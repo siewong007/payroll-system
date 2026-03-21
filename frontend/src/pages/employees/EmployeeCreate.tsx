@@ -1,0 +1,425 @@
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { ArrowLeft } from 'lucide-react';
+import { createEmployee } from '@/api/employees';
+import { getPayrollGroups } from '@/api/payroll';
+import type { CreateEmployeeRequest } from '@/types';
+import { useAuth } from '@/context/AuthContext';
+
+const BANKS = [
+  'Maybank', 'CIMB Bank', 'Public Bank', 'RHB Bank', 'Hong Leong Bank',
+  'AmBank', 'Bank Islam', 'Bank Rakyat', 'Alliance Bank', 'Affin Bank',
+  'BSN', 'OCBC Bank', 'Standard Chartered', 'HSBC', 'UOB', 'Agro Bank',
+  'Bank Muamalat', 'MBSB Bank', 'Al Rajhi Bank',
+];
+
+export function EmployeeCreate() {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const { user } = useAuth();
+  const isExec = user?.role === 'exec';
+
+  const { data: payrollGroups } = useQuery({
+    queryKey: ['payrollGroups'],
+    queryFn: getPayrollGroups,
+  });
+
+  const [form, setForm] = useState<CreateEmployeeRequest>({
+    employee_number: '',
+    full_name: '',
+    date_joined: new Date().toISOString().split('T')[0],
+    basic_salary: 0,
+  });
+
+  const [salaryDisplay, setSalaryDisplay] = useState('');
+
+  const mutation = useMutation({
+    mutationFn: createEmployee,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['employees'] });
+      navigate('/employees');
+    },
+  });
+
+  const updateField = (field: string, value: unknown) => {
+    setForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleSalaryChange = (value: string) => {
+    setSalaryDisplay(value);
+    const ringgit = parseFloat(value) || 0;
+    updateField('basic_salary', Math.round(ringgit * 100)); // Convert to sen
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    mutation.mutate(form);
+  };
+
+  return (
+    <div>
+      <button
+        onClick={() => navigate('/employees')}
+        className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700 mb-4"
+      >
+        <ArrowLeft className="w-4 h-4" /> Back to Employees
+      </button>
+
+      <h1 className="text-2xl font-bold text-gray-900 mb-6">Add New Employee</h1>
+
+      <form onSubmit={handleSubmit} className="space-y-8 max-w-4xl">
+        {mutation.isError && (
+          <div className="bg-red-50 text-red-600 text-sm px-4 py-3 rounded-lg">
+            {(mutation.error as Error)?.message || 'Failed to create employee'}
+          </div>
+        )}
+
+        {/* Personal Information */}
+        <section className="bg-white rounded-2xl shadow p-6">
+          <h2 className="text-lg font-semibold mb-4">Personal Information</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Employee Number *
+              </label>
+              <input
+                type="text"
+                value={form.employee_number}
+                onChange={(e) => updateField('employee_number', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
+                required
+                placeholder="e.g., EMP001"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Full Name (as per NRIC) *
+              </label>
+              <input
+                type="text"
+                value={form.full_name}
+                onChange={(e) => updateField('full_name', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">NRIC / IC Number</label>
+              <input
+                type="text"
+                value={form.ic_number || ''}
+                onChange={(e) => updateField('ic_number', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
+                placeholder="e.g., 900101-14-5678"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Date of Birth</label>
+              <input
+                type="date"
+                value={form.date_of_birth || ''}
+                onChange={(e) => updateField('date_of_birth', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Gender</label>
+              <select
+                value={form.gender || ''}
+                onChange={(e) => updateField('gender', e.target.value || undefined)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
+              >
+                <option value="">Select</option>
+                <option value="male">Male</option>
+                <option value="female">Female</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Race</label>
+              <select
+                value={form.race || ''}
+                onChange={(e) => updateField('race', e.target.value || undefined)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
+              >
+                <option value="">Select</option>
+                <option value="malay">Malay</option>
+                <option value="chinese">Chinese</option>
+                <option value="indian">Indian</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Marital Status</label>
+              <select
+                value={form.marital_status || ''}
+                onChange={(e) => updateField('marital_status', e.target.value || undefined)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
+              >
+                <option value="">Select</option>
+                <option value="single">Single</option>
+                <option value="married">Married</option>
+                <option value="divorced">Divorced</option>
+                <option value="widowed">Widowed</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+              <input
+                type="email"
+                value={form.email || ''}
+                onChange={(e) => updateField('email', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+              <input
+                type="tel"
+                value={form.phone || ''}
+                onChange={(e) => updateField('phone', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
+              />
+            </div>
+          </div>
+        </section>
+
+        {/* Employment */}
+        <section className="bg-white rounded-2xl shadow p-6">
+          <h2 className="text-lg font-semibold mb-4">Employment Details</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Department</label>
+              <input
+                type="text"
+                value={form.department || ''}
+                onChange={(e) => updateField('department', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Designation</label>
+              <input
+                type="text"
+                value={form.designation || ''}
+                onChange={(e) => updateField('designation', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Employment Type</label>
+              <select
+                value={form.employment_type || 'permanent'}
+                onChange={(e) => updateField('employment_type', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
+              >
+                <option value="permanent">Permanent</option>
+                <option value="contract">Contract</option>
+                <option value="part_time">Part Time</option>
+                <option value="intern">Intern</option>
+                <option value="daily_rated">Daily Rated</option>
+                <option value="hourly_rated">Hourly Rated</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Date Joined *</label>
+              <input
+                type="date"
+                value={form.date_joined}
+                onChange={(e) => updateField('date_joined', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
+                required
+              />
+            </div>
+            {!isExec && (
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Basic Salary (RM) *</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={salaryDisplay}
+                    onChange={(e) => handleSalaryChange(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
+                    required
+                    placeholder="e.g., 3000.00"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Payroll Group</label>
+                  <select
+                    value={form.payroll_group_id || ''}
+                    onChange={(e) => updateField('payroll_group_id', e.target.value || undefined)}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
+                  >
+                    <option value="">Select</option>
+                    {payrollGroups?.map((g) => (
+                      <option key={g.id} value={g.id}>
+                        {g.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </>
+            )}
+          </div>
+        </section>
+
+        {/* Banking */}
+        <section className="bg-white rounded-2xl shadow p-6">
+          <h2 className="text-lg font-semibold mb-4">Banking Details</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Bank Name</label>
+              <select
+                value={form.bank_name || ''}
+                onChange={(e) => updateField('bank_name', e.target.value || undefined)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
+              >
+                <option value="">Select Bank</option>
+                {BANKS.map((b) => (
+                  <option key={b} value={b}>{b}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Account Number</label>
+              <input
+                type="text"
+                value={form.bank_account_number || ''}
+                onChange={(e) => updateField('bank_account_number', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
+              />
+            </div>
+          </div>
+        </section>
+
+        {/* Statutory */}
+        <section className="bg-white rounded-2xl shadow p-6">
+          <h2 className="text-lg font-semibold mb-4">Statutory & Tax</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">EPF Number</label>
+              <input
+                type="text"
+                value={form.epf_number || ''}
+                onChange={(e) => updateField('epf_number', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">SOCSO Number</label>
+              <input
+                type="text"
+                value={form.socso_number || ''}
+                onChange={(e) => updateField('socso_number', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">EIS Number</label>
+              <input
+                type="text"
+                value={form.eis_number || ''}
+                onChange={(e) => updateField('eis_number', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">EPF Category</label>
+              <select
+                value={form.epf_category || 'A'}
+                onChange={(e) => updateField('epf_category', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
+              >
+                <option value="A">A - Citizen/PR below 60</option>
+                <option value="B">B - Elected 9% (KWSP 17A)</option>
+                <option value="C">C - PR 60 and above</option>
+                <option value="D">D - Citizen 60 and above</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Residency Status</label>
+              <select
+                value={form.residency_status || 'citizen'}
+                onChange={(e) => updateField('residency_status', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
+              >
+                <option value="citizen">Malaysian Citizen</option>
+                <option value="permanent_resident">Permanent Resident</option>
+                <option value="foreigner">Foreigner</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Working Spouse</label>
+              <select
+                value={form.working_spouse ? 'yes' : 'no'}
+                onChange={(e) => updateField('working_spouse', e.target.value === 'yes')}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
+              >
+                <option value="no">No</option>
+                <option value="yes">Yes</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Number of Children</label>
+              <input
+                type="number"
+                min="0"
+                value={form.num_children ?? 0}
+                onChange={(e) => updateField('num_children', parseInt(e.target.value) || 0)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
+              />
+            </div>
+            <div className="flex items-center gap-4 pt-6">
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={form.is_muslim || false}
+                  onChange={(e) => {
+                    updateField('is_muslim', e.target.checked);
+                    if (!e.target.checked) {
+                      updateField('zakat_eligible', false);
+                      updateField('zakat_monthly_amount', undefined);
+                    }
+                  }}
+                  className="rounded"
+                />
+                <span className="text-sm">Muslim</span>
+              </label>
+              {form.is_muslim && (
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={form.zakat_eligible || false}
+                    onChange={(e) => updateField('zakat_eligible', e.target.checked)}
+                    className="rounded"
+                  />
+                  <span className="text-sm">Zakat Eligible</span>
+                </label>
+              )}
+            </div>
+          </div>
+        </section>
+
+        {/* Submit */}
+        <div className="flex gap-4">
+          <button
+            type="submit"
+            disabled={mutation.isPending}
+            className="bg-black text-white px-6 py-2.5 rounded-lg font-medium hover:bg-gray-800 disabled:opacity-50 transition-colors"
+          >
+            {mutation.isPending ? 'Creating...' : 'Create Employee'}
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate('/employees')}
+            className="bg-white text-gray-700 px-6 py-2.5 rounded-lg font-medium border border-gray-200 hover:bg-gray-50 transition-colors"
+          >
+            Cancel
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}

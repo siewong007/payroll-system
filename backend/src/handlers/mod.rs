@@ -1,0 +1,15 @@
+pub mod auth;
+pub mod company;
+pub mod employee;
+pub mod payroll;
+pub mod portal;
+pub mod dashboard;
+pub mod document;
+pub mod settings;
+pub mod notification;
+pub mod approval;
+pub mod report;
+pub mod calendar;
+pub mod team;
+pub mod admin;
+pub mod oauth2;

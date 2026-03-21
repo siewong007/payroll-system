@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(PGPASSWORD=devpassword psql -h localhost -U payroll -d payroll_db -c \"SELECT u.id, u.email, u.role, u.employee_id, e.employee_number, e.full_name FROM users u LEFT JOIN employees e ON u.employee_id = e.id WHERE u.email = ''sarah@demo.com'';\")",
+      "Bash(PGPASSWORD=payroll_secret psql -h localhost -U payroll -d payroll_db -c \"SELECT id, email, password_hash, is_active FROM users WHERE email = 'sarah@demo.com';\")",
+      "Bash(PGPASSWORD=payroll_secret psql -h localhost -U payroll -d payroll_db -c \"SELECT id, email, LEFT\\(password_hash, 30\\) as hash_prefix, is_active FROM users WHERE email = 'admin@demo.com';\")",
+      "Bash(PGPASSWORD=payroll_secret psql -h localhost -U payroll -d payroll_db -c \"SELECT password_hash FROM users WHERE email = 'admin@demo.com';\")",
+      "Bash(curl:*)",
+      "Bash(PGPASSWORD=payroll_secret psql -h localhost -U payroll -d payroll_db -c \"UPDATE users SET password_hash = '\\\\$2b\\\\$12\\\\$eGHs6MK8r5JgA7KZPQWkR.Op6RKb3Zomh0CIqFDreBNDzaFZTOqk.' WHERE email = 'sarah@demo.com';\")",
+      "Bash(cargo check:*)"
+    ]
+  }
+}

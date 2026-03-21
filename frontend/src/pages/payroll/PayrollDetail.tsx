@@ -1,0 +1,178 @@
+import { useParams, useNavigate } from 'react-router-dom';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { ArrowLeft, CheckCircle, Lock } from 'lucide-react';
+import { getPayrollRun, approvePayroll, lockPayroll } from '@/api/payroll';
+import { formatMYR } from '@/lib/utils';
+
+const MONTHS = [
+  '', 'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+export function PayrollDetail() {
+  const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['payrollRun', id],
+    queryFn: () => getPayrollRun(id!),
+    enabled: !!id,
+  });
+
+  const approveMutation = useMutation({
+    mutationFn: () => approvePayroll(id!),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['payrollRun', id] }),
+  });
+
+  const lockMutation = useMutation({
+    mutationFn: () => lockPayroll(id!),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['payrollRun', id] }),
+  });
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-black" />
+      </div>
+    );
+  }
+
+  if (!data) return <div className="text-center text-gray-500 py-12">Payroll run not found</div>;
+
+  const { payroll_run: run, items } = data;
+
+  return (
+    <div>
+      <button
+        onClick={() => navigate('/payroll')}
+        className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700 mb-4"
+      >
+        <ArrowLeft className="w-4 h-4" /> Back to Payroll
+      </button>
+
+      {/* Header */}
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">
+            {MONTHS[run.period_month]} {run.period_year} Payroll
+          </h1>
+          <p className="text-gray-500">{run.employee_count} employees processed</p>
+        </div>
+        <div className="flex items-center gap-3">
+          {run.status === 'processed' && (
+            <button
+              onClick={() => approveMutation.mutate()}
+              disabled={approveMutation.isPending}
+              className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 disabled:opacity-50 text-sm font-medium"
+            >
+              <CheckCircle className="w-4 h-4" />
+              {approveMutation.isPending ? 'Approving...' : 'Approve'}
+            </button>
+          )}
+          {run.status === 'approved' && (
+            <button
+              onClick={() => lockMutation.mutate()}
+              disabled={lockMutation.isPending}
+              className="flex items-center gap-2 bg-black text-white px-4 py-2 rounded-lg hover:bg-gray-800 disabled:opacity-50 text-sm font-medium"
+            >
+              <Lock className="w-4 h-4" />
+              {lockMutation.isPending ? 'Locking...' : 'Lock & Mark Paid'}
+            </button>
+          )}
+          <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+            run.status === 'paid' ? 'bg-emerald-50 text-emerald-700' :
+            run.status === 'approved' ? 'bg-green-50 text-green-700' :
+            'bg-gray-100 text-gray-900'
+          }`}>
+            {run.status}
+          </span>
+        </div>
+      </div>
+
+      {/* Summary Cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div className="bg-white rounded-2xl shadow border border-gray-200 p-4">
+          <p className="text-xs text-gray-400">Total Gross</p>
+          <p className="text-lg font-bold mt-1">{formatMYR(run.total_gross)}</p>
+        </div>
+        <div className="bg-white rounded-2xl shadow border border-gray-200 p-4">
+          <p className="text-xs text-gray-400">Total Net</p>
+          <p className="text-lg font-bold mt-1 text-green-600">{formatMYR(run.total_net)}</p>
+        </div>
+        <div className="bg-white rounded-2xl shadow border border-gray-200 p-4">
+          <p className="text-xs text-gray-400">Employer Cost</p>
+          <p className="text-lg font-bold mt-1">{formatMYR(run.total_employer_cost)}</p>
+        </div>
+        <div className="bg-white rounded-2xl shadow border border-gray-200 p-4">
+          <p className="text-xs text-gray-400">Total PCB</p>
+          <p className="text-lg font-bold mt-1">{formatMYR(run.total_pcb)}</p>
+        </div>
+      </div>
+
+      {/* Statutory Summary */}
+      <div className="grid grid-cols-3 gap-4 mb-6">
+        <div className="bg-white rounded-2xl shadow border border-gray-200 p-4">
+          <p className="text-xs text-gray-400">EPF (Employee + Employer)</p>
+          <p className="text-sm font-bold mt-1">
+            {formatMYR(run.total_epf_employee)} + {formatMYR(run.total_epf_employer)}
+          </p>
+        </div>
+        <div className="bg-white rounded-2xl shadow border border-gray-200 p-4">
+          <p className="text-xs text-gray-400">SOCSO (Employee + Employer)</p>
+          <p className="text-sm font-bold mt-1">
+            {formatMYR(run.total_socso_employee)} + {formatMYR(run.total_socso_employer)}
+          </p>
+        </div>
+        <div className="bg-white rounded-2xl shadow border border-gray-200 p-4">
+          <p className="text-xs text-gray-400">EIS (Employee + Employer)</p>
+          <p className="text-sm font-bold mt-1">
+            {formatMYR(run.total_eis_employee)} + {formatMYR(run.total_eis_employer)}
+          </p>
+        </div>
+      </div>
+
+      {/* Employee Details Table */}
+      <div className="bg-white rounded-2xl shadow border border-gray-200 overflow-hidden">
+        <div className="px-6 py-4 border-b border-gray-200">
+          <h2 className="font-semibold">Employee Breakdown</h2>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead className="bg-gray-50 border-b border-gray-200">
+              <tr>
+                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Employee</th>
+                <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase">Basic</th>
+                <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase">Gross</th>
+                <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase">EPF</th>
+                <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase">SOCSO</th>
+                <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase">EIS</th>
+                <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase">PCB</th>
+                <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase">Deductions</th>
+                <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase">Net</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {items.map((item) => (
+                <tr key={item.employee_id} className="hover:bg-gray-50">
+                  <td className="px-4 py-3">
+                    <div className="text-sm font-medium">{item.employee_name}</div>
+                    <div className="text-xs text-gray-400">{item.employee_number}</div>
+                  </td>
+                  <td className="px-4 py-3 text-sm text-right">{formatMYR(item.basic_salary)}</td>
+                  <td className="px-4 py-3 text-sm text-right">{formatMYR(item.gross_salary)}</td>
+                  <td className="px-4 py-3 text-sm text-right">{formatMYR(item.epf_employee)}</td>
+                  <td className="px-4 py-3 text-sm text-right">{formatMYR(item.socso_employee)}</td>
+                  <td className="px-4 py-3 text-sm text-right">{formatMYR(item.eis_employee)}</td>
+                  <td className="px-4 py-3 text-sm text-right">{formatMYR(item.pcb_amount)}</td>
+                  <td className="px-4 py-3 text-sm text-right text-red-600">{formatMYR(item.total_deductions)}</td>
+                  <td className="px-4 py-3 text-sm text-right font-bold text-green-600">{formatMYR(item.net_salary)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
