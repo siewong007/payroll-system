@@ -65,7 +65,7 @@ export function ResetPassword() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3 }}
       >
-        <div className="bg-white rounded-2xl shadow p-8">
+        <div className="bg-white rounded-2xl shadow p-6 sm:p-8">
           <div className="text-center mb-8">
             <div className="w-12 h-12 bg-black rounded-xl flex items-center justify-center mx-auto mb-4">
               <span className="text-white font-bold text-lg">P</span>

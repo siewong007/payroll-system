@@ -231,6 +231,13 @@ pub async fn upload_file(
         )));
     }
 
+    // Validate file content matches claimed extension (magic number check)
+    if !validate_magic_bytes(&data, &ext) {
+        return Err(AppError::BadRequest(
+            "File content does not match its extension".into(),
+        ));
+    }
+
     // Save to uploads directory
     let upload_dir = std::path::Path::new("uploads");
     tokio::fs::create_dir_all(upload_dir)
@@ -293,6 +300,19 @@ pub async fn portal_holidays(
     let year = q.year.unwrap_or(chrono::Utc::now().year());
     let holidays = crate::services::calendar_service::get_holidays(&state.pool, company_id, year).await?;
     Ok(Json(holidays))
+}
+
+fn validate_magic_bytes(data: &[u8], claimed_ext: &str) -> bool {
+    match claimed_ext {
+        "pdf" => data.starts_with(b"%PDF"),
+        "jpg" | "jpeg" => data.starts_with(&[0xFF, 0xD8, 0xFF]),
+        "png" => data.starts_with(&[0x89, 0x50, 0x4E, 0x47]),
+        "gif" => data.starts_with(b"GIF8"),
+        "webp" => data.len() >= 12 && &data[8..12] == b"WEBP",
+        "doc" | "xls" => data.starts_with(&[0xD0, 0xCF, 0x11, 0xE0]),
+        "docx" | "xlsx" => data.starts_with(&[0x50, 0x4B, 0x03, 0x04]),
+        _ => false,
+    }
 }
 
 fn sanitize_filename(name: &str) -> String {

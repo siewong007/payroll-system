@@ -81,12 +81,12 @@ export function UserManagement() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="page-header">
           <h1 className="page-title">Users</h1>
           <p className="page-subtitle">All registered accounts across companies</p>
         </div>
-        <button onClick={() => setShowCreate(true)} className="btn-primary">
+        <button onClick={() => setShowCreate(true)} className="btn-primary w-full sm:w-auto">
           <Plus className="w-4 h-4" /> Add User
         </button>
       </div>

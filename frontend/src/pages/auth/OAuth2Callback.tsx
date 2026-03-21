@@ -12,7 +12,6 @@ export function OAuth2Callback() {
     const params = new URLSearchParams(hash);
 
     const token = params.get('token');
-    const refreshToken = params.get('refresh_token');
     const userStr = params.get('user');
 
     if (!token || !userStr) {
@@ -22,7 +21,11 @@ export function OAuth2Callback() {
 
     try {
       const user = JSON.parse(decodeURIComponent(userStr));
-      setSession(token, refreshToken || undefined, user);
+      // Refresh token was set as httpOnly cookie by the server redirect
+      setSession(token, user);
+
+      // Clear the hash fragment from browser history
+      window.history.replaceState(null, '', window.location.pathname);
 
       // Redirect based on role
       navigate(user.role === 'employee' ? '/portal' : '/', { replace: true });

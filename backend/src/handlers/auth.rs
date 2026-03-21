@@ -1,9 +1,15 @@
-use axum::{extract::State, Json};
+use axum::{
+    extract::State,
+    http::HeaderMap,
+    response::IntoResponse,
+    Json,
+};
 
 use crate::core::app_state::AppState;
 use crate::core::auth::{create_token, AuthUser};
-use crate::core::error::AppResult;
-use crate::models::session::{ForgotPasswordRequest, RefreshTokenRequest, ResetPasswordRequest};
+use crate::core::cookie;
+use crate::core::error::{AppError, AppResult};
+use crate::models::session::{ForgotPasswordRequest, ResetPasswordRequest};
 use crate::models::user::{LoginRequest, LoginResponse, User, UserResponse};
 use crate::models::user_company::{CompanySummary, SwitchCompanyRequest};
 use crate::services::{auth_service, password_reset_service, session_service, user_service};
@@ -11,7 +17,7 @@ use crate::services::{auth_service, password_reset_service, session_service, use
 pub async fn login(
     State(state): State<AppState>,
     Json(req): Json<LoginRequest>,
-) -> AppResult<Json<LoginResponse>> {
+) -> Result<impl IntoResponse, AppError> {
     let response = auth_service::login(
         &state.pool,
         req,
@@ -19,7 +25,21 @@ pub async fn login(
         state.config.jwt_expiry_hours,
     )
     .await?;
-    Ok(Json(response))
+
+    let mut headers = HeaderMap::new();
+    if let Some(ref refresh_token) = response.refresh_token {
+        let (name, value) = cookie::set_refresh_cookie(refresh_token, &state.config.frontend_url);
+        headers.insert(name, value.parse().unwrap());
+    }
+
+    // Don't include refresh_token in JSON body — it's in the cookie
+    let body = LoginResponse {
+        token: response.token,
+        refresh_token: None,
+        user: response.user,
+    };
+
+    Ok((headers, Json(body)))
 }
 
 pub async fn me(auth: AuthUser) -> AppResult<Json<UserResponse>> {
@@ -73,22 +93,25 @@ pub async fn switch_company(
     }))
 }
 
-/// Refresh an expired JWT using a valid refresh token.
+/// Refresh an expired JWT using the refresh token from the httpOnly cookie.
 pub async fn refresh_token(
     State(state): State<AppState>,
-    Json(req): Json<RefreshTokenRequest>,
-) -> AppResult<Json<LoginResponse>> {
-    let user_id = session_service::verify_refresh_token(&state.pool, &req.refresh_token).await?;
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, AppError> {
+    let refresh = cookie::extract_refresh_token(&headers)
+        .ok_or_else(|| AppError::Unauthorized("No refresh token".into()))?;
+
+    let user_id = session_service::verify_refresh_token(&state.pool, &refresh).await?;
 
     // Fetch user
     let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1 AND is_active = TRUE")
         .bind(user_id)
         .fetch_optional(&state.pool)
         .await?
-        .ok_or_else(|| crate::core::error::AppError::Unauthorized("User not found or inactive".into()))?;
+        .ok_or_else(|| AppError::Unauthorized("User not found or inactive".into()))?;
 
     // Revoke old refresh token and issue new one (rotation)
-    session_service::revoke_refresh_token(&state.pool, &req.refresh_token).await?;
+    session_service::revoke_refresh_token(&state.pool, &refresh).await?;
     let new_refresh = session_service::create_refresh_token(&state.pool, user.id).await?;
 
     let token = create_token(
@@ -101,20 +124,33 @@ pub async fn refresh_token(
         state.config.jwt_expiry_hours,
     )?;
 
-    Ok(Json(LoginResponse {
+    let mut resp_headers = HeaderMap::new();
+    let (name, value) = cookie::set_refresh_cookie(&new_refresh, &state.config.frontend_url);
+    resp_headers.insert(name, value.parse().unwrap());
+
+    let body = LoginResponse {
         token,
-        refresh_token: Some(new_refresh),
+        refresh_token: None,
         user: UserResponse::from(user),
-    }))
+    };
+
+    Ok((resp_headers, Json(body)))
 }
 
-/// Logout: revoke the refresh token.
+/// Logout: revoke the refresh token and clear the cookie.
 pub async fn logout(
     State(state): State<AppState>,
-    Json(req): Json<RefreshTokenRequest>,
-) -> AppResult<Json<serde_json::Value>> {
-    session_service::revoke_refresh_token(&state.pool, &req.refresh_token).await?;
-    Ok(Json(serde_json::json!({ "ok": true })))
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, AppError> {
+    if let Some(refresh) = cookie::extract_refresh_token(&headers) {
+        let _ = session_service::revoke_refresh_token(&state.pool, &refresh).await;
+    }
+
+    let mut resp_headers = HeaderMap::new();
+    let (name, value) = cookie::clear_refresh_cookie(&state.config.frontend_url);
+    resp_headers.insert(name, value.parse().unwrap());
+
+    Ok((resp_headers, Json(serde_json::json!({ "ok": true }))))
 }
 
 /// User requests a password reset.
@@ -146,7 +182,7 @@ pub async fn validate_reset_token(
 ) -> AppResult<Json<serde_json::Value>> {
     let token = req.get("token")
         .and_then(|t| t.as_str())
-        .ok_or_else(|| crate::core::error::AppError::BadRequest("Token is required".into()))?;
+        .ok_or_else(|| AppError::BadRequest("Token is required".into()))?;
     password_reset_service::validate_reset_token(&state.pool, token).await?;
     Ok(Json(serde_json::json!({ "valid": true })))
 }

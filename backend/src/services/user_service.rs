@@ -49,7 +49,8 @@ pub async fn create_user(pool: &PgPool, req: CreateUserRequest) -> AppResult<Use
         ));
     }
 
-    // Hash password
+    // Validate and hash password
+    super::auth_service::validate_password_strength(&req.password)?;
     let password_hash = bcrypt::hash(&req.password, 12)
         .map_err(|e| AppError::Internal(format!("Failed to hash password: {}", e)))?;
 

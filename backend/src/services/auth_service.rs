@@ -5,6 +5,23 @@ use crate::core::error::{AppError, AppResult};
 use crate::models::user::{LoginRequest, LoginResponse, User, UserResponse};
 use crate::services::session_service;
 
+pub fn validate_password_strength(password: &str) -> AppResult<()> {
+    if password.len() < 10 {
+        return Err(AppError::Validation(
+            "Password must be at least 10 characters".into(),
+        ));
+    }
+    let has_upper = password.chars().any(|c| c.is_uppercase());
+    let has_lower = password.chars().any(|c| c.is_lowercase());
+    let has_digit = password.chars().any(|c| c.is_ascii_digit());
+    if !has_upper || !has_lower || !has_digit {
+        return Err(AppError::Validation(
+            "Password must contain uppercase, lowercase, and a digit".into(),
+        ));
+    }
+    Ok(())
+}
+
 pub async fn login(
     pool: &PgPool,
     req: LoginRequest,

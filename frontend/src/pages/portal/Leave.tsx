@@ -106,18 +106,18 @@ export function Leave() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="page-header">
           <h1 className="page-title">Leave</h1>
           <p className="page-subtitle">Manage your leave entitlements and requests</p>
         </div>
-        <button onClick={() => setShowApply(true)} className="btn-primary">
+        <button onClick={() => setShowApply(true)} className="btn-primary w-full sm:w-auto">
           <Plus className="w-4 h-4" /> Apply for Leave
         </button>
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 border-b border-gray-200">
+      <div className="flex gap-1 border-b border-gray-200 overflow-x-auto">
         {[
           { key: 'balances' as const, label: 'Leave Entitlement' },
           { key: 'requests' as const, label: 'Activities' },
@@ -125,7 +125,7 @@ export function Leave() {
           <button
             key={t.key}
             onClick={() => setTab(t.key)}
-            className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-all-fast ${
+            className={`px-4 py-2.5 text-sm font-medium border-b-2 whitespace-nowrap transition-all-fast ${
               tab === t.key ? 'border-gray-900 text-gray-900' : 'border-transparent text-gray-400 hover:text-gray-700'
             }`}
           >

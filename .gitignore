@@ -23,3 +23,6 @@ Thumbs.db
 
 # Database
 *.sql.bak
+
+# User uploads
+backend/uploads/

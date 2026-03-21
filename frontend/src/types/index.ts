@@ -68,7 +68,7 @@ export interface CreateUserRequest {
   email: string;
   password: string;
   full_name: string;
-  role: 'super_admin' | 'admin' | 'payroll_admin' | 'hr_manager' | 'finance' | 'exec';
+  role: 'super_admin' | 'admin' | 'payroll_admin' | 'hr_manager' | 'finance' | 'exec' | 'employee';
   company_ids: string[];
 }
 
@@ -652,4 +652,70 @@ export interface TeamLeaveEntry {
   end_date: string;
   days: number;
   status: string;
+}
+
+// Email / Letters
+export type LetterType = 'welcome' | 'offer' | 'appointment' | 'warning' | 'termination' | 'promotion';
+
+export interface EmailTemplate {
+  id: string;
+  company_id: string;
+  name: string;
+  letter_type: LetterType;
+  subject: string;
+  body_html: string;
+  is_active: boolean | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateEmailTemplateRequest {
+  name: string;
+  letter_type: LetterType;
+  subject: string;
+  body_html: string;
+}
+
+export interface UpdateEmailTemplateRequest {
+  name?: string;
+  subject?: string;
+  body_html?: string;
+  is_active?: boolean;
+}
+
+export interface EmailLog {
+  id: string;
+  company_id: string;
+  employee_id: string | null;
+  template_id: string | null;
+  letter_type: string;
+  recipient_email: string;
+  recipient_name: string | null;
+  subject: string;
+  body_html: string;
+  status: 'pending' | 'sent' | 'failed';
+  error_message: string | null;
+  sent_at: string | null;
+  created_at: string;
+}
+
+export interface SendLetterRequest {
+  employee_id: string;
+  letter_type: LetterType;
+  subject: string;
+  body_html: string;
+  template_id?: string;
+}
+
+export interface PreviewLetterRequest {
+  employee_id: string;
+  subject: string;
+  body_html: string;
+}
+
+export interface PreviewLetterResponse {
+  subject: string;
+  body_html: string;
+  recipient_email: string;
+  recipient_name: string;
 }

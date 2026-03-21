@@ -11,6 +11,9 @@ pub struct OAuth2Account {
     pub provider_email: Option<String>,
     pub provider_name: Option<String>,
     pub avatar_url: Option<String>,
+    pub access_token_hash: Option<String>,
+    pub refresh_token_hash: Option<String>,
+    pub token_expires_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

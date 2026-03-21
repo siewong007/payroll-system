@@ -18,3 +18,5 @@ pub mod user_service;
 pub mod session_service;
 pub mod password_reset_service;
 pub mod oauth2_service;
+pub mod email_service;
+pub mod passkey_service;

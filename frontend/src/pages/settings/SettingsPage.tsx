@@ -4,6 +4,7 @@ import { Save, Check } from 'lucide-react';
 import { getSettings, bulkUpdateSettings } from '@/api/settings';
 import type { CompanySetting, SettingUpdate } from '@/types';
 import { useAuth } from '@/context/AuthContext';
+import { PasskeyManagement } from '@/components/PasskeyManagement';
 
 const CATEGORY_LABELS: Record<string, string> = {
   payroll: 'Payroll',
@@ -95,12 +96,12 @@ export function SettingsPage() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 mb-6 bg-gray-100 p-1 rounded-lg w-fit">
+      <div className="flex gap-1 mb-6 bg-gray-100 p-1 rounded-lg w-fit max-w-full overflow-x-auto">
         {categories.map(cat => (
           <button
             key={cat}
             onClick={() => setActiveTab(cat)}
-            className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+            className={`px-4 py-2 text-sm font-medium rounded-md whitespace-nowrap transition-colors ${
               activeTab === cat
                 ? 'bg-white text-gray-900 shadow-sm'
                 : 'text-gray-500 hover:text-gray-700'
@@ -135,6 +136,11 @@ export function SettingsPage() {
             {mutation.isPending ? 'Saving...' : 'Save Changes'}
           </button>
         </div>
+      </div>
+
+      {/* Passkey Management */}
+      <div className="mt-6">
+        <PasskeyManagement />
       </div>
     </div>
   );

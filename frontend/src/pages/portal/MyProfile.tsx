@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { User, MapPin, Briefcase, Shield, CreditCard } from 'lucide-react';
 import { getMyProfile } from '@/api/portal';
 import { formatMYR, formatDate } from '@/lib/utils';
+import { PasskeyManagement } from '@/components/PasskeyManagement';
 
 export function MyProfile() {
   const { data: profile, isLoading } = useQuery({
@@ -121,6 +122,8 @@ export function MyProfile() {
               <Field label="Account Number" value={profile.bank_account_number} />
             </div>
           </div>
+
+          <PasskeyManagement />
         </div>
       </div>
     </div>

@@ -164,6 +164,8 @@ pub async fn validate_reset_token(pool: &PgPool, raw_token: &str) -> AppResult<U
 
 /// Resets the user's password using a valid reset token.
 pub async fn reset_password(pool: &PgPool, raw_token: &str, new_password: &str) -> AppResult<()> {
+    super::auth_service::validate_password_strength(new_password)?;
+
     let token_hash = hash_token(raw_token);
 
     // Validate token

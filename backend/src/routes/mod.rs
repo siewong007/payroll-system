@@ -1,27 +1,75 @@
+use std::time::Duration;
+
 use axum::{
     routing::{delete, get, post, put},
     Router,
 };
+use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
 
 use crate::core::app_state::AppState;
-use crate::handlers::{admin, approval, auth, calendar, company, dashboard, document, employee, notification, oauth2, payroll, portal, report, settings, team};
+use crate::handlers::{admin, approval, auth, calendar, company, dashboard, document, email, employee, notification, oauth2, passkey, payroll, portal, report, settings, team};
 
 pub fn create_router(state: AppState) -> Router {
-    let api = Router::new()
-        // Auth
+    // Rate limiter: 5 requests per 60 seconds per IP
+    let auth_rate_limit = GovernorConfigBuilder::default()
+        .per_second(12)
+        .burst_size(5)
+        .finish()
+        .expect("Failed to build rate limiter");
+
+    // Rate limiter: 3 requests per 60 seconds per IP (stricter for forgot-password)
+    let forgot_rate_limit = GovernorConfigBuilder::default()
+        .period(Duration::from_secs(60))
+        .burst_size(3)
+        .finish()
+        .expect("Failed to build rate limiter");
+
+    // Rate limiter: 10 requests per 60 seconds per IP (OAuth2 flow)
+    let oauth2_rate_limit = GovernorConfigBuilder::default()
+        .per_second(6)
+        .burst_size(10)
+        .finish()
+        .expect("Failed to build rate limiter");
+
+    // Rate-limited auth routes
+    let rate_limited_auth = Router::new()
         .route("/auth/login", post(auth::login))
+        .route("/auth/reset-password", post(auth::reset_password))
+        .layer(GovernorLayer { config: auth_rate_limit.into() });
+
+    let rate_limited_forgot = Router::new()
+        .route("/auth/forgot-password", post(auth::forgot_password))
+        .layer(GovernorLayer { config: forgot_rate_limit.into() });
+
+    let rate_limited_oauth2 = Router::new()
+        .route("/auth/oauth2/google/authorize", get(oauth2::google_authorize))
+        .route("/auth/oauth2/google/callback", get(oauth2::google_callback))
+        .layer(GovernorLayer { config: oauth2_rate_limit.into() });
+
+    let api = Router::new()
+        // Health check (no auth required, used by ALB)
+        .route("/health", get(|| async { "ok" }))
+        .merge(rate_limited_auth)
+        .merge(rate_limited_forgot)
+        .merge(rate_limited_oauth2)
+        // Auth (non-rate-limited)
         .route("/auth/me", get(auth::me))
         .route("/auth/refresh", post(auth::refresh_token))
         .route("/auth/logout", post(auth::logout))
-        .route("/auth/forgot-password", post(auth::forgot_password))
-        .route("/auth/reset-password", post(auth::reset_password))
         .route("/auth/validate-reset-token", post(auth::validate_reset_token))
         .route("/auth/switch-company", put(auth::switch_company))
         .route("/auth/my-companies", get(auth::my_companies))
-        // OAuth2
+        // Passkey (WebAuthn) — unauthenticated
+        .route("/auth/passkey/check", post(passkey::check_passkey))
+        .route("/auth/passkey/authenticate/begin", post(passkey::authentication_begin))
+        .route("/auth/passkey/authenticate/complete", post(passkey::authentication_complete))
+        // Passkey (WebAuthn) — authenticated
+        .route("/auth/passkey/register/begin", post(passkey::registration_begin))
+        .route("/auth/passkey/register/complete", post(passkey::registration_complete))
+        .route("/auth/passkeys", get(passkey::list_passkeys))
+        .route("/auth/passkeys/:id", put(passkey::rename_passkey).delete(passkey::delete_passkey))
+        // OAuth2 (non-rate-limited routes)
         .route("/auth/oauth2/providers", get(oauth2::list_providers))
-        .route("/auth/oauth2/google/authorize", get(oauth2::google_authorize))
-        .route("/auth/oauth2/google/callback", get(oauth2::google_callback))
         .route("/auth/oauth2/google/link", post(oauth2::link_google))
         .route("/auth/oauth2/accounts", get(oauth2::my_linked_accounts))
         .route("/auth/oauth2/accounts/:provider", delete(oauth2::unlink_provider))
@@ -114,7 +162,13 @@ pub fn create_router(state: AppState) -> Router {
         .route("/reports/payroll-department", get(report::payroll_by_department))
         .route("/reports/leave", get(report::leave_report))
         .route("/reports/claims", get(report::claims_report))
-        .route("/reports/statutory", get(report::statutory_report));
+        .route("/reports/statutory", get(report::statutory_report))
+        // Email / Letters
+        .route("/email/templates", get(email::list_templates).post(email::create_template))
+        .route("/email/templates/:id", get(email::get_template).put(email::update_template).delete(email::delete_template))
+        .route("/email/preview", post(email::preview_letter))
+        .route("/email/send", post(email::send_letter))
+        .route("/email/logs", get(email::list_email_logs));
 
     Router::new().nest("/api", api).with_state(state)
 }

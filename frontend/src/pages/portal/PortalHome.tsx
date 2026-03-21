@@ -21,7 +21,7 @@ export function PortalHome() {
   return (
     <div className="space-y-8">
       {/* Welcome Banner */}
-      <div className="bg-white rounded-2xl shadow p-8 relative overflow-hidden">
+      <div className="bg-white rounded-2xl shadow p-5 md:p-8 relative overflow-hidden">
         <div className="absolute top-0 right-0 w-64 h-64 bg-gradient-to-bl from-gray-50 to-transparent rounded-bl-full opacity-60" />
         <div className="relative">
           <div className="flex items-center gap-2 mb-1">

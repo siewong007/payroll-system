@@ -14,8 +14,8 @@ const statusColors: Record<string, string> = {
 
 export function PasswordResets() {
   const queryClient = useQueryClient();
-  const [resetToken, setResetToken] = useState<string | null>(null);
-  const [copiedToken, setCopiedToken] = useState(false);
+  const [resetUrl, setResetUrl] = useState<string | null>(null);
+  const [copiedLink, setCopiedLink] = useState(false);
 
   const { data: requests = [], isLoading } = useQuery({
     queryKey: ['password-resets'],
@@ -25,7 +25,7 @@ export function PasswordResets() {
   const approveMutation = useMutation({
     mutationFn: approvePasswordReset,
     onSuccess: (data) => {
-      setResetToken(data.reset_token);
+      setResetUrl(data.reset_url);
       queryClient.invalidateQueries({ queryKey: ['password-resets'] });
     },
   });
@@ -38,11 +38,10 @@ export function PasswordResets() {
   });
 
   const copyResetLink = () => {
-    if (resetToken) {
-      const link = `${window.location.origin}/reset-password?token=${resetToken}`;
-      navigator.clipboard.writeText(link);
-      setCopiedToken(true);
-      setTimeout(() => setCopiedToken(false), 2000);
+    if (resetUrl) {
+      navigator.clipboard.writeText(resetUrl);
+      setCopiedLink(true);
+      setTimeout(() => setCopiedLink(false), 2000);
     }
   };
 
@@ -76,7 +75,7 @@ export function PasswordResets() {
       </div>
 
       {/* Reset Token Modal */}
-      {resetToken && (
+      {resetUrl && (
         <motion.div
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
@@ -90,18 +89,18 @@ export function PasswordResets() {
               </p>
               <div className="mt-3 flex items-center gap-2">
                 <code className="text-xs bg-white px-3 py-2 rounded-lg border border-blue-200 flex-1 break-all">
-                  {window.location.origin}/reset-password?token={resetToken}
+                  {resetUrl}
                 </code>
                 <button
                   onClick={copyResetLink}
                   className="px-3 py-2 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 whitespace-nowrap"
                 >
-                  {copiedToken ? 'Copied!' : 'Copy'}
+                  {copiedLink ? 'Copied!' : 'Copy'}
                 </button>
               </div>
             </div>
             <button
-              onClick={() => setResetToken(null)}
+              onClick={() => setResetUrl(null)}
               className="text-blue-400 hover:text-blue-600 ml-3"
             >
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">

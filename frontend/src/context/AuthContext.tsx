@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { User, LoginResponse } from '@/types';
-import api from '@/api/client';
+import api, { setAccessToken } from '@/api/client';
 
 interface AuthContextType {
   user: User | null;
@@ -9,7 +9,7 @@ interface AuthContextType {
   login: (email: string, password: string) => Promise<User>;
   logout: () => Promise<void>;
   switchCompany: (companyId: string) => Promise<void>;
-  setSession: (token: string, refreshToken: string | undefined, user: User) => void;
+  setSession: (token: string, user: User) => void;
   isAuthenticated: boolean;
   isLoading: boolean;
 }
@@ -22,54 +22,63 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const queryClient = useQueryClient();
 
+  // On mount, try to restore session via cookie-based refresh
   useEffect(() => {
-    const savedToken = localStorage.getItem('token');
-    const savedUser = localStorage.getItem('user');
-    if (savedToken && savedUser) {
-      setToken(savedToken);
-      setUser(JSON.parse(savedUser));
-    }
-    setIsLoading(false);
+    const restoreSession = async () => {
+      try {
+        // Refresh token is sent automatically via httpOnly cookie
+        const { data } = await api.post<LoginResponse>('/auth/refresh', {});
+        setAccessToken(data.token);
+        setToken(data.token);
+        setUser(data.user);
+        localStorage.setItem('user', JSON.stringify(data.user));
+      } catch {
+        // No valid session — user needs to log in
+        setAccessToken(null);
+        setToken(null);
+        setUser(null);
+        localStorage.removeItem('user');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    restoreSession();
   }, []);
 
-  const setSession = useCallback((newToken: string, refreshToken: string | undefined, newUser: User) => {
+  const setSession = useCallback((newToken: string, newUser: User) => {
+    setAccessToken(newToken);
     setToken(newToken);
     setUser(newUser);
-    localStorage.setItem('token', newToken);
     localStorage.setItem('user', JSON.stringify(newUser));
-    if (refreshToken) {
-      localStorage.setItem('refresh_token', refreshToken);
-    }
   }, []);
 
   const login = async (email: string, password: string): Promise<User> => {
     const { data } = await api.post<LoginResponse>('/auth/login', { email, password });
-    setSession(data.token, data.refresh_token, data.user);
+    // Refresh token is set as httpOnly cookie by the server
+    setSession(data.token, data.user);
     return data.user;
   };
 
   const logout = async () => {
-    const refreshToken = localStorage.getItem('refresh_token');
-    if (refreshToken) {
-      try {
-        await api.post('/auth/logout', { refresh_token: refreshToken });
-      } catch {
-        // Ignore errors on logout — still clear local state
-      }
+    try {
+      // Server reads refresh token from cookie and revokes it
+      await api.post('/auth/logout');
+    } catch {
+      // Ignore errors on logout — still clear local state
     }
+    setAccessToken(null);
     setToken(null);
     setUser(null);
-    localStorage.removeItem('token');
-    localStorage.removeItem('refresh_token');
     localStorage.removeItem('user');
     queryClient.clear();
   };
 
   const switchCompany = async (companyId: string) => {
     const { data } = await api.put<LoginResponse>('/auth/switch-company', { company_id: companyId });
+    setAccessToken(data.token);
     setToken(data.token);
     setUser(data.user);
-    localStorage.setItem('token', data.token);
     localStorage.setItem('user', JSON.stringify(data.user));
     queryClient.clear();
   };

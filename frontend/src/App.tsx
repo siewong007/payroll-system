@@ -6,7 +6,6 @@ import { PortalLayout } from '@/components/layout/PortalLayout';
 import { Login } from '@/pages/auth/Login';
 import { ForgotPassword } from '@/pages/auth/ForgotPassword';
 import { ResetPassword } from '@/pages/auth/ResetPassword';
-import { OAuth2Callback } from '@/pages/auth/OAuth2Callback';
 import { Dashboard } from '@/pages/Dashboard';
 import { EmployeeList } from '@/pages/employees/EmployeeList';
 import { EmployeeCreate } from '@/pages/employees/EmployeeCreate';
@@ -33,6 +32,7 @@ import { CompanyManagement } from '@/pages/admin/CompanyManagement';
 import { UserManagement } from '@/pages/admin/UserManagement';
 import { RoleManagement } from '@/pages/admin/RoleManagement';
 import { PasswordResets } from '@/pages/admin/PasswordResets';
+import { LettersPage } from '@/pages/letters/LettersPage';
 
 function RoleGuard({ blockedRoles, children }: { blockedRoles: string[]; children: React.ReactNode }) {
   const { user } = useAuth();
@@ -84,6 +84,7 @@ export default function App() {
               <Route path="/teams" element={<TeamsPage />} />
               <Route path="/approvals" element={<Approvals />} />
               <Route path="/reports" element={<Reports />} />
+              <Route path="/letters" element={<LettersPage />} />
               <Route path="/settings" element={<SettingsPage />} />
               <Route path="/companies" element={<RoleGuard blockedRoles={['exec', 'admin', 'payroll_admin', 'hr_manager', 'finance']}><CompanyManagement /></RoleGuard>} />
               <Route path="/users" element={<RoleGuard blockedRoles={['exec', 'admin', 'payroll_admin', 'hr_manager', 'finance']}><UserManagement /></RoleGuard>} />

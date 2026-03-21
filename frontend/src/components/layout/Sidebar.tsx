@@ -14,9 +14,12 @@ import {
   UserCog,
   Shield,
   KeyRound,
+  Mail,
+  X,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { CompanySwitcher } from './CompanySwitcher';
+import { AnimatePresence, motion } from 'framer-motion';
 
 const navigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard, hideFor: ['super_admin'] },
@@ -28,6 +31,7 @@ const navigation = [
   { name: 'Approvals', href: '/approvals', icon: ClipboardCheck, hideFor: ['super_admin'] },
   { name: 'Reports', href: '/reports', icon: BarChart3, hideFor: ['super_admin'] },
   { name: 'Documents', href: '/documents', icon: FileText, hideFor: ['super_admin'] },
+  { name: 'Letters', href: '/letters', icon: Mail, hideFor: ['super_admin'] },
   { name: 'Settings', href: '/settings', icon: Settings, hideFor: ['super_admin'] },
   { name: 'Companies', href: '/companies', icon: Building2, showFor: ['super_admin'] },
   { name: 'Users', href: '/users', icon: UserCog, showFor: ['super_admin'] },
@@ -35,14 +39,19 @@ const navigation = [
   { name: 'Password Resets', href: '/password-resets', icon: KeyRound, showFor: ['super_admin'] },
 ];
 
-export function Sidebar() {
+interface SidebarProps {
+  open?: boolean;
+  onClose?: () => void;
+}
+
+function SidebarContent({ onClose }: { onClose?: () => void }) {
   const location = useLocation();
   const { user, logout } = useAuth();
 
   return (
-    <aside className="flex flex-col w-64 min-h-screen bg-white border-r border-gray-200">
+    <aside className="flex flex-col w-64 h-full bg-white border-r border-gray-200">
       {/* Logo */}
-      <div className="p-6 border-b border-gray-100">
+      <div className="p-6 border-b border-gray-100 flex items-center justify-between">
         <div className="flex items-center gap-2.5">
           <div className="w-8 h-8 bg-black rounded-lg flex items-center justify-center">
             <span className="text-white font-bold text-sm">P</span>
@@ -52,13 +61,21 @@ export function Sidebar() {
             <p className="text-[10px] text-gray-400 -mt-0.5 uppercase tracking-wider">Admin Console</p>
           </div>
         </div>
+        {onClose && (
+          <button
+            onClick={onClose}
+            className="md:hidden p-2 -mr-2 text-gray-400 hover:text-gray-600 rounded-lg"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        )}
       </div>
 
       {/* Company Switcher */}
       <CompanySwitcher />
 
       {/* Navigation */}
-      <nav className="flex-1 py-4 px-3 space-y-0.5">
+      <nav className="flex-1 py-4 px-3 space-y-0.5 overflow-y-auto">
         {navigation.filter((item) => {
           const role = user?.role ?? '';
           if (item.hideFor?.includes(role)) return false;
@@ -71,6 +88,7 @@ export function Sidebar() {
             <Link
               key={item.name}
               to={item.href}
+              onClick={onClose}
               className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all-fast ${
                 isActive
                   ? 'bg-gray-100 text-gray-900'
@@ -85,24 +103,60 @@ export function Sidebar() {
       </nav>
 
       {/* User */}
-      <div className="p-4 border-t border-gray-100">
-        <div className="flex items-center gap-3 mb-3">
-          <div className="w-9 h-9 rounded-full bg-black flex items-center justify-center text-sm font-semibold text-white">
+      <div className="p-4 border-t border-gray-100 shrink-0" style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}>
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-full bg-black flex items-center justify-center text-sm font-semibold text-white shrink-0">
             {user?.full_name?.[0] || 'U'}
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-semibold text-gray-900 truncate">{user?.full_name || 'User'}</p>
             <p className="text-xs text-gray-400 truncate capitalize">{user?.role?.replace('_', ' ')}</p>
           </div>
+          <button
+            onClick={logout}
+            title="Sign Out"
+            className="p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-all-fast shrink-0"
+          >
+            <LogOut className="w-4 h-4" />
+          </button>
         </div>
-        <button
-          onClick={logout}
-          className="flex items-center gap-2 text-sm text-gray-400 hover:text-gray-700 transition-all-fast w-full px-1"
-        >
-          <LogOut className="w-4 h-4" />
-          Sign Out
-        </button>
       </div>
     </aside>
+  );
+}
+
+export function Sidebar({ open, onClose }: SidebarProps) {
+  return (
+    <>
+      {/* Desktop sidebar */}
+      <div className="hidden md:flex">
+        <SidebarContent />
+      </div>
+
+      {/* Mobile drawer */}
+      <AnimatePresence>
+        {open && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="fixed inset-0 bg-black/40 z-40 md:hidden"
+              onClick={onClose}
+            />
+            <motion.div
+              initial={{ x: '-100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '-100%' }}
+              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+              className="fixed inset-y-0 left-0 z-50 md:hidden h-[100dvh]"
+            >
+              <SidebarContent onClose={onClose} />
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+    </>
   );
 }

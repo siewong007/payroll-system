@@ -13,7 +13,7 @@ use crate::services::approval_service::{self, ClaimWithEmployee, LeaveRequestWit
 
 fn require_admin(auth: &AuthUser) -> AppResult<Uuid> {
     match auth.0.role.as_str() {
-        "super_admin" | "admin" | "payroll_admin" | "hr_manager" | "exec" => Ok(auth
+        "super_admin" | "admin" | "payroll_admin" | "hr_manager" => Ok(auth
             .0
             .company_id
             .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?),

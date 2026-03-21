@@ -1,17 +1,28 @@
 import axios from 'axios';
 
 const api = axios.create({
-  baseURL: '/api',
+  baseURL: import.meta.env.VITE_API_URL || '/api',
   headers: {
     'Content-Type': 'application/json',
   },
+  withCredentials: true,
 });
+
+// Module-level token storage (in-memory only, not localStorage)
+let accessToken: string | null = null;
+
+export function setAccessToken(token: string | null) {
+  accessToken = token;
+}
+
+export function getAccessToken(): string | null {
+  return accessToken;
+}
 
 // Add auth token to requests
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token');
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
+  if (accessToken) {
+    config.headers.Authorization = `Bearer ${accessToken}`;
   }
   return config;
 });
@@ -30,7 +41,7 @@ function processQueue(error: unknown, token: string | null) {
   failedQueue = [];
 }
 
-// Handle 401 responses with refresh token retry
+// Handle 401 responses with refresh token retry (cookie-based)
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
@@ -43,20 +54,17 @@ api.interceptors.response.use(
       originalRequest.url === '/auth/login' ||
       originalRequest.url === '/auth/refresh'
     ) {
-      if (error.response?.status === 401) {
-        localStorage.removeItem('token');
-        localStorage.removeItem('refresh_token');
+      // Only redirect for 401 on regular API calls, not auth endpoints
+      if (
+        error.response?.status === 401 &&
+        originalRequest.url !== '/auth/login' &&
+        originalRequest.url !== '/auth/refresh' &&
+        originalRequest.url !== '/auth/oauth2/providers'
+      ) {
+        accessToken = null;
         localStorage.removeItem('user');
         window.location.href = '/login';
       }
-      return Promise.reject(error);
-    }
-
-    const refreshToken = localStorage.getItem('refresh_token');
-    if (!refreshToken) {
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-      window.location.href = '/login';
       return Promise.reject(error);
     }
 
@@ -73,14 +81,10 @@ api.interceptors.response.use(
     isRefreshing = true;
 
     try {
-      const { data } = await axios.post('/api/auth/refresh', {
-        refresh_token: refreshToken,
-      });
+      // Refresh token is sent automatically via httpOnly cookie
+      const { data } = await axios.post(`${import.meta.env.VITE_API_URL || '/api'}/auth/refresh`, {}, { withCredentials: true });
 
-      localStorage.setItem('token', data.token);
-      if (data.refresh_token) {
-        localStorage.setItem('refresh_token', data.refresh_token);
-      }
+      accessToken = data.token;
       localStorage.setItem('user', JSON.stringify(data.user));
 
       processQueue(null, data.token);
@@ -88,8 +92,7 @@ api.interceptors.response.use(
       return api(originalRequest);
     } catch (refreshError) {
       processQueue(refreshError, null);
-      localStorage.removeItem('token');
-      localStorage.removeItem('refresh_token');
+      accessToken = null;
       localStorage.removeItem('user');
       window.location.href = '/login';
       return Promise.reject(refreshError);

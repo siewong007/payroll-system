@@ -13,3 +13,5 @@ pub mod team;
 pub mod user_company;
 pub mod session;
 pub mod oauth2;
+pub mod email;
+pub mod passkey;

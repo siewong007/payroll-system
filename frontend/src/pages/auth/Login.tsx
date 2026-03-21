@@ -1,9 +1,12 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, Navigate, Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
+import { Fingerprint } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import api from '@/api/client';
+import { checkPasskey, passkeyAuthBegin, passkeyAuthComplete } from '@/api/passkey';
+import { getPasskeyCredential, isWebAuthnSupported } from '@/lib/webauthn';
 
 function GoogleIcon() {
   return (
@@ -31,7 +34,6 @@ function GoogleIcon() {
 interface OAuth2Provider {
   provider: string;
   enabled: boolean;
-  authorize_url: string | null;
 }
 
 export function Login() {
@@ -39,7 +41,10 @@ export function Login() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const { login, user, isAuthenticated } = useAuth();
+  const [passkeyLoading, setPasskeyLoading] = useState(false);
+  const [hasPasskey, setHasPasskey] = useState(false);
+  const [webauthnSupported] = useState(isWebAuthnSupported());
+  const { login, setSession, user, isAuthenticated } = useAuth();
   const navigate = useNavigate();
 
   const { data: providers } = useQuery({
@@ -49,6 +54,23 @@ export function Login() {
   });
 
   const googleProvider = providers?.find((p) => p.provider === 'google' && p.enabled);
+
+  // Check if email has passkeys when email changes
+  useEffect(() => {
+    if (!webauthnSupported || !email || !email.includes('@')) {
+      setHasPasskey(false);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      try {
+        const { has_passkey } = await checkPasskey(email);
+        setHasPasskey(has_passkey);
+      } catch {
+        setHasPasskey(false);
+      }
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [email, webauthnSupported]);
 
   if (isAuthenticated && user) {
     return <Navigate to={user.role === 'employee' ? '/portal' : '/'} replace />;
@@ -65,6 +87,34 @@ export function Login() {
       setError('Invalid email or password');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handlePasskeyLogin = async () => {
+    if (!email) {
+      setError('Please enter your email first');
+      return;
+    }
+    setError('');
+    setPasskeyLoading(true);
+    try {
+      // Step 1: Get challenge from server
+      const { challenge_id, options } = await passkeyAuthBegin(email);
+
+      // Step 2: Browser WebAuthn ceremony
+      const credential = await getPasskeyCredential(options);
+
+      // Step 3: Send credential to server for verification
+      const response = await passkeyAuthComplete(challenge_id, credential);
+
+      // Step 4: Set session
+      setSession(response.token, response.user);
+      navigate(response.user.role === 'employee' ? '/portal' : '/');
+    } catch (err: any) {
+      const msg = err?.response?.data?.error || err?.message || 'Passkey authentication failed';
+      setError(msg);
+    } finally {
+      setPasskeyLoading(false);
     }
   };
 
@@ -85,7 +135,7 @@ export function Login() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3 }}
       >
-        <div className="bg-white rounded-2xl shadow p-8">
+        <div className="bg-white rounded-2xl shadow p-6 sm:p-8">
           {/* Logo */}
           <div className="text-center mb-8">
             <div className="w-12 h-12 bg-black rounded-xl flex items-center justify-center mx-auto mb-4">
@@ -95,17 +145,32 @@ export function Login() {
             <p className="text-sm text-gray-400 mt-1">Malaysian Payroll System</p>
           </div>
 
-          {/* Google Sign-In */}
-          {googleProvider && (
+          {/* Social / Passkey Sign-In */}
+          {(googleProvider || webauthnSupported) && (
             <>
-              <button
-                type="button"
-                onClick={handleGoogleLogin}
-                className="w-full flex items-center justify-center gap-3 py-2.5 px-4 border border-gray-300 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all"
-              >
-                <GoogleIcon />
-                Continue with Google
-              </button>
+              <div className="space-y-2.5">
+                {googleProvider && (
+                  <button
+                    type="button"
+                    onClick={handleGoogleLogin}
+                    className="w-full flex items-center justify-center gap-3 py-2.5 px-4 border border-gray-300 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all"
+                  >
+                    <GoogleIcon />
+                    Continue with Google
+                  </button>
+                )}
+                {webauthnSupported && hasPasskey && (
+                  <button
+                    type="button"
+                    onClick={handlePasskeyLogin}
+                    disabled={passkeyLoading}
+                    className="w-full flex items-center justify-center gap-3 py-2.5 px-4 border border-gray-300 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 transition-all"
+                  >
+                    <Fingerprint className="w-5 h-5" />
+                    {passkeyLoading ? 'Verifying...' : 'Sign in with Passkey'}
+                  </button>
+                )}
+              </div>
 
               <div className="relative my-6">
                 <div className="absolute inset-0 flex items-center">
@@ -172,7 +237,7 @@ export function Login() {
                 onClick={() => { setEmail('admin@demo.com'); setPassword('admin123'); }}
                 className="text-xs text-center py-2.5 px-3 bg-gray-50 rounded-xl text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-all-fast border border-gray-100"
               >
-                <span className="block font-semibold text-gray-600">Admin</span>
+                <span className="block font-semibold text-gray-600">Super Admin</span>
                 admin@demo.com
               </button>
               <button
@@ -185,11 +250,35 @@ export function Login() {
               </button>
               <button
                 type="button"
-                onClick={() => { setEmail('sarah@demo.com'); setPassword('employee123'); }}
+                onClick={() => { setEmail('sarah@demo.com'); setPassword('admin123'); }}
                 className="text-xs text-center py-2.5 px-3 bg-gray-50 rounded-xl text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-all-fast border border-gray-100"
               >
                 <span className="block font-semibold text-gray-600">Employee</span>
                 sarah@demo.com
+              </button>
+              <button
+                type="button"
+                onClick={() => { setEmail('hafiz.rahman@demo.com'); setPassword('employee123'); }}
+                className="text-xs text-center py-2.5 px-3 bg-gray-50 rounded-xl text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-all-fast border border-gray-100"
+              >
+                <span className="block font-semibold text-gray-600">Sr. Developer</span>
+                hafiz.rahman
+              </button>
+              <button
+                type="button"
+                onClick={() => { setEmail('kavitha.s@demo.com'); setPassword('employee123'); }}
+                className="text-xs text-center py-2.5 px-3 bg-gray-50 rounded-xl text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-all-fast border border-gray-100"
+              >
+                <span className="block font-semibold text-gray-600">UX Designer</span>
+                kavitha.s
+              </button>
+              <button
+                type="button"
+                onClick={() => { setEmail('farah.aziz@demo.com'); setPassword('employee123'); }}
+                className="text-xs text-center py-2.5 px-3 bg-gray-50 rounded-xl text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-all-fast border border-gray-100"
+              >
+                <span className="block font-semibold text-gray-600">HR Assistant</span>
+                farah.aziz
               </button>
             </div>
           </div>

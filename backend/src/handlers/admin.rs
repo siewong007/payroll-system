@@ -122,10 +122,19 @@ pub async fn approve_password_reset(
     require_super_admin(&auth)?;
     let (request, raw_token) =
         password_reset_service::approve_request(&state.pool, request_id, auth.0.sub).await?;
+
+    let reset_url = format!(
+        "{}/reset-password?token={}",
+        state.config.frontend_url,
+        urlencoding::encode(&raw_token),
+    );
+
+    tracing::info!("Password reset approved for request {}", request_id);
+
     Ok(Json(serde_json::json!({
         "request": request,
-        "reset_token": raw_token,
-        "message": "Reset approved. Share the reset token with the user securely."
+        "reset_url": reset_url,
+        "message": "Reset approved. Copy the link and share it securely with the user."
     })))
 }
 

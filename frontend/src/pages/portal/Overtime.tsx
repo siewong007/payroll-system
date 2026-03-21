@@ -99,14 +99,14 @@ export function Overtime() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="page-header">
           <h1 className="page-title">Overtime</h1>
           <p className="page-subtitle">Submit and track overtime applications</p>
         </div>
         <button
           onClick={() => { resetForm(); setShowModal(true); }}
-          className="btn-primary flex items-center gap-2"
+          className="btn-primary flex items-center gap-2 w-full sm:w-auto"
         >
           <Plus className="w-4 h-4" />
           Apply OT

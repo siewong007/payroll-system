@@ -50,7 +50,7 @@ export const listPasswordResets = () =>
   api.get<PasswordResetRequest[]>('/admin/password-resets').then((r) => r.data);
 
 export const approvePasswordReset = (id: string) =>
-  api.put<{ request: PasswordResetRequest; reset_token: string; message: string }>(
+  api.put<{ request: PasswordResetRequest; reset_url: string; message: string }>(
     `/admin/password-resets/${id}/approve`
   ).then((r) => r.data);
 

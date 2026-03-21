@@ -1,6 +1,7 @@
 use axum::{
     extract::{Path, Query, State},
-    response::Redirect,
+    http::HeaderMap,
+    response::{IntoResponse, Redirect},
     Json,
 };
 use serde::Deserialize;
@@ -8,6 +9,7 @@ use uuid::Uuid;
 
 use crate::core::app_state::AppState;
 use crate::core::auth::{create_token, AuthUser};
+use crate::core::cookie;
 use crate::core::error::{AppError, AppResult};
 use crate::models::oauth2::{LinkedAccount, OAuth2ProviderInfo};
 use crate::models::user::UserResponse;
@@ -17,20 +19,10 @@ use crate::services::{oauth2_service, session_service};
 pub async fn list_providers(
     State(state): State<AppState>,
 ) -> AppResult<Json<Vec<OAuth2ProviderInfo>>> {
-    let redirect_uri = format!("{}/api/auth/oauth2/google/callback", state.config.frontend_url);
-
     let providers = vec![OAuth2ProviderInfo {
         provider: "google".to_string(),
         enabled: state.config.google_oauth_enabled(),
-        authorize_url: if state.config.google_oauth_enabled() {
-            Some(oauth2_service::google_authorize_url(
-                state.config.google_client_id.as_deref().unwrap_or_default(),
-                &redirect_uri,
-                &Uuid::new_v4().to_string(),
-            ))
-        } else {
-            None
-        },
+        authorize_url: None, // Clients must call /authorize to get a URL with proper PKCE + state
     }];
 
     Ok(Json(providers))
@@ -42,11 +34,18 @@ pub struct OAuth2CallbackQuery {
     pub state: Option<String>,
 }
 
-/// Google OAuth2 callback — exchanges code for tokens, finds/links user, redirects to frontend.
+/// Google OAuth2 callback — validates state/PKCE, exchanges code, finds/links user, redirects.
 pub async fn google_callback(
     State(state): State<AppState>,
     Query(query): Query<OAuth2CallbackQuery>,
-) -> Result<Redirect, AppError> {
+) -> Result<impl IntoResponse, AppError> {
+    // Validate state parameter (CSRF protection)
+    let oauth_state = query.state.as_deref().ok_or_else(|| {
+        AppError::BadRequest("Missing OAuth2 state parameter".into())
+    })?;
+
+    let code_verifier = oauth2_service::consume_oauth2_state(&state.pool, oauth_state).await?;
+
     let client_id = state
         .config
         .google_client_id
@@ -59,14 +58,20 @@ pub async fn google_callback(
         .ok_or_else(|| AppError::Internal("Google OAuth2 not configured".into()))?;
     let redirect_uri = format!("{}/api/auth/oauth2/google/callback", state.config.frontend_url);
 
-    // Exchange code for tokens
-    let token_resp =
-        oauth2_service::google_exchange_code(client_id, client_secret, &redirect_uri, &query.code)
-            .await?;
+    // Exchange code for tokens with PKCE code_verifier
+    let token_resp = oauth2_service::google_exchange_code(
+        client_id,
+        client_secret,
+        &redirect_uri,
+        &query.code,
+        &code_verifier,
+    )
+    .await?;
 
     // Get user info from Google
     let google_user = oauth2_service::google_user_info(&token_resp.access_token).await?;
 
+    // Verify email is present and verified
     let google_email = google_user.email.as_deref().unwrap_or_default();
     if google_email.is_empty() {
         return Err(AppError::BadRequest(
@@ -74,35 +79,56 @@ pub async fn google_callback(
         ));
     }
 
-    // Check if this Google account is already linked
-    let user = if let Some(user) =
-        oauth2_service::find_user_by_oauth2(&state.pool, "google", &google_user.sub).await?
-    {
-        user
-    } else {
-        // Try to match by email
-        let matched_user = oauth2_service::find_user_by_email(&state.pool, google_email)
-            .await?
-            .ok_or_else(|| {
-                AppError::Unauthorized(
-                    "No account found for this email. Please contact your administrator.".into(),
-                )
-            })?;
+    if google_user.email_verified != Some(true) {
+        return Err(AppError::BadRequest(
+            "Google account email is not verified. Please verify your email with Google first."
+                .into(),
+        ));
+    }
 
-        // Auto-link the Google account to the matched user
-        oauth2_service::link_oauth2_account(
-            &state.pool,
-            matched_user.id,
-            "google",
-            &google_user.sub,
-            google_user.email.as_deref(),
-            google_user.name.as_deref(),
-            google_user.picture.as_deref(),
-        )
-        .await?;
+    // Try to find user by linked OAuth2 account first
+    let user = match oauth2_service::find_user_by_oauth2(&state.pool, "google", &google_user.sub).await? {
+        Some(user) => user,
+        None => {
+            // No linked account — auto-link by verified email match
+            let user = oauth2_service::find_user_by_email(&state.pool, google_email)
+                .await?
+                .ok_or_else(|| {
+                    AppError::Unauthorized(
+                        "No account found for this email. Please contact your administrator."
+                            .into(),
+                    )
+                })?;
 
-        matched_user
+            // Auto-link the Google account to this user
+            oauth2_service::link_oauth2_account(
+                &state.pool,
+                user.id,
+                "google",
+                &google_user.sub,
+                google_user.email.as_deref(),
+                google_user.name.as_deref(),
+                google_user.picture.as_deref(),
+                Some(&token_resp.access_token),
+                token_resp.refresh_token.as_deref(),
+                token_resp.expires_in,
+            )
+            .await?;
+
+            user
+        }
     };
+
+    // Update stored Google tokens
+    oauth2_service::update_oauth2_tokens(
+        &state.pool,
+        "google",
+        &google_user.sub,
+        &token_resp.access_token,
+        token_resp.refresh_token.as_deref(),
+        token_resp.expires_in,
+    )
+    .await?;
 
     // Update last login
     sqlx::query("UPDATE users SET last_login = NOW() WHERE id = $1")
@@ -123,19 +149,22 @@ pub async fn google_callback(
 
     let refresh_token = session_service::create_refresh_token(&state.pool, user.id).await?;
 
-    // Redirect to frontend with token in URL fragment (not query param for security)
+    // Set refresh token as httpOnly cookie, pass only JWT + user in URL fragment
+    let mut headers = HeaderMap::new();
+    let (name, value) = cookie::set_refresh_cookie(&refresh_token, &state.config.frontend_url);
+    headers.insert(name, value.parse().unwrap());
+
     let redirect_url = format!(
-        "{}/oauth2/callback#token={}&refresh_token={}&user={}",
+        "{}/oauth2/callback#token={}&user={}",
         state.config.frontend_url,
         urlencoding::encode(&jwt),
-        urlencoding::encode(&refresh_token),
         urlencoding::encode(&serde_json::to_string(&UserResponse::from(user)).unwrap_or_default()),
     );
 
-    Ok(Redirect::temporary(&redirect_url))
+    Ok((headers, Redirect::temporary(&redirect_url)))
 }
 
-/// Initiate Google OAuth2 flow — returns the authorization URL.
+/// Initiate Google OAuth2 flow — generates PKCE + state, returns the authorization URL.
 pub async fn google_authorize(
     State(state): State<AppState>,
 ) -> AppResult<Json<serde_json::Value>> {
@@ -148,11 +177,17 @@ pub async fn google_authorize(
     let redirect_uri = format!("{}/api/auth/oauth2/google/callback", state.config.frontend_url);
     let oauth_state = Uuid::new_v4().to_string();
 
-    let url = oauth2_service::google_authorize_url(client_id, &redirect_uri, &oauth_state);
+    // Generate PKCE code verifier and challenge
+    let code_verifier = oauth2_service::generate_code_verifier();
+    let code_challenge = oauth2_service::compute_code_challenge(&code_verifier);
+
+    // Store state + code_verifier in DB (single-use, expires in 10 minutes)
+    oauth2_service::store_oauth2_state(&state.pool, &oauth_state, &code_verifier).await?;
+
+    let url = oauth2_service::google_authorize_url(client_id, &redirect_uri, &oauth_state, &code_challenge);
 
     Ok(Json(serde_json::json!({
         "authorize_url": url,
-        "state": oauth_state,
     })))
 }
 
@@ -198,9 +233,36 @@ pub async fn link_google(
         .ok_or_else(|| AppError::BadRequest("Google OAuth2 is not configured".into()))?;
     let redirect_uri = format!("{}/api/auth/oauth2/google/callback", state.config.frontend_url);
 
-    let token_resp =
-        oauth2_service::google_exchange_code(client_id, client_secret, &redirect_uri, code).await?;
+    // For account linking, PKCE state is optional (the code comes from a popup/redirect
+    // the frontend manages). Exchange without PKCE code_verifier for the linking flow.
+    let code_verifier = match body.get("state").and_then(|s| s.as_str()) {
+        Some(st) => oauth2_service::consume_oauth2_state(&state.pool, st).await?,
+        None => String::new(),
+    };
+
+    let token_resp = if code_verifier.is_empty() {
+        // Linking flow without PKCE (backward compatible)
+        oauth2_service::google_exchange_code(client_id, client_secret, &redirect_uri, code, "")
+            .await?
+    } else {
+        oauth2_service::google_exchange_code(
+            client_id,
+            client_secret,
+            &redirect_uri,
+            code,
+            &code_verifier,
+        )
+        .await?
+    };
+
     let google_user = oauth2_service::google_user_info(&token_resp.access_token).await?;
+
+    // Verify email is verified
+    if google_user.email_verified != Some(true) {
+        return Err(AppError::BadRequest(
+            "Google account email is not verified".into(),
+        ));
+    }
 
     // Check if already linked to another user
     if let Some(existing) =
@@ -221,6 +283,9 @@ pub async fn link_google(
         google_user.email.as_deref(),
         google_user.name.as_deref(),
         google_user.picture.as_deref(),
+        Some(&token_resp.access_token),
+        token_resp.refresh_token.as_deref(),
+        token_resp.expires_in,
     )
     .await?;
 

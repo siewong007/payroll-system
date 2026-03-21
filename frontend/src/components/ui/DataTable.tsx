@@ -11,6 +11,8 @@ export interface Column<T> {
   summaryRender?: (row: T) => React.ReactNode;
   /** Hide this column from the summary modal */
   hideInSummary?: boolean;
+  /** Show this column prominently in mobile card view (first 2-3 columns recommended) */
+  primary?: boolean;
 }
 
 interface DataTableProps<T> {
@@ -88,6 +90,13 @@ export function DataTable<T>({
     ? summaryTitle(selectedRow)
     : (summaryTitle as string);
 
+  // Split columns into primary (shown prominently on mobile cards) and secondary
+  const primaryColumns = columns.filter((col) => col.primary);
+  const secondaryColumns = columns.filter((col) => !col.primary);
+  // If no columns are marked primary, use first 2 as primary
+  const mobilePrimary = primaryColumns.length > 0 ? primaryColumns : columns.slice(0, 2);
+  const mobileSecondary = primaryColumns.length > 0 ? secondaryColumns : columns.slice(2);
+
   const getPageNumbers = (): (number | 'ellipsis')[] => {
     if (totalPages <= 7) return Array.from({ length: totalPages }, (_, i) => i + 1);
     const pages: (number | 'ellipsis')[] = [1];
@@ -103,7 +112,62 @@ export function DataTable<T>({
   return (
     <>
       <div className="bg-white rounded-2xl shadow overflow-hidden">
-        <div className="overflow-x-auto">
+        {/* Mobile card view */}
+        <div className="md:hidden">
+          {isLoading ? (
+            <div className="px-4 py-12 text-center text-gray-400">
+              <div className="flex items-center justify-center gap-2">
+                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-gray-900" />
+                <span>Loading...</span>
+              </div>
+            </div>
+          ) : displayData.length === 0 ? (
+            <div className="px-4 py-12 text-center text-gray-400">
+              {emptyIcon && <div className="flex justify-center mb-2">{emptyIcon}</div>}
+              {emptyMessage}
+            </div>
+          ) : (
+            <div className="divide-y divide-gray-100">
+              {displayData.map((row, idx) => (
+                <div
+                  key={getKey(row, idx)}
+                  className={`p-4 ${!disableRowClick ? 'cursor-pointer active:bg-gray-50' : ''}`}
+                  onClick={() => handleRowClick(row)}
+                >
+                  {/* Primary fields */}
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1 min-w-0 space-y-0.5">
+                      {mobilePrimary.map((col) => (
+                        <div key={col.key} className="text-sm text-gray-900">
+                          {col.render(row)}
+                        </div>
+                      ))}
+                    </div>
+                    {renderActions && (
+                      <div className="flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+                        {renderActions(row)}
+                      </div>
+                    )}
+                  </div>
+                  {/* Secondary fields */}
+                  {mobileSecondary.length > 0 && (
+                    <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1.5">
+                      {mobileSecondary.map((col) => (
+                        <div key={col.key} className="min-w-0">
+                          <span className="text-[10px] font-medium text-gray-400 uppercase tracking-wider">{col.header}</span>
+                          <div className="text-xs text-gray-600 truncate">{col.render(row)}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Desktop table view */}
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full">
             <thead className="bg-gray-50 text-left">
               <tr>
@@ -170,7 +234,7 @@ export function DataTable<T>({
 
         {/* Pagination */}
         {totalPages > 1 && !isLoading && (
-          <div className="flex items-center justify-between px-6 py-3 border-t border-gray-100 bg-gray-50">
+          <div className="flex flex-col gap-2 sm:flex-row items-center justify-between px-4 sm:px-6 py-3 border-t border-gray-100 bg-gray-50">
             <span className="text-sm text-gray-500">
               Showing {(currentPage - 1) * perPage + 1}–{Math.min(currentPage * perPage, totalItems)} of {totalItems}
             </span>
@@ -178,31 +242,38 @@ export function DataTable<T>({
               <button
                 onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
                 disabled={currentPage === 1}
-                className="p-1.5 rounded-lg hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                className="p-2 sm:p-1.5 rounded-lg hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
                 <ChevronLeft className="w-4 h-4" />
               </button>
-              {getPageNumbers().map((p, i) =>
-                p === 'ellipsis' ? (
-                  <span key={`e${i}`} className="px-1 text-gray-400">...</span>
-                ) : (
-                  <button
-                    key={p}
-                    onClick={() => setCurrentPage(p)}
-                    className={`min-w-[32px] h-8 rounded-lg text-sm font-medium transition-colors ${
-                      p === currentPage
-                        ? 'bg-black text-white'
-                        : 'text-gray-600 hover:bg-gray-200'
-                    }`}
-                  >
-                    {p}
-                  </button>
-                )
-              )}
+              {/* Simplified pagination on mobile: just page count */}
+              <span className="sm:hidden text-sm text-gray-600 px-2">
+                {currentPage} / {totalPages}
+              </span>
+              {/* Full pagination on desktop */}
+              <div className="hidden sm:flex items-center gap-1">
+                {getPageNumbers().map((p, i) =>
+                  p === 'ellipsis' ? (
+                    <span key={`e${i}`} className="px-1 text-gray-400">...</span>
+                  ) : (
+                    <button
+                      key={p}
+                      onClick={() => setCurrentPage(p)}
+                      className={`min-w-[32px] h-8 rounded-lg text-sm font-medium transition-colors ${
+                        p === currentPage
+                          ? 'bg-black text-white'
+                          : 'text-gray-600 hover:bg-gray-200'
+                      }`}
+                    >
+                      {p}
+                    </button>
+                  )
+                )}
+              </div>
               <button
                 onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
                 disabled={currentPage === totalPages}
-                className="p-1.5 rounded-lg hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                className="p-2 sm:p-1.5 rounded-lg hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
                 <ChevronRight className="w-4 h-4" />
               </button>

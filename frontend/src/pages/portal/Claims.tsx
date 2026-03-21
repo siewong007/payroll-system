@@ -64,12 +64,12 @@ export function Claims() {
   return (
     <div className="space-y-6">
       {/* Page Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="page-header">
           <h1 className="page-title">Claims</h1>
           <p className="page-subtitle">Submit and track your expense claims</p>
         </div>
-        <button onClick={() => setShowCreate(true)} className="btn-primary">
+        <button onClick={() => setShowCreate(true)} className="btn-primary w-full sm:w-auto">
           <Plus className="w-4 h-4" /> Add Expense
         </button>
       </div>

@@ -159,12 +159,12 @@ export function TeamsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="page-header flex items-center justify-between">
+      <div className="page-header flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="page-title">Teams</h1>
           <p className="page-subtitle">Organize employees into teams</p>
         </div>
-        <button onClick={openCreate} className="btn-primary flex items-center gap-2">
+        <button onClick={openCreate} className="btn-primary flex items-center gap-2 w-full sm:w-auto">
           <Plus className="w-4 h-4" />
           New Team
         </button>
