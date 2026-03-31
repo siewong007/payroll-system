@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, Edit, DollarSign, Shield, MapPin, TrendingUp, TrendingDown, Pencil, Trash2, AlertTriangle } from 'lucide-react';
+import { Plus, Search, Edit, DollarSign, Shield, MapPin, TrendingUp, TrendingDown, Pencil, Trash2, AlertTriangle, Upload } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { getEmployees, createEmployee, updateEmployee, deleteEmployee, getEmployee, getSalaryHistory } from '@/api/employees';
 import { getPayrollGroups } from '@/api/payroll';
 import { formatMYR, formatDate } from '@/lib/utils';
@@ -72,6 +73,7 @@ const columns: Column<Employee>[] = [
 
 export function EmployeeList() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const isExec = user?.role === 'exec';
   const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
@@ -103,13 +105,24 @@ export function EmployeeList() {
     <div>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-6">
         <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Employees</h1>
-        <button
-          onClick={() => setShowCreate(true)}
-          className="flex items-center justify-center gap-2 bg-black text-white px-4 py-2 rounded-lg hover:bg-gray-800 transition-colors text-sm font-medium w-full sm:w-auto min-h-[44px]"
-        >
-          <Plus className="w-4 h-4" />
-          Add Employee
-        </button>
+        <div className="flex gap-2">
+          {!isExec && (
+            <button
+              onClick={() => navigate('/employees/import')}
+              className="flex items-center justify-center gap-2 border border-gray-300 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium w-full sm:w-auto min-h-[44px]"
+            >
+              <Upload className="w-4 h-4" />
+              Import
+            </button>
+          )}
+          <button
+            onClick={() => setShowCreate(true)}
+            className="flex items-center justify-center gap-2 bg-black text-white px-4 py-2 rounded-lg hover:bg-gray-800 transition-colors text-sm font-medium w-full sm:w-auto min-h-[44px]"
+          >
+            <Plus className="w-4 h-4" />
+            Add Employee
+          </button>
+        </div>
       </div>
 
       {/* Search */}

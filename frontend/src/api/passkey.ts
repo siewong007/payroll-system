@@ -27,6 +27,20 @@ export async function passkeyAuthComplete(challengeId: string, credential: Crede
   return data;
 }
 
+// Discoverable authentication (no email required)
+export async function passkeyDiscoverableBegin() {
+  const { data } = await api.post('/auth/passkey/discoverable/begin');
+  return data as { challenge_id: string; options: PublicKeyCredentialRequestOptions };
+}
+
+export async function passkeyDiscoverableComplete(challengeId: string, credential: Credential) {
+  const { data } = await api.post('/auth/passkey/discoverable/complete', {
+    challenge_id: challengeId,
+    credential,
+  });
+  return data;
+}
+
 // Registration flow (authenticated)
 export async function passkeyRegisterBegin() {
   const { data } = await api.post('/auth/passkey/register/begin');

@@ -655,7 +655,7 @@ export interface TeamLeaveEntry {
 }
 
 // Email / Letters
-export type LetterType = 'welcome' | 'offer' | 'appointment' | 'warning' | 'termination' | 'promotion';
+export type LetterType = 'welcome' | 'offer' | 'appointment' | 'warning' | 'termination' | 'promotion' | 'general';
 
 export interface EmailTemplate {
   id: string;
@@ -700,7 +700,9 @@ export interface EmailLog {
 }
 
 export interface SendLetterRequest {
-  employee_id: string;
+  employee_id?: string;
+  recipient_email?: string;
+  recipient_name?: string;
   letter_type: LetterType;
   subject: string;
   body_html: string;
@@ -708,7 +710,9 @@ export interface SendLetterRequest {
 }
 
 export interface PreviewLetterRequest {
-  employee_id: string;
+  employee_id?: string;
+  recipient_email?: string;
+  recipient_name?: string;
   subject: string;
   body_html: string;
 }
@@ -718,4 +722,38 @@ export interface PreviewLetterResponse {
   body_html: string;
   recipient_email: string;
   recipient_name: string;
+}
+
+// ─── Employee Import ───
+
+export interface FieldError {
+  field: string;
+  message: string;
+}
+
+export interface ImportRowValidation {
+  row_number: number;
+  status: 'valid' | 'error' | 'duplicate';
+  errors: FieldError[];
+  data: Record<string, string | null>;
+}
+
+export interface ImportValidationResponse {
+  session_id: string;
+  total_rows: number;
+  valid_rows: number;
+  error_rows: number;
+  duplicate_rows: number;
+  rows: ImportRowValidation[];
+}
+
+export interface ImportConfirmRequest {
+  session_id: string;
+  skip_invalid: boolean;
+}
+
+export interface ImportConfirmResponse {
+  imported_count: number;
+  skipped_count: number;
+  errors: ImportRowValidation[];
 }

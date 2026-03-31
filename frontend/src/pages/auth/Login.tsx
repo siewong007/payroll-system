@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Fingerprint } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import api from '@/api/client';
-import { checkPasskey, passkeyAuthBegin, passkeyAuthComplete } from '@/api/passkey';
+import { checkPasskey, passkeyAuthBegin, passkeyAuthComplete, passkeyDiscoverableBegin, passkeyDiscoverableComplete } from '@/api/passkey';
 import { getPasskeyCredential, isWebAuthnSupported } from '@/lib/webauthn';
 
 function GoogleIcon() {
@@ -91,23 +91,23 @@ export function Login() {
   };
 
   const handlePasskeyLogin = async () => {
-    if (!email) {
-      setError('Please enter your email first');
-      return;
-    }
     setError('');
     setPasskeyLoading(true);
     try {
-      // Step 1: Get challenge from server
-      const { challenge_id, options } = await passkeyAuthBegin(email);
+      let response;
 
-      // Step 2: Browser WebAuthn ceremony
-      const credential = await getPasskeyCredential(options);
+      if (email && hasPasskey) {
+        // Email-based flow: server sends allowCredentials for this user
+        const { challenge_id, options } = await passkeyAuthBegin(email);
+        const credential = await getPasskeyCredential(options);
+        response = await passkeyAuthComplete(challenge_id, credential);
+      } else {
+        // Discoverable flow: browser shows all available passkeys for this site
+        const { challenge_id, options } = await passkeyDiscoverableBegin();
+        const credential = await getPasskeyCredential(options);
+        response = await passkeyDiscoverableComplete(challenge_id, credential);
+      }
 
-      // Step 3: Send credential to server for verification
-      const response = await passkeyAuthComplete(challenge_id, credential);
-
-      // Step 4: Set session
       setSession(response.token, response.user);
       navigate(response.user.role === 'employee' ? '/portal' : '/');
     } catch (err: any) {
@@ -159,7 +159,7 @@ export function Login() {
                     Continue with Google
                   </button>
                 )}
-                {webauthnSupported && hasPasskey && (
+                {webauthnSupported && (
                   <button
                     type="button"
                     onClick={handlePasskeyLogin}
@@ -258,7 +258,7 @@ export function Login() {
               </button>
               <button
                 type="button"
-                onClick={() => { setEmail('hafiz.rahman@demo.com'); setPassword('employee123'); }}
+                onClick={() => { setEmail('hafiz.rahman@demo.com'); setPassword('admin123'); }}
                 className="text-xs text-center py-2.5 px-3 bg-gray-50 rounded-xl text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-all-fast border border-gray-100"
               >
                 <span className="block font-semibold text-gray-600">Sr. Developer</span>
@@ -266,7 +266,7 @@ export function Login() {
               </button>
               <button
                 type="button"
-                onClick={() => { setEmail('kavitha.s@demo.com'); setPassword('employee123'); }}
+                onClick={() => { setEmail('kavitha.s@demo.com'); setPassword('admin123'); }}
                 className="text-xs text-center py-2.5 px-3 bg-gray-50 rounded-xl text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-all-fast border border-gray-100"
               >
                 <span className="block font-semibold text-gray-600">UX Designer</span>
@@ -274,7 +274,7 @@ export function Login() {
               </button>
               <button
                 type="button"
-                onClick={() => { setEmail('farah.aziz@demo.com'); setPassword('employee123'); }}
+                onClick={() => { setEmail('farah.aziz@demo.com'); setPassword('admin123'); }}
                 className="text-xs text-center py-2.5 px-3 bg-gray-50 rounded-xl text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-all-fast border border-gray-100"
               >
                 <span className="block font-semibold text-gray-600">HR Assistant</span>

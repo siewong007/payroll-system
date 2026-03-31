@@ -7,7 +7,7 @@ use axum::{
 use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
 
 use crate::core::app_state::AppState;
-use crate::handlers::{admin, approval, auth, calendar, company, dashboard, document, email, employee, notification, oauth2, passkey, payroll, portal, report, settings, team};
+use crate::handlers::{admin, approval, auth, calendar, company, dashboard, document, email, employee, employee_import, notification, oauth2, passkey, payroll, portal, report, settings, team};
 
 pub fn create_router(state: AppState) -> Router {
     // Rate limiter: 5 requests per 60 seconds per IP
@@ -63,6 +63,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/auth/passkey/check", post(passkey::check_passkey))
         .route("/auth/passkey/authenticate/begin", post(passkey::authentication_begin))
         .route("/auth/passkey/authenticate/complete", post(passkey::authentication_complete))
+        .route("/auth/passkey/discoverable/begin", post(passkey::discoverable_auth_begin))
+        .route("/auth/passkey/discoverable/complete", post(passkey::discoverable_auth_complete))
         // Passkey (WebAuthn) — authenticated
         .route("/auth/passkey/register/begin", post(passkey::registration_begin))
         .route("/auth/passkey/register/complete", post(passkey::registration_complete))
@@ -88,6 +90,10 @@ pub fn create_router(state: AppState) -> Router {
         .route("/employees/:id", get(employee::get).put(employee::update).delete(employee::delete))
         .route("/employees/:id/salary-history", get(employee::salary_history))
         .route("/employees/:id/tp3", post(employee::create_tp3))
+        // Employee Import
+        .route("/employees/import/template", get(employee_import::download_template))
+        .route("/employees/import/validate", post(employee_import::validate_import))
+        .route("/employees/import/confirm", post(employee_import::confirm_import))
         // Payroll Groups
         .route("/payroll-groups", get(payroll::list_groups))
         // Payroll Runs

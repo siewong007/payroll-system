@@ -53,7 +53,9 @@ pub struct EmailLog {
 
 #[derive(Debug, Deserialize)]
 pub struct SendLetterRequest {
-    pub employee_id: Uuid,
+    pub employee_id: Option<Uuid>,
+    pub recipient_email: Option<String>,
+    pub recipient_name: Option<String>,
     pub letter_type: String,
     pub subject: String,
     pub body_html: String,
@@ -62,7 +64,9 @@ pub struct SendLetterRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct PreviewLetterRequest {
-    pub employee_id: Uuid,
+    pub employee_id: Option<Uuid>,
+    pub recipient_email: Option<String>,
+    pub recipient_name: Option<String>,
     pub subject: String,
     pub body_html: String,
 }
@@ -83,6 +87,7 @@ pub const LETTER_TYPES: &[&str] = &[
     "warning",
     "termination",
     "promotion",
+    "general",
 ];
 
 pub fn is_valid_letter_type(t: &str) -> bool {

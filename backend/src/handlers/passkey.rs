@@ -226,6 +226,130 @@ pub async fn authentication_complete(
     Ok((headers, Json(body)))
 }
 
+// ── Discoverable Authentication (no email required) ─────────────────────
+
+#[derive(Serialize)]
+pub struct DiscoverableAuthBeginResponse {
+    pub challenge_id: Uuid,
+    pub options: RequestChallengeResponse,
+}
+
+pub async fn discoverable_auth_begin(
+    State(state): State<AppState>,
+) -> AppResult<Json<DiscoverableAuthBeginResponse>> {
+    let (mut rcr, auth_state) = state
+        .webauthn
+        .start_discoverable_authentication()
+        .map_err(|e| AppError::Internal(format!("WebAuthn discoverable auth start failed: {}", e)))?;
+
+    // Remove conditional mediation so the browser shows a modal picker on button click
+    rcr.mediation = None;
+
+    let state_json = serde_json::to_value(&auth_state)
+        .map_err(|e| AppError::Internal(format!("Failed to serialize auth state: {}", e)))?;
+
+    let challenge_id = passkey_service::store_challenge(
+        &state.pool,
+        None,
+        None,
+        "discoverable",
+        &state_json,
+    )
+    .await?;
+
+    Ok(Json(DiscoverableAuthBeginResponse {
+        challenge_id,
+        options: rcr,
+    }))
+}
+
+pub async fn discoverable_auth_complete(
+    State(state): State<AppState>,
+    Json(req): Json<AuthCompleteRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    // Get the challenge
+    let challenge_row: Option<(serde_json::Value,)> = sqlx::query_as(
+        r#"DELETE FROM passkey_challenges
+        WHERE id = $1 AND challenge_type = 'discoverable' AND expires_at > NOW()
+        RETURNING state_json"#,
+    )
+    .bind(req.challenge_id)
+    .fetch_optional(&state.pool)
+    .await?;
+
+    let (state_json,) = challenge_row
+        .ok_or_else(|| AppError::BadRequest("Challenge expired or not found".into()))?;
+
+    let auth_state: DiscoverableAuthentication = serde_json::from_value(state_json)
+        .map_err(|e| AppError::BadRequest(format!("Invalid auth state: {}", e)))?;
+
+    // Identify which user is authenticating from the credential response
+    let (user_uuid, _cred_id_bytes) = state
+        .webauthn
+        .identify_discoverable_authentication(&req.credential)
+        .map_err(|e| AppError::Unauthorized(format!("Failed to identify credential: {}", e)))?;
+
+    let user_id = Uuid::from(user_uuid);
+
+    // Load the user's passkeys to finish verification
+    let passkeys = passkey_service::get_passkeys_for_user(&state.pool, user_id).await?;
+    let discoverable_keys: Vec<DiscoverableKey> =
+        passkeys.iter().map(|pk| DiscoverableKey::from(pk)).collect();
+
+    let auth_result = state
+        .webauthn
+        .finish_discoverable_authentication(&req.credential, auth_state, &discoverable_keys)
+        .map_err(|e| AppError::Unauthorized(format!("Passkey authentication failed: {}", e)))?;
+
+    // Update credential counter
+    let mut passkeys = passkey_service::get_passkeys_for_user(&state.pool, user_id).await?;
+    for pk in passkeys.iter_mut() {
+        if pk.cred_id() == auth_result.cred_id() {
+            pk.update_credential(&auth_result);
+            passkey_service::update_passkey_after_auth(&state.pool, user_id, pk).await?;
+            break;
+        }
+    }
+
+    // Fetch user and issue tokens
+    let user = sqlx::query_as::<_, User>(
+        "SELECT * FROM users WHERE id = $1 AND is_active = TRUE",
+    )
+    .bind(user_id)
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or_else(|| AppError::Unauthorized("User not found or inactive".into()))?;
+
+    sqlx::query("UPDATE users SET last_login = NOW() WHERE id = $1")
+        .bind(user.id)
+        .execute(&state.pool)
+        .await?;
+
+    let token = create_token(
+        user.id,
+        &user.email,
+        &user.role,
+        user.company_id,
+        user.employee_id,
+        &state.config.jwt_secret,
+        state.config.jwt_expiry_hours,
+    )?;
+
+    let refresh_token = session_service::create_refresh_token(&state.pool, user.id).await?;
+
+    let mut headers = HeaderMap::new();
+    let (name, value) = cookie::set_refresh_cookie(&refresh_token, &state.config.frontend_url);
+    headers.insert(name, value.parse().unwrap());
+
+    let body = LoginResponse {
+        token,
+        refresh_token: None,
+        user: UserResponse::from(user),
+    };
+
+    Ok((headers, Json(body)))
+}
+
 // ── Passkey Management (authenticated) ─────────────────────────────────
 
 pub async fn list_passkeys(

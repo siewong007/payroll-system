@@ -117,37 +117,78 @@ pub async fn preview_letter(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    let employee = employee_service::get_employee(&state.pool, req.employee_id, company_id).await?;
     let company = company_service::get_company(&state.pool, company_id).await?;
 
-    let subject = email_service::substitute_variables(
-        &req.subject,
-        &employee.full_name,
-        &employee.employee_number,
-        employee.email.as_deref().unwrap_or(""),
-        employee.designation.as_deref().unwrap_or(""),
-        employee.department.as_deref().unwrap_or(""),
-        &employee.date_joined.to_string(),
-        &company.name,
-    );
+    if let Some(employee_id) = req.employee_id {
+        // Employee-based preview: substitute variables
+        let employee = employee_service::get_employee(&state.pool, employee_id, company_id).await?;
 
-    let body_html = email_service::substitute_variables(
-        &req.body_html,
-        &employee.full_name,
-        &employee.employee_number,
-        employee.email.as_deref().unwrap_or(""),
-        employee.designation.as_deref().unwrap_or(""),
-        employee.department.as_deref().unwrap_or(""),
-        &employee.date_joined.to_string(),
-        &company.name,
-    );
+        let subject = email_service::substitute_variables(
+            &req.subject,
+            &employee.full_name,
+            &employee.employee_number,
+            employee.email.as_deref().unwrap_or(""),
+            employee.designation.as_deref().unwrap_or(""),
+            employee.department.as_deref().unwrap_or(""),
+            &employee.date_joined.to_string(),
+            &company.name,
+        );
 
-    Ok(Json(PreviewLetterResponse {
-        subject,
-        body_html,
-        recipient_email: employee.email.unwrap_or_default(),
-        recipient_name: employee.full_name,
-    }))
+        let body_html = email_service::substitute_variables(
+            &req.body_html,
+            &employee.full_name,
+            &employee.employee_number,
+            employee.email.as_deref().unwrap_or(""),
+            employee.designation.as_deref().unwrap_or(""),
+            employee.department.as_deref().unwrap_or(""),
+            &employee.date_joined.to_string(),
+            &company.name,
+        );
+
+        Ok(Json(PreviewLetterResponse {
+            subject,
+            body_html,
+            recipient_email: employee.email.unwrap_or_default(),
+            recipient_name: employee.full_name,
+        }))
+    } else {
+        // Direct email preview: only substitute company_name
+        let recipient_email = req.recipient_email.as_deref().unwrap_or_default();
+        let recipient_name = req.recipient_name.as_deref().unwrap_or_default();
+
+        if recipient_email.is_empty() {
+            return Err(AppError::BadRequest("Recipient email is required".into()));
+        }
+
+        let subject = email_service::substitute_variables(
+            &req.subject,
+            recipient_name,
+            "",
+            recipient_email,
+            "",
+            "",
+            "",
+            &company.name,
+        );
+
+        let body_html = email_service::substitute_variables(
+            &req.body_html,
+            recipient_name,
+            "",
+            recipient_email,
+            "",
+            "",
+            "",
+            &company.name,
+        );
+
+        Ok(Json(PreviewLetterResponse {
+            subject,
+            body_html,
+            recipient_email: recipient_email.to_string(),
+            recipient_name: recipient_name.to_string(),
+        }))
+    }
 }
 
 pub async fn send_letter(
@@ -167,53 +208,104 @@ pub async fn send_letter(
         )));
     }
 
-    let employee = employee_service::get_employee(&state.pool, req.employee_id, company_id).await?;
     let company = company_service::get_company(&state.pool, company_id).await?;
 
-    let recipient_email = employee
-        .email
-        .as_deref()
-        .ok_or_else(|| AppError::BadRequest("Employee has no email address".into()))?;
+    if let Some(employee_id) = req.employee_id {
+        // Employee-based send
+        let employee =
+            employee_service::get_employee(&state.pool, employee_id, company_id).await?;
 
-    // Substitute variables in subject and body
-    let subject = email_service::substitute_variables(
-        &req.subject,
-        &employee.full_name,
-        &employee.employee_number,
-        recipient_email,
-        employee.designation.as_deref().unwrap_or(""),
-        employee.department.as_deref().unwrap_or(""),
-        &employee.date_joined.to_string(),
-        &company.name,
-    );
+        let recipient_email = employee
+            .email
+            .as_deref()
+            .ok_or_else(|| AppError::BadRequest("Employee has no email address".into()))?;
 
-    let body_html = email_service::substitute_variables(
-        &req.body_html,
-        &employee.full_name,
-        &employee.employee_number,
-        recipient_email,
-        employee.designation.as_deref().unwrap_or(""),
-        employee.department.as_deref().unwrap_or(""),
-        &employee.date_joined.to_string(),
-        &company.name,
-    );
+        let subject = email_service::substitute_variables(
+            &req.subject,
+            &employee.full_name,
+            &employee.employee_number,
+            recipient_email,
+            employee.designation.as_deref().unwrap_or(""),
+            employee.department.as_deref().unwrap_or(""),
+            &employee.date_joined.to_string(),
+            &company.name,
+        );
 
-    let log = email_service::send_email(
-        &state.config,
-        &state.pool,
-        company_id,
-        Some(req.employee_id),
-        req.template_id,
-        &req.letter_type,
-        recipient_email,
-        &employee.full_name,
-        &subject,
-        &body_html,
-        auth.0.sub,
-    )
-    .await?;
+        let body_html = email_service::substitute_variables(
+            &req.body_html,
+            &employee.full_name,
+            &employee.employee_number,
+            recipient_email,
+            employee.designation.as_deref().unwrap_or(""),
+            employee.department.as_deref().unwrap_or(""),
+            &employee.date_joined.to_string(),
+            &company.name,
+        );
 
-    Ok(Json(log))
+        let log = email_service::send_email(
+            &state.config,
+            &state.pool,
+            company_id,
+            Some(employee_id),
+            req.template_id,
+            &req.letter_type,
+            recipient_email,
+            &employee.full_name,
+            &subject,
+            &body_html,
+            auth.0.sub,
+        )
+        .await?;
+
+        Ok(Json(log))
+    } else {
+        // Direct email send
+        let recipient_email = req
+            .recipient_email
+            .as_deref()
+            .filter(|e| !e.is_empty())
+            .ok_or_else(|| AppError::BadRequest("Recipient email is required".into()))?;
+        let recipient_name = req.recipient_name.as_deref().unwrap_or("");
+
+        let subject = email_service::substitute_variables(
+            &req.subject,
+            recipient_name,
+            "",
+            recipient_email,
+            "",
+            "",
+            "",
+            &company.name,
+        );
+
+        let body_html = email_service::substitute_variables(
+            &req.body_html,
+            recipient_name,
+            "",
+            recipient_email,
+            "",
+            "",
+            "",
+            &company.name,
+        );
+
+        let log = email_service::send_email(
+            &state.config,
+            &state.pool,
+            company_id,
+            None,
+            req.template_id,
+            &req.letter_type,
+            recipient_email,
+            recipient_name,
+            &subject,
+            &body_html,
+            auth.0.sub,
+        )
+        .await?;
+
+        Ok(Json(log))
+    }
 }
 
 // ── Email Logs ─────────────────────────────────────────────────────────

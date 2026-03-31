@@ -1,5 +1,5 @@
 import api from './client';
-import type { Employee, PaginatedResponse, CreateEmployeeRequest, SalaryHistory, Tp3Record } from '@/types';
+import type { Employee, PaginatedResponse, CreateEmployeeRequest, SalaryHistory, Tp3Record, ImportValidationResponse, ImportConfirmRequest, ImportConfirmResponse } from '@/types';
 
 export async function getEmployees(params?: {
   search?: string;
@@ -46,5 +46,29 @@ export async function createTp3(employeeId: string, req: {
   previous_zakat_ytd?: number;
 }): Promise<Tp3Record> {
   const { data } = await api.post(`/employees/${employeeId}/tp3`, req);
+  return data;
+}
+
+// ─── Employee Import ───
+
+export async function downloadImportTemplate(format: 'csv' | 'xlsx' = 'xlsx'): Promise<Blob> {
+  const { data } = await api.get('/employees/import/template', {
+    params: { format },
+    responseType: 'blob',
+  });
+  return data;
+}
+
+export async function validateImport(file: File): Promise<ImportValidationResponse> {
+  const formData = new FormData();
+  formData.append('file', file);
+  const { data } = await api.post('/employees/import/validate', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+  return data;
+}
+
+export async function confirmImport(req: ImportConfirmRequest): Promise<ImportConfirmResponse> {
+  const { data } = await api.post('/employees/import/confirm', req);
   return data;
 }

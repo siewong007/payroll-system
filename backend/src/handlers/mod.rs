@@ -15,3 +15,4 @@ pub mod admin;
 pub mod oauth2;
 pub mod email;
 pub mod passkey;
+pub mod employee_import;

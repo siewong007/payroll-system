@@ -33,6 +33,7 @@ import { UserManagement } from '@/pages/admin/UserManagement';
 import { RoleManagement } from '@/pages/admin/RoleManagement';
 import { PasswordResets } from '@/pages/admin/PasswordResets';
 import { LettersPage } from '@/pages/letters/LettersPage';
+import { EmployeeImport } from '@/pages/employees/EmployeeImport';
 
 function RoleGuard({ blockedRoles, children }: { blockedRoles: string[]; children: React.ReactNode }) {
   const { user } = useAuth();
@@ -75,6 +76,7 @@ export default function App() {
               <Route path="/company" element={<CompanyProfile />} />
               <Route path="/employees" element={<EmployeeList />} />
               <Route path="/employees/new" element={<EmployeeCreate />} />
+              <Route path="/employees/import" element={<EmployeeImport />} />
               <Route path="/employees/:id" element={<EmployeeDetail />} />
               <Route path="/payroll" element={<RoleGuard blockedRoles={['exec']}><PayrollList /></RoleGuard>} />
               <Route path="/payroll/process" element={<RoleGuard blockedRoles={['exec']}><PayrollProcess /></RoleGuard>} />
