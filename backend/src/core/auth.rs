@@ -68,34 +68,27 @@ where
 {
     type Rejection = AppError;
 
-    fn from_request_parts<'life0, 'life1, 'async_trait>(
-        parts: &'life0 mut Parts,
-        _state: &'life1 S,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Self, Self::Rejection>> + Send + 'async_trait>>
-    where
-        'life0: 'async_trait,
-        'life1: 'async_trait,
-        Self: 'async_trait,
-    {
-        Box::pin(async move {
-            let auth_header = parts
-                .headers
-                .get(header::AUTHORIZATION)
-                .and_then(|value| value.to_str().ok())
-                .ok_or_else(|| AppError::Unauthorized("Missing authorization header".to_string()))?;
+    async fn from_request_parts(
+        parts: &mut Parts,
+        _state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        let auth_header = parts
+            .headers
+            .get(header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .ok_or_else(|| AppError::Unauthorized("Missing authorization header".to_string()))?;
 
-            let token = auth_header
-                .strip_prefix("Bearer ")
-                .ok_or_else(|| AppError::Unauthorized("Invalid authorization format".to_string()))?;
+        let token = auth_header
+            .strip_prefix("Bearer ")
+            .ok_or_else(|| AppError::Unauthorized("Invalid authorization format".to_string()))?;
 
-            let secret = parts
-                .extensions
-                .get::<JwtSecret>()
-                .ok_or_else(|| AppError::Internal("JWT secret not configured".to_string()))?;
+        let secret = parts
+            .extensions
+            .get::<JwtSecret>()
+            .ok_or_else(|| AppError::Internal("JWT secret not configured".to_string()))?;
 
-            let claims = verify_token(token, &secret.0)?;
-            Ok(AuthUser(claims))
-        })
+        let claims = verify_token(token, &secret.0)?;
+        Ok(AuthUser(claims))
     }
 }
 

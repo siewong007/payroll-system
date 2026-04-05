@@ -17,7 +17,8 @@ const STATE_EXPIRY_MINUTES: i64 = 10;
 fn hash_token(token: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(token.as_bytes());
-    format!("{:x}", hasher.finalize())
+    let result = hasher.finalize();
+    result.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
 /// Generate a cryptographically random PKCE code verifier (43-128 chars, base64url).

@@ -10,7 +10,8 @@ const REFRESH_TOKEN_DAYS: i64 = 30;
 fn hash_token(token: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(token.as_bytes());
-    format!("{:x}", hasher.finalize())
+    let result = hasher.finalize();
+    result.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
 /// Creates a new refresh token for a user, returns the raw token string.

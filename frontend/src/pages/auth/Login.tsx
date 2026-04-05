@@ -51,6 +51,7 @@ export function Login() {
     queryKey: ['oauth2-providers'],
     queryFn: () => api.get<OAuth2Provider[]>('/auth/oauth2/providers').then((r) => r.data),
     staleTime: 300_000,
+    select: (data) => (Array.isArray(data) ? data : []),
   });
 
   const googleProvider = providers?.find((p) => p.provider === 'google' && p.enabled);

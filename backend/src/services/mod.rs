@@ -21,3 +21,4 @@ pub mod oauth2_service;
 pub mod email_service;
 pub mod passkey_service;
 pub mod employee_import_service;
+pub mod backup_service;

@@ -757,3 +757,12 @@ export interface ImportConfirmResponse {
   skipped_count: number;
   errors: ImportRowValidation[];
 }
+
+// ─── Backup / Data Migration ───
+
+export interface ImportResult {
+  new_company_id: string;
+  new_company_name: string;
+  records_imported: Record<string, number>;
+  warnings: string[];
+}

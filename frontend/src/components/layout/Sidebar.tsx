@@ -15,6 +15,7 @@ import {
   Shield,
   KeyRound,
   Mail,
+  DatabaseBackup,
   X,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
@@ -37,6 +38,7 @@ const navigation = [
   { name: 'Users', href: '/users', icon: UserCog, showFor: ['super_admin'] },
   { name: 'Roles', href: '/roles', icon: Shield, showFor: ['super_admin'] },
   { name: 'Password Resets', href: '/password-resets', icon: KeyRound, showFor: ['super_admin'] },
+  { name: 'Backup', href: '/backup', icon: DatabaseBackup, showFor: ['super_admin', 'admin'] },
 ];
 
 interface SidebarProps {

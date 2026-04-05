@@ -34,6 +34,7 @@ import { RoleManagement } from '@/pages/admin/RoleManagement';
 import { PasswordResets } from '@/pages/admin/PasswordResets';
 import { LettersPage } from '@/pages/letters/LettersPage';
 import { EmployeeImport } from '@/pages/employees/EmployeeImport';
+import { BackupPage } from '@/pages/backup/BackupPage';
 
 function RoleGuard({ blockedRoles, children }: { blockedRoles: string[]; children: React.ReactNode }) {
   const { user } = useAuth();
@@ -92,6 +93,7 @@ export default function App() {
               <Route path="/users" element={<RoleGuard blockedRoles={['exec', 'admin', 'payroll_admin', 'hr_manager', 'finance']}><UserManagement /></RoleGuard>} />
               <Route path="/roles" element={<RoleGuard blockedRoles={['exec', 'admin', 'payroll_admin', 'hr_manager', 'finance']}><RoleManagement /></RoleGuard>} />
               <Route path="/password-resets" element={<RoleGuard blockedRoles={['exec', 'admin', 'payroll_admin', 'hr_manager', 'finance']}><PasswordResets /></RoleGuard>} />
+              <Route path="/backup" element={<RoleGuard blockedRoles={['exec', 'payroll_admin', 'hr_manager', 'finance', 'employee']}><BackupPage /></RoleGuard>} />
             </Route>
             {/* Employee Portal Layout */}
             <Route element={<PortalLayout />}>

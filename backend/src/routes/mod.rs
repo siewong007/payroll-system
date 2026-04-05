@@ -7,7 +7,7 @@ use axum::{
 use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
 
 use crate::core::app_state::AppState;
-use crate::handlers::{admin, approval, auth, calendar, company, dashboard, document, email, employee, employee_import, notification, oauth2, passkey, payroll, portal, report, settings, team};
+use crate::handlers::{admin, approval, auth, backup, calendar, company, dashboard, document, email, employee, employee_import, notification, oauth2, passkey, payroll, portal, report, settings, team};
 
 pub fn create_router(state: AppState) -> Router {
     // Rate limiter: 5 requests per 60 seconds per IP
@@ -35,16 +35,16 @@ pub fn create_router(state: AppState) -> Router {
     let rate_limited_auth = Router::new()
         .route("/auth/login", post(auth::login))
         .route("/auth/reset-password", post(auth::reset_password))
-        .layer(GovernorLayer { config: auth_rate_limit.into() });
+        .layer(GovernorLayer::new(auth_rate_limit));
 
     let rate_limited_forgot = Router::new()
         .route("/auth/forgot-password", post(auth::forgot_password))
-        .layer(GovernorLayer { config: forgot_rate_limit.into() });
+        .layer(GovernorLayer::new(forgot_rate_limit));
 
     let rate_limited_oauth2 = Router::new()
         .route("/auth/oauth2/google/authorize", get(oauth2::google_authorize))
         .route("/auth/oauth2/google/callback", get(oauth2::google_callback))
-        .layer(GovernorLayer { config: oauth2_rate_limit.into() });
+        .layer(GovernorLayer::new(oauth2_rate_limit));
 
     let api = Router::new()
         // Health check (no auth required, used by ALB)
@@ -85,6 +85,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/admin/password-resets/count", get(admin::count_pending_resets))
         .route("/admin/password-resets/:id/approve", put(admin::approve_password_reset))
         .route("/admin/password-resets/:id/reject", put(admin::reject_password_reset))
+        // Backup / Data Migration
+        .route("/admin/backup/export", get(backup::export_company))
+        .route("/admin/backup/import", post(backup::import_company))
         // Employees
         .route("/employees", get(employee::list).post(employee::create))
         .route("/employees/:id", get(employee::get).put(employee::update).delete(employee::delete))

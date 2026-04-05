@@ -9,7 +9,8 @@ use crate::models::session::{PasswordResetRequest, PasswordResetWithUser};
 fn hash_token(token: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(token.as_bytes());
-    format!("{:x}", hasher.finalize())
+    let result = hasher.finalize();
+    result.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
 const RESET_TOKEN_HOURS: i64 = 24;

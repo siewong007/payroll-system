@@ -7,7 +7,16 @@
       "Bash(PGPASSWORD=payroll_secret psql -h localhost -U payroll -d payroll_db -c \"SELECT password_hash FROM users WHERE email = 'admin@demo.com';\")",
       "Bash(curl:*)",
       "Bash(PGPASSWORD=payroll_secret psql -h localhost -U payroll -d payroll_db -c \"UPDATE users SET password_hash = '\\\\$2b\\\\$12\\\\$eGHs6MK8r5JgA7KZPQWkR.Op6RKb3Zomh0CIqFDreBNDzaFZTOqk.' WHERE email = 'sarah@demo.com';\")",
-      "Bash(cargo check:*)"
+      "Bash(cargo check:*)",
+      "Bash(pkill -f \"git add\")",
+      "Bash(pkill -f \"git diff\")",
+      "Bash(rm -f \"/Users/goaltosuceed/Documents/Personal Projects/payroll-system/.git/index.lock\")",
+      "Bash(xargs kill:*)",
+      "Bash(rm -f '/Users/goaltosuceed/Documents/Personal Projects/payroll-system/.git/index.lock')",
+      "Bash(kill -9 79808 79806)",
+      "Bash(while kill:*)",
+      "Bash(do sleep:*)",
+      "Bash(done)"
     ]
   }
 }
