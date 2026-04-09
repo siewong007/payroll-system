@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { FileText, Download, ChevronDown, ChevronRight, Info, AlertTriangle } from 'lucide-react';
+import { FileText, Download, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import {
   getPayrollSummary,

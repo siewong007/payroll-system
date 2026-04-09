@@ -53,3 +53,13 @@ export const resetPassword = (token: string, new_password: string) =>
 
 export const validateResetToken = (token: string) =>
   api.post('/auth/validate-reset-token', { token }).then((r) => r.data);
+
+// Password reset management (admin)
+export const listPasswordResets = () =>
+  api.get('/admin/password-resets').then((r) => r.data);
+
+export const approvePasswordReset = (id: string) =>
+  api.post<{ reset_url: string }>(`/admin/password-resets/${id}/approve`).then((r) => r.data);
+
+export const rejectPasswordReset = (id: string) =>
+  api.post(`/admin/password-resets/${id}/reject`).then((r) => r.data);
