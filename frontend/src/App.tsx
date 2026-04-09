@@ -6,7 +6,6 @@ import { PortalLayout } from '@/components/layout/PortalLayout';
 import { Login } from '@/pages/auth/Login';
 import { ForgotPassword } from '@/pages/auth/ForgotPassword';
 import { ResetPassword } from '@/pages/auth/ResetPassword';
-import { Dashboard } from '@/pages/Dashboard';
 import { EmployeeList } from '@/pages/employees/EmployeeList';
 import { EmployeeCreate } from '@/pages/employees/EmployeeCreate';
 import { EmployeeDetail } from '@/pages/employees/EmployeeDetail';
@@ -18,7 +17,6 @@ import { CompanyProfile } from '@/pages/company/CompanyProfile';
 import { SettingsPage } from '@/pages/settings/SettingsPage';
 import { Approvals } from '@/pages/approvals/Approvals';
 import { Reports } from '@/pages/reports/Reports';
-import { PortalHome } from '@/pages/portal/PortalHome';
 import { MyProfile } from '@/pages/portal/MyProfile';
 import { MyPayslips } from '@/pages/portal/MyPayslips';
 import { Leave } from '@/pages/portal/Leave';
@@ -31,7 +29,6 @@ import { Overtime } from '@/pages/portal/Overtime';
 import { CompanyManagement } from '@/pages/admin/CompanyManagement';
 import { UserManagement } from '@/pages/admin/UserManagement';
 import { RoleManagement } from '@/pages/admin/RoleManagement';
-import { PasswordResets } from '@/pages/admin/PasswordResets';
 import { LettersPage } from '@/pages/letters/LettersPage';
 import { EmployeeImport } from '@/pages/employees/EmployeeImport';
 import { BackupPage } from '@/pages/backup/BackupPage';
@@ -39,17 +36,17 @@ import { BackupPage } from '@/pages/backup/BackupPage';
 function RoleGuard({ blockedRoles, children }: { blockedRoles: string[]; children: React.ReactNode }) {
   const { user } = useAuth();
   if (user && blockedRoles.includes(user.role)) {
-    return <Navigate to={user.role === 'super_admin' ? '/companies' : '/'} replace />;
+    return <Navigate to={user.role === 'super_admin' ? '/companies' : '/company'} replace />;
   }
   return <>{children}</>;
 }
 
-function SuperAdminRedirect({ children }: { children: React.ReactNode }) {
+function HomeRedirect() {
   const { user } = useAuth();
   if (user?.role === 'super_admin') {
     return <Navigate to="/companies" replace />;
   }
-  return <>{children}</>;
+  return <Navigate to="/company" replace />;
 }
 
 const queryClient = new QueryClient({
@@ -73,7 +70,7 @@ export default function App() {
             <Route path="/reset-password" element={<ResetPassword />} />
             {/* Admin Layout */}
             <Route element={<AppLayout />}>
-              <Route path="/" element={<SuperAdminRedirect><Dashboard /></SuperAdminRedirect>} />
+              <Route path="/" element={<HomeRedirect />} />
               <Route path="/company" element={<CompanyProfile />} />
               <Route path="/employees" element={<EmployeeList />} />
               <Route path="/employees/new" element={<EmployeeCreate />} />
@@ -92,12 +89,11 @@ export default function App() {
               <Route path="/companies" element={<RoleGuard blockedRoles={['exec', 'admin', 'payroll_admin', 'hr_manager', 'finance']}><CompanyManagement /></RoleGuard>} />
               <Route path="/users" element={<RoleGuard blockedRoles={['exec', 'admin', 'payroll_admin', 'hr_manager', 'finance']}><UserManagement /></RoleGuard>} />
               <Route path="/roles" element={<RoleGuard blockedRoles={['exec', 'admin', 'payroll_admin', 'hr_manager', 'finance']}><RoleManagement /></RoleGuard>} />
-              <Route path="/password-resets" element={<RoleGuard blockedRoles={['exec', 'admin', 'payroll_admin', 'hr_manager', 'finance']}><PasswordResets /></RoleGuard>} />
               <Route path="/backup" element={<RoleGuard blockedRoles={['exec', 'payroll_admin', 'hr_manager', 'finance', 'employee']}><BackupPage /></RoleGuard>} />
             </Route>
             {/* Employee Portal Layout */}
             <Route element={<PortalLayout />}>
-              <Route path="/portal" element={<PortalHome />} />
+              <Route path="/portal" element={<Navigate to="/portal/profile" replace />} />
               <Route path="/portal/profile" element={<MyProfile />} />
               <Route path="/portal/payslips" element={<MyPayslips />} />
               <Route path="/portal/leave" element={<Leave />} />

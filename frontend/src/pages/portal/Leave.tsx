@@ -1,10 +1,33 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, ArrowLeft, Paperclip, ExternalLink, X, Calendar, FileText } from 'lucide-react';
-import { getLeaveBalances, getLeaveRequests, getLeaveTypes, createLeaveRequest, cancelLeaveRequest, uploadFile } from '@/api/portal';
+import { Plus, ArrowLeft, Paperclip, ExternalLink, X, Calendar, FileText, AlertTriangle } from 'lucide-react';
+import { getLeaveBalances, getLeaveRequests, getLeaveTypes, createLeaveRequest, cancelLeaveRequest, uploadFile, getMyProfile } from '@/api/portal';
 import { formatDate } from '@/lib/utils';
 import { DataTable, type Column } from '@/components/ui/DataTable';
-import type { LeaveBalance, LeaveRequest, LeaveType } from '@/types';
+import type { Employee, LeaveBalance, LeaveRequest, LeaveType } from '@/types';
+
+function getLeaveEligibility(
+  leaveType: string,
+  profile: Employee | undefined,
+): { eligible: boolean; reason?: string } {
+  if (!profile) return { eligible: true };
+  const name = leaveType.toLowerCase();
+
+  if (name.includes('maternity')) {
+    if (profile.gender !== 'female') return { eligible: false, reason: 'Available to female employees.' };
+  }
+
+  if (name.includes('paternity')) {
+    if (profile.gender !== 'male') return { eligible: false, reason: 'Available to male employees.' };
+    if ((profile.num_children ?? 0) === 0) return { eligible: false, reason: 'Employee has no registered children (requires date of birth).' };
+  }
+
+  if (name.includes('marriage')) {
+    if (profile.marital_status === 'married') return { eligible: false, reason: 'Employee is already married.' };
+  }
+
+  return { eligible: true };
+}
 
 const statusBadge = (status: string) => {
   const cls: Record<string, string> = {
@@ -14,24 +37,57 @@ const statusBadge = (status: string) => {
   return <span className={`badge ${cls[status] || 'badge-draft'}`}>{status}</span>;
 };
 
-const balanceColumns: Column<LeaveBalance>[] = [
-  { key: 'type', header: 'Leave Type', render: (b) => <span className="font-semibold text-gray-900">{b.leave_type_name}</span> },
-  { key: 'entitled', header: 'Entitled', align: 'center', render: (b) => Number(b.entitled_days) },
-  { key: 'taken', header: 'Taken', align: 'center', render: (b) => Number(b.taken_days) },
-  { key: 'pending', header: 'Pending', align: 'center', render: (b) => Number(b.pending_days) },
-  {
-    key: 'balance', header: 'Balance', align: 'center', render: (b) => {
-      const balance = Number(b.entitled_days) + Number(b.carried_forward) - Number(b.taken_days) - Number(b.pending_days);
-      return <span className={`font-bold ${balance > 0 ? 'text-emerald-600' : balance < 0 ? 'text-red-600' : 'text-gray-600'}`}>{balance}</span>;
+function getBalanceColumns(profile: Employee | undefined): Column<LeaveBalance>[] {
+  return [
+    { key: 'type', header: 'Leave Type', render: (b) => <span className="font-semibold text-gray-900">{b.leave_type_name}</span> },
+    {
+      key: 'status', header: 'Status / Remarks', render: (b) => {
+        const elig = getLeaveEligibility(b.leave_type_name, profile);
+        if (!elig.eligible) {
+          return (
+            <span className="inline-flex items-center gap-1.5 text-amber-600 text-sm">
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+              {elig.reason}
+            </span>
+          );
+        }
+        const balance = Number(b.entitled_days) + Number(b.carried_forward) - Number(b.taken_days) - Number(b.pending_days);
+        return (
+          <span className="text-gray-600 text-sm">
+            Employee has <strong>{balance} day(s)</strong> of {b.leave_type_name}
+          </span>
+        );
+      },
     },
-  },
-  {
-    key: 'summary', header: 'Summary', render: (b) => {
-      const balance = Number(b.entitled_days) + Number(b.carried_forward) - Number(b.taken_days) - Number(b.pending_days);
-      return <span className="text-gray-400 text-sm"><strong className="text-gray-600">{balance} day(s)</strong> remaining</span>;
+    {
+      key: 'entitled', header: 'Entitled', align: 'center', render: (b) => {
+        const elig = getLeaveEligibility(b.leave_type_name, profile);
+        return elig.eligible ? Number(b.entitled_days) : <span className="text-gray-300">{'\u2014'}</span>;
+      },
     },
-  },
-];
+    {
+      key: 'taken', header: 'Taken', align: 'center', render: (b) => {
+        const elig = getLeaveEligibility(b.leave_type_name, profile);
+        return elig.eligible ? Number(b.taken_days) : <span className="text-gray-300">{'\u2014'}</span>;
+      },
+    },
+    {
+      key: 'pending', header: 'Pending', align: 'center', render: (b) => {
+        const elig = getLeaveEligibility(b.leave_type_name, profile);
+        if (!elig.eligible) return <span className="text-gray-300">{'\u2014'}</span>;
+        return <span className={Number(b.pending_days) > 0 ? 'text-amber-600' : ''}>{Number(b.pending_days)}</span>;
+      },
+    },
+    {
+      key: 'balance', header: 'Balance', align: 'center', render: (b) => {
+        const elig = getLeaveEligibility(b.leave_type_name, profile);
+        if (!elig.eligible) return <span className="text-gray-300">{'\u2014'}</span>;
+        const balance = Number(b.entitled_days) + Number(b.carried_forward) - Number(b.taken_days) - Number(b.pending_days);
+        return <span className={`font-bold ${balance > 0 ? 'text-emerald-600' : balance < 0 ? 'text-red-600' : 'text-gray-600'}`}>{balance}</span>;
+      },
+    },
+  ];
+}
 
 const requestColumns: Column<LeaveRequest>[] = [
   { key: 'type', header: 'Type', render: (r) => <span className="font-semibold text-gray-900">{r.leave_type_name}</span> },
@@ -68,6 +124,11 @@ export function Leave() {
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<'balances' | 'requests'>('balances');
   const [showApply, setShowApply] = useState(false);
+
+  const { data: profile } = useQuery({
+    queryKey: ['my-profile'],
+    queryFn: getMyProfile,
+  });
 
   const { data: balances, isLoading: loadingBalances } = useQuery({
     queryKey: ['leave-balances', 2026],
@@ -136,7 +197,7 @@ export function Leave() {
 
       {tab === 'balances' ? (
         <DataTable
-          columns={balanceColumns}
+          columns={getBalanceColumns(profile)}
           data={balances ?? []}
           perPage={10}
           emptyMessage="No leave entitlements found"

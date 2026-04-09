@@ -1,9 +1,16 @@
 import { useState, useRef } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Download, Upload, FileJson, CheckCircle2, AlertTriangle, Loader2 } from 'lucide-react';
 import { exportCompanyBackup, importCompanyBackup } from '@/api/backup';
+import { listCompanies } from '@/api/admin';
+import { useAuth } from '@/context/AuthContext';
 import type { ImportResult } from '@/types';
 
 export function BackupPage() {
+  const { user } = useAuth();
+  const isSuperAdmin = user?.role === 'super_admin';
+
+  const [selectedCompanyId, setSelectedCompanyId] = useState('');
   const [exporting, setExporting] = useState(false);
   const [exportSuccess, setExportSuccess] = useState(false);
   const [exportError, setExportError] = useState('');
@@ -14,12 +21,19 @@ export function BackupPage() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const { data: companies } = useQuery({
+    queryKey: ['admin-companies'],
+    queryFn: listCompanies,
+    enabled: isSuperAdmin,
+  });
+
   const handleExport = async () => {
+    if (isSuperAdmin && !selectedCompanyId) return;
     setExporting(true);
     setExportSuccess(false);
     setExportError('');
     try {
-      await exportCompanyBackup();
+      await exportCompanyBackup(isSuperAdmin ? selectedCompanyId : undefined);
       setExportSuccess(true);
     } catch (err: any) {
       setExportError(err.response?.data?.error || err.message || 'Export failed');
@@ -76,16 +90,33 @@ export function BackupPage() {
           <div className="flex-1">
             <h2 className="text-lg font-semibold text-gray-900">Export Company Data</h2>
             <p className="text-sm text-gray-500 mt-1">
-              Download a complete backup of your company data as JSON. Includes employees, payroll history,
+              Download a complete backup of company data as JSON. Includes employees, payroll history,
               leave records, documents metadata, settings, and more.
             </p>
             <p className="text-xs text-gray-400 mt-2">
               Excludes: user accounts, passwords, auth tokens, and passkey credentials.
             </p>
+
+            {isSuperAdmin && (
+              <div className="mt-4 max-w-xs">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Select Company</label>
+                <select
+                  value={selectedCompanyId}
+                  onChange={(e) => { setSelectedCompanyId(e.target.value); setExportSuccess(false); setExportError(''); }}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-1 focus:ring-black outline-none"
+                >
+                  <option value="">Choose a company...</option>
+                  {companies?.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <div className="mt-4 flex items-center gap-3">
               <button
                 onClick={handleExport}
-                disabled={exporting}
+                disabled={exporting || (isSuperAdmin && !selectedCompanyId)}
                 className="inline-flex items-center gap-2 px-4 py-2.5 bg-gray-900 text-white text-sm font-medium rounded-xl hover:bg-gray-800 disabled:opacity-50 transition-all"
               >
                 {exporting ? (
@@ -121,11 +152,11 @@ export function BackupPage() {
           <div className="flex-1">
             <h2 className="text-lg font-semibold text-gray-900">Import / Restore Data</h2>
             <p className="text-sm text-gray-500 mt-1">
-              Upload a previously exported backup file to create a new company with all its data.
-              All IDs are remapped to avoid conflicts with existing data.
+              Upload a previously exported backup file. If a company with the same name already exists,
+              all its data will be overwritten. Otherwise a new company will be created.
             </p>
             <p className="text-xs text-amber-600 mt-2">
-              This will create a new company. User accounts are not included in backups and must be assigned separately.
+              User accounts are not included in backups and must be assigned separately.
             </p>
 
             <div className="mt-4 space-y-3">
@@ -176,10 +207,13 @@ export function BackupPage() {
                 <div className="p-4 bg-green-50 rounded-xl">
                   <div className="flex items-center gap-2 text-green-700 font-medium">
                     <CheckCircle2 className="w-5 h-5" />
-                    Import Successful
+                    {importResult.is_overwrite ? 'Data Overwritten' : 'Import Successful'}
                   </div>
                   <p className="text-sm text-green-600 mt-1">
-                    Company "<strong>{importResult.new_company_name}</strong>" created with {totalRecords} records.
+                    {importResult.is_overwrite
+                      ? <>Company "<strong>{importResult.new_company_name}</strong>" data overwritten with {totalRecords} records.</>
+                      : <>Company "<strong>{importResult.new_company_name}</strong>" created with {totalRecords} records.</>
+                    }
                   </p>
                 </div>
 

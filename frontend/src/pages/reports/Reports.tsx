@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { FileText, Download } from 'lucide-react';
+import { FileText, Download, ChevronDown, ChevronRight, Info, AlertTriangle } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import {
   getPayrollSummary,
@@ -61,45 +61,67 @@ const statutoryColumns: Column<StatutoryReportRow>[] = [
   { key: 'zakat', header: 'Zakat', align: 'right', render: (r) => fmt(r.zakat_amount) },
 ];
 
-const leaveColumns: Column<LeaveReportRow>[] = [
-  {
-    key: 'employee', header: 'Employee', render: (r) => (
-      <div>
-        <div className="font-semibold text-gray-900">{r.employee_name}</div>
-        <div className="text-xs text-gray-400">{r.employee_number}</div>
-      </div>
-    ),
-  },
-  { key: 'department', header: 'Department', render: (r) => <span className="text-gray-500">{r.department || '\u2014'}</span> },
-  { key: 'type', header: 'Leave Type', render: (r) => r.leave_type_name },
-  { key: 'entitled', header: 'Entitled', align: 'right', render: (r) => r.entitled_days },
-  { key: 'taken', header: 'Taken', align: 'right', render: (r) => r.taken_days },
-  { key: 'pending', header: 'Pending', align: 'right', render: (r) => <span className="text-amber-600">{r.pending_days}</span> },
-  {
-    key: 'balance', header: 'Balance', align: 'right', render: (r) => (
-      <span className={`font-semibold ${Number(r.balance) <= 0 ? 'text-red-600' : 'text-emerald-600'}`}>{r.balance}</span>
-    ),
-  },
-];
-
-const claimsColumns: Column<ClaimsReportRow>[] = [
-  {
-    key: 'employee', header: 'Employee', render: (r) => (
-      <div>
-        <div className="font-semibold text-gray-900">{r.employee_name}</div>
-        <div className="text-xs text-gray-400">{r.employee_number}</div>
-      </div>
-    ),
-  },
-  { key: 'department', header: 'Department', render: (r) => <span className="text-gray-500">{r.department || '\u2014'}</span> },
-  { key: 'total', header: 'Total Claims', align: 'right', render: (r) => r.total_claims },
-  { key: 'amount', header: 'Total Amount', align: 'right', render: (r) => <span className="font-semibold">{fmt(r.total_amount)}</span> },
-  { key: 'approved', header: 'Approved', align: 'right', render: (r) => <span className="text-emerald-600">{r.approved_count} ({fmt(r.approved_amount)})</span> },
-  { key: 'pending', header: 'Pending', align: 'right', render: (r) => <span className="text-amber-600">{r.pending_count} ({fmt(r.pending_amount)})</span> },
-  { key: 'rejected', header: 'Rejected', align: 'right', render: (r) => <span className="text-red-600">{r.rejected_count}</span> },
-];
-
 const PAYROLL_TABS: ReportTab[] = ['payroll', 'department', 'statutory'];
+
+// ─── Leave eligibility rules ───
+
+function getLeaveEligibility(
+  leaveType: string,
+  gender: string | null,
+  maritalStatus: string | null,
+  numChildren: number | null,
+): { eligible: boolean; reason?: string } {
+  const name = leaveType.toLowerCase();
+
+  if (name.includes('maternity')) {
+    if (gender !== 'female') return { eligible: false, reason: 'Available to female employees.' };
+  }
+
+  if (name.includes('paternity')) {
+    if (gender !== 'male') return { eligible: false, reason: 'Available to male employees.' };
+    if ((numChildren ?? 0) === 0) return { eligible: false, reason: 'Employee has no registered children (requires date of birth).' };
+  }
+
+  if (name.includes('marriage')) {
+    if (maritalStatus === 'married') return { eligible: false, reason: 'Employee is already married.' };
+    if (!maritalStatus || maritalStatus === 'single') return { eligible: true };
+  }
+
+  return { eligible: true };
+}
+
+// ─── Leave Report: group by employee ───
+
+interface EmployeeLeaveGroup {
+  employee_name: string;
+  employee_number: string;
+  department: string | null;
+  gender: string | null;
+  marital_status: string | null;
+  num_children: number | null;
+  leaves: LeaveReportRow[];
+}
+
+function groupByEmployee(rows: LeaveReportRow[]): EmployeeLeaveGroup[] {
+  const map = new Map<string, EmployeeLeaveGroup>();
+  for (const r of rows) {
+    let group = map.get(r.employee_number);
+    if (!group) {
+      group = {
+        employee_name: r.employee_name,
+        employee_number: r.employee_number,
+        department: r.department,
+        gender: r.gender,
+        marital_status: r.marital_status,
+        num_children: r.num_children,
+        leaves: [],
+      };
+      map.set(r.employee_number, group);
+    }
+    group.leaves.push(r);
+  }
+  return Array.from(map.values());
+}
 
 export function Reports() {
   const { user } = useAuth();
@@ -154,7 +176,7 @@ export function Reports() {
       { key: 'payroll', label: 'Payroll Summary' },
       { key: 'department', label: 'By Department' },
       { key: 'statutory', label: 'Statutory' },
-      { key: 'leave', label: 'Leave Balance' },
+      { key: 'leave', label: 'Leave Entitlement' },
       { key: 'claims', label: 'Claims' },
     ];
     return isExec ? all.filter((t) => !PAYROLL_TABS.includes(t.key)) : all;
@@ -324,77 +346,368 @@ export function Reports() {
         </div>
       )}
 
-      {/* Leave Report */}
+      {/* Leave Entitlement Report */}
       {tab === 'leave' && (
-        <div className="space-y-3">
-          <div className="flex justify-between items-center">
-            <h2 className="font-semibold text-gray-900">Leave Balances — {year}</h2>
-            {leaveQuery.data && leaveQuery.data.length > 0 && (
-              <button
-                onClick={() =>
-                  exportCSV(
-                    ['Employee', 'ID', 'Department', 'Leave Type', 'Entitled', 'Taken', 'Pending', 'Balance'],
-                    leaveQuery.data!.map((r) => [
-                      `"${r.employee_name}"`, r.employee_number, r.department || '',
-                      r.leave_type_name, String(r.entitled_days), String(r.taken_days),
-                      String(r.pending_days), String(r.balance),
-                    ]),
-                    `leave-report-${year}.csv`
-                  )
-                }
-                className="btn-secondary !py-1.5 !px-3 !text-xs"
-              >
-                <Download className="w-3.5 h-3.5" /> Export CSV
-              </button>
-            )}
-          </div>
-          <DataTable
-            columns={leaveColumns}
-            data={leaveQuery.data ?? []}
-            perPage={10}
-            isLoading={leaveQuery.isLoading}
-            emptyMessage="No leave data"
-            rowKey={(r, i) => `${r.employee_number}-${r.leave_type_name}-${i}`}
-            summaryTitle={(r) => `${r.employee_name} — ${r.leave_type_name}`}
-          />
-        </div>
+        <LeaveEntitlementReport
+          data={leaveQuery.data}
+          isLoading={leaveQuery.isLoading}
+          year={year}
+          onExport={() => {
+            if (!leaveQuery.data) return;
+            exportCSV(
+              ['Employee', 'ID', 'Department', 'Leave Type', 'Status', 'Entitled', 'Taken', 'Pending', 'Balance'],
+              leaveQuery.data.map((r) => {
+                const elig = getLeaveEligibility(r.leave_type_name, r.gender, r.marital_status, r.num_children);
+                return [
+                  `"${r.employee_name}"`, r.employee_number, r.department || '',
+                  r.leave_type_name, elig.eligible ? 'Eligible' : elig.reason || 'Not eligible',
+                  String(r.entitled_days), String(r.taken_days), String(r.pending_days), String(r.balance),
+                ];
+              }),
+              `leave-entitlement-${year}.csv`
+            );
+          }}
+        />
       )}
 
       {/* Claims Report */}
       {tab === 'claims' && (
-        <div className="space-y-3">
-          <h2 className="font-semibold text-gray-900">Claims Summary — {year}</h2>
-          <DataTable
-            columns={claimsColumns}
-            data={claimsQuery.data ?? []}
-            perPage={10}
-            isLoading={claimsQuery.isLoading}
-            emptyMessage="No claims data"
-            rowKey={(r) => r.employee_number}
-            summaryTitle={(r) => `${r.employee_name} — Claims`}
-            renderSummary={(r) => (
-              <div className="grid grid-cols-2 gap-4">
-                <SummaryField label="Employee" value={r.employee_name} />
-                <SummaryField label="Department" value={r.department || '\u2014'} />
-                <SummaryField label="Total Claims" value={String(r.total_claims)} />
-                <SummaryField label="Total Amount" value={fmt(r.total_amount)} />
-                <SummaryField label="Approved" value={`${r.approved_count} (${fmt(r.approved_amount)})`} />
-                <SummaryField label="Pending" value={`${r.pending_count} (${fmt(r.pending_amount)})`} />
-                <SummaryField label="Rejected" value={String(r.rejected_count)} />
-              </div>
-            )}
+        <ClaimsSummaryReport
+          data={claimsQuery.data}
+          isLoading={claimsQuery.isLoading}
+          year={year}
+          onExport={() => {
+            if (!claimsQuery.data) return;
+            exportCSV(
+              ['Employee', 'ID', 'Department', 'Total Claims', 'Total Amount', 'Approved', 'Approved Amount', 'Pending', 'Pending Amount', 'Rejected'],
+              claimsQuery.data.map((r) => [
+                `"${r.employee_name}"`, r.employee_number, r.department || '',
+                String(r.total_claims), String(r.total_amount / 100),
+                String(r.approved_count), String(r.approved_amount / 100),
+                String(r.pending_count), String(r.pending_amount / 100),
+                String(r.rejected_count),
+              ]),
+              `claims-report-${year}.csv`
+            );
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── Leave Entitlement Report ───
+
+function LeaveEntitlementReport({
+  data,
+  isLoading,
+  year,
+  onExport,
+}: {
+  data: LeaveReportRow[] | undefined;
+  isLoading: boolean;
+  year: number;
+  onExport: () => void;
+}) {
+  const [expandedEmployee, setExpandedEmployee] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+
+  const groups = useMemo(() => {
+    if (!data) return [];
+    const all = groupByEmployee(data);
+    if (!search.trim()) return all;
+    const q = search.toLowerCase();
+    return all.filter(
+      (g) =>
+        g.employee_name.toLowerCase().includes(q) ||
+        g.employee_number.toLowerCase().includes(q) ||
+        (g.department || '').toLowerCase().includes(q)
+    );
+  }, [data, search]);
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-48">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <h2 className="font-semibold text-gray-900">Leave Entitlement — {year}</h2>
+        <div className="flex items-center gap-2">
+          <input
+            type="text"
+            placeholder="Search employee..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="form-input !w-auto min-w-[200px] !text-sm"
           />
+          {data && data.length > 0 && (
+            <button onClick={onExport} className="btn-secondary !py-1.5 !px-3 !text-xs">
+              <Download className="w-3.5 h-3.5" /> Export
+            </button>
+          )}
+        </div>
+      </div>
+
+      {groups.length === 0 ? (
+        <div className="text-center py-16 text-gray-400">
+          <FileText className="w-8 h-8 mx-auto mb-3 opacity-40" />
+          <p className="text-sm">No leave data for {year}</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {groups.map((g) => {
+            const isOpen = expandedEmployee === g.employee_number;
+            const totalBalance = g.leaves.reduce((sum, l) => {
+              const elig = getLeaveEligibility(l.leave_type_name, g.gender, g.marital_status, g.num_children);
+              return elig.eligible ? sum + Number(l.balance) : sum;
+            }, 0);
+            const totalTaken = g.leaves.reduce((sum, l) => {
+              const elig = getLeaveEligibility(l.leave_type_name, g.gender, g.marital_status, g.num_children);
+              return elig.eligible ? sum + Number(l.taken_days) : sum;
+            }, 0);
+
+            return (
+              <div key={g.employee_number} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                {/* Employee header */}
+                <button
+                  onClick={() => setExpandedEmployee(isOpen ? null : g.employee_number)}
+                  className="w-full flex items-center gap-4 px-5 py-4 hover:bg-gray-50 transition-colors text-left"
+                >
+                  <div className="text-gray-400">
+                    {isOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-semibold text-gray-900">{g.employee_name}</div>
+                    <div className="text-xs text-gray-400">{g.employee_number} · {g.department || 'No department'}</div>
+                  </div>
+                  <div className="flex items-center gap-6 text-sm shrink-0">
+                    <div className="text-center">
+                      <div className="text-xs text-gray-400">Taken</div>
+                      <div className="font-medium text-gray-700">{totalTaken}d</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-xs text-gray-400">Balance</div>
+                      <div className={`font-bold ${totalBalance > 0 ? 'text-emerald-600' : 'text-gray-600'}`}>{totalBalance}d</div>
+                    </div>
+                  </div>
+                </button>
+
+                {/* Expanded leave table */}
+                {isOpen && (
+                  <div className="border-t border-gray-100">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wide">
+                          <th className="text-left px-5 py-2.5 font-medium">Leave Type</th>
+                          <th className="text-left px-5 py-2.5 font-medium">Status / Remarks</th>
+                          <th className="text-center px-5 py-2.5 font-medium">Entitled</th>
+                          <th className="text-center px-5 py-2.5 font-medium">Taken</th>
+                          <th className="text-center px-5 py-2.5 font-medium">Pending</th>
+                          <th className="text-center px-5 py-2.5 font-medium">Balance</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-50">
+                        {g.leaves.map((l, i) => {
+                          const elig = getLeaveEligibility(l.leave_type_name, g.gender, g.marital_status, g.num_children);
+                          return (
+                            <tr key={i} className={!elig.eligible ? 'bg-gray-50/50' : ''}>
+                              <td className="px-5 py-3 font-medium text-gray-900">{l.leave_type_name}</td>
+                              <td className="px-5 py-3">
+                                {elig.eligible ? (
+                                  <span className="text-gray-600">
+                                    Employee has <strong>{Number(l.balance)} day(s)</strong> of {l.leave_type_name}
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1.5 text-amber-600 text-sm">
+                                    <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                                    {elig.reason}
+                                  </span>
+                                )}
+                              </td>
+                              <td className="px-5 py-3 text-center text-gray-600">{elig.eligible ? Number(l.entitled_days) : '\u2014'}</td>
+                              <td className="px-5 py-3 text-center text-gray-600">{elig.eligible ? Number(l.taken_days) : '\u2014'}</td>
+                              <td className="px-5 py-3 text-center">
+                                {elig.eligible ? (
+                                  <span className={Number(l.pending_days) > 0 ? 'text-amber-600' : 'text-gray-600'}>{Number(l.pending_days)}</span>
+                                ) : '\u2014'}
+                              </td>
+                              <td className="px-5 py-3 text-center">
+                                {elig.eligible ? (
+                                  <span className={`font-bold ${Number(l.balance) > 0 ? 'text-emerald-600' : Number(l.balance) < 0 ? 'text-red-600' : 'text-gray-600'}`}>
+                                    {Number(l.balance)}
+                                  </span>
+                                ) : '\u2014'}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
   );
 }
 
+// ─── Claims Summary Report ───
+
+function ClaimsSummaryReport({
+  data,
+  isLoading,
+  year,
+  onExport,
+}: {
+  data: ClaimsReportRow[] | undefined;
+  isLoading: boolean;
+  year: number;
+  onExport: () => void;
+}) {
+  const [search, setSearch] = useState('');
+
+  const filtered = useMemo(() => {
+    if (!data) return [];
+    if (!search.trim()) return data;
+    const q = search.toLowerCase();
+    return data.filter(
+      (r) =>
+        r.employee_name.toLowerCase().includes(q) ||
+        r.employee_number.toLowerCase().includes(q) ||
+        (r.department || '').toLowerCase().includes(q)
+    );
+  }, [data, search]);
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-48">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900" />
+      </div>
+    );
+  }
+
+  // Summary totals
+  const totals = (data ?? []).reduce(
+    (acc, r) => ({
+      claims: acc.claims + r.total_claims,
+      amount: acc.amount + r.total_amount,
+      approved: acc.approved + r.approved_count,
+      approvedAmt: acc.approvedAmt + r.approved_amount,
+      pending: acc.pending + r.pending_count,
+      pendingAmt: acc.pendingAmt + r.pending_amount,
+      rejected: acc.rejected + r.rejected_count,
+    }),
+    { claims: 0, amount: 0, approved: 0, approvedAmt: 0, pending: 0, pendingAmt: 0, rejected: 0 }
+  );
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <h2 className="font-semibold text-gray-900">Claims Summary — {year}</h2>
+        <div className="flex items-center gap-2">
+          <input
+            type="text"
+            placeholder="Search employee..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="form-input !w-auto min-w-[200px] !text-sm"
+          />
+          {data && data.length > 0 && (
+            <button onClick={onExport} className="btn-secondary !py-1.5 !px-3 !text-xs">
+              <Download className="w-3.5 h-3.5" /> Export
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Summary cards */}
+      {data && data.length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <SummaryCard label="Total Claims" value={String(totals.claims)} />
+          <SummaryCard label="Total Amount" value={fmt(totals.amount)} />
+          <SummaryCard label="Approved" value={`${totals.approved} (${fmt(totals.approvedAmt)})`} className="text-emerald-600" />
+          <SummaryCard label="Pending" value={`${totals.pending} (${fmt(totals.pendingAmt)})`} className="text-amber-600" />
+        </div>
+      )}
+
+      {filtered.length === 0 ? (
+        <div className="text-center py-16 text-gray-400">
+          <FileText className="w-8 h-8 mx-auto mb-3 opacity-40" />
+          <p className="text-sm">No claims data for {year}</p>
+        </div>
+      ) : (
+        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wide">
+                <th className="text-left px-5 py-3 font-medium">Employee</th>
+                <th className="text-left px-5 py-3 font-medium">Department</th>
+                <th className="text-center px-5 py-3 font-medium">Total</th>
+                <th className="text-right px-5 py-3 font-medium">Amount</th>
+                <th className="text-center px-5 py-3 font-medium">Approved</th>
+                <th className="text-center px-5 py-3 font-medium">Pending</th>
+                <th className="text-center px-5 py-3 font-medium">Rejected</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {filtered.map((r) => (
+                <tr key={r.employee_number} className="hover:bg-gray-50/50">
+                  <td className="px-5 py-3">
+                    <div className="font-semibold text-gray-900">{r.employee_name}</div>
+                    <div className="text-xs text-gray-400">{r.employee_number}</div>
+                  </td>
+                  <td className="px-5 py-3 text-gray-500">{r.department || '\u2014'}</td>
+                  <td className="px-5 py-3 text-center font-medium text-gray-900">{r.total_claims}</td>
+                  <td className="px-5 py-3 text-right font-semibold text-gray-900">{fmt(r.total_amount)}</td>
+                  <td className="px-5 py-3 text-center">
+                    <span className="text-emerald-600 font-medium">{r.approved_count}</span>
+                    {r.approved_amount > 0 && (
+                      <div className="text-xs text-emerald-500">{fmt(r.approved_amount)}</div>
+                    )}
+                  </td>
+                  <td className="px-5 py-3 text-center">
+                    <span className="text-amber-600 font-medium">{r.pending_count}</span>
+                    {r.pending_amount > 0 && (
+                      <div className="text-xs text-amber-500">{fmt(r.pending_amount)}</div>
+                    )}
+                  </td>
+                  <td className="px-5 py-3 text-center">
+                    <span className={`font-medium ${r.rejected_count > 0 ? 'text-red-600' : 'text-gray-400'}`}>{r.rejected_count}</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Shared Components ───
+
 function SummaryField({ label, value }: { label: string; value: string }) {
   return (
     <div>
       <p className="text-xs text-gray-400 uppercase tracking-wide">{label}</p>
       <p className="text-sm font-medium text-gray-900 mt-0.5">{value}</p>
+    </div>
+  );
+}
+
+function SummaryCard({ label, value, className }: { label: string; value: string; className?: string }) {
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 px-4 py-3">
+      <p className="text-xs text-gray-400 uppercase tracking-wide">{label}</p>
+      <p className={`text-sm font-semibold mt-1 ${className || 'text-gray-900'}`}>{value}</p>
     </div>
   );
 }

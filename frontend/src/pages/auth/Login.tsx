@@ -235,11 +235,19 @@ export function Login() {
             <div className="grid grid-cols-3 gap-3">
               <button
                 type="button"
-                onClick={() => { setEmail('admin@demo.com'); setPassword('admin123'); }}
+                onClick={() => { setEmail('superadmin@demo.com'); setPassword('admin123'); }}
                 className="text-xs text-center py-2.5 px-3 bg-gray-50 rounded-xl text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-all-fast border border-gray-100"
               >
                 <span className="block font-semibold text-gray-600">Super Admin</span>
-                admin@demo.com
+                superadmin
+              </button>
+              <button
+                type="button"
+                onClick={() => { setEmail('admin@demo.com'); setPassword('admin123'); }}
+                className="text-xs text-center py-2.5 px-3 bg-gray-50 rounded-xl text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-all-fast border border-gray-100"
+              >
+                <span className="block font-semibold text-gray-600">Admin</span>
+                admin
               </button>
               <button
                 type="button"
@@ -247,7 +255,7 @@ export function Login() {
                 className="text-xs text-center py-2.5 px-3 bg-gray-50 rounded-xl text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-all-fast border border-gray-100"
               >
                 <span className="block font-semibold text-gray-600">Executive</span>
-                exec@demo.com
+                exec
               </button>
               <button
                 type="button"
@@ -255,7 +263,7 @@ export function Login() {
                 className="text-xs text-center py-2.5 px-3 bg-gray-50 rounded-xl text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-all-fast border border-gray-100"
               >
                 <span className="block font-semibold text-gray-600">Employee</span>
-                sarah@demo.com
+                sarah
               </button>
               <button
                 type="button"
@@ -264,14 +272,6 @@ export function Login() {
               >
                 <span className="block font-semibold text-gray-600">Sr. Developer</span>
                 hafiz.rahman
-              </button>
-              <button
-                type="button"
-                onClick={() => { setEmail('kavitha.s@demo.com'); setPassword('admin123'); }}
-                className="text-xs text-center py-2.5 px-3 bg-gray-50 rounded-xl text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-all-fast border border-gray-100"
-              >
-                <span className="block font-semibold text-gray-600">UX Designer</span>
-                kavitha.s
               </button>
               <button
                 type="button"

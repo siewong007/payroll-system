@@ -1,10 +1,11 @@
 use axum::{
-    extract::{Multipart, State},
+    extract::{Multipart, Query, State},
     http::header,
     response::IntoResponse,
     Json,
 };
 use chrono::Utc;
+use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::core::app_state::AppState;
@@ -13,24 +14,39 @@ use crate::core::error::{AppError, AppResult};
 use crate::models::backup::{CompanyBackup, ImportResult};
 use crate::services::backup_service;
 
-fn require_admin(auth: &AuthUser) -> AppResult<(Uuid, Uuid)> {
+fn require_admin(auth: &AuthUser) -> AppResult<(Option<Uuid>, Uuid)> {
     match auth.0.role.as_str() {
-        "super_admin" | "admin" => {
+        "super_admin" => Ok((auth.0.company_id, auth.0.sub)),
+        "admin" => {
             let company_id = auth
                 .0
                 .company_id
                 .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
-            Ok((company_id, auth.0.sub))
+            Ok((Some(company_id), auth.0.sub))
         }
         _ => Err(AppError::Forbidden("Admin access required".into())),
     }
 }
 
+#[derive(Deserialize)]
+pub struct ExportQuery {
+    pub company_id: Option<Uuid>,
+}
+
 pub async fn export_company(
     State(state): State<AppState>,
     auth: AuthUser,
+    Query(query): Query<ExportQuery>,
 ) -> Result<impl IntoResponse, AppError> {
-    let (company_id, _user_id) = require_admin(&auth)?;
+    let (user_company_id, _user_id) = require_admin(&auth)?;
+
+    let company_id = if auth.0.role == "super_admin" {
+        query.company_id.ok_or_else(|| {
+            AppError::BadRequest("company_id query parameter is required for super_admin".into())
+        })?
+    } else {
+        user_company_id.unwrap()
+    };
 
     let backup = backup_service::export_company(&state.pool, company_id).await?;
 
@@ -64,7 +80,7 @@ pub async fn import_company(
     auth: AuthUser,
     mut multipart: Multipart,
 ) -> AppResult<Json<ImportResult>> {
-    let (_company_id, user_id) = require_admin(&auth)?;
+    let (_, user_id) = require_admin(&auth)?;
 
     let mut file_data: Option<Vec<u8>> = None;
 

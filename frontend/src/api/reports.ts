@@ -28,6 +28,9 @@ export interface LeaveReportRow {
   employee_name: string;
   employee_number: string;
   department: string | null;
+  gender: string | null;
+  marital_status: string | null;
+  num_children: number | null;
   leave_type_name: string;
   entitled_days: number;
   taken_days: number;

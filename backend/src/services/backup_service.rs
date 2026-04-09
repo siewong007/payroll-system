@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use base64::Engine;
 use chrono::Utc;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -31,9 +32,9 @@ pub async fn export_company(pool: &PgPool, company_id: Uuid) -> AppResult<Compan
 
     let employees = sqlx::query_as::<_, EmployeeExport>(
         r#"SELECT id, company_id, employee_number, full_name, ic_number, passport_number,
-                  date_of_birth, gender, nationality, race, residency_status, marital_status,
+                  date_of_birth, gender::text, nationality, race::text, residency_status::text, marital_status::text,
                   email, phone, address_line1, address_line2, city, state, postcode,
-                  department, designation, cost_centre, branch, employment_type,
+                  department, designation, cost_centre, branch, employment_type::text,
                   date_joined, probation_start, probation_end, confirmation_date,
                   date_resigned, resignation_reason,
                   basic_salary, hourly_rate, daily_rate,
@@ -136,7 +137,7 @@ pub async fn export_company(pool: &PgPool, company_id: Uuid) -> AppResult<Compan
 
     let payroll_runs = sqlx::query_as::<_, PayrollRunExport>(
         r#"SELECT id, company_id, payroll_group_id, period_year, period_month,
-                  period_start, period_end, pay_date, status,
+                  period_start, period_end, pay_date, status::text,
                   total_gross, total_net, total_employer_cost,
                   total_epf_employee, total_epf_employer,
                   total_socso_employee, total_socso_employer,
@@ -203,7 +204,7 @@ pub async fn export_company(pool: &PgPool, company_id: Uuid) -> AppResult<Compan
 
     let documents = sqlx::query_as::<_, DocumentExport>(
         r#"SELECT id, company_id, employee_id, category_id, title, description,
-                  file_name, file_url, file_size, mime_type, status,
+                  file_name, file_url, file_size, mime_type, status::text,
                   issue_date, expiry_date, is_confidential, tags,
                   deleted_at, created_at, updated_at
            FROM documents WHERE company_id = $1"#,
@@ -296,6 +297,32 @@ pub async fn export_company(pool: &PgPool, company_id: Uuid) -> AppResult<Compan
         record_counts,
     };
 
+    // Collect uploaded files (documents, leave attachments, claim receipts)
+    let mut files: HashMap<String, String> = HashMap::new();
+    let upload_dir = std::path::Path::new("uploads");
+    let b64 = base64::engine::general_purpose::STANDARD;
+
+    let mut collect_file = |url: Option<&String>| {
+        if let Some(u) = url {
+            if let Some(filename) = u.strip_prefix("/api/uploads/") {
+                let path = upload_dir.join(filename);
+                if let Ok(data) = std::fs::read(&path) {
+                    files.insert(u.clone(), b64.encode(&data));
+                }
+            }
+        }
+    };
+
+    for d in &documents {
+        collect_file(Some(&d.file_url));
+    }
+    for lr in &leave_requests {
+        collect_file(lr.attachment_url.as_ref());
+    }
+    for c in &claims {
+        collect_file(c.receipt_url.as_ref());
+    }
+
     Ok(CompanyBackup {
         metadata,
         company,
@@ -321,6 +348,7 @@ pub async fn export_company(pool: &PgPool, company_id: Uuid) -> AppResult<Compan
         working_day_config,
         email_templates,
         company_settings,
+        files,
     })
 }
 
@@ -336,10 +364,20 @@ pub async fn import_company(
         )));
     }
 
+    // Check if company with same name already exists
+    let existing_company: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT id FROM companies WHERE LOWER(name) = LOWER($1)"
+    )
+    .bind(&backup.company.name)
+    .fetch_optional(pool)
+    .await?;
+
+    let is_overwrite = existing_company.is_some();
+
     // Build UUID remap table
     let mut remap: HashMap<Uuid, Uuid> = HashMap::new();
 
-    let new_company_id = Uuid::new_v4();
+    let new_company_id = existing_company.map(|(id,)| id).unwrap_or_else(Uuid::new_v4);
     remap.insert(backup.company.id, new_company_id);
 
     for pg in &backup.payroll_groups {
@@ -416,22 +454,69 @@ pub async fn import_company(
     let mut warnings = Vec::new();
     let now = Utc::now();
 
-    // 1. Company
-    let c = &backup.company;
-    sqlx::query(
-        r#"INSERT INTO companies (id, name, registration_number, tax_number, epf_number, socso_code,
-           eis_code, hrdf_number, address_line1, address_line2, city, state, postcode, country,
-           phone, email, logo_url, hrdf_enabled, unpaid_leave_divisor, is_active, created_at, updated_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)"#,
-    )
-    .bind(new_company_id).bind(&c.name).bind(&c.registration_number).bind(&c.tax_number)
-    .bind(&c.epf_number).bind(&c.socso_code).bind(&c.eis_code).bind(&c.hrdf_number)
-    .bind(&c.address_line1).bind(&c.address_line2).bind(&c.city).bind(&c.state)
-    .bind(&c.postcode).bind(&c.country).bind(&c.phone).bind(&c.email).bind(&c.logo_url)
-    .bind(c.hrdf_enabled).bind(c.unpaid_leave_divisor).bind(c.is_active)
-    .bind(now).bind(now)
-    .execute(&mut *tx)
-    .await?;
+    // If overwriting, delete all existing data for this company (order matters for FK constraints)
+    if is_overwrite {
+        warnings.push(format!("Existing company \"{}\" data was overwritten.", backup.company.name));
+
+        // Delete in reverse dependency order
+        sqlx::query("DELETE FROM company_settings WHERE company_id = $1").bind(new_company_id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM email_templates WHERE company_id = $1").bind(new_company_id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM working_day_config WHERE company_id = $1").bind(new_company_id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM holidays WHERE company_id = $1").bind(new_company_id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM team_members WHERE team_id IN (SELECT id FROM teams WHERE company_id = $1)").bind(new_company_id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM teams WHERE company_id = $1").bind(new_company_id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM documents WHERE company_id = $1").bind(new_company_id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM document_categories WHERE company_id = $1").bind(new_company_id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM payroll_entries WHERE company_id = $1").bind(new_company_id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM payroll_item_details WHERE payroll_item_id IN (SELECT pi.id FROM payroll_items pi JOIN payroll_runs pr ON pi.payroll_run_id = pr.id WHERE pr.company_id = $1)").bind(new_company_id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM payroll_items WHERE payroll_run_id IN (SELECT id FROM payroll_runs WHERE company_id = $1)").bind(new_company_id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM payroll_runs WHERE company_id = $1").bind(new_company_id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM overtime_applications WHERE company_id = $1").bind(new_company_id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM claims WHERE company_id = $1").bind(new_company_id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM leave_requests WHERE company_id = $1").bind(new_company_id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM leave_balances WHERE employee_id IN (SELECT id FROM employees WHERE company_id = $1)").bind(new_company_id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM leave_types WHERE company_id = $1").bind(new_company_id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM tp3_records WHERE employee_id IN (SELECT id FROM employees WHERE company_id = $1)").bind(new_company_id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM salary_history WHERE employee_id IN (SELECT id FROM employees WHERE company_id = $1)").bind(new_company_id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM employee_allowances WHERE employee_id IN (SELECT id FROM employees WHERE company_id = $1)").bind(new_company_id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM employees WHERE company_id = $1").bind(new_company_id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM payroll_groups WHERE company_id = $1").bind(new_company_id).execute(&mut *tx).await?;
+
+        // Update the company record
+        let c = &backup.company;
+        sqlx::query(
+            r#"UPDATE companies SET registration_number=$2, tax_number=$3, epf_number=$4, socso_code=$5,
+               eis_code=$6, hrdf_number=$7, address_line1=$8, address_line2=$9, city=$10, state=$11,
+               postcode=$12, country=$13, phone=$14, email=$15, logo_url=$16, hrdf_enabled=$17,
+               unpaid_leave_divisor=$18, is_active=$19, updated_at=$20
+               WHERE id = $1"#,
+        )
+        .bind(new_company_id).bind(&c.registration_number).bind(&c.tax_number)
+        .bind(&c.epf_number).bind(&c.socso_code).bind(&c.eis_code).bind(&c.hrdf_number)
+        .bind(&c.address_line1).bind(&c.address_line2).bind(&c.city).bind(&c.state)
+        .bind(&c.postcode).bind(&c.country).bind(&c.phone).bind(&c.email).bind(&c.logo_url)
+        .bind(c.hrdf_enabled).bind(c.unpaid_leave_divisor).bind(c.is_active)
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
+    } else {
+        // 1. Create new company
+        let c = &backup.company;
+        sqlx::query(
+            r#"INSERT INTO companies (id, name, registration_number, tax_number, epf_number, socso_code,
+               eis_code, hrdf_number, address_line1, address_line2, city, state, postcode, country,
+               phone, email, logo_url, hrdf_enabled, unpaid_leave_divisor, is_active, created_at, updated_at)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)"#,
+        )
+        .bind(new_company_id).bind(&c.name).bind(&c.registration_number).bind(&c.tax_number)
+        .bind(&c.epf_number).bind(&c.socso_code).bind(&c.eis_code).bind(&c.hrdf_number)
+        .bind(&c.address_line1).bind(&c.address_line2).bind(&c.city).bind(&c.state)
+        .bind(&c.postcode).bind(&c.country).bind(&c.phone).bind(&c.email).bind(&c.logo_url)
+        .bind(c.hrdf_enabled).bind(c.unpaid_leave_divisor).bind(c.is_active)
+        .bind(now).bind(now)
+        .execute(&mut *tx)
+        .await?;
+    }
 
     // 2. Payroll groups
     for pg in &backup.payroll_groups {
@@ -463,8 +548,8 @@ pub async fn import_company(
                is_muslim, zakat_eligible, zakat_monthly_amount, ptptn_monthly_amount, tabung_haji_amount,
                hrdf_contribution, payroll_group_id, salary_group,
                is_active, deleted_at, created_at, updated_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
-                       $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8::gender_type,$9,$10::race_type,$11::residency_status,$12::marital_status,$13,$14,$15,$16,$17,$18,$19,$20,
+                       $21,$22,$23,$24::employment_type,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,
                        $39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55)"#,
         )
         .bind(r(e.id)).bind(new_company_id).bind(&e.employee_number).bind(&e.full_name)
@@ -613,7 +698,7 @@ pub async fn import_company(
                total_eis_employee, total_eis_employer,
                total_pcb, total_zakat, employee_count, version, notes,
                created_at, updated_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)"#,
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::payroll_status,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)"#,
         )
         .bind(r(pr.id)).bind(new_company_id).bind(r(pr.payroll_group_id))
         .bind(pr.period_year).bind(pr.period_month).bind(pr.period_start).bind(pr.period_end)
@@ -707,17 +792,14 @@ pub async fn import_company(
         .await?;
     }
 
-    // 17. Documents (metadata only - files need separate migration)
-    if !backup.documents.is_empty() {
-        warnings.push("Document file URLs were preserved but actual files may need to be migrated separately.".into());
-    }
+    // 17. Documents
     for d in &backup.documents {
         sqlx::query(
             r#"INSERT INTO documents (id, company_id, employee_id, category_id, title, description,
                file_name, file_url, file_size, mime_type, status,
                issue_date, expiry_date, is_confidential, tags,
                deleted_at, created_at, updated_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)"#,
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::document_status,$12,$13,$14,$15,$16,$17,$18)"#,
         )
         .bind(r(d.id)).bind(new_company_id).bind(ro(d.employee_id)).bind(ro(d.category_id))
         .bind(&d.title).bind(&d.description).bind(&d.file_name).bind(&d.file_url)
@@ -804,6 +886,27 @@ pub async fn import_company(
 
     tx.commit().await?;
 
+    // Restore uploaded files from backup
+    if !backup.files.is_empty() {
+        let upload_dir = std::path::Path::new("uploads");
+        let _ = tokio::fs::create_dir_all(upload_dir).await;
+        let b64 = base64::engine::general_purpose::STANDARD;
+        let mut files_restored = 0usize;
+        for (url, data_b64) in &backup.files {
+            if let Some(filename) = url.strip_prefix("/api/uploads/") {
+                if let Ok(data) = b64.decode(data_b64) {
+                    let path = upload_dir.join(filename);
+                    if tokio::fs::write(&path, &data).await.is_ok() {
+                        files_restored += 1;
+                    }
+                }
+            }
+        }
+        if files_restored > 0 {
+            warnings.push(format!("{} file(s) restored to uploads directory.", files_restored));
+        }
+    }
+
     let mut records_imported = HashMap::new();
     records_imported.insert("company".into(), 1usize);
     records_imported.insert("payroll_groups".into(), backup.payroll_groups.len());
@@ -832,6 +935,7 @@ pub async fn import_company(
     Ok(ImportResult {
         new_company_id,
         new_company_name: backup.company.name.clone(),
+        is_overwrite,
         records_imported,
         warnings,
     })

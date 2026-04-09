@@ -1,8 +1,9 @@
 import api from './client';
 import type { ImportResult } from '@/types';
 
-export async function exportCompanyBackup(): Promise<void> {
-  const response = await api.get('/admin/backup/export', { responseType: 'blob' });
+export async function exportCompanyBackup(companyId?: string): Promise<void> {
+  const params = companyId ? { company_id: companyId } : {};
+  const response = await api.get('/admin/backup/export', { params, responseType: 'blob' });
   const url = window.URL.createObjectURL(new Blob([response.data]));
   const a = document.createElement('a');
   a.href = url;

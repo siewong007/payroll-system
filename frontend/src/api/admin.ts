@@ -9,7 +9,6 @@ import type {
   UpdateUserCompaniesRequest,
   CompanySummary,
   LoginResponse,
-  PasswordResetRequest,
 } from '@/types';
 
 // Company management (super_admin)
@@ -45,22 +44,7 @@ export const getMyCompanies = () =>
 export const switchCompany = (companyId: string) =>
   api.put<LoginResponse>('/auth/switch-company', { company_id: companyId }).then((r) => r.data);
 
-// Password Reset Admin
-export const listPasswordResets = () =>
-  api.get<PasswordResetRequest[]>('/admin/password-resets').then((r) => r.data);
-
-export const approvePasswordReset = (id: string) =>
-  api.put<{ request: PasswordResetRequest; reset_url: string; message: string }>(
-    `/admin/password-resets/${id}/approve`
-  ).then((r) => r.data);
-
-export const rejectPasswordReset = (id: string) =>
-  api.put(`/admin/password-resets/${id}/reject`).then((r) => r.data);
-
-export const countPendingResets = () =>
-  api.get<{ count: number }>('/admin/password-resets/count').then((r) => r.data);
-
-// Auth - forgot/reset password (public-ish)
+// Auth - forgot/reset password (public)
 export const forgotPassword = (email: string) =>
   api.post('/auth/forgot-password', { email }).then((r) => r.data);
 

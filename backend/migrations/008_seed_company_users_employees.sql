@@ -1,9 +1,68 @@
--- =====================================================
--- Seed Employees for Demo Company
--- Company ID: 00000000-0000-0000-0000-000000000001
--- Payroll Group ID: 00000000-0000-0000-0000-000000000003
--- =====================================================
+-- Seed demo company, users, employees, and allowances
 
+-- Demo Company
+INSERT INTO companies (id, name, registration_number, tax_number)
+VALUES ('00000000-0000-0000-0000-000000000001', 'Demo Company Sdn Bhd', '202301012345', 'C2023-001234');
+
+-- Password: admin123 (bcrypt hash)
+-- Super Admin user (superadmin@demo.com)
+INSERT INTO users (id, email, password_hash, full_name, role, company_id)
+VALUES (
+    '00000000-0000-0000-0000-000000000002',
+    'superadmin@demo.com',
+    '$2b$12$fRjUOo/hbE.JoyBkrDmmg.0nkGxVzL6dQXJuUHZ2dgDBZcdvX3yA2',
+    'Super Administrator',
+    'super_admin',
+    '00000000-0000-0000-0000-000000000001'
+);
+
+-- Admin user (admin@demo.com)
+INSERT INTO users (id, email, password_hash, full_name, role, company_id)
+VALUES (
+    '00000000-0000-0000-0000-000000000021',
+    'admin@demo.com',
+    '$2b$12$fRjUOo/hbE.JoyBkrDmmg.0nkGxVzL6dQXJuUHZ2dgDBZcdvX3yA2',
+    'Company Administrator',
+    'admin',
+    '00000000-0000-0000-0000-000000000001'
+);
+
+-- Executive Director user (exec@demo.com)
+INSERT INTO users (id, email, password_hash, full_name, role, company_id)
+VALUES (
+    '00000000-0000-0000-0000-000000000020',
+    'exec@demo.com',
+    '$2b$12$fRjUOo/hbE.JoyBkrDmmg.0nkGxVzL6dQXJuUHZ2dgDBZcdvX3yA2',
+    'Executive Director',
+    'exec',
+    '00000000-0000-0000-0000-000000000001'
+);
+
+-- Employee portal user (sarah@demo.com)
+INSERT INTO users (id, email, password_hash, full_name, role, company_id)
+VALUES (
+    '00000000-0000-0000-0000-000000000010',
+    'sarah@demo.com',
+    '$2b$12$fRjUOo/hbE.JoyBkrDmmg.0nkGxVzL6dQXJuUHZ2dgDBZcdvX3yA2',
+    'Sarah Lee',
+    'employee',
+    '00000000-0000-0000-0000-000000000001'
+);
+
+-- Default payroll group
+INSERT INTO payroll_groups (id, company_id, name, description, cutoff_day, payment_day)
+VALUES (
+    '00000000-0000-0000-0000-000000000003',
+    '00000000-0000-0000-0000-000000000001',
+    'Default',
+    'Default monthly payroll group',
+    25,
+    28
+);
+
+-- Link sarah to employee after employees are inserted (done via UPDATE below)
+
+-- Employees (EMP001–EMP010)
 INSERT INTO employees (
     id, company_id, employee_number, full_name, ic_number, date_of_birth, gender,
     nationality, race, residency_status, marital_status,
@@ -14,7 +73,6 @@ INSERT INTO employees (
     working_spouse, num_children, epf_category, is_muslim,
     payroll_group_id, is_active
 ) VALUES
--- 1. Ahmad Razak - Engineering Manager
 (
     'a0000000-0000-0000-0000-000000000001',
     '00000000-0000-0000-0000-000000000001',
@@ -27,7 +85,6 @@ INSERT INTO employees (
     TRUE, 2, 'A', TRUE,
     '00000000-0000-0000-0000-000000000003', TRUE
 ),
--- 2. Siti Nurhaliza - Senior Accountant
 (
     'a0000000-0000-0000-0000-000000000002',
     '00000000-0000-0000-0000-000000000001',
@@ -40,7 +97,6 @@ INSERT INTO employees (
     TRUE, 3, 'A', TRUE,
     '00000000-0000-0000-0000-000000000003', TRUE
 ),
--- 3. Lee Wei Ming - Software Developer
 (
     'a0000000-0000-0000-0000-000000000003',
     '00000000-0000-0000-0000-000000000001',
@@ -53,7 +109,6 @@ INSERT INTO employees (
     FALSE, 0, 'A', FALSE,
     '00000000-0000-0000-0000-000000000003', TRUE
 ),
--- 4. Priya Nair - HR Executive
 (
     'a0000000-0000-0000-0000-000000000004',
     '00000000-0000-0000-0000-000000000001',
@@ -66,7 +121,6 @@ INSERT INTO employees (
     TRUE, 1, 'A', FALSE,
     '00000000-0000-0000-0000-000000000003', TRUE
 ),
--- 5. Muhammad Faiz - Junior Developer (contract)
 (
     'a0000000-0000-0000-0000-000000000005',
     '00000000-0000-0000-0000-000000000001',
@@ -79,7 +133,6 @@ INSERT INTO employees (
     FALSE, 0, 'A', TRUE,
     '00000000-0000-0000-0000-000000000003', TRUE
 ),
--- 6. Tan Mei Ling - Marketing Manager
 (
     'a0000000-0000-0000-0000-000000000006',
     '00000000-0000-0000-0000-000000000001',
@@ -92,7 +145,6 @@ INSERT INTO employees (
     FALSE, 1, 'A', FALSE,
     '00000000-0000-0000-0000-000000000003', TRUE
 ),
--- 7. Rajesh Kumar - Operations Executive
 (
     'a0000000-0000-0000-0000-000000000007',
     '00000000-0000-0000-0000-000000000001',
@@ -105,7 +157,6 @@ INSERT INTO employees (
     TRUE, 2, 'A', FALSE,
     '00000000-0000-0000-0000-000000000003', TRUE
 ),
--- 8. Nurul Aisyah - Finance Assistant
 (
     'a0000000-0000-0000-0000-000000000008',
     '00000000-0000-0000-0000-000000000001',
@@ -118,7 +169,6 @@ INSERT INTO employees (
     FALSE, 0, 'A', TRUE,
     '00000000-0000-0000-0000-000000000003', TRUE
 ),
--- 9. Wong Jia Hao - QA Engineer (intern)
 (
     'a0000000-0000-0000-0000-000000000009',
     '00000000-0000-0000-0000-000000000001',
@@ -131,7 +181,6 @@ INSERT INTO employees (
     FALSE, 0, 'A', FALSE,
     '00000000-0000-0000-0000-000000000003', TRUE
 ),
--- 10. Amirah Zainal - Admin & Office Manager
 (
     'a0000000-0000-0000-0000-000000000010',
     '00000000-0000-0000-0000-000000000001',
@@ -146,16 +195,17 @@ INSERT INTO employees (
 )
 ON CONFLICT (id) DO NOTHING;
 
--- Recurring allowances for some employees
--- Delete any existing seed allowances to avoid duplicates on re-run
-DELETE FROM employee_allowances WHERE employee_id IN (
-    'a0000000-0000-0000-0000-000000000001',
-    'a0000000-0000-0000-0000-000000000002',
-    'a0000000-0000-0000-0000-000000000004',
-    'a0000000-0000-0000-0000-000000000006',
-    'a0000000-0000-0000-0000-000000000007',
-    'a0000000-0000-0000-0000-000000000010'
-);
+-- Link sarah user to EMP002
+UPDATE users SET employee_id = (
+    SELECT id FROM employees WHERE employee_number = 'EMP002' AND company_id = '00000000-0000-0000-0000-000000000001' LIMIT 1
+) WHERE id = '00000000-0000-0000-0000-000000000010';
+
+-- Seed user_companies junction table
+INSERT INTO user_companies (user_id, company_id)
+SELECT id, company_id FROM users WHERE company_id IS NOT NULL
+ON CONFLICT DO NOTHING;
+
+-- Employee allowances
 INSERT INTO employee_allowances (employee_id, category, name, amount, is_taxable, effective_from) VALUES
 ('a0000000-0000-0000-0000-000000000001', 'earning', 'Housing Allowance', 50000, TRUE, '2020-03-01'),
 ('a0000000-0000-0000-0000-000000000001', 'earning', 'Transport Allowance', 30000, TRUE, '2020-03-01'),

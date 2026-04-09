@@ -1,12 +1,11 @@
 import { Outlet, Link, useLocation, Navigate } from 'react-router-dom';
-import { Home, User, FileText, Calendar, Receipt, LogOut, ChevronDown, Bell, Users, Clock, MoreHorizontal } from 'lucide-react';
+import { User, FileText, Calendar, Receipt, LogOut, ChevronDown, Bell, Users, Clock, MoreHorizontal } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getNotificationCount } from '@/api/notifications';
 
 const portalNav = [
-  { name: 'Home', href: '/portal', icon: Home },
   { name: 'My Profile', href: '/portal/profile', icon: User },
   { name: 'My Payslips', href: '/portal/payslips', icon: FileText },
   { name: 'Leave', href: '/portal/leave', icon: Calendar },
@@ -18,7 +17,7 @@ const portalNav = [
 
 // Primary tabs shown in mobile bottom bar
 const mobileTabNav = [
-  { name: 'Home', href: '/portal', icon: Home },
+  { name: 'Profile', href: '/portal/profile', icon: User },
   { name: 'Payslips', href: '/portal/payslips', icon: FileText },
   { name: 'Leave', href: '/portal/leave', icon: Calendar },
   { name: 'Claims', href: '/portal/claims', icon: Receipt },
@@ -26,7 +25,6 @@ const mobileTabNav = [
 
 // Items shown in "More" menu on mobile
 const mobileMoreNav = [
-  { name: 'My Profile', href: '/portal/profile', icon: User },
   { name: 'Overtime', href: '/portal/overtime', icon: Clock },
   { name: 'Team Calendar', href: '/portal/team-calendar', icon: Users },
   { name: 'Notifications', href: '/portal/notifications', icon: Bell },
@@ -86,7 +84,7 @@ export function PortalLayout() {
               {portalNav.map((item) => {
                 const isActive =
                   location.pathname === item.href ||
-                  (item.href !== '/portal' && location.pathname.startsWith(item.href));
+                  location.pathname.startsWith(item.href + '/');
                 return (
                   <Link
                     key={item.name}
@@ -170,7 +168,7 @@ export function PortalLayout() {
           {mobileTabNav.map((item) => {
             const isActive =
               location.pathname === item.href ||
-              (item.href !== '/portal' && location.pathname.startsWith(item.href));
+              location.pathname.startsWith(item.href + '/');
             return (
               <Link
                 key={item.name}

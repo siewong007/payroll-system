@@ -29,21 +29,6 @@ pub struct PasswordResetRequest {
     pub completed_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
-pub struct PasswordResetWithUser {
-    pub id: Uuid,
-    pub user_id: Uuid,
-    pub status: String,
-    pub requested_at: DateTime<Utc>,
-    pub reviewed_by: Option<Uuid>,
-    pub reviewed_at: Option<DateTime<Utc>>,
-    pub completed_at: Option<DateTime<Utc>>,
-    // joined fields
-    pub user_email: String,
-    pub user_full_name: String,
-    pub user_role: String,
-}
-
 // ─── Request/Response DTOs ───
 
 #[derive(Debug, Serialize)]

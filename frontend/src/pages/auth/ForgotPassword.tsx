@@ -51,7 +51,7 @@ export function ForgotPassword() {
               </div>
               <div>
                 <p className="text-sm text-gray-600">
-                  Your password reset request has been submitted. An administrator will review it and provide you with a reset link.
+                  If an account exists with that email, we've sent a password reset link. Please check your inbox and spam folder.
                 </p>
               </div>
               <Link

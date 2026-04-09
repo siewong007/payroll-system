@@ -12,7 +12,7 @@ use crate::core::error::{AppError, AppResult};
 use crate::models::session::{ForgotPasswordRequest, ResetPasswordRequest};
 use crate::models::user::{LoginRequest, LoginResponse, User, UserResponse};
 use crate::models::user_company::{CompanySummary, SwitchCompanyRequest};
-use crate::services::{auth_service, password_reset_service, session_service, user_service};
+use crate::services::{auth_service, email_service, password_reset_service, session_service, user_service};
 
 pub async fn login(
     State(state): State<AppState>,
@@ -153,14 +153,34 @@ pub async fn logout(
     Ok((resp_headers, Json(serde_json::json!({ "ok": true }))))
 }
 
-/// User requests a password reset.
+/// User requests a password reset. Sends reset link via email automatically.
 pub async fn forgot_password(
     State(state): State<AppState>,
     Json(req): Json<ForgotPasswordRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
-    password_reset_service::request_reset(&state.pool, &req.email).await?;
+    let result = password_reset_service::request_reset(&state.pool, &req.email).await?;
+
+    // Send reset email if user exists (fire-and-forget, don't reveal whether email exists)
+    if let Some((user_email, user_name, raw_token)) = result {
+        let reset_url = format!("{}/reset-password?token={}", state.config.frontend_url, raw_token);
+        let body_html = email_service::password_reset_html(&user_name, &reset_url);
+
+        // Log but don't fail the request if email sending fails
+        if let Err(e) = email_service::send_system_email(
+            &state.config,
+            &user_email,
+            &user_name,
+            "Reset your PayrollMY password",
+            &body_html,
+        )
+        .await
+        {
+            tracing::error!("Failed to send password reset email to {}: {}", user_email, e);
+        }
+    }
+
     Ok(Json(serde_json::json!({
-        "message": "If the email exists, a reset request has been submitted for admin approval."
+        "message": "If the email exists, a password reset link has been sent."
     })))
 }
 

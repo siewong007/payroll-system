@@ -38,12 +38,15 @@ pub struct CompanyBackup {
     pub working_day_config: Vec<WorkingDayConfigExport>,
     pub email_templates: Vec<EmailTemplateExport>,
     pub company_settings: Vec<CompanySettingExport>,
+    #[serde(default)]
+    pub files: HashMap<String, String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ImportResult {
     pub new_company_id: Uuid,
     pub new_company_name: String,
+    pub is_overwrite: bool,
     pub records_imported: HashMap<String, usize>,
     pub warnings: Vec<String>,
 }

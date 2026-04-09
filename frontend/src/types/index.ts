@@ -763,6 +763,7 @@ export interface ImportConfirmResponse {
 export interface ImportResult {
   new_company_id: string;
   new_company_name: string;
+  is_overwrite: boolean;
   records_imported: Record<string, number>;
   warnings: string[];
 }

@@ -1,6 +1,5 @@
 import { Link, useLocation } from 'react-router-dom';
 import {
-  LayoutDashboard,
   Building2,
   Users,
   Users2,
@@ -13,7 +12,6 @@ import {
   CalendarDays,
   UserCog,
   Shield,
-  KeyRound,
   Mail,
   DatabaseBackup,
   X,
@@ -23,7 +21,6 @@ import { CompanySwitcher } from './CompanySwitcher';
 import { AnimatePresence, motion } from 'framer-motion';
 
 const navigation = [
-  { name: 'Dashboard', href: '/', icon: LayoutDashboard, hideFor: ['super_admin'] },
   { name: 'Company', href: '/company', icon: Building2, hideFor: ['super_admin'] },
   { name: 'Employees', href: '/employees', icon: Users, hideFor: ['super_admin'] },
   { name: 'Payroll', href: '/payroll', icon: Calculator, hideFor: ['exec', 'super_admin'] },
@@ -37,7 +34,6 @@ const navigation = [
   { name: 'Companies', href: '/companies', icon: Building2, showFor: ['super_admin'] },
   { name: 'Users', href: '/users', icon: UserCog, showFor: ['super_admin'] },
   { name: 'Roles', href: '/roles', icon: Shield, showFor: ['super_admin'] },
-  { name: 'Password Resets', href: '/password-resets', icon: KeyRound, showFor: ['super_admin'] },
   { name: 'Backup', href: '/backup', icon: DatabaseBackup, showFor: ['super_admin', 'admin'] },
 ];
 

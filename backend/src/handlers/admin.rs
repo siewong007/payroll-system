@@ -8,9 +8,8 @@ use crate::core::app_state::AppState;
 use crate::core::auth::AuthUser;
 use crate::core::error::{AppError, AppResult};
 use crate::models::company::{Company, CreateCompanyRequest, UpdateCompanyRequest};
-use crate::models::session::PasswordResetWithUser;
 use crate::models::user_company::{CreateUserRequest, UpdateUserCompaniesRequest, UpdateUserRequest, UserWithCompanies};
-use crate::services::{company_service, password_reset_service, user_service};
+use crate::services::{company_service, user_service};
 
 fn require_super_admin(auth: &AuthUser) -> AppResult<()> {
     if auth.0.role != "super_admin" {
@@ -103,56 +102,3 @@ pub async fn update_user_companies(
     Ok(Json(user))
 }
 
-// ─── Password Reset Admin ───
-
-pub async fn list_password_resets(
-    State(state): State<AppState>,
-    auth: AuthUser,
-) -> AppResult<Json<Vec<PasswordResetWithUser>>> {
-    require_super_admin(&auth)?;
-    let requests = password_reset_service::list_requests(&state.pool).await?;
-    Ok(Json(requests))
-}
-
-pub async fn approve_password_reset(
-    State(state): State<AppState>,
-    auth: AuthUser,
-    Path(request_id): Path<Uuid>,
-) -> AppResult<Json<serde_json::Value>> {
-    require_super_admin(&auth)?;
-    let (request, raw_token) =
-        password_reset_service::approve_request(&state.pool, request_id, auth.0.sub).await?;
-
-    let reset_url = format!(
-        "{}/reset-password?token={}",
-        state.config.frontend_url,
-        urlencoding::encode(&raw_token),
-    );
-
-    tracing::info!("Password reset approved for request {}", request_id);
-
-    Ok(Json(serde_json::json!({
-        "request": request,
-        "reset_url": reset_url,
-        "message": "Reset approved. Copy the link and share it securely with the user."
-    })))
-}
-
-pub async fn reject_password_reset(
-    State(state): State<AppState>,
-    auth: AuthUser,
-    Path(request_id): Path<Uuid>,
-) -> AppResult<Json<serde_json::Value>> {
-    require_super_admin(&auth)?;
-    password_reset_service::reject_request(&state.pool, request_id, auth.0.sub).await?;
-    Ok(Json(serde_json::json!({ "ok": true })))
-}
-
-pub async fn count_pending_resets(
-    State(state): State<AppState>,
-    auth: AuthUser,
-) -> AppResult<Json<serde_json::Value>> {
-    require_super_admin(&auth)?;
-    let count = password_reset_service::count_pending(&state.pool).await?;
-    Ok(Json(serde_json::json!({ "count": count })))
-}

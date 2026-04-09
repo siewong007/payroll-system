@@ -16,16 +16,15 @@ pub async fn list_employees(
     limit: i64,
     offset: i64,
 ) -> AppResult<(Vec<Employee>, i64)> {
-    let active = is_active.unwrap_or(true);
-
     let count: i64 = sqlx::query_scalar(
         r#"SELECT COUNT(*) FROM employees
-        WHERE company_id = $1 AND is_active = $2 AND deleted_at IS NULL
+        WHERE company_id = $1 AND deleted_at IS NULL
+        AND ($2::bool IS NULL OR is_active = $2)
         AND ($3::text IS NULL OR full_name ILIKE '%' || $3 || '%' OR employee_number ILIKE '%' || $3 || '%')
         AND ($4::text IS NULL OR department = $4)"#,
     )
     .bind(company_id)
-    .bind(active)
+    .bind(is_active)
     .bind(search)
     .bind(department)
     .fetch_one(pool)
@@ -45,14 +44,15 @@ pub async fn list_employees(
             hrdf_contribution, payroll_group_id, salary_group, is_active,
             deleted_at, created_at, updated_at, created_by, updated_by
         FROM employees
-        WHERE company_id = $1 AND is_active = $2 AND deleted_at IS NULL
+        WHERE company_id = $1 AND deleted_at IS NULL
+        AND ($2::bool IS NULL OR is_active = $2)
         AND ($3::text IS NULL OR full_name ILIKE '%' || $3 || '%' OR employee_number ILIKE '%' || $3 || '%')
         AND ($4::text IS NULL OR department = $4)
         ORDER BY employee_number ASC
         LIMIT $5 OFFSET $6"#,
     )
     .bind(company_id)
-    .bind(active)
+    .bind(is_active)
     .bind(search)
     .bind(department)
     .bind(limit)
@@ -213,27 +213,51 @@ pub async fn update_employee(
             ic_number = COALESCE($4, ic_number),
             passport_number = COALESCE($5, passport_number),
             date_of_birth = COALESCE($6, date_of_birth),
-            gender = COALESCE($7, gender),
+            gender = COALESCE($7::gender_type, gender),
             nationality = COALESCE($8, nationality),
-            race = COALESCE($9, race),
-            residency_status = COALESCE($10, residency_status),
-            marital_status = COALESCE($11, marital_status),
+            race = COALESCE($9::race_type, race),
+            residency_status = COALESCE($10::residency_status, residency_status),
+            marital_status = COALESCE($11::marital_status, marital_status),
             email = COALESCE($12, email),
             phone = COALESCE($13, phone),
-            department = COALESCE($14, department),
-            designation = COALESCE($15, designation),
-            basic_salary = COALESCE($16, basic_salary),
-            bank_name = COALESCE($17, bank_name),
-            bank_account_number = COALESCE($18, bank_account_number),
-            working_spouse = COALESCE($19, working_spouse),
-            num_children = COALESCE($20, num_children),
-            epf_category = COALESCE($21, epf_category),
-            is_muslim = COALESCE($22, is_muslim),
-            zakat_eligible = COALESCE($23, zakat_eligible),
-            zakat_monthly_amount = COALESCE($24, zakat_monthly_amount),
-            ptptn_monthly_amount = COALESCE($25, ptptn_monthly_amount),
-            payroll_group_id = COALESCE($26, payroll_group_id),
-            updated_by = $27,
+            address_line1 = COALESCE($14, address_line1),
+            address_line2 = COALESCE($15, address_line2),
+            city = COALESCE($16, city),
+            state = COALESCE($17, state),
+            postcode = COALESCE($18, postcode),
+            department = COALESCE($19, department),
+            designation = COALESCE($20, designation),
+            cost_centre = COALESCE($21, cost_centre),
+            branch = COALESCE($22, branch),
+            employment_type = COALESCE($23::employment_type, employment_type),
+            probation_start = COALESCE($24, probation_start),
+            probation_end = COALESCE($25, probation_end),
+            confirmation_date = COALESCE($26, confirmation_date),
+            date_resigned = COALESCE($27, date_resigned),
+            resignation_reason = COALESCE($28, resignation_reason),
+            basic_salary = COALESCE($29, basic_salary),
+            hourly_rate = COALESCE($30, hourly_rate),
+            daily_rate = COALESCE($31, daily_rate),
+            bank_name = COALESCE($32, bank_name),
+            bank_account_number = COALESCE($33, bank_account_number),
+            bank_account_type = COALESCE($34, bank_account_type),
+            tax_identification_number = COALESCE($35, tax_identification_number),
+            epf_number = COALESCE($36, epf_number),
+            socso_number = COALESCE($37, socso_number),
+            eis_number = COALESCE($38, eis_number),
+            working_spouse = COALESCE($39, working_spouse),
+            num_children = COALESCE($40, num_children),
+            epf_category = COALESCE($41, epf_category),
+            is_muslim = COALESCE($42, is_muslim),
+            zakat_eligible = COALESCE($43, zakat_eligible),
+            zakat_monthly_amount = COALESCE($44, zakat_monthly_amount),
+            ptptn_monthly_amount = COALESCE($45, ptptn_monthly_amount),
+            tabung_haji_amount = COALESCE($46, tabung_haji_amount),
+            hrdf_contribution = COALESCE($47, hrdf_contribution),
+            payroll_group_id = COALESCE($48, payroll_group_id),
+            salary_group = COALESCE($49, salary_group),
+            is_active = COALESCE($50, is_active),
+            updated_by = $51,
             updated_at = NOW()
         WHERE id = $1 AND company_id = $2 AND deleted_at IS NULL
         RETURNING id, company_id, employee_number, full_name, ic_number, passport_number,
@@ -262,11 +286,31 @@ pub async fn update_employee(
     .bind(&req.marital_status)
     .bind(&req.email)
     .bind(&req.phone)
+    .bind(&req.address_line1)
+    .bind(&req.address_line2)
+    .bind(&req.city)
+    .bind(&req.state)
+    .bind(&req.postcode)
     .bind(&req.department)
     .bind(&req.designation)
+    .bind(&req.cost_centre)
+    .bind(&req.branch)
+    .bind(&req.employment_type)
+    .bind(req.probation_start)
+    .bind(req.probation_end)
+    .bind(req.confirmation_date)
+    .bind(req.date_resigned)
+    .bind(&req.resignation_reason)
     .bind(req.basic_salary)
+    .bind(req.hourly_rate)
+    .bind(req.daily_rate)
     .bind(&req.bank_name)
     .bind(&req.bank_account_number)
+    .bind(&req.bank_account_type)
+    .bind(&req.tax_identification_number)
+    .bind(&req.epf_number)
+    .bind(&req.socso_number)
+    .bind(&req.eis_number)
     .bind(req.working_spouse)
     .bind(req.num_children)
     .bind(&req.epf_category)
@@ -274,7 +318,11 @@ pub async fn update_employee(
     .bind(req.zakat_eligible)
     .bind(req.zakat_monthly_amount)
     .bind(req.ptptn_monthly_amount)
+    .bind(req.tabung_haji_amount)
+    .bind(req.hrdf_contribution)
     .bind(req.payroll_group_id)
+    .bind(&req.salary_group)
+    .bind(req.is_active)
     .bind(updated_by)
     .fetch_one(pool)
     .await?;

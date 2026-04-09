@@ -277,6 +277,88 @@ pub async fn send_email(
     }
 }
 
+// ── System Email (no DB logging, no company context) ──────────────────
+
+pub async fn send_system_email(
+    config: &AppConfig,
+    recipient_email: &str,
+    recipient_name: &str,
+    subject: &str,
+    body_html: &str,
+) -> AppResult<()> {
+    if !config.smtp_enabled() {
+        tracing::warn!("SMTP not configured, skipping system email to {}", recipient_email);
+        return Ok(());
+    }
+
+    let smtp_host = config.smtp_host.as_deref().unwrap();
+    let from_email = config.smtp_from_email.as_deref().unwrap();
+    let from_name = config.smtp_from_name.as_deref().unwrap_or("PayrollMY");
+
+    let from_addr = format!("{} <{}>", from_name, from_email);
+    let to_addr = if recipient_name.is_empty() {
+        recipient_email.to_string()
+    } else {
+        format!("{} <{}>", recipient_name, recipient_email)
+    };
+
+    let email = Message::builder()
+        .from(from_addr.parse().map_err(|e| AppError::Internal(format!("Invalid from address: {}", e)))?)
+        .to(to_addr.parse().map_err(|e| AppError::Internal(format!("Invalid to address: {}", e)))?)
+        .subject(subject)
+        .header(ContentType::TEXT_HTML)
+        .body(body_html.to_string())
+        .map_err(|e| AppError::Internal(format!("Failed to build email: {}", e)))?;
+
+    let port = config.smtp_port.unwrap_or(587);
+    let mut transport_builder = AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(smtp_host)
+        .map_err(|e| AppError::Internal(format!("SMTP connection error: {}", e)))?
+        .port(port);
+
+    if let (Some(user), Some(pass)) = (&config.smtp_username, &config.smtp_password) {
+        transport_builder = transport_builder.credentials(Credentials::new(user.clone(), pass.clone()));
+    }
+
+    let transport = transport_builder.build();
+
+    transport.send(email).await
+        .map_err(|e| AppError::Internal(format!("Failed to send email: {}", e)))?;
+
+    tracing::info!("System email sent to {}", recipient_email);
+    Ok(())
+}
+
+// ── Password Reset Email ──────────────────────────────────────────────
+
+pub fn password_reset_html(user_name: &str, reset_url: &str) -> String {
+    format!(
+        r#"<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; color: #333;">
+  <div style="background: #000; color: #fff; padding: 24px; border-radius: 12px 12px 0 0; text-align: center;">
+    <h1 style="margin: 0; font-size: 24px;">Password Reset</h1>
+  </div>
+  <div style="border: 1px solid #e5e7eb; border-top: none; padding: 24px; border-radius: 0 0 12px 12px;">
+    <p>Hi <strong>{user_name}</strong>,</p>
+    <p>We received a request to reset your password. Click the button below to set a new password:</p>
+    <p style="text-align: center; margin: 24px 0;">
+      <a href="{reset_url}" style="background: #000; color: #fff; padding: 12px 32px; border-radius: 8px; text-decoration: none; font-weight: 600; display: inline-block;">
+        Reset Password
+      </a>
+    </p>
+    <p style="font-size: 13px; color: #6b7280;">This link will expire in 1 hour. If you didn't request this, you can safely ignore this email.</p>
+  </div>
+  <p style="text-align: center; font-size: 12px; color: #9ca3af; margin-top: 16px;">
+    This is an automated message from PayrollMY.
+  </p>
+</body>
+</html>"#,
+        user_name = user_name,
+        reset_url = reset_url,
+    )
+}
+
 // ── Welcome Email ──────────────────────────────────────────────────────
 
 pub fn default_welcome_html(employee_name: &str, company_name: &str, frontend_url: &str) -> String {

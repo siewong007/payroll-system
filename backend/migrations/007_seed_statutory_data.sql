@@ -1,15 +1,7 @@
--- =====================================================
--- EPF Third Schedule 2024 - Category A (citizen/PR < 60, 11% employee)
--- Employer: 13% for wages <= RM5,000; 12% for wages > RM5,000
--- Wage ranges and exact contributions in sen
--- =====================================================
+-- Seed statutory rate tables and system settings
 
--- For wages above RM20,000, it's a flat percentage, but below that it's table-based.
--- Inserting key wage bands from the Third Schedule.
-
+-- EPF Third Schedule 2024 - Category A
 INSERT INTO epf_rates (wage_from, wage_to, employee_contribution, employer_contribution, category, effective_from) VALUES
--- Category A: Below 60, standard 11% employee
--- Wage band (sen), Employee (sen), Employer (sen)
 (1, 3000, 0, 500, 'A', '2024-01-01'),
 (3001, 5000, 500, 500, 'A', '2024-01-01'),
 (5001, 7000, 500, 1000, 'A', '2024-01-01'),
@@ -47,7 +39,6 @@ INSERT INTO epf_rates (wage_from, wage_to, employee_contribution, employer_contr
 (440001, 460000, 48500, 53500, 'A', '2024-01-01'),
 (460001, 480000, 51000, 55500, 'A', '2024-01-01'),
 (480001, 500000, 53000, 58000, 'A', '2024-01-01'),
--- Above RM5,000: employer rate drops to 12%
 (500001, 520000, 55000, 60000, 'A', '2024-01-01'),
 (520001, 540000, 57000, 62400, 'A', '2024-01-01'),
 (540001, 560000, 59500, 64800, 'A', '2024-01-01'),
@@ -72,15 +63,7 @@ INSERT INTO epf_rates (wage_from, wage_to, employee_contribution, employer_contr
 (1800001, 1900000, 203500, 222000, 'A', '2024-01-01'),
 (1900001, 2000000, 214500, 234000, 'A', '2024-01-01');
 
--- For wages above RM20,000: 11% employee, 12% employer (computed in code, not table)
-
--- =====================================================
 -- SOCSO First Schedule 2024
--- First Category: Employment Injury + Invalidity (employee < 60)
--- Second Category: Employment Injury only (employee >= 60)
--- Wage ceiling: RM6,000 (effective 2024)
--- =====================================================
-
 INSERT INTO socso_rates (wage_from, wage_to, first_cat_employee, first_cat_employer, second_cat_employer, effective_from) VALUES
 (1, 3000, 5, 15, 15, '2024-01-01'),
 (3001, 5000, 15, 35, 25, '2024-01-01'),
@@ -136,12 +119,7 @@ INSERT INTO socso_rates (wage_from, wage_to, first_cat_employee, first_cat_emplo
 (490001, 500000, 1825, 3335, 2015, '2024-01-01'),
 (500001, 600000, 2175, 3985, 2415, '2024-01-01');
 
--- =====================================================
 -- EIS Contribution Table 2024
--- 0.2% employee + 0.2% employer
--- Wage ceiling: RM5,000
--- =====================================================
-
 INSERT INTO eis_rates (wage_from, wage_to, employee_contribution, employer_contribution, effective_from) VALUES
 (1, 3000, 5, 5, '2024-01-01'),
 (3001, 5000, 10, 10, '2024-01-01'),
@@ -196,12 +174,7 @@ INSERT INTO eis_rates (wage_from, wage_to, employee_contribution, employer_contr
 (480001, 490000, 970, 970, '2024-01-01'),
 (490001, 500000, 990, 990, '2024-01-01');
 
--- =====================================================
--- PCB Tax Brackets 2024 (Malaysia Income Tax)
--- Schedule 1: Resident individual tax rates
--- Amounts in sen (annual chargeable income)
--- =====================================================
-
+-- PCB Tax Brackets 2024
 INSERT INTO pcb_brackets (chargeable_income_from, chargeable_income_to, tax_rate_percent, cumulative_tax, effective_year) VALUES
 (0, 500000, 0, 0, 2024),
 (500001, 2000000, 1, 0, 2024),
@@ -214,10 +187,7 @@ INSERT INTO pcb_brackets (chargeable_income_from, chargeable_income_to, tax_rate
 (60000001, 200000000, 28, 1364000000, 2024),
 (200000001, 9999999999, 30, 5284000000, 2024);
 
--- =====================================================
 -- PCB Reliefs 2024
--- =====================================================
-
 INSERT INTO pcb_reliefs (relief_type, amount, effective_year, description) VALUES
 ('individual', 900000, 2024, 'Individual relief RM9,000'),
 ('spouse', 400000, 2024, 'Spouse relief RM4,000 (non-working spouse)'),
@@ -234,10 +204,7 @@ INSERT INTO pcb_reliefs (relief_type, amount, effective_year, description) VALUE
 ('lifestyle_relief', 250000, 2024, 'Lifestyle relief RM2,500'),
 ('tax_rebate_individual', 40000, 2024, 'Tax rebate RM400 if chargeable income <= RM35,000');
 
--- =====================================================
 -- System Settings
--- =====================================================
-
 INSERT INTO system_settings (setting_key, setting_value, description, effective_from) VALUES
 ('minimum_wage', '150000', 'Minimum wage RM1,500/month in sen', '2023-01-01'),
 ('standard_working_hours_day', '8', 'Standard working hours per day', '2023-01-01'),
@@ -251,32 +218,3 @@ INSERT INTO system_settings (setting_key, setting_value, description, effective_
 ('socso_wage_ceiling', '600000', 'SOCSO wage ceiling RM6,000 in sen', '2024-01-01'),
 ('eis_wage_ceiling', '500000', 'EIS wage ceiling RM5,000 in sen', '2024-01-01'),
 ('pcb_rounding', 'up', 'PCB rounds up to nearest RM', '2024-01-01');
-
--- =====================================================
--- Default Company + Admin User
--- =====================================================
-
-INSERT INTO companies (id, name, registration_number, tax_number)
-VALUES ('00000000-0000-0000-0000-000000000001', 'Demo Company Sdn Bhd', '202301012345', 'C2023-001234');
-
--- Password: admin123 (bcrypt hash)
-INSERT INTO users (id, email, password_hash, full_name, role, company_id)
-VALUES (
-    '00000000-0000-0000-0000-000000000002',
-    'admin@demo.com',
-    '$2b$12$LJ3m4ys3Lz0Y.SaNjqFmRuPNiIhKMkxXbC5e2FNTE9A5YfDVbQcKO',
-    'System Administrator',
-    'super_admin',
-    '00000000-0000-0000-0000-000000000001'
-);
-
--- Default payroll group
-INSERT INTO payroll_groups (id, company_id, name, description, cutoff_day, payment_day)
-VALUES (
-    '00000000-0000-0000-0000-000000000003',
-    '00000000-0000-0000-0000-000000000001',
-    'Default',
-    'Default monthly payroll group',
-    25,
-    28
-);

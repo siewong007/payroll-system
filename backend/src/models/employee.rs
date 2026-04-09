@@ -176,8 +176,10 @@ pub struct UpdateEmployeeRequest {
     pub zakat_monthly_amount: Option<i64>,
     pub ptptn_monthly_amount: Option<i64>,
     pub tabung_haji_amount: Option<i64>,
+    pub hrdf_contribution: Option<bool>,
     pub payroll_group_id: Option<Uuid>,
     pub salary_group: Option<String>,
+    pub is_active: Option<bool>,
 }
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
