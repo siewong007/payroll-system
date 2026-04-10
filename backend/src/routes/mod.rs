@@ -58,6 +58,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/auth/logout", post(auth::logout))
         .route("/auth/validate-reset-token", post(auth::validate_reset_token))
         .route("/auth/change-password", put(auth::change_password))
+        .route("/auth/skip-change-password", put(auth::skip_change_password))
         .route("/auth/switch-company", put(auth::switch_company))
         .route("/auth/my-companies", get(auth::my_companies))
         // Passkey (WebAuthn) — unauthenticated

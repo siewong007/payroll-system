@@ -102,10 +102,13 @@ pub async fn create(
         if info.created {
             if let Some(ref email_addr) = emp.email {
                 let company = company_service::get_company(&state.pool, company_id).await?;
+                let default_pw = info.default_password.as_deref().unwrap_or("(your IC number)");
                 let body_html = email_service::default_welcome_html(
                     &emp.full_name,
                     &company.name,
                     &state.config.frontend_url,
+                    email_addr,
+                    default_pw,
                 );
                 let subject = format!("Welcome to {} - PayrollMY", company.name);
 

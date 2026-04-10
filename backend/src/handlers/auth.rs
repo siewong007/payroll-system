@@ -262,3 +262,17 @@ pub async fn change_password(
         "message": "Password changed successfully."
     })))
 }
+
+pub async fn skip_change_password(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> AppResult<Json<serde_json::Value>> {
+    sqlx::query("UPDATE users SET must_change_password = FALSE, updated_at = NOW() WHERE id = $1")
+        .bind(auth.0.sub)
+        .execute(&state.pool)
+        .await?;
+
+    Ok(Json(serde_json::json!({
+        "message": "Password change skipped."
+    })))
+}

@@ -202,24 +202,30 @@ pub async fn create_user_for_employee(
     };
 
     // Check if email already exists
-    let existing: Option<Uuid> = sqlx::query_scalar(
-        "SELECT id FROM users WHERE email = $1",
+    let existing: Option<(Uuid, String)> = sqlx::query_as(
+        "SELECT id, role FROM users WHERE email = $1",
     )
     .bind(email)
     .fetch_optional(pool)
     .await?;
 
-    if existing.is_some() {
-        return Ok(Some(EmployeeAccountInfo {
-            created: false,
-            email: email.clone(),
-            role: "employee".into(),
-            default_password: None,
-            message: format!(
-                "A user account with email {} already exists. The employee has been linked to the existing account.",
-                email
-            ),
-        }));
+    if let Some((existing_id, existing_role)) = existing {
+        if existing_role == "employee" {
+            // Stale employee account — clean up and recreate below
+            sqlx::query("DELETE FROM user_companies WHERE user_id = $1")
+                .bind(existing_id).execute(pool).await?;
+            sqlx::query("DELETE FROM refresh_tokens WHERE user_id = $1")
+                .bind(existing_id).execute(pool).await?;
+            sqlx::query("DELETE FROM users WHERE id = $1")
+                .bind(existing_id).execute(pool).await?;
+        } else {
+            // Non-employee user (admin, etc.) — link to this employee silently
+            sqlx::query("UPDATE users SET employee_id = $1, company_id = $2 WHERE id = $3")
+                .bind(emp.id).bind(emp.company_id).bind(existing_id).execute(pool).await?;
+            sqlx::query("INSERT INTO user_companies (user_id, company_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
+                .bind(existing_id).bind(emp.company_id).execute(pool).await?;
+            return Ok(None);
+        }
     }
 
     // Default password: IC number or "Welcome@123" if no IC
@@ -429,6 +435,21 @@ pub async fn soft_delete_employee(
     if rows == 0 {
         return Err(AppError::NotFound("Employee not found".into()));
     }
+
+    // Delete the user account linked to this employee
+    sqlx::query("DELETE FROM user_companies WHERE user_id IN (SELECT id FROM users WHERE employee_id = $1)")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    sqlx::query("DELETE FROM refresh_tokens WHERE user_id IN (SELECT id FROM users WHERE employee_id = $1)")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    sqlx::query("DELETE FROM users WHERE employee_id = $1")
+        .bind(id)
+        .execute(pool)
+        .await?;
+
     Ok(())
 }
 

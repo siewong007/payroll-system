@@ -361,7 +361,7 @@ pub fn password_reset_html(user_name: &str, reset_url: &str) -> String {
 
 // ── Welcome Email ──────────────────────────────────────────────────────
 
-pub fn default_welcome_html(employee_name: &str, company_name: &str, frontend_url: &str) -> String {
+pub fn default_welcome_html(employee_name: &str, company_name: &str, frontend_url: &str, login_email: &str, default_password: &str) -> String {
     format!(
         r#"<!DOCTYPE html>
 <html>
@@ -373,10 +373,24 @@ pub fn default_welcome_html(employee_name: &str, company_name: &str, frontend_ur
   <div style="border: 1px solid #e5e7eb; border-top: none; padding: 24px; border-radius: 0 0 12px 12px;">
     <p>Dear <strong>{employee_name}</strong>,</p>
     <p>Welcome aboard! We're excited to have you join the team at <strong>{company_name}</strong>.</p>
+    <p>An account has been created for you. Here are your login details:</p>
+    <div style="background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; margin: 16px 0;">
+      <table style="width: 100%; border-collapse: collapse;">
+        <tr>
+          <td style="padding: 4px 8px; color: #6b7280; font-size: 14px;">Email</td>
+          <td style="padding: 4px 8px; font-weight: 600; font-size: 14px;">{login_email}</td>
+        </tr>
+        <tr>
+          <td style="padding: 4px 8px; color: #6b7280; font-size: 14px;">Password</td>
+          <td style="padding: 4px 8px; font-weight: 600; font-family: monospace; font-size: 14px;">{default_password}</td>
+        </tr>
+      </table>
+    </div>
+    <p style="font-size: 13px; color: #d97706; background: #fffbeb; padding: 10px 14px; border-radius: 8px;">You will be asked to change your password on first login.</p>
     <p>You can access the employee portal to view your payslips, submit leave requests, claims, and more:</p>
     <p style="text-align: center; margin: 24px 0;">
-      <a href="{frontend_url}/portal" style="background: #000; color: #fff; padding: 12px 32px; border-radius: 8px; text-decoration: none; font-weight: 600; display: inline-block;">
-        Go to Employee Portal
+      <a href="{frontend_url}/login" style="background: #000; color: #fff; padding: 12px 32px; border-radius: 8px; text-decoration: none; font-weight: 600; display: inline-block;">
+        Login to Employee Portal
       </a>
     </p>
     <p>If you have any questions, please reach out to your HR department.</p>
@@ -390,5 +404,7 @@ pub fn default_welcome_html(employee_name: &str, company_name: &str, frontend_ur
         company_name = company_name,
         employee_name = employee_name,
         frontend_url = frontend_url,
+        login_email = login_email,
+        default_password = default_password,
     )
 }

@@ -12,6 +12,20 @@ export function ChangePassword() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
+  const handleSkip = async () => {
+    try {
+      await api.put('/auth/skip-change-password');
+      if (user) {
+        const updatedUser = { ...user, must_change_password: false };
+        localStorage.setItem('user', JSON.stringify(updatedUser));
+      }
+      navigate(user?.role === 'employee' ? '/portal' : '/');
+      window.location.reload();
+    } catch {
+      navigate(user?.role === 'employee' ? '/portal' : '/');
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -117,6 +131,12 @@ export function ChangePassword() {
               {loading ? 'Changing...' : 'Change Password'}
             </button>
           </form>
+          <button
+            onClick={handleSkip}
+            className="w-full mt-3 text-sm text-gray-400 hover:text-gray-600 transition-colors"
+          >
+            Skip for now
+          </button>
         </div>
       </div>
     </div>
