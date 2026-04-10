@@ -5,6 +5,7 @@ export interface User {
   role: 'super_admin' | 'payroll_admin' | 'hr_manager' | 'finance' | 'exec' | 'employee';
   company_id: string | null;
   employee_id: string | null;
+  must_change_password?: boolean;
 }
 
 export interface LoginResponse {

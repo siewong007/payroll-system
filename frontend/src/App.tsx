@@ -6,6 +6,7 @@ import { PortalLayout } from '@/components/layout/PortalLayout';
 import { Login } from '@/pages/auth/Login';
 import { ForgotPassword } from '@/pages/auth/ForgotPassword';
 import { ResetPassword } from '@/pages/auth/ResetPassword';
+import { ChangePassword } from '@/pages/auth/ChangePassword';
 import { EmployeeList } from '@/pages/employees/EmployeeList';
 import { EmployeeCreate } from '@/pages/employees/EmployeeCreate';
 import { EmployeeDetail } from '@/pages/employees/EmployeeDetail';
@@ -68,6 +69,7 @@ export default function App() {
             <Route path="/login" element={<Login />} />
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/reset-password" element={<ResetPassword />} />
+            <Route path="/change-password" element={<ChangePassword />} />
             {/* Admin Layout */}
             <Route element={<AppLayout />}>
               <Route path="/" element={<HomeRedirect />} />
@@ -79,12 +81,12 @@ export default function App() {
               <Route path="/payroll" element={<RoleGuard blockedRoles={['exec']}><PayrollList /></RoleGuard>} />
               <Route path="/payroll/process" element={<RoleGuard blockedRoles={['exec']}><PayrollProcess /></RoleGuard>} />
               <Route path="/payroll/:id" element={<RoleGuard blockedRoles={['exec']}><PayrollDetail /></RoleGuard>} />
-              <Route path="/documents" element={<DocumentList />} />
+              <Route path="/documents" element={<RoleGuard blockedRoles={['exec']}><DocumentList /></RoleGuard>} />
               <Route path="/calendar" element={<CalendarPage />} />
               <Route path="/teams" element={<TeamsPage />} />
-              <Route path="/approvals" element={<Approvals />} />
+              <Route path="/approvals" element={<RoleGuard blockedRoles={['exec']}><Approvals /></RoleGuard>} />
               <Route path="/reports" element={<Reports />} />
-              <Route path="/letters" element={<LettersPage />} />
+              <Route path="/letters" element={<RoleGuard blockedRoles={['exec']}><LettersPage /></RoleGuard>} />
               <Route path="/settings" element={<SettingsPage />} />
               <Route path="/companies" element={<RoleGuard blockedRoles={['exec', 'admin', 'payroll_admin', 'hr_manager', 'finance']}><CompanyManagement /></RoleGuard>} />
               <Route path="/users" element={<RoleGuard blockedRoles={['exec', 'admin', 'payroll_admin', 'hr_manager', 'finance']}><UserManagement /></RoleGuard>} />

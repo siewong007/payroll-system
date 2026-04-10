@@ -12,7 +12,7 @@ use crate::models::employee::{
     CreateEmployeeRequest, CreateTp3Request, Employee, SalaryHistory, Tp3Record,
     UpdateEmployeeRequest,
 };
-use crate::services::{company_service, email_service, employee_service, settings_service};
+use crate::services::{company_service, email_service, employee_service};
 
 #[derive(Debug, Deserialize)]
 pub struct ListQuery {
@@ -91,63 +91,57 @@ pub async fn create(
     State(state): State<AppState>,
     auth: AuthUser,
     Json(req): Json<CreateEmployeeRequest>,
-) -> AppResult<Json<Employee>> {
+) -> AppResult<Json<serde_json::Value>> {
     let company_id = auth.0.company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    let emp = employee_service::create_employee(&state.pool, company_id, req, auth.0.sub).await?;
+    let (emp, account_info) = employee_service::create_employee(&state.pool, company_id, req, auth.0.sub).await?;
 
-    // Auto-send welcome email if enabled and employee has an email
-    if let Some(ref email_addr) = emp.email {
-        let should_send = settings_service::get_setting(
-            &state.pool,
-            company_id,
-            "email",
-            "auto_welcome_email",
-        )
-        .await
-        .map(|s| s.value == serde_json::json!(true) || s.value == serde_json::json!("true"))
-        .unwrap_or(false);
+    // Auto-send welcome email if a new user account was created
+    if let Some(ref info) = account_info {
+        if info.created {
+            if let Some(ref email_addr) = emp.email {
+                let company = company_service::get_company(&state.pool, company_id).await?;
+                let body_html = email_service::default_welcome_html(
+                    &emp.full_name,
+                    &company.name,
+                    &state.config.frontend_url,
+                );
+                let subject = format!("Welcome to {} - PayrollMY", company.name);
 
-        if should_send {
-            let company = company_service::get_company(&state.pool, company_id).await?;
-            let body_html = email_service::default_welcome_html(
-                &emp.full_name,
-                &company.name,
-                &state.config.frontend_url,
-            );
-            let subject = format!("Welcome to {} - PayrollMY", company.name);
-
-            // Send in background so it doesn't block the response
-            let config = state.config.clone();
-            let pool = state.pool.clone();
-            let emp_id = emp.id;
-            let emp_name = emp.full_name.clone();
-            let email = email_addr.clone();
-            let user_id = auth.0.sub;
-            tokio::spawn(async move {
-                if let Err(e) = email_service::send_email(
-                    &config,
-                    &pool,
-                    company_id,
-                    Some(emp_id),
-                    None,
-                    "welcome",
-                    &email,
-                    &emp_name,
-                    &subject,
-                    &body_html,
-                    user_id,
-                )
-                .await
-                {
-                    tracing::error!("Failed to send welcome email for employee {}: {}", emp_id, e);
-                }
-            });
+                let config = state.config.clone();
+                let pool = state.pool.clone();
+                let emp_id = emp.id;
+                let emp_name = emp.full_name.clone();
+                let email = email_addr.clone();
+                let user_id = auth.0.sub;
+                tokio::spawn(async move {
+                    if let Err(e) = email_service::send_email(
+                        &config,
+                        &pool,
+                        company_id,
+                        Some(emp_id),
+                        None,
+                        "welcome",
+                        &email,
+                        &emp_name,
+                        &subject,
+                        &body_html,
+                        user_id,
+                    )
+                    .await
+                    {
+                        tracing::error!("Failed to send welcome email for employee {}: {}", emp_id, e);
+                    }
+                });
+            }
         }
     }
 
-    Ok(Json(emp))
+    Ok(Json(serde_json::json!({
+        "employee": emp,
+        "account": account_info,
+    })))
 }
 
 pub async fn update(

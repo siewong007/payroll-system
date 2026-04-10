@@ -50,6 +50,16 @@ pub async fn update_company(
     Ok(Json(company))
 }
 
+pub async fn delete_company(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(company_id): Path<Uuid>,
+) -> AppResult<Json<serde_json::Value>> {
+    require_super_admin(&auth)?;
+    company_service::delete_company(&state.pool, company_id).await?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
 // ─── Users ───
 
 pub async fn list_users(

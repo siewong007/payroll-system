@@ -1,13 +1,15 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Building2, X, Pencil } from 'lucide-react';
-import { listCompanies, createCompany, updateCompanyAdmin } from '@/api/admin';
+import { Plus, Building2, X, Pencil, Trash2 } from 'lucide-react';
+import { listCompanies, createCompany, updateCompanyAdmin, deleteCompany } from '@/api/admin';
 import type { Company, CreateCompanyRequest, UpdateCompanyRequest } from '@/types';
 
 export function CompanyManagement() {
   const queryClient = useQueryClient();
   const [showCreate, setShowCreate] = useState(false);
   const [editCompany, setEditCompany] = useState<Company | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Company | null>(null);
+  const [deleteConfirmName, setDeleteConfirmName] = useState('');
   const [form, setForm] = useState<CreateCompanyRequest>({ name: '' });
   const [error, setError] = useState('');
 
@@ -26,6 +28,18 @@ export function CompanyManagement() {
     },
     onError: (err: any) => {
       setError(err.response?.data?.error || 'Failed to create company');
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: deleteCompany,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-companies'] });
+      setDeleteTarget(null);
+      setDeleteConfirmName('');
+    },
+    onError: (err: any) => {
+      setError(err.response?.data?.error || 'Failed to delete company');
     },
   });
 
@@ -96,6 +110,12 @@ export function CompanyManagement() {
                       className="text-sm text-gray-500 hover:text-gray-900 px-2 py-1 rounded hover:bg-gray-100 transition-colors inline-flex items-center gap-1"
                     >
                       <Pencil className="w-3.5 h-3.5" /> Edit
+                    </button>
+                    <button
+                      onClick={() => setDeleteTarget(c)}
+                      className="text-sm text-red-500 hover:text-red-700 px-2 py-1 rounded hover:bg-red-50 transition-colors inline-flex items-center gap-1 ml-1"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" /> Delete
                     </button>
                   </td>
                 </tr>
@@ -171,6 +191,46 @@ export function CompanyManagement() {
               <button onClick={() => { setShowCreate(false); setError(''); }} className="btn-secondary">Cancel</button>
               <button onClick={handleSubmit} disabled={createMutation.isPending} className="btn-primary">
                 {createMutation.isPending ? 'Creating...' : 'Create Company'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Company Confirmation Modal */}
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4">
+            <div className="flex items-center justify-between p-6 border-b border-gray-100">
+              <h2 className="text-lg font-semibold text-red-600">Delete Company</h2>
+              <button onClick={() => { setDeleteTarget(null); setDeleteConfirmName(''); }} className="text-gray-400 hover:text-gray-700">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="p-3 bg-red-50 text-red-700 text-sm rounded-lg border border-red-100">
+                This will permanently delete <strong>{deleteTarget.name}</strong> and all related data including employees, payroll records, documents, leave requests, and claims. This action cannot be undone.
+              </div>
+              <div>
+                <label className="form-label">
+                  Type <strong>{deleteTarget.name}</strong> to confirm
+                </label>
+                <input
+                  value={deleteConfirmName}
+                  onChange={(e) => setDeleteConfirmName(e.target.value)}
+                  className="form-input"
+                  placeholder={deleteTarget.name}
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-3 p-6 border-t border-gray-100">
+              <button onClick={() => { setDeleteTarget(null); setDeleteConfirmName(''); }} className="btn-secondary">Cancel</button>
+              <button
+                onClick={() => deleteMutation.mutate(deleteTarget.id)}
+                disabled={deleteConfirmName !== deleteTarget.name || deleteMutation.isPending}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {deleteMutation.isPending ? 'Deleting...' : 'Delete Company'}
               </button>
             </div>
           </div>

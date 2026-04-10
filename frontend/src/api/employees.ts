@@ -17,7 +17,20 @@ export async function getEmployee(id: string): Promise<Employee> {
   return data;
 }
 
-export async function createEmployee(req: CreateEmployeeRequest): Promise<Employee> {
+export interface EmployeeAccountInfo {
+  created: boolean;
+  email: string;
+  role: string;
+  default_password: string | null;
+  message: string;
+}
+
+export interface CreateEmployeeResponse {
+  employee: Employee;
+  account: EmployeeAccountInfo | null;
+}
+
+export async function createEmployee(req: CreateEmployeeRequest): Promise<CreateEmployeeResponse> {
   const { data } = await api.post('/employees', req);
   return data;
 }

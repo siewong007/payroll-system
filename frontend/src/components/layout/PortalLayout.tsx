@@ -54,6 +54,10 @@ export function PortalLayout() {
     return <Navigate to="/login" replace />;
   }
 
+  if (user?.must_change_password) {
+    return <Navigate to="/change-password" replace />;
+  }
+
   const isMoreActive = mobileMoreNav.some(
     (item) => location.pathname === item.href || location.pathname.startsWith(item.href)
   );

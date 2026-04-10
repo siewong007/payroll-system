@@ -43,6 +43,25 @@ pub async fn login(
         return Err(AppError::Unauthorized("Invalid email or password".into()));
     }
 
+    // Check if linked employee has been deleted
+    if let Some(employee_id) = user.employee_id {
+        let employee_active: Option<bool> = sqlx::query_scalar(
+            "SELECT is_active FROM employees WHERE id = $1",
+        )
+        .bind(employee_id)
+        .fetch_optional(pool)
+        .await?;
+
+        match employee_active {
+            Some(false) | None => {
+                return Err(AppError::Unauthorized(
+                    "Your employee account has been deleted. Please contact your administrator.".into(),
+                ));
+            }
+            _ => {}
+        }
+    }
+
     // Update last login
     sqlx::query("UPDATE users SET last_login = NOW() WHERE id = $1")
         .bind(user.id)

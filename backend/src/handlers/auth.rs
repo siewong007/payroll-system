@@ -42,15 +42,15 @@ pub async fn login(
     Ok((headers, Json(body)))
 }
 
-pub async fn me(auth: AuthUser) -> AppResult<Json<UserResponse>> {
-    Ok(Json(UserResponse {
-        id: auth.0.sub,
-        email: auth.0.email,
-        full_name: String::new(),
-        role: auth.0.role,
-        company_id: auth.0.company_id,
-        employee_id: auth.0.employee_id,
-    }))
+pub async fn me(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> AppResult<Json<UserResponse>> {
+    let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
+        .bind(auth.0.sub)
+        .fetch_one(&state.pool)
+        .await?;
+    Ok(Json(UserResponse::from(user)))
 }
 
 pub async fn my_companies(
@@ -109,6 +109,23 @@ pub async fn refresh_token(
         .fetch_optional(&state.pool)
         .await?
         .ok_or_else(|| AppError::Unauthorized("User not found or inactive".into()))?;
+
+    // Check if linked employee has been deleted
+    if let Some(employee_id) = user.employee_id {
+        let employee_active: Option<bool> = sqlx::query_scalar(
+            "SELECT is_active FROM employees WHERE id = $1",
+        )
+        .bind(employee_id)
+        .fetch_optional(&state.pool)
+        .await?;
+
+        if matches!(employee_active, Some(false) | None) {
+            session_service::revoke_refresh_token(&state.pool, &refresh).await?;
+            return Err(AppError::Unauthorized(
+                "Your employee account has been deleted. Please contact your administrator.".into(),
+            ));
+        }
+    }
 
     // Revoke old refresh token and issue new one (rotation)
     session_service::revoke_refresh_token(&state.pool, &refresh).await?;
@@ -205,4 +222,43 @@ pub async fn validate_reset_token(
         .ok_or_else(|| AppError::BadRequest("Token is required".into()))?;
     password_reset_service::validate_reset_token(&state.pool, token).await?;
     Ok(Json(serde_json::json!({ "valid": true })))
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct ChangePasswordRequest {
+    pub current_password: String,
+    pub new_password: String,
+}
+
+pub async fn change_password(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Json(req): Json<ChangePasswordRequest>,
+) -> AppResult<Json<serde_json::Value>> {
+    auth_service::validate_password_strength(&req.new_password)?;
+
+    let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
+        .bind(auth.0.sub)
+        .fetch_one(&state.pool)
+        .await?;
+
+    let valid = bcrypt::verify(&req.current_password, &user.password_hash)
+        .map_err(|_| AppError::Internal("Password verification failed".into()))?;
+
+    if !valid {
+        return Err(AppError::BadRequest("Current password is incorrect".into()));
+    }
+
+    let new_hash = bcrypt::hash(&req.new_password, 10)
+        .map_err(|_| AppError::Internal("Password hashing failed".into()))?;
+
+    sqlx::query("UPDATE users SET password_hash = $1, must_change_password = FALSE, updated_at = NOW() WHERE id = $2")
+        .bind(&new_hash)
+        .bind(auth.0.sub)
+        .execute(&state.pool)
+        .await?;
+
+    Ok(Json(serde_json::json!({
+        "message": "Password changed successfully."
+    })))
 }

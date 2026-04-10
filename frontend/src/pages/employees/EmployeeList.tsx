@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, Edit, DollarSign, Shield, MapPin, TrendingUp, TrendingDown, Pencil, Trash2, AlertTriangle, Upload } from 'lucide-react';
+import { Plus, Search, Edit, DollarSign, Shield, MapPin, TrendingUp, TrendingDown, Pencil, Trash2, AlertTriangle, Upload, UserCheck, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getEmployees, createEmployee, updateEmployee, deleteEmployee, getEmployee, getSalaryHistory } from '@/api/employees';
 import { getPayrollGroups } from '@/api/payroll';
@@ -510,11 +510,17 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
 
   const [salaryDisplay, setSalaryDisplay] = useState(defaults?.salaryDisplay ?? '');
 
+  const [accountDialog, setAccountDialog] = useState<import('@/api/employees').EmployeeAccountInfo | null>(null);
+
   const createMutation = useMutation({
     mutationFn: (req: CreateEmployeeRequest) => createEmployee(req),
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['employees'] });
-      onClose();
+      if (data.account) {
+        setAccountDialog(data.account);
+      } else {
+        onClose();
+      }
     },
   });
 
@@ -989,6 +995,64 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
           }
         </button>
       </div>
+
+      {/* Account Created Dialog */}
+      {accountDialog && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4">
+            <div className="flex items-center justify-between p-6 border-b border-gray-100">
+              <div className="flex items-center gap-2">
+                {accountDialog.created ? (
+                  <UserCheck className="w-5 h-5 text-green-600" />
+                ) : (
+                  <AlertTriangle className="w-5 h-5 text-amber-500" />
+                )}
+                <h2 className="text-lg font-semibold text-gray-900">
+                  {accountDialog.created ? 'User Account Created' : 'Account Notice'}
+                </h2>
+              </div>
+              <button onClick={() => { setAccountDialog(null); onClose(); }} className="text-gray-400 hover:text-gray-700">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              {accountDialog.created ? (
+                <>
+                  <p className="text-sm text-gray-600">
+                    A user account has been created and a welcome email has been sent to the employee.
+                  </p>
+                  <div className="bg-gray-50 rounded-xl p-4 space-y-3">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-500">Email</span>
+                      <span className="font-medium text-gray-900">{accountDialog.email}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-500">Role</span>
+                      <span className="font-medium text-gray-900 capitalize">{accountDialog.role}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-500">Default Password</span>
+                      <span className="font-mono font-medium text-gray-900">{accountDialog.default_password}</span>
+                    </div>
+                  </div>
+                  <p className="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2">
+                    Please advise the employee to change their password upon first login.
+                  </p>
+                </>
+              ) : (
+                <div className="bg-amber-50 rounded-xl p-4">
+                  <p className="text-sm text-amber-800">{accountDialog.message}</p>
+                </div>
+              )}
+            </div>
+            <div className="flex justify-end p-6 border-t border-gray-100">
+              <button onClick={() => { setAccountDialog(null); onClose(); }} className="btn-primary">
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </form>
   );
 }

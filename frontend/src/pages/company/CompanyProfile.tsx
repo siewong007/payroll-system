@@ -8,7 +8,6 @@ import {
   Users,
   FolderOpen,
   Calculator,
-  FileText,
 } from 'lucide-react';
 import { getCompany, updateCompany, getCompanyStats } from '@/api/company';
 import type { UpdateCompanyRequest } from '@/types';
@@ -131,7 +130,7 @@ export function CompanyProfile() {
 
       {/* Stats Cards */}
       {stats && (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-2 gap-4 mb-6">
           <div className="bg-white rounded-2xl shadow p-4">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center">
@@ -151,28 +150,6 @@ export function CompanyProfile() {
               <div>
                 <p className="text-2xl font-bold text-gray-900">{stats.total_departments}</p>
                 <p className="text-xs text-gray-500">Departments</p>
-              </div>
-            </div>
-          </div>
-          <div className="bg-white rounded-2xl shadow p-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-lg bg-green-50 flex items-center justify-center">
-                <Calculator className="w-5 h-5 text-green-600" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-gray-900">{stats.total_payroll_groups}</p>
-                <p className="text-xs text-gray-500">Payroll Groups</p>
-              </div>
-            </div>
-          </div>
-          <div className="bg-white rounded-2xl shadow p-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-lg bg-amber-50 flex items-center justify-center">
-                <FileText className="w-5 h-5 text-amber-600" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-gray-900">{stats.total_documents}</p>
-                <p className="text-xs text-gray-500">Documents</p>
               </div>
             </div>
           </div>

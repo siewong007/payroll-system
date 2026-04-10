@@ -20,6 +20,10 @@ export function AppLayout() {
     return <Navigate to="/login" replace />;
   }
 
+  if (user?.must_change_password) {
+    return <Navigate to="/change-password" replace />;
+  }
+
   if (user?.role === 'employee') {
     return <Navigate to="/portal" replace />;
   }

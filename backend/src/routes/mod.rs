@@ -57,6 +57,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/auth/refresh", post(auth::refresh_token))
         .route("/auth/logout", post(auth::logout))
         .route("/auth/validate-reset-token", post(auth::validate_reset_token))
+        .route("/auth/change-password", put(auth::change_password))
         .route("/auth/switch-company", put(auth::switch_company))
         .route("/auth/my-companies", get(auth::my_companies))
         // Passkey (WebAuthn) — unauthenticated
@@ -77,7 +78,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/auth/oauth2/accounts/{provider}", delete(oauth2::unlink_provider))
         // Admin (super_admin)
         .route("/admin/companies", get(admin::list_companies).post(admin::create_company))
-        .route("/admin/companies/{id}", put(admin::update_company))
+        .route("/admin/companies/{id}", put(admin::update_company).delete(admin::delete_company))
         .route("/admin/users", get(admin::list_users).post(admin::create_user))
         .route("/admin/users/{id}", put(admin::update_user).delete(admin::delete_user))
         .route("/admin/users/{id}/companies", put(admin::update_user_companies))

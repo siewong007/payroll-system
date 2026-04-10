@@ -13,6 +13,7 @@ pub struct User {
     pub company_id: Option<Uuid>,
     pub employee_id: Option<Uuid>,
     pub is_active: Option<bool>,
+    pub must_change_password: bool,
     pub last_login: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -40,6 +41,7 @@ pub struct UserResponse {
     pub role: String,
     pub company_id: Option<Uuid>,
     pub employee_id: Option<Uuid>,
+    pub must_change_password: bool,
 }
 
 impl From<User> for UserResponse {
@@ -51,6 +53,7 @@ impl From<User> for UserResponse {
             role: u.role,
             company_id: u.company_id,
             employee_id: u.employee_id,
+            must_change_password: u.must_change_password,
         }
     }
 }

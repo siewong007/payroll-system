@@ -187,18 +187,31 @@ pub async fn soft_delete_document(
     id: Uuid,
     company_id: Uuid,
 ) -> AppResult<()> {
-    let rows = sqlx::query(
-        "UPDATE documents SET deleted_at = NOW() WHERE id = $1 AND company_id = $2 AND deleted_at IS NULL",
+    // Fetch the file_url before deleting so we can remove the file from disk
+    let file_url: Option<String> = sqlx::query_scalar(
+        "SELECT file_url FROM documents WHERE id = $1 AND company_id = $2 AND deleted_at IS NULL",
     )
     .bind(id)
     .bind(company_id)
-    .execute(pool)
+    .fetch_optional(pool)
     .await?
-    .rows_affected();
+    .ok_or_else(|| AppError::NotFound("Document not found".into()))?;
 
-    if rows == 0 {
-        return Err(AppError::NotFound("Document not found".into()));
+    // Hard delete the record
+    sqlx::query("DELETE FROM documents WHERE id = $1 AND company_id = $2")
+        .bind(id)
+        .bind(company_id)
+        .execute(pool)
+        .await?;
+
+    // Remove the file from disk if it exists
+    if let Some(url) = file_url {
+        if let Some(filename) = url.strip_prefix("/api/uploads/") {
+            let file_path = std::path::Path::new("uploads").join(filename);
+            let _ = tokio::fs::remove_file(&file_path).await;
+        }
     }
+
     Ok(())
 }
 

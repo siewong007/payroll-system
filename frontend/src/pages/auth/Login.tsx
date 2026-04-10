@@ -83,9 +83,13 @@ export function Login() {
     setLoading(true);
     try {
       const loggedInUser = await login(email, password);
-      navigate(loggedInUser.role === 'employee' ? '/portal' : '/');
-    } catch {
-      setError('Invalid email or password');
+      if (loggedInUser.must_change_password) {
+        navigate('/change-password');
+      } else {
+        navigate(loggedInUser.role === 'employee' ? '/portal' : '/');
+      }
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Invalid email or password');
     } finally {
       setLoading(false);
     }

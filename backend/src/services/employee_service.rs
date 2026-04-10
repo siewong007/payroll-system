@@ -91,7 +91,7 @@ pub async fn create_employee(
     company_id: Uuid,
     req: CreateEmployeeRequest,
     created_by: Uuid,
-) -> AppResult<Employee> {
+) -> AppResult<(Employee, Option<EmployeeAccountInfo>)> {
     let id = Uuid::new_v4();
     let emp = sqlx::query_as::<_, Employee>(
         r#"INSERT INTO employees (
@@ -109,9 +109,9 @@ pub async fn create_employee(
             payroll_group_id, salary_group,
             created_by
         ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+            $1, $2, $3, $4, $5, $6, $7, $8::gender_type, $9, $10::race_type, $11::residency_status, $12::marital_status,
             $13, $14, $15, $16, $17, $18, $19,
-            $20, $21, $22, $23, $24, $25, $26, $27,
+            $20, $21, $22, $23, $24::employment_type, $25, $26, $27,
             $28, $29, $30, $31, $32, $33, $34, $35, $36, $37,
             $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48
         ) RETURNING id, company_id, employee_number, full_name, ic_number, passport_number,
@@ -178,7 +178,89 @@ pub async fn create_employee(
     .fetch_one(pool)
     .await?;
 
-    Ok(emp)
+    // Auto-create a user account for the employee if they have an email
+    let account_info = create_user_for_employee(pool, &emp).await?;
+
+    Ok((emp, account_info))
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct EmployeeAccountInfo {
+    pub created: bool,
+    pub email: String,
+    pub role: String,
+    pub default_password: Option<String>,
+    pub message: String,
+}
+
+pub async fn create_user_for_employee(
+    pool: &PgPool,
+    emp: &Employee,
+) -> AppResult<Option<EmployeeAccountInfo>> {
+    let Some(ref email) = emp.email else {
+        return Ok(None);
+    };
+
+    // Check if email already exists
+    let existing: Option<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM users WHERE email = $1",
+    )
+    .bind(email)
+    .fetch_optional(pool)
+    .await?;
+
+    if existing.is_some() {
+        return Ok(Some(EmployeeAccountInfo {
+            created: false,
+            email: email.clone(),
+            role: "employee".into(),
+            default_password: None,
+            message: format!(
+                "A user account with email {} already exists. The employee has been linked to the existing account.",
+                email
+            ),
+        }));
+    }
+
+    // Default password: IC number or "Welcome@123" if no IC
+    let default_password = emp.ic_number.as_deref().unwrap_or("Welcome@123");
+    let password_hash = bcrypt::hash(default_password, 10)
+        .map_err(|e| AppError::Internal(format!("Failed to hash password: {}", e)))?;
+
+    let user_id = Uuid::new_v4();
+    sqlx::query(
+        r#"INSERT INTO users (id, email, password_hash, full_name, role, company_id, employee_id, must_change_password)
+        VALUES ($1, $2, $3, $4, 'employee', $5, $6, TRUE)"#,
+    )
+    .bind(user_id)
+    .bind(email)
+    .bind(&password_hash)
+    .bind(&emp.full_name)
+    .bind(emp.company_id)
+    .bind(emp.id)
+    .execute(pool)
+    .await?;
+
+    // Link user to company
+    sqlx::query(
+        r#"INSERT INTO user_companies (user_id, company_id)
+        VALUES ($1, $2) ON CONFLICT DO NOTHING"#,
+    )
+    .bind(user_id)
+    .bind(emp.company_id)
+    .execute(pool)
+    .await?;
+
+    Ok(Some(EmployeeAccountInfo {
+        created: true,
+        email: email.clone(),
+        role: "employee".into(),
+        default_password: Some(default_password.to_string()),
+        message: format!(
+            "User account created for {}. Default password is their IC number.",
+            emp.full_name
+        ),
+    }))
 }
 
 pub async fn update_employee(
