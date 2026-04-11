@@ -92,6 +92,22 @@ pub async fn create_employee(
     req: CreateEmployeeRequest,
     created_by: Uuid,
 ) -> AppResult<(Employee, Option<EmployeeAccountInfo>)> {
+    // Check for duplicate employee number within the same company
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM employees WHERE company_id = $1 AND employee_number = $2 AND deleted_at IS NULL)",
+    )
+    .bind(company_id)
+    .bind(&req.employee_number)
+    .fetch_one(pool)
+    .await?;
+
+    if exists {
+        return Err(AppError::Conflict(format!(
+            "Employee number '{}' already exists in this company",
+            req.employee_number
+        )));
+    }
+
     let id = Uuid::new_v4();
     let emp = sqlx::query_as::<_, Employee>(
         r#"INSERT INTO employees (
@@ -424,7 +440,7 @@ pub async fn soft_delete_employee(
     company_id: Uuid,
 ) -> AppResult<()> {
     let rows = sqlx::query(
-        "UPDATE employees SET deleted_at = NOW(), is_active = FALSE WHERE id = $1 AND company_id = $2",
+        "UPDATE employees SET deleted_at = NOW(), is_active = FALSE, employee_number = employee_number || '_DEL_' || id::text WHERE id = $1 AND company_id = $2",
     )
     .bind(id)
     .bind(company_id)

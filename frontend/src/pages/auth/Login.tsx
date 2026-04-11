@@ -236,23 +236,7 @@ export function Login() {
 
           <div className="mt-8 pt-6 border-t border-gray-100">
             <p className="text-xs text-gray-400 text-center mb-2">Demo Credentials</p>
-            <div className="grid grid-cols-3 gap-3">
-              <button
-                type="button"
-                onClick={() => { setEmail('superadmin@demo.com'); setPassword('admin123'); }}
-                className="text-xs text-center py-2.5 px-3 bg-gray-50 rounded-xl text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-all-fast border border-gray-100"
-              >
-                <span className="block font-semibold text-gray-600">Super Admin</span>
-                superadmin
-              </button>
-              <button
-                type="button"
-                onClick={() => { setEmail('admin@demo.com'); setPassword('admin123'); }}
-                className="text-xs text-center py-2.5 px-3 bg-gray-50 rounded-xl text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-all-fast border border-gray-100"
-              >
-                <span className="block font-semibold text-gray-600">Admin</span>
-                admin
-              </button>
+            <div className="flex justify-center">
               <button
                 type="button"
                 onClick={() => { setEmail('exec@demo.com'); setPassword('admin123'); }}
@@ -260,30 +244,6 @@ export function Login() {
               >
                 <span className="block font-semibold text-gray-600">Executive</span>
                 exec
-              </button>
-              <button
-                type="button"
-                onClick={() => { setEmail('sarah@demo.com'); setPassword('admin123'); }}
-                className="text-xs text-center py-2.5 px-3 bg-gray-50 rounded-xl text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-all-fast border border-gray-100"
-              >
-                <span className="block font-semibold text-gray-600">Employee</span>
-                sarah
-              </button>
-              <button
-                type="button"
-                onClick={() => { setEmail('hafiz.rahman@demo.com'); setPassword('admin123'); }}
-                className="text-xs text-center py-2.5 px-3 bg-gray-50 rounded-xl text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-all-fast border border-gray-100"
-              >
-                <span className="block font-semibold text-gray-600">Sr. Developer</span>
-                hafiz.rahman
-              </button>
-              <button
-                type="button"
-                onClick={() => { setEmail('farah.aziz@demo.com'); setPassword('admin123'); }}
-                className="text-xs text-center py-2.5 px-3 bg-gray-50 rounded-xl text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-all-fast border border-gray-100"
-              >
-                <span className="block font-semibold text-gray-600">HR Assistant</span>
-                farah.aziz
               </button>
             </div>
           </div>
