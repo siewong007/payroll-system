@@ -12,6 +12,9 @@ pub struct LeaveType {
     pub default_days: rust_decimal::Decimal,
     pub is_paid: bool,
     pub is_active: bool,
+    pub max_carry_forward: rust_decimal::Decimal,
+    pub carry_forward_expiry_months: i32,
+    pub is_system: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

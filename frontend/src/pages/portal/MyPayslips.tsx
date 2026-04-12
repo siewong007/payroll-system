@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronLeft, ChevronRight, Printer } from 'lucide-react';
-import { getMyPayslips, getMyProfile } from '@/api/portal';
+import { ChevronLeft, ChevronRight, Printer, Download } from 'lucide-react';
+import { getMyPayslips, getMyProfile, downloadPayslipPdf } from '@/api/portal';
 import { formatMYR } from '@/lib/utils';
 import type { MyPayslip } from '@/types';
 
@@ -53,9 +53,14 @@ export function MyPayslips() {
           <h1 className="page-title">{profile?.full_name || 'Employee'}</h1>
         </div>
         {currentPayslip && (
-          <button onClick={() => window.print()} className="btn-primary">
-            <Printer className="w-4 h-4" /> Print Payslip
-          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={() => downloadPayslipPdf(currentPayslip.id)} className="btn-secondary">
+              <Download className="w-4 h-4" /> Download PDF
+            </button>
+            <button onClick={() => window.print()} className="btn-primary">
+              <Printer className="w-4 h-4" /> Print Payslip
+            </button>
+          </div>
         )}
       </div>
 

@@ -12,7 +12,7 @@ use crate::models::employee::{
     CreateEmployeeRequest, CreateTp3Request, Employee, SalaryHistory, Tp3Record,
     UpdateEmployeeRequest,
 };
-use crate::services::{company_service, email_service, employee_service};
+use crate::services::{company_service, email_service, employee_service, portal_service};
 
 #[derive(Debug, Deserialize)]
 pub struct ListQuery {
@@ -192,3 +192,55 @@ pub async fn create_tp3(
     let record = employee_service::create_tp3(&state.pool, id, req, auth.0.sub).await?;
     Ok(Json(record))
 }
+
+#[derive(Debug, Deserialize)]
+pub struct InitBalancesQuery {
+    pub year: Option<i32>,
+}
+
+pub async fn initialize_balances(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+    Query(q): Query<InitBalancesQuery>,
+) -> AppResult<Json<serde_json::Value>> {
+    let company_id = auth.0.company_id
+        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
+
+    let emp = employee_service::get_employee(&state.pool, id, company_id).await?;
+    let year = q.year.unwrap_or_else(|| chrono::Utc::now().year());
+    let balances = portal_service::initialize_leave_balances(
+        &state.pool, id, company_id, emp.date_joined, year,
+    ).await?;
+
+    Ok(Json(serde_json::json!({
+        "message": format!("Initialized {} leave balances", balances.len()),
+        "count": balances.len(),
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CarryForwardRequest {
+    pub from_year: i32,
+    pub to_year: i32,
+}
+
+pub async fn process_carry_forward(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Json(req): Json<CarryForwardRequest>,
+) -> AppResult<Json<serde_json::Value>> {
+    let company_id = auth.0.company_id
+        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
+
+    let count = portal_service::process_year_end_carry_forward(
+        &state.pool, company_id, req.from_year, req.to_year,
+    ).await?;
+
+    Ok(Json(serde_json::json!({
+        "message": format!("Processed {} leave balance entries", count),
+        "count": count,
+    })))
+}
+
+use chrono::Datelike;

@@ -7,7 +7,7 @@ use axum::{
 use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
 
 use crate::core::app_state::AppState;
-use crate::handlers::{admin, approval, auth, backup, calendar, company, dashboard, document, email, employee, employee_import, notification, oauth2, passkey, payroll, portal, report, settings, team};
+use crate::handlers::{admin, approval, audit, auth, backup, calendar, company, dashboard, document, email, employee, employee_import, notification, oauth2, passkey, payroll, portal, report, settings, team};
 
 pub fn create_router(state: AppState) -> Router {
     // Rate limiter: 5 requests per 60 seconds per IP
@@ -175,7 +175,25 @@ pub fn create_router(state: AppState) -> Router {
         .route("/email/templates/{id}", get(email::get_template).put(email::update_template).delete(email::delete_template))
         .route("/email/preview", post(email::preview_letter))
         .route("/email/send", post(email::send_letter))
-        .route("/email/logs", get(email::list_email_logs));
+        .route("/email/logs", get(email::list_email_logs))
+        // Audit Trail
+        .route("/audit-logs", get(audit::list_audit_logs))
+        // Leave enhancements
+        .route("/employees/{id}/leave-balances/initialize", post(employee::initialize_balances))
+        .route("/leave/year-end", post(employee::process_carry_forward))
+        // Portal: leave ICS export & payslip PDF
+        .route("/portal/leave/export-ics", get(portal::export_leave_ics))
+        .route("/portal/payslips/{id}/pdf", get(portal::download_payslip_pdf))
+        // Payroll: bulk payslip PDF
+        .route("/payroll/runs/{run_id}/payslips/pdf", get(payroll::download_run_payslips_pdf))
+        // Statutory file exports
+        .route("/reports/statutory/epf-export", get(report::export_epf))
+        .route("/reports/statutory/socso-export", get(report::export_socso))
+        .route("/reports/statutory/eis-export", get(report::export_eis))
+        .route("/reports/statutory/pcb-export", get(report::export_pcb))
+        // EA Form
+        .route("/reports/ea-form/employees", get(report::list_ea_employees))
+        .route("/reports/ea-form", get(report::get_ea_form));
 
     Router::new().nest("/api", api).with_state(state)
 }

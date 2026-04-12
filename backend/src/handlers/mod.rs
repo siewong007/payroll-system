@@ -17,3 +17,4 @@ pub mod email;
 pub mod passkey;
 pub mod employee_import;
 pub mod backup;
+pub mod audit;

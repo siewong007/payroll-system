@@ -1,7 +1,7 @@
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, CheckCircle, Lock } from 'lucide-react';
-import { getPayrollRun, approvePayroll, lockPayroll } from '@/api/payroll';
+import { ArrowLeft, CheckCircle, Lock, Download } from 'lucide-react';
+import { getPayrollRun, approvePayroll, lockPayroll, downloadRunPayslips } from '@/api/payroll';
 import { formatMYR } from '@/lib/utils';
 
 const MONTHS = [
@@ -60,6 +60,12 @@ export function PayrollDetail() {
           <p className="text-gray-500">{run.employee_count} employees processed</p>
         </div>
         <div className="flex items-center gap-3">
+          <button
+            onClick={() => downloadRunPayslips(id!)}
+            className="flex items-center gap-2 bg-white border border-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-50 text-sm font-medium"
+          >
+            <Download className="w-4 h-4" /> Download Payslips
+          </button>
           {run.status === 'processed' && (
             <button
               onClick={() => approveMutation.mutate()}

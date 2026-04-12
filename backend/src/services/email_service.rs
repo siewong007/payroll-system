@@ -361,6 +361,55 @@ pub fn password_reset_html(user_name: &str, reset_url: &str) -> String {
 
 // ── Welcome Email ──────────────────────────────────────────────────────
 
+// ── Approval Notification Email ───────────────────────────────────────
+
+pub fn approval_email_html(
+    employee_name: &str,
+    company_name: &str,
+    approval_type: &str,   // "Leave", "Claim"
+    details: &str,          // e.g. "Annual Leave from 2026-04-15 to 2026-04-17"
+    extra_note: &str,       // e.g. "A salary deduction will be applied..." or ""
+) -> String {
+    let extra_section = if extra_note.is_empty() {
+        String::new()
+    } else {
+        format!(
+            r#"<p style="font-size: 13px; color: #d97706; background: #fffbeb; padding: 10px 14px; border-radius: 8px;">{}</p>"#,
+            extra_note
+        )
+    };
+
+    format!(
+        r#"<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; color: #333;">
+  <div style="background: #000; color: #fff; padding: 24px; border-radius: 12px 12px 0 0; text-align: center;">
+    <h1 style="margin: 0; font-size: 24px;">{approval_type} Approved</h1>
+  </div>
+  <div style="border: 1px solid #e5e7eb; border-top: none; padding: 24px; border-radius: 0 0 12px 12px;">
+    <p>Dear <strong>{employee_name}</strong>,</p>
+    <p>Your {approval_type_lower} request has been <span style="color: #059669; font-weight: 600;">approved</span>.</p>
+    <div style="background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; margin: 16px 0;">
+      <p style="margin: 0; font-size: 14px;">{details}</p>
+    </div>
+    {extra_section}
+    <p style="margin-top: 24px;">Best regards,<br><strong>{company_name} HR Team</strong></p>
+  </div>
+  <p style="text-align: center; font-size: 12px; color: #9ca3af; margin-top: 16px;">
+    This is an automated message from PayrollMY.
+  </p>
+</body>
+</html>"#,
+        approval_type = approval_type,
+        approval_type_lower = approval_type.to_lowercase(),
+        employee_name = employee_name,
+        details = details,
+        extra_section = extra_section,
+        company_name = company_name,
+    )
+}
+
 pub fn default_welcome_html(employee_name: &str, company_name: &str, frontend_url: &str, login_email: &str, default_password: &str) -> String {
     format!(
         r#"<!DOCTYPE html>

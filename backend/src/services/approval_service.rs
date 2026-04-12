@@ -2,9 +2,11 @@ use chrono::Datelike;
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use crate::core::config::AppConfig;
 use crate::core::error::{AppError, AppResult};
 use crate::models::portal::{Claim, LeaveRequest, OvertimeApplication};
 use crate::services::calendar_service;
+use crate::services::email_service;
 use crate::services::notification_service;
 use crate::services::settings_service;
 
@@ -64,6 +66,7 @@ pub async fn get_pending_leave_requests(
 
 pub async fn approve_leave(
     pool: &PgPool,
+    config: &AppConfig,
     company_id: Uuid,
     request_id: Uuid,
     reviewer_id: Uuid,
@@ -208,6 +211,41 @@ pub async fn approve_leave(
         .await;
     }
 
+    // Send approval email
+    let emp_info: Option<(String, String, String)> = sqlx::query_as(
+        r#"SELECT e.full_name, e.email, COALESCE(c.name, '') as company_name
+        FROM employees e
+        JOIN companies c ON e.company_id = c.id
+        WHERE e.id = $1"#,
+    )
+    .bind(lr.employee_id)
+    .fetch_optional(pool)
+    .await?;
+
+    if let Some((emp_name, emp_email, company_name)) = emp_info {
+        let leave_type = lr.leave_type_name.as_deref().unwrap_or("Leave");
+        let details = format!(
+            "<strong>Type:</strong> {}<br><strong>Period:</strong> {} to {} ({} day{})",
+            leave_type, lr.start_date, lr.end_date, lr.days,
+            if lr.days == rust_decimal::Decimal::ONE { "" } else { "s" }
+        );
+        let extra = if is_unpaid {
+            "A salary deduction will be applied in your next payroll."
+        } else {
+            ""
+        };
+        let body = email_service::approval_email_html(
+            &emp_name, &company_name, "Leave", &details, extra,
+        );
+        let _ = email_service::send_email(
+            config, pool, company_id, Some(lr.employee_id), None,
+            "leave_approved", &emp_email, &emp_name,
+            &format!("Leave Request Approved - {} to {}", lr.start_date, lr.end_date),
+            &body, reviewer_id,
+        )
+        .await;
+    }
+
     Ok(lr)
 }
 
@@ -329,6 +367,7 @@ pub async fn get_pending_claims(
 
 pub async fn approve_claim(
     pool: &PgPool,
+    config: &AppConfig,
     company_id: Uuid,
     claim_id: Uuid,
     reviewer_id: Uuid,
@@ -391,6 +430,37 @@ pub async fn approve_claim(
             ),
             Some("claim"),
             Some(claim.id),
+        )
+        .await;
+    }
+
+    // Send approval email
+    let emp_info: Option<(String, String, String)> = sqlx::query_as(
+        r#"SELECT e.full_name, e.email, COALESCE(c.name, '') as company_name
+        FROM employees e
+        JOIN companies c ON e.company_id = c.id
+        WHERE e.id = $1"#,
+    )
+    .bind(claim.employee_id)
+    .fetch_optional(pool)
+    .await?;
+
+    if let Some((emp_name, emp_email, company_name)) = emp_info {
+        let amount_rm = claim.amount as f64 / 100.0;
+        let details = format!(
+            "<strong>Claim:</strong> {}<br><strong>Amount:</strong> RM {:.2}<br><strong>Category:</strong> {}",
+            claim.title, amount_rm,
+            claim.category.as_deref().unwrap_or("General")
+        );
+        let body = email_service::approval_email_html(
+            &emp_name, &company_name, "Claim", &details,
+            "The approved amount will be included in your next payroll.",
+        );
+        let _ = email_service::send_email(
+            config, pool, company_id, Some(claim.employee_id), None,
+            "claim_approved", &emp_email, &emp_name,
+            &format!("Claim Approved - {} (RM {:.2})", claim.title, amount_rm),
+            &body, reviewer_id,
         )
         .await;
     }
@@ -539,6 +609,34 @@ pub async fn approve_overtime(
         .bind(reviewer_id)
         .execute(pool)
         .await;
+    }
+
+    // Replacement leave: if OT was on a public holiday, grant 1 day replacement leave
+    if ot.ot_type == "public_holiday" {
+        // Find or create system "Replacement Leave" type for this company
+        let rl_type_id: Uuid = sqlx::query_scalar(
+            r#"INSERT INTO leave_types (company_id, name, description, default_days, is_paid, is_system)
+            VALUES ($1, 'Replacement Leave', 'Auto-granted when working on public holidays', 0, TRUE, TRUE)
+            ON CONFLICT (company_id, name) DO UPDATE SET updated_at = NOW()
+            RETURNING id"#,
+        )
+        .bind(company_id)
+        .fetch_one(pool)
+        .await?;
+
+        // UPSERT leave balance: increment entitled_days by 1
+        let year = ot.ot_date.year();
+        sqlx::query(
+            r#"INSERT INTO leave_balances (employee_id, leave_type_id, year, entitled_days)
+            VALUES ($1, $2, $3, 1)
+            ON CONFLICT (employee_id, leave_type_id, year)
+            DO UPDATE SET entitled_days = leave_balances.entitled_days + 1, updated_at = NOW()"#,
+        )
+        .bind(ot.employee_id)
+        .bind(rl_type_id)
+        .bind(year)
+        .execute(pool)
+        .await?;
     }
 
     // Notify employee

@@ -1,3 +1,4 @@
+use chrono::Datelike;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -196,6 +197,17 @@ pub async fn create_employee(
 
     // Auto-create a user account for the employee if they have an email
     let account_info = create_user_for_employee(pool, &emp).await?;
+
+    // Initialize leave balances for the current year (prorated for mid-year joiners)
+    let current_year = chrono::Utc::now().year();
+    let _ = crate::services::portal_service::initialize_leave_balances(
+        pool,
+        emp.id,
+        company_id,
+        emp.date_joined,
+        current_year,
+    )
+    .await;
 
     Ok((emp, account_info))
 }

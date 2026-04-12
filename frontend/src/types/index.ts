@@ -417,6 +417,9 @@ export interface LeaveType {
   default_days: number;
   is_paid: boolean;
   is_active: boolean;
+  max_carry_forward: number;
+  carry_forward_expiry_months: number;
+  is_system: boolean;
 }
 
 export interface LeaveBalance {
@@ -757,6 +760,34 @@ export interface ImportConfirmResponse {
   imported_count: number;
   skipped_count: number;
   errors: ImportRowValidation[];
+}
+
+// ─── Audit Trail ───
+
+export interface AuditLog {
+  id: string;
+  company_id: string;
+  user_id: string | null;
+  entity_type: string;
+  entity_id: string | null;
+  action: string;
+  old_values: Record<string, unknown> | null;
+  new_values: Record<string, unknown> | null;
+  ip_address: string | null;
+  created_at: string;
+  user_email: string | null;
+  user_full_name: string | null;
+}
+
+// ─── EA Form ───
+
+export interface EaEmployeeSummary {
+  employee_id: string;
+  employee_name: string;
+  employee_number: string;
+  ic_number: string | null;
+  ytd_gross: number;
+  months_worked: number;
 }
 
 // ─── Backup / Data Migration ───

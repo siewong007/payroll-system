@@ -116,3 +116,25 @@ export async function getPortalHolidays(year?: number): Promise<Holiday[]> {
   const { data } = await api.get('/portal/holidays', { params: { year } });
   return data;
 }
+
+// Payslip PDF Download
+export async function downloadPayslipPdf(payslipId: string): Promise<void> {
+  const res = await api.get(`/portal/payslips/${payslipId}/pdf`, { responseType: 'blob' });
+  const url = window.URL.createObjectURL(new Blob([res.data]));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `payslip_${payslipId}.pdf`;
+  a.click();
+  window.URL.revokeObjectURL(url);
+}
+
+// Leave ICS Export
+export async function exportLeaveIcs(): Promise<void> {
+  const res = await api.get('/portal/leave/export-ics', { responseType: 'blob' });
+  const url = window.URL.createObjectURL(new Blob([res.data]));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'leave_calendar.ics';
+  a.click();
+  window.URL.revokeObjectURL(url);
+}

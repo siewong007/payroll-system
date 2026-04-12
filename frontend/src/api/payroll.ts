@@ -30,3 +30,13 @@ export async function lockPayroll(id: string): Promise<PayrollRun> {
   const { data } = await api.put(`/payroll/runs/${id}/lock`);
   return data;
 }
+
+export async function downloadRunPayslips(runId: string): Promise<void> {
+  const res = await api.get(`/payroll/runs/${runId}/payslips/pdf`, { responseType: 'blob' });
+  const url = window.URL.createObjectURL(new Blob([res.data]));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `payslips_${runId}.pdf`;
+  a.click();
+  window.URL.revokeObjectURL(url);
+}

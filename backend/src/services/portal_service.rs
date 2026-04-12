@@ -476,6 +476,151 @@ pub async fn cancel_overtime_application(
 }
 
 use chrono::Datelike;
+use rust_decimal::prelude::*;
+
+// ─── Leave Proration ───
+
+/// Calculate prorated leave days for a mid-year joiner.
+/// Formula: default_days × remaining_months / 12, rounded to nearest 0.5
+pub fn calculate_prorated_days(
+    default_days: rust_decimal::Decimal,
+    date_joined: chrono::NaiveDate,
+    year: i32,
+) -> rust_decimal::Decimal {
+    let join_year = date_joined.year();
+    if join_year < year {
+        // Joined before this year — full entitlement
+        return default_days;
+    }
+    if join_year > year {
+        // Joined after this year — no entitlement
+        return rust_decimal::Decimal::ZERO;
+    }
+    // Joined this year: remaining months including the joining month
+    let join_month = date_joined.month() as i32;
+    let remaining = (12 - join_month + 1).max(0);
+    let prorated = default_days * rust_decimal::Decimal::from(remaining) / rust_decimal::Decimal::from(12);
+    // Round to nearest 0.5
+    let doubled = prorated * rust_decimal::Decimal::from(2);
+    let rounded = doubled.round_dp(0);
+    rounded / rust_decimal::Decimal::from(2)
+}
+
+/// Initialize leave balances for an employee for a given year.
+/// Prorates based on date_joined if it's a mid-year join.
+pub async fn initialize_leave_balances(
+    pool: &PgPool,
+    employee_id: Uuid,
+    company_id: Uuid,
+    date_joined: chrono::NaiveDate,
+    year: i32,
+) -> AppResult<Vec<LeaveBalance>> {
+    let leave_types = sqlx::query_as::<_, LeaveType>(
+        "SELECT * FROM leave_types WHERE company_id = $1 AND is_active = TRUE",
+    )
+    .bind(company_id)
+    .fetch_all(pool)
+    .await?;
+
+    let mut balances = vec![];
+    for lt in &leave_types {
+        let entitled = calculate_prorated_days(lt.default_days, date_joined, year);
+        let balance = sqlx::query_as::<_, LeaveBalance>(
+            r#"INSERT INTO leave_balances (employee_id, leave_type_id, year, entitled_days)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (employee_id, leave_type_id, year) DO NOTHING
+            RETURNING *"#,
+        )
+        .bind(employee_id)
+        .bind(lt.id)
+        .bind(year)
+        .bind(entitled)
+        .fetch_optional(pool)
+        .await?;
+
+        if let Some(b) = balance {
+            balances.push(b);
+        }
+    }
+    Ok(balances)
+}
+
+// ─── Year-End Carry-Forward ───
+
+/// Process year-end carry-forward for all employees in a company.
+/// Returns the count of balances created/updated.
+pub async fn process_year_end_carry_forward(
+    pool: &PgPool,
+    company_id: Uuid,
+    from_year: i32,
+    to_year: i32,
+) -> AppResult<i32> {
+    let leave_types = sqlx::query_as::<_, LeaveType>(
+        "SELECT * FROM leave_types WHERE company_id = $1 AND is_active = TRUE",
+    )
+    .bind(company_id)
+    .fetch_all(pool)
+    .await?;
+
+    let employees: Vec<(Uuid, chrono::NaiveDate)> = sqlx::query_as(
+        "SELECT id, date_joined FROM employees WHERE company_id = $1 AND is_active = TRUE AND deleted_at IS NULL",
+    )
+    .bind(company_id)
+    .fetch_all(pool)
+    .await?;
+
+    let mut count = 0;
+    for (emp_id, date_joined) in &employees {
+        for lt in &leave_types {
+            // Get current year balance
+            let balance: Option<(rust_decimal::Decimal, rust_decimal::Decimal, rust_decimal::Decimal, rust_decimal::Decimal)> =
+                sqlx::query_as(
+                    r#"SELECT entitled_days, taken_days, pending_days, carried_forward
+                    FROM leave_balances
+                    WHERE employee_id = $1 AND leave_type_id = $2 AND year = $3"#,
+                )
+                .bind(emp_id)
+                .bind(lt.id)
+                .bind(from_year)
+                .fetch_optional(pool)
+                .await?;
+
+            let carry = if let Some((entitled, taken, pending, cf)) = balance {
+                let remaining = entitled + cf - taken - pending;
+                let remaining = remaining.max(rust_decimal::Decimal::ZERO);
+                if lt.max_carry_forward > rust_decimal::Decimal::ZERO {
+                    remaining.min(lt.max_carry_forward)
+                } else {
+                    rust_decimal::Decimal::ZERO
+                }
+            } else {
+                rust_decimal::Decimal::ZERO
+            };
+
+            // Calculate entitled for next year (prorate for mid-year joiners)
+            let entitled = calculate_prorated_days(lt.default_days, *date_joined, to_year);
+
+            // UPSERT next year balance
+            sqlx::query(
+                r#"INSERT INTO leave_balances (employee_id, leave_type_id, year, entitled_days, carried_forward)
+                VALUES ($1, $2, $3, $4, $5)
+                ON CONFLICT (employee_id, leave_type_id, year)
+                DO UPDATE SET carried_forward = $5, entitled_days = $4, updated_at = NOW()"#,
+            )
+            .bind(emp_id)
+            .bind(lt.id)
+            .bind(to_year)
+            .bind(entitled)
+            .bind(carry)
+            .execute(pool)
+            .await?;
+
+            count += 1;
+        }
+    }
+
+    Ok(count)
+}
 
 // ─── Team Calendar ───
 

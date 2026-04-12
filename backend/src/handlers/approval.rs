@@ -54,6 +54,7 @@ pub async fn approve_leave(
     let company_id = require_admin(&auth)?;
     let lr = approval_service::approve_leave(
         &state.pool,
+        &state.config,
         company_id,
         id,
         auth.0.sub,
@@ -103,6 +104,7 @@ pub async fn approve_claim(
     let company_id = require_admin(&auth)?;
     let claim = approval_service::approve_claim(
         &state.pool,
+        &state.config,
         company_id,
         id,
         auth.0.sub,

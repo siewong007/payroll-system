@@ -14,6 +14,7 @@ import {
   Shield,
   Mail,
   DatabaseBackup,
+  ScrollText,
   X,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
@@ -34,6 +35,7 @@ const navigation = [
   { name: 'Companies', href: '/companies', icon: Building2, showFor: ['super_admin'] },
   { name: 'Users', href: '/users', icon: UserCog, showFor: ['super_admin'] },
   { name: 'Roles', href: '/roles', icon: Shield, showFor: ['super_admin'] },
+  { name: 'Audit Trail', href: '/audit-trail', icon: ScrollText, showFor: ['super_admin', 'admin'] },
   { name: 'Backup', href: '/backup', icon: DatabaseBackup, showFor: ['super_admin', 'admin'] },
 ];
 

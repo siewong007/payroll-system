@@ -8,6 +8,9 @@ import {
   getLeaveReport,
   getClaimsReport,
   getStatutoryReport,
+  downloadStatutoryExport,
+  getEaEmployees,
+  downloadEaForm,
   type PayrollSummaryRow,
   type DepartmentPayrollRow,
   type LeaveReportRow,
@@ -19,7 +22,7 @@ import { DataTable, type Column } from '@/components/ui/DataTable';
 const fmt = (sen: number) => `RM ${(sen / 100).toLocaleString('en-MY', { minimumFractionDigits: 2 })}`;
 const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-type ReportTab = 'payroll' | 'department' | 'statutory' | 'leave' | 'claims';
+type ReportTab = 'payroll' | 'department' | 'statutory' | 'leave' | 'claims' | 'ea_form';
 
 const payrollColumns: Column<PayrollSummaryRow>[] = [
   { key: 'period', header: 'Period', render: (r) => <span className="font-semibold text-gray-900">{r.period}</span> },
@@ -61,7 +64,7 @@ const statutoryColumns: Column<StatutoryReportRow>[] = [
   { key: 'zakat', header: 'Zakat', align: 'right', render: (r) => fmt(r.zakat_amount) },
 ];
 
-const PAYROLL_TABS: ReportTab[] = ['payroll', 'department', 'statutory'];
+const PAYROLL_TABS: ReportTab[] = ['payroll', 'department', 'statutory', 'ea_form'];
 
 // ─── Leave eligibility rules ───
 
@@ -160,6 +163,12 @@ export function Reports() {
     enabled: tab === 'claims',
   });
 
+  const eaQuery = useQuery({
+    queryKey: ['report-ea', year],
+    queryFn: () => getEaEmployees(year),
+    enabled: tab === 'ea_form',
+  });
+
   const exportCSV = (headers: string[], rows: string[][], filename: string) => {
     const csv = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
@@ -176,6 +185,7 @@ export function Reports() {
       { key: 'payroll', label: 'Payroll Summary' },
       { key: 'department', label: 'By Department' },
       { key: 'statutory', label: 'Statutory' },
+      { key: 'ea_form', label: 'EA Form' },
       { key: 'leave', label: 'Leave Entitlement' },
       { key: 'claims', label: 'Claims' },
     ];
@@ -293,6 +303,24 @@ export function Reports() {
       {/* Statutory Report */}
       {tab === 'statutory' && (
         <div className="space-y-3">
+          {/* Statutory Export Buttons */}
+          <div className="bg-white rounded-xl border border-gray-200 p-4">
+            <h3 className="text-sm font-medium text-gray-700 mb-3">Download Submission Files — {months[month - 1]} {year}</h3>
+            <div className="flex flex-wrap gap-2">
+              <button onClick={() => downloadStatutoryExport('epf', year, month)} className="btn-secondary !py-1.5 !px-3 !text-xs">
+                <Download className="w-3.5 h-3.5" /> EPF (e-Caruman)
+              </button>
+              <button onClick={() => downloadStatutoryExport('socso', year, month)} className="btn-secondary !py-1.5 !px-3 !text-xs">
+                <Download className="w-3.5 h-3.5" /> SOCSO
+              </button>
+              <button onClick={() => downloadStatutoryExport('eis', year, month)} className="btn-secondary !py-1.5 !px-3 !text-xs">
+                <Download className="w-3.5 h-3.5" /> EIS
+              </button>
+              <button onClick={() => downloadStatutoryExport('pcb', year, month)} className="btn-secondary !py-1.5 !px-3 !text-xs">
+                <Download className="w-3.5 h-3.5" /> PCB / CP39
+              </button>
+            </div>
+          </div>
           <div className="flex justify-between items-center">
             <h2 className="font-semibold text-gray-900">Statutory Deductions — {months[month - 1]} {year}</h2>
             {statutoryQuery.data && statutoryQuery.data.length > 0 && (
@@ -368,6 +396,11 @@ export function Reports() {
             );
           }}
         />
+      )}
+
+      {/* EA Form */}
+      {tab === 'ea_form' && (
+        <EaFormTab data={eaQuery.data} isLoading={eaQuery.isLoading} year={year} />
       )}
 
       {/* Claims Report */}
@@ -681,6 +714,86 @@ function ClaimsSummaryReport({
                   </td>
                   <td className="px-5 py-3 text-center">
                     <span className={`font-medium ${r.rejected_count > 0 ? 'text-red-600' : 'text-gray-400'}`}>{r.rejected_count}</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── EA Form Tab ───
+
+function EaFormTab({
+  data,
+  isLoading,
+  year,
+}: {
+  data: import('@/types').EaEmployeeSummary[] | undefined;
+  isLoading: boolean;
+  year: number;
+}) {
+  const [downloading, setDownloading] = useState<string | null>(null);
+
+  const handleDownload = async (employeeId: string) => {
+    setDownloading(employeeId);
+    try {
+      await downloadEaForm(year, employeeId);
+    } finally {
+      setDownloading(null);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-48">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <h2 className="font-semibold text-gray-900">EA Form (Borang EA) — {year}</h2>
+      {!data || data.length === 0 ? (
+        <div className="text-center py-16 text-gray-400">
+          <FileText className="w-8 h-8 mx-auto mb-3 opacity-40" />
+          <p className="text-sm">No payroll data for {year}</p>
+        </div>
+      ) : (
+        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wide">
+                <th className="text-left px-5 py-3 font-medium">Employee</th>
+                <th className="text-left px-5 py-3 font-medium">IC Number</th>
+                <th className="text-center px-5 py-3 font-medium">Months</th>
+                <th className="text-right px-5 py-3 font-medium">YTD Gross</th>
+                <th className="text-right px-5 py-3 font-medium">Action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {data.map((emp) => (
+                <tr key={emp.employee_id} className="hover:bg-gray-50/50">
+                  <td className="px-5 py-3">
+                    <div className="font-semibold text-gray-900">{emp.employee_name}</div>
+                    <div className="text-xs text-gray-400">{emp.employee_number}</div>
+                  </td>
+                  <td className="px-5 py-3 text-gray-500">{emp.ic_number || '\u2014'}</td>
+                  <td className="px-5 py-3 text-center text-gray-600">{emp.months_worked}</td>
+                  <td className="px-5 py-3 text-right font-medium text-gray-900">{fmt(emp.ytd_gross)}</td>
+                  <td className="px-5 py-3 text-right">
+                    <button
+                      onClick={() => handleDownload(emp.employee_id)}
+                      disabled={downloading === emp.employee_id}
+                      className="btn-secondary !py-1 !px-2.5 !text-xs disabled:opacity-50"
+                    >
+                      <Download className="w-3 h-3" />
+                      {downloading === emp.employee_id ? 'Generating...' : 'Download PDF'}
+                    </button>
                   </td>
                 </tr>
               ))}

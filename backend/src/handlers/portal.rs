@@ -302,6 +302,85 @@ pub async fn portal_holidays(
     Ok(Json(holidays))
 }
 
+// ─── Leave Calendar Export (.ics) ───
+
+pub async fn export_leave_ics(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Query(q): Query<LeaveBalanceQuery>,
+) -> Result<axum::response::Response, AppError> {
+    use axum::body::Body;
+    use axum::http::{header, Response, StatusCode};
+
+    let employee_id = get_employee_id(&auth)?;
+    let year = q.year.unwrap_or(chrono::Utc::now().year());
+
+    let leaves = sqlx::query_as::<_, LeaveRequest>(
+        r#"SELECT lr.id, lr.employee_id, lr.company_id, lr.leave_type_id,
+            lr.start_date, lr.end_date, lr.days, lr.reason, lr.status,
+            lr.reviewed_by, lr.reviewed_at, lr.review_notes,
+            lr.attachment_url, lr.attachment_name,
+            lr.created_at, lr.updated_at,
+            lt.name as leave_type_name
+        FROM leave_requests lr
+        JOIN leave_types lt ON lr.leave_type_id = lt.id
+        WHERE lr.employee_id = $1 AND lr.status = 'approved'
+        AND EXTRACT(YEAR FROM lr.start_date) = $2
+        ORDER BY lr.start_date"#,
+    )
+    .bind(employee_id)
+    .bind(year)
+    .fetch_all(&state.pool)
+    .await?;
+
+    let mut ics = String::from("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//PayrollMY//Leave Calendar//EN\r\nCALSCALE:GREGORIAN\r\n");
+
+    for lr in &leaves {
+        let uid = lr.id;
+        let summary = lr.leave_type_name.as_deref().unwrap_or("Leave");
+        let dtstart = lr.start_date.format("%Y%m%d");
+        // DTEND in VEVENT DATE type is exclusive, so add 1 day
+        let dtend = lr.end_date.succ_opt().map(|d| d.format("%Y%m%d").to_string()).unwrap_or_default();
+        let description = lr.reason.as_deref().unwrap_or("");
+
+        ics.push_str(&format!(
+            "BEGIN:VEVENT\r\nUID:{uid}@payrollmy\r\nDTSTART;VALUE=DATE:{dtstart}\r\nDTEND;VALUE=DATE:{dtend}\r\nSUMMARY:{summary}\r\nDESCRIPTION:{description}\r\nSTATUS:CONFIRMED\r\nEND:VEVENT\r\n"
+        ));
+    }
+
+    ics.push_str("END:VCALENDAR\r\n");
+
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/calendar; charset=utf-8")
+        .header(header::CONTENT_DISPOSITION, format!("attachment; filename=\"leave-{}.ics\"", year))
+        .body(Body::from(ics))
+        .unwrap())
+}
+
+// ─── Payslip PDF Download ───
+
+pub async fn download_payslip_pdf(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+) -> Result<axum::response::Response, AppError> {
+    use axum::body::Body;
+    use axum::http::{header, Response, StatusCode};
+
+    let employee_id = get_employee_id(&auth)?;
+    let bytes = crate::services::payslip_pdf_service::generate_payslip_pdf(
+        &state.pool, id, employee_id,
+    ).await?;
+
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/pdf")
+        .header(header::CONTENT_DISPOSITION, "attachment; filename=\"payslip.pdf\"")
+        .body(Body::from(bytes))
+        .unwrap())
+}
+
 fn validate_magic_bytes(data: &[u8], claimed_ext: &str) -> bool {
     match claimed_ext {
         "pdf" => data.starts_with(b"%PDF"),

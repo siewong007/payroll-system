@@ -215,6 +215,30 @@ pub async fn list_groups(
     Ok(Json(groups))
 }
 
+pub async fn download_run_payslips_pdf(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(run_id): Path<Uuid>,
+) -> Result<axum::response::Response, crate::core::error::AppError> {
+    use axum::body::Body;
+    use axum::http::{header, Response, StatusCode};
+
+    auth.deny_exec()?;
+    let company_id = auth.0.company_id
+        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
+
+    let bytes = crate::services::payslip_pdf_service::generate_bulk_payslips(
+        &state.pool, run_id, company_id,
+    ).await?;
+
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/pdf")
+        .header(header::CONTENT_DISPOSITION, "attachment; filename=\"payslips.pdf\"")
+        .body(Body::from(bytes))
+        .unwrap())
+}
+
 pub async fn get_items(
     State(state): State<AppState>,
     auth: AuthUser,

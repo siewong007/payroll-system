@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, ArrowLeft, Paperclip, ExternalLink, X, Calendar, FileText, AlertTriangle } from 'lucide-react';
-import { getLeaveBalances, getLeaveRequests, getLeaveTypes, createLeaveRequest, cancelLeaveRequest, uploadFile, getMyProfile } from '@/api/portal';
+import { Plus, ArrowLeft, Paperclip, ExternalLink, X, Calendar, FileText, AlertTriangle, Download } from 'lucide-react';
+import { getLeaveBalances, getLeaveRequests, getLeaveTypes, createLeaveRequest, cancelLeaveRequest, uploadFile, getMyProfile, exportLeaveIcs } from '@/api/portal';
 import { formatDate } from '@/lib/utils';
 import { DataTable, type Column } from '@/components/ui/DataTable';
 import type { Employee, LeaveBalance, LeaveRequest, LeaveType } from '@/types';
@@ -172,9 +172,14 @@ export function Leave() {
           <h1 className="page-title">Leave</h1>
           <p className="page-subtitle">Manage your leave entitlements and requests</p>
         </div>
-        <button onClick={() => setShowApply(true)} className="btn-primary w-full sm:w-auto">
-          <Plus className="w-4 h-4" /> Apply for Leave
-        </button>
+        <div className="flex gap-2 w-full sm:w-auto">
+          <button onClick={() => exportLeaveIcs()} className="btn-secondary w-full sm:w-auto">
+            <Download className="w-4 h-4" /> Export .ics
+          </button>
+          <button onClick={() => setShowApply(true)} className="btn-primary w-full sm:w-auto">
+            <Plus className="w-4 h-4" /> Apply for Leave
+          </button>
+        </div>
       </div>
 
       {/* Tabs */}

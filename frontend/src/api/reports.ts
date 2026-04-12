@@ -83,3 +83,42 @@ export const getClaimsReport = (startDate: string, endDate: string) =>
 
 export const getStatutoryReport = (year: number, month: number) =>
   api.get<StatutoryReportRow[]>('/reports/statutory', { params: { year, month } }).then(r => r.data);
+
+// Statutory File Exports
+export const downloadStatutoryExport = async (type: 'epf' | 'socso' | 'eis' | 'pcb', year: number, month: number) => {
+  const res = await api.get(`/reports/statutory/${type}-export`, {
+    params: { year, month },
+    responseType: 'blob',
+  });
+  const contentDisposition = res.headers['content-disposition'] || '';
+  const match = contentDisposition.match(/filename="?([^"]+)"?/);
+  const filename = match?.[1] || `${type}_export_${year}_${month}.csv`;
+  const url = window.URL.createObjectURL(new Blob([res.data]));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  window.URL.revokeObjectURL(url);
+};
+
+// EA Form
+import type { EaEmployeeSummary } from '@/types';
+
+export const getEaEmployees = (year: number) =>
+  api.get<EaEmployeeSummary[]>('/reports/ea-form/employees', { params: { year } }).then(r => r.data);
+
+export const downloadEaForm = async (year: number, employeeId: string) => {
+  const res = await api.get('/reports/ea-form', {
+    params: { year, employee_id: employeeId },
+    responseType: 'blob',
+  });
+  const contentDisposition = res.headers['content-disposition'] || '';
+  const match = contentDisposition.match(/filename="?([^"]+)"?/);
+  const filename = match?.[1] || `EA_Form_${year}.pdf`;
+  const url = window.URL.createObjectURL(new Blob([res.data]));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  window.URL.revokeObjectURL(url);
+};

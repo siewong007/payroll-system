@@ -22,3 +22,8 @@ pub mod email_service;
 pub mod passkey_service;
 pub mod employee_import_service;
 pub mod backup_service;
+pub mod audit_service;
+pub mod pdf_helpers;
+pub mod payslip_pdf_service;
+pub mod ea_form_service;
+pub mod statutory_export_service;
