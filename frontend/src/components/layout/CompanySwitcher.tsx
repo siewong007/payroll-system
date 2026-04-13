@@ -1,11 +1,13 @@
 import { useQuery } from '@tanstack/react-query';
 import { Building2, ChevronDown } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { getMyCompanies } from '@/api/admin';
 
 export function CompanySwitcher() {
   const { user, switchCompany } = useAuth();
+  const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [switching, setSwitching] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -39,6 +41,7 @@ export function CompanySwitcher() {
     setSwitching(true);
     try {
       await switchCompany(companyId);
+      navigate('/', { replace: true });
     } finally {
       setSwitching(false);
       setOpen(false);

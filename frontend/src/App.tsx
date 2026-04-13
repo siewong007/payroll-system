@@ -82,12 +82,12 @@ export default function App() {
               <Route path="/payroll" element={<RoleGuard blockedRoles={['exec']}><PayrollList /></RoleGuard>} />
               <Route path="/payroll/process" element={<RoleGuard blockedRoles={['exec']}><PayrollProcess /></RoleGuard>} />
               <Route path="/payroll/:id" element={<RoleGuard blockedRoles={['exec']}><PayrollDetail /></RoleGuard>} />
-              <Route path="/documents" element={<RoleGuard blockedRoles={['exec']}><DocumentList /></RoleGuard>} />
+              <Route path="/documents" element={<DocumentList />} />
               <Route path="/calendar" element={<CalendarPage />} />
               <Route path="/teams" element={<TeamsPage />} />
-              <Route path="/approvals" element={<RoleGuard blockedRoles={['exec']}><Approvals /></RoleGuard>} />
-              <Route path="/reports" element={<Reports />} />
-              <Route path="/letters" element={<RoleGuard blockedRoles={['exec']}><LettersPage /></RoleGuard>} />
+              <Route path="/approvals" element={<Approvals />} />
+              <Route path="/reports" element={<RoleGuard blockedRoles={['exec']}><Reports /></RoleGuard>} />
+              <Route path="/letters" element={<LettersPage />} />
               <Route path="/settings" element={<SettingsPage />} />
               <Route path="/companies" element={<RoleGuard blockedRoles={['exec', 'admin', 'payroll_admin', 'hr_manager', 'finance']}><CompanyManagement /></RoleGuard>} />
               <Route path="/users" element={<RoleGuard blockedRoles={['exec', 'admin', 'payroll_admin', 'hr_manager', 'finance']}><UserManagement /></RoleGuard>} />

@@ -80,7 +80,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setToken(data.token);
     setUser(data.user);
     localStorage.setItem('user', JSON.stringify(data.user));
-    queryClient.clear();
+    queryClient.removeQueries();
+    await queryClient.invalidateQueries();
   };
 
   return (
