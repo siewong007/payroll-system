@@ -80,15 +80,28 @@ function QrScannerModal({ onClose, onScanned }: { onClose: () => void; onScanned
         const errorCb = (_err: any) => { /* scanning in progress */ };
 
         const constraints = {
-          width: { min: 640, ideal: 1280, max: 1920 },
-          height: { min: 480, ideal: 720, max: 1080 },
+          width: { min: 640, ideal: 1280 },
+          height: { min: 480, ideal: 720 },
         };
 
         try {
+          // Try 1: HD constraints + Environment camera
           await qr.start({ ...constraints, facingMode: 'environment' }, config, successCb, errorCb);
-        } catch (envErr) {
-          console.warn('Environment camera failed, trying user camera', envErr);
-          await qr.start({ ...constraints, facingMode: 'user' }, config, successCb, errorCb);
+        } catch (err1) {
+          console.warn('HD environment camera failed, trying basic environment camera', err1);
+          try {
+            // Try 2: Basic environment camera (no resolution constraints)
+            await qr.start({ facingMode: 'environment' }, config, successCb, errorCb);
+          } catch (err2) {
+            console.warn('Environment camera failed, trying user camera', err2);
+            try {
+              // Try 3: User (front) camera
+              await qr.start({ facingMode: 'user' }, config, successCb, errorCb);
+            } catch (err3) {
+              console.error('All camera attempts failed', err3);
+              throw new Error('Could not access camera. Please ensure camera permissions are granted.');
+            }
+          }
         }
         
         if (!stopped) setStarted(true);
