@@ -45,12 +45,17 @@ function QrScannerModal({ onClose, onScanned }: { onClose: () => void; onScanned
     
     const initScanner = async () => {
       try {
+        // Wait a small bit to ensure DOM is ready and styled
+        await new Promise(r => setTimeout(r, 300));
+        
+        if (stopped) return;
+
         if (!scannerRef.current) {
           scannerRef.current = new Html5Qrcode('qr-reader');
         }
         const qr = scannerRef.current;
         
-        const config = { fps: 10, qrbox: { width: 250, height: 250 } };
+        const config = { fps: 15, qrbox: { width: 250, height: 250 } };
         const successCb = (decodedText: string) => {
           if (stopped) return;
           stopped = true;
@@ -71,17 +76,16 @@ function QrScannerModal({ onClose, onScanned }: { onClose: () => void; onScanned
         const errorCb = (_err: any) => { /* scanning in progress */ };
 
         try {
-          // Prefer back camera
           await qr.start({ facingMode: 'environment' }, config, successCb, errorCb);
         } catch (envErr) {
-          // Fallback to front camera (e.g. for Macbooks or devices with no rear camera)
+          console.warn('Environment camera failed, trying user camera', envErr);
           await qr.start({ facingMode: 'user' }, config, successCb, errorCb);
         }
         
         if (!stopped) setStarted(true);
       } catch (err: any) {
         console.error('QR Scanner error:', err);
-        setError('Camera access denied or device not supported.');
+        setError(err?.message || 'Camera access denied or device not supported.');
       }
     };
     
@@ -108,30 +112,28 @@ function QrScannerModal({ onClose, onScanned }: { onClose: () => void; onScanned
             <QrCode className="w-5 h-5 text-violet-600" />
             Scan Attendance QR
           </h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-xl leading-none">&times;</button>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-xl leading-none transition-colors">&times;</button>
         </div>
 
         <div className="p-5">
-          {!started && !error && (
-            <div className="h-64 flex items-center justify-center bg-gray-50 rounded-2xl mb-4">
-              <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-black" />
-            </div>
-          )}
-          {error && (
-            <div className="h-64 flex flex-col items-center justify-center bg-red-50 rounded-2xl gap-3 mb-4">
-              <AlertCircle className="w-10 h-10 text-red-400" />
-              <p className="text-sm text-red-600 text-center px-4">{error}</p>
-            </div>
-          )}
-          
-          {/* Always render DOM node so constructor doesn't fail, just hide it if error */}
-          <div 
-            id="qr-reader" 
-            className="rounded-2xl overflow-hidden" 
-            style={{ display: error || !started ? 'none' : 'block' }}
-          />
+          <div className="relative h-64 bg-gray-50 rounded-2xl overflow-hidden mb-4 border border-gray-100">
+            {!started && !error && (
+              <div className="absolute inset-0 flex items-center justify-center z-10">
+                <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-black" />
+              </div>
+            )}
+            
+            {error && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-red-50 gap-3 z-20">
+                <AlertCircle className="w-10 h-10 text-red-400" />
+                <p className="text-sm text-red-600 text-center px-4">{error}</p>
+              </div>
+            )}
+            
+            <div id="qr-reader" className="w-full h-full" />
+          </div>
 
-          <p className="text-xs text-gray-400 text-center mt-3">
+          <p className="text-xs text-gray-400 text-center">
             Point your camera at the QR code on the kiosk screen
           </p>
         </div>
