@@ -55,7 +55,11 @@ function QrScannerModal({ onClose, onScanned }: { onClose: () => void; onScanned
         }
         const qr = scannerRef.current;
         
-        const config = { fps: 15, qrbox: { width: 250, height: 250 } };
+        const config = {
+          fps: 20,
+          qrbox: { width: 280, height: 280 },
+          aspectRatio: 1.0,
+        };
         const successCb = (decodedText: string) => {
           if (stopped) return;
           stopped = true;
@@ -75,11 +79,16 @@ function QrScannerModal({ onClose, onScanned }: { onClose: () => void; onScanned
         };
         const errorCb = (_err: any) => { /* scanning in progress */ };
 
+        const constraints = {
+          width: { min: 640, ideal: 1280, max: 1920 },
+          height: { min: 480, ideal: 720, max: 1080 },
+        };
+
         try {
-          await qr.start({ facingMode: 'environment' }, config, successCb, errorCb);
+          await qr.start({ ...constraints, facingMode: 'environment' }, config, successCb, errorCb);
         } catch (envErr) {
           console.warn('Environment camera failed, trying user camera', envErr);
-          await qr.start({ facingMode: 'user' }, config, successCb, errorCb);
+          await qr.start({ ...constraints, facingMode: 'user' }, config, successCb, errorCb);
         }
         
         if (!stopped) setStarted(true);

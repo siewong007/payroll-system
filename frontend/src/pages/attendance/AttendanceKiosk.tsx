@@ -51,8 +51,9 @@ export function AttendanceKiosk() {
   useEffect(() => {
     if (!scanUrl || !canvasRef.current) return;
     QRCode.toCanvas(canvasRef.current, scanUrl, {
-      width: 320,
-      margin: 2,
+      width: 400,
+      margin: 1,
+      errorCorrectionLevel: 'L',
       color: { dark: '#111827', light: '#ffffff' },
     });
   }, [scanUrl]);
@@ -116,8 +117,8 @@ export function AttendanceKiosk() {
               <p className="text-red-400 text-sm text-center px-4">{error}</p>
             </div>
           ) : (
-            <div className="bg-white p-3 rounded-2xl shadow-glow">
-              <canvas ref={canvasRef} className="block rounded-xl" />
+            <div className="bg-white p-4 rounded-2xl shadow-[0_0_50px_rgba(255,255,255,0.15)] transition-transform hover:scale-[1.02]">
+              <canvas ref={canvasRef} className="block rounded-lg shadow-sm" />
             </div>
           )}
         </div>
