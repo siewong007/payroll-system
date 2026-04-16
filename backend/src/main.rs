@@ -1,6 +1,8 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use chrono::Timelike;
+
 use axum::http::{HeaderValue, Method};
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
@@ -101,6 +103,40 @@ async fn main() {
                 }
                 Err(e) => tracing::error!("Failed to clean up refresh tokens: {}", e),
             }
+        }
+    });
+
+    // Background task: auto-mark absent employees daily at 12:30 PM MYT (04:30 UTC)
+    let absent_pool = pool.clone();
+    tokio::spawn(async move {
+        use payroll_system::services::attendance_service;
+
+        // Wait until the next 04:30 UTC, then run daily
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60 * 60)); // check hourly
+        loop {
+            interval.tick().await;
+            // Only run between 04:00-05:00 UTC (12:00-13:00 MYT)
+            let now = chrono::Utc::now();
+            if now.hour() != 4 {
+                continue;
+            }
+
+            tracing::info!("Running auto-absent marking...");
+            match attendance_service::mark_absent_for_date(
+                &absent_pool,
+                "Asia/Kuala_Lumpur",
+            )
+            .await
+            {
+                Ok(count) => {
+                    if count > 0 {
+                        tracing::info!("Auto-marked {} employees as absent", count);
+                    }
+                }
+                Err(e) => tracing::error!("Auto-absent marking failed: {}", e),
+            }
+            // Sleep past this hour to avoid re-running
+            tokio::time::sleep(std::time::Duration::from_secs(60 * 60)).await;
         }
     });
 

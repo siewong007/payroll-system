@@ -1,5 +1,5 @@
 import { Outlet, Link, useLocation, Navigate } from 'react-router-dom';
-import { User, FileText, Calendar, Receipt, LogOut, ChevronDown, Bell, Users, Clock, MoreHorizontal } from 'lucide-react';
+import { User, FileText, Calendar, Receipt, LogOut, ChevronDown, Bell, Users, Clock, MoreHorizontal, ScanLine } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -9,6 +9,7 @@ const portalNav = [
   { name: 'My Profile', href: '/portal/profile', icon: User },
   { name: 'My Payslips', href: '/portal/payslips', icon: FileText },
   { name: 'Leave', href: '/portal/leave', icon: Calendar },
+  { name: 'Attendance', href: '/portal/attendance', icon: ScanLine },
   { name: 'Claims', href: '/portal/claims', icon: Receipt },
   { name: 'Overtime', href: '/portal/overtime', icon: Clock },
   { name: 'Team Calendar', href: '/portal/team-calendar', icon: Users },
@@ -25,6 +26,7 @@ const mobileTabNav = [
 
 // Items shown in "More" menu on mobile
 const mobileMoreNav = [
+  { name: 'Attendance', href: '/portal/attendance', icon: ScanLine },
   { name: 'Overtime', href: '/portal/overtime', icon: Clock },
   { name: 'Team Calendar', href: '/portal/team-calendar', icon: Users },
   { name: 'Notifications', href: '/portal/notifications', icon: Bell },

@@ -27,3 +27,6 @@ pub mod pdf_helpers;
 pub mod payslip_pdf_service;
 pub mod ea_form_service;
 pub mod statutory_export_service;
+pub mod attendance_service;
+pub mod geofence_service;
+pub mod work_schedule_service;

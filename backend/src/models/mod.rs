@@ -17,3 +17,6 @@ pub mod email;
 pub mod passkey;
 pub mod employee_import;
 pub mod backup;
+pub mod attendance;
+pub mod company_location;
+pub mod work_schedule;

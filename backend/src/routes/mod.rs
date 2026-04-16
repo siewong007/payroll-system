@@ -7,7 +7,7 @@ use axum::{
 use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
 
 use crate::core::app_state::AppState;
-use crate::handlers::{admin, approval, audit, auth, backup, calendar, company, dashboard, document, email, employee, employee_import, notification, oauth2, passkey, payroll, portal, report, settings, team};
+use crate::handlers::{admin, approval, attendance, audit, auth, backup, calendar, company, dashboard, document, email, employee, employee_import, geofence, notification, oauth2, passkey, payroll, portal, report, settings, team, work_schedule};
 
 pub fn create_router(state: AppState) -> Router {
     // Rate limiter: 5 requests per 60 seconds per IP
@@ -193,7 +193,38 @@ pub fn create_router(state: AppState) -> Router {
         .route("/reports/statutory/pcb-export", get(report::export_pcb))
         // EA Form
         .route("/reports/ea-form/employees", get(report::list_ea_employees))
-        .route("/reports/ea-form", get(report::get_ea_form));
+        .route("/reports/ea-form", get(report::get_ea_form))
+        // ─── Attendance ───
+        // Platform method control (super_admin only)
+        .route("/admin/platform/attendance-method",
+            get(attendance::get_platform_method).put(attendance::set_platform_method))
+        // Effective method for caller's company (any auth)
+        .route("/attendance/method", get(attendance::get_attendance_method))
+        // Company-level override (admin)
+        .route("/attendance/company-method", put(attendance::set_company_method))
+        // QR token generation (admin/hr_manager)
+        .route("/attendance/qr/generate", post(attendance::generate_qr_token))
+        // Employee check-in
+        .route("/attendance/check-in/qr", post(attendance::check_in_qr))
+        .route("/attendance/check-in/face-id", post(attendance::check_in_face_id))
+        .route("/attendance/check-out", post(attendance::check_out))
+        // Employee portal
+        .route("/attendance/my/today", get(attendance::my_today))
+        .route("/attendance/my", get(attendance::my_attendance))
+        // Admin management
+        .route("/attendance/records", get(attendance::list_attendance))
+        .route("/attendance/records/{id}", put(attendance::update_attendance))
+        .route("/attendance/manual", post(attendance::manual_attendance))
+        // ─── Work Schedules ───
+        .route("/work-schedules", get(work_schedule::list_schedules))
+        .route("/work-schedules/default",
+            get(work_schedule::get_default_schedule).put(work_schedule::upsert_default_schedule))
+        .route("/work-schedules/{id}", put(work_schedule::update_schedule))
+        // ─── Geofencing ───
+        .route("/geofence/locations", get(geofence::list_locations).post(geofence::create_location))
+        .route("/geofence/locations/{id}", put(geofence::update_location).delete(geofence::delete_location))
+        .route("/geofence/mode", get(geofence::get_mode).put(geofence::set_mode));
+
 
     Router::new().nest("/api", api).with_state(state)
 }

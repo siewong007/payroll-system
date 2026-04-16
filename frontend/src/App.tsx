@@ -34,6 +34,11 @@ import { LettersPage } from '@/pages/letters/LettersPage';
 import { EmployeeImport } from '@/pages/employees/EmployeeImport';
 import { BackupPage } from '@/pages/backup/BackupPage';
 import { AuditTrailPage } from '@/pages/audit/AuditTrailPage';
+import { AttendancePage } from '@/pages/attendance/AttendancePage';
+import { AttendanceKiosk } from '@/pages/attendance/AttendanceKiosk';
+import { AttendanceScanPage } from '@/pages/attendance/AttendanceScanPage';
+import { MyAttendance } from '@/pages/portal/MyAttendance';
+import { AttendanceSettings } from '@/pages/admin/AttendanceSettings';
 
 function RoleGuard({ blockedRoles, children }: { blockedRoles: string[]; children: React.ReactNode }) {
   const { user } = useAuth();
@@ -71,6 +76,9 @@ export default function App() {
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/change-password" element={<ChangePassword />} />
+            {/* Public attendance routes (no auth required) */}
+            <Route path="/attendance/kiosk" element={<AttendanceKiosk />} />
+            <Route path="/attendance/scan" element={<AttendanceScanPage />} />
             {/* Admin Layout */}
             <Route element={<AppLayout />}>
               <Route path="/" element={<HomeRedirect />} />
@@ -94,6 +102,8 @@ export default function App() {
               <Route path="/roles" element={<RoleGuard blockedRoles={['exec', 'admin', 'payroll_admin', 'hr_manager', 'finance']}><RoleManagement /></RoleGuard>} />
               <Route path="/backup" element={<RoleGuard blockedRoles={['exec', 'payroll_admin', 'hr_manager', 'finance', 'employee']}><BackupPage /></RoleGuard>} />
               <Route path="/audit-trail" element={<RoleGuard blockedRoles={['exec', 'payroll_admin', 'hr_manager', 'finance', 'employee']}><AuditTrailPage /></RoleGuard>} />
+              <Route path="/attendance" element={<AttendancePage />} />
+              <Route path="/admin/attendance-settings" element={<RoleGuard blockedRoles={['exec', 'admin', 'payroll_admin', 'hr_manager', 'finance', 'employee']}><AttendanceSettings /></RoleGuard>} />
             </Route>
             {/* Employee Portal Layout */}
             <Route element={<PortalLayout />}>
@@ -105,6 +115,7 @@ export default function App() {
               <Route path="/portal/overtime" element={<Overtime />} />
               <Route path="/portal/team-calendar" element={<TeamCalendar />} />
               <Route path="/portal/notifications" element={<Notifications />} />
+              <Route path="/portal/attendance" element={<MyAttendance />} />
             </Route>
           </Routes>
         </AuthProvider>

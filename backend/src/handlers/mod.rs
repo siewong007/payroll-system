@@ -18,3 +18,6 @@ pub mod passkey;
 pub mod employee_import;
 pub mod backup;
 pub mod audit;
+pub mod attendance;
+pub mod geofence;
+pub mod work_schedule;
