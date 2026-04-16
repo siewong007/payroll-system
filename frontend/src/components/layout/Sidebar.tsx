@@ -28,7 +28,7 @@ const navigation = [
   { name: 'Payroll', href: '/payroll', icon: Calculator, hideFor: ['exec', 'super_admin'] },
   { name: 'Teams', href: '/teams', icon: Users2, hideFor: ['super_admin'] },
   { name: 'Calendar', href: '/calendar', icon: CalendarDays, hideFor: ['super_admin'] },
-  { name: 'Attendance', href: '/attendance', icon: ScanLine, hideFor: ['super_admin', 'exec'] },
+  { name: 'Attendance', href: '/attendance', icon: ScanLine, hideFor: ['super_admin'] },
   { name: 'Approvals', href: '/approvals', icon: ClipboardCheck, hideFor: ['super_admin'] },
   { name: 'Reports', href: '/reports', icon: BarChart3, hideFor: ['exec', 'super_admin'] },
   { name: 'Documents', href: '/documents', icon: FileText, hideFor: ['super_admin'] },
@@ -38,7 +38,7 @@ const navigation = [
   { name: 'Users', href: '/users', icon: UserCog, showFor: ['super_admin'] },
   { name: 'Roles', href: '/roles', icon: Shield, showFor: ['super_admin'] },
   { name: 'Attendance Settings', href: '/admin/attendance-settings', icon: ScanLine, showFor: ['super_admin'] },
-  { name: 'Audit Trail', href: '/audit-trail', icon: ScrollText, showFor: ['super_admin', 'admin'] },
+  { name: 'Audit Trail', href: '/audit-trail', icon: ScrollText, showFor: ['super_admin', 'admin', 'hr_manager'] },
   { name: 'Backup', href: '/backup', icon: DatabaseBackup, showFor: ['super_admin', 'admin'] },
 ];
 

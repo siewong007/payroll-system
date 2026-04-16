@@ -396,7 +396,7 @@ export function AttendancePage() {
   const totalPages = result?.total_pages ?? 1;
   const total = result?.total ?? 0;
 
-  const isAdmin = ['admin', 'super_admin', 'hr_manager'].includes(user?.role ?? '');
+  const isAdmin = ['admin', 'super_admin', 'hr_manager', 'payroll_admin', 'exec'].includes(user?.role ?? '');
 
   // Reset to page 1 when filters change
   const updateFilter = (key: string, value: string) => {

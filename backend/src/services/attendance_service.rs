@@ -12,7 +12,7 @@ use crate::models::work_schedule::WorkSchedule;
 use crate::services::geofence_service;
 
 // ─── QR Token TTL ───
-const QR_TOKEN_TTL_SECONDS: i64 = 60;
+const QR_TOKEN_TTL_SECONDS: i64 = 300;
 const DEFAULT_TIMEZONE: &str = "Asia/Kuala_Lumpur";
 
 // ─── Platform Settings ───
@@ -173,17 +173,19 @@ pub async fn validate_and_consume_qr_token(
     token: &str,
     company_id: Uuid,
 ) -> AppResult<Uuid> {
+    // First, find the token regardless of company to provide better error messages
     let row: Option<AttendanceQrToken> = sqlx::query_as(
-        "SELECT * FROM attendance_qr_tokens
-         WHERE token = $1 AND company_id = $2",
+        "SELECT * FROM attendance_qr_tokens WHERE token = $1",
     )
     .bind(token)
-    .bind(company_id)
     .fetch_optional(pool)
     .await?;
 
     match row {
-        None => Err(AppError::BadRequest("Invalid QR code".into())),
+        None => Err(AppError::BadRequest("Invalid QR code: Token not found".into())),
+        Some(t) if t.company_id != company_id => Err(AppError::BadRequest(
+            "Invalid QR code: This code belongs to a different company".into(),
+        )),
         Some(t) if t.used => Err(AppError::BadRequest(
             "This QR code has already been used".into(),
         )),

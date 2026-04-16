@@ -110,10 +110,10 @@ pub async fn generate_qr_token(
 
     if !matches!(
         auth.0.role.as_str(),
-        "admin" | "super_admin" | "hr_manager"
+        "admin" | "super_admin" | "hr_manager" | "payroll_admin" | "exec"
     ) {
         return Err(AppError::Forbidden(
-            "Admin or HR Manager role required".into(),
+            "Authorized role required to generate QR code".into(),
         ));
     }
 
