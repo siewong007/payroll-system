@@ -18,6 +18,11 @@ output "cloudfront_domain" {
   value       = aws_cloudfront_distribution.frontend.domain_name
 }
 
+output "cloudfront_distribution_id" {
+  description = "CloudFront distribution ID"
+  value       = aws_cloudfront_distribution.frontend.id
+}
+
 output "ecr_repository_url" {
   description = "ECR repository URL for backend Docker images"
   value       = aws_ecr_repository.backend.repository_url
