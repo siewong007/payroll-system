@@ -89,6 +89,12 @@ resource "aws_iam_role_policy" "ec2_app" {
 
 # --- CI/CD Deployment Role ---
 
+resource "aws_iam_openid_connect_provider" "github" {
+  url             = "https://token.actions.githubusercontent.com"
+  client_id_list  = ["sts.amazonaws.com"]
+  thumbprint_list = ["6938fd4d98bab03faadb97b34396831e3780aea1", "1c58a3a8518e8759bf075b76b750d4f2df264fcd"]
+}
+
 resource "aws_iam_role" "cicd" {
   name = "${local.name_prefix}-cicd"
 
@@ -99,7 +105,7 @@ resource "aws_iam_role" "cicd" {
         Action = "sts:AssumeRoleWithWebIdentity"
         Effect = "Allow"
         Principal = {
-          Federated = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:oidc-provider/token.actions.githubusercontent.com"
+          Federated = aws_iam_openid_connect_provider.github.arn
         }
         Condition = {
           StringLike = {
