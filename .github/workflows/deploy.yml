@@ -24,6 +24,8 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          mask-aws-account-id: true
+          audience: sts.amazonaws.com
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
@@ -75,6 +77,8 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          mask-aws-account-id: true
+          audience: sts.amazonaws.com
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Sync to S3
