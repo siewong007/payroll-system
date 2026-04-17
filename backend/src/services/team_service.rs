@@ -57,6 +57,7 @@ pub async fn create_team(
     Ok(team)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn update_team(
     pool: &PgPool,
     company_id: Uuid,

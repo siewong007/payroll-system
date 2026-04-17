@@ -219,6 +219,7 @@ pub async fn find_user_by_email(pool: &PgPool, email: &str) -> AppResult<Option<
 }
 
 /// Link an OAuth2 account to an existing user (with optional token storage).
+#[allow(clippy::too_many_arguments)]
 pub async fn link_oauth2_account(
     pool: &PgPool,
     user_id: Uuid,
@@ -231,8 +232,8 @@ pub async fn link_oauth2_account(
     refresh_token: Option<&str>,
     token_expires_in: Option<i64>,
 ) -> AppResult<OAuth2Account> {
-    let access_token_hash = access_token.map(|t| hash_token(t));
-    let refresh_token_hash = refresh_token.map(|t| hash_token(t));
+    let access_token_hash = access_token.map(hash_token);
+    let refresh_token_hash = refresh_token.map(hash_token);
     let token_expires_at = token_expires_in.map(|secs| Utc::now() + Duration::seconds(secs));
 
     let account = sqlx::query_as::<_, OAuth2Account>(
@@ -272,7 +273,7 @@ pub async fn update_oauth2_tokens(
     expires_in: Option<i64>,
 ) -> AppResult<()> {
     let access_hash = hash_token(access_token);
-    let refresh_hash = refresh_token.map(|t| hash_token(t));
+    let refresh_hash = refresh_token.map(hash_token);
     let token_expires_at = expires_in.map(|secs| Utc::now() + Duration::seconds(secs));
 
     sqlx::query(

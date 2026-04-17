@@ -174,7 +174,7 @@ async fn calculate_tax_from_brackets(
     for (from, to, rate_pct, cumulative) in &brackets {
         if chargeable_income > *from {
             let taxable_in_bracket = chargeable_income.min(*to) - from;
-            let rate = Decimal::from(*rate_pct);
+            let rate = *rate_pct;
             let bracket_tax = Decimal::from(taxable_in_bracket) * rate / Decimal::from(100);
             tax = cumulative + bracket_tax.to_i64().unwrap_or(0);
 

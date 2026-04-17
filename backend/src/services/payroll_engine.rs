@@ -15,6 +15,7 @@ use crate::services::socso_service;
 /// 1. Fetch all active employees in the payroll group
 /// 2. For each employee, calculate gross, statutory deductions, net
 /// 3. Create PayrollRun + PayrollItems in a transaction
+#[allow(clippy::too_many_arguments)]
 pub async fn process_payroll(
     pool: &PgPool,
     company_id: Uuid,
@@ -306,8 +307,8 @@ async fn process_employee(
         ytd_gross: ytd_gross + tp3_income,
         ytd_pcb: ytd_pcb + tp3_pcb,
         ytd_epf: ytd_epf + tp3_epf,
-        ytd_socso: ytd_socso,
-        ytd_eis: ytd_eis,
+        ytd_socso,
+        ytd_eis,
         ytd_zakat: ytd_zakat + tp3_zakat,
         is_bonus_month: false,
         bonus_amount: 0,

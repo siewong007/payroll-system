@@ -113,13 +113,12 @@ pub async fn set_company_attendance_method(
         ));
     }
 
-    if let Some(m) = method {
-        if m != "qr_code" && m != "face_id" {
+    if let Some(m) = method
+        && m != "qr_code" && m != "face_id" {
             return Err(AppError::BadRequest(
                 "Method must be 'qr_code' or 'face_id'".into(),
             ));
         }
-    }
 
     sqlx::query("UPDATE companies SET attendance_method = $1 WHERE id = $2")
         .bind(method)
@@ -401,7 +400,7 @@ async fn ensure_no_active_checkin(pool: &PgPool, employee_id: Uuid, tz: &str) ->
 // ─── Pagination Helpers ───
 
 fn resolve_pagination(q: &AttendanceListQuery) -> (i64, i64, i64) {
-    let per_page = q.per_page.unwrap_or(50).min(200).max(1);
+    let per_page = q.per_page.unwrap_or(50).clamp(1, 200);
     let page = q.page.unwrap_or(1).max(1);
     let offset = (page - 1) * per_page;
     (page, per_page, offset)

@@ -303,14 +303,13 @@ pub async fn export_company(pool: &PgPool, company_id: Uuid) -> AppResult<Compan
     let b64 = base64::engine::general_purpose::STANDARD;
 
     let mut collect_file = |url: Option<&String>| {
-        if let Some(u) = url {
-            if let Some(filename) = u.strip_prefix("/api/uploads/") {
+        if let Some(u) = url
+            && let Some(filename) = u.strip_prefix("/api/uploads/") {
                 let path = upload_dir.join(filename);
                 if let Ok(data) = std::fs::read(&path) {
                     files.insert(u.clone(), b64.encode(&data));
                 }
             }
-        }
     };
 
     for d in &documents {
@@ -448,7 +447,7 @@ pub async fn import_company(
     }
 
     let r = |old: Uuid| -> Uuid { *remap.get(&old).unwrap_or(&old) };
-    let ro = |old: Option<Uuid>| -> Option<Uuid> { old.map(|id| r(id)) };
+    let ro = |old: Option<Uuid>| -> Option<Uuid> { old.map(&r) };
 
     let mut tx = pool.begin().await?;
     let mut warnings = Vec::new();
@@ -893,14 +892,13 @@ pub async fn import_company(
         let b64 = base64::engine::general_purpose::STANDARD;
         let mut files_restored = 0usize;
         for (url, data_b64) in &backup.files {
-            if let Some(filename) = url.strip_prefix("/api/uploads/") {
-                if let Ok(data) = b64.decode(data_b64) {
+            if let Some(filename) = url.strip_prefix("/api/uploads/")
+                && let Ok(data) = b64.decode(data_b64) {
                     let path = upload_dir.join(filename);
                     if tokio::fs::write(&path, &data).await.is_ok() {
                         files_restored += 1;
                     }
                 }
-            }
         }
         if files_restored > 0 {
             warnings.push(format!("{} file(s) restored to uploads directory.", files_restored));

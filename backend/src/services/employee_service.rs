@@ -307,8 +307,8 @@ pub async fn update_employee(
     let existing = get_employee(pool, id, company_id).await?;
 
     // Track salary change
-    if let Some(new_salary) = req.basic_salary {
-        if new_salary != existing.basic_salary {
+    if let Some(new_salary) = req.basic_salary
+        && new_salary != existing.basic_salary {
             sqlx::query(
                 r#"INSERT INTO salary_history (id, employee_id, old_salary, new_salary, effective_date, created_by)
                 VALUES ($1, $2, $3, $4, NOW()::date, $5)"#,
@@ -321,7 +321,6 @@ pub async fn update_employee(
             .execute(pool)
             .await?;
         }
-    }
 
     let emp = sqlx::query_as::<_, Employee>(
         r#"UPDATE employees SET

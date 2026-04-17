@@ -267,13 +267,11 @@ pub async fn link_google(
     // Check if already linked to another user
     if let Some(existing) =
         oauth2_service::find_oauth2_account(&state.pool, "google", &google_user.sub).await?
-    {
-        if existing.user_id != auth.0.sub {
+        && existing.user_id != auth.0.sub {
             return Err(AppError::BadRequest(
                 "This Google account is already linked to another user".into(),
             ));
         }
-    }
 
     oauth2_service::link_oauth2_account(
         &state.pool,

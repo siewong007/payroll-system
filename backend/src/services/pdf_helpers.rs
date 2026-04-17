@@ -12,7 +12,7 @@ pub fn sen_to_rm(sen: i64) -> String {
     let chars: Vec<char> = int_part.chars().collect();
     let mut result = String::new();
     for (i, c) in chars.iter().enumerate() {
-        if i > 0 && (chars.len() - i) % 3 == 0 {
+        if i > 0 && (chars.len() - i).is_multiple_of(3) {
             result.push(',');
         }
         result.push(*c);
@@ -57,6 +57,7 @@ pub fn draw_line(ops: &mut Vec<Op>, x1: f32, x2: f32, y: f32) {
 }
 
 /// Push ops for a simple table row with label on left and value on right
+#[allow(clippy::too_many_arguments)]
 pub fn draw_row(
     ops: &mut Vec<Op>,
     font: &PdfFontHandle,

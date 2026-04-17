@@ -7,7 +7,6 @@ use crate::services::pdf_helpers::sen_to_rm;
 #[derive(Debug, sqlx::FromRow)]
 struct StatutoryRow {
     employee_name: String,
-    employee_number: String,
     ic_number: Option<String>,
     tax_identification_number: Option<String>,
     epf_number: Option<String>,
@@ -21,7 +20,6 @@ struct StatutoryRow {
     eis_employee: i64,
     eis_employer: i64,
     pcb_amount: i64,
-    zakat_amount: i64,
 }
 
 #[derive(Debug, sqlx::FromRow)]

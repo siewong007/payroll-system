@@ -264,13 +264,13 @@ fn validate_row(row: &ImportRowRaw) -> Vec<FieldError> {
     let mut errors = Vec::new();
 
     // Required fields
-    if row.employee_number.as_ref().map_or(true, |s| s.is_empty()) {
+    if row.employee_number.as_ref().is_none_or(|s| s.is_empty()) {
         errors.push(FieldError {
             field: "employee_number".into(),
             message: "Employee number is required".into(),
         });
     }
-    if row.full_name.as_ref().map_or(true, |s| s.is_empty()) {
+    if row.full_name.as_ref().is_none_or(|s| s.is_empty()) {
         errors.push(FieldError {
             field: "full_name".into(),
             message: "Full name is required".into(),
@@ -296,14 +296,13 @@ fn validate_row(row: &ImportRowRaw) -> Vec<FieldError> {
         ("probation_start", &row.probation_start),
         ("probation_end", &row.probation_end),
     ] {
-        if let Some(v) = value {
-            if let Err(msg) = parse_date(v) {
+        if let Some(v) = value
+            && let Err(msg) = parse_date(v) {
                 errors.push(FieldError {
                     field: field.into(),
                     message: msg,
                 });
             }
-        }
     }
 
     // Money validations
@@ -315,14 +314,13 @@ fn validate_row(row: &ImportRowRaw) -> Vec<FieldError> {
         ("ptptn_monthly_amount", &row.ptptn_monthly_amount),
         ("tabung_haji_amount", &row.tabung_haji_amount),
     ] {
-        if let Some(v) = value {
-            if let Err(msg) = parse_money_to_sen(v) {
+        if let Some(v) = value
+            && let Err(msg) = parse_money_to_sen(v) {
                 errors.push(FieldError {
                     field: field.into(),
                     message: msg,
                 });
             }
-        }
     }
 
     // Enum validations
@@ -391,45 +389,41 @@ fn validate_row(row: &ImportRowRaw) -> Vec<FieldError> {
         ("is_muslim", &row.is_muslim),
         ("zakat_eligible", &row.zakat_eligible),
     ] {
-        if let Some(v) = value {
-            if let Err(msg) = parse_bool(v) {
+        if let Some(v) = value
+            && let Err(msg) = parse_bool(v) {
                 errors.push(FieldError {
                     field: field.into(),
                     message: msg,
                 });
             }
-        }
     }
 
     // Integer validation
-    if let Some(v) = &row.num_children {
-        if v.parse::<i32>().is_err() {
+    if let Some(v) = &row.num_children
+        && v.parse::<i32>().is_err() {
             errors.push(FieldError {
                 field: "num_children".into(),
                 message: format!("Invalid number '{}'. Enter a whole number", v),
             });
         }
-    }
 
     // Email format
-    if let Some(v) = &row.email {
-        if !v.contains('@') || !v.contains('.') {
+    if let Some(v) = &row.email
+        && (!v.contains('@') || !v.contains('.')) {
             errors.push(FieldError {
                 field: "email".into(),
                 message: format!("Invalid email address '{}'", v),
             });
         }
-    }
 
     // UUID validation for payroll_group_id
-    if let Some(v) = &row.payroll_group_id {
-        if Uuid::parse_str(v).is_err() {
+    if let Some(v) = &row.payroll_group_id
+        && Uuid::parse_str(v).is_err() {
             errors.push(FieldError {
                 field: "payroll_group_id".into(),
                 message: format!("Invalid payroll group ID '{}'. Must be a valid UUID", v),
             });
         }
-    }
 
     errors
 }
@@ -453,11 +447,10 @@ async fn load_existing(pool: &PgPool, company_id: Uuid) -> AppResult<ExistingEmp
     let mut ic_numbers = HashSet::new();
     for (emp_no, ic) in rows {
         employee_numbers.insert(emp_no.to_lowercase());
-        if let Some(ic) = ic {
-            if !ic.is_empty() {
+        if let Some(ic) = ic
+            && !ic.is_empty() {
                 ic_numbers.insert(ic.to_lowercase());
             }
-        }
     }
 
     Ok(ExistingEmployees {
@@ -556,11 +549,10 @@ pub async fn validate_file(
         if let Some(emp_no) = &row.employee_number {
             seen_emp_numbers.entry(emp_no.to_lowercase()).or_insert(row.row_number);
         }
-        if let Some(ic) = &row.ic_number {
-            if !ic.is_empty() {
+        if let Some(ic) = &row.ic_number
+            && !ic.is_empty() {
                 seen_ic_numbers.entry(ic.to_lowercase()).or_insert(row.row_number);
             }
-        }
 
         let status = if !dup_errors.is_empty() {
             errors.extend(dup_errors);

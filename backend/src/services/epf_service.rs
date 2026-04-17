@@ -65,11 +65,7 @@ pub async fn calculate_epf(
         }
         "D" => {
             // Citizen >= 60: no mandatory employee contribution
-            if wage <= 500000 {
-                (0.0_f64, 4.0_f64)
-            } else {
-                (0.0_f64, 4.0_f64)
-            }
+            (0.0_f64, 4.0_f64)
         }
         "C" => {
             // PR >= 60

@@ -38,7 +38,7 @@ pub async fn registration_begin(
     let (ccr, reg_state) = state
         .webauthn
         .start_passkey_registration(
-            Uuid::from(user_id),
+            user_id,
             user_email,
             user_email,
             Some(exclude),
@@ -289,12 +289,12 @@ pub async fn discoverable_auth_complete(
         .identify_discoverable_authentication(&req.credential)
         .map_err(|e| AppError::Unauthorized(format!("Failed to identify credential: {}", e)))?;
 
-    let user_id = Uuid::from(user_uuid);
+    let user_id = user_uuid;
 
     // Load the user's passkeys to finish verification
     let passkeys = passkey_service::get_passkeys_for_user(&state.pool, user_id).await?;
     let discoverable_keys: Vec<DiscoverableKey> =
-        passkeys.iter().map(|pk| DiscoverableKey::from(pk)).collect();
+        passkeys.iter().map(DiscoverableKey::from).collect();
 
     let auth_result = state
         .webauthn

@@ -33,7 +33,7 @@ pub async fn create_location(
     req: &CreateLocationRequest,
 ) -> AppResult<CompanyLocation> {
     let radius = req.radius_meters.unwrap_or(200);
-    if radius < 10 || radius > 10_000 {
+    if !(10..=10_000).contains(&radius) {
         return Err(AppError::BadRequest(
             "Radius must be between 10 and 10,000 meters".into(),
         ));
@@ -75,7 +75,7 @@ pub async fn update_location(
     let radius = req.radius_meters.unwrap_or(existing.radius_meters);
     let active = req.is_active.unwrap_or(existing.is_active);
 
-    if radius < 10 || radius > 10_000 {
+    if !(10..=10_000).contains(&radius) {
         return Err(AppError::BadRequest(
             "Radius must be between 10 and 10,000 meters".into(),
         ));

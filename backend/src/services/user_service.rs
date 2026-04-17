@@ -169,7 +169,7 @@ pub async fn update_user_companies(
     }
 
     // If current active company is no longer in the list, update it
-    let needs_update = user.company_id.map_or(true, |cid| !company_ids.contains(&cid));
+    let needs_update = user.company_id.is_none_or(|cid| !company_ids.contains(&cid));
     if needs_update {
         sqlx::query("UPDATE users SET company_id = $2, updated_at = NOW() WHERE id = $1")
             .bind(user_id)
@@ -232,15 +232,14 @@ pub async fn switch_company(pool: &PgPool, user_id: Uuid, target_company_id: Uui
 
 pub async fn update_user(pool: &PgPool, user_id: Uuid, req: UpdateUserRequest) -> AppResult<UserWithCompanies> {
     // Validate role if provided
-    if let Some(ref role) = req.role {
-        if !VALID_ROLES.contains(&role.as_str()) {
+    if let Some(ref role) = req.role
+        && !VALID_ROLES.contains(&role.as_str()) {
             return Err(AppError::BadRequest(format!(
                 "Invalid role '{}'. Valid roles: {}",
                 role,
                 VALID_ROLES.join(", ")
             )));
         }
-    }
 
     // Check user exists
     let existing = sqlx::query_as::<_, UserWithCompanies>(
@@ -304,7 +303,7 @@ pub async fn update_user(pool: &PgPool, user_id: Uuid, req: UpdateUserRequest) -
             }
             // Update active company if needed
             let current_company = existing.company_id;
-            if current_company.map_or(true, |c| !company_ids.contains(&c)) {
+            if current_company.is_none_or(|c| !company_ids.contains(&c)) {
                 sqlx::query("UPDATE users SET company_id = $2, updated_at = NOW() WHERE id = $1")
                     .bind(user_id)
                     .bind(company_ids[0])

@@ -67,6 +67,7 @@ pub async fn mark_all_read(pool: &PgPool, user_id: Uuid) -> AppResult<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn create_notification(
     pool: &PgPool,
     user_id: Uuid,

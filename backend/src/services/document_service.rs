@@ -14,6 +14,7 @@ const DOC_SELECT: &str = r#"
     e.full_name as employee_name, e.employee_number
 "#;
 
+#[allow(clippy::too_many_arguments)]
 pub async fn list_documents(
     pool: &PgPool,
     company_id: Uuid,
@@ -91,8 +92,7 @@ pub async fn create_document(
 ) -> AppResult<Document> {
     let id = Uuid::new_v4();
 
-    let query = format!(
-        r#"WITH new_doc AS (
+    let query = r#"WITH new_doc AS (
             INSERT INTO documents (
                 id, company_id, employee_id, category_id, title, description,
                 file_name, file_url, file_size, mime_type,
@@ -106,8 +106,7 @@ pub async fn create_document(
             nd.is_confidential, nd.tags, nd.deleted_at, nd.created_at, nd.updated_at, nd.created_by, nd.updated_by,
             e.full_name as employee_name, e.employee_number
         FROM new_doc nd
-        LEFT JOIN employees e ON nd.employee_id = e.id"#
-    );
+        LEFT JOIN employees e ON nd.employee_id = e.id"#.to_string();
 
     let doc = sqlx::query_as::<_, Document>(&query)
         .bind(id)
@@ -138,8 +137,7 @@ pub async fn update_document(
     req: UpdateDocumentRequest,
     updated_by: Uuid,
 ) -> AppResult<Document> {
-    let query = format!(
-        r#"WITH updated AS (
+    let query = r#"WITH updated AS (
             UPDATE documents SET
                 title = COALESCE($3, title),
                 description = COALESCE($4, description),
@@ -160,8 +158,7 @@ pub async fn update_document(
             u.is_confidential, u.tags, u.deleted_at, u.created_at, u.updated_at, u.created_by, u.updated_by,
             e.full_name as employee_name, e.employee_number
         FROM updated u
-        LEFT JOIN employees e ON u.employee_id = e.id"#
-    );
+        LEFT JOIN employees e ON u.employee_id = e.id"#.to_string();
 
     let doc = sqlx::query_as::<_, Document>(&query)
         .bind(id)
@@ -205,12 +202,11 @@ pub async fn soft_delete_document(
         .await?;
 
     // Remove the file from disk if it exists
-    if let Some(url) = file_url {
-        if let Some(filename) = url.strip_prefix("/api/uploads/") {
+    if let Some(url) = file_url
+        && let Some(filename) = url.strip_prefix("/api/uploads/") {
             let file_path = std::path::Path::new("uploads").join(filename);
             let _ = tokio::fs::remove_file(&file_path).await;
         }
-    }
 
     Ok(())
 }
@@ -244,11 +240,10 @@ pub async fn create_category(
     .fetch_one(pool)
     .await
     .map_err(|e| {
-        if let sqlx::Error::Database(ref db_err) = e {
-            if db_err.constraint() == Some("document_categories_company_id_name_key") {
+        if let sqlx::Error::Database(ref db_err) = e
+            && db_err.constraint() == Some("document_categories_company_id_name_key") {
                 return AppError::Conflict("Category with this name already exists".into());
             }
-        }
         AppError::Database(e)
     })?;
     Ok(cat)

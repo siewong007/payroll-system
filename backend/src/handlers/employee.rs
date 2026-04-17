@@ -98,9 +98,9 @@ pub async fn create(
     let (emp, account_info) = employee_service::create_employee(&state.pool, company_id, req, auth.0.sub).await?;
 
     // Auto-send welcome email if a new user account was created
-    if let Some(ref info) = account_info {
-        if info.created {
-            if let Some(ref email_addr) = emp.email {
+    if let Some(ref info) = account_info
+        && info.created
+            && let Some(ref email_addr) = emp.email {
                 let company = company_service::get_company(&state.pool, company_id).await?;
                 let default_pw = info.default_password.as_deref().unwrap_or("(your IC number)");
                 let body_html = email_service::default_welcome_html(
@@ -138,8 +138,6 @@ pub async fn create(
                     }
                 });
             }
-        }
-    }
 
     Ok(Json(serde_json::json!({
         "employee": emp,

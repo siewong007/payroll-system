@@ -35,6 +35,7 @@ pub async fn get_holiday(pool: &PgPool, company_id: Uuid, id: Uuid) -> AppResult
 }
 
 /// Create a holiday
+#[allow(clippy::too_many_arguments)]
 pub async fn create_holiday(
     pool: &PgPool,
     company_id: Uuid,
@@ -65,6 +66,7 @@ pub async fn create_holiday(
 }
 
 /// Update a holiday
+#[allow(clippy::too_many_arguments)]
 pub async fn update_holiday(
     pool: &PgPool,
     company_id: Uuid,
@@ -213,9 +215,7 @@ fn count_working_days_in_month(
     // Build working day lookup (default: Mon-Fri)
     let mut working_days_of_week = [false; 7];
     if config.is_empty() {
-        for i in 1..=5 {
-            working_days_of_week[i] = true;
-        }
+        working_days_of_week[1..=5].fill(true);
     } else {
         for c in config {
             if (0..=6).contains(&c.day_of_week) {
@@ -263,9 +263,7 @@ pub async fn count_working_days_between(
 
     let mut working_days_of_week = [false; 7];
     if config.is_empty() {
-        for i in 1..=5 {
-            working_days_of_week[i] = true;
-        }
+        working_days_of_week[1..=5].fill(true);
     } else {
         for c in &config {
             if (0..=6).contains(&c.day_of_week) {
@@ -333,9 +331,9 @@ pub async fn import_from_ics_text(
             date = None;
             description = None;
         } else if line == "END:VEVENT" {
-            if in_event {
-                if let (ref n, Some(d)) = (&name, date) {
-                    if !n.is_empty() {
+            if in_event
+                && let (n, Some(d)) = (&name, date)
+                    && !n.is_empty() {
                         let exists: i64 = sqlx::query_scalar(
                             "SELECT COUNT(*) FROM holidays WHERE company_id = $1 AND date = $2 AND name = $3"
                         )
@@ -361,8 +359,6 @@ pub async fn import_from_ics_text(
                             holidays.push(h);
                         }
                     }
-                }
-            }
             in_event = false;
         } else if in_event {
             if let Some(val) = line.strip_prefix("SUMMARY:") {

@@ -149,6 +149,7 @@ pub async fn list_email_logs(
 // ── Variable Substitution ──────────────────────────────────────────────
 
 /// Replace template variables like {{employee_name}}, {{company_name}}, etc.
+#[allow(clippy::too_many_arguments)]
 pub fn substitute_variables(
     template: &str,
     employee_name: &str,
@@ -171,6 +172,7 @@ pub fn substitute_variables(
 
 // ── Send Email via SMTP ────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 pub async fn send_email(
     config: &AppConfig,
     pool: &PgPool,

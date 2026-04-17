@@ -38,11 +38,10 @@ pub fn extract_refresh_token(headers: &HeaderMap) -> Option<String> {
         .split(';')
         .find_map(|cookie| {
             let cookie = cookie.trim();
-            if let Some(value) = cookie.strip_prefix(&format!("{}=", REFRESH_COOKIE_NAME)) {
-                if !value.is_empty() {
+            if let Some(value) = cookie.strip_prefix(&format!("{}=", REFRESH_COOKIE_NAME))
+                && !value.is_empty() {
                     return Some(value.to_string());
                 }
-            }
             None
         })
 }

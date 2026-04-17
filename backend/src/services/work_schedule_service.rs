@@ -46,7 +46,7 @@ pub async fn upsert_default_schedule(
     let half_day = req.half_day_hours.unwrap_or(4.0);
     let tz = req.timezone.as_deref().unwrap_or("Asia/Kuala_Lumpur");
 
-    if grace < 0 || grace > 120 {
+    if !(0..=120).contains(&grace) {
         return Err(AppError::BadRequest("Grace minutes must be between 0 and 120".into()));
     }
 
@@ -111,7 +111,7 @@ pub async fn update_schedule(
     });
     let tz = req.timezone.as_deref().unwrap_or(&existing.timezone);
 
-    if grace < 0 || grace > 120 {
+    if !(0..=120).contains(&grace) {
         return Err(AppError::BadRequest("Grace minutes must be between 0 and 120".into()));
     }
 
