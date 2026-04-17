@@ -21,10 +21,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check AWS Role configuration
+        run: |
+          if [ -z "${{ vars.AWS_DEPLOY_ROLE_ARN }}" ] && [ -z "${{ secrets.AWS_DEPLOY_ROLE_ARN }}" ]; then
+            echo "::error::AWS_DEPLOY_ROLE_ARN is not set in either Variables or Secrets!"
+            exit 1
+          fi
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN || secrets.AWS_DEPLOY_ROLE_ARN }}
           role-session-name: github-actions-deploy
           mask-aws-account-id: true
           audience: sts.amazonaws.com
@@ -37,7 +44,7 @@ jobs:
       - name: Build and push Docker image
         env:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
-          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY || secrets.ECR_REPOSITORY }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
           docker build -f infra/Dockerfile -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
@@ -46,8 +53,8 @@ jobs:
 
       - name: Update ECS service
         env:
-          ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
-          ECS_SERVICE: ${{ vars.ECS_SERVICE }}
+          ECS_CLUSTER: ${{ vars.ECS_CLUSTER || secrets.ECS_CLUSTER }}
+          ECS_SERVICE: ${{ vars.ECS_SERVICE || secrets.ECS_SERVICE }}
         run: |
           aws ecs update-service \
             --cluster $ECS_CLUSTER \
@@ -70,7 +77,7 @@ jobs:
       - name: Build frontend
         working-directory: frontend
         env:
-          VITE_API_URL: ${{ vars.API_URL }}
+          VITE_API_URL: ${{ vars.API_URL || secrets.API_URL }}
         run: |
           npm ci
           npm run build
@@ -78,7 +85,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN || secrets.AWS_DEPLOY_ROLE_ARN }}
           role-session-name: github-actions-frontend-deploy
           mask-aws-account-id: true
           audience: sts.amazonaws.com
@@ -86,18 +93,18 @@ jobs:
 
       - name: Sync to S3
         run: |
-          aws s3 sync frontend/dist/ s3://${{ vars.FRONTEND_BUCKET }} \
+          aws s3 sync frontend/dist/ s3://${{ vars.FRONTEND_BUCKET || secrets.FRONTEND_BUCKET }} \
             --delete \
             --cache-control "public, max-age=31536000, immutable" \
             --exclude "index.html" \
             --exclude "favicon.svg"
-          aws s3 cp frontend/dist/index.html s3://${{ vars.FRONTEND_BUCKET }}/index.html \
+          aws s3 cp frontend/dist/index.html s3://${{ vars.FRONTEND_BUCKET || secrets.FRONTEND_BUCKET }}/index.html \
             --cache-control "no-cache, no-store, must-revalidate"
-          aws s3 cp frontend/dist/favicon.svg s3://${{ vars.FRONTEND_BUCKET }}/favicon.svg \
+          aws s3 cp frontend/dist/favicon.svg s3://${{ vars.FRONTEND_BUCKET || secrets.FRONTEND_BUCKET }}/favicon.svg \
             --cache-control "public, max-age=86400"
 
       - name: Invalidate CloudFront
         run: |
           aws cloudfront create-invalidation \
-            --distribution-id ${{ vars.CLOUDFRONT_DISTRIBUTION_ID }} \
+            --distribution-id ${{ vars.CLOUDFRONT_DISTRIBUTION_ID || secrets.CLOUDFRONT_DISTRIBUTION_ID }} \
             --paths "/index.html"
