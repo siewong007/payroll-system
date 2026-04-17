@@ -1,6 +1,6 @@
 use chrono::{Datelike, NaiveDate};
-use rust_decimal::prelude::*;
 use rust_decimal::Decimal;
+use rust_decimal::prelude::*;
 use sqlx::PgPool;
 
 use crate::core::error::AppResult;
@@ -16,15 +16,15 @@ pub struct PcbInput {
     pub marital_status: String,      // single, married
     pub working_spouse: bool,
     pub num_children: i32,
-    pub months_worked: i32,          // current month number in tax year (1-12)
-    pub ytd_gross: i64,              // YTD gross excluding current month (sen)
-    pub ytd_pcb: i64,                // YTD PCB already deducted (sen)
-    pub ytd_epf: i64,               // YTD EPF employee already deducted (sen)
-    pub ytd_socso: i64,             // YTD SOCSO employee (sen)
-    pub ytd_eis: i64,               // YTD EIS employee (sen)
-    pub ytd_zakat: i64,             // YTD zakat already deducted (sen)
+    pub months_worked: i32, // current month number in tax year (1-12)
+    pub ytd_gross: i64,     // YTD gross excluding current month (sen)
+    pub ytd_pcb: i64,       // YTD PCB already deducted (sen)
+    pub ytd_epf: i64,       // YTD EPF employee already deducted (sen)
+    pub ytd_socso: i64,     // YTD SOCSO employee (sen)
+    pub ytd_eis: i64,       // YTD EIS employee (sen)
+    pub ytd_zakat: i64,     // YTD zakat already deducted (sen)
     pub is_bonus_month: bool,
-    pub bonus_amount: i64,           // in sen (Schedule 2 for bonus)
+    pub bonus_amount: i64, // in sen (Schedule 2 for bonus)
 }
 
 /// Calculate PCB/MTD using LHDN Kaedah Pengiraan Berkomputer (Computerised Calculation Method).

@@ -51,8 +51,7 @@ async fn main() {
         .allow_credentials(true);
 
     // WebAuthn
-    let rp_origin = Url::parse(&config.webauthn_rp_origin)
-        .expect("Invalid WEBAUTHN_RP_ORIGIN URL");
+    let rp_origin = Url::parse(&config.webauthn_rp_origin).expect("Invalid WEBAUTHN_RP_ORIGIN URL");
     let webauthn = WebauthnBuilder::new(&config.webauthn_rp_id, &rp_origin)
         .expect("Failed to build WebAuthn")
         .rp_name("PayrollMY")
@@ -122,11 +121,7 @@ async fn main() {
             }
 
             tracing::info!("Running auto-absent marking...");
-            match attendance_service::mark_absent_for_date(
-                &absent_pool,
-                "Asia/Kuala_Lumpur",
-            )
-            .await
+            match attendance_service::mark_absent_for_date(&absent_pool, "Asia/Kuala_Lumpur").await
             {
                 Ok(count) => {
                     if count > 0 {

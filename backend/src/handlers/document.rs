@@ -1,6 +1,6 @@
 use axum::{
-    extract::{Path, Query, State},
     Json,
+    extract::{Path, Query, State},
 };
 use serde::Deserialize;
 use uuid::Uuid;
@@ -35,7 +35,9 @@ pub async fn list(
     auth: AuthUser,
     Query(query): Query<DocumentListQuery>,
 ) -> AppResult<Json<PaginatedResponse<Document>>> {
-    let company_id = auth.0.company_id
+    let company_id = auth
+        .0
+        .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
     let page = query.page.unwrap_or(1).max(1);
@@ -67,7 +69,9 @@ pub async fn get(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<Document>> {
-    let company_id = auth.0.company_id
+    let company_id = auth
+        .0
+        .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
     let doc = document_service::get_document(&state.pool, id, company_id).await?;
@@ -79,7 +83,9 @@ pub async fn create(
     auth: AuthUser,
     Json(req): Json<CreateDocumentRequest>,
 ) -> AppResult<Json<Document>> {
-    let company_id = auth.0.company_id
+    let company_id = auth
+        .0
+        .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
     let doc = document_service::create_document(&state.pool, company_id, req, auth.0.sub).await?;
@@ -92,10 +98,13 @@ pub async fn update(
     Path(id): Path<Uuid>,
     Json(req): Json<UpdateDocumentRequest>,
 ) -> AppResult<Json<Document>> {
-    let company_id = auth.0.company_id
+    let company_id = auth
+        .0
+        .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    let doc = document_service::update_document(&state.pool, id, company_id, req, auth.0.sub).await?;
+    let doc =
+        document_service::update_document(&state.pool, id, company_id, req, auth.0.sub).await?;
     Ok(Json(doc))
 }
 
@@ -104,7 +113,9 @@ pub async fn delete(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<serde_json::Value>> {
-    let company_id = auth.0.company_id
+    let company_id = auth
+        .0
+        .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
     document_service::soft_delete_document(&state.pool, id, company_id).await?;
@@ -115,7 +126,9 @@ pub async fn list_categories(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> AppResult<Json<Vec<DocumentCategory>>> {
-    let company_id = auth.0.company_id
+    let company_id = auth
+        .0
+        .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
     let categories = document_service::list_categories(&state.pool, company_id).await?;
@@ -127,7 +140,9 @@ pub async fn create_category(
     auth: AuthUser,
     Json(req): Json<CreateDocumentCategoryRequest>,
 ) -> AppResult<Json<DocumentCategory>> {
-    let company_id = auth.0.company_id
+    let company_id = auth
+        .0
+        .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
     let cat = document_service::create_category(&state.pool, company_id, req).await?;
@@ -139,7 +154,9 @@ pub async fn expiring(
     auth: AuthUser,
     Query(query): Query<ExpiringQuery>,
 ) -> AppResult<Json<Vec<Document>>> {
-    let company_id = auth.0.company_id
+    let company_id = auth
+        .0
+        .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
     let days = query.days.unwrap_or(30);

@@ -78,12 +78,22 @@ pub async fn export_epf(
     let (company, rows) = get_statutory_data(pool, company_id, year, month).await?;
 
     let mut wtr = csv::Writer::from_writer(Vec::new());
-    wtr.write_record(["Employer EPF No", "Employee EPF No", "IC Number", "Employee Name", "Wages (RM)", "Employee Contribution (RM)", "Employer Contribution (RM)"])
-        .map_err(|e| AppError::Internal(format!("CSV error: {}", e)))?;
+    wtr.write_record([
+        "Employer EPF No",
+        "Employee EPF No",
+        "IC Number",
+        "Employee Name",
+        "Wages (RM)",
+        "Employee Contribution (RM)",
+        "Employer Contribution (RM)",
+    ])
+    .map_err(|e| AppError::Internal(format!("CSV error: {}", e)))?;
 
     let employer_epf = company.epf_number.as_deref().unwrap_or("");
     for row in &rows {
-        if row.epf_employee == 0 && row.epf_employer == 0 { continue; }
+        if row.epf_employee == 0 && row.epf_employer == 0 {
+            continue;
+        }
         wtr.write_record([
             employer_epf,
             row.epf_number.as_deref().unwrap_or(""),
@@ -109,12 +119,22 @@ pub async fn export_socso(
     let (company, rows) = get_statutory_data(pool, company_id, year, month).await?;
 
     let mut wtr = csv::Writer::from_writer(Vec::new());
-    wtr.write_record(["Employer SOCSO Code", "Employee SOCSO No", "IC Number", "Employee Name", "Wages (RM)", "Employee Contribution (RM)", "Employer Contribution (RM)"])
-        .map_err(|e| AppError::Internal(format!("CSV error: {}", e)))?;
+    wtr.write_record([
+        "Employer SOCSO Code",
+        "Employee SOCSO No",
+        "IC Number",
+        "Employee Name",
+        "Wages (RM)",
+        "Employee Contribution (RM)",
+        "Employer Contribution (RM)",
+    ])
+    .map_err(|e| AppError::Internal(format!("CSV error: {}", e)))?;
 
     let employer_socso = company.socso_code.as_deref().unwrap_or("");
     for row in &rows {
-        if row.socso_employee == 0 && row.socso_employer == 0 { continue; }
+        if row.socso_employee == 0 && row.socso_employer == 0 {
+            continue;
+        }
         wtr.write_record([
             employer_socso,
             row.socso_number.as_deref().unwrap_or(""),
@@ -140,12 +160,22 @@ pub async fn export_eis(
     let (company, rows) = get_statutory_data(pool, company_id, year, month).await?;
 
     let mut wtr = csv::Writer::from_writer(Vec::new());
-    wtr.write_record(["Employer EIS Code", "Employee EIS No", "IC Number", "Employee Name", "Wages (RM)", "Employee Contribution (RM)", "Employer Contribution (RM)"])
-        .map_err(|e| AppError::Internal(format!("CSV error: {}", e)))?;
+    wtr.write_record([
+        "Employer EIS Code",
+        "Employee EIS No",
+        "IC Number",
+        "Employee Name",
+        "Wages (RM)",
+        "Employee Contribution (RM)",
+        "Employer Contribution (RM)",
+    ])
+    .map_err(|e| AppError::Internal(format!("CSV error: {}", e)))?;
 
     let employer_eis = company.eis_code.as_deref().unwrap_or("");
     for row in &rows {
-        if row.eis_employee == 0 && row.eis_employer == 0 { continue; }
+        if row.eis_employee == 0 && row.eis_employer == 0 {
+            continue;
+        }
         wtr.write_record([
             employer_eis,
             row.eis_number.as_deref().unwrap_or(""),
@@ -181,7 +211,9 @@ pub async fn export_pcb_cp39(
     ));
 
     for row in &rows {
-        if row.pcb_amount == 0 { continue; }
+        if row.pcb_amount == 0 {
+            continue;
+        }
         // D|Tax ID|IC Number|Employee Name|PCB Amount|Additional PCB
         output.push_str(&format!(
             "D|{}|{}|{}|{}|0.00\n",

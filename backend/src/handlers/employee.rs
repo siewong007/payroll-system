@@ -1,6 +1,6 @@
 use axum::{
-    extract::{Path, Query, State},
     Json,
+    extract::{Path, Query, State},
 };
 use serde::Deserialize;
 use uuid::Uuid;
@@ -36,7 +36,9 @@ pub async fn list(
     auth: AuthUser,
     Query(query): Query<ListQuery>,
 ) -> AppResult<Json<PaginatedResponse<Employee>>> {
-    let company_id = auth.0.company_id
+    let company_id = auth
+        .0
+        .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
     let page = query.page.unwrap_or(1).max(1);
@@ -75,7 +77,9 @@ pub async fn get(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<Employee>> {
-    let company_id = auth.0.company_id
+    let company_id = auth
+        .0
+        .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
     let mut emp = employee_service::get_employee(&state.pool, id, company_id).await?;
@@ -92,52 +96,63 @@ pub async fn create(
     auth: AuthUser,
     Json(req): Json<CreateEmployeeRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
-    let company_id = auth.0.company_id
+    let company_id = auth
+        .0
+        .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    let (emp, account_info) = employee_service::create_employee(&state.pool, company_id, req, auth.0.sub).await?;
+    let (emp, account_info) =
+        employee_service::create_employee(&state.pool, company_id, req, auth.0.sub).await?;
 
     // Auto-send welcome email if a new user account was created
     if let Some(ref info) = account_info
         && info.created
-            && let Some(ref email_addr) = emp.email {
-                let company = company_service::get_company(&state.pool, company_id).await?;
-                let default_pw = info.default_password.as_deref().unwrap_or("(your IC number)");
-                let body_html = email_service::default_welcome_html(
-                    &emp.full_name,
-                    &company.name,
-                    &state.config.frontend_url,
-                    email_addr,
-                    default_pw,
-                );
-                let subject = format!("Welcome to {} - PayrollMY", company.name);
+        && let Some(ref email_addr) = emp.email
+    {
+        let company = company_service::get_company(&state.pool, company_id).await?;
+        let default_pw = info
+            .default_password
+            .as_deref()
+            .unwrap_or("(your IC number)");
+        let body_html = email_service::default_welcome_html(
+            &emp.full_name,
+            &company.name,
+            &state.config.frontend_url,
+            email_addr,
+            default_pw,
+        );
+        let subject = format!("Welcome to {} - PayrollMY", company.name);
 
-                let config = state.config.clone();
-                let pool = state.pool.clone();
-                let emp_id = emp.id;
-                let emp_name = emp.full_name.clone();
-                let email = email_addr.clone();
-                let user_id = auth.0.sub;
-                tokio::spawn(async move {
-                    if let Err(e) = email_service::send_email(
-                        &config,
-                        &pool,
-                        company_id,
-                        Some(emp_id),
-                        None,
-                        "welcome",
-                        &email,
-                        &emp_name,
-                        &subject,
-                        &body_html,
-                        user_id,
-                    )
-                    .await
-                    {
-                        tracing::error!("Failed to send welcome email for employee {}: {}", emp_id, e);
-                    }
-                });
+        let config = state.config.clone();
+        let pool = state.pool.clone();
+        let emp_id = emp.id;
+        let emp_name = emp.full_name.clone();
+        let email = email_addr.clone();
+        let user_id = auth.0.sub;
+        tokio::spawn(async move {
+            if let Err(e) = email_service::send_email(
+                &config,
+                &pool,
+                company_id,
+                Some(emp_id),
+                None,
+                "welcome",
+                &email,
+                &emp_name,
+                &subject,
+                &body_html,
+                user_id,
+            )
+            .await
+            {
+                tracing::error!(
+                    "Failed to send welcome email for employee {}: {}",
+                    emp_id,
+                    e
+                );
             }
+        });
+    }
 
     Ok(Json(serde_json::json!({
         "employee": emp,
@@ -151,10 +166,13 @@ pub async fn update(
     Path(id): Path<Uuid>,
     Json(req): Json<UpdateEmployeeRequest>,
 ) -> AppResult<Json<Employee>> {
-    let company_id = auth.0.company_id
+    let company_id = auth
+        .0
+        .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    let emp = employee_service::update_employee(&state.pool, id, company_id, req, auth.0.sub).await?;
+    let emp =
+        employee_service::update_employee(&state.pool, id, company_id, req, auth.0.sub).await?;
     Ok(Json(emp))
 }
 
@@ -163,7 +181,9 @@ pub async fn delete(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<serde_json::Value>> {
-    let company_id = auth.0.company_id
+    let company_id = auth
+        .0
+        .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
     employee_service::soft_delete_employee(&state.pool, id, company_id).await?;
@@ -202,14 +222,21 @@ pub async fn initialize_balances(
     Path(id): Path<Uuid>,
     Query(q): Query<InitBalancesQuery>,
 ) -> AppResult<Json<serde_json::Value>> {
-    let company_id = auth.0.company_id
+    let company_id = auth
+        .0
+        .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
     let emp = employee_service::get_employee(&state.pool, id, company_id).await?;
     let year = q.year.unwrap_or_else(|| chrono::Utc::now().year());
     let balances = portal_service::initialize_leave_balances(
-        &state.pool, id, company_id, emp.date_joined, year,
-    ).await?;
+        &state.pool,
+        id,
+        company_id,
+        emp.date_joined,
+        year,
+    )
+    .await?;
 
     Ok(Json(serde_json::json!({
         "message": format!("Initialized {} leave balances", balances.len()),
@@ -228,12 +255,18 @@ pub async fn process_carry_forward(
     auth: AuthUser,
     Json(req): Json<CarryForwardRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
-    let company_id = auth.0.company_id
+    let company_id = auth
+        .0
+        .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
     let count = portal_service::process_year_end_carry_forward(
-        &state.pool, company_id, req.from_year, req.to_year,
-    ).await?;
+        &state.pool,
+        company_id,
+        req.from_year,
+        req.to_year,
+    )
+    .await?;
 
     Ok(Json(serde_json::json!({
         "message": format!("Processed {} leave balance entries", count),

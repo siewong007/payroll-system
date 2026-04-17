@@ -34,11 +34,9 @@ pub async fn create_company(
 }
 
 pub async fn list_companies(pool: &PgPool) -> AppResult<Vec<Company>> {
-    let companies = sqlx::query_as::<_, Company>(
-        "SELECT * FROM companies ORDER BY name ASC",
-    )
-    .fetch_all(pool)
-    .await?;
+    let companies = sqlx::query_as::<_, Company>("SELECT * FROM companies ORDER BY name ASC")
+        .fetch_all(pool)
+        .await?;
     Ok(companies)
 }
 
@@ -100,10 +98,7 @@ pub async fn update_company(
     Ok(company)
 }
 
-pub async fn get_company_stats(
-    pool: &PgPool,
-    company_id: Uuid,
-) -> AppResult<CompanyStats> {
+pub async fn get_company_stats(pool: &PgPool, company_id: Uuid) -> AppResult<CompanyStats> {
     let total_employees: Option<i64> = sqlx::query_scalar(
         "SELECT COUNT(*) FROM employees WHERE company_id = $1 AND is_active = TRUE",
     )
@@ -146,8 +141,12 @@ pub async fn delete_company(pool: &PgPool, company_id: Uuid) -> AppResult<()> {
     // Delete in dependency order (children before parents)
 
     // 1. Team members (via teams)
-    sqlx::query("DELETE FROM team_members WHERE team_id IN (SELECT id FROM teams WHERE company_id = $1)")
-        .bind(company_id).execute(&mut *tx).await?;
+    sqlx::query(
+        "DELETE FROM team_members WHERE team_id IN (SELECT id FROM teams WHERE company_id = $1)",
+    )
+    .bind(company_id)
+    .execute(&mut *tx)
+    .await?;
 
     // 2. Leave balances (via employees)
     sqlx::query("DELETE FROM leave_balances WHERE employee_id IN (SELECT id FROM employees WHERE company_id = $1)")
@@ -188,16 +187,23 @@ pub async fn delete_company(pool: &PgPool, company_id: Uuid) -> AppResult<()> {
 
     for table in tables {
         let query = format!("DELETE FROM {} WHERE company_id = $1", table);
-        sqlx::query(&query).bind(company_id).execute(&mut *tx).await?;
+        sqlx::query(&query)
+            .bind(company_id)
+            .execute(&mut *tx)
+            .await?;
     }
 
     // 6. Clear company_id on users (nullable FK)
     sqlx::query("UPDATE users SET company_id = NULL WHERE company_id = $1")
-        .bind(company_id).execute(&mut *tx).await?;
+        .bind(company_id)
+        .execute(&mut *tx)
+        .await?;
 
     // 7. Delete the company itself
     let result = sqlx::query("DELETE FROM companies WHERE id = $1")
-        .bind(company_id).execute(&mut *tx).await?;
+        .bind(company_id)
+        .execute(&mut *tx)
+        .await?;
 
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound("Company not found".into()));

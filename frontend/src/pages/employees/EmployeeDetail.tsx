@@ -5,6 +5,13 @@ import { getEmployee, getSalaryHistory } from '@/api/employees';
 import { formatMYR, formatDate } from '@/lib/utils';
 import { useAuth } from '@/context/AuthContext';
 
+const InfoField = ({ label, value }: { label: string; value: string | null | undefined }) => (
+  <div>
+    <p className="text-xs text-gray-400 uppercase tracking-wide">{label}</p>
+    <p className="text-sm font-medium mt-0.5">{value || '-'}</p>
+  </div>
+);
+
 export function EmployeeDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -34,13 +41,6 @@ export function EmployeeDetail() {
   if (!employee) {
     return <div className="text-center text-gray-500 py-12">Employee not found</div>;
   }
-
-  const InfoField = ({ label, value }: { label: string; value: string | null | undefined }) => (
-    <div>
-      <p className="text-xs text-gray-400 uppercase tracking-wide">{label}</p>
-      <p className="text-sm font-medium mt-0.5">{value || '-'}</p>
-    </div>
-  );
 
   return (
     <div>

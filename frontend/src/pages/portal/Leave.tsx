@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, ArrowLeft, Paperclip, ExternalLink, X, Calendar, FileText, AlertTriangle, Download } from 'lucide-react';
 import { getLeaveBalances, getLeaveRequests, getLeaveTypes, createLeaveRequest, cancelLeaveRequest, uploadFile, getMyProfile, exportLeaveIcs } from '@/api/portal';
-import { formatDate } from '@/lib/utils';
+import { formatDate, getErrorMessage } from '@/lib/utils';
 import { DataTable, type Column } from '@/components/ui/DataTable';
 import type { Employee, LeaveBalance, LeaveRequest, LeaveType } from '@/types';
 
@@ -436,8 +436,8 @@ function ApplyLeaveForm({ leaveTypes, onClose }: { leaveTypes: LeaveType[]; onCl
       setSuccess(true);
       setTimeout(() => onClose(), 1200);
     },
-    onError: (err: any) => {
-      setError(err.response?.data?.error || 'Failed to submit leave request. Please try again.');
+    onError: (err: unknown) => {
+      setError(getErrorMessage(err, 'Failed to submit leave request. Please try again.'));
     },
   });
 

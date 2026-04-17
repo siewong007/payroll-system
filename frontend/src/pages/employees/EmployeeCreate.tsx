@@ -5,6 +5,7 @@ import { ArrowLeft, UserCheck, AlertTriangle, X } from 'lucide-react';
 import { createEmployee } from '@/api/employees';
 import type { EmployeeAccountInfo } from '@/api/employees';
 import { getPayrollGroups } from '@/api/payroll';
+import { getErrorMessage } from '@/lib/utils';
 import type { CreateEmployeeRequest } from '@/types';
 import { useAuth } from '@/context/AuthContext';
 
@@ -77,7 +78,7 @@ export function EmployeeCreate() {
       <form onSubmit={handleSubmit} className="space-y-8 max-w-4xl">
         {mutation.isError && (
           <div className="bg-red-50 text-red-600 text-sm px-4 py-3 rounded-lg">
-            {(mutation.error as any)?.response?.data?.error || (mutation.error as Error)?.message || 'Failed to create employee'}
+            {getErrorMessage(mutation.error, 'Failed to create employee')}
           </div>
         )}
 

@@ -70,18 +70,20 @@ pub async fn set_platform_attendance_method(
 }
 
 /// Get the effective attendance method for a company (company override > platform default)
-pub async fn get_effective_method(pool: &PgPool, company_id: Uuid) -> AppResult<AttendanceMethodResponse> {
+pub async fn get_effective_method(
+    pool: &PgPool,
+    company_id: Uuid,
+) -> AppResult<AttendanceMethodResponse> {
     let platform_method = get_platform_attendance_method(pool).await?;
     let allow_override = get_platform_allow_override(pool).await?;
 
     // Check if company has an override
-    let company_method: Option<String> = sqlx::query_scalar(
-        "SELECT attendance_method FROM companies WHERE id = $1",
-    )
-    .bind(company_id)
-    .fetch_optional(pool)
-    .await?
-    .flatten();
+    let company_method: Option<String> =
+        sqlx::query_scalar("SELECT attendance_method FROM companies WHERE id = $1")
+            .bind(company_id)
+            .fetch_optional(pool)
+            .await?
+            .flatten();
 
     let (method, is_override) = if allow_override {
         if let Some(m) = company_method {
@@ -114,11 +116,13 @@ pub async fn set_company_attendance_method(
     }
 
     if let Some(m) = method
-        && m != "qr_code" && m != "face_id" {
-            return Err(AppError::BadRequest(
-                "Method must be 'qr_code' or 'face_id'".into(),
-            ));
-        }
+        && m != "qr_code"
+        && m != "face_id"
+    {
+        return Err(AppError::BadRequest(
+            "Method must be 'qr_code' or 'face_id'".into(),
+        ));
+    }
 
     sqlx::query("UPDATE companies SET attendance_method = $1 WHERE id = $2")
         .bind(method)
@@ -171,29 +175,26 @@ pub async fn generate_qr_token(
 /// Validate a QR token without consuming it — multiple employees may check in with the
 /// same active token during its TTL window. The `used` flag means admin-revoked (a new
 /// token was generated), not employee-scanned.
-pub async fn validate_qr_token(
-    pool: &PgPool,
-    token: &str,
-    company_id: Uuid,
-) -> AppResult<Uuid> {
-    let row: Option<AttendanceQrToken> = sqlx::query_as(
-        "SELECT * FROM attendance_qr_tokens WHERE token = $1",
-    )
-    .bind(token)
-    .fetch_optional(pool)
-    .await?;
+pub async fn validate_qr_token(pool: &PgPool, token: &str, company_id: Uuid) -> AppResult<Uuid> {
+    let row: Option<AttendanceQrToken> =
+        sqlx::query_as("SELECT * FROM attendance_qr_tokens WHERE token = $1")
+            .bind(token)
+            .fetch_optional(pool)
+            .await?;
 
     match row {
-        None => Err(AppError::BadRequest("Invalid QR code: token not found".into())),
+        None => Err(AppError::BadRequest(
+            "Invalid QR code: token not found".into(),
+        )),
         Some(t) if t.company_id != company_id => Err(AppError::BadRequest(
             "Invalid QR code: this code belongs to a different company".into(),
         )),
         Some(t) if t.used => Err(AppError::BadRequest(
             "This QR code has been revoked — please refresh the kiosk screen.".into(),
         )),
-        Some(t) if t.expires_at < Utc::now() => {
-            Err(AppError::BadRequest("QR code has expired — please refresh the kiosk screen.".into()))
-        }
+        Some(t) if t.expires_at < Utc::now() => Err(AppError::BadRequest(
+            "QR code has expired — please refresh the kiosk screen.".into(),
+        )),
         Some(t) => Ok(t.id),
     }
 }
@@ -218,13 +219,11 @@ async fn determine_checkin_status(pool: &PgPool, company_id: Uuid) -> String {
 
     // Get current time in the company's timezone
     let tz = schedule.timezone.as_str();
-    let now_local: Option<NaiveTime> = sqlx::query_scalar(
-        "SELECT (NOW() AT TIME ZONE $1)::time",
-    )
-    .bind(tz)
-    .fetch_optional(pool)
-    .await
-    .unwrap_or(None);
+    let now_local: Option<NaiveTime> = sqlx::query_scalar("SELECT (NOW() AT TIME ZONE $1)::time")
+        .bind(tz)
+        .fetch_optional(pool)
+        .await
+        .unwrap_or(None);
 
     let now_local = match now_local {
         Some(t) => t,
@@ -268,7 +267,8 @@ pub async fn check_in_qr(
     ensure_no_active_checkin(pool, employee_id, &tz).await?;
 
     // Geofence check (may reject in enforce mode)
-    let outside_geofence = geofence_service::validate_geofence(pool, company_id, latitude, longitude).await?;
+    let outside_geofence =
+        geofence_service::validate_geofence(pool, company_id, latitude, longitude).await?;
 
     let token_id = validate_qr_token(pool, token, company_id).await?;
     let status = determine_checkin_status(pool, company_id).await;
@@ -303,7 +303,8 @@ pub async fn check_in_face_id(
     ensure_no_active_checkin(pool, employee_id, &tz).await?;
 
     // Geofence check
-    let outside_geofence = geofence_service::validate_geofence(pool, company_id, latitude, longitude).await?;
+    let outside_geofence =
+        geofence_service::validate_geofence(pool, company_id, latitude, longitude).await?;
 
     let status = determine_checkin_status(pool, company_id).await;
 
@@ -367,9 +368,11 @@ pub async fn check_out(
     .bind(company_id)
     .fetch_optional(pool)
     .await?
-    .ok_or_else(|| AppError::BadRequest(
-        "No active check-in found. Please check in before checking out.".into(),
-    ))?;
+    .ok_or_else(|| {
+        AppError::BadRequest(
+            "No active check-in found. Please check in before checking out.".into(),
+        )
+    })?;
 
     Ok(record)
 }
@@ -428,7 +431,10 @@ pub async fn list_attendance(
         param_idx += 1;
     }
     if q.date_to.is_some() {
-        where_clause.push_str(&format!(" AND ar.check_in_at < (${}::date + INTERVAL '1 day')", param_idx));
+        where_clause.push_str(&format!(
+            " AND ar.check_in_at < (${}::date + INTERVAL '1 day')",
+            param_idx
+        ));
         param_idx += 1;
     }
     if q.status.is_some() {
@@ -446,11 +452,21 @@ pub async fn list_attendance(
         where_clause
     );
     let mut count_query = sqlx::query_scalar::<_, i64>(&count_sql).bind(company_id);
-    if let Some(eid) = q.employee_id { count_query = count_query.bind(eid); }
-    if let Some(ref df) = q.date_from { count_query = count_query.bind(df); }
-    if let Some(ref dt) = q.date_to { count_query = count_query.bind(dt); }
-    if let Some(ref st) = q.status { count_query = count_query.bind(st); }
-    if let Some(ref m) = q.method { count_query = count_query.bind(m); }
+    if let Some(eid) = q.employee_id {
+        count_query = count_query.bind(eid);
+    }
+    if let Some(ref df) = q.date_from {
+        count_query = count_query.bind(df);
+    }
+    if let Some(ref dt) = q.date_to {
+        count_query = count_query.bind(dt);
+    }
+    if let Some(ref st) = q.status {
+        count_query = count_query.bind(st);
+    }
+    if let Some(ref m) = q.method {
+        count_query = count_query.bind(m);
+    }
     let total = count_query.fetch_one(pool).await?;
 
     // Data query
@@ -470,20 +486,43 @@ pub async fn list_attendance(
            WHERE {}
            ORDER BY ar.check_in_at DESC
            LIMIT ${} OFFSET ${}"#,
-        where_clause, param_idx, param_idx + 1
+        where_clause,
+        param_idx,
+        param_idx + 1
     );
 
-    let mut data_query = sqlx::query_as::<_, AttendanceRecordWithEmployee>(&data_sql).bind(company_id);
-    if let Some(eid) = q.employee_id { data_query = data_query.bind(eid); }
-    if let Some(ref df) = q.date_from { data_query = data_query.bind(df); }
-    if let Some(ref dt) = q.date_to { data_query = data_query.bind(dt); }
-    if let Some(ref st) = q.status { data_query = data_query.bind(st); }
-    if let Some(ref m) = q.method { data_query = data_query.bind(m); }
-    let data = data_query.bind(per_page).bind(offset).fetch_all(pool).await?;
+    let mut data_query =
+        sqlx::query_as::<_, AttendanceRecordWithEmployee>(&data_sql).bind(company_id);
+    if let Some(eid) = q.employee_id {
+        data_query = data_query.bind(eid);
+    }
+    if let Some(ref df) = q.date_from {
+        data_query = data_query.bind(df);
+    }
+    if let Some(ref dt) = q.date_to {
+        data_query = data_query.bind(dt);
+    }
+    if let Some(ref st) = q.status {
+        data_query = data_query.bind(st);
+    }
+    if let Some(ref m) = q.method {
+        data_query = data_query.bind(m);
+    }
+    let data = data_query
+        .bind(per_page)
+        .bind(offset)
+        .fetch_all(pool)
+        .await?;
 
     let total_pages = (total + per_page - 1) / per_page;
 
-    Ok(PaginatedAttendance { data, total, page, per_page, total_pages })
+    Ok(PaginatedAttendance {
+        data,
+        total,
+        page,
+        per_page,
+        total_pages,
+    })
 }
 
 pub async fn get_my_attendance(
@@ -501,30 +540,56 @@ pub async fn get_my_attendance(
         param_idx += 1;
     }
     if q.date_to.is_some() {
-        where_clause.push_str(&format!(" AND check_in_at < (${}::date + INTERVAL '1 day')", param_idx));
+        where_clause.push_str(&format!(
+            " AND check_in_at < (${}::date + INTERVAL '1 day')",
+            param_idx
+        ));
         param_idx += 1;
     }
 
     // Count
-    let count_sql = format!("SELECT COUNT(*) FROM attendance_records WHERE {}", where_clause);
+    let count_sql = format!(
+        "SELECT COUNT(*) FROM attendance_records WHERE {}",
+        where_clause
+    );
     let mut count_query = sqlx::query_scalar::<_, i64>(&count_sql).bind(employee_id);
-    if let Some(ref df) = q.date_from { count_query = count_query.bind(df); }
-    if let Some(ref dt) = q.date_to { count_query = count_query.bind(dt); }
+    if let Some(ref df) = q.date_from {
+        count_query = count_query.bind(df);
+    }
+    if let Some(ref dt) = q.date_to {
+        count_query = count_query.bind(dt);
+    }
     let total = count_query.fetch_one(pool).await?;
 
     // Data
     let data_sql = format!(
         "SELECT * FROM attendance_records WHERE {} ORDER BY check_in_at DESC LIMIT ${} OFFSET ${}",
-        where_clause, param_idx, param_idx + 1
+        where_clause,
+        param_idx,
+        param_idx + 1
     );
     let mut data_query = sqlx::query_as::<_, AttendanceRecord>(&data_sql).bind(employee_id);
-    if let Some(ref df) = q.date_from { data_query = data_query.bind(df); }
-    if let Some(ref dt) = q.date_to { data_query = data_query.bind(dt); }
-    let data = data_query.bind(per_page).bind(offset).fetch_all(pool).await?;
+    if let Some(ref df) = q.date_from {
+        data_query = data_query.bind(df);
+    }
+    if let Some(ref dt) = q.date_to {
+        data_query = data_query.bind(dt);
+    }
+    let data = data_query
+        .bind(per_page)
+        .bind(offset)
+        .fetch_all(pool)
+        .await?;
 
     let total_pages = (total + per_page - 1) / per_page;
 
-    Ok(PaginatedAttendance { data, total, page, per_page, total_pages })
+    Ok(PaginatedAttendance {
+        data,
+        total,
+        page,
+        per_page,
+        total_pages,
+    })
 }
 
 /// Get today's check-in for the current employee (if any)
@@ -768,8 +833,12 @@ pub async fn get_attendance_summary(
         .bind(&q.date_from)
         .bind(&q.date_to);
 
-    if let Some(eid)  = q.employee_id          { query = query.bind(eid); }
-    if let Some(ref d) = q.department           { query = query.bind(d); }
+    if let Some(eid) = q.employee_id {
+        query = query.bind(eid);
+    }
+    if let Some(ref d) = q.department {
+        query = query.bind(d);
+    }
 
     Ok(query.fetch_all(pool).await?)
 }
@@ -831,10 +900,18 @@ pub async fn export_attendance_csv(
     );
 
     let mut dq = sqlx::query_as::<_, AttendanceRecordWithEmployee>(&sql).bind(company_id);
-    if let Some(eid)   = q.employee_id          { dq = dq.bind(eid); }
-    if let Some(ref f) = q.date_from             { dq = dq.bind(f); }
-    if let Some(ref t) = q.date_to               { dq = dq.bind(t); }
-    if let Some(ref s) = q.status                { dq = dq.bind(s); }
+    if let Some(eid) = q.employee_id {
+        dq = dq.bind(eid);
+    }
+    if let Some(ref f) = q.date_from {
+        dq = dq.bind(f);
+    }
+    if let Some(ref t) = q.date_to {
+        dq = dq.bind(t);
+    }
+    if let Some(ref s) = q.status {
+        dq = dq.bind(s);
+    }
 
     let records = dq.fetch_all(pool).await?;
 
@@ -844,29 +921,36 @@ pub async fn export_attendance_csv(
     );
 
     for r in &records {
-        let date      = r.check_in_at.format("%Y-%m-%d");
-        let check_in  = r.check_in_at.format("%H:%M:%S");
-        let check_out = r.check_out_at
+        let date = r.check_in_at.format("%Y-%m-%d");
+        let check_in = r.check_in_at.format("%H:%M:%S");
+        let check_out = r
+            .check_out_at
             .map(|t| t.format("%H:%M:%S").to_string())
             .unwrap_or_default();
-        let hours = r.hours_worked
-            .map(|h| h.to_string())
-            .unwrap_or_default();
-        let ot = r.overtime_hours
-            .map(|h| h.to_string())
-            .unwrap_or_default();
-        let outside = r.is_outside_geofence
+        let hours = r.hours_worked.map(|h| h.to_string()).unwrap_or_default();
+        let ot = r.overtime_hours.map(|h| h.to_string()).unwrap_or_default();
+        let outside = r
+            .is_outside_geofence
             .map(|b| if b { "Yes" } else { "No" })
             .unwrap_or("No");
         let notes = csv_field(r.notes.as_deref().unwrap_or(""));
-        let dept  = csv_field(r.department.as_deref().unwrap_or(""));
-        let name  = csv_field(&r.full_name);
+        let dept = csv_field(r.department.as_deref().unwrap_or(""));
+        let name = csv_field(&r.full_name);
 
         csv.push_str(&format!(
             "{},{},{},{},{},{},{},{},{},{},{},{}\n",
-            date, r.employee_number, name, dept,
-            check_in, check_out, hours, ot,
-            r.method, r.status, outside, notes
+            date,
+            r.employee_number,
+            name,
+            dept,
+            check_in,
+            check_out,
+            hours,
+            ot,
+            r.method,
+            r.status,
+            outside,
+            notes
         ));
     }
 

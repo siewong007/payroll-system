@@ -4,6 +4,7 @@ import { motion } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
 import { Fingerprint } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
+import { getErrorMessage } from '@/lib/utils';
 import api from '@/api/client';
 import { checkPasskey, passkeyAuthBegin, passkeyAuthComplete, passkeyDiscoverableBegin, passkeyDiscoverableComplete } from '@/api/passkey';
 import { getPasskeyCredential, isWebAuthnSupported } from '@/lib/webauthn';
@@ -88,8 +89,8 @@ export function Login() {
       } else {
         navigate(loggedInUser.role === 'employee' ? '/portal' : '/');
       }
-    } catch (err: any) {
-      setError(err.response?.data?.error || 'Invalid email or password');
+    } catch (err: unknown) {
+      setError(getErrorMessage(err, 'Invalid email or password'));
     } finally {
       setLoading(false);
     }
@@ -115,9 +116,8 @@ export function Login() {
 
       setSession(response.token, response.user);
       navigate(response.user.role === 'employee' ? '/portal' : '/');
-    } catch (err: any) {
-      const msg = err?.response?.data?.error || err?.message || 'Passkey authentication failed';
-      setError(msg);
+    } catch (err: unknown) {
+      setError(getErrorMessage(err, 'Passkey authentication failed'));
     } finally {
       setPasskeyLoading(false);
     }

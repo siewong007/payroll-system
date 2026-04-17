@@ -28,14 +28,31 @@ pub fn sen_to_rm(sen: i64) -> String {
 /// Push ops to write text at a position (x, y in mm, from bottom-left)
 pub fn add_text(ops: &mut Vec<Op>, font: &PdfFontHandle, size: f32, x: f32, y: f32, text: &str) {
     ops.push(Op::StartTextSection);
-    ops.push(Op::SetFont { font: font.clone(), size: Pt(size) });
-    ops.push(Op::SetTextCursor { pos: Point { x: Mm(x).into(), y: Mm(y).into() } });
-    ops.push(Op::ShowText { items: vec![TextItem::Text(text.to_string())] });
+    ops.push(Op::SetFont {
+        font: font.clone(),
+        size: Pt(size),
+    });
+    ops.push(Op::SetTextCursor {
+        pos: Point {
+            x: Mm(x).into(),
+            y: Mm(y).into(),
+        },
+    });
+    ops.push(Op::ShowText {
+        items: vec![TextItem::Text(text.to_string())],
+    });
     ops.push(Op::EndTextSection);
 }
 
 /// Push ops to write right-aligned text (approximate based on char count)
-pub fn add_text_right(ops: &mut Vec<Op>, font: &PdfFontHandle, size: f32, right_x: f32, y: f32, text: &str) {
+pub fn add_text_right(
+    ops: &mut Vec<Op>,
+    font: &PdfFontHandle,
+    size: f32,
+    right_x: f32,
+    y: f32,
+    text: &str,
+) {
     let approx_width = text.len() as f32 * size * 0.22;
     let x = right_x - approx_width;
     add_text(ops, font, size, x, y, text);
@@ -43,13 +60,21 @@ pub fn add_text_right(ops: &mut Vec<Op>, font: &PdfFontHandle, size: f32, right_
 
 /// Push ops to draw a horizontal line
 pub fn draw_line(ops: &mut Vec<Op>, x1: f32, x2: f32, y: f32) {
-    ops.push(Op::SetOutlineColor { col: Color::Greyscale(Greyscale::new(0.7, None)) });
+    ops.push(Op::SetOutlineColor {
+        col: Color::Greyscale(Greyscale::new(0.7, None)),
+    });
     ops.push(Op::SetOutlineThickness { pt: Pt(0.5) });
     ops.push(Op::DrawLine {
         line: Line {
             points: vec![
-                LinePoint { p: Point::new(Mm(x1), Mm(y)), bezier: false },
-                LinePoint { p: Point::new(Mm(x2), Mm(y)), bezier: false },
+                LinePoint {
+                    p: Point::new(Mm(x1), Mm(y)),
+                    bezier: false,
+                },
+                LinePoint {
+                    p: Point::new(Mm(x2), Mm(y)),
+                    bezier: false,
+                },
             ],
             is_closed: false,
         },

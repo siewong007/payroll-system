@@ -3,7 +3,9 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::core::error::{AppError, AppResult};
-use crate::models::work_schedule::{CreateWorkScheduleRequest, UpdateWorkScheduleRequest, WorkSchedule};
+use crate::models::work_schedule::{
+    CreateWorkScheduleRequest, UpdateWorkScheduleRequest, WorkSchedule,
+};
 
 fn parse_time(s: &str) -> AppResult<NaiveTime> {
     NaiveTime::parse_from_str(s, "%H:%M")
@@ -12,7 +14,10 @@ fn parse_time(s: &str) -> AppResult<NaiveTime> {
 }
 
 /// Get the default work schedule for a company
-pub async fn get_default_schedule(pool: &PgPool, company_id: Uuid) -> AppResult<Option<WorkSchedule>> {
+pub async fn get_default_schedule(
+    pool: &PgPool,
+    company_id: Uuid,
+) -> AppResult<Option<WorkSchedule>> {
     let schedule = sqlx::query_as::<_, WorkSchedule>(
         "SELECT * FROM company_work_schedules WHERE company_id = $1 AND is_default = TRUE",
     )
@@ -47,7 +52,9 @@ pub async fn upsert_default_schedule(
     let tz = req.timezone.as_deref().unwrap_or("Asia/Kuala_Lumpur");
 
     if !(0..=120).contains(&grace) {
-        return Err(AppError::BadRequest("Grace minutes must be between 0 and 120".into()));
+        return Err(AppError::BadRequest(
+            "Grace minutes must be between 0 and 120".into(),
+        ));
     }
 
     let schedule = sqlx::query_as::<_, WorkSchedule>(
@@ -112,7 +119,9 @@ pub async fn update_schedule(
     let tz = req.timezone.as_deref().unwrap_or(&existing.timezone);
 
     if !(0..=120).contains(&grace) {
-        return Err(AppError::BadRequest("Grace minutes must be between 0 and 120".into()));
+        return Err(AppError::BadRequest(
+            "Grace minutes must be between 0 and 120".into(),
+        ));
     }
 
     let schedule = sqlx::query_as::<_, WorkSchedule>(

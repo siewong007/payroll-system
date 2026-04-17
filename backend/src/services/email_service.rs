@@ -29,11 +29,7 @@ pub async fn list_templates(
     Ok(templates)
 }
 
-pub async fn get_template(
-    pool: &PgPool,
-    id: Uuid,
-    company_id: Uuid,
-) -> AppResult<EmailTemplate> {
+pub async fn get_template(pool: &PgPool, id: Uuid, company_id: Uuid) -> AppResult<EmailTemplate> {
     sqlx::query_as::<_, EmailTemplate>(
         "SELECT * FROM email_templates WHERE id = $1 AND company_id = $2",
     )
@@ -98,13 +94,11 @@ pub async fn update_template(
 }
 
 pub async fn delete_template(pool: &PgPool, id: Uuid, company_id: Uuid) -> AppResult<()> {
-    let result = sqlx::query(
-        "DELETE FROM email_templates WHERE id = $1 AND company_id = $2",
-    )
-    .bind(id)
-    .bind(company_id)
-    .execute(pool)
-    .await?;
+    let result = sqlx::query("DELETE FROM email_templates WHERE id = $1 AND company_id = $2")
+        .bind(id)
+        .bind(company_id)
+        .execute(pool)
+        .await?;
 
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound("Template not found".into()));
@@ -231,8 +225,14 @@ pub async fn send_email(
     };
 
     let email = Message::builder()
-        .from(from_addr.parse().map_err(|e| AppError::Internal(format!("Invalid from address: {}", e)))?)
-        .to(to_addr.parse().map_err(|e| AppError::Internal(format!("Invalid to address: {}", e)))?)
+        .from(
+            from_addr
+                .parse()
+                .map_err(|e| AppError::Internal(format!("Invalid from address: {}", e)))?,
+        )
+        .to(to_addr
+            .parse()
+            .map_err(|e| AppError::Internal(format!("Invalid to address: {}", e)))?)
         .subject(subject)
         .header(ContentType::TEXT_HTML)
         .body(body_html.to_string())
@@ -245,7 +245,8 @@ pub async fn send_email(
         .port(port);
 
     if let (Some(user), Some(pass)) = (&config.smtp_username, &config.smtp_password) {
-        transport_builder = transport_builder.credentials(Credentials::new(user.clone(), pass.clone()));
+        transport_builder =
+            transport_builder.credentials(Credentials::new(user.clone(), pass.clone()));
     }
 
     let transport = transport_builder.build();
@@ -289,7 +290,10 @@ pub async fn send_system_email(
     body_html: &str,
 ) -> AppResult<()> {
     if !config.smtp_enabled() {
-        tracing::warn!("SMTP not configured, skipping system email to {}", recipient_email);
+        tracing::warn!(
+            "SMTP not configured, skipping system email to {}",
+            recipient_email
+        );
         return Ok(());
     }
 
@@ -305,8 +309,14 @@ pub async fn send_system_email(
     };
 
     let email = Message::builder()
-        .from(from_addr.parse().map_err(|e| AppError::Internal(format!("Invalid from address: {}", e)))?)
-        .to(to_addr.parse().map_err(|e| AppError::Internal(format!("Invalid to address: {}", e)))?)
+        .from(
+            from_addr
+                .parse()
+                .map_err(|e| AppError::Internal(format!("Invalid from address: {}", e)))?,
+        )
+        .to(to_addr
+            .parse()
+            .map_err(|e| AppError::Internal(format!("Invalid to address: {}", e)))?)
         .subject(subject)
         .header(ContentType::TEXT_HTML)
         .body(body_html.to_string())
@@ -318,12 +328,15 @@ pub async fn send_system_email(
         .port(port);
 
     if let (Some(user), Some(pass)) = (&config.smtp_username, &config.smtp_password) {
-        transport_builder = transport_builder.credentials(Credentials::new(user.clone(), pass.clone()));
+        transport_builder =
+            transport_builder.credentials(Credentials::new(user.clone(), pass.clone()));
     }
 
     let transport = transport_builder.build();
 
-    transport.send(email).await
+    transport
+        .send(email)
+        .await
         .map_err(|e| AppError::Internal(format!("Failed to send email: {}", e)))?;
 
     tracing::info!("System email sent to {}", recipient_email);
@@ -368,9 +381,9 @@ pub fn password_reset_html(user_name: &str, reset_url: &str) -> String {
 pub fn approval_email_html(
     employee_name: &str,
     company_name: &str,
-    approval_type: &str,   // "Leave", "Claim"
-    details: &str,          // e.g. "Annual Leave from 2026-04-15 to 2026-04-17"
-    extra_note: &str,       // e.g. "A salary deduction will be applied..." or ""
+    approval_type: &str, // "Leave", "Claim"
+    details: &str,       // e.g. "Annual Leave from 2026-04-15 to 2026-04-17"
+    extra_note: &str,    // e.g. "A salary deduction will be applied..." or ""
 ) -> String {
     let extra_section = if extra_note.is_empty() {
         String::new()
@@ -412,7 +425,13 @@ pub fn approval_email_html(
     )
 }
 
-pub fn default_welcome_html(employee_name: &str, company_name: &str, frontend_url: &str, login_email: &str, default_password: &str) -> String {
+pub fn default_welcome_html(
+    employee_name: &str,
+    company_name: &str,
+    frontend_url: &str,
+    login_email: &str,
+    default_password: &str,
+) -> String {
     format!(
         r#"<!DOCTYPE html>
 <html>

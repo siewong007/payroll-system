@@ -78,10 +78,7 @@ pub async fn update_my_profile(
 
 // ─── Payslips ───
 
-pub async fn get_my_payslips(
-    pool: &PgPool,
-    employee_id: Uuid,
-) -> AppResult<Vec<MyPayslip>> {
+pub async fn get_my_payslips(pool: &PgPool, employee_id: Uuid) -> AppResult<Vec<MyPayslip>> {
     let payslips = sqlx::query_as::<_, MyPayslip>(
         r#"SELECT pi.id, pi.payroll_run_id,
             pr.period_year, pr.period_month, pr.period_start, pr.period_end, pr.pay_date,
@@ -139,10 +136,7 @@ pub async fn get_leave_balances(
     Ok(balances)
 }
 
-pub async fn get_leave_requests(
-    pool: &PgPool,
-    employee_id: Uuid,
-) -> AppResult<Vec<LeaveRequest>> {
+pub async fn get_leave_requests(pool: &PgPool, employee_id: Uuid) -> AppResult<Vec<LeaveRequest>> {
     let requests = sqlx::query_as::<_, LeaveRequest>(
         r#"SELECT lr.id, lr.employee_id, lr.company_id, lr.leave_type_id,
             lr.start_date, lr.end_date, lr.days, lr.reason, lr.status,
@@ -219,20 +213,27 @@ pub async fn create_leave_request(
     .await?;
 
     // Notify admins about new leave request
-    let emp_name: Option<(String,)> = sqlx::query_as("SELECT full_name FROM employees WHERE id = $1")
-        .bind(employee_id)
-        .fetch_optional(pool)
-        .await?;
+    let emp_name: Option<(String,)> =
+        sqlx::query_as("SELECT full_name FROM employees WHERE id = $1")
+            .bind(employee_id)
+            .fetch_optional(pool)
+            .await?;
     let name = emp_name.map(|e| e.0).unwrap_or_default();
     let _ = notification_service::notify_admins(
         pool,
         company_id,
         "leave_submitted",
         "New Leave Request",
-        &format!("{} has submitted a {} leave request ({} days)", name, leave.leave_type_name.as_deref().unwrap_or(""), leave.days),
+        &format!(
+            "{} has submitted a {} leave request ({} days)",
+            name,
+            leave.leave_type_name.as_deref().unwrap_or(""),
+            leave.days
+        ),
         Some("leave_request"),
         Some(leave.id),
-    ).await;
+    )
+    .await;
 
     Ok(leave)
 }
@@ -326,11 +327,7 @@ pub async fn create_claim(
     Ok(claim)
 }
 
-pub async fn submit_claim(
-    pool: &PgPool,
-    employee_id: Uuid,
-    claim_id: Uuid,
-) -> AppResult<Claim> {
+pub async fn submit_claim(pool: &PgPool, employee_id: Uuid, claim_id: Uuid) -> AppResult<Claim> {
     let claim = sqlx::query_as::<_, Claim>(
         r#"UPDATE claims SET status = 'pending', submitted_at = NOW(), updated_at = NOW()
         WHERE id = $1 AND employee_id = $2 AND status = 'draft'
@@ -343,40 +340,44 @@ pub async fn submit_claim(
     .ok_or_else(|| AppError::BadRequest("Claim not found or already submitted".into()))?;
 
     // Notify admins about submitted claim
-    let emp_name: Option<(String,)> = sqlx::query_as("SELECT full_name FROM employees WHERE id = $1")
-        .bind(employee_id)
-        .fetch_optional(pool)
-        .await?;
+    let emp_name: Option<(String,)> =
+        sqlx::query_as("SELECT full_name FROM employees WHERE id = $1")
+            .bind(employee_id)
+            .fetch_optional(pool)
+            .await?;
     let name = emp_name.map(|e| e.0).unwrap_or_default();
     let _ = notification_service::notify_admins(
         pool,
         claim.company_id,
         "claim_submitted",
         "New Claim Submitted",
-        &format!("{} submitted a claim: \"{}\" (RM {:.2})", name, claim.title, claim.amount as f64 / 100.0),
+        &format!(
+            "{} submitted a claim: \"{}\" (RM {:.2})",
+            name,
+            claim.title,
+            claim.amount as f64 / 100.0
+        ),
         Some("claim"),
         Some(claim.id),
-    ).await;
+    )
+    .await;
 
     Ok(claim)
 }
 
-pub async fn delete_claim(
-    pool: &PgPool,
-    employee_id: Uuid,
-    claim_id: Uuid,
-) -> AppResult<()> {
-    let rows = sqlx::query(
-        "DELETE FROM claims WHERE id = $1 AND employee_id = $2 AND status = 'draft'",
-    )
-    .bind(claim_id)
-    .bind(employee_id)
-    .execute(pool)
-    .await?
-    .rows_affected();
+pub async fn delete_claim(pool: &PgPool, employee_id: Uuid, claim_id: Uuid) -> AppResult<()> {
+    let rows =
+        sqlx::query("DELETE FROM claims WHERE id = $1 AND employee_id = $2 AND status = 'draft'")
+            .bind(claim_id)
+            .bind(employee_id)
+            .execute(pool)
+            .await?
+            .rows_affected();
 
     if rows == 0 {
-        return Err(AppError::BadRequest("Claim not found or cannot be deleted".into()));
+        return Err(AppError::BadRequest(
+            "Claim not found or cannot be deleted".into(),
+        ));
     }
     Ok(())
 }
@@ -433,10 +434,11 @@ pub async fn create_overtime_application(
     .await?;
 
     // Notify admins
-    let emp_name: Option<(String,)> = sqlx::query_as("SELECT full_name FROM employees WHERE id = $1")
-        .bind(employee_id)
-        .fetch_optional(pool)
-        .await?;
+    let emp_name: Option<(String,)> =
+        sqlx::query_as("SELECT full_name FROM employees WHERE id = $1")
+            .bind(employee_id)
+            .fetch_optional(pool)
+            .await?;
     let name = emp_name.map(|e| e.0).unwrap_or_default();
     let _ = notification_service::notify_admins(
         pool,
@@ -445,7 +447,10 @@ pub async fn create_overtime_application(
         "New Overtime Application",
         &format!(
             "{} submitted an overtime application for {} ({} hours, {})",
-            name, req.ot_date, req.hours, ot_type.replace('_', " ")
+            name,
+            req.ot_date,
+            req.hours,
+            ot_type.replace('_', " ")
         ),
         Some("overtime"),
         Some(app.id),
@@ -470,7 +475,9 @@ pub async fn cancel_overtime_application(
     .rows_affected();
 
     if rows == 0 {
-        return Err(AppError::BadRequest("OT application not found or cannot be cancelled".into()));
+        return Err(AppError::BadRequest(
+            "OT application not found or cannot be cancelled".into(),
+        ));
     }
     Ok(())
 }
@@ -498,7 +505,8 @@ pub fn calculate_prorated_days(
     // Joined this year: remaining months including the joining month
     let join_month = date_joined.month() as i32;
     let remaining = (12 - join_month + 1).max(0);
-    let prorated = default_days * rust_decimal::Decimal::from(remaining) / rust_decimal::Decimal::from(12);
+    let prorated =
+        default_days * rust_decimal::Decimal::from(remaining) / rust_decimal::Decimal::from(12);
     // Round to nearest 0.5
     let doubled = prorated * rust_decimal::Decimal::from(2);
     let rounded = doubled.round_dp(0);
@@ -572,17 +580,21 @@ pub async fn process_year_end_carry_forward(
     for (emp_id, date_joined) in &employees {
         for lt in &leave_types {
             // Get current year balance
-            let balance: Option<(rust_decimal::Decimal, rust_decimal::Decimal, rust_decimal::Decimal, rust_decimal::Decimal)> =
-                sqlx::query_as(
-                    r#"SELECT entitled_days, taken_days, pending_days, carried_forward
+            let balance: Option<(
+                rust_decimal::Decimal,
+                rust_decimal::Decimal,
+                rust_decimal::Decimal,
+                rust_decimal::Decimal,
+            )> = sqlx::query_as(
+                r#"SELECT entitled_days, taken_days, pending_days, carried_forward
                     FROM leave_balances
                     WHERE employee_id = $1 AND leave_type_id = $2 AND year = $3"#,
-                )
-                .bind(emp_id)
-                .bind(lt.id)
-                .bind(from_year)
-                .fetch_optional(pool)
-                .await?;
+            )
+            .bind(emp_id)
+            .bind(lt.id)
+            .bind(from_year)
+            .fetch_optional(pool)
+            .await?;
 
             let carry = if let Some((entitled, taken, pending, cf)) = balance {
                 let remaining = entitled + cf - taken - pending;

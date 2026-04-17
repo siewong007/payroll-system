@@ -61,8 +61,15 @@ export function PasskeyManagement() {
       setNewName('');
       setSuccess('Passkey registered successfully!');
       setTimeout(() => setSuccess(''), 3000);
-    } catch (err: any) {
-      const msg = err?.response?.data?.error || err?.message || 'Failed to register passkey';
+    } catch (err: unknown) {
+      console.error('Passkey registration error:', err);
+      let msg = 'Failed to register passkey';
+      if (err instanceof Error) msg = err.message;
+      // Handle axios error if necessary
+      if (typeof err === 'object' && err !== null && 'response' in err) {
+        const axiosErr = err as { response: { data: { error?: string } } };
+        if (axiosErr.response?.data?.error) msg = axiosErr.response.data.error;
+      }
       setError(msg);
     } finally {
       setRegistering(false);

@@ -253,7 +253,7 @@ function ManualEntryModal({ onClose }: { onClose: () => void }) {
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
-            <select value={form.status} onChange={e => setForm(p => ({ ...p, status: e.target.value as any }))}
+            <select value={form.status} onChange={e => setForm(p => ({ ...p, status: e.target.value as keyof typeof STATUS_CONFIG }))}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-1 focus:ring-black outline-none"
             >
               <option value="present">Present</option>
@@ -335,7 +335,7 @@ function EditAttendanceModal({ record, onClose }: { record: AttendanceRecordWith
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
-            <select value={form.status} onChange={e => setForm(p => ({ ...p, status: e.target.value as any }))}
+            <select value={form.status} onChange={e => setForm(p => ({ ...p, status: e.target.value as keyof typeof STATUS_CONFIG }))}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-1 focus:ring-black outline-none">
               <option value="present">Present</option>
               <option value="late">Late</option>

@@ -1,6 +1,6 @@
 use axum::{
-    extract::{Multipart, Path, Query, State},
     Json,
+    extract::{Multipart, Path, Query, State},
 };
 use serde::Deserialize;
 use uuid::Uuid;
@@ -91,7 +91,8 @@ pub async fn create_leave(
 ) -> AppResult<Json<LeaveRequest>> {
     let employee_id = get_employee_id(&auth)?;
     let company_id = get_company_id(&auth)?;
-    let leave = portal_service::create_leave_request(&state.pool, employee_id, company_id, req).await?;
+    let leave =
+        portal_service::create_leave_request(&state.pool, employee_id, company_id, req).await?;
     Ok(Json(leave))
 }
 
@@ -171,7 +172,9 @@ pub async fn create_overtime(
 ) -> AppResult<Json<crate::models::portal::OvertimeApplication>> {
     let employee_id = get_employee_id(&auth)?;
     let company_id = get_company_id(&auth)?;
-    let app = portal_service::create_overtime_application(&state.pool, employee_id, company_id, req).await?;
+    let app =
+        portal_service::create_overtime_application(&state.pool, employee_id, company_id, req)
+            .await?;
     Ok(Json(app))
 }
 
@@ -188,7 +191,9 @@ pub async fn cancel_overtime(
 // ─── File Upload ───
 
 const MAX_UPLOAD_SIZE: usize = 10 * 1024 * 1024; // 10 MB
-const ALLOWED_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "gif", "webp", "pdf", "doc", "docx", "xls", "xlsx"];
+const ALLOWED_EXTENSIONS: &[&str] = &[
+    "jpg", "jpeg", "png", "gif", "webp", "pdf", "doc", "docx", "xls", "xlsx",
+];
 
 pub async fn upload_file(
     _auth: AuthUser,
@@ -244,7 +249,12 @@ pub async fn upload_file(
         .await
         .map_err(|e| AppError::Internal(format!("Failed to create upload dir: {}", e)))?;
 
-    let stored_name = format!("{}_{}.{}", Uuid::new_v4(), sanitize_filename(&original_name), ext);
+    let stored_name = format!(
+        "{}_{}.{}",
+        Uuid::new_v4(),
+        sanitize_filename(&original_name),
+        ext
+    );
     let file_path = upload_dir.join(&stored_name);
 
     tokio::fs::write(&file_path, &data)
@@ -278,7 +288,9 @@ pub async fn team_calendar(
     let now = chrono::Utc::now();
     let year = q.year.unwrap_or(now.year());
     let month = q.month.unwrap_or(now.month());
-    let entries = portal_service::get_team_calendar(&state.pool, employee_id, company_id, year, month).await?;
+    let entries =
+        portal_service::get_team_calendar(&state.pool, employee_id, company_id, year, month)
+            .await?;
     Ok(Json(entries))
 }
 
@@ -298,7 +310,8 @@ pub async fn portal_holidays(
 ) -> AppResult<Json<Vec<crate::models::calendar::Holiday>>> {
     let company_id = get_company_id(&auth)?;
     let year = q.year.unwrap_or(chrono::Utc::now().year());
-    let holidays = crate::services::calendar_service::get_holidays(&state.pool, company_id, year).await?;
+    let holidays =
+        crate::services::calendar_service::get_holidays(&state.pool, company_id, year).await?;
     Ok(Json(holidays))
 }
 
@@ -310,7 +323,7 @@ pub async fn export_leave_ics(
     Query(q): Query<LeaveBalanceQuery>,
 ) -> Result<axum::response::Response, AppError> {
     use axum::body::Body;
-    use axum::http::{header, Response, StatusCode};
+    use axum::http::{Response, StatusCode, header};
 
     let employee_id = get_employee_id(&auth)?;
     let year = q.year.unwrap_or(chrono::Utc::now().year());
@@ -333,14 +346,20 @@ pub async fn export_leave_ics(
     .fetch_all(&state.pool)
     .await?;
 
-    let mut ics = String::from("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//PayrollMY//Leave Calendar//EN\r\nCALSCALE:GREGORIAN\r\n");
+    let mut ics = String::from(
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//PayrollMY//Leave Calendar//EN\r\nCALSCALE:GREGORIAN\r\n",
+    );
 
     for lr in &leaves {
         let uid = lr.id;
         let summary = lr.leave_type_name.as_deref().unwrap_or("Leave");
         let dtstart = lr.start_date.format("%Y%m%d");
         // DTEND in VEVENT DATE type is exclusive, so add 1 day
-        let dtend = lr.end_date.succ_opt().map(|d| d.format("%Y%m%d").to_string()).unwrap_or_default();
+        let dtend = lr
+            .end_date
+            .succ_opt()
+            .map(|d| d.format("%Y%m%d").to_string())
+            .unwrap_or_default();
         let description = lr.reason.as_deref().unwrap_or("");
 
         ics.push_str(&format!(
@@ -353,7 +372,10 @@ pub async fn export_leave_ics(
     Ok(Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "text/calendar; charset=utf-8")
-        .header(header::CONTENT_DISPOSITION, format!("attachment; filename=\"leave-{}.ics\"", year))
+        .header(
+            header::CONTENT_DISPOSITION,
+            format!("attachment; filename=\"leave-{}.ics\"", year),
+        )
         .body(Body::from(ics))
         .unwrap())
 }
@@ -366,17 +388,20 @@ pub async fn download_payslip_pdf(
     Path(id): Path<Uuid>,
 ) -> Result<axum::response::Response, AppError> {
     use axum::body::Body;
-    use axum::http::{header, Response, StatusCode};
+    use axum::http::{Response, StatusCode, header};
 
     let employee_id = get_employee_id(&auth)?;
-    let bytes = crate::services::payslip_pdf_service::generate_payslip_pdf(
-        &state.pool, id, employee_id,
-    ).await?;
+    let bytes =
+        crate::services::payslip_pdf_service::generate_payslip_pdf(&state.pool, id, employee_id)
+            .await?;
 
     Ok(Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "application/pdf")
-        .header(header::CONTENT_DISPOSITION, "attachment; filename=\"payslip.pdf\"")
+        .header(
+            header::CONTENT_DISPOSITION,
+            "attachment; filename=\"payslip.pdf\"",
+        )
         .body(Body::from(bytes))
         .unwrap())
 }
@@ -395,9 +420,22 @@ fn validate_magic_bytes(data: &[u8], claimed_ext: &str) -> bool {
 }
 
 fn sanitize_filename(name: &str) -> String {
-    let stem = name.rsplit('.').skip(1).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join(".");
+    let stem = name
+        .rsplit('.')
+        .skip(1)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<Vec<_>>()
+        .join(".");
     stem.chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .take(50)
         .collect()
 }
@@ -406,7 +444,7 @@ pub async fn serve_upload(
     Path(filename): Path<String>,
 ) -> Result<axum::response::Response, AppError> {
     use axum::body::Body;
-    use axum::http::{header, Response, StatusCode};
+    use axum::http::{Response, StatusCode, header};
 
     // Prevent directory traversal
     if filename.contains("..") || filename.contains('/') || filename.contains('\\') {
@@ -419,7 +457,13 @@ pub async fn serve_upload(
         .await
         .map_err(|_| AppError::NotFound("File not found".into()))?;
 
-    let content_type = match filename.rsplit('.').next().unwrap_or("").to_lowercase().as_str() {
+    let content_type = match filename
+        .rsplit('.')
+        .next()
+        .unwrap_or("")
+        .to_lowercase()
+        .as_str()
+    {
         "jpg" | "jpeg" => "image/jpeg",
         "png" => "image/png",
         "gif" => "image/gif",

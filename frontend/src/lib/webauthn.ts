@@ -22,21 +22,58 @@ function bufferToBase64url(buf: ArrayBuffer): string {
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
+export interface PublicKeyCredentialCreationOptionsJSON extends Omit<PublicKeyCredentialCreationOptions, 'challenge' | 'user' | 'excludeCredentials'> {
+  challenge: string;
+  user: Omit<PublicKeyCredentialUserEntity, 'id'> & { id: string };
+  excludeCredentials?: Array<Omit<PublicKeyCredentialDescriptor, 'id'> & { id: string }>;
+}
+
+export interface PublicKeyCredentialRequestOptionsJSON extends Omit<PublicKeyCredentialRequestOptions, 'challenge' | 'allowCredentials'> {
+  challenge: string;
+  allowCredentials?: Array<Omit<PublicKeyCredentialDescriptor, 'id'> & { id: string }>;
+}
+
+/** The serialized format we send to the server for registration */
+export interface RegistrationResponseJSON {
+  id: string;
+  rawId: string;
+  type: string;
+  response: {
+    attestationObject: string;
+    clientDataJSON: string;
+  };
+}
+
+/** The serialized format we send to the server for authentication */
+export interface AuthenticationResponseJSON {
+  id: string;
+  rawId: string;
+  type: string;
+  response: {
+    authenticatorData: string;
+    clientDataJSON: string;
+    signature: string;
+    userHandle: string | null;
+  };
+}
+
 /**
  * Convert server creation options → browser-ready options, call navigator.credentials.create,
  * then serialize the result back to JSON for the server.
  */
 export async function createPasskeyCredential(
-  options: any
-): Promise<any> {
-  // Convert base64url fields to ArrayBuffer
-  const publicKey = { ...options.publicKey };
+  publicKeyOptions: PublicKeyCredentialCreationOptionsJSON
+): Promise<RegistrationResponseJSON> {
+  // Convert base64url fields to ArrayBuffer for the browser API
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const publicKey: any = { ...publicKeyOptions };
   publicKey.challenge = base64urlToBuffer(publicKey.challenge);
   publicKey.user = {
     ...publicKey.user,
     id: base64urlToBuffer(publicKey.user.id),
   };
   if (publicKey.excludeCredentials) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     publicKey.excludeCredentials = publicKey.excludeCredentials.map((c: any) => ({
       ...c,
       id: base64urlToBuffer(c.id),
@@ -63,11 +100,13 @@ export async function createPasskeyCredential(
  * then serialize the result back to JSON for the server.
  */
 export async function getPasskeyCredential(
-  options: any
-): Promise<any> {
-  const publicKey = { ...options.publicKey };
+  publicKeyOptions: PublicKeyCredentialRequestOptionsJSON
+): Promise<AuthenticationResponseJSON> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const publicKey: any = { ...publicKeyOptions };
   publicKey.challenge = base64urlToBuffer(publicKey.challenge);
   if (publicKey.allowCredentials) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     publicKey.allowCredentials = publicKey.allowCredentials.map((c: any) => ({
       ...c,
       id: base64urlToBuffer(c.id),

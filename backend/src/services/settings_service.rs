@@ -89,7 +89,10 @@ pub async fn bulk_update_settings(
         .fetch_optional(&mut *tx)
         .await?
         .ok_or_else(|| {
-            AppError::NotFound(format!("Setting not found: {}/{}", update.category, update.key))
+            AppError::NotFound(format!(
+                "Setting not found: {}/{}",
+                update.category, update.key
+            ))
         })?;
 
         results.push(setting);

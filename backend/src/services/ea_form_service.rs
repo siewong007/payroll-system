@@ -175,22 +175,46 @@ pub async fn get_ea_form_data(
     .await?;
 
     let mut company_addr = vec![];
-    if let Some(ref a) = company.address_line1 { company_addr.push(a.clone()); }
-    if let Some(ref a) = company.address_line2 { company_addr.push(a.clone()); }
+    if let Some(ref a) = company.address_line1 {
+        company_addr.push(a.clone());
+    }
+    if let Some(ref a) = company.address_line2 {
+        company_addr.push(a.clone());
+    }
     let mut city_parts = vec![];
-    if let Some(ref p) = company.postcode { city_parts.push(p.clone()); }
-    if let Some(ref c) = company.city { city_parts.push(c.clone()); }
-    if let Some(ref s) = company.state { city_parts.push(s.clone()); }
-    if !city_parts.is_empty() { company_addr.push(city_parts.join(", ")); }
+    if let Some(ref p) = company.postcode {
+        city_parts.push(p.clone());
+    }
+    if let Some(ref c) = company.city {
+        city_parts.push(c.clone());
+    }
+    if let Some(ref s) = company.state {
+        city_parts.push(s.clone());
+    }
+    if !city_parts.is_empty() {
+        company_addr.push(city_parts.join(", "));
+    }
 
     let mut emp_addr = vec![];
-    if let Some(ref a) = emp.address_line1 { emp_addr.push(a.clone()); }
-    if let Some(ref a) = emp.address_line2 { emp_addr.push(a.clone()); }
+    if let Some(ref a) = emp.address_line1 {
+        emp_addr.push(a.clone());
+    }
+    if let Some(ref a) = emp.address_line2 {
+        emp_addr.push(a.clone());
+    }
     let mut emp_city = vec![];
-    if let Some(ref p) = emp.postcode { emp_city.push(p.clone()); }
-    if let Some(ref c) = emp.city { emp_city.push(c.clone()); }
-    if let Some(ref s) = emp.state { emp_city.push(s.clone()); }
-    if !emp_city.is_empty() { emp_addr.push(emp_city.join(", ")); }
+    if let Some(ref p) = emp.postcode {
+        emp_city.push(p.clone());
+    }
+    if let Some(ref c) = emp.city {
+        emp_city.push(c.clone());
+    }
+    if let Some(ref s) = emp.state {
+        emp_city.push(s.clone());
+    }
+    if !emp_city.is_empty() {
+        emp_addr.push(emp_city.join(", "));
+    }
 
     Ok(EaFormData {
         company_name: company.name,
@@ -235,48 +259,194 @@ pub fn generate_ea_form_pdf(data: &EaFormData) -> AppResult<Vec<u8>> {
     // Title
     add_text(&mut ops, &bold, 14.0, left, y, "BORANG EA / FORM EA");
     y -= 5.0;
-    add_text(&mut ops, &font, 9.0, left, y, &format!("Statement of Remuneration from Employment - Year {}", data.tax_year));
+    add_text(
+        &mut ops,
+        &font,
+        9.0,
+        left,
+        y,
+        &format!(
+            "Statement of Remuneration from Employment - Year {}",
+            data.tax_year
+        ),
+    );
     y -= 4.0;
-    add_text(&mut ops, &font, 8.0, left, y, "Penyata Saraan Daripada Penggajian (Subseksyen 83(1A) Akta Cukai Pendapatan 1967)");
+    add_text(
+        &mut ops,
+        &font,
+        8.0,
+        left,
+        y,
+        "Penyata Saraan Daripada Penggajian (Subseksyen 83(1A) Akta Cukai Pendapatan 1967)",
+    );
     y -= 6.0;
     draw_line(&mut ops, left, right, y);
     y -= 8.0;
 
     // Section A: Employer details
-    add_text(&mut ops, &bold, 10.0, left, y, "SECTION A: EMPLOYER DETAILS / BUTIRAN MAJIKAN");
+    add_text(
+        &mut ops,
+        &bold,
+        10.0,
+        left,
+        y,
+        "SECTION A: EMPLOYER DETAILS / BUTIRAN MAJIKAN",
+    );
     y -= 6.0;
-    draw_row(&mut ops, &font, &bold, 9.0, left + 3.0, mid - 5.0, y, "Employer Name:", &data.company_name, false);
+    draw_row(
+        &mut ops,
+        &font,
+        &bold,
+        9.0,
+        left + 3.0,
+        mid - 5.0,
+        y,
+        "Employer Name:",
+        &data.company_name,
+        false,
+    );
     y -= 5.0;
-    draw_row(&mut ops, &font, &bold, 9.0, left + 3.0, mid - 5.0, y, "Employer Tax No:", &data.company_tax_no, false);
-    add_text(&mut ops, &font, 9.0, mid, y, &format!("EPF Ref No: {}", data.company_epf_no));
+    draw_row(
+        &mut ops,
+        &font,
+        &bold,
+        9.0,
+        left + 3.0,
+        mid - 5.0,
+        y,
+        "Employer Tax No:",
+        &data.company_tax_no,
+        false,
+    );
+    add_text(
+        &mut ops,
+        &font,
+        9.0,
+        mid,
+        y,
+        &format!("EPF Ref No: {}", data.company_epf_no),
+    );
     y -= 5.0;
-    draw_row(&mut ops, &font, &bold, 9.0, left + 3.0, mid - 5.0, y, "Reg No:", &data.company_reg_no, false);
+    draw_row(
+        &mut ops,
+        &font,
+        &bold,
+        9.0,
+        left + 3.0,
+        mid - 5.0,
+        y,
+        "Reg No:",
+        &data.company_reg_no,
+        false,
+    );
     y -= 5.0;
-    add_text(&mut ops, &font, 9.0, left + 3.0, y, &format!("Address: {}", data.company_address));
+    add_text(
+        &mut ops,
+        &font,
+        9.0,
+        left + 3.0,
+        y,
+        &format!("Address: {}", data.company_address),
+    );
     y -= 8.0;
     draw_line(&mut ops, left, right, y);
     y -= 8.0;
 
     // Section B: Employee details
-    add_text(&mut ops, &bold, 10.0, left, y, "SECTION B: EMPLOYEE DETAILS / BUTIRAN PEKERJA");
+    add_text(
+        &mut ops,
+        &bold,
+        10.0,
+        left,
+        y,
+        "SECTION B: EMPLOYEE DETAILS / BUTIRAN PEKERJA",
+    );
     y -= 6.0;
-    draw_row(&mut ops, &font, &bold, 9.0, left + 3.0, mid - 5.0, y, "Employee Name:", &data.employee_name, false);
+    draw_row(
+        &mut ops,
+        &font,
+        &bold,
+        9.0,
+        left + 3.0,
+        mid - 5.0,
+        y,
+        "Employee Name:",
+        &data.employee_name,
+        false,
+    );
     y -= 5.0;
-    draw_row(&mut ops, &font, &bold, 9.0, left + 3.0, mid - 5.0, y, "IC Number:", &data.ic_number, false);
-    add_text(&mut ops, &font, 9.0, mid, y, &format!("Tax Ref No: {}", data.tax_id));
+    draw_row(
+        &mut ops,
+        &font,
+        &bold,
+        9.0,
+        left + 3.0,
+        mid - 5.0,
+        y,
+        "IC Number:",
+        &data.ic_number,
+        false,
+    );
+    add_text(
+        &mut ops,
+        &font,
+        9.0,
+        mid,
+        y,
+        &format!("Tax Ref No: {}", data.tax_id),
+    );
     y -= 5.0;
-    draw_row(&mut ops, &font, &bold, 9.0, left + 3.0, mid - 5.0, y, "EPF Number:", &data.epf_number, false);
-    add_text(&mut ops, &font, 9.0, mid, y, &format!("SOCSO No: {}", data.socso_number));
+    draw_row(
+        &mut ops,
+        &font,
+        &bold,
+        9.0,
+        left + 3.0,
+        mid - 5.0,
+        y,
+        "EPF Number:",
+        &data.epf_number,
+        false,
+    );
+    add_text(
+        &mut ops,
+        &font,
+        9.0,
+        mid,
+        y,
+        &format!("SOCSO No: {}", data.socso_number),
+    );
     y -= 5.0;
-    add_text(&mut ops, &font, 9.0, left + 3.0, y, &format!("Address: {}", data.employee_address));
+    add_text(
+        &mut ops,
+        &font,
+        9.0,
+        left + 3.0,
+        y,
+        &format!("Address: {}", data.employee_address),
+    );
     y -= 5.0;
-    add_text(&mut ops, &font, 9.0, left + 3.0, y, &format!("Date Commenced Employment: {}", data.date_joined));
+    add_text(
+        &mut ops,
+        &font,
+        9.0,
+        left + 3.0,
+        y,
+        &format!("Date Commenced Employment: {}", data.date_joined),
+    );
     y -= 8.0;
     draw_line(&mut ops, left, right, y);
     y -= 8.0;
 
     // Section C: Employment income
-    add_text(&mut ops, &bold, 10.0, left, y, "SECTION C: EMPLOYMENT INCOME / PENDAPATAN PENGGAJIAN");
+    add_text(
+        &mut ops,
+        &bold,
+        10.0,
+        left,
+        y,
+        "SECTION C: EMPLOYMENT INCOME / PENDAPATAN PENGGAJIAN",
+    );
     y -= 7.0;
 
     let income_items: Vec<(&str, &str, i64)> = vec![
@@ -290,21 +460,49 @@ pub fn generate_ea_form_pdf(data: &EaFormData) -> AppResult<Vec<u8>> {
     for (num, label, amount) in &income_items {
         add_text(&mut ops, &font, 9.0, left + 3.0, y, num);
         add_text(&mut ops, &font, 9.0, left + 12.0, y, label);
-        add_text_right(&mut ops, &font, 9.0, right, y, &format!("RM {}", sen_to_rm(*amount)));
+        add_text_right(
+            &mut ops,
+            &font,
+            9.0,
+            right,
+            y,
+            &format!("RM {}", sen_to_rm(*amount)),
+        );
         y -= 5.0;
     }
 
     y -= 2.0;
     draw_line(&mut ops, mid + 20.0, right, y + 1.0);
     y -= 5.0;
-    add_text(&mut ops, &bold, 9.0, left + 3.0, y, "TOTAL EMPLOYMENT INCOME");
-    add_text_right(&mut ops, &bold, 9.0, right, y, &format!("RM {}", sen_to_rm(data.ytd_gross)));
+    add_text(
+        &mut ops,
+        &bold,
+        9.0,
+        left + 3.0,
+        y,
+        "TOTAL EMPLOYMENT INCOME",
+    );
+    add_text_right(
+        &mut ops,
+        &bold,
+        9.0,
+        right,
+        y,
+        &format!("RM {}", sen_to_rm(data.ytd_gross)),
+    );
     y -= 8.0;
     draw_line(&mut ops, left, right, y);
     y -= 8.0;
 
     // Section D: Deductions
-    add_text(&mut ops, &bold, 10.0, left, y, "SECTION D: DEDUCTIONS / POTONGAN");
+    add_text(
+        &mut ops,
+        &bold,
+        10.0,
+        left,
+        y,
+        "SECTION D: DEDUCTIONS / POTONGAN",
+    );
     y -= 7.0;
 
     let deduction_items: Vec<(&str, &str, i64)> = vec![
@@ -318,16 +516,34 @@ pub fn generate_ea_form_pdf(data: &EaFormData) -> AppResult<Vec<u8>> {
     for (num, label, amount) in &deduction_items {
         add_text(&mut ops, &font, 9.0, left + 3.0, y, num);
         add_text(&mut ops, &font, 9.0, left + 12.0, y, label);
-        add_text_right(&mut ops, &font, 9.0, right, y, &format!("RM {}", sen_to_rm(*amount)));
+        add_text_right(
+            &mut ops,
+            &font,
+            9.0,
+            right,
+            y,
+            &format!("RM {}", sen_to_rm(*amount)),
+        );
         y -= 5.0;
     }
 
     y -= 2.0;
     draw_line(&mut ops, mid + 20.0, right, y + 1.0);
     y -= 5.0;
-    let total_deductions = data.ytd_epf_employee + data.ytd_socso_employee + data.ytd_eis_employee + data.ytd_pcb + data.ytd_zakat;
+    let total_deductions = data.ytd_epf_employee
+        + data.ytd_socso_employee
+        + data.ytd_eis_employee
+        + data.ytd_pcb
+        + data.ytd_zakat;
     add_text(&mut ops, &bold, 9.0, left + 3.0, y, "TOTAL DEDUCTIONS");
-    add_text_right(&mut ops, &bold, 9.0, right, y, &format!("RM {}", sen_to_rm(total_deductions)));
+    add_text_right(
+        &mut ops,
+        &bold,
+        9.0,
+        right,
+        y,
+        &format!("RM {}", sen_to_rm(total_deductions)),
+    );
     y -= 8.0;
     draw_line(&mut ops, left, right, y);
     y -= 8.0;
@@ -335,18 +551,52 @@ pub fn generate_ea_form_pdf(data: &EaFormData) -> AppResult<Vec<u8>> {
     // Section E: Summary
     add_text(&mut ops, &bold, 10.0, left, y, "SECTION E: SUMMARY");
     y -= 7.0;
-    add_text(&mut ops, &font, 9.0, left + 3.0, y, &format!("Months of Employment in {}: {}", data.tax_year, data.months_worked));
+    add_text(
+        &mut ops,
+        &font,
+        9.0,
+        left + 3.0,
+        y,
+        &format!(
+            "Months of Employment in {}: {}",
+            data.tax_year, data.months_worked
+        ),
+    );
     y -= 5.0;
     let net = data.ytd_gross - total_deductions;
     add_text(&mut ops, &bold, 9.0, left + 3.0, y, "Net Remuneration:");
-    add_text_right(&mut ops, &bold, 9.0, right, y, &format!("RM {}", sen_to_rm(net)));
+    add_text_right(
+        &mut ops,
+        &bold,
+        9.0,
+        right,
+        y,
+        &format!("RM {}", sen_to_rm(net)),
+    );
 
     // Footer
-    add_text(&mut ops, &font, 7.0, left, 20.0, "This is a computer-generated EA Form. No signature is required.");
-    add_text(&mut ops, &font, 7.0, left, 15.0, &format!("Generated by PayrollMY for tax year {}", data.tax_year));
+    add_text(
+        &mut ops,
+        &font,
+        7.0,
+        left,
+        20.0,
+        "This is a computer-generated EA Form. No signature is required.",
+    );
+    add_text(
+        &mut ops,
+        &font,
+        7.0,
+        left,
+        15.0,
+        &format!("Generated by PayrollMY for tax year {}", data.tax_year),
+    );
 
     let page = PdfPage::new(Mm(210.0), Mm(297.0), ops);
-    let mut doc = PdfDocument::new(&format!("EA Form {} - {}", data.tax_year, data.employee_name));
+    let mut doc = PdfDocument::new(&format!(
+        "EA Form {} - {}",
+        data.tax_year, data.employee_name
+    ));
     doc.pages.push(page);
 
     let mut warnings = Vec::new();

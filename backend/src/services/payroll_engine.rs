@@ -5,8 +5,8 @@ use uuid::Uuid;
 use crate::core::error::{AppError, AppResult};
 use crate::models::employee::Employee;
 use crate::models::payroll::{PayrollItem, PayrollRun};
-use crate::services::epf_service;
 use crate::services::eis_service;
+use crate::services::epf_service;
 use crate::services::pcb_calculator::{self, PcbInput};
 use crate::services::socso_service;
 
@@ -129,7 +129,8 @@ pub async fn process_payroll(
     let mut total_zakat: i64 = 0;
 
     for emp in &employees {
-        let item = process_employee(pool, &mut tx, run_id, emp, year, month, effective_date).await?;
+        let item =
+            process_employee(pool, &mut tx, run_id, emp, year, month, effective_date).await?;
 
         total_gross += item.gross_salary;
         total_net += item.net_salary;
@@ -185,9 +186,9 @@ pub async fn process_payroll(
             locked_at, locked_by, notes, created_at, updated_at, created_by, updated_by
         FROM payroll_runs WHERE id = $1"#,
     )
-        .bind(run_id)
-        .fetch_one(pool)
-        .await?;
+    .bind(run_id)
+    .fetch_one(pool)
+    .await?;
 
     Ok(run)
 }
@@ -265,7 +266,8 @@ async fn process_employee(
     let epf = epf_service::calculate_epf(pool, gross, &epf_category, effective_date).await?;
 
     // SOCSO
-    let socso = socso_service::calculate_socso(pool, gross, age, is_foreigner, effective_date).await?;
+    let socso =
+        socso_service::calculate_socso(pool, gross, age, is_foreigner, effective_date).await?;
 
     // EIS
     let eis = eis_service::calculate_eis(pool, gross, age, is_foreigner, effective_date).await?;
@@ -300,7 +302,10 @@ async fn process_employee(
         socso_employee_monthly: socso.employee,
         eis_employee_monthly: eis.employee,
         zakat_monthly: zakat,
-        marital_status: emp.marital_status.clone().unwrap_or_else(|| "single".into()),
+        marital_status: emp
+            .marital_status
+            .clone()
+            .unwrap_or_else(|| "single".into()),
         working_spouse: emp.working_spouse.unwrap_or(false),
         num_children: emp.num_children.unwrap_or(0),
         months_worked: month,

@@ -13,6 +13,7 @@ import {
   checkInFaceId,
   type AttendanceRecord,
 } from '@/api/attendance';
+import { getErrorMessage } from '@/lib/utils';
 
 function formatTime(iso: string | null) {
   if (!iso) return '—';
@@ -76,7 +77,7 @@ function QrScannerModal({ onClose, onScanned }: { onClose: () => void; onScanned
             }
           }).catch(console.error);
         };
-        const errorCb = (_err: any) => { /* scanning in progress */ };
+        const errorCb = () => { /* scanning in progress */ };
 
         try {
           // Simplest possible start to ensure compatibility
@@ -92,9 +93,9 @@ function QrScannerModal({ onClose, onScanned }: { onClose: () => void; onScanned
         }
         
         if (!stopped) setStarted(true);
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.error('QR Scanner error:', err);
-        setError(err?.message || 'Camera access denied or device not supported.');
+        setError(getErrorMessage(err, 'Camera access denied or device not supported.'));
       }
     };
     

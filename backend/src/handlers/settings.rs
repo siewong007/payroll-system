@@ -1,6 +1,6 @@
 use axum::{
-    extract::{Path, Query, State},
     Json,
+    extract::{Path, Query, State},
 };
 use serde::Deserialize;
 
@@ -20,15 +20,14 @@ pub async fn list(
     auth: AuthUser,
     Query(query): Query<SettingsQuery>,
 ) -> AppResult<Json<Vec<CompanySetting>>> {
-    let company_id = auth.0.company_id
+    let company_id = auth
+        .0
+        .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    let mut settings = settings_service::get_all_settings(
-        &state.pool,
-        company_id,
-        query.category.as_deref(),
-    )
-    .await?;
+    let mut settings =
+        settings_service::get_all_settings(&state.pool, company_id, query.category.as_deref())
+            .await?;
 
     if auth.is_exec() {
         settings.retain(|s| s.category != "payroll" && s.category != "statutory");
@@ -42,7 +41,9 @@ pub async fn get(
     auth: AuthUser,
     Path((category, key)): Path<(String, String)>,
 ) -> AppResult<Json<CompanySetting>> {
-    let company_id = auth.0.company_id
+    let company_id = auth
+        .0
+        .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
     let setting = settings_service::get_setting(&state.pool, company_id, &category, &key).await?;
@@ -56,9 +57,13 @@ pub async fn update(
     Json(req): Json<UpdateSettingRequest>,
 ) -> AppResult<Json<CompanySetting>> {
     if auth.is_exec() && (category == "payroll" || category == "statutory") {
-        return Err(AppError::Forbidden("Payroll settings not available for this role".into()));
+        return Err(AppError::Forbidden(
+            "Payroll settings not available for this role".into(),
+        ));
     }
-    let company_id = auth.0.company_id
+    let company_id = auth
+        .0
+        .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
     let setting = settings_service::update_setting(
@@ -78,18 +83,23 @@ pub async fn bulk_update(
     auth: AuthUser,
     Json(req): Json<BulkUpdateSettingsRequest>,
 ) -> AppResult<Json<Vec<CompanySetting>>> {
-    if auth.is_exec() && req.settings.iter().any(|s| s.category == "payroll" || s.category == "statutory") {
-        return Err(AppError::Forbidden("Payroll settings not available for this role".into()));
+    if auth.is_exec()
+        && req
+            .settings
+            .iter()
+            .any(|s| s.category == "payroll" || s.category == "statutory")
+    {
+        return Err(AppError::Forbidden(
+            "Payroll settings not available for this role".into(),
+        ));
     }
-    let company_id = auth.0.company_id
+    let company_id = auth
+        .0
+        .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    let settings = settings_service::bulk_update_settings(
-        &state.pool,
-        company_id,
-        req.settings,
-        auth.0.sub,
-    )
-    .await?;
+    let settings =
+        settings_service::bulk_update_settings(&state.pool, company_id, req.settings, auth.0.sub)
+            .await?;
     Ok(Json(settings))
 }

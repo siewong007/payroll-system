@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { Download, Upload, Link as LinkIcon } from 'lucide-react';
@@ -14,6 +14,7 @@ import {
   importIcsFile,
 } from '@/api/calendar';
 import { Modal } from '@/components/ui/Modal';
+import { getErrorMessage } from '@/lib/utils';
 import type { Holiday, CreateHolidayRequest } from '@/types';
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -457,10 +458,7 @@ function HolidayModal({
       : { holiday_type: 'public_holiday', is_recurring: false },
   });
 
-  // Reset form when holiday changes
-  const prevHolidayId = useState<string | null>(null);
-  if ((holiday?.id ?? null) !== prevHolidayId[0]) {
-    prevHolidayId[1](holiday?.id ?? null);
+  useEffect(() => {
     if (holiday) {
       reset({
         name: holiday.name,
@@ -473,7 +471,7 @@ function HolidayModal({
     } else {
       reset({ holiday_type: 'public_holiday', is_recurring: false, name: '', date: '', description: '', state: '' });
     }
-  }
+  }, [holiday, reset]);
 
   return (
     <Modal open={open} onClose={onClose} title={holiday ? 'Edit Holiday' : 'Add Holiday'}>
@@ -569,8 +567,8 @@ function ImportIcsModal({
       setResult({ count: data.length });
       onSuccess();
     },
-    onError: (err: any) => {
-      setError(err.response?.data?.error || 'Failed to import from URL. Please check the URL and try again.');
+    onError: (err: unknown) => {
+      setError(getErrorMessage(err, 'Failed to import from URL. Please check the URL and try again.'));
     },
   });
 
@@ -580,8 +578,8 @@ function ImportIcsModal({
       setResult({ count: data.length });
       onSuccess();
     },
-    onError: (err: any) => {
-      setError(err.response?.data?.error || 'Failed to import file. Please check the file and try again.');
+    onError: (err: unknown) => {
+      setError(getErrorMessage(err, 'Failed to import file. Please check the file and try again.'));
     },
   });
 

@@ -1,15 +1,15 @@
 use axum::{
+    Json,
     extract::{Path, State},
     http::HeaderMap,
     response::IntoResponse,
-    Json,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use webauthn_rs::prelude::*;
 
 use crate::core::app_state::AppState;
-use crate::core::auth::{create_token, AuthUser};
+use crate::core::auth::{AuthUser, create_token};
 use crate::core::cookie;
 use crate::core::error::{AppError, AppResult};
 use crate::models::passkey::{PasskeyInfo, RenamePasskeyRequest};
@@ -37,20 +37,20 @@ pub async fn registration_begin(
 
     let (ccr, reg_state) = state
         .webauthn
-        .start_passkey_registration(
-            user_id,
-            user_email,
-            user_email,
-            Some(exclude),
-        )
+        .start_passkey_registration(user_id, user_email, user_email, Some(exclude))
         .map_err(|e| AppError::Internal(format!("WebAuthn registration start failed: {}", e)))?;
 
     let state_json = serde_json::to_value(&reg_state)
         .map_err(|e| AppError::Internal(format!("Failed to serialize reg state: {}", e)))?;
 
-    let challenge_id =
-        passkey_service::store_challenge(&state.pool, Some(user_id), None, "registration", &state_json)
-            .await?;
+    let challenge_id = passkey_service::store_challenge(
+        &state.pool,
+        Some(user_id),
+        None,
+        "registration",
+        &state_json,
+    )
+    .await?;
 
     Ok(Json(RegistrationBeginResponse {
         challenge_id,
@@ -70,12 +70,9 @@ pub async fn registration_complete(
     auth: AuthUser,
     Json(req): Json<RegistrationCompleteRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
-    let state_json = passkey_service::get_and_delete_challenge(
-        &state.pool,
-        req.challenge_id,
-        "registration",
-    )
-    .await?;
+    let state_json =
+        passkey_service::get_and_delete_challenge(&state.pool, req.challenge_id, "registration")
+            .await?;
 
     let reg_state: PasskeyRegistration = serde_json::from_value(state_json)
         .map_err(|e| AppError::BadRequest(format!("Invalid registration state: {}", e)))?;
@@ -88,7 +85,9 @@ pub async fn registration_complete(
     let name = req.name.unwrap_or_else(|| "My Passkey".to_string());
     passkey_service::save_passkey(&state.pool, auth.0.sub, &name, &passkey).await?;
 
-    Ok(Json(serde_json::json!({"message": "Passkey registered successfully"})))
+    Ok(Json(
+        serde_json::json!({"message": "Passkey registered successfully"}),
+    ))
 }
 
 // ── Authentication (unauthenticated user logs in with passkey) ─────────
@@ -166,7 +165,8 @@ pub async fn authentication_complete(
     let (user_id, state_json) = challenge_row
         .ok_or_else(|| AppError::BadRequest("Challenge expired or not found".into()))?;
 
-    let user_id = user_id.ok_or_else(|| AppError::Internal("Missing user_id in challenge".into()))?;
+    let user_id =
+        user_id.ok_or_else(|| AppError::Internal("Missing user_id in challenge".into()))?;
 
     let auth_state: PasskeyAuthentication = serde_json::from_value(state_json)
         .map_err(|e| AppError::BadRequest(format!("Invalid auth state: {}", e)))?;
@@ -187,13 +187,11 @@ pub async fn authentication_complete(
     }
 
     // Fetch user and issue tokens (same as password login)
-    let user = sqlx::query_as::<_, User>(
-        "SELECT * FROM users WHERE id = $1 AND is_active = TRUE",
-    )
-    .bind(user_id)
-    .fetch_optional(&state.pool)
-    .await?
-    .ok_or_else(|| AppError::Unauthorized("User not found or inactive".into()))?;
+    let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1 AND is_active = TRUE")
+        .bind(user_id)
+        .fetch_optional(&state.pool)
+        .await?
+        .ok_or_else(|| AppError::Unauthorized("User not found or inactive".into()))?;
 
     // Update last login
     sqlx::query("UPDATE users SET last_login = NOW() WHERE id = $1")
@@ -237,10 +235,13 @@ pub struct DiscoverableAuthBeginResponse {
 pub async fn discoverable_auth_begin(
     State(state): State<AppState>,
 ) -> AppResult<Json<DiscoverableAuthBeginResponse>> {
-    let (mut rcr, auth_state) = state
-        .webauthn
-        .start_discoverable_authentication()
-        .map_err(|e| AppError::Internal(format!("WebAuthn discoverable auth start failed: {}", e)))?;
+    let (mut rcr, auth_state) =
+        state
+            .webauthn
+            .start_discoverable_authentication()
+            .map_err(|e| {
+                AppError::Internal(format!("WebAuthn discoverable auth start failed: {}", e))
+            })?;
 
     // Remove conditional mediation so the browser shows a modal picker on button click
     rcr.mediation = None;
@@ -248,14 +249,9 @@ pub async fn discoverable_auth_begin(
     let state_json = serde_json::to_value(&auth_state)
         .map_err(|e| AppError::Internal(format!("Failed to serialize auth state: {}", e)))?;
 
-    let challenge_id = passkey_service::store_challenge(
-        &state.pool,
-        None,
-        None,
-        "discoverable",
-        &state_json,
-    )
-    .await?;
+    let challenge_id =
+        passkey_service::store_challenge(&state.pool, None, None, "discoverable", &state_json)
+            .await?;
 
     Ok(Json(DiscoverableAuthBeginResponse {
         challenge_id,
@@ -312,13 +308,11 @@ pub async fn discoverable_auth_complete(
     }
 
     // Fetch user and issue tokens
-    let user = sqlx::query_as::<_, User>(
-        "SELECT * FROM users WHERE id = $1 AND is_active = TRUE",
-    )
-    .bind(user_id)
-    .fetch_optional(&state.pool)
-    .await?
-    .ok_or_else(|| AppError::Unauthorized("User not found or inactive".into()))?;
+    let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1 AND is_active = TRUE")
+        .bind(user_id)
+        .fetch_optional(&state.pool)
+        .await?
+        .ok_or_else(|| AppError::Unauthorized("User not found or inactive".into()))?;
 
     sqlx::query("UPDATE users SET last_login = NOW() WHERE id = $1")
         .bind(user.id)

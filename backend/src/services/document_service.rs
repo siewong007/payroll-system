@@ -179,11 +179,7 @@ pub async fn update_document(
     Ok(doc)
 }
 
-pub async fn soft_delete_document(
-    pool: &PgPool,
-    id: Uuid,
-    company_id: Uuid,
-) -> AppResult<()> {
+pub async fn soft_delete_document(pool: &PgPool, id: Uuid, company_id: Uuid) -> AppResult<()> {
     // Fetch the file_url before deleting so we can remove the file from disk
     let file_url: Option<String> = sqlx::query_scalar(
         "SELECT file_url FROM documents WHERE id = $1 AND company_id = $2 AND deleted_at IS NULL",
@@ -203,18 +199,16 @@ pub async fn soft_delete_document(
 
     // Remove the file from disk if it exists
     if let Some(url) = file_url
-        && let Some(filename) = url.strip_prefix("/api/uploads/") {
-            let file_path = std::path::Path::new("uploads").join(filename);
-            let _ = tokio::fs::remove_file(&file_path).await;
-        }
+        && let Some(filename) = url.strip_prefix("/api/uploads/")
+    {
+        let file_path = std::path::Path::new("uploads").join(filename);
+        let _ = tokio::fs::remove_file(&file_path).await;
+    }
 
     Ok(())
 }
 
-pub async fn list_categories(
-    pool: &PgPool,
-    company_id: Uuid,
-) -> AppResult<Vec<DocumentCategory>> {
+pub async fn list_categories(pool: &PgPool, company_id: Uuid) -> AppResult<Vec<DocumentCategory>> {
     let cats = sqlx::query_as::<_, DocumentCategory>(
         "SELECT * FROM document_categories WHERE company_id = $1 AND is_active = TRUE ORDER BY name",
     )
@@ -241,9 +235,10 @@ pub async fn create_category(
     .await
     .map_err(|e| {
         if let sqlx::Error::Database(ref db_err) = e
-            && db_err.constraint() == Some("document_categories_company_id_name_key") {
-                return AppError::Conflict("Category with this name already exists".into());
-            }
+            && db_err.constraint() == Some("document_categories_company_id_name_key")
+        {
+            return AppError::Conflict("Category with this name already exists".into());
+        }
         AppError::Database(e)
     })?;
     Ok(cat)

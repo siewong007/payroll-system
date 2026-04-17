@@ -1,8 +1,8 @@
 import { useState, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, ArrowLeft, Send, Trash2, Receipt, Upload, X, FileText, Image, Paperclip, ExternalLink } from 'lucide-react';
-import { getClaims, createClaim, submitClaim, deleteClaim, uploadFile } from '@/api/portal';
-import { formatMYR, formatDate } from '@/lib/utils';
+import { listMyClaims, createClaim, deleteClaim, submitClaim, uploadFile } from '@/api/claims';
+import { formatMYR, formatDate, getErrorMessage } from '@/lib/utils';
 
 const STATUS_TABS = [
   { key: null, label: 'All' },
@@ -25,7 +25,7 @@ export function Claims() {
 
   const { data: claims, isLoading } = useQuery({
     queryKey: ['my-claims', statusFilter],
-    queryFn: () => getClaims(statusFilter ?? undefined),
+    queryFn: () => listMyClaims(statusFilter ?? undefined),
   });
 
   const submitMutation = useMutation({
@@ -184,8 +184,8 @@ function CreateClaimForm({ onClose }: { onClose: () => void }) {
       queryClient.invalidateQueries({ queryKey: ['my-claims'] });
       onClose();
     },
-    onError: (err: any) => {
-      setError(err.response?.data?.error || 'Failed to create claim');
+    onError: (err: unknown) => {
+      setError(getErrorMessage(err, 'Failed to create claim'));
     },
   });
 
@@ -214,8 +214,8 @@ function CreateClaimForm({ onClose }: { onClose: () => void }) {
     try {
       const result = await uploadFile(file);
       setForm((prev) => ({ ...prev, receipt_url: result.url, receipt_file_name: result.file_name }));
-    } catch (err: any) {
-      setError(err.response?.data?.error || 'Failed to upload file');
+    } catch (err: unknown) {
+      setError(getErrorMessage(err, 'Failed to upload file'));
       setUploadPreview(null);
     } finally {
       setUploading(false);

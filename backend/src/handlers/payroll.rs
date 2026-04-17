@@ -1,6 +1,6 @@
 use axum::{
-    extract::{Path, State},
     Json,
+    extract::{Path, State},
 };
 use uuid::Uuid;
 
@@ -8,7 +8,7 @@ use crate::core::app_state::AppState;
 use crate::core::auth::AuthUser;
 use crate::core::error::{AppError, AppResult};
 use crate::models::payroll::{
-    PayrollGroup, PayrollItem, PayrollRun, PayrollSummary, PayrollItemSummary,
+    PayrollGroup, PayrollItem, PayrollItemSummary, PayrollRun, PayrollSummary,
     ProcessPayrollRequest,
 };
 use crate::services::payroll_engine;
@@ -19,13 +19,16 @@ pub async fn process(
     Json(req): Json<ProcessPayrollRequest>,
 ) -> AppResult<Json<PayrollRun>> {
     auth.deny_exec()?;
-    let company_id = auth.0.company_id
+    let company_id = auth
+        .0
+        .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
     let pay_date = req.pay_date.unwrap_or_else(|| {
         chrono::NaiveDate::from_ymd_opt(req.period_year, req.period_month as u32, 28)
             .unwrap_or_else(|| {
-                chrono::NaiveDate::from_ymd_opt(req.period_year, req.period_month as u32, 1).unwrap()
+                chrono::NaiveDate::from_ymd_opt(req.period_year, req.period_month as u32, 1)
+                    .unwrap()
             })
     });
 
@@ -49,7 +52,9 @@ pub async fn list_runs(
     auth: AuthUser,
 ) -> AppResult<Json<Vec<PayrollRun>>> {
     auth.deny_exec()?;
-    let company_id = auth.0.company_id
+    let company_id = auth
+        .0
+        .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
     let runs = sqlx::query_as::<_, PayrollRun>(
@@ -78,7 +83,9 @@ pub async fn get_run(
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<PayrollSummary>> {
     auth.deny_exec()?;
-    let company_id = auth.0.company_id
+    let company_id = auth
+        .0
+        .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
     let run = sqlx::query_as::<_, PayrollRun>(
@@ -97,23 +104,24 @@ pub async fn get_run(
     .await?
     .ok_or_else(|| AppError::NotFound("Payroll run not found".into()))?;
 
-    let items = sqlx::query_as::<_, (Uuid, String, String, i64, i64, i64, i64, i64, i64, i64, i64)>(
-        r#"SELECT pi.employee_id, e.full_name, e.employee_number,
+    let items =
+        sqlx::query_as::<_, (Uuid, String, String, i64, i64, i64, i64, i64, i64, i64, i64)>(
+            r#"SELECT pi.employee_id, e.full_name, e.employee_number,
            pi.basic_salary, pi.gross_salary, pi.total_deductions, pi.net_salary,
            pi.epf_employee, pi.socso_employee, pi.eis_employee, pi.pcb_amount
         FROM payroll_items pi
         JOIN employees e ON pi.employee_id = e.id
         WHERE pi.payroll_run_id = $1
         ORDER BY e.employee_number"#,
-    )
-    .bind(id)
-    .fetch_all(&state.pool)
-    .await?;
+        )
+        .bind(id)
+        .fetch_all(&state.pool)
+        .await?;
 
     let item_summaries: Vec<PayrollItemSummary> = items
         .into_iter()
-        .map(|(eid, name, num, basic, gross, ded, net, epf, socso, eis, pcb)| {
-            PayrollItemSummary {
+        .map(
+            |(eid, name, num, basic, gross, ded, net, epf, socso, eis, pcb)| PayrollItemSummary {
                 employee_id: eid,
                 employee_name: name,
                 employee_number: num,
@@ -125,8 +133,8 @@ pub async fn get_run(
                 socso_employee: socso,
                 eis_employee: eis,
                 pcb_amount: pcb,
-            }
-        })
+            },
+        )
         .collect();
 
     Ok(Json(PayrollSummary {
@@ -141,7 +149,9 @@ pub async fn approve_run(
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<PayrollRun>> {
     auth.deny_exec()?;
-    let company_id = auth.0.company_id
+    let company_id = auth
+        .0
+        .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
     let run = sqlx::query_as::<_, PayrollRun>(
@@ -161,7 +171,9 @@ pub async fn approve_run(
     .bind(auth.0.sub)
     .fetch_optional(&state.pool)
     .await?
-    .ok_or_else(|| AppError::BadRequest("Payroll run not found or not in processed status".into()))?;
+    .ok_or_else(|| {
+        AppError::BadRequest("Payroll run not found or not in processed status".into())
+    })?;
 
     Ok(Json(run))
 }
@@ -172,7 +184,9 @@ pub async fn lock_run(
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<PayrollRun>> {
     auth.deny_exec()?;
-    let company_id = auth.0.company_id
+    let company_id = auth
+        .0
+        .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
     let run = sqlx::query_as::<_, PayrollRun>(
@@ -202,7 +216,9 @@ pub async fn list_groups(
     auth: AuthUser,
 ) -> AppResult<Json<Vec<PayrollGroup>>> {
     auth.deny_exec()?;
-    let company_id = auth.0.company_id
+    let company_id = auth
+        .0
+        .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
     let groups = sqlx::query_as::<_, PayrollGroup>(
@@ -221,20 +237,28 @@ pub async fn download_run_payslips_pdf(
     Path(run_id): Path<Uuid>,
 ) -> Result<axum::response::Response, crate::core::error::AppError> {
     use axum::body::Body;
-    use axum::http::{header, Response, StatusCode};
+    use axum::http::{Response, StatusCode, header};
 
     auth.deny_exec()?;
-    let company_id = auth.0.company_id
+    let company_id = auth
+        .0
+        .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
     let bytes = crate::services::payslip_pdf_service::generate_bulk_payslips(
-        &state.pool, run_id, company_id,
-    ).await?;
+        &state.pool,
+        run_id,
+        company_id,
+    )
+    .await?;
 
     Ok(Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "application/pdf")
-        .header(header::CONTENT_DISPOSITION, "attachment; filename=\"payslips.pdf\"")
+        .header(
+            header::CONTENT_DISPOSITION,
+            "attachment; filename=\"payslips.pdf\"",
+        )
         .body(Body::from(bytes))
         .unwrap())
 }

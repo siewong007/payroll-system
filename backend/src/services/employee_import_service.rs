@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
 
-use calamine::{open_workbook_from_rs, Reader, Xlsx};
+use calamine::{Reader, Xlsx, open_workbook_from_rs};
 use chrono::NaiveDate;
 use rust_xlsxwriter::{Format, Workbook};
 use sqlx::PgPool;
@@ -15,50 +15,210 @@ use crate::models::employee_import::*;
 
 fn build_header_map() -> HashMap<String, &'static str> {
     let aliases: Vec<(&[&str], &str)> = vec![
-        (&["employee_number", "employee number", "emp no", "emp number", "employee no"], "employee_number"),
-        (&["full_name", "full name", "name", "employee name"], "full_name"),
-        (&["ic_number", "ic number", "nric", "ic no", "mykad"], "ic_number"),
-        (&["passport_number", "passport number", "passport no", "passport"], "passport_number"),
-        (&["date_of_birth", "date of birth", "dob", "birth date"], "date_of_birth"),
+        (
+            &[
+                "employee_number",
+                "employee number",
+                "emp no",
+                "emp number",
+                "employee no",
+            ],
+            "employee_number",
+        ),
+        (
+            &["full_name", "full name", "name", "employee name"],
+            "full_name",
+        ),
+        (
+            &["ic_number", "ic number", "nric", "ic no", "mykad"],
+            "ic_number",
+        ),
+        (
+            &[
+                "passport_number",
+                "passport number",
+                "passport no",
+                "passport",
+            ],
+            "passport_number",
+        ),
+        (
+            &["date_of_birth", "date of birth", "dob", "birth date"],
+            "date_of_birth",
+        ),
         (&["gender", "sex"], "gender"),
         (&["nationality"], "nationality"),
         (&["race", "ethnicity"], "race"),
-        (&["residency_status", "residency status", "residency", "resident status"], "residency_status"),
-        (&["marital_status", "marital status", "marital"], "marital_status"),
+        (
+            &[
+                "residency_status",
+                "residency status",
+                "residency",
+                "resident status",
+            ],
+            "residency_status",
+        ),
+        (
+            &["marital_status", "marital status", "marital"],
+            "marital_status",
+        ),
         (&["email", "email address"], "email"),
-        (&["phone", "phone number", "mobile", "contact number", "tel"], "phone"),
-        (&["address_line1", "address line 1", "address 1", "address"], "address_line1"),
-        (&["address_line2", "address line 2", "address 2"], "address_line2"),
+        (
+            &["phone", "phone number", "mobile", "contact number", "tel"],
+            "phone",
+        ),
+        (
+            &["address_line1", "address line 1", "address 1", "address"],
+            "address_line1",
+        ),
+        (
+            &["address_line2", "address line 2", "address 2"],
+            "address_line2",
+        ),
         (&["city", "town"], "city"),
         (&["state", "province"], "state"),
-        (&["postcode", "post code", "zip", "zip code", "postal code"], "postcode"),
+        (
+            &["postcode", "post code", "zip", "zip code", "postal code"],
+            "postcode",
+        ),
         (&["department", "dept"], "department"),
-        (&["designation", "position", "job title", "title"], "designation"),
-        (&["cost_centre", "cost centre", "cost center"], "cost_centre"),
+        (
+            &["designation", "position", "job title", "title"],
+            "designation",
+        ),
+        (
+            &["cost_centre", "cost centre", "cost center"],
+            "cost_centre",
+        ),
         (&["branch", "office", "location"], "branch"),
-        (&["employment_type", "employment type", "emp type", "type"], "employment_type"),
-        (&["date_joined", "date joined", "join date", "start date", "joining date"], "date_joined"),
-        (&["probation_start", "probation start", "probation start date"], "probation_start"),
-        (&["probation_end", "probation end", "probation end date"], "probation_end"),
-        (&["basic_salary", "basic salary", "salary", "basic salary (rm)", "monthly salary"], "basic_salary"),
-        (&["hourly_rate", "hourly rate", "rate per hour"], "hourly_rate"),
+        (
+            &["employment_type", "employment type", "emp type", "type"],
+            "employment_type",
+        ),
+        (
+            &[
+                "date_joined",
+                "date joined",
+                "join date",
+                "start date",
+                "joining date",
+            ],
+            "date_joined",
+        ),
+        (
+            &["probation_start", "probation start", "probation start date"],
+            "probation_start",
+        ),
+        (
+            &["probation_end", "probation end", "probation end date"],
+            "probation_end",
+        ),
+        (
+            &[
+                "basic_salary",
+                "basic salary",
+                "salary",
+                "basic salary (rm)",
+                "monthly salary",
+            ],
+            "basic_salary",
+        ),
+        (
+            &["hourly_rate", "hourly rate", "rate per hour"],
+            "hourly_rate",
+        ),
         (&["daily_rate", "daily rate", "rate per day"], "daily_rate"),
         (&["bank_name", "bank name", "bank"], "bank_name"),
-        (&["bank_account_number", "bank account number", "bank account", "account number", "account no"], "bank_account_number"),
-        (&["bank_account_type", "bank account type", "account type"], "bank_account_type"),
-        (&["tax_identification_number", "tax identification number", "tin", "tax number", "tax id"], "tax_identification_number"),
-        (&["epf_number", "epf number", "epf no", "kwsp number"], "epf_number"),
-        (&["socso_number", "socso number", "socso no", "perkeso number"], "socso_number"),
-        (&["eis_number", "eis number", "eis no", "sip number"], "eis_number"),
-        (&["working_spouse", "working spouse", "spouse working"], "working_spouse"),
-        (&["num_children", "num children", "number of children", "children", "no of children"], "num_children"),
-        (&["epf_category", "epf category", "kwsp category"], "epf_category"),
+        (
+            &[
+                "bank_account_number",
+                "bank account number",
+                "bank account",
+                "account number",
+                "account no",
+            ],
+            "bank_account_number",
+        ),
+        (
+            &["bank_account_type", "bank account type", "account type"],
+            "bank_account_type",
+        ),
+        (
+            &[
+                "tax_identification_number",
+                "tax identification number",
+                "tin",
+                "tax number",
+                "tax id",
+            ],
+            "tax_identification_number",
+        ),
+        (
+            &["epf_number", "epf number", "epf no", "kwsp number"],
+            "epf_number",
+        ),
+        (
+            &["socso_number", "socso number", "socso no", "perkeso number"],
+            "socso_number",
+        ),
+        (
+            &["eis_number", "eis number", "eis no", "sip number"],
+            "eis_number",
+        ),
+        (
+            &["working_spouse", "working spouse", "spouse working"],
+            "working_spouse",
+        ),
+        (
+            &[
+                "num_children",
+                "num children",
+                "number of children",
+                "children",
+                "no of children",
+            ],
+            "num_children",
+        ),
+        (
+            &["epf_category", "epf category", "kwsp category"],
+            "epf_category",
+        ),
         (&["is_muslim", "is muslim", "muslim"], "is_muslim"),
-        (&["zakat_eligible", "zakat eligible", "zakat"], "zakat_eligible"),
-        (&["zakat_monthly_amount", "zakat monthly amount", "zakat amount", "zakat monthly (rm)"], "zakat_monthly_amount"),
-        (&["ptptn_monthly_amount", "ptptn monthly amount", "ptptn amount", "ptptn monthly (rm)"], "ptptn_monthly_amount"),
-        (&["tabung_haji_amount", "tabung haji amount", "tabung haji", "tabung haji (rm)"], "tabung_haji_amount"),
-        (&["payroll_group_id", "payroll group id", "payroll group"], "payroll_group_id"),
+        (
+            &["zakat_eligible", "zakat eligible", "zakat"],
+            "zakat_eligible",
+        ),
+        (
+            &[
+                "zakat_monthly_amount",
+                "zakat monthly amount",
+                "zakat amount",
+                "zakat monthly (rm)",
+            ],
+            "zakat_monthly_amount",
+        ),
+        (
+            &[
+                "ptptn_monthly_amount",
+                "ptptn monthly amount",
+                "ptptn amount",
+                "ptptn monthly (rm)",
+            ],
+            "ptptn_monthly_amount",
+        ),
+        (
+            &[
+                "tabung_haji_amount",
+                "tabung haji amount",
+                "tabung haji",
+                "tabung haji (rm)",
+            ],
+            "tabung_haji_amount",
+        ),
+        (
+            &["payroll_group_id", "payroll group id", "payroll group"],
+            "payroll_group_id",
+        ),
         (&["salary_group", "salary group"], "salary_group"),
     ];
 
@@ -103,7 +263,8 @@ pub fn parse_csv(data: &[u8]) -> AppResult<(Vec<String>, Vec<Vec<String>>)> {
 
     let mut rows = Vec::new();
     for result in rdr.records() {
-        let record = result.map_err(|e| AppError::BadRequest(format!("Failed to read CSV row: {}", e)))?;
+        let record =
+            result.map_err(|e| AppError::BadRequest(format!("Failed to read CSV row: {}", e)))?;
         let row: Vec<String> = record.iter().map(|s| s.to_string()).collect();
         // Skip completely empty rows
         if row.iter().all(|s| s.trim().is_empty()) {
@@ -142,12 +303,17 @@ pub fn parse_xlsx(data: &[u8]) -> AppResult<(Vec<String>, Vec<Vec<String>>)> {
         .collect();
 
     if headers.is_empty() || headers.iter().all(|h| h.is_empty()) {
-        return Err(AppError::BadRequest("Excel file has no valid headers".into()));
+        return Err(AppError::BadRequest(
+            "Excel file has no valid headers".into(),
+        ));
     }
 
     let mut rows = Vec::new();
     for row in row_iter {
-        let cells: Vec<String> = row.iter().map(|cell| cell.to_string().trim().to_string()).collect();
+        let cells: Vec<String> = row
+            .iter()
+            .map(|cell| cell.to_string().trim().to_string())
+            .collect();
         if cells.iter().all(|s| s.is_empty()) {
             continue;
         }
@@ -157,10 +323,7 @@ pub fn parse_xlsx(data: &[u8]) -> AppResult<(Vec<String>, Vec<Vec<String>>)> {
     Ok((headers, rows))
 }
 
-fn rows_to_import_rows(
-    headers: &[String],
-    rows: Vec<Vec<String>>,
-) -> AppResult<Vec<ImportRowRaw>> {
+fn rows_to_import_rows(headers: &[String], rows: Vec<Vec<String>>) -> AppResult<Vec<ImportRowRaw>> {
     let resolved = resolve_headers(headers);
     let mut result = Vec::with_capacity(rows.len());
 
@@ -238,11 +401,19 @@ fn parse_date(s: &str) -> Result<NaiveDate, String> {
             return Ok(d);
         }
     }
-    Err(format!("Invalid date '{}'. Use YYYY-MM-DD or DD/MM/YYYY", s))
+    Err(format!(
+        "Invalid date '{}'. Use YYYY-MM-DD or DD/MM/YYYY",
+        s
+    ))
 }
 
 fn parse_money_to_sen(s: &str) -> Result<i64, String> {
-    let cleaned = s.replace(',', "").replace("RM", "").replace("rm", "").trim().to_string();
+    let cleaned = s
+        .replace(',', "")
+        .replace("RM", "")
+        .replace("rm", "")
+        .trim()
+        .to_string();
     let amount: f64 = cleaned
         .parse()
         .map_err(|_| format!("Invalid amount '{}'. Enter a number like 3500.00", s))?;
@@ -297,12 +468,13 @@ fn validate_row(row: &ImportRowRaw) -> Vec<FieldError> {
         ("probation_end", &row.probation_end),
     ] {
         if let Some(v) = value
-            && let Err(msg) = parse_date(v) {
-                errors.push(FieldError {
-                    field: field.into(),
-                    message: msg,
-                });
-            }
+            && let Err(msg) = parse_date(v)
+        {
+            errors.push(FieldError {
+                field: field.into(),
+                message: msg,
+            });
+        }
     }
 
     // Money validations
@@ -315,12 +487,13 @@ fn validate_row(row: &ImportRowRaw) -> Vec<FieldError> {
         ("tabung_haji_amount", &row.tabung_haji_amount),
     ] {
         if let Some(v) = value
-            && let Err(msg) = parse_money_to_sen(v) {
-                errors.push(FieldError {
-                    field: field.into(),
-                    message: msg,
-                });
-            }
+            && let Err(msg) = parse_money_to_sen(v)
+        {
+            errors.push(FieldError {
+                field: field.into(),
+                message: msg,
+            });
+        }
     }
 
     // Enum validations
@@ -390,40 +563,44 @@ fn validate_row(row: &ImportRowRaw) -> Vec<FieldError> {
         ("zakat_eligible", &row.zakat_eligible),
     ] {
         if let Some(v) = value
-            && let Err(msg) = parse_bool(v) {
-                errors.push(FieldError {
-                    field: field.into(),
-                    message: msg,
-                });
-            }
+            && let Err(msg) = parse_bool(v)
+        {
+            errors.push(FieldError {
+                field: field.into(),
+                message: msg,
+            });
+        }
     }
 
     // Integer validation
     if let Some(v) = &row.num_children
-        && v.parse::<i32>().is_err() {
-            errors.push(FieldError {
-                field: "num_children".into(),
-                message: format!("Invalid number '{}'. Enter a whole number", v),
-            });
-        }
+        && v.parse::<i32>().is_err()
+    {
+        errors.push(FieldError {
+            field: "num_children".into(),
+            message: format!("Invalid number '{}'. Enter a whole number", v),
+        });
+    }
 
     // Email format
     if let Some(v) = &row.email
-        && (!v.contains('@') || !v.contains('.')) {
-            errors.push(FieldError {
-                field: "email".into(),
-                message: format!("Invalid email address '{}'", v),
-            });
-        }
+        && (!v.contains('@') || !v.contains('.'))
+    {
+        errors.push(FieldError {
+            field: "email".into(),
+            message: format!("Invalid email address '{}'", v),
+        });
+    }
 
     // UUID validation for payroll_group_id
     if let Some(v) = &row.payroll_group_id
-        && Uuid::parse_str(v).is_err() {
-            errors.push(FieldError {
-                field: "payroll_group_id".into(),
-                message: format!("Invalid payroll group ID '{}'. Must be a valid UUID", v),
-            });
-        }
+        && Uuid::parse_str(v).is_err()
+    {
+        errors.push(FieldError {
+            field: "payroll_group_id".into(),
+            message: format!("Invalid payroll group ID '{}'. Must be a valid UUID", v),
+        });
+    }
 
     errors
 }
@@ -448,9 +625,10 @@ async fn load_existing(pool: &PgPool, company_id: Uuid) -> AppResult<ExistingEmp
     for (emp_no, ic) in rows {
         employee_numbers.insert(emp_no.to_lowercase());
         if let Some(ic) = ic
-            && !ic.is_empty() {
-                ic_numbers.insert(ic.to_lowercase());
-            }
+            && !ic.is_empty()
+        {
+            ic_numbers.insert(ic.to_lowercase());
+        }
     }
 
     Ok(ExistingEmployees {
@@ -547,12 +725,17 @@ pub async fn validate_file(
 
         // Track seen values for within-file duplicate detection
         if let Some(emp_no) = &row.employee_number {
-            seen_emp_numbers.entry(emp_no.to_lowercase()).or_insert(row.row_number);
+            seen_emp_numbers
+                .entry(emp_no.to_lowercase())
+                .or_insert(row.row_number);
         }
         if let Some(ic) = &row.ic_number
-            && !ic.is_empty() {
-                seen_ic_numbers.entry(ic.to_lowercase()).or_insert(row.row_number);
-            }
+            && !ic.is_empty()
+        {
+            seen_ic_numbers
+                .entry(ic.to_lowercase())
+                .or_insert(row.row_number);
+        }
 
         let status = if !dup_errors.is_empty() {
             errors.extend(dup_errors);
@@ -572,9 +755,18 @@ pub async fn validate_file(
     }
 
     let total_rows = validated_rows.len();
-    let valid_rows = validated_rows.iter().filter(|r| r.status == RowStatus::Valid).count();
-    let error_rows = validated_rows.iter().filter(|r| r.status == RowStatus::Error).count();
-    let duplicate_rows = validated_rows.iter().filter(|r| r.status == RowStatus::Duplicate).count();
+    let valid_rows = validated_rows
+        .iter()
+        .filter(|r| r.status == RowStatus::Valid)
+        .count();
+    let error_rows = validated_rows
+        .iter()
+        .filter(|r| r.status == RowStatus::Error)
+        .count();
+    let duplicate_rows = validated_rows
+        .iter()
+        .filter(|r| r.status == RowStatus::Duplicate)
+        .count();
 
     // Store session
     let session_id = Uuid::new_v4();
@@ -634,15 +826,24 @@ fn row_to_create_request(row: &ImportRowRaw) -> CreateEmployeeRequest {
             .as_ref()
             .and_then(|s| parse_date(s).ok())
             .unwrap_or_else(|| chrono::Utc::now().date_naive()),
-        probation_start: row.probation_start.as_ref().and_then(|s| parse_date(s).ok()),
+        probation_start: row
+            .probation_start
+            .as_ref()
+            .and_then(|s| parse_date(s).ok()),
         probation_end: row.probation_end.as_ref().and_then(|s| parse_date(s).ok()),
         basic_salary: row
             .basic_salary
             .as_ref()
             .and_then(|s| parse_money_to_sen(s).ok())
             .unwrap_or(0),
-        hourly_rate: row.hourly_rate.as_ref().and_then(|s| parse_money_to_sen(s).ok()),
-        daily_rate: row.daily_rate.as_ref().and_then(|s| parse_money_to_sen(s).ok()),
+        hourly_rate: row
+            .hourly_rate
+            .as_ref()
+            .and_then(|s| parse_money_to_sen(s).ok()),
+        daily_rate: row
+            .daily_rate
+            .as_ref()
+            .and_then(|s| parse_money_to_sen(s).ok()),
         bank_name: row.bank_name.clone(),
         bank_account_number: row.bank_account_number.clone(),
         bank_account_type: row.bank_account_type.clone(),
@@ -655,10 +856,22 @@ fn row_to_create_request(row: &ImportRowRaw) -> CreateEmployeeRequest {
         epf_category: row.epf_category.clone(),
         is_muslim: row.is_muslim.as_ref().and_then(|s| parse_bool(s).ok()),
         zakat_eligible: row.zakat_eligible.as_ref().and_then(|s| parse_bool(s).ok()),
-        zakat_monthly_amount: row.zakat_monthly_amount.as_ref().and_then(|s| parse_money_to_sen(s).ok()),
-        ptptn_monthly_amount: row.ptptn_monthly_amount.as_ref().and_then(|s| parse_money_to_sen(s).ok()),
-        tabung_haji_amount: row.tabung_haji_amount.as_ref().and_then(|s| parse_money_to_sen(s).ok()),
-        payroll_group_id: row.payroll_group_id.as_ref().and_then(|s| Uuid::parse_str(s).ok()),
+        zakat_monthly_amount: row
+            .zakat_monthly_amount
+            .as_ref()
+            .and_then(|s| parse_money_to_sen(s).ok()),
+        ptptn_monthly_amount: row
+            .ptptn_monthly_amount
+            .as_ref()
+            .and_then(|s| parse_money_to_sen(s).ok()),
+        tabung_haji_amount: row
+            .tabung_haji_amount
+            .as_ref()
+            .and_then(|s| parse_money_to_sen(s).ok()),
+        payroll_group_id: row
+            .payroll_group_id
+            .as_ref()
+            .and_then(|s| Uuid::parse_str(s).ok()),
         salary_group: row.salary_group.clone(),
     }
 }
@@ -670,15 +883,21 @@ pub async fn confirm_import(
     req: ImportConfirmRequest,
 ) -> AppResult<ImportConfirmResponse> {
     // Load and verify session
-    let session: (Uuid, Uuid, String, serde_json::Value, String, chrono::DateTime<chrono::Utc>) =
-        sqlx::query_as(
-            r#"SELECT company_id, user_id, file_name, validated_data, status, expires_at
+    let session: (
+        Uuid,
+        Uuid,
+        String,
+        serde_json::Value,
+        String,
+        chrono::DateTime<chrono::Utc>,
+    ) = sqlx::query_as(
+        r#"SELECT company_id, user_id, file_name, validated_data, status, expires_at
             FROM bulk_import_sessions WHERE id = $1"#,
-        )
-        .bind(req.session_id)
-        .fetch_optional(pool)
-        .await?
-        .ok_or_else(|| AppError::NotFound("Import session not found".into()))?;
+    )
+    .bind(req.session_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound("Import session not found".into()))?;
 
     let (sess_company_id, sess_user_id, _file_name, validated_data, status, expires_at) = session;
 

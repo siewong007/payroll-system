@@ -114,12 +114,11 @@ pub async fn rename_passkey(
 }
 
 pub async fn delete_passkey(pool: &PgPool, user_id: Uuid, passkey_id: Uuid) -> AppResult<()> {
-    let result =
-        sqlx::query("DELETE FROM passkey_credentials WHERE id = $1 AND user_id = $2")
-            .bind(passkey_id)
-            .bind(user_id)
-            .execute(pool)
-            .await?;
+    let result = sqlx::query("DELETE FROM passkey_credentials WHERE id = $1 AND user_id = $2")
+        .bind(passkey_id)
+        .bind(user_id)
+        .execute(pool)
+        .await?;
 
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound("Passkey not found".into()));

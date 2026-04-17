@@ -300,13 +300,6 @@ export function TeamsPage() {
                             employeeId: member.employee_id,
                           })
                         }
-                        onChangeRole={(role) =>
-                          addMemberMutation.mutate({
-                            teamId: selectedTeamId!,
-                            employeeId: member.employee_id,
-                            role,
-                          })
-                        }
                         isRemoving={removeMemberMutation.isPending}
                       />
                     ))}
@@ -546,12 +539,10 @@ export function TeamsPage() {
 function MemberRow({
   member,
   onRemove,
-  onChangeRole: _onChangeRole,
   isRemoving,
 }: {
   member: TeamMember;
   onRemove: () => void;
-  onChangeRole: (role: string) => void;
   isRemoving: boolean;
 }) {
   return (

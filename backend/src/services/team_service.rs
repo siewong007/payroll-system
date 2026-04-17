@@ -93,12 +93,11 @@ pub async fn update_team(
 }
 
 pub async fn delete_team(pool: &PgPool, company_id: Uuid, team_id: Uuid) -> AppResult<()> {
-    let result =
-        sqlx::query("DELETE FROM teams WHERE id = $1 AND company_id = $2")
-            .bind(team_id)
-            .bind(company_id)
-            .execute(pool)
-            .await?;
+    let result = sqlx::query("DELETE FROM teams WHERE id = $1 AND company_id = $2")
+        .bind(team_id)
+        .bind(company_id)
+        .execute(pool)
+        .await?;
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound("Team not found".into()));
     }
@@ -153,13 +152,11 @@ pub async fn add_member(
 }
 
 pub async fn remove_member(pool: &PgPool, team_id: Uuid, employee_id: Uuid) -> AppResult<()> {
-    let result = sqlx::query(
-        "DELETE FROM team_members WHERE team_id = $1 AND employee_id = $2",
-    )
-    .bind(team_id)
-    .bind(employee_id)
-    .execute(pool)
-    .await?;
+    let result = sqlx::query("DELETE FROM team_members WHERE team_id = $1 AND employee_id = $2")
+        .bind(team_id)
+        .bind(employee_id)
+        .execute(pool)
+        .await?;
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound("Member not found in this team".into()));
     }

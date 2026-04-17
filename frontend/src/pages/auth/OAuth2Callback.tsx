@@ -15,6 +15,7 @@ export function OAuth2Callback() {
     const userStr = params.get('user');
 
     if (!token || !userStr) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setError('OAuth2 login failed. Missing authentication data.');
       return;
     }

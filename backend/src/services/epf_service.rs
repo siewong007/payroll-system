@@ -17,8 +17,8 @@ pub struct EpfContribution {
 /// - Category D (citizen >= 60): 0% employee, employer varies
 pub async fn calculate_epf(
     pool: &PgPool,
-    wage: i64,              // monthly wage in sen
-    category: &str,         // A, B, C, D
+    wage: i64,      // monthly wage in sen
+    category: &str, // A, B, C, D
     effective_date: NaiveDate,
 ) -> AppResult<EpfContribution> {
     // Try table lookup first
@@ -71,7 +71,12 @@ pub async fn calculate_epf(
             // PR >= 60
             (0.0_f64, 4.0_f64)
         }
-        _ => return Err(AppError::BadRequest(format!("Invalid EPF category: {}", category))),
+        _ => {
+            return Err(AppError::BadRequest(format!(
+                "Invalid EPF category: {}",
+                category
+            )));
+        }
     };
 
     let employee = round_to_nearest_ringgit((wage as f64 * emp_pct / 100.0) as i64);

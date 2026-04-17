@@ -1,4 +1,10 @@
 import api from './client';
+import type { 
+  RegistrationResponseJSON, 
+  AuthenticationResponseJSON,
+  PublicKeyCredentialCreationOptionsJSON,
+  PublicKeyCredentialRequestOptionsJSON
+} from '@/lib/webauthn';
 
 export interface PasskeyInfo {
   id: string;
@@ -16,10 +22,10 @@ export async function checkPasskey(email: string): Promise<{ has_passkey: boolea
 // Authentication (login) flow
 export async function passkeyAuthBegin(email: string) {
   const { data } = await api.post('/auth/passkey/authenticate/begin', { email });
-  return data as { challenge_id: string; options: PublicKeyCredentialRequestOptions };
+  return data as { challenge_id: string; options: PublicKeyCredentialRequestOptionsJSON };
 }
 
-export async function passkeyAuthComplete(challengeId: string, credential: Credential) {
+export async function passkeyAuthComplete(challengeId: string, credential: AuthenticationResponseJSON) {
   const { data } = await api.post('/auth/passkey/authenticate/complete', {
     challenge_id: challengeId,
     credential,
@@ -30,10 +36,10 @@ export async function passkeyAuthComplete(challengeId: string, credential: Crede
 // Discoverable authentication (no email required)
 export async function passkeyDiscoverableBegin() {
   const { data } = await api.post('/auth/passkey/discoverable/begin');
-  return data as { challenge_id: string; options: PublicKeyCredentialRequestOptions };
+  return data as { challenge_id: string; options: PublicKeyCredentialRequestOptionsJSON };
 }
 
-export async function passkeyDiscoverableComplete(challengeId: string, credential: Credential) {
+export async function passkeyDiscoverableComplete(challengeId: string, credential: AuthenticationResponseJSON) {
   const { data } = await api.post('/auth/passkey/discoverable/complete', {
     challenge_id: challengeId,
     credential,
@@ -44,10 +50,10 @@ export async function passkeyDiscoverableComplete(challengeId: string, credentia
 // Registration flow (authenticated)
 export async function passkeyRegisterBegin() {
   const { data } = await api.post('/auth/passkey/register/begin');
-  return data as { challenge_id: string; options: PublicKeyCredentialCreationOptions };
+  return data as { challenge_id: string; options: PublicKeyCredentialCreationOptionsJSON };
 }
 
-export async function passkeyRegisterComplete(challengeId: string, credential: Credential, name?: string) {
+export async function passkeyRegisterComplete(challengeId: string, credential: RegistrationResponseJSON, name?: string) {
   const { data } = await api.post('/auth/passkey/register/complete', {
     challenge_id: challengeId,
     credential,

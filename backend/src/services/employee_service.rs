@@ -230,26 +230,35 @@ pub async fn create_user_for_employee(
     };
 
     // Check if email already exists
-    let existing: Option<(Uuid, String)> = sqlx::query_as(
-        "SELECT id, role FROM users WHERE email = $1",
-    )
-    .bind(email)
-    .fetch_optional(pool)
-    .await?;
+    let existing: Option<(Uuid, String)> =
+        sqlx::query_as("SELECT id, role FROM users WHERE email = $1")
+            .bind(email)
+            .fetch_optional(pool)
+            .await?;
 
     if let Some((existing_id, existing_role)) = existing {
         if existing_role == "employee" {
             // Stale employee account — clean up and recreate below
             sqlx::query("DELETE FROM user_companies WHERE user_id = $1")
-                .bind(existing_id).execute(pool).await?;
+                .bind(existing_id)
+                .execute(pool)
+                .await?;
             sqlx::query("DELETE FROM refresh_tokens WHERE user_id = $1")
-                .bind(existing_id).execute(pool).await?;
+                .bind(existing_id)
+                .execute(pool)
+                .await?;
             sqlx::query("DELETE FROM users WHERE id = $1")
-                .bind(existing_id).execute(pool).await?;
+                .bind(existing_id)
+                .execute(pool)
+                .await?;
         } else {
             // Non-employee user (admin, etc.) — link to this employee silently
             sqlx::query("UPDATE users SET employee_id = $1, company_id = $2 WHERE id = $3")
-                .bind(emp.id).bind(emp.company_id).bind(existing_id).execute(pool).await?;
+                .bind(emp.id)
+                .bind(emp.company_id)
+                .bind(existing_id)
+                .execute(pool)
+                .await?;
             sqlx::query("INSERT INTO user_companies (user_id, company_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
                 .bind(existing_id).bind(emp.company_id).execute(pool).await?;
             return Ok(None);
@@ -308,8 +317,9 @@ pub async fn update_employee(
 
     // Track salary change
     if let Some(new_salary) = req.basic_salary
-        && new_salary != existing.basic_salary {
-            sqlx::query(
+        && new_salary != existing.basic_salary
+    {
+        sqlx::query(
                 r#"INSERT INTO salary_history (id, employee_id, old_salary, new_salary, effective_date, created_by)
                 VALUES ($1, $2, $3, $4, NOW()::date, $5)"#,
             )
@@ -320,7 +330,7 @@ pub async fn update_employee(
             .bind(updated_by)
             .execute(pool)
             .await?;
-        }
+    }
 
     let emp = sqlx::query_as::<_, Employee>(
         r#"UPDATE employees SET
@@ -445,11 +455,7 @@ pub async fn update_employee(
     Ok(emp)
 }
 
-pub async fn soft_delete_employee(
-    pool: &PgPool,
-    id: Uuid,
-    company_id: Uuid,
-) -> AppResult<()> {
+pub async fn soft_delete_employee(pool: &PgPool, id: Uuid, company_id: Uuid) -> AppResult<()> {
     let rows = sqlx::query(
         "UPDATE employees SET deleted_at = NOW(), is_active = FALSE, employee_number = employee_number || '_DEL_' || id::text WHERE id = $1 AND company_id = $2",
     )
@@ -464,14 +470,18 @@ pub async fn soft_delete_employee(
     }
 
     // Delete the user account linked to this employee
-    sqlx::query("DELETE FROM user_companies WHERE user_id IN (SELECT id FROM users WHERE employee_id = $1)")
-        .bind(id)
-        .execute(pool)
-        .await?;
-    sqlx::query("DELETE FROM refresh_tokens WHERE user_id IN (SELECT id FROM users WHERE employee_id = $1)")
-        .bind(id)
-        .execute(pool)
-        .await?;
+    sqlx::query(
+        "DELETE FROM user_companies WHERE user_id IN (SELECT id FROM users WHERE employee_id = $1)",
+    )
+    .bind(id)
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "DELETE FROM refresh_tokens WHERE user_id IN (SELECT id FROM users WHERE employee_id = $1)",
+    )
+    .bind(id)
+    .execute(pool)
+    .await?;
     sqlx::query("DELETE FROM users WHERE employee_id = $1")
         .bind(id)
         .execute(pool)

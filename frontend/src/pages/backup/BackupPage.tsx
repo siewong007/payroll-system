@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Download, Upload, FileJson, CheckCircle2, AlertTriangle, Loader2 } from 'lucide-react';
 import { exportCompanyBackup, importCompanyBackup } from '@/api/backup';
 import { listCompanies } from '@/api/admin';
+import { getErrorMessage } from '@/lib/utils';
 import { useAuth } from '@/context/AuthContext';
 import type { ImportResult } from '@/types';
 
@@ -35,8 +36,9 @@ export function BackupPage() {
     try {
       await exportCompanyBackup(isSuperAdmin ? selectedCompanyId : undefined);
       setExportSuccess(true);
-    } catch (err: any) {
-      setExportError(err.response?.data?.error || err.message || 'Export failed');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? (err as { response?: { data?: { error?: string } } }).response?.data?.error || err.message : 'Export failed';
+      setExportError(msg);
     } finally {
       setExporting(false);
     }
@@ -61,8 +63,8 @@ export function BackupPage() {
       setImportResult(result);
       setSelectedFile(null);
       if (fileInputRef.current) fileInputRef.current.value = '';
-    } catch (err: any) {
-      setImportError(err.response?.data?.error || err.message || 'Import failed');
+    } catch (err: unknown) {
+      setImportError(getErrorMessage(err, 'Failed to import backup'));
     } finally {
       setImporting(false);
     }

@@ -2,7 +2,9 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::core::error::{AppError, AppResult};
-use crate::models::user_company::{CompanySummary, CreateUserRequest, UpdateUserRequest, UserWithCompanies};
+use crate::models::user_company::{
+    CompanySummary, CreateUserRequest, UpdateUserRequest, UserWithCompanies,
+};
 
 const VALID_ROLES: &[&str] = &[
     "super_admin",
@@ -38,11 +40,10 @@ pub async fn create_user(pool: &PgPool, req: CreateUserRequest) -> AppResult<Use
     }
 
     // Check email uniqueness
-    let exists: Option<(Uuid,)> =
-        sqlx::query_as("SELECT id FROM users WHERE email = $1")
-            .bind(&req.email)
-            .fetch_optional(pool)
-            .await?;
+    let exists: Option<(Uuid,)> = sqlx::query_as("SELECT id FROM users WHERE email = $1")
+        .bind(&req.email)
+        .fetch_optional(pool)
+        .await?;
     if exists.is_some() {
         return Err(AppError::BadRequest(
             "A user with this email already exists".into(),
@@ -159,17 +160,17 @@ pub async fn update_user_companies(
 
     // Insert new assignments
     for company_id in &company_ids {
-        sqlx::query(
-            "INSERT INTO user_companies (user_id, company_id) VALUES ($1, $2)",
-        )
-        .bind(user_id)
-        .bind(company_id)
-        .execute(pool)
-        .await?;
+        sqlx::query("INSERT INTO user_companies (user_id, company_id) VALUES ($1, $2)")
+            .bind(user_id)
+            .bind(company_id)
+            .execute(pool)
+            .await?;
     }
 
     // If current active company is no longer in the list, update it
-    let needs_update = user.company_id.is_none_or(|cid| !company_ids.contains(&cid));
+    let needs_update = user
+        .company_id
+        .is_none_or(|cid| !company_ids.contains(&cid));
     if needs_update {
         sqlx::query("UPDATE users SET company_id = $2, updated_at = NOW() WHERE id = $1")
             .bind(user_id)
@@ -204,15 +205,18 @@ pub async fn get_user_companies(pool: &PgPool, user_id: Uuid) -> AppResult<Vec<C
     Ok(companies)
 }
 
-pub async fn switch_company(pool: &PgPool, user_id: Uuid, target_company_id: Uuid) -> AppResult<()> {
+pub async fn switch_company(
+    pool: &PgPool,
+    user_id: Uuid,
+    target_company_id: Uuid,
+) -> AppResult<()> {
     // Verify user has access to this company
-    let has_access: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT user_id FROM user_companies WHERE user_id = $1 AND company_id = $2",
-    )
-    .bind(user_id)
-    .bind(target_company_id)
-    .fetch_optional(pool)
-    .await?;
+    let has_access: Option<(Uuid,)> =
+        sqlx::query_as("SELECT user_id FROM user_companies WHERE user_id = $1 AND company_id = $2")
+            .bind(user_id)
+            .bind(target_company_id)
+            .fetch_optional(pool)
+            .await?;
 
     if has_access.is_none() {
         return Err(AppError::Forbidden(
@@ -230,16 +234,21 @@ pub async fn switch_company(pool: &PgPool, user_id: Uuid, target_company_id: Uui
     Ok(())
 }
 
-pub async fn update_user(pool: &PgPool, user_id: Uuid, req: UpdateUserRequest) -> AppResult<UserWithCompanies> {
+pub async fn update_user(
+    pool: &PgPool,
+    user_id: Uuid,
+    req: UpdateUserRequest,
+) -> AppResult<UserWithCompanies> {
     // Validate role if provided
     if let Some(ref role) = req.role
-        && !VALID_ROLES.contains(&role.as_str()) {
-            return Err(AppError::BadRequest(format!(
-                "Invalid role '{}'. Valid roles: {}",
-                role,
-                VALID_ROLES.join(", ")
-            )));
-        }
+        && !VALID_ROLES.contains(&role.as_str())
+    {
+        return Err(AppError::BadRequest(format!(
+            "Invalid role '{}'. Valid roles: {}",
+            role,
+            VALID_ROLES.join(", ")
+        )));
+    }
 
     // Check user exists
     let existing = sqlx::query_as::<_, UserWithCompanies>(
@@ -259,7 +268,9 @@ pub async fn update_user(pool: &PgPool, user_id: Uuid, req: UpdateUserRequest) -
                 .fetch_optional(pool)
                 .await?;
         if exists.is_some() {
-            return Err(AppError::BadRequest("A user with this email already exists".into()));
+            return Err(AppError::BadRequest(
+                "A user with this email already exists".into(),
+            ));
         }
     }
 
@@ -285,9 +296,10 @@ pub async fn update_user(pool: &PgPool, user_id: Uuid, req: UpdateUserRequest) -
     if let Some(company_ids) = req.company_ids {
         let effective_role = req.role.as_deref().unwrap_or(&existing.role);
         if (effective_role == "exec" || effective_role == "employee") && company_ids.len() > 1 {
-            return Err(AppError::BadRequest(
-                format!("{} role can only be assigned to one company", effective_role),
-            ));
+            return Err(AppError::BadRequest(format!(
+                "{} role can only be assigned to one company",
+                effective_role
+            )));
         }
         if !company_ids.is_empty() {
             sqlx::query("DELETE FROM user_companies WHERE user_id = $1")

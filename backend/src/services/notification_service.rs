@@ -24,21 +24,17 @@ pub async fn get_notifications(
     Ok(notifications)
 }
 
-pub async fn get_notification_count(
-    pool: &PgPool,
-    user_id: Uuid,
-) -> AppResult<NotificationCount> {
+pub async fn get_notification_count(pool: &PgPool, user_id: Uuid) -> AppResult<NotificationCount> {
     let unread: (i64,) =
         sqlx::query_as("SELECT COUNT(*) FROM notifications WHERE user_id = $1 AND is_read = FALSE")
             .bind(user_id)
             .fetch_one(pool)
             .await?;
 
-    let total: (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM notifications WHERE user_id = $1")
-            .bind(user_id)
-            .fetch_one(pool)
-            .await?;
+    let total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM notifications WHERE user_id = $1")
+        .bind(user_id)
+        .fetch_one(pool)
+        .await?;
 
     Ok(NotificationCount {
         unread: unread.0,

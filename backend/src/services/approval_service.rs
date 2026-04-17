@@ -104,12 +104,10 @@ pub async fn approve_leave(
     .await?;
 
     // Check if this is unpaid leave — if so, auto-create payroll deduction
-    let is_paid: Option<bool> = sqlx::query_scalar(
-        "SELECT is_paid FROM leave_types WHERE id = $1",
-    )
-    .bind(lr.leave_type_id)
-    .fetch_optional(pool)
-    .await?;
+    let is_paid: Option<bool> = sqlx::query_scalar("SELECT is_paid FROM leave_types WHERE id = $1")
+        .bind(lr.leave_type_id)
+        .fetch_optional(pool)
+        .await?;
 
     if is_paid == Some(false) {
         // Calculate deduction: (basic_salary / working_days_in_month) * unpaid_leave_working_days
@@ -129,7 +127,11 @@ pub async fn approve_leave(
                 lr.end_date,
             )
             .await
-            .unwrap_or(rust_decimal::Decimal::to_string(&lr.days).parse::<i32>().unwrap_or(0));
+            .unwrap_or(
+                rust_decimal::Decimal::to_string(&lr.days)
+                    .parse::<i32>()
+                    .unwrap_or(0),
+            );
 
             if unpaid_working_days > 0 {
                 // Get working days in the leave month for daily rate calculation
@@ -226,22 +228,38 @@ pub async fn approve_leave(
         let leave_type = lr.leave_type_name.as_deref().unwrap_or("Leave");
         let details = format!(
             "<strong>Type:</strong> {}<br><strong>Period:</strong> {} to {} ({} day{})",
-            leave_type, lr.start_date, lr.end_date, lr.days,
-            if lr.days == rust_decimal::Decimal::ONE { "" } else { "s" }
+            leave_type,
+            lr.start_date,
+            lr.end_date,
+            lr.days,
+            if lr.days == rust_decimal::Decimal::ONE {
+                ""
+            } else {
+                "s"
+            }
         );
         let extra = if is_unpaid {
             "A salary deduction will be applied in your next payroll."
         } else {
             ""
         };
-        let body = email_service::approval_email_html(
-            &emp_name, &company_name, "Leave", &details, extra,
-        );
+        let body =
+            email_service::approval_email_html(&emp_name, &company_name, "Leave", &details, extra);
         let _ = email_service::send_email(
-            config, pool, company_id, Some(lr.employee_id), None,
-            "leave_approved", &emp_email, &emp_name,
-            &format!("Leave Request Approved - {} to {}", lr.start_date, lr.end_date),
-            &body, reviewer_id,
+            config,
+            pool,
+            company_id,
+            Some(lr.employee_id),
+            None,
+            "leave_approved",
+            &emp_email,
+            &emp_name,
+            &format!(
+                "Leave Request Approved - {} to {}",
+                lr.start_date, lr.end_date
+            ),
+            &body,
+            reviewer_id,
         )
         .await;
     }
@@ -449,18 +467,29 @@ pub async fn approve_claim(
         let amount_rm = claim.amount as f64 / 100.0;
         let details = format!(
             "<strong>Claim:</strong> {}<br><strong>Amount:</strong> RM {:.2}<br><strong>Category:</strong> {}",
-            claim.title, amount_rm,
+            claim.title,
+            amount_rm,
             claim.category.as_deref().unwrap_or("General")
         );
         let body = email_service::approval_email_html(
-            &emp_name, &company_name, "Claim", &details,
+            &emp_name,
+            &company_name,
+            "Claim",
+            &details,
             "The approved amount will be included in your next payroll.",
         );
         let _ = email_service::send_email(
-            config, pool, company_id, Some(claim.employee_id), None,
-            "claim_approved", &emp_email, &emp_name,
+            config,
+            pool,
+            company_id,
+            Some(claim.employee_id),
+            None,
+            "claim_approved",
+            &emp_email,
+            &emp_name,
             &format!("Claim Approved - {} (RM {:.2})", claim.title, amount_rm),
-            &body, reviewer_id,
+            &body,
+            reviewer_id,
         )
         .await;
     }
@@ -537,26 +566,27 @@ pub async fn approve_overtime(
     .ok_or_else(|| AppError::BadRequest("OT application not found or not pending".into()))?;
 
     // Get employee hourly rate
-    let hourly_rate: Option<(Option<i64>, i64)> = sqlx::query_as(
-        "SELECT hourly_rate, basic_salary FROM employees WHERE id = $1",
-    )
-    .bind(ot.employee_id)
-    .fetch_optional(pool)
-    .await?;
+    let hourly_rate: Option<(Option<i64>, i64)> =
+        sqlx::query_as("SELECT hourly_rate, basic_salary FROM employees WHERE id = $1")
+            .bind(ot.employee_id)
+            .fetch_optional(pool)
+            .await?;
 
     if let Some((hr, basic_salary)) = hourly_rate {
         // Use hourly_rate if set, otherwise calculate from basic: basic / working_days / effective_hours
         // effective_hours_per_day excludes rest time (e.g. 8h for a 9h day with 1h lunch)
-        let effective_hours: i64 = settings_service::get_setting(pool, company_id, "payroll", "effective_hours_per_day")
-            .await
-            .ok()
-            .and_then(|s| s.value.as_str().and_then(|v| v.parse::<i64>().ok()))
-            .unwrap_or(8);
-        let working_days: i64 = settings_service::get_setting(pool, company_id, "payroll", "unpaid_leave_divisor")
-            .await
-            .ok()
-            .and_then(|s| s.value.as_str().and_then(|v| v.parse::<i64>().ok()))
-            .unwrap_or(26);
+        let effective_hours: i64 =
+            settings_service::get_setting(pool, company_id, "payroll", "effective_hours_per_day")
+                .await
+                .ok()
+                .and_then(|s| s.value.as_str().and_then(|v| v.parse::<i64>().ok()))
+                .unwrap_or(8);
+        let working_days: i64 =
+            settings_service::get_setting(pool, company_id, "payroll", "unpaid_leave_divisor")
+                .await
+                .ok()
+                .and_then(|s| s.value.as_str().and_then(|v| v.parse::<i64>().ok()))
+                .unwrap_or(26);
         let base_hourly = hr.unwrap_or_else(|| basic_salary / working_days / effective_hours);
 
         // Get OT multiplier from company settings
@@ -566,15 +596,16 @@ pub async fn approve_overtime(
             _ => "overtime_multiplier_normal",
         };
 
-        let multiplier: f64 = settings_service::get_setting(pool, company_id, "payroll", multiplier_key)
-            .await
-            .ok()
-            .and_then(|s| s.value.as_str().and_then(|v| v.parse::<f64>().ok()))
-            .unwrap_or(match ot.ot_type.as_str() {
-                "rest_day" => 2.0,
-                "public_holiday" => 3.0,
-                _ => 1.5,
-            });
+        let multiplier: f64 =
+            settings_service::get_setting(pool, company_id, "payroll", multiplier_key)
+                .await
+                .ok()
+                .and_then(|s| s.value.as_str().and_then(|v| v.parse::<f64>().ok()))
+                .unwrap_or(match ot.ot_type.as_str() {
+                    "rest_day" => 2.0,
+                    "public_holiday" => 3.0,
+                    _ => 1.5,
+                });
 
         let ot_hours_f64 = rust_decimal::prelude::ToPrimitive::to_f64(&ot.hours).unwrap_or(0.0);
         let ot_rate = (base_hourly as f64 * multiplier) as i64;

@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, Printer, Download } from 'lucide-react';
 import { getMyPayslips, getMyProfile, downloadPayslipPdf } from '@/api/portal';
 import { formatMYR } from '@/lib/utils';
-import type { MyPayslip } from '@/types';
+import type { MyPayslip, Employee } from '@/types';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'];
@@ -99,28 +99,28 @@ export function MyPayslips() {
   );
 }
 
-function PayslipDetail({ payslip, profile }: { payslip: MyPayslip; profile: any }) {
+const Row = ({ label, amount, indent, bold, negative }: {
+  label: string; amount: number; indent?: boolean; bold?: boolean; negative?: boolean;
+}) => (
+  <div className={`flex justify-between py-2 ${indent ? 'pl-4' : ''} ${bold ? 'font-semibold border-t border-gray-200 pt-3 mt-1' : ''}`}>
+    <span className={`text-sm ${indent ? 'text-gray-400 italic' : 'text-gray-600'}`}>{label}</span>
+    <span className={`text-sm ${bold ? 'font-bold' : 'font-medium'} ${negative ? 'text-red-600' : ''}`}>
+      {negative ? '-' : ''}{formatMYR(Math.abs(amount))}
+    </span>
+  </div>
+);
+
+const SummaryRow = ({ label, value, highlight }: { label: string; value: string; highlight?: string }) => (
+  <div className="flex justify-between py-2">
+    <span className="text-sm text-gray-400">{label}</span>
+    <span className={`text-sm font-medium ${highlight || ''}`}>{value}</span>
+  </div>
+);
+
+function PayslipDetail({ payslip, profile }: { payslip: MyPayslip; profile: Employee | undefined }) {
   const periodStart = new Date(payslip.period_start).toLocaleDateString('en-MY', { day: '2-digit', month: 'long', year: 'numeric' });
   const periodEnd = new Date(payslip.period_end).toLocaleDateString('en-MY', { day: '2-digit', month: 'long', year: 'numeric' });
   const payDate = new Date(payslip.pay_date).toLocaleDateString('en-MY', { day: '2-digit', month: 'long', year: 'numeric' });
-
-  const Row = ({ label, amount, indent, bold, negative }: {
-    label: string; amount: number; indent?: boolean; bold?: boolean; negative?: boolean;
-  }) => (
-    <div className={`flex justify-between py-2 ${indent ? 'pl-4' : ''} ${bold ? 'font-semibold border-t border-gray-200 pt-3 mt-1' : ''}`}>
-      <span className={`text-sm ${indent ? 'text-gray-400 italic' : 'text-gray-600'}`}>{label}</span>
-      <span className={`text-sm ${bold ? 'font-bold' : 'font-medium'} ${negative ? 'text-red-600' : ''}`}>
-        {negative ? '-' : ''}{formatMYR(Math.abs(amount))}
-      </span>
-    </div>
-  );
-
-  const SummaryRow = ({ label, value, highlight }: { label: string; value: string; highlight?: string }) => (
-    <div className="flex justify-between py-2">
-      <span className="text-sm text-gray-400">{label}</span>
-      <span className={`text-sm font-medium ${highlight || ''}`}>{value}</span>
-    </div>
-  );
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

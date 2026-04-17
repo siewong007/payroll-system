@@ -45,8 +45,9 @@ pub async fn verify_refresh_token(pool: &PgPool, raw_token: &str) -> AppResult<U
     .fetch_optional(pool)
     .await?;
 
-    row.map(|r| r.0)
-        .ok_or_else(|| crate::core::error::AppError::Unauthorized("Invalid or expired refresh token".into()))
+    row.map(|r| r.0).ok_or_else(|| {
+        crate::core::error::AppError::Unauthorized("Invalid or expired refresh token".into())
+    })
 }
 
 /// Revokes a specific refresh token.

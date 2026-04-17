@@ -1,6 +1,6 @@
 use axum::{
-    extract::{Path, Query, State},
     Json,
+    extract::{Path, Query, State},
 };
 use serde::Deserialize;
 use uuid::Uuid;
@@ -9,7 +9,9 @@ use crate::core::app_state::AppState;
 use crate::core::auth::AuthUser;
 use crate::core::error::{AppError, AppResult};
 use crate::models::portal::{Claim, LeaveRequest, OvertimeApplication};
-use crate::services::approval_service::{self, ClaimWithEmployee, LeaveRequestWithEmployee, OvertimeWithEmployee};
+use crate::services::approval_service::{
+    self, ClaimWithEmployee, LeaveRequestWithEmployee, OvertimeWithEmployee,
+};
 
 fn require_admin(auth: &AuthUser) -> AppResult<Uuid> {
     match auth.0.role.as_str() {
@@ -140,9 +142,8 @@ pub async fn list_overtime(
     Query(q): Query<StatusQuery>,
 ) -> AppResult<Json<Vec<OvertimeWithEmployee>>> {
     let company_id = require_admin(&auth)?;
-    let apps =
-        approval_service::get_pending_overtime(&state.pool, company_id, q.status.as_deref())
-            .await?;
+    let apps = approval_service::get_pending_overtime(&state.pool, company_id, q.status.as_deref())
+        .await?;
     Ok(Json(apps))
 }
 

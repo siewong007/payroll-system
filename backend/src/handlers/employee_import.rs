@@ -1,15 +1,17 @@
 use axum::{
+    Json,
     extract::{Multipart, Query, State},
     http::header,
     response::IntoResponse,
-    Json,
 };
 use uuid::Uuid;
 
 use crate::core::app_state::AppState;
 use crate::core::auth::AuthUser;
 use crate::core::error::{AppError, AppResult};
-use crate::models::employee_import::{ImportConfirmRequest, ImportValidationResponse, TemplateQuery};
+use crate::models::employee_import::{
+    ImportConfirmRequest, ImportValidationResponse, TemplateQuery,
+};
 use crate::services::employee_import_service;
 
 fn require_hr_admin(auth: &AuthUser) -> AppResult<(Uuid, Uuid)> {
@@ -82,10 +84,7 @@ pub async fn validate_import(
         .map_err(|e| AppError::BadRequest(format!("Failed to read upload: {}", e)))?
     {
         if field.name() == Some("file") {
-            let file_name = field
-                .file_name()
-                .unwrap_or("upload")
-                .to_string();
+            let file_name = field.file_name().unwrap_or("upload").to_string();
             let data = field
                 .bytes()
                 .await
@@ -102,9 +101,8 @@ pub async fn validate_import(
         }
     }
 
-    let (file_name, data) = file_data.ok_or_else(|| {
-        AppError::BadRequest("No file uploaded. Include a 'file' field.".into())
-    })?;
+    let (file_name, data) = file_data
+        .ok_or_else(|| AppError::BadRequest("No file uploaded. Include a 'file' field.".into()))?;
 
     let is_xlsx = file_name.ends_with(".xlsx") || file_name.ends_with(".xls");
     let is_csv = file_name.ends_with(".csv");

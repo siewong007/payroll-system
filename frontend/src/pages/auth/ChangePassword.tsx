@@ -56,8 +56,9 @@ export function ChangePassword() {
       // Logout so user logs in with new password
       await logout();
       navigate('/login');
-    } catch (err: any) {
-      setError(err.response?.data?.error || 'Failed to change password');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? (err as { response?: { data?: { error?: string } } }).response?.data?.error || err.message : 'Failed to change password';
+      setError(msg);
     } finally {
       setLoading(false);
     }

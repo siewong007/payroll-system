@@ -4,6 +4,23 @@ import { getMyProfile } from '@/api/portal';
 import { formatMYR, formatDate } from '@/lib/utils';
 import { PasskeyManagement } from '@/components/PasskeyManagement';
 
+const Field = ({ label, value }: { label: string; value: string | null | undefined }) => (
+  <div className="py-3 flex items-start justify-between gap-4">
+    <span className="text-sm text-gray-400 min-w-[140px] shrink-0">{label}</span>
+    <span className="text-sm font-medium text-gray-900 text-right">{value || '—'}</span>
+  </div>
+);
+
+const SectionIcon = ({ icon: Icon, label, num }: { icon: React.ElementType; label: string; num: number }) => (
+  <div className="section-header">
+    <span className="section-number">{num}</span>
+    <div className="flex items-center gap-2">
+      <Icon className="w-4 h-4 text-gray-400" />
+      <span className="section-title">{label}</span>
+    </div>
+  </div>
+);
+
 export function MyProfile() {
   const { data: profile, isLoading } = useQuery({
     queryKey: ['my-profile'],
@@ -19,23 +36,6 @@ export function MyProfile() {
   }
 
   if (!profile) return <div className="text-center py-12 text-gray-400">Profile not found</div>;
-
-  const Field = ({ label, value }: { label: string; value: string | null | undefined }) => (
-    <div className="py-3 flex items-start justify-between gap-4">
-      <span className="text-sm text-gray-400 min-w-[140px] shrink-0">{label}</span>
-      <span className="text-sm font-medium text-gray-900 text-right">{value || '—'}</span>
-    </div>
-  );
-
-  const SectionIcon = ({ icon: Icon, label, num }: { icon: React.ElementType; label: string; num: number }) => (
-    <div className="section-header">
-      <span className="section-number">{num}</span>
-      <div className="flex items-center gap-2">
-        <Icon className="w-4 h-4 text-gray-400" />
-        <span className="section-title">{label}</span>
-      </div>
-    </div>
-  );
 
   return (
     <div className="space-y-6">

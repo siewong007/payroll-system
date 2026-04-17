@@ -6,11 +6,7 @@ use crate::core::error::{AppError, AppResult};
 use crate::models::calendar::{Holiday, MonthCalendar, WorkingDayConfig};
 
 /// Get all holidays for a company in a given year
-pub async fn get_holidays(
-    pool: &PgPool,
-    company_id: Uuid,
-    year: i32,
-) -> AppResult<Vec<Holiday>> {
+pub async fn get_holidays(pool: &PgPool, company_id: Uuid, year: i32) -> AppResult<Vec<Holiday>> {
     let holidays = sqlx::query_as::<_, Holiday>(
         r#"SELECT * FROM holidays
         WHERE company_id = $1
@@ -121,10 +117,7 @@ pub async fn delete_holiday(pool: &PgPool, company_id: Uuid, id: Uuid) -> AppRes
 }
 
 /// Get working day configuration for a company
-pub async fn get_working_days(
-    pool: &PgPool,
-    company_id: Uuid,
-) -> AppResult<Vec<WorkingDayConfig>> {
+pub async fn get_working_days(pool: &PgPool, company_id: Uuid) -> AppResult<Vec<WorkingDayConfig>> {
     let config = sqlx::query_as::<_, WorkingDayConfig>(
         "SELECT * FROM working_day_config WHERE company_id = $1 ORDER BY day_of_week",
     )
@@ -333,8 +326,9 @@ pub async fn import_from_ics_text(
         } else if line == "END:VEVENT" {
             if in_event
                 && let (n, Some(d)) = (&name, date)
-                    && !n.is_empty() {
-                        let exists: i64 = sqlx::query_scalar(
+                && !n.is_empty()
+            {
+                let exists: i64 = sqlx::query_scalar(
                             "SELECT COUNT(*) FROM holidays WHERE company_id = $1 AND date = $2 AND name = $3"
                         )
                         .bind(company_id)
@@ -343,22 +337,22 @@ pub async fn import_from_ics_text(
                         .fetch_one(pool)
                         .await?;
 
-                        if exists == 0 {
-                            let h = create_holiday(
-                                pool,
-                                company_id,
-                                n,
-                                d,
-                                "public_holiday",
-                                description.as_deref(),
-                                false,
-                                None,
-                                created_by,
-                            )
-                            .await?;
-                            holidays.push(h);
-                        }
-                    }
+                if exists == 0 {
+                    let h = create_holiday(
+                        pool,
+                        company_id,
+                        n,
+                        d,
+                        "public_holiday",
+                        description.as_deref(),
+                        false,
+                        None,
+                        created_by,
+                    )
+                    .await?;
+                    holidays.push(h);
+                }
+            }
             in_event = false;
         } else if in_event {
             if let Some(val) = line.strip_prefix("SUMMARY:") {

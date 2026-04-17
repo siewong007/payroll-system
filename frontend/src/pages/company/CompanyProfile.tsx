@@ -10,7 +10,32 @@ import {
   Calculator,
 } from 'lucide-react';
 import { getCompany, updateCompany, getCompanyStats } from '@/api/company';
+import { getErrorMessage } from '@/lib/utils';
 import type { UpdateCompanyRequest } from '@/types';
+
+const renderRow = (label: string, value: string | null | undefined) => (
+  <div className="flex justify-between py-2.5 border-b border-gray-100 last:border-none text-sm">
+    <span className="text-gray-500">{label}</span>
+    <span className="font-medium text-gray-800">
+      {value || <span className="italic text-gray-400">Not provided</span>}
+    </span>
+  </div>
+);
+
+function FieldInput({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+  return (
+    <div>
+      <label className="block text-sm text-gray-500 mb-1">{label}</label>
+      <input
+        type="text"
+        value={value ?? ''}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={label}
+        className="w-full border p-2 rounded-lg text-sm focus:border-black outline-none transition-colors"
+      />
+    </div>
+  );
+}
 
 type Section = 'info' | 'statutory' | 'address' | 'payroll';
 
@@ -43,8 +68,8 @@ export function CompanyProfile() {
       queryClient.invalidateQueries({ queryKey: ['company'] });
       closeModal();
     },
-    onError: (err: any) => {
-      setError(err.response?.data?.error || 'Failed to update');
+    onError: (err: unknown) => {
+      setError(getErrorMessage(err, 'Failed to update company settings. Please try again.'));
     },
   });
 
@@ -111,14 +136,6 @@ export function CompanyProfile() {
     return <div className="text-center text-gray-500 py-12">Company not found</div>;
   }
 
-  const renderRow = (label: string, value: string | null | undefined) => (
-    <div className="flex justify-between py-2.5 border-b border-gray-100 last:border-none text-sm">
-      <span className="text-gray-500">{label}</span>
-      <span className="font-medium text-gray-800">
-        {value || <span className="italic text-gray-400">Not provided</span>}
-      </span>
-    </div>
-  );
 
   return (
     <div>
@@ -282,26 +299,26 @@ export function CompanyProfile() {
               <div className="flex flex-col gap-3 max-h-[60vh] overflow-auto">
                 {activeSection === 'info' && (
                   <>
-                    <FieldInput label="Company Name" value={(form as any).name} onChange={(v) => updateField('name', v)} />
-                    <FieldInput label="Registration No. (SSM)" value={(form as any).registration_number} onChange={(v) => updateField('registration_number', v)} />
-                    <FieldInput label="Tax No. (LHDN)" value={(form as any).tax_number} onChange={(v) => updateField('tax_number', v)} />
-                    <FieldInput label="Phone" value={(form as any).phone} onChange={(v) => updateField('phone', v)} />
-                    <FieldInput label="Email" value={(form as any).email} onChange={(v) => updateField('email', v)} />
+                    <FieldInput label="Company Name" value={form.name ?? ''} onChange={(v) => updateField('name', v)} />
+                    <FieldInput label="Registration No. (SSM)" value={form.registration_number ?? ''} onChange={(v) => updateField('registration_number', v)} />
+                    <FieldInput label="Tax No. (LHDN)" value={form.tax_number ?? ''} onChange={(v) => updateField('tax_number', v)} />
+                    <FieldInput label="Phone" value={form.phone ?? ''} onChange={(v) => updateField('phone', v)} />
+                    <FieldInput label="Email" value={form.email ?? ''} onChange={(v) => updateField('email', v)} />
                   </>
                 )}
 
                 {activeSection === 'statutory' && (
                   <>
-                    <FieldInput label="EPF No. (KWSP)" value={(form as any).epf_number} onChange={(v) => updateField('epf_number', v)} />
-                    <FieldInput label="SOCSO Code (PERKESO)" value={(form as any).socso_code} onChange={(v) => updateField('socso_code', v)} />
-                    <FieldInput label="EIS Code" value={(form as any).eis_code} onChange={(v) => updateField('eis_code', v)} />
-                    <FieldInput label="HRDF No." value={(form as any).hrdf_number} onChange={(v) => updateField('hrdf_number', v)} />
+                    <FieldInput label="EPF No. (KWSP)" value={form.epf_number ?? ''} onChange={(v) => updateField('epf_number', v)} />
+                    <FieldInput label="SOCSO Code (PERKESO)" value={form.socso_code ?? ''} onChange={(v) => updateField('socso_code', v)} />
+                    <FieldInput label="EIS Code" value={form.eis_code ?? ''} onChange={(v) => updateField('eis_code', v)} />
+                    <FieldInput label="HRDF No." value={form.hrdf_number ?? ''} onChange={(v) => updateField('hrdf_number', v)} />
                     <div>
                       <label className="block text-sm text-gray-500 mb-1">HRDF Enabled</label>
                       <label className="relative inline-flex items-center cursor-pointer">
                         <input
                           type="checkbox"
-                          checked={(form as any).hrdf_enabled ?? false}
+                          checked={form.hrdf_enabled ?? false}
                           onChange={(e) => updateField('hrdf_enabled', e.target.checked)}
                           className="sr-only peer"
                         />
@@ -313,13 +330,13 @@ export function CompanyProfile() {
 
                 {activeSection === 'address' && (
                   <>
-                    <FieldInput label="Address Line 1" value={(form as any).address_line1} onChange={(v) => updateField('address_line1', v)} />
-                    <FieldInput label="Address Line 2" value={(form as any).address_line2} onChange={(v) => updateField('address_line2', v)} />
-                    <FieldInput label="City" value={(form as any).city} onChange={(v) => updateField('city', v)} />
+                    <FieldInput label="Address Line 1" value={form.address_line1 ?? ''} onChange={(v) => updateField('address_line1', v)} />
+                    <FieldInput label="Address Line 2" value={form.address_line2 ?? ''} onChange={(v) => updateField('address_line2', v)} />
+                    <FieldInput label="City" value={form.city ?? ''} onChange={(v) => updateField('city', v)} />
                     <div>
                       <label className="block text-sm text-gray-500 mb-1">State</label>
                       <select
-                        value={(form as any).state ?? ''}
+                        value={form.state ?? ''}
                         onChange={(e) => updateField('state', e.target.value)}
                         className="w-full border p-2 rounded-lg text-sm focus:border-black outline-none transition-colors"
                       >
@@ -329,8 +346,8 @@ export function CompanyProfile() {
                         ))}
                       </select>
                     </div>
-                    <FieldInput label="Postcode" value={(form as any).postcode} onChange={(v) => updateField('postcode', v)} />
-                    <FieldInput label="Country" value={(form as any).country} onChange={(v) => updateField('country', v)} />
+                    <FieldInput label="Postcode" value={form.postcode ?? ''} onChange={(v) => updateField('postcode', v)} />
+                    <FieldInput label="Country" value={form.country ?? ''} onChange={(v) => updateField('country', v)} />
                   </>
                 )}
 
@@ -340,7 +357,7 @@ export function CompanyProfile() {
                       <label className="block text-sm text-gray-500 mb-1">Unpaid Leave Divisor</label>
                       <input
                         type="number"
-                        value={(form as any).unpaid_leave_divisor ?? ''}
+                        value={form.unpaid_leave_divisor ?? ''}
                         onChange={(e) => updateField('unpaid_leave_divisor', Number(e.target.value))}
                         className="w-full border p-2 rounded-lg text-sm focus:border-black outline-none transition-colors"
                       />
@@ -376,17 +393,3 @@ export function CompanyProfile() {
   );
 }
 
-function FieldInput({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
-  return (
-    <div>
-      <label className="block text-sm text-gray-500 mb-1">{label}</label>
-      <input
-        type="text"
-        value={value ?? ''}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={label}
-        className="w-full border p-2 rounded-lg text-sm focus:border-black outline-none transition-colors"
-      />
-    </div>
-  );
-}

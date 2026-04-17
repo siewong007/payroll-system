@@ -1,6 +1,6 @@
 use axum::{
-    extract::{Multipart, Path, Query, State},
     Json,
+    extract::{Multipart, Path, Query, State},
 };
 use serde::Deserialize;
 use uuid::Uuid;
@@ -146,7 +146,8 @@ pub async fn get_month_calendar(
     Query(q): Query<MonthQuery>,
 ) -> AppResult<Json<MonthCalendar>> {
     let company_id = require_admin(&auth)?;
-    let cal = calendar_service::get_month_calendar(&state.pool, company_id, q.year, q.month).await?;
+    let cal =
+        calendar_service::get_month_calendar(&state.pool, company_id, q.year, q.month).await?;
     Ok(Json(cal))
 }
 
@@ -165,7 +166,8 @@ pub async fn import_ics(
     Json(req): Json<ImportIcsRequest>,
 ) -> AppResult<Json<Vec<Holiday>>> {
     let company_id = require_admin(&auth)?;
-    let holidays = calendar_service::import_from_ics(&state.pool, company_id, &req.url, auth.0.sub).await?;
+    let holidays =
+        calendar_service::import_from_ics(&state.pool, company_id, &req.url, auth.0.sub).await?;
     Ok(Json(holidays))
 }
 
@@ -184,10 +186,7 @@ pub async fn import_ics_file(
         .map_err(|e| AppError::BadRequest(format!("Invalid multipart data: {}", e)))?
         .ok_or_else(|| AppError::BadRequest("No file provided".into()))?;
 
-    let file_name = field
-        .file_name()
-        .map(|s| s.to_string())
-        .unwrap_or_default();
+    let file_name = field.file_name().map(|s| s.to_string()).unwrap_or_default();
 
     if !file_name.ends_with(".ics") && !file_name.ends_with(".ical") {
         return Err(AppError::BadRequest(

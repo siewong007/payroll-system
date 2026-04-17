@@ -1,18 +1,15 @@
-use axum::{
-    extract::State,
-    http::HeaderMap,
-    response::IntoResponse,
-    Json,
-};
+use axum::{Json, extract::State, http::HeaderMap, response::IntoResponse};
 
 use crate::core::app_state::AppState;
-use crate::core::auth::{create_token, AuthUser};
+use crate::core::auth::{AuthUser, create_token};
 use crate::core::cookie;
 use crate::core::error::{AppError, AppResult};
 use crate::models::session::{ForgotPasswordRequest, ResetPasswordRequest};
 use crate::models::user::{LoginRequest, LoginResponse, User, UserResponse};
 use crate::models::user_company::{CompanySummary, SwitchCompanyRequest};
-use crate::services::{auth_service, email_service, password_reset_service, session_service, user_service};
+use crate::services::{
+    auth_service, email_service, password_reset_service, session_service, user_service,
+};
 
 pub async fn login(
     State(state): State<AppState>,
@@ -42,10 +39,7 @@ pub async fn login(
     Ok((headers, Json(body)))
 }
 
-pub async fn me(
-    State(state): State<AppState>,
-    auth: AuthUser,
-) -> AppResult<Json<UserResponse>> {
+pub async fn me(State(state): State<AppState>, auth: AuthUser) -> AppResult<Json<UserResponse>> {
     let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
         .bind(auth.0.sub)
         .fetch_one(&state.pool)
@@ -112,12 +106,11 @@ pub async fn refresh_token(
 
     // Check if linked employee has been deleted
     if let Some(employee_id) = user.employee_id {
-        let employee_active: Option<bool> = sqlx::query_scalar(
-            "SELECT is_active FROM employees WHERE id = $1",
-        )
-        .bind(employee_id)
-        .fetch_optional(&state.pool)
-        .await?;
+        let employee_active: Option<bool> =
+            sqlx::query_scalar("SELECT is_active FROM employees WHERE id = $1")
+                .bind(employee_id)
+                .fetch_optional(&state.pool)
+                .await?;
 
         if matches!(employee_active, Some(false) | None) {
             session_service::revoke_refresh_token(&state.pool, &refresh).await?;
@@ -179,7 +172,10 @@ pub async fn forgot_password(
 
     // Send reset email if user exists (fire-and-forget, don't reveal whether email exists)
     if let Some((user_email, user_name, raw_token)) = result {
-        let reset_url = format!("{}/reset-password?token={}", state.config.frontend_url, raw_token);
+        let reset_url = format!(
+            "{}/reset-password?token={}",
+            state.config.frontend_url, raw_token
+        );
         let body_html = email_service::password_reset_html(&user_name, &reset_url);
 
         // Log but don't fail the request if email sending fails
@@ -192,7 +188,11 @@ pub async fn forgot_password(
         )
         .await
         {
-            tracing::error!("Failed to send password reset email to {}: {}", user_email, e);
+            tracing::error!(
+                "Failed to send password reset email to {}: {}",
+                user_email,
+                e
+            );
         }
     }
 
@@ -217,7 +217,8 @@ pub async fn validate_reset_token(
     State(state): State<AppState>,
     Json(req): Json<serde_json::Value>,
 ) -> AppResult<Json<serde_json::Value>> {
-    let token = req.get("token")
+    let token = req
+        .get("token")
         .and_then(|t| t.as_str())
         .ok_or_else(|| AppError::BadRequest("Token is required".into()))?;
     password_reset_service::validate_reset_token(&state.pool, token).await?;

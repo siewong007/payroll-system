@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { QrCode, Fingerprint, Shield, CheckCircle2, AlertCircle, Info, Building2 } from 'lucide-react';
 import { getPlatformAttendanceMethod, setPlatformAttendanceMethod } from '@/api/attendance';
@@ -11,25 +11,15 @@ export function AttendanceSettings() {
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
 
-  if (user?.role !== 'super_admin') {
-    return <Navigate to="/companies" replace />;
-  }
-
   const { data, isLoading } = useQuery({
     queryKey: ['platform-attendance-method'],
     queryFn: getPlatformAttendanceMethod,
+    enabled: user?.role === 'super_admin',
   });
 
   const [method, setMethod] = useState<'qr_code' | 'face_id'>('qr_code');
   const [allowOverride, setAllowOverride] = useState(false);
-
-  // Sync from server once loaded
   const [initialized, setInitialized] = useState(false);
-  if (data && !initialized) {
-    setMethod(data.method as 'qr_code' | 'face_id');
-    setAllowOverride(data.allow_company_override);
-    setInitialized(true);
-  }
 
   const mutation = useMutation({
     mutationFn: () => setPlatformAttendanceMethod(method, allowOverride),
@@ -43,6 +33,19 @@ export function AttendanceSettings() {
       setError('Failed to save settings. Please try again.');
     },
   });
+
+  useEffect(() => {
+    if (data && !initialized) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setMethod(data.method as 'qr_code' | 'face_id');
+      setAllowOverride(data.allow_company_override);
+      setInitialized(true);
+    }
+  }, [data, initialized]);
+
+  if (user?.role !== 'super_admin') {
+    return <Navigate to="/companies" replace />;
+  }
 
   if (isLoading) {
     return (

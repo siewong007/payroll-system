@@ -79,11 +79,7 @@ fn base64url_encode(bytes: &[u8]) -> String {
 }
 
 /// Store OAuth2 state + PKCE code verifier in the database.
-pub async fn store_oauth2_state(
-    pool: &PgPool,
-    state: &str,
-    code_verifier: &str,
-) -> AppResult<()> {
+pub async fn store_oauth2_state(pool: &PgPool, state: &str, code_verifier: &str) -> AppResult<()> {
     let expires_at = Utc::now() + Duration::minutes(STATE_EXPIRY_MINUTES);
 
     // Clean up expired states opportunistically
@@ -91,14 +87,12 @@ pub async fn store_oauth2_state(
         .execute(pool)
         .await?;
 
-    sqlx::query(
-        "INSERT INTO oauth2_states (state, code_verifier, expires_at) VALUES ($1, $2, $3)",
-    )
-    .bind(state)
-    .bind(code_verifier)
-    .bind(expires_at)
-    .execute(pool)
-    .await?;
+    sqlx::query("INSERT INTO oauth2_states (state, code_verifier, expires_at) VALUES ($1, $2, $3)")
+        .bind(state)
+        .bind(code_verifier)
+        .bind(expires_at)
+        .execute(pool)
+        .await?;
 
     Ok(())
 }
@@ -183,7 +177,9 @@ pub async fn google_user_info(access_token: &str) -> AppResult<GoogleUserInfo> {
         .map_err(|e| AppError::Internal(format!("Google userinfo request failed: {}", e)))?;
 
     if !resp.status().is_success() {
-        return Err(AppError::Internal("Failed to fetch Google user info".into()));
+        return Err(AppError::Internal(
+            "Failed to fetch Google user info".into(),
+        ));
     }
 
     resp.json::<GoogleUserInfo>()
@@ -209,12 +205,11 @@ pub async fn find_oauth2_account(
 
 /// Find a user by their email.
 pub async fn find_user_by_email(pool: &PgPool, email: &str) -> AppResult<Option<User>> {
-    let user = sqlx::query_as::<_, User>(
-        "SELECT * FROM users WHERE email = $1 AND is_active = TRUE",
-    )
-    .bind(email)
-    .fetch_optional(pool)
-    .await?;
+    let user =
+        sqlx::query_as::<_, User>("SELECT * FROM users WHERE email = $1 AND is_active = TRUE")
+            .bind(email)
+            .fetch_optional(pool)
+            .await?;
     Ok(user)
 }
 
@@ -296,18 +291,12 @@ pub async fn update_oauth2_tokens(
 }
 
 /// Unlink an OAuth2 account from a user.
-pub async fn unlink_oauth2_account(
-    pool: &PgPool,
-    user_id: Uuid,
-    provider: &str,
-) -> AppResult<()> {
-    let result = sqlx::query(
-        "DELETE FROM oauth2_accounts WHERE user_id = $1 AND provider = $2",
-    )
-    .bind(user_id)
-    .bind(provider)
-    .execute(pool)
-    .await?;
+pub async fn unlink_oauth2_account(pool: &PgPool, user_id: Uuid, provider: &str) -> AppResult<()> {
+    let result = sqlx::query("DELETE FROM oauth2_accounts WHERE user_id = $1 AND provider = $2")
+        .bind(user_id)
+        .bind(provider)
+        .execute(pool)
+        .await?;
 
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound("OAuth2 account not linked".into()));
@@ -329,7 +318,11 @@ pub async fn list_linked_accounts(pool: &PgPool, user_id: Uuid) -> AppResult<Vec
 }
 
 /// Find user by OAuth2 account, fetching full User row.
-pub async fn find_user_by_oauth2(pool: &PgPool, provider: &str, provider_user_id: &str) -> AppResult<Option<User>> {
+pub async fn find_user_by_oauth2(
+    pool: &PgPool,
+    provider: &str,
+    provider_user_id: &str,
+) -> AppResult<Option<User>> {
     let user = sqlx::query_as::<_, User>(
         r#"SELECT u.* FROM users u
         JOIN oauth2_accounts oa ON u.id = oa.user_id

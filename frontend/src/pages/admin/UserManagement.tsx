@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Users, Search, X, Building2, Plus, Pencil, Trash2 } from 'lucide-react';
 import { listUsers, listCompanies, createUser, updateUser, deleteUser } from '@/api/admin';
+import { getErrorMessage } from '@/lib/utils';
 import type { CreateUserRequest, UpdateUserRequest, UserWithCompanies } from '@/types';
 
 const ALL_ROLES = [
@@ -257,7 +258,7 @@ function CreateUserModal({
   const mutation = useMutation({
     mutationFn: createUser,
     onSuccess: onCreated,
-    onError: (err: any) => setError(err.response?.data?.error || 'Failed to create user'),
+    onError: (err: unknown) => setError(getErrorMessage(err, 'Failed to create user')),
   });
 
   const isSingleCompany = form.role === 'exec' || form.role === 'employee';
@@ -413,7 +414,7 @@ function EditUserModal({
   const mutation = useMutation({
     mutationFn: () => updateUser(user.id, form),
     onSuccess: onUpdated,
-    onError: (err: any) => setError(err.response?.data?.error || 'Failed to update user'),
+    onError: (err: unknown) => setError(getErrorMessage(err, 'Failed to update user')),
   });
 
   const isSingleCompany = form.role === 'exec' || form.role === 'employee';

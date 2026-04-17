@@ -1,4 +1,4 @@
-use axum::{extract::State, Json};
+use axum::{Json, extract::State};
 use chrono::Datelike;
 use serde::Serialize;
 
@@ -31,7 +31,9 @@ pub async fn summary(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> AppResult<Json<DashboardSummary>> {
-    let company_id = auth.0.company_id
+    let company_id = auth
+        .0
+        .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
     let total_employees: Option<i64> = sqlx::query_scalar(
@@ -94,10 +96,26 @@ pub async fn summary(
     Ok(Json(DashboardSummary {
         total_employees,
         active_employees,
-        last_payroll_period: if is_exec { None } else { last_payroll.as_ref().map(|p| p.0.clone()) },
-        last_payroll_total_net: if is_exec { None } else { last_payroll.as_ref().map(|p| p.1) },
-        last_payroll_total_gross: if is_exec { None } else { last_payroll.as_ref().map(|p| p.2) },
-        last_payroll_employee_count: if is_exec { None } else { last_payroll.as_ref().map(|p| p.3) },
+        last_payroll_period: if is_exec {
+            None
+        } else {
+            last_payroll.as_ref().map(|p| p.0.clone())
+        },
+        last_payroll_total_net: if is_exec {
+            None
+        } else {
+            last_payroll.as_ref().map(|p| p.1)
+        },
+        last_payroll_total_gross: if is_exec {
+            None
+        } else {
+            last_payroll.as_ref().map(|p| p.2)
+        },
+        last_payroll_employee_count: if is_exec {
+            None
+        } else {
+            last_payroll.as_ref().map(|p| p.3)
+        },
         ytd_total_gross: if is_exec { 0 } else { ytd.0 },
         ytd_total_epf_employer: if is_exec { 0 } else { ytd.1 },
         ytd_total_socso_employer: if is_exec { 0 } else { ytd.2 },

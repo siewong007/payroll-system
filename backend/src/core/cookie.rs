@@ -1,4 +1,4 @@
-use axum::http::{header, HeaderMap};
+use axum::http::{HeaderMap, header};
 
 const REFRESH_COOKIE_NAME: &str = "refresh_token";
 const REFRESH_COOKIE_MAX_AGE: i64 = 30 * 24 * 60 * 60; // 30 days in seconds
@@ -39,9 +39,10 @@ pub fn extract_refresh_token(headers: &HeaderMap) -> Option<String> {
         .find_map(|cookie| {
             let cookie = cookie.trim();
             if let Some(value) = cookie.strip_prefix(&format!("{}=", REFRESH_COOKIE_NAME))
-                && !value.is_empty() {
-                    return Some(value.to_string());
-                }
+                && !value.is_empty()
+            {
+                return Some(value.to_string());
+            }
             None
         })
 }

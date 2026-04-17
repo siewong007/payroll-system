@@ -2,7 +2,9 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::core::error::{AppError, AppResult};
-use crate::models::company_location::{CompanyLocation, CreateLocationRequest, GeofenceCheckResult, UpdateLocationRequest};
+use crate::models::company_location::{
+    CompanyLocation, CreateLocationRequest, GeofenceCheckResult, UpdateLocationRequest,
+};
 
 /// Haversine distance in meters between two lat/lng points
 fn haversine_meters(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
@@ -101,13 +103,11 @@ pub async fn update_location(
 }
 
 pub async fn delete_location(pool: &PgPool, company_id: Uuid, location_id: Uuid) -> AppResult<()> {
-    let result = sqlx::query(
-        "DELETE FROM company_locations WHERE id = $1 AND company_id = $2",
-    )
-    .bind(location_id)
-    .bind(company_id)
-    .execute(pool)
-    .await?;
+    let result = sqlx::query("DELETE FROM company_locations WHERE id = $1 AND company_id = $2")
+        .bind(location_id)
+        .bind(company_id)
+        .execute(pool)
+        .await?;
 
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound("Location not found".into()));
@@ -118,12 +118,11 @@ pub async fn delete_location(pool: &PgPool, company_id: Uuid, location_id: Uuid)
 // ─── Geofence Mode ───
 
 pub async fn get_geofence_mode(pool: &PgPool, company_id: Uuid) -> AppResult<String> {
-    let mode: Option<String> = sqlx::query_scalar(
-        "SELECT geofence_mode FROM companies WHERE id = $1",
-    )
-    .bind(company_id)
-    .fetch_optional(pool)
-    .await?;
+    let mode: Option<String> =
+        sqlx::query_scalar("SELECT geofence_mode FROM companies WHERE id = $1")
+            .bind(company_id)
+            .fetch_optional(pool)
+            .await?;
     Ok(mode.unwrap_or_else(|| "none".to_string()))
 }
 

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Building2, X, Pencil, Trash2 } from 'lucide-react';
 import { listCompanies, createCompany, updateCompanyAdmin, deleteCompany } from '@/api/admin';
+import { getErrorMessage } from '@/lib/utils';
 import type { Company, CreateCompanyRequest, UpdateCompanyRequest } from '@/types';
 
 export function CompanyManagement() {
@@ -26,8 +27,8 @@ export function CompanyManagement() {
       setForm({ name: '' });
       setError('');
     },
-    onError: (err: any) => {
-      setError(err.response?.data?.error || 'Failed to create company');
+    onError: (err: unknown) => {
+      setError(getErrorMessage(err, 'Failed to create company'));
     },
   });
 
@@ -38,8 +39,8 @@ export function CompanyManagement() {
       setDeleteTarget(null);
       setDeleteConfirmName('');
     },
-    onError: (err: any) => {
-      setError(err.response?.data?.error || 'Failed to delete company');
+    onError: (err: unknown) => {
+      setError(getErrorMessage(err, 'Failed to delete company'));
     },
   });
 
@@ -284,7 +285,7 @@ function EditCompanyModal({
   const mutation = useMutation({
     mutationFn: () => updateCompanyAdmin(company.id, form),
     onSuccess: onUpdated,
-    onError: (err: any) => setError(err.response?.data?.error || 'Failed to update company'),
+    onError: (err: unknown) => setError(getErrorMessage(err, 'Failed to update company')),
   });
 
   const set = (key: keyof UpdateCompanyRequest, value: string) =>

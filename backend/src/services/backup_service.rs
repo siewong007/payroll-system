@@ -304,12 +304,13 @@ pub async fn export_company(pool: &PgPool, company_id: Uuid) -> AppResult<Compan
 
     let mut collect_file = |url: Option<&String>| {
         if let Some(u) = url
-            && let Some(filename) = u.strip_prefix("/api/uploads/") {
-                let path = upload_dir.join(filename);
-                if let Ok(data) = std::fs::read(&path) {
-                    files.insert(u.clone(), b64.encode(&data));
-                }
+            && let Some(filename) = u.strip_prefix("/api/uploads/")
+        {
+            let path = upload_dir.join(filename);
+            if let Ok(data) = std::fs::read(&path) {
+                files.insert(u.clone(), b64.encode(&data));
             }
+        }
     };
 
     for d in &documents {
@@ -364,19 +365,20 @@ pub async fn import_company(
     }
 
     // Check if company with same name already exists
-    let existing_company: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT id FROM companies WHERE LOWER(name) = LOWER($1)"
-    )
-    .bind(&backup.company.name)
-    .fetch_optional(pool)
-    .await?;
+    let existing_company: Option<(Uuid,)> =
+        sqlx::query_as("SELECT id FROM companies WHERE LOWER(name) = LOWER($1)")
+            .bind(&backup.company.name)
+            .fetch_optional(pool)
+            .await?;
 
     let is_overwrite = existing_company.is_some();
 
     // Build UUID remap table
     let mut remap: HashMap<Uuid, Uuid> = HashMap::new();
 
-    let new_company_id = existing_company.map(|(id,)| id).unwrap_or_else(Uuid::new_v4);
+    let new_company_id = existing_company
+        .map(|(id,)| id)
+        .unwrap_or_else(Uuid::new_v4);
     remap.insert(backup.company.id, new_company_id);
 
     for pg in &backup.payroll_groups {
@@ -455,31 +457,79 @@ pub async fn import_company(
 
     // If overwriting, delete all existing data for this company (order matters for FK constraints)
     if is_overwrite {
-        warnings.push(format!("Existing company \"{}\" data was overwritten.", backup.company.name));
+        warnings.push(format!(
+            "Existing company \"{}\" data was overwritten.",
+            backup.company.name
+        ));
 
         // Delete in reverse dependency order
-        sqlx::query("DELETE FROM company_settings WHERE company_id = $1").bind(new_company_id).execute(&mut *tx).await?;
-        sqlx::query("DELETE FROM email_templates WHERE company_id = $1").bind(new_company_id).execute(&mut *tx).await?;
-        sqlx::query("DELETE FROM working_day_config WHERE company_id = $1").bind(new_company_id).execute(&mut *tx).await?;
-        sqlx::query("DELETE FROM holidays WHERE company_id = $1").bind(new_company_id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM company_settings WHERE company_id = $1")
+            .bind(new_company_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM email_templates WHERE company_id = $1")
+            .bind(new_company_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM working_day_config WHERE company_id = $1")
+            .bind(new_company_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM holidays WHERE company_id = $1")
+            .bind(new_company_id)
+            .execute(&mut *tx)
+            .await?;
         sqlx::query("DELETE FROM team_members WHERE team_id IN (SELECT id FROM teams WHERE company_id = $1)").bind(new_company_id).execute(&mut *tx).await?;
-        sqlx::query("DELETE FROM teams WHERE company_id = $1").bind(new_company_id).execute(&mut *tx).await?;
-        sqlx::query("DELETE FROM documents WHERE company_id = $1").bind(new_company_id).execute(&mut *tx).await?;
-        sqlx::query("DELETE FROM document_categories WHERE company_id = $1").bind(new_company_id).execute(&mut *tx).await?;
-        sqlx::query("DELETE FROM payroll_entries WHERE company_id = $1").bind(new_company_id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM teams WHERE company_id = $1")
+            .bind(new_company_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM documents WHERE company_id = $1")
+            .bind(new_company_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM document_categories WHERE company_id = $1")
+            .bind(new_company_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM payroll_entries WHERE company_id = $1")
+            .bind(new_company_id)
+            .execute(&mut *tx)
+            .await?;
         sqlx::query("DELETE FROM payroll_item_details WHERE payroll_item_id IN (SELECT pi.id FROM payroll_items pi JOIN payroll_runs pr ON pi.payroll_run_id = pr.id WHERE pr.company_id = $1)").bind(new_company_id).execute(&mut *tx).await?;
         sqlx::query("DELETE FROM payroll_items WHERE payroll_run_id IN (SELECT id FROM payroll_runs WHERE company_id = $1)").bind(new_company_id).execute(&mut *tx).await?;
-        sqlx::query("DELETE FROM payroll_runs WHERE company_id = $1").bind(new_company_id).execute(&mut *tx).await?;
-        sqlx::query("DELETE FROM overtime_applications WHERE company_id = $1").bind(new_company_id).execute(&mut *tx).await?;
-        sqlx::query("DELETE FROM claims WHERE company_id = $1").bind(new_company_id).execute(&mut *tx).await?;
-        sqlx::query("DELETE FROM leave_requests WHERE company_id = $1").bind(new_company_id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM payroll_runs WHERE company_id = $1")
+            .bind(new_company_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM overtime_applications WHERE company_id = $1")
+            .bind(new_company_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM claims WHERE company_id = $1")
+            .bind(new_company_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM leave_requests WHERE company_id = $1")
+            .bind(new_company_id)
+            .execute(&mut *tx)
+            .await?;
         sqlx::query("DELETE FROM leave_balances WHERE employee_id IN (SELECT id FROM employees WHERE company_id = $1)").bind(new_company_id).execute(&mut *tx).await?;
-        sqlx::query("DELETE FROM leave_types WHERE company_id = $1").bind(new_company_id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM leave_types WHERE company_id = $1")
+            .bind(new_company_id)
+            .execute(&mut *tx)
+            .await?;
         sqlx::query("DELETE FROM tp3_records WHERE employee_id IN (SELECT id FROM employees WHERE company_id = $1)").bind(new_company_id).execute(&mut *tx).await?;
         sqlx::query("DELETE FROM salary_history WHERE employee_id IN (SELECT id FROM employees WHERE company_id = $1)").bind(new_company_id).execute(&mut *tx).await?;
         sqlx::query("DELETE FROM employee_allowances WHERE employee_id IN (SELECT id FROM employees WHERE company_id = $1)").bind(new_company_id).execute(&mut *tx).await?;
-        sqlx::query("DELETE FROM employees WHERE company_id = $1").bind(new_company_id).execute(&mut *tx).await?;
-        sqlx::query("DELETE FROM payroll_groups WHERE company_id = $1").bind(new_company_id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM employees WHERE company_id = $1")
+            .bind(new_company_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM payroll_groups WHERE company_id = $1")
+            .bind(new_company_id)
+            .execute(&mut *tx)
+            .await?;
 
         // Update the company record
         let c = &backup.company;
@@ -605,9 +655,16 @@ pub async fn import_company(
                previous_zakat_ytd, created_at)
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"#,
         )
-        .bind(r(t.id)).bind(r(t.employee_id)).bind(t.tax_year).bind(&t.previous_employer_name)
-        .bind(t.previous_income_ytd).bind(t.previous_epf_ytd).bind(t.previous_pcb_ytd)
-        .bind(t.previous_socso_ytd).bind(t.previous_zakat_ytd).bind(now)
+        .bind(r(t.id))
+        .bind(r(t.employee_id))
+        .bind(t.tax_year)
+        .bind(&t.previous_employer_name)
+        .bind(t.previous_income_ytd)
+        .bind(t.previous_epf_ytd)
+        .bind(t.previous_pcb_ytd)
+        .bind(t.previous_socso_ytd)
+        .bind(t.previous_zakat_ytd)
+        .bind(now)
         .execute(&mut *tx)
         .await?;
     }
@@ -632,9 +689,16 @@ pub async fn import_company(
                entitled_days, taken_days, pending_days, carried_forward, created_at, updated_at)
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"#,
         )
-        .bind(r(lb.id)).bind(r(lb.employee_id)).bind(r(lb.leave_type_id)).bind(lb.year)
-        .bind(lb.entitled_days).bind(lb.taken_days).bind(lb.pending_days).bind(lb.carried_forward)
-        .bind(now).bind(now)
+        .bind(r(lb.id))
+        .bind(r(lb.employee_id))
+        .bind(r(lb.leave_type_id))
+        .bind(lb.year)
+        .bind(lb.entitled_days)
+        .bind(lb.taken_days)
+        .bind(lb.pending_days)
+        .bind(lb.carried_forward)
+        .bind(now)
+        .bind(now)
         .execute(&mut *tx)
         .await?;
     }
@@ -647,10 +711,20 @@ pub async fn import_company(
                attachment_url, attachment_name, created_at, updated_at)
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)"#,
         )
-        .bind(r(lr.id)).bind(r(lr.employee_id)).bind(new_company_id).bind(r(lr.leave_type_id))
-        .bind(lr.start_date).bind(lr.end_date).bind(lr.days).bind(&lr.reason)
-        .bind(&lr.status).bind(&lr.review_notes).bind(&lr.attachment_url).bind(&lr.attachment_name)
-        .bind(now).bind(now)
+        .bind(r(lr.id))
+        .bind(r(lr.employee_id))
+        .bind(new_company_id)
+        .bind(r(lr.leave_type_id))
+        .bind(lr.start_date)
+        .bind(lr.end_date)
+        .bind(lr.days)
+        .bind(&lr.reason)
+        .bind(&lr.status)
+        .bind(&lr.review_notes)
+        .bind(&lr.attachment_url)
+        .bind(&lr.attachment_name)
+        .bind(now)
+        .bind(now)
         .execute(&mut *tx)
         .await?;
     }
@@ -678,10 +752,19 @@ pub async fn import_company(
                end_time, hours, ot_type, reason, status, review_notes, created_at, updated_at)
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)"#,
         )
-        .bind(r(ot.id)).bind(r(ot.employee_id)).bind(new_company_id)
-        .bind(ot.ot_date).bind(ot.start_time).bind(ot.end_time).bind(ot.hours)
-        .bind(&ot.ot_type).bind(&ot.reason).bind(&ot.status).bind(&ot.review_notes)
-        .bind(now).bind(now)
+        .bind(r(ot.id))
+        .bind(r(ot.employee_id))
+        .bind(new_company_id)
+        .bind(ot.ot_date)
+        .bind(ot.start_time)
+        .bind(ot.end_time)
+        .bind(ot.hours)
+        .bind(&ot.ot_type)
+        .bind(&ot.reason)
+        .bind(&ot.status)
+        .bind(&ot.review_notes)
+        .bind(now)
+        .bind(now)
         .execute(&mut *tx)
         .await?;
     }
@@ -755,8 +838,14 @@ pub async fn import_company(
                description, amount, is_taxable, is_statutory, created_at)
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)"#,
         )
-        .bind(r(pid.id)).bind(r(pid.payroll_item_id)).bind(&pid.category).bind(&pid.item_type)
-        .bind(&pid.description).bind(pid.amount).bind(pid.is_taxable).bind(pid.is_statutory)
+        .bind(r(pid.id))
+        .bind(r(pid.payroll_item_id))
+        .bind(&pid.category)
+        .bind(&pid.item_type)
+        .bind(&pid.description)
+        .bind(pid.amount)
+        .bind(pid.is_taxable)
+        .bind(pid.is_statutory)
         .bind(now)
         .execute(&mut *tx)
         .await?;
@@ -770,11 +859,22 @@ pub async fn import_company(
                is_taxable, is_processed, payroll_run_id, created_at, updated_at)
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)"#,
         )
-        .bind(r(pe.id)).bind(r(pe.employee_id)).bind(new_company_id)
-        .bind(pe.period_year).bind(pe.period_month).bind(&pe.category).bind(&pe.item_type)
-        .bind(&pe.description).bind(pe.amount).bind(pe.quantity).bind(pe.rate)
-        .bind(pe.is_taxable).bind(pe.is_processed).bind(ro(pe.payroll_run_id))
-        .bind(now).bind(now)
+        .bind(r(pe.id))
+        .bind(r(pe.employee_id))
+        .bind(new_company_id)
+        .bind(pe.period_year)
+        .bind(pe.period_month)
+        .bind(&pe.category)
+        .bind(&pe.item_type)
+        .bind(&pe.description)
+        .bind(pe.amount)
+        .bind(pe.quantity)
+        .bind(pe.rate)
+        .bind(pe.is_taxable)
+        .bind(pe.is_processed)
+        .bind(ro(pe.payroll_run_id))
+        .bind(now)
+        .bind(now)
         .execute(&mut *tx)
         .await?;
     }
@@ -827,7 +927,11 @@ pub async fn import_company(
             r#"INSERT INTO team_members (id, team_id, employee_id, role, joined_at)
                VALUES ($1,$2,$3,$4,$5)"#,
         )
-        .bind(r(tm.id)).bind(r(tm.team_id)).bind(r(tm.employee_id)).bind(&tm.role).bind(now)
+        .bind(r(tm.id))
+        .bind(r(tm.team_id))
+        .bind(r(tm.employee_id))
+        .bind(&tm.role)
+        .bind(now)
         .execute(&mut *tx)
         .await?;
     }
@@ -839,9 +943,16 @@ pub async fn import_company(
                is_recurring, state, created_at, updated_at)
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"#,
         )
-        .bind(r(h.id)).bind(new_company_id).bind(&h.name).bind(h.date)
-        .bind(&h.holiday_type).bind(&h.description).bind(h.is_recurring).bind(&h.state)
-        .bind(now).bind(now)
+        .bind(r(h.id))
+        .bind(new_company_id)
+        .bind(&h.name)
+        .bind(h.date)
+        .bind(&h.holiday_type)
+        .bind(&h.description)
+        .bind(h.is_recurring)
+        .bind(&h.state)
+        .bind(now)
+        .bind(now)
         .execute(&mut *tx)
         .await?;
     }
@@ -865,8 +976,15 @@ pub async fn import_company(
                is_active, created_at, updated_at)
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)"#,
         )
-        .bind(r(et.id)).bind(new_company_id).bind(&et.name).bind(&et.letter_type)
-        .bind(&et.subject).bind(&et.body_html).bind(et.is_active).bind(now).bind(now)
+        .bind(r(et.id))
+        .bind(new_company_id)
+        .bind(&et.name)
+        .bind(&et.letter_type)
+        .bind(&et.subject)
+        .bind(&et.body_html)
+        .bind(et.is_active)
+        .bind(now)
+        .bind(now)
         .execute(&mut *tx)
         .await?;
     }
@@ -893,15 +1011,19 @@ pub async fn import_company(
         let mut files_restored = 0usize;
         for (url, data_b64) in &backup.files {
             if let Some(filename) = url.strip_prefix("/api/uploads/")
-                && let Ok(data) = b64.decode(data_b64) {
-                    let path = upload_dir.join(filename);
-                    if tokio::fs::write(&path, &data).await.is_ok() {
-                        files_restored += 1;
-                    }
+                && let Ok(data) = b64.decode(data_b64)
+            {
+                let path = upload_dir.join(filename);
+                if tokio::fs::write(&path, &data).await.is_ok() {
+                    files_restored += 1;
                 }
+            }
         }
         if files_restored > 0 {
-            warnings.push(format!("{} file(s) restored to uploads directory.", files_restored));
+            warnings.push(format!(
+                "{} file(s) restored to uploads directory.",
+                files_restored
+            ));
         }
     }
 
@@ -909,19 +1031,31 @@ pub async fn import_company(
     records_imported.insert("company".into(), 1usize);
     records_imported.insert("payroll_groups".into(), backup.payroll_groups.len());
     records_imported.insert("employees".into(), backup.employees.len());
-    records_imported.insert("employee_allowances".into(), backup.employee_allowances.len());
+    records_imported.insert(
+        "employee_allowances".into(),
+        backup.employee_allowances.len(),
+    );
     records_imported.insert("salary_history".into(), backup.salary_history.len());
     records_imported.insert("tp3_records".into(), backup.tp3_records.len());
     records_imported.insert("leave_types".into(), backup.leave_types.len());
     records_imported.insert("leave_balances".into(), backup.leave_balances.len());
     records_imported.insert("leave_requests".into(), backup.leave_requests.len());
     records_imported.insert("claims".into(), backup.claims.len());
-    records_imported.insert("overtime_applications".into(), backup.overtime_applications.len());
+    records_imported.insert(
+        "overtime_applications".into(),
+        backup.overtime_applications.len(),
+    );
     records_imported.insert("payroll_runs".into(), backup.payroll_runs.len());
     records_imported.insert("payroll_items".into(), backup.payroll_items.len());
-    records_imported.insert("payroll_item_details".into(), backup.payroll_item_details.len());
+    records_imported.insert(
+        "payroll_item_details".into(),
+        backup.payroll_item_details.len(),
+    );
     records_imported.insert("payroll_entries".into(), backup.payroll_entries.len());
-    records_imported.insert("document_categories".into(), backup.document_categories.len());
+    records_imported.insert(
+        "document_categories".into(),
+        backup.document_categories.len(),
+    );
     records_imported.insert("documents".into(), backup.documents.len());
     records_imported.insert("teams".into(), backup.teams.len());
     records_imported.insert("team_members".into(), backup.team_members.len());

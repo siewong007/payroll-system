@@ -1,8 +1,8 @@
 use axum::{
+    Json,
     body::Body,
     extract::{Path, Query, State},
-    http::{header, Response, StatusCode},
-    Json,
+    http::{Response, StatusCode, header},
 };
 use uuid::Uuid;
 
@@ -226,9 +226,14 @@ pub async fn check_out(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    let record =
-        attendance_service::check_out(&state.pool, employee_id, company_id, req.latitude, req.longitude)
-            .await?;
+    let record = attendance_service::check_out(
+        &state.pool,
+        employee_id,
+        company_id,
+        req.latitude,
+        req.longitude,
+    )
+    .await?;
     Ok(Json(record))
 }
 
@@ -302,10 +307,7 @@ pub async fn manual_attendance(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    if !matches!(
-        auth.0.role.as_str(),
-        "admin" | "super_admin" | "hr_manager"
-    ) {
+    if !matches!(auth.0.role.as_str(), "admin" | "super_admin" | "hr_manager") {
         return Err(AppError::Forbidden("Admin role required".into()));
     }
 
@@ -378,20 +380,12 @@ pub async fn update_attendance(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    if !matches!(
-        auth.0.role.as_str(),
-        "admin" | "super_admin" | "hr_manager"
-    ) {
+    if !matches!(auth.0.role.as_str(), "admin" | "super_admin" | "hr_manager") {
         return Err(AppError::Forbidden("Admin role required".into()));
     }
 
-    let record = attendance_service::update_attendance_record(
-        &state.pool,
-        company_id,
-        id,
-        &req,
-        auth.0.sub,
-    )
-    .await?;
+    let record =
+        attendance_service::update_attendance_record(&state.pool, company_id, id, &req, auth.0.sub)
+            .await?;
     Ok(Json(record))
 }

@@ -11,6 +11,7 @@ permissions:
 
 env:
   AWS_REGION: ap-southeast-1
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   deploy-backend:
@@ -24,6 +25,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-session-name: github-actions-deploy
           mask-aws-account-id: true
           audience: sts.amazonaws.com
           aws-region: ${{ env.AWS_REGION }}
@@ -77,6 +79,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-session-name: github-actions-frontend-deploy
           mask-aws-account-id: true
           audience: sts.amazonaws.com
           aws-region: ${{ env.AWS_REGION }}

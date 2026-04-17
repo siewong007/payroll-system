@@ -23,3 +23,12 @@ export function formatDate(date: string | Date): string {
     year: 'numeric',
   });
 }
+/** Extract error message from Axios-style or standard Error objects */
+export function getErrorMessage(err: unknown, fallback = 'Action failed'): string {
+  if (typeof err === 'object' && err !== null && 'response' in err) {
+    const axiosErr = err as { response: { data?: { error?: string } } };
+    if (axiosErr.response?.data?.error) return axiosErr.response.data.error;
+  }
+  if (err instanceof Error) return err.message;
+  return fallback;
+}

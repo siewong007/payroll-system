@@ -1,6 +1,6 @@
 use axum::{
-    extract::{Path, State},
     Json,
+    extract::{Path, State},
 };
 use uuid::Uuid;
 
@@ -8,7 +8,9 @@ use crate::core::app_state::AppState;
 use crate::core::auth::AuthUser;
 use crate::core::error::{AppError, AppResult};
 use crate::models::company::{Company, CreateCompanyRequest, UpdateCompanyRequest};
-use crate::models::user_company::{CreateUserRequest, UpdateUserCompaniesRequest, UpdateUserRequest, UserWithCompanies};
+use crate::models::user_company::{
+    CreateUserRequest, UpdateUserCompaniesRequest, UpdateUserRequest, UserWithCompanies,
+};
 use crate::services::{company_service, user_service};
 
 fn require_super_admin(auth: &AuthUser) -> AppResult<()> {
@@ -111,4 +113,3 @@ pub async fn update_user_companies(
     let user = user_service::update_user_companies(&state.pool, user_id, req.company_ids).await?;
     Ok(Json(user))
 }
-
