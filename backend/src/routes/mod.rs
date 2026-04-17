@@ -211,6 +211,9 @@ pub fn create_router(state: AppState) -> Router {
         // Employee portal
         .route("/attendance/my/today", get(attendance::my_today))
         .route("/attendance/my", get(attendance::my_attendance))
+        // Summary & export (admin)
+        .route("/attendance/summary", get(attendance::attendance_summary))
+        .route("/attendance/export", get(attendance::export_attendance))
         // Admin management
         .route("/attendance/records", get(attendance::list_attendance))
         .route("/attendance/records/{id}", put(attendance::update_attendance))

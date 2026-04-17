@@ -10,6 +10,8 @@ export interface QrTokenResponse {
   token: string;
   expires_at: string;
   scan_url: string;
+  /** Token lifetime in seconds — use for progress bar calculations */
+  ttl_seconds: number;
 }
 
 export interface AttendanceRecord {
@@ -128,4 +130,49 @@ export function updateAttendanceRecord(id: string, data: {
   notes?: string;
 }): Promise<AttendanceRecord> {
   return api.put(`/attendance/records/${id}`, data).then(r => r.data);
+}
+
+// ─── Summary & Export ───
+
+export interface AttendanceSummaryItem {
+  employee_id: string;
+  employee_number: string;
+  full_name: string;
+  department: string | null;
+  present_days: number;
+  late_days: number;
+  absent_days: number;
+  half_days: number;
+  total_hours: number;
+  overtime_hours: number;
+  unchecked_out_days: number;
+}
+
+export interface AttendanceSummaryQuery {
+  date_from: string;
+  date_to: string;
+  employee_id?: string;
+  department?: string;
+}
+
+export function getAttendanceSummary(params: AttendanceSummaryQuery): Promise<AttendanceSummaryItem[]> {
+  return api.get('/attendance/summary', { params }).then(r => r.data);
+}
+
+export async function downloadAttendanceCsv(params: {
+  date_from?: string;
+  date_to?: string;
+  employee_id?: string;
+  status?: string;
+}): Promise<void> {
+  const response = await api.get('/attendance/export', {
+    params,
+    responseType: 'blob',
+  });
+  const url = URL.createObjectURL(new Blob([response.data], { type: 'text/csv' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'attendance.csv';
+  a.click();
+  URL.revokeObjectURL(url);
 }

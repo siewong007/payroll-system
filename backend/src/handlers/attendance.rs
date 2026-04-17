@@ -1,5 +1,7 @@
 use axum::{
+    body::Body,
     extract::{Path, Query, State},
+    http::{header, Response, StatusCode},
     Json,
 };
 use uuid::Uuid;
@@ -8,9 +10,10 @@ use crate::core::app_state::AppState;
 use crate::core::auth::AuthUser;
 use crate::core::error::{AppError, AppResult};
 use crate::models::attendance::{
-    AttendanceListQuery, AttendanceMethodResponse, AttendanceRecord,
-    AttendanceRecordWithEmployee, CheckInFaceIdRequest, CheckInQrRequest, CheckOutRequest,
-    ManualAttendanceRequest, PaginatedAttendance, QrTokenResponse, SetAttendanceMethodRequest,
+    AttendanceExportQuery, AttendanceListQuery, AttendanceMethodResponse, AttendanceRecord,
+    AttendanceRecordWithEmployee, AttendanceSummaryItem, AttendanceSummaryQuery,
+    CheckInFaceIdRequest, CheckInQrRequest, CheckOutRequest, ManualAttendanceRequest,
+    PaginatedAttendance, QrTokenResponse, SetAttendanceMethodRequest,
     SetCompanyAttendanceMethodRequest, UpdateAttendanceRecordRequest,
 };
 use crate::services::attendance_service;
@@ -309,6 +312,57 @@ pub async fn manual_attendance(
     let record =
         attendance_service::manual_attendance(&state.pool, company_id, req, auth.0.sub).await?;
     Ok(Json(record))
+}
+
+// ─── Attendance Summary ───
+
+pub async fn attendance_summary(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Query(q): Query<AttendanceSummaryQuery>,
+) -> AppResult<Json<Vec<AttendanceSummaryItem>>> {
+    let company_id = auth
+        .0
+        .company_id
+        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
+
+    if auth.0.role == "employee" {
+        return Err(AppError::Forbidden("Not authorized".into()));
+    }
+
+    let items = attendance_service::get_attendance_summary(&state.pool, company_id, &q).await?;
+    Ok(Json(items))
+}
+
+// ─── CSV Export ───
+
+pub async fn export_attendance(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Query(q): Query<AttendanceExportQuery>,
+) -> AppResult<Response<Body>> {
+    let company_id = auth
+        .0
+        .company_id
+        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
+
+    if auth.0.role == "employee" {
+        return Err(AppError::Forbidden("Not authorized".into()));
+    }
+
+    let csv = attendance_service::export_attendance_csv(&state.pool, company_id, &q).await?;
+
+    let response = Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/csv; charset=utf-8")
+        .header(
+            header::CONTENT_DISPOSITION,
+            "attachment; filename=\"attendance.csv\"",
+        )
+        .body(Body::from(csv))
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    Ok(response)
 }
 
 // ─── Admin: Edit/Correct Attendance Record ───

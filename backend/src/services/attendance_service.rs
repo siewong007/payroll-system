@@ -4,9 +4,9 @@ use uuid::Uuid;
 
 use crate::core::error::{AppError, AppResult};
 use crate::models::attendance::{
-    AttendanceListQuery, AttendanceMethodResponse, AttendanceQrToken, AttendanceRecord,
-    AttendanceRecordWithEmployee, ManualAttendanceRequest, PaginatedAttendance, QrTokenResponse,
-    UpdateAttendanceRecordRequest,
+    AttendanceExportQuery, AttendanceListQuery, AttendanceMethodResponse, AttendanceQrToken,
+    AttendanceRecord, AttendanceRecordWithEmployee, AttendanceSummaryItem, AttendanceSummaryQuery,
+    ManualAttendanceRequest, PaginatedAttendance, QrTokenResponse, UpdateAttendanceRecordRequest,
 };
 use crate::models::work_schedule::WorkSchedule;
 use crate::services::geofence_service;
@@ -165,15 +165,18 @@ pub async fn generate_qr_token(
         token,
         expires_at,
         scan_url,
+        ttl_seconds: QR_TOKEN_TTL_SECONDS,
     })
 }
 
-pub async fn validate_and_consume_qr_token(
+/// Validate a QR token without consuming it — multiple employees may check in with the
+/// same active token during its TTL window. The `used` flag means admin-revoked (a new
+/// token was generated), not employee-scanned.
+pub async fn validate_qr_token(
     pool: &PgPool,
     token: &str,
     company_id: Uuid,
 ) -> AppResult<Uuid> {
-    // First, find the token regardless of company to provide better error messages
     let row: Option<AttendanceQrToken> = sqlx::query_as(
         "SELECT * FROM attendance_qr_tokens WHERE token = $1",
     )
@@ -182,24 +185,17 @@ pub async fn validate_and_consume_qr_token(
     .await?;
 
     match row {
-        None => Err(AppError::BadRequest("Invalid QR code: Token not found".into())),
+        None => Err(AppError::BadRequest("Invalid QR code: token not found".into())),
         Some(t) if t.company_id != company_id => Err(AppError::BadRequest(
-            "Invalid QR code: This code belongs to a different company".into(),
+            "Invalid QR code: this code belongs to a different company".into(),
         )),
         Some(t) if t.used => Err(AppError::BadRequest(
-            "This QR code has already been used".into(),
+            "This QR code has been revoked — please refresh the kiosk screen.".into(),
         )),
         Some(t) if t.expires_at < Utc::now() => {
-            Err(AppError::BadRequest("QR code has expired".into()))
+            Err(AppError::BadRequest("QR code has expired — please refresh the kiosk screen.".into()))
         }
-        Some(t) => {
-            // Mark as used
-            sqlx::query("UPDATE attendance_qr_tokens SET used = TRUE WHERE id = $1")
-                .bind(t.id)
-                .execute(pool)
-                .await?;
-            Ok(t.id)
-        }
+        Some(t) => Ok(t.id),
     }
 }
 
@@ -275,7 +271,7 @@ pub async fn check_in_qr(
     // Geofence check (may reject in enforce mode)
     let outside_geofence = geofence_service::validate_geofence(pool, company_id, latitude, longitude).await?;
 
-    let token_id = validate_and_consume_qr_token(pool, token, company_id).await?;
+    let token_id = validate_qr_token(pool, token, company_id).await?;
     let status = determine_checkin_status(pool, company_id).await;
 
     let record = sqlx::query_as::<_, AttendanceRecord>(
@@ -337,9 +333,9 @@ pub async fn check_out(
     latitude: Option<f64>,
     longitude: Option<f64>,
 ) -> AppResult<AttendanceRecord> {
-    let tz = get_company_timezone(pool, company_id).await;
-
-    // Compute hours_worked and overtime via SQL using the work schedule
+    // Use a subquery to find the most recent open check-in within 24 hours.
+    // The 24-hour window (instead of same-calendar-day) handles overnight shifts
+    // where check-in and check-out span midnight.
     let record = sqlx::query_as::<_, AttendanceRecord>(
         r#"UPDATE attendance_records ar
            SET check_out_at = NOW(),
@@ -355,18 +351,26 @@ pub async fn check_out(
                    ), 9)
                ),
                updated_at = NOW()
-           WHERE ar.employee_id = $1
-             AND ar.check_out_at IS NULL
-             AND DATE(ar.check_in_at AT TIME ZONE $4) = DATE(NOW() AT TIME ZONE $4)
+           WHERE ar.id = (
+               SELECT id FROM attendance_records
+               WHERE employee_id = $1
+                 AND company_id = $4
+                 AND check_out_at IS NULL
+                 AND check_in_at > NOW() - INTERVAL '24 hours'
+               ORDER BY check_in_at DESC
+               LIMIT 1
+           )
            RETURNING ar.*"#,
     )
     .bind(employee_id)
     .bind(latitude)
     .bind(longitude)
-    .bind(&tz)
+    .bind(company_id)
     .fetch_optional(pool)
     .await?
-    .ok_or_else(|| AppError::BadRequest("No active check-in found for today".into()))?;
+    .ok_or_else(|| AppError::BadRequest(
+        "No active check-in found. Please check in before checking out.".into(),
+    ))?;
 
     Ok(record)
 }
@@ -689,6 +693,13 @@ pub async fn mark_absent_for_date(pool: &PgPool, tz: &str) -> AppResult<i64> {
                  WHERE h.company_id = e.company_id
                    AND h.date = DATE(NOW() AT TIME ZONE $1)
              )
+             -- Not on approved leave today
+             AND NOT EXISTS (
+                 SELECT 1 FROM leave_requests lr
+                 WHERE lr.employee_id = e.id
+                   AND lr.status = 'approved'
+                   AND DATE(NOW() AT TIME ZONE $1) BETWEEN lr.start_date AND lr.end_date
+             )
              -- No attendance record today
              AND NOT EXISTS (
                  SELECT 1 FROM attendance_records ar
@@ -701,4 +712,164 @@ pub async fn mark_absent_for_date(pool: &PgPool, tz: &str) -> AppResult<i64> {
     .await?;
 
     Ok(result.rows_affected() as i64)
+}
+
+// ─── Attendance Summary ───
+
+/// Per-employee aggregate for a date range. Employees with no records still appear (zero counts).
+pub async fn get_attendance_summary(
+    pool: &PgPool,
+    company_id: Uuid,
+    q: &AttendanceSummaryQuery,
+) -> AppResult<Vec<AttendanceSummaryItem>> {
+    let mut extra_where = String::new();
+    let mut param_idx = 4usize;
+
+    if q.employee_id.is_some() {
+        extra_where.push_str(&format!(" AND e.id = ${}", param_idx));
+        param_idx += 1;
+    }
+    if q.department.is_some() {
+        extra_where.push_str(&format!(" AND e.department = ${}", param_idx));
+        param_idx += 1;
+    }
+    let _ = param_idx; // suppress unused warning
+
+    let sql = format!(
+        r#"SELECT
+               e.id              AS employee_id,
+               e.employee_number,
+               e.full_name,
+               e.department,
+               COUNT(*) FILTER (WHERE ar.status = 'present')  AS present_days,
+               COUNT(*) FILTER (WHERE ar.status = 'late')     AS late_days,
+               COUNT(*) FILTER (WHERE ar.status = 'absent')   AS absent_days,
+               COUNT(*) FILTER (WHERE ar.status = 'half_day') AS half_days,
+               COALESCE(SUM(ar.hours_worked),    0)::NUMERIC(10,2) AS total_hours,
+               COALESCE(SUM(ar.overtime_hours),  0)::NUMERIC(10,2) AS overtime_hours,
+               COUNT(*) FILTER (
+                   WHERE ar.check_out_at IS NULL AND ar.status NOT IN ('absent')
+               ) AS unchecked_out_days
+           FROM employees e
+           LEFT JOIN attendance_records ar
+               ON  ar.employee_id = e.id
+               AND ar.check_in_at >= $2::date
+               AND ar.check_in_at <  ($3::date + INTERVAL '1 day')
+           WHERE e.company_id   = $1
+             AND e.is_active    = TRUE
+             AND e.deleted_at   IS NULL
+             {}
+           GROUP BY e.id, e.employee_number, e.full_name, e.department
+           ORDER BY e.full_name"#,
+        extra_where
+    );
+
+    let mut query = sqlx::query_as::<_, AttendanceSummaryItem>(&sql)
+        .bind(company_id)
+        .bind(&q.date_from)
+        .bind(&q.date_to);
+
+    if let Some(eid)  = q.employee_id          { query = query.bind(eid); }
+    if let Some(ref d) = q.department           { query = query.bind(d); }
+
+    Ok(query.fetch_all(pool).await?)
+}
+
+// ─── CSV Export ───
+
+fn csv_field(s: &str) -> String {
+    if s.contains(',') || s.contains('"') || s.contains('\n') {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
+}
+
+pub async fn export_attendance_csv(
+    pool: &PgPool,
+    company_id: Uuid,
+    q: &AttendanceExportQuery,
+) -> AppResult<String> {
+    let mut where_clause = String::from("ar.company_id = $1");
+    let mut param_idx = 2usize;
+
+    if q.employee_id.is_some() {
+        where_clause.push_str(&format!(" AND ar.employee_id = ${}", param_idx));
+        param_idx += 1;
+    }
+    if q.date_from.is_some() {
+        where_clause.push_str(&format!(" AND ar.check_in_at >= ${}::date", param_idx));
+        param_idx += 1;
+    }
+    if q.date_to.is_some() {
+        where_clause.push_str(&format!(
+            " AND ar.check_in_at < (${}::date + INTERVAL '1 day')",
+            param_idx
+        ));
+        param_idx += 1;
+    }
+    if q.status.is_some() {
+        where_clause.push_str(&format!(" AND ar.status = ${}", param_idx));
+        param_idx += 1;
+    }
+    let _ = param_idx;
+
+    let sql = format!(
+        r#"SELECT
+               ar.id, ar.company_id, ar.employee_id,
+               e.employee_number, e.full_name, e.department,
+               ar.check_in_at, ar.check_out_at,
+               ar.method, ar.status,
+               ar.latitude, ar.longitude,
+               ar.checkout_latitude, ar.checkout_longitude,
+               ar.notes, ar.hours_worked, ar.overtime_hours, ar.is_outside_geofence,
+               ar.created_at
+           FROM attendance_records ar
+           JOIN employees e ON ar.employee_id = e.id
+           WHERE {}
+           ORDER BY ar.check_in_at DESC"#,
+        where_clause
+    );
+
+    let mut dq = sqlx::query_as::<_, AttendanceRecordWithEmployee>(&sql).bind(company_id);
+    if let Some(eid)   = q.employee_id          { dq = dq.bind(eid); }
+    if let Some(ref f) = q.date_from             { dq = dq.bind(f); }
+    if let Some(ref t) = q.date_to               { dq = dq.bind(t); }
+    if let Some(ref s) = q.status                { dq = dq.bind(s); }
+
+    let records = dq.fetch_all(pool).await?;
+
+    let mut csv = String::from(
+        "Date,Employee Number,Name,Department,Check In,Check Out,\
+         Hours Worked,Overtime Hours,Method,Status,Outside Geofence,Notes\n",
+    );
+
+    for r in &records {
+        let date      = r.check_in_at.format("%Y-%m-%d");
+        let check_in  = r.check_in_at.format("%H:%M:%S");
+        let check_out = r.check_out_at
+            .map(|t| t.format("%H:%M:%S").to_string())
+            .unwrap_or_default();
+        let hours = r.hours_worked
+            .map(|h| h.to_string())
+            .unwrap_or_default();
+        let ot = r.overtime_hours
+            .map(|h| h.to_string())
+            .unwrap_or_default();
+        let outside = r.is_outside_geofence
+            .map(|b| if b { "Yes" } else { "No" })
+            .unwrap_or("No");
+        let notes = csv_field(r.notes.as_deref().unwrap_or(""));
+        let dept  = csv_field(r.department.as_deref().unwrap_or(""));
+        let name  = csv_field(&r.full_name);
+
+        csv.push_str(&format!(
+            "{},{},{},{},{},{},{},{},{},{},{},{}\n",
+            date, r.employee_number, name, dept,
+            check_in, check_out, hours, ot,
+            r.method, r.status, outside, notes
+        ));
+    }
+
+    Ok(csv)
 }

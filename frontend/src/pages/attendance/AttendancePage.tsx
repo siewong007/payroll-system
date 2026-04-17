@@ -4,7 +4,7 @@ import {
   QrCode, RefreshCw, Clock, CheckCircle2,
   Filter, Plus, MapPin, Fingerprint,
   AlertCircle, Calendar, User, LogIn, LogOut, MoreVertical,
-  ChevronLeft, ChevronRight, Pencil, AlertTriangle, Timer,
+  ChevronLeft, ChevronRight, Pencil, AlertTriangle, Timer, Download,
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import {
@@ -13,6 +13,7 @@ import {
   generateQrToken,
   createManualAttendance,
   updateAttendanceRecord,
+  downloadAttendanceCsv,
   type AttendanceRecordWithEmployee,
 } from '@/api/attendance';
 import { useAuth } from '@/context/AuthContext';
@@ -92,7 +93,7 @@ function QrPanel() {
     }
   }, [isExpired, handleRefresh]);
 
-  const pct = token ? Math.max(0, (timeLeft / 60) * 100) : 0;
+  const pct = token ? Math.max(0, (timeLeft / (token.ttl_seconds || 300)) * 100) : 0;
 
   return (
     <div className="bg-white rounded-2xl shadow p-6 flex flex-col items-center gap-4">
@@ -373,6 +374,7 @@ export function AttendancePage() {
   const [page, setPage] = useState(1);
   const [showManual, setShowManual] = useState(false);
   const [editRecord, setEditRecord] = useState<AttendanceRecordWithEmployee | null>(null);
+  const [exporting, setExporting] = useState(false);
   const perPage = 50;
 
   const { data: method } = useQuery({
@@ -424,13 +426,34 @@ export function AttendancePage() {
         </div>
         <div className="flex gap-2">
           {isAdmin && (
-            <button
-              onClick={() => setShowManual(true)}
-              className="flex items-center gap-2 bg-black text-white text-sm font-medium px-4 py-2 rounded-xl hover:bg-gray-800 transition-colors"
-            >
-              <Plus className="w-4 h-4" />
-              Manual Entry
-            </button>
+            <>
+              <button
+                onClick={async () => {
+                  setExporting(true);
+                  try {
+                    await downloadAttendanceCsv({
+                      date_from: filters.date_from || undefined,
+                      date_to:   filters.date_to   || undefined,
+                      status:    filters.status    || undefined,
+                    });
+                  } finally {
+                    setExporting(false);
+                  }
+                }}
+                disabled={exporting}
+                className="flex items-center gap-2 text-sm font-medium px-4 py-2 rounded-xl border border-gray-300 hover:bg-gray-50 transition-colors disabled:opacity-50"
+              >
+                <Download className="w-4 h-4" />
+                {exporting ? 'Exporting…' : 'Export CSV'}
+              </button>
+              <button
+                onClick={() => setShowManual(true)}
+                className="flex items-center gap-2 bg-black text-white text-sm font-medium px-4 py-2 rounded-xl hover:bg-gray-800 transition-colors"
+              >
+                <Plus className="w-4 h-4" />
+                Manual Entry
+              </button>
+            </>
           )}
         </div>
       </div>

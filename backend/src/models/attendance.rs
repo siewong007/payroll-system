@@ -159,6 +159,43 @@ pub struct QrTokenResponse {
     pub expires_at: DateTime<Utc>,
     /// The full URL the QR code should encode (employee scans this)
     pub scan_url: String,
+    /// Token lifetime in seconds — clients use this for progress bar calculations
+    pub ttl_seconds: i64,
+}
+
+// ─── Summary ───
+
+#[derive(Debug, Deserialize)]
+pub struct AttendanceSummaryQuery {
+    pub date_from: String,
+    pub date_to: String,
+    pub employee_id: Option<Uuid>,
+    pub department: Option<String>,
+}
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct AttendanceSummaryItem {
+    pub employee_id: Uuid,
+    pub employee_number: String,
+    pub full_name: String,
+    pub department: Option<String>,
+    pub present_days: i64,
+    pub late_days: i64,
+    pub absent_days: i64,
+    pub half_days: i64,
+    pub total_hours: rust_decimal::Decimal,
+    pub overtime_hours: rust_decimal::Decimal,
+    pub unchecked_out_days: i64,
+}
+
+// ─── Export ───
+
+#[derive(Debug, Deserialize)]
+pub struct AttendanceExportQuery {
+    pub date_from: Option<String>,
+    pub date_to: Option<String>,
+    pub employee_id: Option<Uuid>,
+    pub status: Option<String>,
 }
 
 /// Response for the effective attendance method of a company
