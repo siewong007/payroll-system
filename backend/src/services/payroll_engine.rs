@@ -130,7 +130,7 @@ pub async fn process_payroll(
 
     for emp in &employees {
         let item =
-            process_employee(pool, &mut tx, run_id, emp, year, month, effective_date).await?;
+            process_employee(pool, &mut tx, run_id, emp, year, month, period_start, period_end, effective_date).await?;
 
         total_gross += item.gross_salary;
         total_net += item.net_salary;
@@ -201,6 +201,8 @@ async fn process_employee(
     emp: &Employee,
     year: i32,
     month: i32,
+    period_start: NaiveDate,
+    period_end: NaiveDate,
     effective_date: NaiveDate,
 ) -> AppResult<PayrollItem> {
     // Calculate age
@@ -260,7 +262,36 @@ async fn process_employee(
     .fetch_one(&mut **tx)
     .await?;
 
-    let gross = basic + allowances_total + variable_earnings;
+    // Auto-pull overtime from attendance records for hours NOT already covered by approved manual OT
+    // We assume Normal OT (1.5x) for auto-pulled hours.
+    let attendance_ot_hours: f64 = sqlx::query_scalar(
+        r#"SELECT COALESCE(SUM(ar.overtime_hours), 0)::FLOAT
+        FROM attendance_records ar
+        LEFT JOIN overtime_applications oa
+            ON ar.employee_id = oa.employee_id
+            AND DATE(ar.check_in_at) = oa.ot_date
+            AND oa.status = 'approved'
+        WHERE ar.employee_id = $1
+          AND ar.check_in_at >= $2 AND ar.check_in_at <= $3 + INTERVAL '1 day'
+          AND oa.id IS NULL"#,
+    )
+    .bind(emp.id)
+    .bind(period_start)
+    .bind(period_end)
+    .fetch_one(&mut **tx)
+    .await?;
+
+    let attendance_ot_pay = if attendance_ot_hours > 0.0 {
+        let hourly_rate = emp.hourly_rate.unwrap_or_else(|| {
+            // Default calculation: basic / 26 days / 8 hours
+            emp.basic_salary / 26 / 8
+        });
+        (hourly_rate as f64 * 1.5 * attendance_ot_hours) as i64
+    } else {
+        0
+    };
+
+    let gross = basic + allowances_total + variable_earnings + attendance_ot_pay;
 
     // EPF
     let epf = epf_service::calculate_epf(pool, gross, &epf_category, effective_date).await?;

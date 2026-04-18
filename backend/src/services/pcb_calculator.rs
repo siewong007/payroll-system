@@ -230,7 +230,7 @@ async fn get_rebate(pool: &PgPool, tax_year: i32) -> AppResult<i64> {
 }
 
 /// Round up to nearest RM (100 sen)
-fn round_up_to_ringgit(amount_sen: i64) -> i64 {
+pub(crate) fn round_up_to_ringgit(amount_sen: i64) -> i64 {
     if amount_sen <= 0 {
         return 0;
     }
@@ -242,16 +242,3 @@ fn round_up_to_ringgit(amount_sen: i64) -> i64 {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_round_up_to_ringgit() {
-        assert_eq!(round_up_to_ringgit(1001), 1100); // RM10.01 -> RM11
-        assert_eq!(round_up_to_ringgit(1000), 1000); // RM10.00 -> RM10
-        assert_eq!(round_up_to_ringgit(1099), 1100); // RM10.99 -> RM11
-        assert_eq!(round_up_to_ringgit(0), 0);
-        assert_eq!(round_up_to_ringgit(-100), 0);
-    }
-}

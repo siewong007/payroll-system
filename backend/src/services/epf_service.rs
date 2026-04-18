@@ -86,7 +86,7 @@ pub async fn calculate_epf(
 }
 
 /// EPF amounts are rounded to the nearest ringgit (RM1 = 100 sen)
-fn round_to_nearest_ringgit(amount_sen: i64) -> i64 {
+pub(crate) fn round_to_nearest_ringgit(amount_sen: i64) -> i64 {
     let remainder = amount_sen % 100;
     if remainder >= 50 {
         amount_sen + (100 - remainder)
@@ -95,15 +95,4 @@ fn round_to_nearest_ringgit(amount_sen: i64) -> i64 {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
 
-    #[test]
-    fn test_round_to_nearest_ringgit() {
-        assert_eq!(round_to_nearest_ringgit(1050), 1100); // RM10.50 -> RM11
-        assert_eq!(round_to_nearest_ringgit(1049), 1000); // RM10.49 -> RM10
-        assert_eq!(round_to_nearest_ringgit(1000), 1000); // RM10.00 -> RM10
-        assert_eq!(round_to_nearest_ringgit(1099), 1100); // RM10.99 -> RM11
-    }
-}

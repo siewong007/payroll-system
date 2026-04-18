@@ -273,7 +273,7 @@ pub async fn check_in_qr(
     let token_id = validate_qr_token(pool, token, company_id).await?;
     let status = determine_checkin_status(pool, company_id).await;
 
-    let record = sqlx::query_as::<_, AttendanceRecord>(
+    let result = sqlx::query_as::<_, AttendanceRecord>(
         r#"INSERT INTO attendance_records
            (company_id, employee_id, method, status, latitude, longitude, qr_token_id, is_outside_geofence)
            VALUES ($1, $2, 'qr_code', $3, $4, $5, $6, $7)
@@ -287,9 +287,23 @@ pub async fn check_in_qr(
     .bind(token_id)
     .bind(outside_geofence)
     .fetch_one(pool)
-    .await?;
+    .await;
 
-    Ok(record)
+    match result {
+        Ok(record) => Ok(record),
+        Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("23505") => {
+            // Handle race condition: if already checked in, return the existing open record
+            let record = sqlx::query_as::<_, AttendanceRecord>(
+                "SELECT * FROM attendance_records WHERE employee_id = $1 AND check_out_at IS NULL LIMIT 1"
+            )
+            .bind(employee_id)
+            .fetch_optional(pool)
+            .await?;
+            
+            record.ok_or_else(|| AppError::BadRequest("You already have an active check-in.".into()))
+        }
+        Err(e) => Err(e.into()),
+    }
 }
 
 pub async fn check_in_face_id(
@@ -308,7 +322,7 @@ pub async fn check_in_face_id(
 
     let status = determine_checkin_status(pool, company_id).await;
 
-    let record = sqlx::query_as::<_, AttendanceRecord>(
+    let result = sqlx::query_as::<_, AttendanceRecord>(
         r#"INSERT INTO attendance_records
            (company_id, employee_id, method, status, latitude, longitude, is_outside_geofence)
            VALUES ($1, $2, 'face_id', $3, $4, $5, $6)
@@ -321,9 +335,23 @@ pub async fn check_in_face_id(
     .bind(longitude)
     .bind(outside_geofence)
     .fetch_one(pool)
-    .await?;
+    .await;
 
-    Ok(record)
+    match result {
+        Ok(record) => Ok(record),
+        Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("23505") => {
+            // Handle race condition: if already checked in, return the existing open record
+            let record = sqlx::query_as::<_, AttendanceRecord>(
+                "SELECT * FROM attendance_records WHERE employee_id = $1 AND check_out_at IS NULL LIMIT 1"
+            )
+            .bind(employee_id)
+            .fetch_optional(pool)
+            .await?;
+            
+            record.ok_or_else(|| AppError::BadRequest("You already have an active check-in.".into()))
+        }
+        Err(e) => Err(e.into()),
+    }
 }
 
 pub async fn check_out(
