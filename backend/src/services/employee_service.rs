@@ -208,6 +208,18 @@ pub async fn create_employee(
         current_year,
     )
     .await;
+    
+    // Audit Log
+    let _ = crate::services::audit_service::log_action(
+        pool,
+        Some(created_by),
+        "create_employee",
+        "employee",
+        Some(emp.id),
+        None,
+        Some(serde_json::to_value(&emp).unwrap_or_default()),
+        Some(&format!("Created employee {} ({})", emp.full_name, emp.employee_number)),
+    ).await;
 
     Ok((emp, account_info))
 }
@@ -451,6 +463,18 @@ pub async fn update_employee(
     .bind(updated_by)
     .fetch_one(pool)
     .await?;
+
+    // Audit Log
+    let _ = crate::services::audit_service::log_action(
+        pool,
+        Some(updated_by),
+        "update_employee",
+        "employee",
+        Some(emp.id),
+        Some(serde_json::to_value(&existing).unwrap_or_default()),
+        Some(serde_json::to_value(&emp).unwrap_or_default()),
+        Some(&format!("Updated employee {} ({})", emp.full_name, emp.employee_number)),
+    ).await;
 
     Ok(emp)
 }

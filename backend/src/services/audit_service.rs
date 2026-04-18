@@ -90,3 +90,28 @@ pub async fn list_audit_logs(
 
     Ok((logs, count))
 }
+pub async fn log_action(
+    pool: &PgPool,
+    user_id: Option<Uuid>,
+    action: &str,
+    entity_type: &str,
+    entity_id: Option<Uuid>,
+    old_values: Option<serde_json::Value>,
+    new_values: Option<serde_json::Value>,
+    description: Option<&str>,
+) -> AppResult<()> {
+    sqlx::query(
+        r#"INSERT INTO audit_logs (user_id, action, entity_type, entity_id, old_values, new_values, description)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)"#,
+    )
+    .bind(user_id)
+    .bind(action)
+    .bind(entity_type)
+    .bind(entity_id)
+    .bind(old_values)
+    .bind(new_values)
+    .bind(description)
+    .execute(pool)
+    .await?;
+    Ok(())
+}

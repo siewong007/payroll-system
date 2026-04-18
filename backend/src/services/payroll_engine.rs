@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use chrono::{Datelike, NaiveDate};
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -116,6 +117,120 @@ pub async fn process_payroll(
     .execute(&mut *tx)
     .await?;
 
+    let employee_ids: Vec<Uuid> = employees.iter().map(|e| e.id).collect();
+
+    // 1. Batch fetch recurring allowances and deductions
+    let mut recurring_allowances_map = HashMap::new();
+    let mut recurring_deductions_map = HashMap::new();
+    let allowances: Vec<(Uuid, String, i64)> = sqlx::query_as(
+        r#"SELECT employee_id, category, SUM(amount)::BIGINT
+           FROM employee_allowances
+           WHERE employee_id = ANY($1) AND is_active = TRUE AND is_recurring = TRUE
+             AND effective_from <= $2 AND (effective_to IS NULL OR effective_to >= $2)
+           GROUP BY employee_id, category"#
+    )
+    .bind(&employee_ids)
+    .bind(effective_date)
+    .fetch_all(&mut *tx)
+    .await?;
+
+    for (emp_id, cat, total) in allowances {
+        if cat == "earning" {
+            recurring_allowances_map.insert(emp_id, total);
+        } else {
+            recurring_deductions_map.insert(emp_id, total);
+        }
+    }
+
+    // 2. Batch fetch staged payroll entries
+    let mut variable_earnings_map = HashMap::new();
+    let mut variable_deductions_map = HashMap::new();
+    let entries: Vec<(Uuid, String, i64)> = sqlx::query_as(
+        r#"SELECT employee_id, category, SUM(amount)::BIGINT
+           FROM payroll_entries
+           WHERE employee_id = ANY($1) AND period_year = $2 AND period_month = $3
+             AND is_processed = FALSE
+           GROUP BY employee_id, category"#
+    )
+    .bind(&employee_ids)
+    .bind(year)
+    .bind(month)
+    .fetch_all(&mut *tx)
+    .await?;
+
+    for (emp_id, cat, total) in entries {
+        if cat == "earning" {
+            variable_earnings_map.insert(emp_id, total);
+        } else {
+            variable_deductions_map.insert(emp_id, total);
+        }
+    }
+
+    // 3. Batch fetch attendance OT hours
+    let ot_hours: Vec<(Uuid, f64)> = sqlx::query_as(
+        r#"SELECT ar.employee_id, SUM(ar.overtime_hours)::FLOAT
+           FROM attendance_records ar
+           LEFT JOIN overtime_applications oa
+               ON ar.employee_id = oa.employee_id
+               AND DATE(ar.check_in_at) = oa.ot_date
+               AND oa.status = 'approved'
+           WHERE ar.employee_id = ANY($1)
+             AND ar.check_in_at >= $2 AND ar.check_in_at <= $3 + INTERVAL '1 day'
+             AND oa.id IS NULL
+           GROUP BY ar.employee_id"#
+    )
+    .bind(&employee_ids)
+    .bind(period_start)
+    .bind(period_end)
+    .fetch_all(&mut *tx)
+    .await?;
+    let attendance_ot_map: HashMap<Uuid, f64> = ot_hours.into_iter().collect();
+
+    // 4. Batch fetch TP3 data
+    let tp3_data: Vec<(Uuid, i64, i64, i64, i64)> = sqlx::query_as(
+        r#"SELECT employee_id, previous_income_ytd, previous_epf_ytd, previous_pcb_ytd, previous_zakat_ytd
+           FROM tp3_records WHERE employee_id = ANY($1) AND tax_year = $2"#
+    )
+    .bind(&employee_ids)
+    .bind(year)
+    .fetch_all(&mut *tx)
+    .await?;
+    let tp3_map: HashMap<Uuid, (i64, i64, i64, i64)> = tp3_data.into_iter().map(|(id, i, e, p, z)| (id, (i, e, p, z))).collect();
+
+    // 5. Batch fetch YTD figures
+    let ytd_data: Vec<(Uuid, i64, i64, i64, i64, i64, i64, i64)> = sqlx::query_as(
+        r#"SELECT
+            pi.employee_id,
+            COALESCE(SUM(pi.gross_salary), 0)::BIGINT,
+            COALESCE(SUM(pi.pcb_amount), 0)::BIGINT,
+            COALESCE(SUM(pi.epf_employee), 0)::BIGINT,
+            COALESCE(SUM(pi.socso_employee), 0)::BIGINT,
+            COALESCE(SUM(pi.eis_employee), 0)::BIGINT,
+            COALESCE(SUM(pi.zakat_amount), 0)::BIGINT,
+            COALESCE(SUM(pi.net_salary), 0)::BIGINT
+        FROM payroll_items pi
+        JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
+        WHERE pi.employee_id = ANY($1) AND pr.period_year = $2 AND pr.period_month < $3
+        AND pr.status::text IN ('processed', 'approved', 'paid')
+        GROUP BY pi.employee_id"#
+    )
+    .bind(&employee_ids)
+    .bind(year)
+    .bind(month)
+    .fetch_all(&mut *tx)
+    .await?;
+    let ytd_map: HashMap<Uuid, (i64, i64, i64, i64, i64, i64, i64)> = ytd_data.into_iter().map(|(id, g, p, e, s, ei, z, n)| (id, (g, p, e, s, ei, z, n))).collect();
+
+    let bulk_data = BulkPayrollData {
+        recurring_allowances: recurring_allowances_map,
+        recurring_deductions: recurring_deductions_map,
+        variable_earnings: variable_earnings_map,
+        variable_deductions: variable_deductions_map,
+        attendance_ot_hours: attendance_ot_map,
+        tp3: tp3_map,
+        ytd: ytd_map,
+    };
+
     let mut total_gross: i64 = 0;
     let mut total_net: i64 = 0;
     let mut total_employer_cost: i64 = 0;
@@ -130,7 +245,7 @@ pub async fn process_payroll(
 
     for emp in &employees {
         let item =
-            process_employee(pool, &mut tx, run_id, emp, year, month, period_start, period_end, effective_date).await?;
+            process_employee(pool, &mut tx, run_id, emp, year, month, period_start, period_end, effective_date, &bulk_data).await?;
 
         total_gross += item.gross_salary;
         total_net += item.net_salary;
@@ -175,6 +290,24 @@ pub async fn process_payroll(
 
     tx.commit().await?;
 
+    // Audit Log
+    let _ = crate::services::audit_service::log_action(
+        pool,
+        Some(processed_by),
+        "process_payroll",
+        "payroll_run",
+        Some(run_id),
+        None,
+        Some(serde_json::json!({
+            "year": year,
+            "month": month,
+            "total_gross": total_gross,
+            "total_net": total_net,
+            "employee_count": employees.len()
+        })),
+        Some(&format!("Processed payroll for {:02}/{}", month, year)),
+    ).await;
+
     // Return the completed run
     let run = sqlx::query_as::<_, PayrollRun>(
         r#"SELECT id, company_id, payroll_group_id, period_year, period_month,
@@ -204,6 +337,7 @@ async fn process_employee(
     period_start: NaiveDate,
     period_end: NaiveDate,
     effective_date: NaiveDate,
+    bulk: &BulkPayrollData,
 ) -> AppResult<PayrollItem> {
     // Calculate age
     let age = calculate_age(emp.date_of_birth, effective_date);
@@ -213,73 +347,11 @@ async fn process_employee(
     // Gross salary = basic + recurring allowances
     let basic = emp.basic_salary;
 
-    // Fetch recurring allowances
-    let allowances_total: i64 = sqlx::query_scalar(
-        r#"SELECT COALESCE(SUM(amount), 0)::BIGINT FROM employee_allowances
-        WHERE employee_id = $1 AND category = 'earning'
-        AND is_active = TRUE AND is_recurring = TRUE
-        AND effective_from <= $2
-        AND (effective_to IS NULL OR effective_to >= $2)"#,
-    )
-    .bind(emp.id)
-    .bind(effective_date)
-    .fetch_one(&mut **tx)
-    .await?;
-
-    // Fetch staged variable entries for this period
-    let variable_earnings: i64 = sqlx::query_scalar(
-        r#"SELECT COALESCE(SUM(amount), 0)::BIGINT FROM payroll_entries
-        WHERE employee_id = $1 AND period_year = $2 AND period_month = $3
-        AND category = 'earning' AND is_processed = FALSE"#,
-    )
-    .bind(emp.id)
-    .bind(year)
-    .bind(month)
-    .fetch_one(&mut **tx)
-    .await?;
-
-    // Fetch staged deductions
-    let variable_deductions: i64 = sqlx::query_scalar(
-        r#"SELECT COALESCE(SUM(amount), 0)::BIGINT FROM payroll_entries
-        WHERE employee_id = $1 AND period_year = $2 AND period_month = $3
-        AND category = 'deduction' AND is_processed = FALSE"#,
-    )
-    .bind(emp.id)
-    .bind(year)
-    .bind(month)
-    .fetch_one(&mut **tx)
-    .await?;
-
-    let recurring_deductions: i64 = sqlx::query_scalar(
-        r#"SELECT COALESCE(SUM(amount), 0)::BIGINT FROM employee_allowances
-        WHERE employee_id = $1 AND category = 'deduction'
-        AND is_active = TRUE AND is_recurring = TRUE
-        AND effective_from <= $2
-        AND (effective_to IS NULL OR effective_to >= $2)"#,
-    )
-    .bind(emp.id)
-    .bind(effective_date)
-    .fetch_one(&mut **tx)
-    .await?;
-
-    // Auto-pull overtime from attendance records for hours NOT already covered by approved manual OT
-    // We assume Normal OT (1.5x) for auto-pulled hours.
-    let attendance_ot_hours: f64 = sqlx::query_scalar(
-        r#"SELECT COALESCE(SUM(ar.overtime_hours), 0)::FLOAT
-        FROM attendance_records ar
-        LEFT JOIN overtime_applications oa
-            ON ar.employee_id = oa.employee_id
-            AND DATE(ar.check_in_at) = oa.ot_date
-            AND oa.status = 'approved'
-        WHERE ar.employee_id = $1
-          AND ar.check_in_at >= $2 AND ar.check_in_at <= $3 + INTERVAL '1 day'
-          AND oa.id IS NULL"#,
-    )
-    .bind(emp.id)
-    .bind(period_start)
-    .bind(period_end)
-    .fetch_one(&mut **tx)
-    .await?;
+    let allowances_total = *bulk.recurring_allowances.get(&emp.id).unwrap_or(&0);
+    let variable_earnings = *bulk.variable_earnings.get(&emp.id).unwrap_or(&0);
+    let variable_deductions = *bulk.variable_deductions.get(&emp.id).unwrap_or(&0);
+    let recurring_deductions = *bulk.recurring_deductions.get(&emp.id).unwrap_or(&0);
+    let attendance_ot_hours = *bulk.attendance_ot_hours.get(&emp.id).unwrap_or(&0.0);
 
     let attendance_ot_pay = if attendance_ot_hours > 0.0 {
         let hourly_rate = emp.hourly_rate.unwrap_or_else(|| {
@@ -304,20 +376,12 @@ async fn process_employee(
     let eis = eis_service::calculate_eis(pool, gross, age, is_foreigner, effective_date).await?;
 
     // Get YTD figures (from previous months this year)
-    let (ytd_gross, ytd_pcb, ytd_epf, ytd_socso, ytd_eis, ytd_zakat, ytd_net) =
-        get_ytd_figures(pool, emp.id, year, month).await?;
+    let (ytd_gross, ytd_pcb, ytd_epf, ytd_socso, ytd_eis, ytd_zakat, ytd_net) = 
+        *bulk.ytd.get(&emp.id).unwrap_or(&(0, 0, 0, 0, 0, 0, 0));
 
     // Get TP3 data if exists
-    let tp3 = sqlx::query_as::<_, (i64, i64, i64, i64)>(
-        r#"SELECT previous_income_ytd, previous_epf_ytd, previous_pcb_ytd, previous_zakat_ytd
-        FROM tp3_records WHERE employee_id = $1 AND tax_year = $2"#,
-    )
-    .bind(emp.id)
-    .bind(year)
-    .fetch_optional(pool)
-    .await?;
-
-    let (tp3_income, tp3_epf, tp3_pcb, tp3_zakat) = tp3.unwrap_or((0, 0, 0, 0));
+    let (tp3_income, tp3_epf, tp3_pcb, tp3_zakat) = 
+        *bulk.tp3.get(&emp.id).unwrap_or(&(0, 0, 0, 0));
 
     // Zakat
     let zakat = if emp.zakat_eligible.unwrap_or(false) {
@@ -442,37 +506,6 @@ async fn process_employee(
     Ok(item)
 }
 
-/// Get YTD figures from previous payroll items in the same tax year
-async fn get_ytd_figures(
-    pool: &PgPool,
-    employee_id: Uuid,
-    year: i32,
-    current_month: i32,
-) -> AppResult<(i64, i64, i64, i64, i64, i64, i64)> {
-    let result = sqlx::query_as::<_, (i64, i64, i64, i64, i64, i64, i64)>(
-        r#"SELECT
-            COALESCE(SUM(pi.gross_salary), 0)::BIGINT,
-            COALESCE(SUM(pi.pcb_amount), 0)::BIGINT,
-            COALESCE(SUM(pi.epf_employee), 0)::BIGINT,
-            COALESCE(SUM(pi.socso_employee), 0)::BIGINT,
-            COALESCE(SUM(pi.eis_employee), 0)::BIGINT,
-            COALESCE(SUM(pi.zakat_amount), 0)::BIGINT,
-            COALESCE(SUM(pi.net_salary), 0)::BIGINT
-        FROM payroll_items pi
-        JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
-        WHERE pi.employee_id = $1
-          AND pr.period_year = $2
-          AND pr.period_month < $3
-          AND pr.status NOT IN ('cancelled', 'draft')"#,
-    )
-    .bind(employee_id)
-    .bind(year)
-    .bind(current_month)
-    .fetch_one(pool)
-    .await?;
-
-    Ok(result)
-}
 
 fn calculate_age(dob: Option<NaiveDate>, as_of: NaiveDate) -> i32 {
     match dob {
@@ -485,4 +518,13 @@ fn calculate_age(dob: Option<NaiveDate>, as_of: NaiveDate) -> i32 {
         }
         None => 30, // default assumption if DOB not provided
     }
+}
+struct BulkPayrollData {
+    recurring_allowances: HashMap<Uuid, i64>,
+    recurring_deductions: HashMap<Uuid, i64>,
+    variable_earnings: HashMap<Uuid, i64>,
+    variable_deductions: HashMap<Uuid, i64>,
+    attendance_ot_hours: HashMap<Uuid, f64>,
+    tp3: HashMap<Uuid, (i64, i64, i64, i64)>,
+    ytd: HashMap<Uuid, (i64, i64, i64, i64, i64, i64, i64)>,
 }

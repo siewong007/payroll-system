@@ -264,6 +264,18 @@ pub async fn approve_leave(
         .await;
     }
 
+    // Audit Log
+    let _ = crate::services::audit_service::log_action(
+        pool,
+        Some(reviewer_id),
+        "approve_leave",
+        "leave_request",
+        Some(lr.id),
+        None,
+        Some(serde_json::to_value(&lr).unwrap_or_default()),
+        Some(&format!("Approved leave for employee {}", lr.employee_id)),
+    ).await;
+
     Ok(lr)
 }
 
@@ -331,6 +343,18 @@ pub async fn reject_leave(
         )
         .await;
     }
+
+    // Audit Log
+    let _ = crate::services::audit_service::log_action(
+        pool,
+        Some(reviewer_id),
+        "reject_leave",
+        "leave_request",
+        Some(lr.id),
+        None,
+        Some(serde_json::to_value(&lr).unwrap_or_default()),
+        Some(&format!("Rejected leave for employee {}", lr.employee_id)),
+    ).await;
 
     Ok(lr)
 }

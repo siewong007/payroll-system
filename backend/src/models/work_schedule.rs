@@ -41,3 +41,24 @@ pub struct UpdateWorkScheduleRequest {
     pub half_day_hours: Option<f64>,
     pub timezone: Option<String>,
 }
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct EmployeeWorkSchedule {
+    pub id: Uuid,
+    pub employee_id: Uuid,
+    pub company_id: Uuid,
+    pub day_of_week: i16,
+    pub start_time: NaiveTime,
+    pub end_time: NaiveTime,
+    pub grace_minutes: i32,
+    pub is_active: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateEmployeeWorkScheduleRequest {
+    pub day_of_week: i16,
+    pub start_time: String,
+    pub end_time: String,
+    pub grace_minutes: Option<i32>,
+}

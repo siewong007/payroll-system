@@ -203,35 +203,52 @@ pub async fn validate_qr_token(pool: &PgPool, token: &str, company_id: Uuid) -> 
 
 /// Determine attendance status based on the company's work schedule.
 /// Returns "present" or "late".
-async fn determine_checkin_status(pool: &PgPool, company_id: Uuid) -> String {
-    let schedule: Option<WorkSchedule> = sqlx::query_as(
-        "SELECT * FROM company_work_schedules WHERE company_id = $1 AND is_default = TRUE",
+async fn determine_checkin_status(pool: &PgPool, employee_id: Uuid, company_id: Uuid) -> String {
+    let tz = get_company_timezone(pool, company_id).await;
+
+    // Get current day of week (0=Sunday, 6=Saturday)
+    let dow: i16 = sqlx::query_scalar("SELECT EXTRACT(DOW FROM (NOW() AT TIME ZONE $1))::int16")
+        .bind(&tz)
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
+
+    // 1. Try employee-specific schedule
+    let emp_schedule: Option<(NaiveTime, i32)> = sqlx::query_as(
+        "SELECT start_time, grace_minutes FROM employee_work_schedules
+         WHERE employee_id = $1 AND day_of_week = $2 AND is_active = TRUE",
     )
-    .bind(company_id)
+    .bind(employee_id)
+    .bind(dow)
     .fetch_optional(pool)
     .await
     .unwrap_or(None);
 
-    let schedule = match schedule {
-        Some(s) => s,
-        None => return "present".to_string(), // no schedule configured → always present
-    };
-
-    // Get current time in the company's timezone
-    let tz = schedule.timezone.as_str();
-    let now_local: Option<NaiveTime> = sqlx::query_scalar("SELECT (NOW() AT TIME ZONE $1)::time")
-        .bind(tz)
+    let (start_time, grace_minutes) = if let Some(s) = emp_schedule {
+        s
+    } else {
+        // 2. Fallback to company default
+        let company_schedule: Option<(NaiveTime, i32)> = sqlx::query_as(
+            "SELECT start_time, grace_minutes FROM company_work_schedules WHERE company_id = $1 AND is_default = TRUE",
+        )
+        .bind(company_id)
         .fetch_optional(pool)
         .await
         .unwrap_or(None);
 
-    let now_local = match now_local {
-        Some(t) => t,
-        None => return "present".to_string(),
+        match company_schedule {
+            Some(s) => s,
+            None => return "present".to_string(),
+        }
     };
 
-    // Calculate the cutoff: start_time + grace_minutes
-    let cutoff = schedule.start_time + chrono::Duration::minutes(schedule.grace_minutes as i64);
+    let now_local: NaiveTime = sqlx::query_scalar("SELECT (NOW() AT TIME ZONE $1)::time")
+        .bind(&tz)
+        .fetch_one(pool)
+        .await
+        .unwrap_or_else(|_| Utc::now().time());
+
+    let cutoff = start_time + chrono::Duration::minutes(grace_minutes as i64);
 
     if now_local > cutoff {
         "late".to_string()
@@ -271,7 +288,7 @@ pub async fn check_in_qr(
         geofence_service::validate_geofence(pool, company_id, latitude, longitude).await?;
 
     let token_id = validate_qr_token(pool, token, company_id).await?;
-    let status = determine_checkin_status(pool, company_id).await;
+    let status = determine_checkin_status(pool, employee_id, company_id).await;
 
     let result = sqlx::query_as::<_, AttendanceRecord>(
         r#"INSERT INTO attendance_records
@@ -320,7 +337,7 @@ pub async fn check_in_face_id(
     let outside_geofence =
         geofence_service::validate_geofence(pool, company_id, latitude, longitude).await?;
 
-    let status = determine_checkin_status(pool, company_id).await;
+    let status = determine_checkin_status(pool, employee_id, company_id).await;
 
     let result = sqlx::query_as::<_, AttendanceRecord>(
         r#"INSERT INTO attendance_records

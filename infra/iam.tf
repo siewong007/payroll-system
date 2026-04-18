@@ -173,6 +173,39 @@ resource "aws_iam_role_policy" "cicd_deploy" {
           "cloudfront:CreateInvalidation",
         ]
         Resource = aws_cloudfront_distribution.frontend.arn
+      },
+      {
+        Sid    = "TerraformState"
+        Effect = "Allow"
+        Action = [
+          "s3:ListBucket",
+          "s3:GetObject",
+          "s3:PutObject"
+        ]
+        Resource = [
+          "arn:aws:s3:::payroll-tfstate-371726673750",
+          "arn:aws:s3:::payroll-tfstate-371726673750/*"
+        ]
+      },
+      {
+        Sid    = "TerraformLock"
+        Effect = "Allow"
+        Action = [
+          "dynamodb:GetItem",
+          "dynamodb:PutItem",
+          "dynamodb:DeleteItem"
+        ]
+        Resource = "arn:aws:dynamodb:ap-southeast-1:371726673750:table/payroll-terraform-locks"
+      },
+      {
+        Sid    = "TerraformOutputs"
+        Effect = "Allow"
+        Action = [
+          "ecr:DescribeRepositories",
+          "s3:GetBucketLocation",
+          "cloudfront:GetDistribution"
+        ]
+        Resource = "*"
       }
     ]
   })
