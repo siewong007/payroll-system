@@ -241,4 +241,3 @@ pub(crate) fn round_up_to_ringgit(amount_sen: i64) -> i64 {
         amount_sen
     }
 }
-

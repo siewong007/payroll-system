@@ -1,8 +1,9 @@
-import { useState, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { FileText, Download, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import {
+  getReportPeriods,
   getPayrollSummary,
   getPayrollByDepartment,
   getLeaveReport,
@@ -130,8 +131,75 @@ export function Reports() {
   const { user } = useAuth();
   const isExec = user?.role === 'exec';
   const [tab, setTab] = useState<ReportTab>(isExec ? 'leave' : 'payroll');
-  const [year, setYear] = useState(2026);
-  const [month, setMonth] = useState(3);
+  const today = new Date();
+  const fallbackYear = today.getFullYear();
+  const fallbackMonth = today.getMonth() + 1;
+  const [year, setYear] = useState(fallbackYear);
+  const [month, setMonth] = useState(fallbackMonth);
+  const [hasInitializedPeriods, setHasInitializedPeriods] = useState(false);
+
+  const periodsQuery = useQuery({
+    queryKey: ['report-periods'],
+    queryFn: getReportPeriods,
+  });
+
+  const payrollMonthsByYear = useMemo(
+    () => new Map((periodsQuery.data?.payroll_months ?? []).map((period) => [period.year, period.months])),
+    [periodsQuery.data?.payroll_months]
+  );
+
+  const yearOptions = useMemo(() => {
+    const source = (() => {
+      switch (tab) {
+        case 'payroll':
+        case 'department':
+        case 'statutory':
+          return periodsQuery.data?.payroll_years;
+        case 'leave':
+          return periodsQuery.data?.leave_years;
+        case 'claims':
+          return periodsQuery.data?.claims_years;
+        case 'ea_form':
+          return periodsQuery.data?.ea_form_years;
+      }
+    })();
+
+    return source && source.length > 0 ? source : [periodsQuery.data?.default_year ?? fallbackYear];
+  }, [fallbackYear, periodsQuery.data, tab]);
+
+  const monthOptions = useMemo(() => {
+    const availableMonths = payrollMonthsByYear.get(year);
+    if (availableMonths && availableMonths.length > 0) {
+      return availableMonths;
+    }
+    return [periodsQuery.data?.default_month ?? fallbackMonth];
+  }, [fallbackMonth, payrollMonthsByYear, periodsQuery.data?.default_month, year]);
+
+  useEffect(() => {
+    if (!periodsQuery.data || hasInitializedPeriods) {
+      return;
+    }
+
+    setYear(periodsQuery.data.default_year);
+    setMonth(periodsQuery.data.default_month);
+    setHasInitializedPeriods(true);
+  }, [hasInitializedPeriods, periodsQuery.data]);
+
+  useEffect(() => {
+    if (yearOptions.length === 0 || yearOptions.includes(year)) {
+      return;
+    }
+
+    setYear(yearOptions[yearOptions.length - 1]);
+  }, [year, yearOptions]);
+
+  useEffect(() => {
+    if (!['department', 'statutory'].includes(tab) || monthOptions.length === 0 || monthOptions.includes(month)) {
+      return;
+    }
+
+    setMonth(monthOptions[monthOptions.length - 1]);
+  }, [month, monthOptions, tab]);
 
   const payrollQuery = useQuery({
     queryKey: ['report-payroll', year],
@@ -201,11 +269,11 @@ export function Reports() {
         </div>
         <div className="flex items-center gap-2">
           <select value={year} onChange={(e) => setYear(Number(e.target.value))} className="form-input !w-auto">
-            {[2024, 2025, 2026].map((y) => <option key={y} value={y}>{y}</option>)}
+            {yearOptions.map((optionYear) => <option key={optionYear} value={optionYear}>{optionYear}</option>)}
           </select>
           {(tab === 'department' || tab === 'statutory') && (
             <select value={month} onChange={(e) => setMonth(Number(e.target.value))} className="form-input !w-auto">
-              {months.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
+              {monthOptions.map((optionMonth) => <option key={optionMonth} value={optionMonth}>{months[optionMonth - 1]}</option>)}
             </select>
           )}
         </div>

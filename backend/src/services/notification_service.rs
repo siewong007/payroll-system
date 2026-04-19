@@ -1,7 +1,7 @@
-use sqlx::PgPool;
-use uuid::Uuid;
 use crate::core::error::AppResult;
 use crate::models::notification::{Notification, NotificationCount};
+use sqlx::PgPool;
+use uuid::Uuid;
 
 pub trait NotificationChannel: Send + Sync {
     fn send(
@@ -28,10 +28,11 @@ impl NotificationChannel for EmailNotificationChannel {
         message: &str,
     ) -> AppResult<()> {
         // Get user email
-        let user: (String, String) = sqlx::query_as("SELECT email, full_name FROM users WHERE id = $1")
-            .bind(user_id)
-            .fetch_one(pool)
-            .await?;
+        let user: (String, String) =
+            sqlx::query_as("SELECT email, full_name FROM users WHERE id = $1")
+                .bind(user_id)
+                .fetch_one(pool)
+                .await?;
 
         crate::services::email_service::send_email(
             &self.config,
@@ -43,7 +44,7 @@ impl NotificationChannel for EmailNotificationChannel {
             &user.0,
             &user.1,
             title,
-            message, // This should ideally be wrapped in HTML
+            message,     // This should ideally be wrapped in HTML
             Uuid::nil(), // System sent
         )
         .await?;

@@ -291,6 +291,7 @@ pub fn create_router(state: AppState) -> Router {
             delete(team::remove_member),
         )
         // Reports (admin)
+        .route("/reports/periods", get(report::report_periods))
         .route("/reports/payroll-summary", get(report::payroll_summary))
         .route(
             "/reports/payroll-department",

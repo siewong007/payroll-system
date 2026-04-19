@@ -2,7 +2,7 @@ use axum::{
     Json,
     extract::{Query, State},
 };
-use chrono::NaiveDate;
+use chrono::{Datelike, NaiveDate, Utc};
 use serde::Deserialize;
 
 use crate::core::app_state::AppState;
@@ -37,6 +37,24 @@ pub struct DateRangeQuery {
     pub end_date: Option<NaiveDate>,
 }
 
+fn current_year_month() -> (i32, i32) {
+    let now = Utc::now().date_naive();
+    (now.year(), now.month() as i32)
+}
+
+fn current_year() -> i32 {
+    current_year_month().0
+}
+
+pub async fn report_periods(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> AppResult<Json<ReportPeriodsResponse>> {
+    let company_id = require_admin(&auth)?;
+    let periods = report_service::report_periods(&state.pool, company_id).await?;
+    Ok(Json(periods))
+}
+
 pub async fn payroll_summary(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -44,7 +62,7 @@ pub async fn payroll_summary(
 ) -> AppResult<Json<Vec<PayrollSummaryRow>>> {
     auth.deny_exec()?;
     let company_id = require_admin(&auth)?;
-    let year = q.year.unwrap_or(2026);
+    let year = q.year.unwrap_or_else(current_year);
     let rows = report_service::payroll_summary(&state.pool, company_id, year).await?;
     Ok(Json(rows))
 }
@@ -56,8 +74,9 @@ pub async fn payroll_by_department(
 ) -> AppResult<Json<Vec<DepartmentPayrollRow>>> {
     auth.deny_exec()?;
     let company_id = require_admin(&auth)?;
-    let year = q.year.unwrap_or(2026);
-    let month = q.month.unwrap_or(1);
+    let (default_year, default_month) = current_year_month();
+    let year = q.year.unwrap_or(default_year);
+    let month = q.month.unwrap_or(default_month);
     let rows = report_service::payroll_by_department(&state.pool, company_id, year, month).await?;
     Ok(Json(rows))
 }
@@ -68,7 +87,7 @@ pub async fn leave_report(
     Query(q): Query<YearQuery>,
 ) -> AppResult<Json<Vec<LeaveReportRow>>> {
     let company_id = require_admin(&auth)?;
-    let year = q.year.unwrap_or(2026);
+    let year = q.year.unwrap_or_else(current_year);
     let rows = report_service::leave_report(&state.pool, company_id, year).await?;
     Ok(Json(rows))
 }
@@ -79,12 +98,13 @@ pub async fn claims_report(
     Query(q): Query<DateRangeQuery>,
 ) -> AppResult<Json<Vec<ClaimsReportRow>>> {
     let company_id = require_admin(&auth)?;
+    let current_year = current_year();
     let start = q
         .start_date
-        .unwrap_or(NaiveDate::from_ymd_opt(2026, 1, 1).unwrap());
+        .unwrap_or(NaiveDate::from_ymd_opt(current_year, 1, 1).unwrap());
     let end = q
         .end_date
-        .unwrap_or(NaiveDate::from_ymd_opt(2026, 12, 31).unwrap());
+        .unwrap_or(NaiveDate::from_ymd_opt(current_year, 12, 31).unwrap());
     let rows = report_service::claims_report(&state.pool, company_id, start, end).await?;
     Ok(Json(rows))
 }
@@ -96,8 +116,9 @@ pub async fn statutory_report(
 ) -> AppResult<Json<Vec<StatutoryReportRow>>> {
     auth.deny_exec()?;
     let company_id = require_admin(&auth)?;
-    let year = q.year.unwrap_or(2026);
-    let month = q.month.unwrap_or(1);
+    let (default_year, default_month) = current_year_month();
+    let year = q.year.unwrap_or(default_year);
+    let month = q.month.unwrap_or(default_month);
     let rows = report_service::statutory_report(&state.pool, company_id, year, month).await?;
     Ok(Json(rows))
 }
@@ -117,8 +138,9 @@ pub async fn export_epf(
 
     auth.deny_exec()?;
     let company_id = require_admin(&auth)?;
-    let year = q.year.unwrap_or(2026);
-    let month = q.month.unwrap_or(1);
+    let (default_year, default_month) = current_year_month();
+    let year = q.year.unwrap_or(default_year);
+    let month = q.month.unwrap_or(default_month);
     let bytes = statutory_export_service::export_epf(&state.pool, company_id, year, month).await?;
 
     Ok(Response::builder()
@@ -145,8 +167,9 @@ pub async fn export_socso(
 
     auth.deny_exec()?;
     let company_id = require_admin(&auth)?;
-    let year = q.year.unwrap_or(2026);
-    let month = q.month.unwrap_or(1);
+    let (default_year, default_month) = current_year_month();
+    let year = q.year.unwrap_or(default_year);
+    let month = q.month.unwrap_or(default_month);
     let bytes =
         statutory_export_service::export_socso(&state.pool, company_id, year, month).await?;
 
@@ -174,8 +197,9 @@ pub async fn export_eis(
 
     auth.deny_exec()?;
     let company_id = require_admin(&auth)?;
-    let year = q.year.unwrap_or(2026);
-    let month = q.month.unwrap_or(1);
+    let (default_year, default_month) = current_year_month();
+    let year = q.year.unwrap_or(default_year);
+    let month = q.month.unwrap_or(default_month);
     let bytes = statutory_export_service::export_eis(&state.pool, company_id, year, month).await?;
 
     Ok(Response::builder()
@@ -202,8 +226,9 @@ pub async fn export_pcb(
 
     auth.deny_exec()?;
     let company_id = require_admin(&auth)?;
-    let year = q.year.unwrap_or(2026);
-    let month = q.month.unwrap_or(1);
+    let (default_year, default_month) = current_year_month();
+    let year = q.year.unwrap_or(default_year);
+    let month = q.month.unwrap_or(default_month);
     let bytes =
         statutory_export_service::export_pcb_cp39(&state.pool, company_id, year, month).await?;
 
@@ -236,7 +261,7 @@ pub async fn list_ea_employees(
 ) -> AppResult<Json<Vec<ea_form_service::EaEmployeeSummary>>> {
     auth.deny_exec()?;
     let company_id = require_admin(&auth)?;
-    let year = q.year.unwrap_or(2026);
+    let year = q.year.unwrap_or_else(current_year);
     let rows = ea_form_service::list_employees_for_ea(&state.pool, company_id, year).await?;
     Ok(Json(rows))
 }
@@ -251,7 +276,7 @@ pub async fn get_ea_form(
 
     auth.deny_exec()?;
     let company_id = require_admin(&auth)?;
-    let year = q.year.unwrap_or(2026);
+    let year = q.year.unwrap_or_else(current_year);
     let employee_id = q.employee_id.ok_or_else(|| {
         crate::core::error::AppError::BadRequest("employee_id is required".into())
     })?;

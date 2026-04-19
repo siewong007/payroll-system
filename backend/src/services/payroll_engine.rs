@@ -1,6 +1,6 @@
-use std::collections::HashMap;
 use chrono::{Datelike, NaiveDate};
 use sqlx::PgPool;
+use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::core::error::{AppError, AppResult};
@@ -127,7 +127,7 @@ pub async fn process_payroll(
            FROM employee_allowances
            WHERE employee_id = ANY($1) AND is_active = TRUE AND is_recurring = TRUE
              AND effective_from <= $2 AND (effective_to IS NULL OR effective_to >= $2)
-           GROUP BY employee_id, category"#
+           GROUP BY employee_id, category"#,
     )
     .bind(&employee_ids)
     .bind(effective_date)
@@ -150,7 +150,7 @@ pub async fn process_payroll(
            FROM payroll_entries
            WHERE employee_id = ANY($1) AND period_year = $2 AND period_month = $3
              AND is_processed = FALSE
-           GROUP BY employee_id, category"#
+           GROUP BY employee_id, category"#,
     )
     .bind(&employee_ids)
     .bind(year)
@@ -177,7 +177,7 @@ pub async fn process_payroll(
            WHERE ar.employee_id = ANY($1)
              AND ar.check_in_at >= $2 AND ar.check_in_at <= $3 + INTERVAL '1 day'
              AND oa.id IS NULL
-           GROUP BY ar.employee_id"#
+           GROUP BY ar.employee_id"#,
     )
     .bind(&employee_ids)
     .bind(period_start)
@@ -195,7 +195,10 @@ pub async fn process_payroll(
     .bind(year)
     .fetch_all(&mut *tx)
     .await?;
-    let tp3_map: HashMap<Uuid, (i64, i64, i64, i64)> = tp3_data.into_iter().map(|(id, i, e, p, z)| (id, (i, e, p, z))).collect();
+    let tp3_map: HashMap<Uuid, (i64, i64, i64, i64)> = tp3_data
+        .into_iter()
+        .map(|(id, i, e, p, z)| (id, (i, e, p, z)))
+        .collect();
 
     // 5. Batch fetch YTD figures
     let ytd_data: Vec<(Uuid, i64, i64, i64, i64, i64, i64, i64)> = sqlx::query_as(
@@ -212,14 +215,17 @@ pub async fn process_payroll(
         JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
         WHERE pi.employee_id = ANY($1) AND pr.period_year = $2 AND pr.period_month < $3
         AND pr.status::text IN ('processed', 'approved', 'paid')
-        GROUP BY pi.employee_id"#
+        GROUP BY pi.employee_id"#,
     )
     .bind(&employee_ids)
     .bind(year)
     .bind(month)
     .fetch_all(&mut *tx)
     .await?;
-    let ytd_map: HashMap<Uuid, (i64, i64, i64, i64, i64, i64, i64)> = ytd_data.into_iter().map(|(id, g, p, e, s, ei, z, n)| (id, (g, p, e, s, ei, z, n))).collect();
+    let ytd_map: HashMap<Uuid, (i64, i64, i64, i64, i64, i64, i64)> = ytd_data
+        .into_iter()
+        .map(|(id, g, p, e, s, ei, z, n)| (id, (g, p, e, s, ei, z, n)))
+        .collect();
 
     let bulk_data = BulkPayrollData {
         recurring_allowances: recurring_allowances_map,
@@ -244,8 +250,19 @@ pub async fn process_payroll(
     let mut total_zakat: i64 = 0;
 
     for emp in &employees {
-        let item =
-            process_employee(pool, &mut tx, run_id, emp, year, month, period_start, period_end, effective_date, &bulk_data).await?;
+        let item = process_employee(
+            pool,
+            &mut tx,
+            run_id,
+            emp,
+            year,
+            month,
+            period_start,
+            period_end,
+            effective_date,
+            &bulk_data,
+        )
+        .await?;
 
         total_gross += item.gross_salary;
         total_net += item.net_salary;
@@ -306,7 +323,8 @@ pub async fn process_payroll(
             "employee_count": employees.len()
         })),
         Some(&format!("Processed payroll for {:02}/{}", month, year)),
-    ).await;
+    )
+    .await;
 
     // Return the completed run
     let run = sqlx::query_as::<_, PayrollRun>(
@@ -376,12 +394,11 @@ async fn process_employee(
     let eis = eis_service::calculate_eis(pool, gross, age, is_foreigner, effective_date).await?;
 
     // Get YTD figures (from previous months this year)
-    let (ytd_gross, ytd_pcb, ytd_epf, ytd_socso, ytd_eis, ytd_zakat, ytd_net) = 
+    let (ytd_gross, ytd_pcb, ytd_epf, ytd_socso, ytd_eis, ytd_zakat, ytd_net) =
         *bulk.ytd.get(&emp.id).unwrap_or(&(0, 0, 0, 0, 0, 0, 0));
 
     // Get TP3 data if exists
-    let (tp3_income, tp3_epf, tp3_pcb, tp3_zakat) = 
-        *bulk.tp3.get(&emp.id).unwrap_or(&(0, 0, 0, 0));
+    let (tp3_income, tp3_epf, tp3_pcb, tp3_zakat) = *bulk.tp3.get(&emp.id).unwrap_or(&(0, 0, 0, 0));
 
     // Zakat
     let zakat = if emp.zakat_eligible.unwrap_or(false) {
@@ -505,7 +522,6 @@ async fn process_employee(
 
     Ok(item)
 }
-
 
 fn calculate_age(dob: Option<NaiveDate>, as_of: NaiveDate) -> i32 {
     match dob {

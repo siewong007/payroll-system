@@ -266,6 +266,21 @@ export interface DashboardSummary {
   departments: { department: string; count: number }[];
 }
 
+export interface YearMonthsOption {
+  year: number;
+  months: number[];
+}
+
+export interface ReportPeriodsResponse {
+  default_year: number;
+  default_month: number;
+  payroll_years: number[];
+  payroll_months: YearMonthsOption[];
+  leave_years: number[];
+  claims_years: number[];
+  ea_form_years: number[];
+}
+
 export interface SalaryHistory {
   id: string;
   employee_id: string;

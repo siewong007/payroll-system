@@ -316,8 +316,9 @@ pub async fn check_in_qr(
             .bind(employee_id)
             .fetch_optional(pool)
             .await?;
-            
-            record.ok_or_else(|| AppError::BadRequest("You already have an active check-in.".into()))
+
+            record
+                .ok_or_else(|| AppError::BadRequest("You already have an active check-in.".into()))
         }
         Err(e) => Err(e.into()),
     }
@@ -364,8 +365,9 @@ pub async fn check_in_face_id(
             .bind(employee_id)
             .fetch_optional(pool)
             .await?;
-            
-            record.ok_or_else(|| AppError::BadRequest("You already have an active check-in.".into()))
+
+            record
+                .ok_or_else(|| AppError::BadRequest("You already have an active check-in.".into()))
         }
         Err(e) => Err(e.into()),
     }

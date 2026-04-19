@@ -94,5 +94,3 @@ pub(crate) fn round_to_nearest_ringgit(amount_sen: i64) -> i64 {
         amount_sen - remainder
     }
 }
-
-

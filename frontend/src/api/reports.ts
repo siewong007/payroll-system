@@ -1,4 +1,5 @@
 import api from './client';
+import type { EaEmployeeSummary, ReportPeriodsResponse } from '@/types';
 
 export interface PayrollSummaryRow {
   period: string;
@@ -84,6 +85,9 @@ export const getClaimsReport = (startDate: string, endDate: string) =>
 export const getStatutoryReport = (year: number, month: number) =>
   api.get<StatutoryReportRow[]>('/reports/statutory', { params: { year, month } }).then(r => r.data);
 
+export const getReportPeriods = () =>
+  api.get<ReportPeriodsResponse>('/reports/periods').then(r => r.data);
+
 // Statutory File Exports
 export const downloadStatutoryExport = async (type: 'epf' | 'socso' | 'eis' | 'pcb', year: number, month: number) => {
   const res = await api.get(`/reports/statutory/${type}-export`, {
@@ -100,9 +104,6 @@ export const downloadStatutoryExport = async (type: 'epf' | 'socso' | 'eis' | 'p
   a.click();
   window.URL.revokeObjectURL(url);
 };
-
-// EA Form
-import type { EaEmployeeSummary } from '@/types';
 
 export const getEaEmployees = (year: number) =>
   api.get<EaEmployeeSummary[]>('/reports/ea-form/employees', { params: { year } }).then(r => r.data);

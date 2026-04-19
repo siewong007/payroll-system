@@ -1,4 +1,6 @@
-use chrono::NaiveDate;
+use std::collections::BTreeMap;
+
+use chrono::{Datelike, NaiveDate, Utc};
 use serde::Serialize;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -238,4 +240,97 @@ pub async fn statutory_report(
     .fetch_all(pool)
     .await?;
     Ok(rows)
+}
+
+// ─── Report Period Options ───
+
+#[derive(Debug, Serialize)]
+pub struct YearMonthsOption {
+    pub year: i32,
+    pub months: Vec<i32>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ReportPeriodsResponse {
+    pub default_year: i32,
+    pub default_month: i32,
+    pub payroll_years: Vec<i32>,
+    pub payroll_months: Vec<YearMonthsOption>,
+    pub leave_years: Vec<i32>,
+    pub claims_years: Vec<i32>,
+    pub ea_form_years: Vec<i32>,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct PayrollPeriodRow {
+    period_year: i32,
+    period_month: i32,
+}
+
+pub fn current_report_year_month() -> (i32, i32) {
+    let now = Utc::now().date_naive();
+    (now.year(), now.month() as i32)
+}
+
+pub async fn report_periods(pool: &PgPool, company_id: Uuid) -> AppResult<ReportPeriodsResponse> {
+    let payroll_periods = sqlx::query_as::<_, PayrollPeriodRow>(
+        r#"SELECT DISTINCT period_year, period_month
+        FROM payroll_runs
+        WHERE company_id = $1
+        AND status::text IN ('processed', 'approved', 'paid')
+        ORDER BY period_year ASC, period_month ASC"#,
+    )
+    .bind(company_id)
+    .fetch_all(pool)
+    .await?;
+
+    let mut payroll_months_map = BTreeMap::<i32, Vec<i32>>::new();
+    for row in payroll_periods {
+        payroll_months_map
+            .entry(row.period_year)
+            .or_default()
+            .push(row.period_month);
+    }
+
+    let payroll_years = payroll_months_map.keys().copied().collect::<Vec<_>>();
+    let payroll_months = payroll_months_map
+        .into_iter()
+        .map(|(year, months)| YearMonthsOption { year, months })
+        .collect::<Vec<_>>();
+
+    let leave_years = sqlx::query_scalar::<_, i32>(
+        r#"SELECT DISTINCT lb.year
+        FROM leave_balances lb
+        JOIN employees e ON lb.employee_id = e.id
+        WHERE e.company_id = $1
+        ORDER BY lb.year ASC"#,
+    )
+    .bind(company_id)
+    .fetch_all(pool)
+    .await?;
+
+    let claims_years = sqlx::query_scalar::<_, i32>(
+        r#"SELECT DISTINCT EXTRACT(YEAR FROM expense_date)::INT
+        FROM claims
+        WHERE company_id = $1
+        ORDER BY EXTRACT(YEAR FROM expense_date)::INT ASC"#,
+    )
+    .bind(company_id)
+    .fetch_all(pool)
+    .await?;
+
+    let (default_year, default_month) = payroll_months
+        .last()
+        .and_then(|period| period.months.last().map(|month| (period.year, *month)))
+        .unwrap_or_else(current_report_year_month);
+
+    Ok(ReportPeriodsResponse {
+        default_year,
+        default_month,
+        payroll_years: payroll_years.clone(),
+        payroll_months,
+        leave_years,
+        claims_years,
+        ea_form_years: payroll_years,
+    })
 }
