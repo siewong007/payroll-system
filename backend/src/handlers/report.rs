@@ -20,6 +20,13 @@ fn require_admin(auth: &AuthUser) -> AppResult<uuid::Uuid> {
     }
 }
 
+fn require_payroll_access(auth: &AuthUser) -> AppResult<uuid::Uuid> {
+    auth.require_payroll_privileged()?;
+    auth.0
+        .company_id
+        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))
+}
+
 #[derive(Debug, Deserialize)]
 pub struct YearQuery {
     pub year: Option<i32>,
@@ -51,7 +58,12 @@ pub async fn report_periods(
     auth: AuthUser,
 ) -> AppResult<Json<ReportPeriodsResponse>> {
     let company_id = require_admin(&auth)?;
-    let periods = report_service::report_periods(&state.pool, company_id).await?;
+    let mut periods = report_service::report_periods(&state.pool, company_id).await?;
+    if !auth.is_payroll_privileged() {
+        periods.payroll_years.clear();
+        periods.payroll_months.clear();
+        periods.ea_form_years.clear();
+    }
     Ok(Json(periods))
 }
 
@@ -60,8 +72,7 @@ pub async fn payroll_summary(
     auth: AuthUser,
     Query(q): Query<YearQuery>,
 ) -> AppResult<Json<Vec<PayrollSummaryRow>>> {
-    auth.deny_exec()?;
-    let company_id = require_admin(&auth)?;
+    let company_id = require_payroll_access(&auth)?;
     let year = q.year.unwrap_or_else(current_year);
     let rows = report_service::payroll_summary(&state.pool, company_id, year).await?;
     Ok(Json(rows))
@@ -72,8 +83,7 @@ pub async fn payroll_by_department(
     auth: AuthUser,
     Query(q): Query<YearMonthQuery>,
 ) -> AppResult<Json<Vec<DepartmentPayrollRow>>> {
-    auth.deny_exec()?;
-    let company_id = require_admin(&auth)?;
+    let company_id = require_payroll_access(&auth)?;
     let (default_year, default_month) = current_year_month();
     let year = q.year.unwrap_or(default_year);
     let month = q.month.unwrap_or(default_month);
@@ -114,8 +124,7 @@ pub async fn statutory_report(
     auth: AuthUser,
     Query(q): Query<YearMonthQuery>,
 ) -> AppResult<Json<Vec<StatutoryReportRow>>> {
-    auth.deny_exec()?;
-    let company_id = require_admin(&auth)?;
+    let company_id = require_payroll_access(&auth)?;
     let (default_year, default_month) = current_year_month();
     let year = q.year.unwrap_or(default_year);
     let month = q.month.unwrap_or(default_month);
@@ -136,8 +145,7 @@ pub async fn export_epf(
     use axum::body::Body;
     use axum::http::{Response, StatusCode, header};
 
-    auth.deny_exec()?;
-    let company_id = require_admin(&auth)?;
+    let company_id = require_payroll_access(&auth)?;
     let (default_year, default_month) = current_year_month();
     let year = q.year.unwrap_or(default_year);
     let month = q.month.unwrap_or(default_month);
@@ -165,8 +173,7 @@ pub async fn export_socso(
     use axum::body::Body;
     use axum::http::{Response, StatusCode, header};
 
-    auth.deny_exec()?;
-    let company_id = require_admin(&auth)?;
+    let company_id = require_payroll_access(&auth)?;
     let (default_year, default_month) = current_year_month();
     let year = q.year.unwrap_or(default_year);
     let month = q.month.unwrap_or(default_month);
@@ -195,8 +202,7 @@ pub async fn export_eis(
     use axum::body::Body;
     use axum::http::{Response, StatusCode, header};
 
-    auth.deny_exec()?;
-    let company_id = require_admin(&auth)?;
+    let company_id = require_payroll_access(&auth)?;
     let (default_year, default_month) = current_year_month();
     let year = q.year.unwrap_or(default_year);
     let month = q.month.unwrap_or(default_month);
@@ -224,8 +230,7 @@ pub async fn export_pcb(
     use axum::body::Body;
     use axum::http::{Response, StatusCode, header};
 
-    auth.deny_exec()?;
-    let company_id = require_admin(&auth)?;
+    let company_id = require_payroll_access(&auth)?;
     let (default_year, default_month) = current_year_month();
     let year = q.year.unwrap_or(default_year);
     let month = q.month.unwrap_or(default_month);
@@ -259,8 +264,7 @@ pub async fn list_ea_employees(
     auth: AuthUser,
     Query(q): Query<YearQuery>,
 ) -> AppResult<Json<Vec<ea_form_service::EaEmployeeSummary>>> {
-    auth.deny_exec()?;
-    let company_id = require_admin(&auth)?;
+    let company_id = require_payroll_access(&auth)?;
     let year = q.year.unwrap_or_else(current_year);
     let rows = ea_form_service::list_employees_for_ea(&state.pool, company_id, year).await?;
     Ok(Json(rows))
@@ -274,8 +278,7 @@ pub async fn get_ea_form(
     use axum::body::Body;
     use axum::http::{Response, StatusCode, header};
 
-    auth.deny_exec()?;
-    let company_id = require_admin(&auth)?;
+    let company_id = require_payroll_access(&auth)?;
     let year = q.year.unwrap_or_else(current_year);
     let employee_id = q.employee_id.ok_or_else(|| {
         crate::core::error::AppError::BadRequest("employee_id is required".into())

@@ -3,6 +3,7 @@ import { Users, DollarSign, Building2, TrendingUp } from 'lucide-react';
 import { getDashboardSummary } from '@/api/dashboard';
 import { formatMYR } from '@/lib/utils';
 import { useAuth } from '@/context/AuthContext';
+import { canAccessPayrollData } from '@/lib/roles';
 
 function StatCard({
   title,
@@ -37,7 +38,7 @@ function StatCard({
 
 export function Dashboard() {
   const { user } = useAuth();
-  const isExec = user?.role === 'exec';
+  const canViewPayroll = canAccessPayrollData(user?.role);
   const { data, isLoading } = useQuery({
     queryKey: ['dashboard'],
     queryFn: getDashboardSummary,
@@ -55,11 +56,13 @@ export function Dashboard() {
     <div className="space-y-8">
       <div className="page-header">
         <h1 className="page-title">Dashboard</h1>
-        <p className="page-subtitle">Overview of your company's payroll</p>
+        <p className="page-subtitle">
+          {canViewPayroll ? "Overview of your company's payroll" : "Overview of your company"}
+        </p>
       </div>
 
       {/* Stats Grid */}
-      <div className={`grid grid-cols-1 md:grid-cols-2 ${isExec ? '' : 'lg:grid-cols-4'} gap-3 md:gap-5`}>
+      <div className={`grid grid-cols-1 md:grid-cols-2 ${canViewPayroll ? 'lg:grid-cols-4' : ''} gap-3 md:gap-5`}>
         <StatCard
           title="Total Employees"
           value={String(data?.active_employees ?? 0)}
@@ -68,7 +71,7 @@ export function Dashboard() {
           color="text-gray-900"
           iconBg="bg-black"
         />
-        {!isExec && (
+        {canViewPayroll && (
           <>
             <StatCard
               title="Last Payroll"

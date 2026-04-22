@@ -4,6 +4,7 @@ import { ArrowLeft, Edit, DollarSign, Shield } from 'lucide-react';
 import { getEmployee, getSalaryHistory } from '@/api/employees';
 import { formatMYR, formatDate } from '@/lib/utils';
 import { useAuth } from '@/context/AuthContext';
+import { canAccessPayrollData } from '@/lib/roles';
 
 const InfoField = ({ label, value }: { label: string; value: string | null | undefined }) => (
   <div>
@@ -16,7 +17,7 @@ export function EmployeeDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { user } = useAuth();
-  const isExec = user?.role === 'exec';
+  const canViewPayroll = canAccessPayrollData(user?.role);
 
   const { data: employee, isLoading } = useQuery({
     queryKey: ['employee', id],
@@ -27,7 +28,7 @@ export function EmployeeDetail() {
   const { data: salaryHistory } = useQuery({
     queryKey: ['salaryHistory', id],
     queryFn: () => getSalaryHistory(id!),
-    enabled: !!id && !isExec,
+    enabled: !!id && canViewPayroll,
   });
 
   if (isLoading) {
@@ -96,7 +97,7 @@ export function EmployeeDetail() {
             <InfoField label="Employment Type" value={employee.employment_type?.replace('_', ' ')} />
             <InfoField label="Date Joined" value={formatDate(employee.date_joined)} />
             <InfoField label="Confirmation Date" value={employee.confirmation_date ? formatDate(employee.confirmation_date) : null} />
-            {!isExec && <InfoField label="Basic Salary" value={formatMYR(employee.basic_salary)} />}
+            {canViewPayroll && <InfoField label="Basic Salary" value={formatMYR(employee.basic_salary)} />}
             <InfoField label="Bank" value={employee.bank_name} />
             <InfoField label="Account No" value={employee.bank_account_number} />
             <InfoField label="Cost Centre" value={employee.cost_centre} />
@@ -104,33 +105,34 @@ export function EmployeeDetail() {
           </div>
         </div>
 
-        {/* Statutory */}
-        <div className="bg-white rounded-2xl shadow p-6">
-          <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-            <Shield className="w-4 h-4" /> Statutory
-          </h2>
-          <div className="space-y-3">
-            <InfoField label="TIN" value={employee.tax_identification_number} />
-            <InfoField label="EPF Number" value={employee.epf_number} />
-            <InfoField label="EPF Category" value={employee.epf_category} />
-            <InfoField label="SOCSO Number" value={employee.socso_number} />
-            <InfoField label="EIS Number" value={employee.eis_number} />
-            <InfoField label="Residency" value={employee.residency_status?.replace('_', ' ')} />
-            <InfoField label="Working Spouse" value={employee.working_spouse ? 'Yes' : 'No'} />
-            <InfoField label="Children" value={String(employee.num_children ?? 0)} />
-            <InfoField label="Muslim" value={employee.is_muslim ? 'Yes' : 'No'} />
-            {employee.zakat_eligible && (
-              <InfoField label="Zakat (Monthly)" value={formatMYR(employee.zakat_monthly_amount ?? 0)} />
-            )}
-            {(employee.ptptn_monthly_amount ?? 0) > 0 && (
-              <InfoField label="PTPTN (Monthly)" value={formatMYR(employee.ptptn_monthly_amount!)} />
-            )}
+        {canViewPayroll && (
+          <div className="bg-white rounded-2xl shadow p-6">
+            <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+              <Shield className="w-4 h-4" /> Statutory
+            </h2>
+            <div className="space-y-3">
+              <InfoField label="TIN" value={employee.tax_identification_number} />
+              <InfoField label="EPF Number" value={employee.epf_number} />
+              <InfoField label="EPF Category" value={employee.epf_category} />
+              <InfoField label="SOCSO Number" value={employee.socso_number} />
+              <InfoField label="EIS Number" value={employee.eis_number} />
+              <InfoField label="Residency" value={employee.residency_status?.replace('_', ' ')} />
+              <InfoField label="Working Spouse" value={employee.working_spouse ? 'Yes' : 'No'} />
+              <InfoField label="Children" value={String(employee.num_children ?? 0)} />
+              <InfoField label="Muslim" value={employee.is_muslim ? 'Yes' : 'No'} />
+              {employee.zakat_eligible && (
+                <InfoField label="Zakat (Monthly)" value={formatMYR(employee.zakat_monthly_amount ?? 0)} />
+              )}
+              {(employee.ptptn_monthly_amount ?? 0) > 0 && (
+                <InfoField label="PTPTN (Monthly)" value={formatMYR(employee.ptptn_monthly_amount!)} />
+              )}
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Salary History */}
-      {!isExec && salaryHistory && salaryHistory.length > 0 && (
+      {canViewPayroll && salaryHistory && salaryHistory.length > 0 && (
         <div className="bg-white rounded-2xl shadow p-6 mt-6">
           <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
             <DollarSign className="w-4 h-4" /> Salary History

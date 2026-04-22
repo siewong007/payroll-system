@@ -91,35 +91,35 @@ pub async fn summary(
     .fetch_all(&state.pool)
     .await?;
 
-    let is_exec = auth.is_exec();
+    let can_access_payroll = auth.is_payroll_privileged();
 
     Ok(Json(DashboardSummary {
         total_employees,
         active_employees,
-        last_payroll_period: if is_exec {
-            None
-        } else {
+        last_payroll_period: if can_access_payroll {
             last_payroll.as_ref().map(|p| p.0.clone())
-        },
-        last_payroll_total_net: if is_exec {
-            None
         } else {
+            None
+        },
+        last_payroll_total_net: if can_access_payroll {
             last_payroll.as_ref().map(|p| p.1)
-        },
-        last_payroll_total_gross: if is_exec {
-            None
         } else {
+            None
+        },
+        last_payroll_total_gross: if can_access_payroll {
             last_payroll.as_ref().map(|p| p.2)
-        },
-        last_payroll_employee_count: if is_exec {
-            None
         } else {
-            last_payroll.as_ref().map(|p| p.3)
+            None
         },
-        ytd_total_gross: if is_exec { 0 } else { ytd.0 },
-        ytd_total_epf_employer: if is_exec { 0 } else { ytd.1 },
-        ytd_total_socso_employer: if is_exec { 0 } else { ytd.2 },
-        ytd_total_eis_employer: if is_exec { 0 } else { ytd.3 },
+        last_payroll_employee_count: if can_access_payroll {
+            last_payroll.as_ref().map(|p| p.3)
+        } else {
+            None
+        },
+        ytd_total_gross: if can_access_payroll { ytd.0 } else { 0 },
+        ytd_total_epf_employer: if can_access_payroll { ytd.1 } else { 0 },
+        ytd_total_socso_employer: if can_access_payroll { ytd.2 } else { 0 },
+        ytd_total_eis_employer: if can_access_payroll { ytd.3 } else { 0 },
         departments: departments
             .into_iter()
             .map(|(dept, count)| DepartmentCount {

@@ -1,10 +1,11 @@
-import { useState, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Save, Check } from 'lucide-react';
 import { getSettings, bulkUpdateSettings } from '@/api/settings';
 import type { CompanySetting, SettingUpdate } from '@/types';
 import { useAuth } from '@/context/AuthContext';
 import { PasskeyManagement } from '@/components/PasskeyManagement';
+import { canAccessPayrollData } from '@/lib/roles';
 
 const CATEGORY_LABELS: Record<string, string> = {
   payroll: 'Payroll',
@@ -17,8 +18,9 @@ const CATEGORY_ORDER = ['payroll', 'statutory', 'system', 'notifications'];
 
 export function SettingsPage() {
   const { user } = useAuth();
+  const canViewPayroll = canAccessPayrollData(user?.role);
   const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState(user?.role === 'exec' ? 'system' : 'payroll');
+  const [activeTab, setActiveTab] = useState(canViewPayroll ? 'payroll' : 'system');
   const [edits, setEdits] = useState<Record<string, unknown>>({});
   const [saved, setSaved] = useState(false);
 
@@ -40,6 +42,16 @@ export function SettingsPage() {
     () => CATEGORY_ORDER.filter(c => grouped[c]?.length),
     [grouped],
   );
+
+  useEffect(() => {
+    if (categories.length === 0) {
+      return;
+    }
+
+    if (!categories.includes(activeTab)) {
+      setActiveTab(categories[0]);
+    }
+  }, [activeTab, categories]);
 
   const mutation = useMutation({
     mutationFn: (updates: SettingUpdate[]) => bulkUpdateSettings(updates),

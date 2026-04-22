@@ -18,7 +18,7 @@ pub async fn process(
     auth: AuthUser,
     Json(req): Json<ProcessPayrollRequest>,
 ) -> AppResult<Json<PayrollRun>> {
-    auth.deny_exec()?;
+    auth.require_payroll_privileged()?;
     let company_id = auth
         .0
         .company_id
@@ -51,7 +51,7 @@ pub async fn list_runs(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> AppResult<Json<Vec<PayrollRun>>> {
-    auth.deny_exec()?;
+    auth.require_payroll_privileged()?;
     let company_id = auth
         .0
         .company_id
@@ -82,7 +82,7 @@ pub async fn get_run(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<PayrollSummary>> {
-    auth.deny_exec()?;
+    auth.require_payroll_privileged()?;
     let company_id = auth
         .0
         .company_id
@@ -148,7 +148,7 @@ pub async fn approve_run(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<PayrollRun>> {
-    auth.deny_exec()?;
+    auth.require_payroll_privileged()?;
     let company_id = auth
         .0
         .company_id
@@ -183,7 +183,7 @@ pub async fn lock_run(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<PayrollRun>> {
-    auth.deny_exec()?;
+    auth.require_payroll_privileged()?;
     let company_id = auth
         .0
         .company_id
@@ -215,7 +215,7 @@ pub async fn list_groups(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> AppResult<Json<Vec<PayrollGroup>>> {
-    auth.deny_exec()?;
+    auth.require_payroll_privileged()?;
     let company_id = auth
         .0
         .company_id
@@ -239,7 +239,7 @@ pub async fn download_run_payslips_pdf(
     use axum::body::Body;
     use axum::http::{Response, StatusCode, header};
 
-    auth.deny_exec()?;
+    auth.require_payroll_privileged()?;
     let company_id = auth
         .0
         .company_id
@@ -268,7 +268,7 @@ pub async fn get_items(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<Vec<PayrollItem>>> {
-    auth.deny_exec()?;
+    auth.require_payroll_privileged()?;
     let items = sqlx::query_as::<_, PayrollItem>(
         "SELECT * FROM payroll_items WHERE payroll_run_id = $1 ORDER BY created_at",
     )

@@ -213,11 +213,13 @@ pub async fn update_claim(
     auth: AuthUser,
     Path(id): Path<Uuid>,
     Json(req): Json<UpdateClaimRequest>,
-) -> AppResult<Json<Claim>> {
+) -> AppResult<Json<ClaimWithEmployee>> {
     let company_id = require_admin(&auth)?;
     let claim =
         approval_service::update_claim_admin(&state.pool, company_id, id, req, auth.0.sub).await?;
-    Ok(Json(claim))
+    let enriched =
+        approval_service::get_claim_with_employee_by_id(&state.pool, company_id, claim.id).await?;
+    Ok(Json(enriched))
 }
 
 pub async fn delete_claim(
@@ -309,12 +311,15 @@ pub async fn update_overtime(
     auth: AuthUser,
     Path(id): Path<Uuid>,
     Json(req): Json<UpdateOvertimeRequest>,
-) -> AppResult<Json<OvertimeApplication>> {
+) -> AppResult<Json<OvertimeWithEmployee>> {
     let company_id = require_admin(&auth)?;
     let overtime =
         approval_service::update_overtime_admin(&state.pool, company_id, id, req, auth.0.sub)
             .await?;
-    Ok(Json(overtime))
+    let enriched =
+        approval_service::get_overtime_with_employee_by_id(&state.pool, company_id, overtime.id)
+            .await?;
+    Ok(Json(enriched))
 }
 
 pub async fn delete_overtime(

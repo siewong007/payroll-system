@@ -196,6 +196,8 @@ pub async fn update_leave_request_admin(
     .await?
     .ok_or_else(|| AppError::BadRequest("Leave request not found or cannot be edited".into()))?;
 
+    let employee_id = req.employee_id.unwrap_or(current.employee_id);
+    ensure_employee_in_company(pool, company_id, employee_id).await?;
     let leave_type_id = req.leave_type_id.unwrap_or(current.leave_type_id);
     ensure_leave_type_in_company(pool, company_id, leave_type_id).await?;
     let start_date = req.start_date.unwrap_or(current.start_date);
@@ -222,7 +224,7 @@ pub async fn update_leave_request_admin(
         SET pending_days = pending_days + $3, updated_at = NOW()
         WHERE employee_id = $1 AND leave_type_id = $2 AND year = $4"#,
     )
-    .bind(current.employee_id)
+    .bind(employee_id)
     .bind(leave_type_id)
     .bind(days)
     .bind(new_year)
@@ -238,13 +240,14 @@ pub async fn update_leave_request_admin(
 
     let updated = sqlx::query_as::<_, LeaveRequest>(
         r#"UPDATE leave_requests
-        SET leave_type_id = $3,
-            start_date = $4,
-            end_date = $5,
-            days = $6,
-            reason = CASE WHEN $7::text IS NULL THEN reason ELSE NULLIF($7, '') END,
-            attachment_url = CASE WHEN $8::text IS NULL THEN attachment_url ELSE NULLIF($8, '') END,
-            attachment_name = CASE WHEN $9::text IS NULL THEN attachment_name ELSE NULLIF($9, '') END,
+        SET employee_id = $3,
+            leave_type_id = $4,
+            start_date = $5,
+            end_date = $6,
+            days = $7,
+            reason = CASE WHEN $8::text IS NULL THEN reason ELSE NULLIF($8, '') END,
+            attachment_url = CASE WHEN $9::text IS NULL THEN attachment_url ELSE NULLIF($9, '') END,
+            attachment_name = CASE WHEN $10::text IS NULL THEN attachment_name ELSE NULLIF($10, '') END,
             updated_at = NOW()
         WHERE id = $1 AND company_id = $2
         RETURNING *,
@@ -252,6 +255,7 @@ pub async fn update_leave_request_admin(
     )
     .bind(request_id)
     .bind(company_id)
+    .bind(employee_id)
     .bind(leave_type_id)
     .bind(start_date)
     .bind(end_date)
@@ -406,25 +410,31 @@ pub async fn update_claim_admin(
     .await?
     .ok_or_else(|| AppError::BadRequest("Claim not found or cannot be edited".into()))?;
 
+    if let Some(employee_id) = req.employee_id {
+        ensure_employee_in_company(pool, company_id, employee_id).await?;
+    }
+
     if let Some(amount) = req.amount {
         ensure_positive_amount(amount)?;
     }
 
     let updated = sqlx::query_as::<_, Claim>(
         r#"UPDATE claims
-        SET title = COALESCE($3, title),
-            description = CASE WHEN $4::text IS NULL THEN description ELSE NULLIF($4, '') END,
-            amount = COALESCE($5, amount),
-            category = CASE WHEN $6::text IS NULL THEN category ELSE NULLIF($6, '') END,
-            receipt_url = CASE WHEN $7::text IS NULL THEN receipt_url ELSE NULLIF($7, '') END,
-            receipt_file_name = CASE WHEN $8::text IS NULL THEN receipt_file_name ELSE NULLIF($8, '') END,
-            expense_date = COALESCE($9, expense_date),
+        SET employee_id = COALESCE($3, employee_id),
+            title = COALESCE($4, title),
+            description = CASE WHEN $5::text IS NULL THEN description ELSE NULLIF($5, '') END,
+            amount = COALESCE($6, amount),
+            category = CASE WHEN $7::text IS NULL THEN category ELSE NULLIF($7, '') END,
+            receipt_url = CASE WHEN $8::text IS NULL THEN receipt_url ELSE NULLIF($8, '') END,
+            receipt_file_name = CASE WHEN $9::text IS NULL THEN receipt_file_name ELSE NULLIF($9, '') END,
+            expense_date = COALESCE($10, expense_date),
             updated_at = NOW()
         WHERE id = $1 AND company_id = $2
         RETURNING *"#,
     )
     .bind(claim_id)
     .bind(company_id)
+    .bind(req.employee_id)
     .bind(&req.title)
     .bind(&req.description)
     .bind(req.amount)
@@ -558,6 +568,10 @@ pub async fn update_overtime_admin(
     .await?
     .ok_or_else(|| AppError::BadRequest("OT application not found or cannot be edited".into()))?;
 
+    if let Some(employee_id) = req.employee_id {
+        ensure_employee_in_company(pool, company_id, employee_id).await?;
+    }
+
     let start_time_raw = req
         .start_time
         .as_deref()
@@ -575,18 +589,20 @@ pub async fn update_overtime_admin(
 
     let updated = sqlx::query_as::<_, OvertimeApplication>(
         r#"UPDATE overtime_applications
-        SET ot_date = COALESCE($3, ot_date),
-            start_time = $4,
-            end_time = $5,
-            hours = COALESCE($6, hours),
-            ot_type = $7,
-            reason = CASE WHEN $8::text IS NULL THEN reason ELSE NULLIF($8, '') END,
+        SET employee_id = COALESCE($3, employee_id),
+            ot_date = COALESCE($4, ot_date),
+            start_time = $5,
+            end_time = $6,
+            hours = COALESCE($7, hours),
+            ot_type = $8,
+            reason = CASE WHEN $9::text IS NULL THEN reason ELSE NULLIF($9, '') END,
             updated_at = NOW()
         WHERE id = $1 AND company_id = $2
         RETURNING *"#,
     )
     .bind(ot_id)
     .bind(company_id)
+    .bind(req.employee_id)
     .bind(req.ot_date)
     .bind(start_time)
     .bind(end_time)
@@ -1031,6 +1047,26 @@ pub struct ClaimWithEmployee {
     pub employee_number: Option<String>,
 }
 
+pub async fn get_claim_with_employee_by_id(
+    pool: &PgPool,
+    company_id: Uuid,
+    claim_id: Uuid,
+) -> AppResult<ClaimWithEmployee> {
+    sqlx::query_as::<_, ClaimWithEmployee>(
+        r#"SELECT c.*,
+            e.full_name as employee_name,
+            e.employee_number
+        FROM claims c
+        JOIN employees e ON c.employee_id = e.id
+        WHERE c.id = $1 AND c.company_id = $2"#,
+    )
+    .bind(claim_id)
+    .bind(company_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound("Claim not found".into()))
+}
+
 pub async fn get_pending_claims(
     pool: &PgPool,
     company_id: Uuid,
@@ -1189,6 +1225,26 @@ pub struct OvertimeWithEmployee {
     pub updated_at: chrono::DateTime<chrono::Utc>,
     pub employee_name: Option<String>,
     pub employee_number: Option<String>,
+}
+
+pub async fn get_overtime_with_employee_by_id(
+    pool: &PgPool,
+    company_id: Uuid,
+    overtime_id: Uuid,
+) -> AppResult<OvertimeWithEmployee> {
+    sqlx::query_as::<_, OvertimeWithEmployee>(
+        r#"SELECT oa.*,
+            e.full_name as employee_name,
+            e.employee_number
+        FROM overtime_applications oa
+        JOIN employees e ON oa.employee_id = e.id
+        WHERE oa.id = $1 AND oa.company_id = $2"#,
+    )
+    .bind(overtime_id)
+    .bind(company_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound("Overtime application not found".into()))
 }
 
 pub async fn get_pending_overtime(

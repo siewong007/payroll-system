@@ -9,6 +9,7 @@ import { DataTable, type Column } from '@/components/ui/DataTable';
 import { Modal } from '@/components/ui/Modal';
 import type { Employee, CreateEmployeeRequest } from '@/types';
 import { useAuth } from '@/context/AuthContext';
+import { canAccessPayrollData } from '@/lib/roles';
 
 const BANKS = [
   'Maybank', 'CIMB Bank', 'Public Bank', 'RHB Bank', 'Hong Leong Bank',
@@ -74,7 +75,7 @@ const columns: Column<Employee>[] = [
 export function EmployeeList() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const isExec = user?.role === 'exec';
+  const canViewPayroll = canAccessPayrollData(user?.role);
   const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
@@ -84,8 +85,8 @@ export function EmployeeList() {
   const perPage = 20;
 
   const filteredColumns = useMemo(
-    () => isExec ? columns.filter((c) => c.key !== 'salary') : columns,
-    [isExec],
+    () => canViewPayroll ? columns : columns.filter((c) => c.key !== 'salary'),
+    [canViewPayroll],
   );
 
   const { data, isLoading } = useQuery({
@@ -106,7 +107,7 @@ export function EmployeeList() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-6">
         <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Employees</h1>
         <div className="flex gap-2">
-          {!isExec && (
+          {canViewPayroll && (
             <button
               onClick={() => navigate('/employees/import')}
               className="flex items-center justify-center gap-2 border border-gray-300 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium w-full sm:w-auto min-h-[44px]"
@@ -247,7 +248,7 @@ function InfoField({ label, value }: { label: string; value: string | null | und
 
 function EmployeeProfile({ employeeId }: { employeeId: string }) {
   const { user } = useAuth();
-  const isExec = user?.role === 'exec';
+  const canViewPayroll = canAccessPayrollData(user?.role);
   const { data: employee, isLoading } = useQuery({
     queryKey: ['employee', employeeId],
     queryFn: () => getEmployee(employeeId),
@@ -256,7 +257,7 @@ function EmployeeProfile({ employeeId }: { employeeId: string }) {
   const { data: salaryHistory } = useQuery({
     queryKey: ['salaryHistory', employeeId],
     queryFn: () => getSalaryHistory(employeeId),
-    enabled: !isExec,
+    enabled: canViewPayroll,
   });
 
   if (isLoading || !employee) {
@@ -322,7 +323,7 @@ function EmployeeProfile({ employeeId }: { employeeId: string }) {
           <InfoField label="Employment Type" value={employee.employment_type?.replace('_', ' ')} />
           <InfoField label="Date Joined" value={formatDate(employee.date_joined)} />
           <InfoField label="Confirmation Date" value={employee.confirmation_date ? formatDate(employee.confirmation_date) : null} />
-          {!isExec && <InfoField label="Basic Salary" value={formatMYR(employee.basic_salary)} />}
+          {canViewPayroll && <InfoField label="Basic Salary" value={formatMYR(employee.basic_salary)} />}
           <InfoField label="Bank" value={employee.bank_name} />
           <InfoField label="Account No" value={employee.bank_account_number} />
           <InfoField label="Cost Centre" value={employee.cost_centre} />
@@ -330,32 +331,33 @@ function EmployeeProfile({ employeeId }: { employeeId: string }) {
         </div>
       </section>
 
-      {/* Statutory */}
-      <section>
-        <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-4 flex items-center gap-2">
-          <Shield className="w-3.5 h-3.5" /> Statutory
-        </h4>
-        <div className="grid grid-cols-2 gap-x-8 gap-y-4">
-          <InfoField label="TIN" value={employee.tax_identification_number} />
-          <InfoField label="EPF Number" value={employee.epf_number} />
-          <InfoField label="EPF Category" value={employee.epf_category} />
-          <InfoField label="SOCSO Number" value={employee.socso_number} />
-          <InfoField label="EIS Number" value={employee.eis_number} />
-          <InfoField label="Residency" value={employee.residency_status?.replace('_', ' ')} />
-          <InfoField label="Working Spouse" value={employee.working_spouse ? 'Yes' : 'No'} />
-          <InfoField label="Children" value={String(employee.num_children ?? 0)} />
-          <InfoField label="Muslim" value={employee.is_muslim ? 'Yes' : 'No'} />
-          {employee.zakat_eligible && (
-            <InfoField label="Zakat (Monthly)" value={formatMYR(employee.zakat_monthly_amount ?? 0)} />
-          )}
-          {(employee.ptptn_monthly_amount ?? 0) > 0 && (
-            <InfoField label="PTPTN (Monthly)" value={formatMYR(employee.ptptn_monthly_amount!)} />
-          )}
-        </div>
-      </section>
+      {canViewPayroll && (
+        <section>
+          <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-4 flex items-center gap-2">
+            <Shield className="w-3.5 h-3.5" /> Statutory
+          </h4>
+          <div className="grid grid-cols-2 gap-x-8 gap-y-4">
+            <InfoField label="TIN" value={employee.tax_identification_number} />
+            <InfoField label="EPF Number" value={employee.epf_number} />
+            <InfoField label="EPF Category" value={employee.epf_category} />
+            <InfoField label="SOCSO Number" value={employee.socso_number} />
+            <InfoField label="EIS Number" value={employee.eis_number} />
+            <InfoField label="Residency" value={employee.residency_status?.replace('_', ' ')} />
+            <InfoField label="Working Spouse" value={employee.working_spouse ? 'Yes' : 'No'} />
+            <InfoField label="Children" value={String(employee.num_children ?? 0)} />
+            <InfoField label="Muslim" value={employee.is_muslim ? 'Yes' : 'No'} />
+            {employee.zakat_eligible && (
+              <InfoField label="Zakat (Monthly)" value={formatMYR(employee.zakat_monthly_amount ?? 0)} />
+            )}
+            {(employee.ptptn_monthly_amount ?? 0) > 0 && (
+              <InfoField label="PTPTN (Monthly)" value={formatMYR(employee.ptptn_monthly_amount!)} />
+            )}
+          </div>
+        </section>
+      )}
 
       {/* Salary History */}
-      {!isExec && salaryHistory && salaryHistory.length > 0 && (
+      {canViewPayroll && salaryHistory && salaryHistory.length > 0 && (
         <section>
           <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-4 flex items-center gap-2">
             <DollarSign className="w-3.5 h-3.5" /> Salary History
@@ -445,13 +447,33 @@ function employeeToForm(emp: Employee): CreateEmployeeRequest & { salaryDisplay:
   };
 }
 
+function stripPayrollFields(form: CreateEmployeeRequest): Partial<CreateEmployeeRequest> {
+  const {
+    basic_salary: _basicSalary,
+    tax_identification_number: _taxIdentificationNumber,
+    epf_number: _epfNumber,
+    socso_number: _socsoNumber,
+    eis_number: _eisNumber,
+    working_spouse: _workingSpouse,
+    epf_category: _epfCategory,
+    is_muslim: _isMuslim,
+    zakat_eligible: _zakatEligible,
+    zakat_monthly_amount: _zakatMonthlyAmount,
+    ptptn_monthly_amount: _ptptnMonthlyAmount,
+    payroll_group_id: _payrollGroupId,
+    ...safeFields
+  } = form;
+
+  return safeFields;
+}
+
 function EmployeeFormModal({ mode, employeeId, onClose }: {
   mode: 'create' | 'edit';
   employeeId?: string;
   onClose: () => void;
 }) {
   const { user } = useAuth();
-  const isExec = user?.role === 'exec';
+  const canViewPayroll = canAccessPayrollData(user?.role);
   const queryClient = useQueryClient();
 
   const { data: existingEmployee, isLoading: loadingEmployee } = useQuery({
@@ -463,6 +485,7 @@ function EmployeeFormModal({ mode, employeeId, onClose }: {
   const { data: payrollGroups } = useQuery({
     queryKey: ['payrollGroups'],
     queryFn: getPayrollGroups,
+    enabled: canViewPayroll,
   });
 
   const isReady = mode === 'create' || !!existingEmployee;
@@ -481,21 +504,21 @@ function EmployeeFormModal({ mode, employeeId, onClose }: {
           payrollGroups={payrollGroups}
           onClose={onClose}
           queryClient={queryClient}
-          isExec={isExec}
+          canViewPayroll={canViewPayroll}
         />
       )}
     </Modal>
   );
 }
 
-function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onClose, queryClient, isExec }: {
+function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onClose, queryClient, canViewPayroll }: {
   mode: 'create' | 'edit';
   employeeId?: string;
   initialData?: Employee;
   payrollGroups?: { id: string; name: string }[];
   onClose: () => void;
   queryClient: ReturnType<typeof useQueryClient>;
-  isExec?: boolean;
+  canViewPayroll?: boolean;
 }) {
   const defaults = initialData
     ? employeeToForm(initialData)
@@ -547,7 +570,16 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    mutation.mutate(form);
+    if (mode === 'create') {
+      const payload = canViewPayroll
+        ? form
+        : { ...stripPayrollFields(form), basic_salary: 0 } as CreateEmployeeRequest;
+      createMutation.mutate(payload);
+      return;
+    }
+
+    const payload = canViewPayroll ? form : stripPayrollFields(form);
+    updateMutation.mutate(payload);
   };
 
   const inputClass = 'w-full px-4 py-2.5 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none text-sm bg-white transition-colors';
@@ -766,7 +798,7 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
               required
             />
           </div>
-          {!isExec && (
+          {canViewPayroll && (
             <>
               <div>
                 <label className={labelClass}>Basic Salary (RM) *</label>
@@ -858,10 +890,10 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
         </div>
       </section>
 
-      {/* Statutory & Tax */}
-      <section className="bg-gray-50 rounded-xl border border-gray-100 p-6">
-        <h3 className={sectionTitleClass}>Statutory & Tax</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-5">
+      {canViewPayroll && (
+        <section className="bg-gray-50 rounded-xl border border-gray-100 p-6">
+          <h3 className={sectionTitleClass}>Statutory & Tax</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-5">
           <div>
             <label className={labelClass}>TIN</label>
             <input
@@ -944,36 +976,37 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
               className={inputClass}
             />
           </div>
-          <div className="md:col-span-2 flex items-center gap-6 pt-2">
-            <label className="flex items-center gap-2.5 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={form.is_muslim || false}
-                onChange={(e) => {
-                  updateField('is_muslim', e.target.checked);
-                  if (!e.target.checked) {
-                    updateField('zakat_eligible', false);
-                    updateField('zakat_monthly_amount', undefined);
-                  }
-                }}
-                className="rounded border-gray-200 w-4 h-4 text-gray-900 focus:ring-black"
-              />
-              <span className="text-sm font-medium text-gray-700">Muslim</span>
-            </label>
-            {form.is_muslim && (
+            <div className="md:col-span-2 flex items-center gap-6 pt-2">
               <label className="flex items-center gap-2.5 cursor-pointer">
                 <input
                   type="checkbox"
-                  checked={form.zakat_eligible || false}
-                  onChange={(e) => updateField('zakat_eligible', e.target.checked)}
+                  checked={form.is_muslim || false}
+                  onChange={(e) => {
+                    updateField('is_muslim', e.target.checked);
+                    if (!e.target.checked) {
+                      updateField('zakat_eligible', false);
+                      updateField('zakat_monthly_amount', undefined);
+                    }
+                  }}
                   className="rounded border-gray-200 w-4 h-4 text-gray-900 focus:ring-black"
                 />
-                <span className="text-sm font-medium text-gray-700">Zakat Eligible</span>
+                <span className="text-sm font-medium text-gray-700">Muslim</span>
               </label>
-            )}
+              {form.is_muslim && (
+                <label className="flex items-center gap-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.zakat_eligible || false}
+                    onChange={(e) => updateField('zakat_eligible', e.target.checked)}
+                    className="rounded border-gray-200 w-4 h-4 text-gray-900 focus:ring-black"
+                  />
+                  <span className="text-sm font-medium text-gray-700">Zakat Eligible</span>
+                </label>
+              )}
+            </div>
           </div>
-        </div>
-      </section>
+        </section>
+      )}
 
       {/* Footer */}
       <div className="flex justify-end gap-3 pt-2">

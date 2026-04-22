@@ -8,6 +8,7 @@ import { getPayrollGroups } from '@/api/payroll';
 import { getErrorMessage } from '@/lib/utils';
 import type { CreateEmployeeRequest } from '@/types';
 import { useAuth } from '@/context/AuthContext';
+import { canAccessPayrollData } from '@/lib/roles';
 
 const BANKS = [
   'Maybank', 'CIMB Bank', 'Public Bank', 'RHB Bank', 'Hong Leong Bank',
@@ -20,11 +21,12 @@ export function EmployeeCreate() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { user } = useAuth();
-  const isExec = user?.role === 'exec';
+  const canViewPayroll = canAccessPayrollData(user?.role);
 
   const { data: payrollGroups } = useQuery({
     queryKey: ['payrollGroups'],
     queryFn: getPayrollGroups,
+    enabled: canViewPayroll,
   });
 
   const [form, setForm] = useState<CreateEmployeeRequest>({
@@ -238,7 +240,7 @@ export function EmployeeCreate() {
                 required
               />
             </div>
-            {!isExec && (
+            {canViewPayroll && (
               <>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Basic Salary (RM) *</label>
@@ -301,10 +303,10 @@ export function EmployeeCreate() {
           </div>
         </section>
 
-        {/* Statutory */}
-        <section className="bg-white rounded-2xl shadow p-6">
-          <h2 className="text-lg font-semibold mb-4">Statutory & Tax</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {canViewPayroll && (
+          <section className="bg-white rounded-2xl shadow p-6">
+            <h2 className="text-lg font-semibold mb-4">Statutory & Tax</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">EPF Number</label>
               <input
@@ -378,36 +380,37 @@ export function EmployeeCreate() {
                 className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
               />
             </div>
-            <div className="flex items-center gap-4 pt-6">
-              <label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={form.is_muslim || false}
-                  onChange={(e) => {
-                    updateField('is_muslim', e.target.checked);
-                    if (!e.target.checked) {
-                      updateField('zakat_eligible', false);
-                      updateField('zakat_monthly_amount', undefined);
-                    }
-                  }}
-                  className="rounded"
-                />
-                <span className="text-sm">Muslim</span>
-              </label>
-              {form.is_muslim && (
+              <div className="flex items-center gap-4 pt-6">
                 <label className="flex items-center gap-2">
                   <input
                     type="checkbox"
-                    checked={form.zakat_eligible || false}
-                    onChange={(e) => updateField('zakat_eligible', e.target.checked)}
+                    checked={form.is_muslim || false}
+                    onChange={(e) => {
+                      updateField('is_muslim', e.target.checked);
+                      if (!e.target.checked) {
+                        updateField('zakat_eligible', false);
+                        updateField('zakat_monthly_amount', undefined);
+                      }
+                    }}
                     className="rounded"
                   />
-                  <span className="text-sm">Zakat Eligible</span>
+                  <span className="text-sm">Muslim</span>
                 </label>
-              )}
+                {form.is_muslim && (
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={form.zakat_eligible || false}
+                      onChange={(e) => updateField('zakat_eligible', e.target.checked)}
+                      className="rounded"
+                    />
+                    <span className="text-sm">Zakat Eligible</span>
+                  </label>
+                )}
+              </div>
             </div>
-          </div>
-        </section>
+          </section>
+        )}
 
         {/* Submit */}
         <div className="flex gap-4">

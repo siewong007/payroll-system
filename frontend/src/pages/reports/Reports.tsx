@@ -19,6 +19,7 @@ import {
   type StatutoryReportRow,
 } from '@/api/reports';
 import { DataTable, type Column } from '@/components/ui/DataTable';
+import { canAccessPayrollData } from '@/lib/roles';
 
 const fmt = (sen: number) => `RM ${(sen / 100).toLocaleString('en-MY', { minimumFractionDigits: 2 })}`;
 const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -129,8 +130,8 @@ function groupByEmployee(rows: LeaveReportRow[]): EmployeeLeaveGroup[] {
 
 export function Reports() {
   const { user } = useAuth();
-  const isExec = user?.role === 'exec';
-  const [tab, setTab] = useState<ReportTab>(isExec ? 'leave' : 'payroll');
+  const canViewPayroll = canAccessPayrollData(user?.role);
+  const [tab, setTab] = useState<ReportTab>(canViewPayroll ? 'payroll' : 'leave');
   const today = new Date();
   const fallbackYear = today.getFullYear();
   const fallbackMonth = today.getMonth() + 1;
@@ -257,15 +258,23 @@ export function Reports() {
       { key: 'leave', label: 'Leave Entitlement' },
       { key: 'claims', label: 'Claims' },
     ];
-    return isExec ? all.filter((t) => !PAYROLL_TABS.includes(t.key)) : all;
-  }, [isExec]);
+    return canViewPayroll ? all : all.filter((t) => !PAYROLL_TABS.includes(t.key));
+  }, [canViewPayroll]);
+
+  useEffect(() => {
+    if (!tabs.some((option) => option.key === tab)) {
+      setTab(canViewPayroll ? 'payroll' : 'leave');
+    }
+  }, [canViewPayroll, tab, tabs]);
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="page-header">
           <h1 className="page-title">Reports</h1>
-          <p className="page-subtitle">Company payroll and HR reports</p>
+          <p className="page-subtitle">
+            {canViewPayroll ? 'Company payroll and HR reports' : 'Company HR reports'}
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <select value={year} onChange={(e) => setYear(Number(e.target.value))} className="form-input !w-auto">

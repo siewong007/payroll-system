@@ -14,6 +14,65 @@ use crate::models::employee::{
 };
 use crate::services::{company_service, email_service, employee_service, portal_service};
 
+fn redact_payroll_fields(employee: &mut Employee) {
+    employee.basic_salary = 0;
+    employee.hourly_rate = None;
+    employee.daily_rate = None;
+    employee.tax_identification_number = None;
+    employee.epf_number = None;
+    employee.socso_number = None;
+    employee.eis_number = None;
+    employee.working_spouse = None;
+    employee.epf_category = None;
+    employee.is_muslim = None;
+    employee.zakat_eligible = None;
+    employee.zakat_monthly_amount = None;
+    employee.ptptn_monthly_amount = None;
+    employee.tabung_haji_amount = None;
+    employee.hrdf_contribution = None;
+    employee.payroll_group_id = None;
+    employee.salary_group = None;
+}
+
+fn create_request_touches_payroll_fields(req: &CreateEmployeeRequest) -> bool {
+    req.basic_salary != 0
+        || req.hourly_rate.is_some()
+        || req.daily_rate.is_some()
+        || req.tax_identification_number.is_some()
+        || req.epf_number.is_some()
+        || req.socso_number.is_some()
+        || req.eis_number.is_some()
+        || req.working_spouse.is_some()
+        || req.epf_category.is_some()
+        || req.is_muslim.is_some()
+        || req.zakat_eligible.is_some()
+        || req.zakat_monthly_amount.is_some()
+        || req.ptptn_monthly_amount.is_some()
+        || req.tabung_haji_amount.is_some()
+        || req.payroll_group_id.is_some()
+        || req.salary_group.is_some()
+}
+
+fn update_request_touches_payroll_fields(req: &UpdateEmployeeRequest) -> bool {
+    req.basic_salary.is_some()
+        || req.hourly_rate.is_some()
+        || req.daily_rate.is_some()
+        || req.tax_identification_number.is_some()
+        || req.epf_number.is_some()
+        || req.socso_number.is_some()
+        || req.eis_number.is_some()
+        || req.working_spouse.is_some()
+        || req.epf_category.is_some()
+        || req.is_muslim.is_some()
+        || req.zakat_eligible.is_some()
+        || req.zakat_monthly_amount.is_some()
+        || req.ptptn_monthly_amount.is_some()
+        || req.tabung_haji_amount.is_some()
+        || req.hrdf_contribution.is_some()
+        || req.payroll_group_id.is_some()
+        || req.salary_group.is_some()
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ListQuery {
     pub search: Option<String>,
@@ -56,11 +115,9 @@ pub async fn list(
     )
     .await?;
 
-    if auth.is_exec() {
+    if !auth.is_payroll_privileged() {
         for emp in &mut employees {
-            emp.basic_salary = 0;
-            emp.hourly_rate = None;
-            emp.daily_rate = None;
+            redact_payroll_fields(emp);
         }
     }
 
@@ -83,10 +140,8 @@ pub async fn get(
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
     let mut emp = employee_service::get_employee(&state.pool, id, company_id).await?;
-    if auth.is_exec() {
-        emp.basic_salary = 0;
-        emp.hourly_rate = None;
-        emp.daily_rate = None;
+    if !auth.is_payroll_privileged() {
+        redact_payroll_fields(&mut emp);
     }
     Ok(Json(emp))
 }
@@ -96,6 +151,11 @@ pub async fn create(
     auth: AuthUser,
     Json(req): Json<CreateEmployeeRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
+    if !auth.is_payroll_privileged() && create_request_touches_payroll_fields(&req) {
+        return Err(AppError::Forbidden(
+            "Payroll fields are not available for this role".into(),
+        ));
+    }
     let company_id = auth
         .0
         .company_id
@@ -166,6 +226,11 @@ pub async fn update(
     Path(id): Path<Uuid>,
     Json(req): Json<UpdateEmployeeRequest>,
 ) -> AppResult<Json<Employee>> {
+    if !auth.is_payroll_privileged() && update_request_touches_payroll_fields(&req) {
+        return Err(AppError::Forbidden(
+            "Payroll fields are not available for this role".into(),
+        ));
+    }
     let company_id = auth
         .0
         .company_id
@@ -195,7 +260,7 @@ pub async fn salary_history(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<Vec<SalaryHistory>>> {
-    auth.deny_exec()?;
+    auth.require_payroll_privileged()?;
     let history = employee_service::get_salary_history(&state.pool, id).await?;
     Ok(Json(history))
 }
@@ -206,7 +271,7 @@ pub async fn create_tp3(
     Path(id): Path<Uuid>,
     Json(req): Json<CreateTp3Request>,
 ) -> AppResult<Json<Tp3Record>> {
-    auth.deny_exec()?;
+    auth.require_payroll_privileged()?;
     let record = employee_service::create_tp3(&state.pool, id, req, auth.0.sub).await?;
     Ok(Json(record))
 }

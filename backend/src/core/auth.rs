@@ -95,9 +95,24 @@ impl AuthUser {
         self.0.role == "exec"
     }
 
+    /// Returns true if the role can access payroll and statutory data.
+    pub fn is_payroll_privileged(&self) -> bool {
+        matches!(self.0.role.as_str(), "super_admin" | "payroll_admin")
+    }
+
     /// Rejects the request if role is 'exec'. Use to guard payroll endpoints.
     pub fn deny_exec(&self) -> AppResult<()> {
         if self.is_exec() {
+            return Err(AppError::Forbidden(
+                "Payroll access not available for this role".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Rejects the request unless the role is allowed to access payroll data.
+    pub fn require_payroll_privileged(&self) -> AppResult<()> {
+        if !self.is_payroll_privileged() {
             return Err(AppError::Forbidden(
                 "Payroll access not available for this role".into(),
             ));

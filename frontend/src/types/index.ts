@@ -2,7 +2,7 @@ export interface User {
   id: string;
   email: string;
   full_name: string;
-  role: 'super_admin' | 'payroll_admin' | 'hr_manager' | 'finance' | 'exec' | 'employee';
+  role: 'super_admin' | 'admin' | 'payroll_admin' | 'hr_manager' | 'finance' | 'exec' | 'employee';
   company_id: string | null;
   employee_id: string | null;
   must_change_password?: boolean;
@@ -479,6 +479,7 @@ export interface CreateLeaveRequest {
 }
 
 export interface UpdateLeaveRequest {
+  employee_id?: string;
   leave_type_id?: string;
   start_date?: string;
   end_date?: string;
@@ -522,6 +523,7 @@ export interface CreateClaimRequest {
 }
 
 export interface UpdateClaimRequest {
+  employee_id?: string;
   title?: string;
   description?: string;
   amount?: number;
@@ -710,6 +712,7 @@ export interface CreateOvertimeRequest {
 }
 
 export interface UpdateOvertimeRequest {
+  employee_id?: string;
   ot_date?: string;
   start_time?: string;
   end_time?: string;

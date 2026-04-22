@@ -569,33 +569,7 @@ export function Approvals() {
             )}
             renderSummaryFooter={(request, close) =>
               request.status === 'pending' ? (
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2">
-                    {canEditLeave(request) && (
-                      <button
-                        onClick={() => {
-                          setLeaveEditor(request);
-                          setShowLeaveModal(true);
-                        }}
-                        className="btn-secondary !py-2"
-                      >
-                        <Pencil className="w-4 h-4" /> Edit
-                      </button>
-                    )}
-                    {canDeleteLeave(request) && (
-                      <button
-                        onClick={() => {
-                          if (confirm('Delete this leave request?')) {
-                            deleteLeaveM.mutate(request.id, { onSuccess: close });
-                          }
-                        }}
-                        className="flex items-center gap-2 px-4 py-2.5 bg-white border border-red-200 text-red-600 text-sm font-medium rounded-lg hover:bg-red-50 hover:border-red-300"
-                      >
-                        <Trash2 className="w-4 h-4" /> Delete
-                      </button>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-3">
+                <div className="flex items-center justify-end gap-3">
                     <button
                       onClick={() => rejectLeaveM.mutate({ id: request.id, notes: reviewNotes[request.id] }, { onSuccess: close })}
                       disabled={rejectLeaveM.isPending}
@@ -612,7 +586,6 @@ export function Approvals() {
                       <CheckCircle className="w-4 h-4" />
                       {approveLeaveM.isPending ? 'Approving...' : 'Approve'}
                     </button>
-                  </div>
                 </div>
               ) : null
             }
@@ -705,33 +678,7 @@ export function Approvals() {
             )}
             renderSummaryFooter={(claim, close) =>
               claim.status === 'pending' ? (
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2">
-                    {canEditClaim(claim) && (
-                      <button
-                        onClick={() => {
-                          setClaimEditor(claim);
-                          setShowClaimModal(true);
-                        }}
-                        className="btn-secondary !py-2"
-                      >
-                        <Pencil className="w-4 h-4" /> Edit
-                      </button>
-                    )}
-                    {canDeleteClaim(claim) && (
-                      <button
-                        onClick={() => {
-                          if (confirm('Delete this claim?')) {
-                            deleteClaimM.mutate(claim.id, { onSuccess: close });
-                          }
-                        }}
-                        className="flex items-center gap-2 px-4 py-2.5 bg-white border border-red-200 text-red-600 text-sm font-medium rounded-lg hover:bg-red-50 hover:border-red-300"
-                      >
-                        <Trash2 className="w-4 h-4" /> Delete
-                      </button>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-3">
+                <div className="flex items-center justify-end gap-3">
                     <button
                       onClick={() => rejectClaimM.mutate({ id: claim.id, notes: reviewNotes[claim.id] }, { onSuccess: close })}
                       disabled={rejectClaimM.isPending}
@@ -748,33 +695,6 @@ export function Approvals() {
                       <CheckCircle className="w-4 h-4" />
                       {approveClaimM.isPending ? 'Approving...' : 'Approve'}
                     </button>
-                  </div>
-                </div>
-              ) : canEditClaim(claim) || canDeleteClaim(claim) ? (
-                <div className="flex items-center justify-end gap-2">
-                  {canEditClaim(claim) && (
-                    <button
-                      onClick={() => {
-                        setClaimEditor(claim);
-                        setShowClaimModal(true);
-                      }}
-                      className="btn-secondary !py-2"
-                    >
-                      <Pencil className="w-4 h-4" /> Edit
-                    </button>
-                  )}
-                  {canDeleteClaim(claim) && (
-                    <button
-                      onClick={() => {
-                        if (confirm('Delete this claim?')) {
-                          deleteClaimM.mutate(claim.id, { onSuccess: close });
-                        }
-                      }}
-                      className="flex items-center gap-2 px-4 py-2.5 bg-white border border-red-200 text-red-600 text-sm font-medium rounded-lg hover:bg-red-50 hover:border-red-300"
-                    >
-                      <Trash2 className="w-4 h-4" /> Delete
-                    </button>
-                  )}
                 </div>
               ) : null
             }
@@ -862,33 +782,7 @@ export function Approvals() {
             )}
             renderSummaryFooter={(overtime, close) =>
               overtime.status === 'pending' ? (
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2">
-                    {canEditOvertime(overtime) && (
-                      <button
-                        onClick={() => {
-                          setOvertimeEditor(overtime);
-                          setShowOvertimeModal(true);
-                        }}
-                        className="btn-secondary !py-2"
-                      >
-                        <Pencil className="w-4 h-4" /> Edit
-                      </button>
-                    )}
-                    {canDeleteOvertime(overtime) && (
-                      <button
-                        onClick={() => {
-                          if (confirm('Delete this overtime application?')) {
-                            deleteOvertimeM.mutate(overtime.id, { onSuccess: close });
-                          }
-                        }}
-                        className="flex items-center gap-2 px-4 py-2.5 bg-white border border-red-200 text-red-600 text-sm font-medium rounded-lg hover:bg-red-50 hover:border-red-300"
-                      >
-                        <Trash2 className="w-4 h-4" /> Delete
-                      </button>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-3">
+                <div className="flex items-center justify-end gap-3">
                     <button
                       onClick={() => rejectOvertimeM.mutate({ id: overtime.id, notes: reviewNotes[overtime.id] }, { onSuccess: close })}
                       disabled={rejectOvertimeM.isPending}
@@ -905,33 +799,6 @@ export function Approvals() {
                       <CheckCircle className="w-4 h-4" />
                       {approveOvertimeM.isPending ? 'Approving...' : 'Approve'}
                     </button>
-                  </div>
-                </div>
-              ) : canEditOvertime(overtime) || canDeleteOvertime(overtime) ? (
-                <div className="flex items-center justify-end gap-2">
-                  {canEditOvertime(overtime) && (
-                    <button
-                      onClick={() => {
-                        setOvertimeEditor(overtime);
-                        setShowOvertimeModal(true);
-                      }}
-                      className="btn-secondary !py-2"
-                    >
-                      <Pencil className="w-4 h-4" /> Edit
-                    </button>
-                  )}
-                  {canDeleteOvertime(overtime) && (
-                    <button
-                      onClick={() => {
-                        if (confirm('Delete this overtime application?')) {
-                          deleteOvertimeM.mutate(overtime.id, { onSuccess: close });
-                        }
-                      }}
-                      className="flex items-center gap-2 px-4 py-2.5 bg-white border border-red-200 text-red-600 text-sm font-medium rounded-lg hover:bg-red-50 hover:border-red-300"
-                    >
-                      <Trash2 className="w-4 h-4" /> Delete
-                    </button>
-                  )}
                 </div>
               ) : null
             }
@@ -1016,6 +883,10 @@ function LeaveCrudModal({
   });
   const [error, setError] = useState('');
   const [uploading, setUploading] = useState(false);
+  const selectedEmployee = employees.find((employee) => employee.id === form.employee_id);
+  const modalTitle = item
+    ? `Edit Leave Request${selectedEmployee ? ` - ${selectedEmployee.full_name}` : ''}`
+    : 'Create Leave Request';
 
   useEffect(() => {
     if (!open) {
@@ -1089,6 +960,7 @@ function LeaveCrudModal({
       updateMutation.mutate({
         id: item.id,
         payload: {
+          employee_id: form.employee_id,
           leave_type_id: form.leave_type_id,
           start_date: form.start_date,
           end_date: form.end_date,
@@ -1113,7 +985,7 @@ function LeaveCrudModal({
     <Modal
       open={open}
       onClose={onClose}
-      title={item ? 'Edit Leave Request' : 'Create Leave Request'}
+      title={modalTitle}
       footer={
         <div className="flex justify-end gap-3">
           <button onClick={onClose} className="btn-secondary">Cancel</button>
@@ -1136,7 +1008,6 @@ function LeaveCrudModal({
             value={form.employee_id}
             onChange={(event) => setForm((prev) => ({ ...prev, employee_id: event.target.value }))}
             className="form-input"
-            disabled={Boolean(item)}
           >
             <option value="">Select employee</option>
             {employees.map((employee) => (
@@ -1257,6 +1128,7 @@ function ClaimCrudModal({
   onSaved: () => void;
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const queryClient = useQueryClient();
   const [form, setForm] = useState<AdminCreateClaimRequest>({
     employee_id: '',
     title: '',
@@ -1269,6 +1141,10 @@ function ClaimCrudModal({
   });
   const [error, setError] = useState('');
   const [uploading, setUploading] = useState(false);
+  const selectedEmployee = employees.find((employee) => employee.id === form.employee_id);
+  const modalTitle = item
+    ? `Edit Claim${selectedEmployee ? ` - ${selectedEmployee.full_name}` : ''}`
+    : 'Create Claim';
 
   useEffect(() => {
     if (!open) {
@@ -1311,7 +1187,20 @@ function ClaimCrudModal({
 
   const updateMutation = useMutation({
     mutationFn: ({ id, payload }: { id: string; payload: UpdateClaimRequest }) => updateClaim(id, payload),
-    onSuccess: onSaved,
+    onSuccess: async (updatedClaim) => {
+      queryClient.setQueriesData<ClaimWithEmployee[]>({ queryKey: ['approvals-claims'] }, (current) =>
+        current?.map((claim) =>
+          claim.id === updatedClaim.id
+            ? {
+                ...claim,
+                ...updatedClaim,
+              }
+            : claim
+        ) ?? current
+      );
+      await queryClient.refetchQueries({ queryKey: ['approvals-claims'] });
+      onSaved();
+    },
     onError: (err: unknown) => setError(getErrorMessage(err, 'Failed to update claim')),
   });
 
@@ -1342,6 +1231,7 @@ function ClaimCrudModal({
       updateMutation.mutate({
         id: item.id,
         payload: {
+          employee_id: form.employee_id,
           title: form.title,
           description: form.description,
           amount: Math.round(form.amount * 100),
@@ -1368,7 +1258,7 @@ function ClaimCrudModal({
     <Modal
       open={open}
       onClose={onClose}
-      title={item ? 'Edit Claim' : 'Create Claim'}
+      title={modalTitle}
       footer={
         <div className="flex justify-end gap-3">
           <button onClick={onClose} className="btn-secondary">Cancel</button>
@@ -1391,7 +1281,6 @@ function ClaimCrudModal({
             value={form.employee_id}
             onChange={(event) => setForm((prev) => ({ ...prev, employee_id: event.target.value }))}
             className="form-input"
-            disabled={Boolean(item)}
           >
             <option value="">Select employee</option>
             {employees.map((employee) => (
@@ -1507,6 +1396,7 @@ function OvertimeCrudModal({
   employees: Employee[];
   onSaved: () => void;
 }) {
+  const queryClient = useQueryClient();
   const [form, setForm] = useState<AdminCreateOvertimeRequest>({
     employee_id: '',
     ot_date: '',
@@ -1517,6 +1407,10 @@ function OvertimeCrudModal({
     reason: '',
   });
   const [error, setError] = useState('');
+  const selectedEmployee = employees.find((employee) => employee.id === form.employee_id);
+  const modalTitle = item
+    ? `Edit Overtime Request${selectedEmployee ? ` - ${selectedEmployee.full_name}` : ''}`
+    : 'Create Overtime Request';
 
   useEffect(() => {
     if (!open) {
@@ -1557,7 +1451,20 @@ function OvertimeCrudModal({
 
   const updateMutation = useMutation({
     mutationFn: ({ id, payload }: { id: string; payload: UpdateOvertimeRequest }) => updateOvertimeRequest(id, payload),
-    onSuccess: onSaved,
+    onSuccess: async (updatedOvertime) => {
+      queryClient.setQueriesData<OvertimeWithEmployee[]>({ queryKey: ['approvals-overtime'] }, (current) =>
+        current?.map((overtime) =>
+          overtime.id === updatedOvertime.id
+            ? {
+                ...overtime,
+                ...updatedOvertime,
+              }
+            : overtime
+        ) ?? current
+      );
+      await queryClient.refetchQueries({ queryKey: ['approvals-overtime'] });
+      onSaved();
+    },
     onError: (err: unknown) => setError(getErrorMessage(err, 'Failed to update overtime request')),
   });
 
@@ -1591,6 +1498,7 @@ function OvertimeCrudModal({
       updateMutation.mutate({
         id: item.id,
         payload: {
+          employee_id: form.employee_id,
           ot_date: form.ot_date,
           start_time: form.start_time,
           end_time: form.end_time,
@@ -1612,7 +1520,7 @@ function OvertimeCrudModal({
     <Modal
       open={open}
       onClose={onClose}
-      title={item ? 'Edit Overtime Request' : 'Create Overtime Request'}
+      title={modalTitle}
       footer={
         <div className="flex justify-end gap-3">
           <button onClick={onClose} className="btn-secondary">Cancel</button>
@@ -1635,7 +1543,6 @@ function OvertimeCrudModal({
             value={form.employee_id}
             onChange={(event) => setForm((prev) => ({ ...prev, employee_id: event.target.value }))}
             className="form-input"
-            disabled={Boolean(item)}
           >
             <option value="">Select employee</option>
             {employees.map((employee) => (

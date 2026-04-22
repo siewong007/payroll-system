@@ -81,6 +81,7 @@ pub struct CreateLeaveRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateLeaveRequest {
+    pub employee_id: Option<Uuid>,
     pub leave_type_id: Option<Uuid>,
     pub start_date: Option<NaiveDate>,
     pub end_date: Option<NaiveDate>,
@@ -125,6 +126,7 @@ pub struct CreateClaimRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateClaimRequest {
+    pub employee_id: Option<Uuid>,
     pub title: Option<String>,
     pub description: Option<String>,
     pub amount: Option<i64>,
@@ -166,6 +168,7 @@ pub struct CreateOvertimeRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateOvertimeRequest {
+    pub employee_id: Option<Uuid>,
     pub ot_date: Option<NaiveDate>,
     pub start_time: Option<String>,
     pub end_time: Option<String>,

@@ -12,6 +12,8 @@ import {
 import { getCompany, updateCompany, getCompanyStats } from '@/api/company';
 import { getErrorMessage } from '@/lib/utils';
 import type { UpdateCompanyRequest } from '@/types';
+import { useAuth } from '@/context/AuthContext';
+import { canAccessPayrollData } from '@/lib/roles';
 
 const renderRow = (label: string, value: string | null | undefined) => (
   <div className="flex justify-between py-2.5 border-b border-gray-100 last:border-none text-sm">
@@ -47,6 +49,8 @@ const STATES = [
 ];
 
 export function CompanyProfile() {
+  const { user } = useAuth();
+  const canViewPayroll = canAccessPayrollData(user?.role);
   const queryClient = useQueryClient();
   const [activeSection, setActiveSection] = useState<Section | null>(null);
   const [form, setForm] = useState<UpdateCompanyRequest>({});
@@ -142,7 +146,11 @@ export function CompanyProfile() {
       {/* Page Header */}
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Company Profile</h1>
-        <p className="text-gray-500 text-sm mt-1">Manage your company information and statutory details</p>
+        <p className="text-gray-500 text-sm mt-1">
+          {canViewPayroll
+            ? 'Manage your company information and statutory details'
+            : 'Manage your company information'}
+        </p>
       </div>
 
       {/* Stats Cards */}
@@ -193,32 +201,33 @@ export function CompanyProfile() {
           {renderRow('Email', company.email)}
         </div>
 
-        {/* Statutory Details */}
-        <div
-          onClick={() => openModal('statutory')}
-          className="bg-white rounded-2xl shadow-sm hover:shadow-md transition cursor-pointer p-5"
-        >
-          <div className="flex justify-between items-center mb-3">
-            <h2 className="font-semibold text-gray-800 flex items-center gap-2">
-              <Shield className="w-5 h-5 text-gray-600" /> Statutory Details
-            </h2>
-            <span className="text-xs text-gray-400">Click to edit</span>
+        {canViewPayroll && (
+          <div
+            onClick={() => openModal('statutory')}
+            className="bg-white rounded-2xl shadow-sm hover:shadow-md transition cursor-pointer p-5"
+          >
+            <div className="flex justify-between items-center mb-3">
+              <h2 className="font-semibold text-gray-800 flex items-center gap-2">
+                <Shield className="w-5 h-5 text-gray-600" /> Statutory Details
+              </h2>
+              <span className="text-xs text-gray-400">Click to edit</span>
+            </div>
+            {renderRow('EPF No.', company.epf_number)}
+            {renderRow('SOCSO Code', company.socso_code)}
+            {renderRow('EIS Code', company.eis_code)}
+            {renderRow('HRDF No.', company.hrdf_number)}
+            <div className="flex justify-between py-2.5 border-b border-gray-100 last:border-none text-sm">
+              <span className="text-gray-500">HRDF Enabled</span>
+              <span
+                className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
+                  company.hrdf_enabled ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'
+                }`}
+              >
+                {company.hrdf_enabled ? 'Yes' : 'No'}
+              </span>
+            </div>
           </div>
-          {renderRow('EPF No.', company.epf_number)}
-          {renderRow('SOCSO Code', company.socso_code)}
-          {renderRow('EIS Code', company.eis_code)}
-          {renderRow('HRDF No.', company.hrdf_number)}
-          <div className="flex justify-between py-2.5 border-b border-gray-100 last:border-none text-sm">
-            <span className="text-gray-500">HRDF Enabled</span>
-            <span
-              className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
-                company.hrdf_enabled ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'
-              }`}
-            >
-              {company.hrdf_enabled ? 'Yes' : 'No'}
-            </span>
-          </div>
-        </div>
+        )}
 
         {/* Address */}
         <div
@@ -239,22 +248,23 @@ export function CompanyProfile() {
           {renderRow('Country', company.country)}
         </div>
 
-        {/* Payroll Configuration */}
-        <div
-          onClick={() => openModal('payroll')}
-          className="bg-white rounded-2xl shadow-sm hover:shadow-md transition cursor-pointer p-5"
-        >
-          <div className="flex justify-between items-center mb-3">
-            <h2 className="font-semibold text-gray-800 flex items-center gap-2">
-              <Calculator className="w-5 h-5 text-gray-600" /> Payroll Configuration
-            </h2>
-            <span className="text-xs text-gray-400">Click to edit</span>
+        {canViewPayroll && (
+          <div
+            onClick={() => openModal('payroll')}
+            className="bg-white rounded-2xl shadow-sm hover:shadow-md transition cursor-pointer p-5"
+          >
+            <div className="flex justify-between items-center mb-3">
+              <h2 className="font-semibold text-gray-800 flex items-center gap-2">
+                <Calculator className="w-5 h-5 text-gray-600" /> Payroll Configuration
+              </h2>
+              <span className="text-xs text-gray-400">Click to edit</span>
+            </div>
+            {renderRow('Unpaid Leave Divisor', String(company.unpaid_leave_divisor ?? 26))}
+            {renderRow('Status', company.is_active ? 'Active' : 'Inactive')}
+            {renderRow('Created', new Date(company.created_at).toLocaleDateString('en-MY', { day: 'numeric', month: 'long', year: 'numeric' }))}
+            {renderRow('Last Updated', new Date(company.updated_at).toLocaleDateString('en-MY', { day: 'numeric', month: 'long', year: 'numeric' }))}
           </div>
-          {renderRow('Unpaid Leave Divisor', String(company.unpaid_leave_divisor ?? 26))}
-          {renderRow('Status', company.is_active ? 'Active' : 'Inactive')}
-          {renderRow('Created', new Date(company.created_at).toLocaleDateString('en-MY', { day: 'numeric', month: 'long', year: 'numeric' }))}
-          {renderRow('Last Updated', new Date(company.updated_at).toLocaleDateString('en-MY', { day: 'numeric', month: 'long', year: 'numeric' }))}
-        </div>
+        )}
       </div>
 
       {/* Edit Modal */}
@@ -392,4 +402,3 @@ export function CompanyProfile() {
     </div>
   );
 }
-

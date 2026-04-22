@@ -14,24 +14,20 @@ use crate::models::employee_import::{
 };
 use crate::services::employee_import_service;
 
-fn require_hr_admin(auth: &AuthUser) -> AppResult<(Uuid, Uuid)> {
-    match auth.0.role.as_str() {
-        "super_admin" | "admin" | "payroll_admin" | "hr_manager" => {
-            let company_id = auth
-                .0
-                .company_id
-                .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
-            Ok((company_id, auth.0.sub))
-        }
-        _ => Err(AppError::Forbidden("Admin access required".into())),
-    }
+fn require_payroll_admin(auth: &AuthUser) -> AppResult<(Uuid, Uuid)> {
+    auth.require_payroll_privileged()?;
+    let company_id = auth
+        .0
+        .company_id
+        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
+    Ok((company_id, auth.0.sub))
 }
 
 pub async fn download_template(
     auth: AuthUser,
     Query(query): Query<TemplateQuery>,
 ) -> Result<impl IntoResponse, AppError> {
-    require_hr_admin(&auth)?;
+    require_payroll_admin(&auth)?;
 
     let format = query.format.as_deref().unwrap_or("xlsx");
 
@@ -74,7 +70,7 @@ pub async fn validate_import(
     auth: AuthUser,
     mut multipart: Multipart,
 ) -> AppResult<Json<ImportValidationResponse>> {
-    let (company_id, user_id) = require_hr_admin(&auth)?;
+    let (company_id, user_id) = require_payroll_admin(&auth)?;
 
     let mut file_data: Option<(String, Vec<u8>)> = None;
 
@@ -131,7 +127,7 @@ pub async fn confirm_import(
     auth: AuthUser,
     Json(req): Json<ImportConfirmRequest>,
 ) -> AppResult<Json<crate::models::employee_import::ImportConfirmResponse>> {
-    let (company_id, user_id) = require_hr_admin(&auth)?;
+    let (company_id, user_id) = require_payroll_admin(&auth)?;
 
     let response =
         employee_import_service::confirm_import(&state.pool, company_id, user_id, req).await?;

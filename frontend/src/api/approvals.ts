@@ -49,7 +49,7 @@ export const createClaim = (req: AdminCreateClaimRequest) =>
   api.post<Claim>('/approvals/claims', req).then(r => r.data);
 
 export const updateClaim = (id: string, req: UpdateClaimRequest) =>
-  api.put<Claim>(`/approvals/claims/${id}`, req).then(r => r.data);
+  api.put<ClaimWithEmployee>(`/approvals/claims/${id}`, req).then(r => r.data);
 
 export const deleteClaim = (id: string) =>
   api.delete(`/approvals/claims/${id}`).then(r => r.data);
@@ -68,7 +68,7 @@ export const createOvertimeRequest = (req: AdminCreateOvertimeRequest) =>
   api.post<OvertimeApplication>('/approvals/overtime', req).then(r => r.data);
 
 export const updateOvertimeRequest = (id: string, req: UpdateOvertimeRequest) =>
-  api.put<OvertimeApplication>(`/approvals/overtime/${id}`, req).then(r => r.data);
+  api.put<OvertimeWithEmployee>(`/approvals/overtime/${id}`, req).then(r => r.data);
 
 export const deleteOvertimeRequest = (id: string) =>
   api.delete(`/approvals/overtime/${id}`).then(r => r.data);

@@ -15,6 +15,10 @@ pub struct SettingsQuery {
     pub category: Option<String>,
 }
 
+fn is_payroll_category(category: &str) -> bool {
+    category == "payroll" || category == "statutory"
+}
+
 pub async fn list(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -29,7 +33,7 @@ pub async fn list(
         settings_service::get_all_settings(&state.pool, company_id, query.category.as_deref())
             .await?;
 
-    if auth.is_exec() {
+    if !auth.is_payroll_privileged() {
         settings.retain(|s| s.category != "payroll" && s.category != "statutory");
     }
 
@@ -41,6 +45,11 @@ pub async fn get(
     auth: AuthUser,
     Path((category, key)): Path<(String, String)>,
 ) -> AppResult<Json<CompanySetting>> {
+    if is_payroll_category(&category) && !auth.is_payroll_privileged() {
+        return Err(AppError::Forbidden(
+            "Payroll settings not available for this role".into(),
+        ));
+    }
     let company_id = auth
         .0
         .company_id
@@ -56,7 +65,7 @@ pub async fn update(
     Path((category, key)): Path<(String, String)>,
     Json(req): Json<UpdateSettingRequest>,
 ) -> AppResult<Json<CompanySetting>> {
-    if auth.is_exec() && (category == "payroll" || category == "statutory") {
+    if is_payroll_category(&category) && !auth.is_payroll_privileged() {
         return Err(AppError::Forbidden(
             "Payroll settings not available for this role".into(),
         ));
@@ -83,11 +92,11 @@ pub async fn bulk_update(
     auth: AuthUser,
     Json(req): Json<BulkUpdateSettingsRequest>,
 ) -> AppResult<Json<Vec<CompanySetting>>> {
-    if auth.is_exec()
+    if !auth.is_payroll_privileged()
         && req
             .settings
             .iter()
-            .any(|s| s.category == "payroll" || s.category == "statutory")
+            .any(|s| is_payroll_category(&s.category))
     {
         return Err(AppError::Forbidden(
             "Payroll settings not available for this role".into(),
