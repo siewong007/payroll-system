@@ -43,6 +43,7 @@ import { getLeaveTypes, uploadFile } from '@/api/portal';
 import { Modal } from '@/components/ui/Modal';
 import { DataTable, type Column } from '@/components/ui/DataTable';
 import { TimeSelector } from '@/components/ui/TimeSelector';
+import { useAuth } from '@/context/AuthContext';
 import { formatDate, getErrorMessage } from '@/lib/utils';
 import type {
   AdminCreateClaimRequest,
@@ -189,6 +190,7 @@ function ActionButtons({
 }
 
 export function Approvals() {
+  const { user } = useAuth();
   const [tab, setTab] = useState<'leave' | 'claims' | 'overtime'>('leave');
   const [statusFilter, setStatusFilter] = useState<string>('pending');
   const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
@@ -199,10 +201,12 @@ export function Approvals() {
   const [showClaimModal, setShowClaimModal] = useState(false);
   const [showOvertimeModal, setShowOvertimeModal] = useState(false);
   const queryClient = useQueryClient();
+  const activeCompanyId = user?.company_id ?? null;
 
   const { data: employeeResp } = useQuery({
-    queryKey: ['approval-employees'],
+    queryKey: ['approval-employees', activeCompanyId],
     queryFn: () => getEmployees({ is_active: true, page: 1, per_page: 100 }),
+    enabled: Boolean(activeCompanyId),
   });
 
   const { data: leaveTypes = [] } = useQuery({
@@ -211,7 +215,10 @@ export function Approvals() {
     enabled: tab === 'leave' || showLeaveModal,
   });
 
-  const employees = employeeResp?.data ?? [];
+  const employees = useMemo(
+    () => (employeeResp?.data ?? []).filter((employee) => employee.company_id === activeCompanyId),
+    [activeCompanyId, employeeResp?.data],
+  );
 
   const leaveQuery = useQuery({
     queryKey: ['approvals-leave', statusFilter],
