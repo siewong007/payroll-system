@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Clock, CheckCircle2, AlertCircle } from 'lucide-react';
 import { getDefaultSchedule, upsertDefaultSchedule } from '@/api/workSchedule';
+import { TimeSelector } from '@/components/ui/TimeSelector';
 
 const TIMEZONES = [
   'Asia/Kuala_Lumpur',
@@ -100,24 +101,18 @@ export function WorkScheduleCard() {
       <div className="p-6 space-y-5">
         {/* Time row */}
         <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Start Time</label>
-            <input
-              type="time"
-              value={form.start_time}
-              onChange={e => setForm(p => ({ ...p, start_time: e.target.value }))}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-1 focus:ring-black outline-none"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">End Time</label>
-            <input
-              type="time"
-              value={form.end_time}
-              onChange={e => setForm(p => ({ ...p, end_time: e.target.value }))}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-1 focus:ring-black outline-none"
-            />
-          </div>
+          <TimeSelector
+            label="Start Time"
+            value={form.start_time}
+            onChange={(value) => setForm(p => ({ ...p, start_time: value }))}
+            minuteStep={15}
+          />
+          <TimeSelector
+            label="End Time"
+            value={form.end_time}
+            onChange={(value) => setForm(p => ({ ...p, end_time: value }))}
+            minuteStep={15}
+          />
         </div>
 
         {/* Grace period */}

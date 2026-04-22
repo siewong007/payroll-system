@@ -3,6 +3,7 @@ import { RefreshCw, Wifi, Clock } from 'lucide-react';
 import QRCode from 'qrcode';
 import { generateQrToken } from '@/api/attendance';
 import { useAuth } from '@/context/AuthContext';
+import { BrandLogo } from '@/components/ui/BrandLogo';
 
 const QR_TTL = 60; // seconds
 
@@ -87,12 +88,7 @@ export function AttendanceKiosk() {
     <div className="min-h-screen bg-gray-950 flex flex-col items-center justify-center p-6 select-none">
       {/* Header */}
       <div className="mb-8 text-center">
-        <div className="flex items-center justify-center gap-3 mb-2">
-          <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center">
-            <span className="font-black text-gray-950 text-xl">P</span>
-          </div>
-          <h1 className="text-3xl font-black text-white tracking-tight">PayrollMY</h1>
-        </div>
+        <BrandLogo variant="lockup-light" className="h-10 w-auto mx-auto mb-2" />
         <p className="text-gray-400 text-sm font-medium uppercase tracking-wider">Attendance Kiosk</p>
       </div>
 

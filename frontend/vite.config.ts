@@ -12,6 +12,7 @@ export default defineConfig({
     },
   },
   server: {
+    host: '127.0.0.1',
     port: 5173,
     proxy: {
       '/api': {
@@ -19,10 +20,5 @@ export default defineConfig({
         changeOrigin: true,
       },
     },
-  },
-  test: {
-    globals: true,
-    environment: 'jsdom',
-    setupFiles: './src/tests/setup.ts',
   },
 })

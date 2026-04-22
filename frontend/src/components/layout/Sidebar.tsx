@@ -21,6 +21,7 @@ import {
 import { useAuth } from '@/context/AuthContext';
 import { CompanySwitcher } from './CompanySwitcher';
 import { AnimatePresence, motion } from 'framer-motion';
+import { BrandLogo } from '@/components/ui/BrandLogo';
 
 const navigation = [
   { name: 'Company', href: '/company', icon: Building2, hideFor: ['super_admin'] },
@@ -55,13 +56,10 @@ function SidebarContent({ onClose }: { onClose?: () => void }) {
     <aside className="flex flex-col w-64 h-full bg-white border-r border-gray-200">
       {/* Logo */}
       <div className="p-6 border-b border-gray-100 flex items-center justify-between">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 bg-black rounded-lg flex items-center justify-center">
-            <span className="text-white font-bold text-sm">P</span>
-          </div>
+        <div className="min-w-0">
+          <BrandLogo variant="lockup-dark" className="h-8 w-auto" />
           <div>
-            <h1 className="text-base font-bold text-gray-900">PayrollMY</h1>
-            <p className="text-[10px] text-gray-400 -mt-0.5 uppercase tracking-wider">Admin Console</p>
+            <p className="text-[10px] text-gray-400 mt-1 uppercase tracking-wider">Admin Console</p>
           </div>
         </div>
         {onClose && (

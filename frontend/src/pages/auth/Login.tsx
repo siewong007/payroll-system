@@ -8,6 +8,7 @@ import { getErrorMessage } from '@/lib/utils';
 import api from '@/api/client';
 import { checkPasskey, passkeyAuthBegin, passkeyAuthComplete, passkeyDiscoverableBegin, passkeyDiscoverableComplete } from '@/api/passkey';
 import { getPasskeyCredential, isWebAuthnSupported } from '@/lib/webauthn';
+import { BrandLogo } from '@/components/ui/BrandLogo';
 
 function GoogleIcon() {
   return (
@@ -143,10 +144,7 @@ export function Login() {
         <div className="bg-white rounded-2xl shadow p-6 sm:p-8">
           {/* Logo */}
           <div className="text-center mb-8">
-            <div className="w-12 h-12 bg-black rounded-xl flex items-center justify-center mx-auto mb-4">
-              <span className="text-white font-bold text-lg">P</span>
-            </div>
-            <h1 className="text-xl font-semibold text-gray-900">PayrollMY</h1>
+            <BrandLogo variant="lockup-dark" className="h-12 w-auto mx-auto mb-4" />
             <p className="text-sm text-gray-400 mt-1">Malaysian Payroll System</p>
           </div>
 

@@ -79,6 +79,17 @@ pub struct CreateLeaveRequest {
     pub attachment_name: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct UpdateLeaveRequest {
+    pub leave_type_id: Option<Uuid>,
+    pub start_date: Option<NaiveDate>,
+    pub end_date: Option<NaiveDate>,
+    pub days: Option<rust_decimal::Decimal>,
+    pub reason: Option<String>,
+    pub attachment_url: Option<String>,
+    pub attachment_name: Option<String>,
+}
+
 // Claims
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct Claim {
@@ -149,6 +160,16 @@ pub struct CreateOvertimeRequest {
     pub start_time: String,
     pub end_time: String,
     pub hours: rust_decimal::Decimal,
+    pub ot_type: Option<String>,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateOvertimeRequest {
+    pub ot_date: Option<NaiveDate>,
+    pub start_time: Option<String>,
+    pub end_time: Option<String>,
+    pub hours: Option<rust_decimal::Decimal>,
     pub ot_type: Option<String>,
     pub reason: Option<String>,
 }

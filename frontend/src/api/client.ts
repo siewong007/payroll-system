@@ -1,7 +1,18 @@
 import axios from 'axios';
 
+function resolveApiBaseUrl(rawBaseUrl?: string) {
+  if (!rawBaseUrl) {
+    return '/api';
+  }
+
+  const normalized = rawBaseUrl.replace(/\/+$/, '');
+  return normalized.endsWith('/api') ? normalized : `${normalized}/api`;
+}
+
+const API_BASE_URL = resolveApiBaseUrl(import.meta.env.VITE_API_URL);
+
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || '/api',
+  baseURL: API_BASE_URL,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -82,7 +93,7 @@ api.interceptors.response.use(
 
     try {
       // Refresh token is sent automatically via httpOnly cookie
-      const { data } = await axios.post(`${import.meta.env.VITE_API_URL || '/api'}/auth/refresh`, {}, { withCredentials: true });
+      const { data } = await axios.post(`${API_BASE_URL}/auth/refresh`, {}, { withCredentials: true });
 
       accessToken = data.token;
       localStorage.setItem('user', JSON.stringify(data.user));

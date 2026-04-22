@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Clock, X } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
+import { TimeSelector } from '@/components/ui/TimeSelector';
 import { getOvertimeApplications, createOvertimeApplication, cancelOvertimeApplication } from '@/api/portal';
 import { formatDate } from '@/lib/utils';
 import type { OvertimeApplication, CreateOvertimeRequest } from '@/types';
@@ -225,24 +226,16 @@ export function Overtime() {
           </div>
 
           <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="form-label">Start Time *</label>
-              <input
-                type="time"
-                value={form.start_time}
-                onChange={(e) => updateTime('start_time', e.target.value)}
-                className="form-input"
-              />
-            </div>
-            <div>
-              <label className="form-label">End Time *</label>
-              <input
-                type="time"
-                value={form.end_time}
-                onChange={(e) => updateTime('end_time', e.target.value)}
-                className="form-input"
-              />
-            </div>
+            <TimeSelector
+              label="Start Time *"
+              value={form.start_time || '18:00'}
+              onChange={(value) => updateTime('start_time', value)}
+            />
+            <TimeSelector
+              label="End Time *"
+              value={form.end_time || '19:00'}
+              onChange={(value) => updateTime('end_time', value)}
+            />
           </div>
 
           {form.hours > 0 && (

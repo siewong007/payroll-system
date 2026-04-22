@@ -468,6 +468,30 @@ export interface LeaveRequest {
   leave_type_name: string | null;
 }
 
+export interface CreateLeaveRequest {
+  leave_type_id: string;
+  start_date: string;
+  end_date: string;
+  days: number;
+  reason?: string;
+  attachment_url?: string;
+  attachment_name?: string;
+}
+
+export interface UpdateLeaveRequest {
+  leave_type_id?: string;
+  start_date?: string;
+  end_date?: string;
+  days?: number;
+  reason?: string;
+  attachment_url?: string;
+  attachment_name?: string;
+}
+
+export interface AdminCreateLeaveRequest extends CreateLeaveRequest {
+  employee_id: string;
+}
+
 export interface Claim {
   id: string;
   employee_id: string;
@@ -485,6 +509,30 @@ export interface Claim {
   reviewed_at: string | null;
   review_notes: string | null;
   created_at: string;
+}
+
+export interface CreateClaimRequest {
+  title: string;
+  description?: string;
+  amount: number;
+  category?: string;
+  receipt_url?: string;
+  receipt_file_name?: string;
+  expense_date: string;
+}
+
+export interface UpdateClaimRequest {
+  title?: string;
+  description?: string;
+  amount?: number;
+  category?: string;
+  receipt_url?: string;
+  receipt_file_name?: string;
+  expense_date?: string;
+}
+
+export interface AdminCreateClaimRequest extends CreateClaimRequest {
+  employee_id: string;
 }
 
 export interface MyPayslip {
@@ -659,6 +707,19 @@ export interface CreateOvertimeRequest {
   hours: number;
   ot_type?: 'normal' | 'rest_day' | 'public_holiday';
   reason?: string;
+}
+
+export interface UpdateOvertimeRequest {
+  ot_date?: string;
+  start_time?: string;
+  end_time?: string;
+  hours?: number;
+  ot_type?: 'normal' | 'rest_day' | 'public_holiday';
+  reason?: string;
+}
+
+export interface AdminCreateOvertimeRequest extends CreateOvertimeRequest {
+  employee_id: string;
 }
 
 export interface TeamLeaveEntry {

@@ -3,6 +3,7 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import { CheckCircle2, XCircle, Loader2, MapPin, QrCode } from 'lucide-react';
 import { checkInQr } from '@/api/attendance';
 import { useAuth } from '@/context/AuthContext';
+import { BrandLogo } from '@/components/ui/BrandLogo';
 
 type State = 'locating' | 'checking-in' | 'success' | 'error' | 'no-token' | 'login-required';
 
@@ -89,12 +90,7 @@ export function AttendanceScanPage() {
       <div className="w-full max-w-sm">
 
         {/* Logo */}
-        <div className="flex items-center justify-center gap-2.5 mb-8">
-          <div className="w-10 h-10 bg-black rounded-xl flex items-center justify-center">
-            <span className="text-white font-black text-xl">P</span>
-          </div>
-          <span className="text-xl font-bold text-gray-900">PayrollMY</span>
-        </div>
+        <BrandLogo variant="lockup-dark" className="h-10 w-auto mx-auto mb-8" />
 
         {/* Card */}
         <div className="bg-white rounded-3xl shadow-lg p-8 flex flex-col items-center text-center gap-5">

@@ -1,0 +1,25 @@
+<svg width="320" height="72" viewBox="0 0 320 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+  
+  <rect width="320" height="72" fill="#1B2E4B"></rect>
+
+  
+  <rect width="72" height="72" rx="16" fill="#2E4E7A"></rect>
+  <rect x="30" y="21.375" width="29.25" height="37.125" rx="2.25" fill="#3A6096"></rect>
+  <rect x="27" y="18" width="29.25" height="37.125" rx="2.25" fill="#4877B5"></rect>
+  <rect x="24" y="14.625" width="29.25" height="37.125" rx="2.25" fill="white"></rect>
+  <path d="M40.5 14.625 L46.125 14.625 L40.5 20.25 Z" fill="#E8E4DC"></path>
+  <path d="M40.5 20.25 L46.125 14.625 L46.125 20.25 Z" fill="#D0CAC0"></path>
+  <rect x="28.125" y="23.625" width="15.1875" height="1.96875" rx="0.984375" fill="#F5C842"></rect>
+  <rect x="28.125" y="28.40625" width="20.25" height="1.40625" rx="0.703125" fill="#BDD4EE"></rect>
+  <rect x="28.125" y="32.0625" width="15.75" height="1.40625" rx="0.703125" fill="#BDD4EE"></rect>
+  <rect x="28.125" y="35.71875" width="18" height="1.40625" rx="0.703125" fill="#BDD4EE"></rect>
+  <rect x="28.125" y="40.5" width="20.25" height="0.421875" rx="0.2109375" fill="#BDD4EE" opacity="0.5"></rect>
+  <rect x="28.125" y="43.09375" width="10.6875" height="1.125" rx="0.5625" fill="#BDD4EE"></rect>
+  <rect x="39.9375" y="43.09375" width="7.875" height="1.125" rx="0.5625" fill="#F5C842"></rect>
+  <rect x="28.125" y="46.21875" width="10.6875" height="1.125" rx="0.5625" fill="#BDD4EE"></rect>
+  <rect x="39.9375" y="46.21875" width="6.1875" height="1.125" rx="0.5625" fill="#BDD4EE"></rect>
+
+  
+  <text x="88" y="37" font-family="&#39;DM Sans&#39;, &#39;Helvetica Neue&#39;, Helvetica, Arial, sans-serif" font-weight="700" font-size="28" fill="white" letter-spacing="-0.84">Payroll</text>
+  <text x="89" y="54" font-family="&#39;DM Sans&#39;, &#39;Helvetica Neue&#39;, Helvetica, Arial, sans-serif" font-weight="500" font-size="11" fill="white" letter-spacing="1.54" opacity="0.55">MALAYSIA</text>
+</svg>

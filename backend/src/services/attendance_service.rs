@@ -15,6 +15,18 @@ use crate::services::geofence_service;
 const QR_TOKEN_TTL_SECONDS: i64 = 300;
 const DEFAULT_TIMEZONE: &str = "Asia/Kuala_Lumpur";
 
+fn normalize_absent_check_out(
+    status: &str,
+    check_in_at: chrono::DateTime<Utc>,
+    check_out_at: Option<chrono::DateTime<Utc>>,
+) -> Option<chrono::DateTime<Utc>> {
+    if status == "absent" {
+        Some(check_out_at.unwrap_or(check_in_at))
+    } else {
+        check_out_at
+    }
+}
+
 // ─── Platform Settings ───
 
 pub async fn get_platform_attendance_method(pool: &PgPool) -> AppResult<String> {
@@ -669,6 +681,7 @@ pub async fn manual_attendance(
     created_by: Uuid,
 ) -> AppResult<AttendanceRecord> {
     let status = req.status.as_deref().unwrap_or("present");
+    let check_out_at = normalize_absent_check_out(status, req.check_in_at, req.check_out_at);
 
     let record = sqlx::query_as::<_, AttendanceRecord>(
         r#"INSERT INTO attendance_records
@@ -679,7 +692,7 @@ pub async fn manual_attendance(
     .bind(company_id)
     .bind(req.employee_id)
     .bind(req.check_in_at)
-    .bind(req.check_out_at)
+    .bind(check_out_at)
     .bind(status)
     .bind(req.notes)
     .bind(created_by)
@@ -709,9 +722,10 @@ pub async fn update_attendance_record(
     .ok_or_else(|| AppError::NotFound("Attendance record not found".into()))?;
 
     let check_in = req.check_in_at.unwrap_or(existing.check_in_at);
-    let check_out = req.check_out_at.or(existing.check_out_at);
     let status = req.status.as_deref().unwrap_or(&existing.status);
     let notes = req.notes.as_deref().or(existing.notes.as_deref());
+    let check_out =
+        normalize_absent_check_out(status, check_in, req.check_out_at.or(existing.check_out_at));
 
     // Validate status
     if !matches!(status, "present" | "late" | "absent" | "half_day") {
@@ -782,10 +796,12 @@ pub async fn mark_absent_for_date(pool: &PgPool, tz: &str) -> AppResult<i64> {
     // 3. Don't have a holiday today
     // 4. Don't already have an attendance record today
     let result = sqlx::query(
-        r#"INSERT INTO attendance_records (company_id, employee_id, check_in_at, method, status, notes)
+        r#"INSERT INTO attendance_records
+           (company_id, employee_id, check_in_at, check_out_at, method, status, notes)
            SELECT
                e.company_id,
                e.id,
+               DATE(NOW() AT TIME ZONE $1) + TIME '00:00',
                DATE(NOW() AT TIME ZONE $1) + TIME '00:00',
                'manual',
                'absent',

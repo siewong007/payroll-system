@@ -234,20 +234,41 @@ pub fn create_router(state: AppState) -> Router {
         .route("/notifications/read-all", put(notification::mark_all_read))
         .route("/notifications/{id}/read", put(notification::mark_read))
         // Approval Workflows (admin)
-        .route("/approvals/leave", get(approval::list_leave_requests))
+        .route(
+            "/approvals/leave",
+            get(approval::list_leave_requests).post(approval::create_leave_request),
+        )
+        .route(
+            "/approvals/leave/{id}",
+            put(approval::update_leave_request).delete(approval::delete_leave_request),
+        )
         .route(
             "/approvals/leave/{id}/approve",
             put(approval::approve_leave),
         )
         .route("/approvals/leave/{id}/reject", put(approval::reject_leave))
-        .route("/approvals/claims", get(approval::list_claims))
+        .route(
+            "/approvals/claims",
+            get(approval::list_claims).post(approval::create_claim),
+        )
+        .route(
+            "/approvals/claims/{id}",
+            put(approval::update_claim).delete(approval::delete_claim),
+        )
         .route(
             "/approvals/claims/{id}/approve",
             put(approval::approve_claim),
         )
         .route("/approvals/claims/{id}/reject", put(approval::reject_claim))
         // Overtime approvals (admin)
-        .route("/approvals/overtime", get(approval::list_overtime))
+        .route(
+            "/approvals/overtime",
+            get(approval::list_overtime).post(approval::create_overtime),
+        )
+        .route(
+            "/approvals/overtime/{id}",
+            put(approval::update_overtime).delete(approval::delete_overtime),
+        )
         .route(
             "/approvals/overtime/{id}/approve",
             put(approval::approve_overtime),

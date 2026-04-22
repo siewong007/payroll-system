@@ -4,6 +4,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getNotificationCount } from '@/api/notifications';
+import { BrandLogo } from '@/components/ui/BrandLogo';
 
 const portalNav = [
   { name: 'My Profile', href: '/portal/profile', icon: User },
@@ -73,16 +74,11 @@ export function PortalLayout() {
         <div className="max-w-7xl mx-auto flex items-center justify-between h-14 md:h-16 px-4 md:px-6">
           {/* Left: Logo + nav */}
           <div className="flex items-center gap-8">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 bg-black rounded-lg flex items-center justify-center">
-                <span className="text-white font-bold text-sm">P</span>
-              </div>
-              <div>
-                <span className="font-bold text-gray-900 text-sm">PayrollMY</span>
-                <span className="ml-1.5 bg-gray-100 text-gray-600 text-[10px] font-semibold px-1.5 py-0.5 rounded">
-                  PORTAL
-                </span>
-              </div>
+            <div className="flex items-center gap-2">
+              <BrandLogo variant="lockup-dark" className="h-8 w-auto shrink-0" />
+              <span className="bg-gray-100 text-gray-600 text-[10px] font-semibold px-1.5 py-0.5 rounded">
+                PORTAL
+              </span>
             </div>
 
             {/* Desktop nav */}

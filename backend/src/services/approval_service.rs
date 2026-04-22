@@ -4,11 +4,656 @@ use uuid::Uuid;
 
 use crate::core::config::AppConfig;
 use crate::core::error::{AppError, AppResult};
-use crate::models::portal::{Claim, LeaveRequest, OvertimeApplication};
+use crate::models::portal::{
+    Claim, CreateClaimRequest, CreateLeaveRequest, CreateOvertimeRequest, LeaveRequest,
+    OvertimeApplication, UpdateClaimRequest, UpdateLeaveRequest, UpdateOvertimeRequest,
+};
 use crate::services::calendar_service;
 use crate::services::email_service;
 use crate::services::notification_service;
 use crate::services::settings_service;
+
+fn ensure_positive_amount(amount: i64) -> AppResult<()> {
+    if amount <= 0 {
+        return Err(AppError::BadRequest(
+            "Amount must be greater than zero".into(),
+        ));
+    }
+    Ok(())
+}
+
+async fn ensure_employee_in_company(
+    pool: &PgPool,
+    company_id: Uuid,
+    employee_id: Uuid,
+) -> AppResult<()> {
+    let exists = sqlx::query_scalar::<_, bool>(
+        r#"SELECT EXISTS(
+            SELECT 1 FROM employees
+            WHERE id = $1 AND company_id = $2 AND deleted_at IS NULL
+        )"#,
+    )
+    .bind(employee_id)
+    .bind(company_id)
+    .fetch_one(pool)
+    .await?;
+
+    if !exists {
+        return Err(AppError::NotFound(
+            "Employee not found in the active company".into(),
+        ));
+    }
+
+    Ok(())
+}
+
+async fn ensure_leave_type_in_company(
+    pool: &PgPool,
+    company_id: Uuid,
+    leave_type_id: Uuid,
+) -> AppResult<()> {
+    let exists = sqlx::query_scalar::<_, bool>(
+        r#"SELECT EXISTS(
+            SELECT 1 FROM leave_types
+            WHERE id = $1 AND company_id = $2 AND is_active = TRUE
+        )"#,
+    )
+    .bind(leave_type_id)
+    .bind(company_id)
+    .fetch_one(pool)
+    .await?;
+
+    if !exists {
+        return Err(AppError::NotFound("Leave type not found".into()));
+    }
+
+    Ok(())
+}
+
+fn validate_overtime_type(ot_type: &str) -> AppResult<()> {
+    if !["normal", "rest_day", "public_holiday"].contains(&ot_type) {
+        return Err(AppError::BadRequest("Invalid ot_type".into()));
+    }
+    Ok(())
+}
+
+fn parse_overtime_times(
+    start_time: &str,
+    end_time: &str,
+) -> AppResult<(chrono::NaiveTime, chrono::NaiveTime)> {
+    let start = chrono::NaiveTime::parse_from_str(start_time, "%H:%M")
+        .map_err(|_| AppError::BadRequest("Invalid start_time format, expected HH:MM".into()))?;
+    let end = chrono::NaiveTime::parse_from_str(end_time, "%H:%M")
+        .map_err(|_| AppError::BadRequest("Invalid end_time format, expected HH:MM".into()))?;
+    Ok((start, end))
+}
+
+// ─── Admin CRUD ───
+
+pub async fn create_leave_request_admin(
+    pool: &PgPool,
+    company_id: Uuid,
+    employee_id: Uuid,
+    req: CreateLeaveRequest,
+    actor_id: Uuid,
+) -> AppResult<LeaveRequest> {
+    ensure_employee_in_company(pool, company_id, employee_id).await?;
+    ensure_leave_type_in_company(pool, company_id, req.leave_type_id).await?;
+
+    let mut tx = pool.begin().await?;
+
+    let leave = sqlx::query_as::<_, LeaveRequest>(
+        r#"WITH new_lr AS (
+            INSERT INTO leave_requests
+                (employee_id, company_id, leave_type_id, start_date, end_date, days, reason, attachment_url, attachment_name)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            RETURNING *
+        )
+        SELECT nlr.id, nlr.employee_id, nlr.company_id, nlr.leave_type_id,
+            nlr.start_date, nlr.end_date, nlr.days, nlr.reason, nlr.status,
+            nlr.reviewed_by, nlr.reviewed_at, nlr.review_notes,
+            nlr.attachment_url, nlr.attachment_name,
+            nlr.created_at, nlr.updated_at,
+            lt.name as leave_type_name
+        FROM new_lr nlr
+        JOIN leave_types lt ON nlr.leave_type_id = lt.id"#,
+    )
+    .bind(employee_id)
+    .bind(company_id)
+    .bind(req.leave_type_id)
+    .bind(req.start_date)
+    .bind(req.end_date)
+    .bind(req.days)
+    .bind(&req.reason)
+    .bind(&req.attachment_url)
+    .bind(&req.attachment_name)
+    .fetch_one(&mut *tx)
+    .await?;
+
+    let year = req.start_date.year();
+    let rows = sqlx::query(
+        r#"UPDATE leave_balances
+        SET pending_days = pending_days + $3, updated_at = NOW()
+        WHERE employee_id = $1 AND leave_type_id = $2 AND year = $4"#,
+    )
+    .bind(employee_id)
+    .bind(req.leave_type_id)
+    .bind(req.days)
+    .bind(year)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+
+    if rows == 0 {
+        return Err(AppError::BadRequest(
+            "Leave balance not initialized for the selected employee/year".into(),
+        ));
+    }
+
+    tx.commit().await?;
+
+    let _ = crate::services::audit_service::log_action(
+        pool,
+        Some(actor_id),
+        "create_leave_request_admin",
+        "leave_request",
+        Some(leave.id),
+        None,
+        Some(serde_json::to_value(&leave).unwrap_or_default()),
+        Some(&format!(
+            "Created leave request for employee {}",
+            leave.employee_id
+        )),
+    )
+    .await;
+
+    Ok(leave)
+}
+
+pub async fn update_leave_request_admin(
+    pool: &PgPool,
+    company_id: Uuid,
+    request_id: Uuid,
+    req: UpdateLeaveRequest,
+    actor_id: Uuid,
+) -> AppResult<LeaveRequest> {
+    let mut tx = pool.begin().await?;
+
+    let current = sqlx::query_as::<_, LeaveRequest>(
+        r#"SELECT lr.id, lr.employee_id, lr.company_id, lr.leave_type_id,
+            lr.start_date, lr.end_date, lr.days, lr.reason, lr.status,
+            lr.reviewed_by, lr.reviewed_at, lr.review_notes,
+            lr.attachment_url, lr.attachment_name,
+            lr.created_at, lr.updated_at,
+            lt.name as leave_type_name
+        FROM leave_requests lr
+        JOIN leave_types lt ON lr.leave_type_id = lt.id
+        WHERE lr.id = $1 AND lr.company_id = $2 AND lr.status = 'pending'"#,
+    )
+    .bind(request_id)
+    .bind(company_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| AppError::BadRequest("Leave request not found or cannot be edited".into()))?;
+
+    let leave_type_id = req.leave_type_id.unwrap_or(current.leave_type_id);
+    ensure_leave_type_in_company(pool, company_id, leave_type_id).await?;
+    let start_date = req.start_date.unwrap_or(current.start_date);
+    let end_date = req.end_date.unwrap_or(current.end_date);
+    let days = req.days.unwrap_or(current.days);
+
+    let old_year = current.start_date.year();
+    let new_year = start_date.year();
+
+    sqlx::query(
+        r#"UPDATE leave_balances
+        SET pending_days = GREATEST(pending_days - $3, 0), updated_at = NOW()
+        WHERE employee_id = $1 AND leave_type_id = $2 AND year = $4"#,
+    )
+    .bind(current.employee_id)
+    .bind(current.leave_type_id)
+    .bind(current.days)
+    .bind(old_year)
+    .execute(&mut *tx)
+    .await?;
+
+    let add_rows = sqlx::query(
+        r#"UPDATE leave_balances
+        SET pending_days = pending_days + $3, updated_at = NOW()
+        WHERE employee_id = $1 AND leave_type_id = $2 AND year = $4"#,
+    )
+    .bind(current.employee_id)
+    .bind(leave_type_id)
+    .bind(days)
+    .bind(new_year)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+
+    if add_rows == 0 {
+        return Err(AppError::BadRequest(
+            "Leave balance not initialized for the selected employee/year".into(),
+        ));
+    }
+
+    let updated = sqlx::query_as::<_, LeaveRequest>(
+        r#"UPDATE leave_requests
+        SET leave_type_id = $3,
+            start_date = $4,
+            end_date = $5,
+            days = $6,
+            reason = CASE WHEN $7::text IS NULL THEN reason ELSE NULLIF($7, '') END,
+            attachment_url = CASE WHEN $8::text IS NULL THEN attachment_url ELSE NULLIF($8, '') END,
+            attachment_name = CASE WHEN $9::text IS NULL THEN attachment_name ELSE NULLIF($9, '') END,
+            updated_at = NOW()
+        WHERE id = $1 AND company_id = $2
+        RETURNING *,
+            (SELECT name FROM leave_types WHERE id = leave_type_id) as leave_type_name"#,
+    )
+    .bind(request_id)
+    .bind(company_id)
+    .bind(leave_type_id)
+    .bind(start_date)
+    .bind(end_date)
+    .bind(days)
+    .bind(&req.reason)
+    .bind(&req.attachment_url)
+    .bind(&req.attachment_name)
+    .fetch_one(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+
+    let _ = crate::services::audit_service::log_action(
+        pool,
+        Some(actor_id),
+        "update_leave_request_admin",
+        "leave_request",
+        Some(updated.id),
+        Some(serde_json::to_value(&current).unwrap_or_default()),
+        Some(serde_json::to_value(&updated).unwrap_or_default()),
+        Some(&format!(
+            "Updated leave request for employee {}",
+            updated.employee_id
+        )),
+    )
+    .await;
+
+    Ok(updated)
+}
+
+pub async fn delete_leave_request_admin(
+    pool: &PgPool,
+    company_id: Uuid,
+    request_id: Uuid,
+    actor_id: Uuid,
+) -> AppResult<()> {
+    let mut tx = pool.begin().await?;
+
+    let current = sqlx::query_as::<_, LeaveRequest>(
+        r#"SELECT lr.id, lr.employee_id, lr.company_id, lr.leave_type_id,
+            lr.start_date, lr.end_date, lr.days, lr.reason, lr.status,
+            lr.reviewed_by, lr.reviewed_at, lr.review_notes,
+            lr.attachment_url, lr.attachment_name,
+            lr.created_at, lr.updated_at,
+            lt.name as leave_type_name
+        FROM leave_requests lr
+        JOIN leave_types lt ON lr.leave_type_id = lt.id
+        WHERE lr.id = $1 AND lr.company_id = $2 AND lr.status = 'pending'"#,
+    )
+    .bind(request_id)
+    .bind(company_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| AppError::BadRequest("Leave request not found or cannot be deleted".into()))?;
+
+    sqlx::query(
+        r#"UPDATE leave_balances
+        SET pending_days = GREATEST(pending_days - $3, 0), updated_at = NOW()
+        WHERE employee_id = $1 AND leave_type_id = $2 AND year = $4"#,
+    )
+    .bind(current.employee_id)
+    .bind(current.leave_type_id)
+    .bind(current.days)
+    .bind(current.start_date.year())
+    .execute(&mut *tx)
+    .await?;
+
+    sqlx::query("DELETE FROM leave_requests WHERE id = $1 AND company_id = $2")
+        .bind(request_id)
+        .bind(company_id)
+        .execute(&mut *tx)
+        .await?;
+
+    tx.commit().await?;
+
+    let _ = crate::services::audit_service::log_action(
+        pool,
+        Some(actor_id),
+        "delete_leave_request_admin",
+        "leave_request",
+        Some(current.id),
+        Some(serde_json::to_value(&current).unwrap_or_default()),
+        None,
+        Some(&format!(
+            "Deleted leave request for employee {}",
+            current.employee_id
+        )),
+    )
+    .await;
+
+    Ok(())
+}
+
+pub async fn create_claim_admin(
+    pool: &PgPool,
+    company_id: Uuid,
+    employee_id: Uuid,
+    req: CreateClaimRequest,
+    actor_id: Uuid,
+) -> AppResult<Claim> {
+    ensure_employee_in_company(pool, company_id, employee_id).await?;
+    ensure_positive_amount(req.amount)?;
+
+    let claim = sqlx::query_as::<_, Claim>(
+        r#"INSERT INTO claims
+            (employee_id, company_id, title, description, amount, category, receipt_url, receipt_file_name, expense_date, status, submitted_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', NOW())
+        RETURNING *"#,
+    )
+    .bind(employee_id)
+    .bind(company_id)
+    .bind(&req.title)
+    .bind(&req.description)
+    .bind(req.amount)
+    .bind(&req.category)
+    .bind(&req.receipt_url)
+    .bind(&req.receipt_file_name)
+    .bind(req.expense_date)
+    .fetch_one(pool)
+    .await?;
+
+    let _ = crate::services::audit_service::log_action(
+        pool,
+        Some(actor_id),
+        "create_claim_admin",
+        "claim",
+        Some(claim.id),
+        None,
+        Some(serde_json::to_value(&claim).unwrap_or_default()),
+        Some(&format!("Created claim for employee {}", claim.employee_id)),
+    )
+    .await;
+
+    Ok(claim)
+}
+
+pub async fn update_claim_admin(
+    pool: &PgPool,
+    company_id: Uuid,
+    claim_id: Uuid,
+    req: UpdateClaimRequest,
+    actor_id: Uuid,
+) -> AppResult<Claim> {
+    let current = sqlx::query_as::<_, Claim>(
+        r#"SELECT * FROM claims
+        WHERE id = $1 AND company_id = $2
+        AND status IN ('draft', 'pending', 'rejected')"#,
+    )
+    .bind(claim_id)
+    .bind(company_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::BadRequest("Claim not found or cannot be edited".into()))?;
+
+    if let Some(amount) = req.amount {
+        ensure_positive_amount(amount)?;
+    }
+
+    let updated = sqlx::query_as::<_, Claim>(
+        r#"UPDATE claims
+        SET title = COALESCE($3, title),
+            description = CASE WHEN $4::text IS NULL THEN description ELSE NULLIF($4, '') END,
+            amount = COALESCE($5, amount),
+            category = CASE WHEN $6::text IS NULL THEN category ELSE NULLIF($6, '') END,
+            receipt_url = CASE WHEN $7::text IS NULL THEN receipt_url ELSE NULLIF($7, '') END,
+            receipt_file_name = CASE WHEN $8::text IS NULL THEN receipt_file_name ELSE NULLIF($8, '') END,
+            expense_date = COALESCE($9, expense_date),
+            updated_at = NOW()
+        WHERE id = $1 AND company_id = $2
+        RETURNING *"#,
+    )
+    .bind(claim_id)
+    .bind(company_id)
+    .bind(&req.title)
+    .bind(&req.description)
+    .bind(req.amount)
+    .bind(&req.category)
+    .bind(&req.receipt_url)
+    .bind(&req.receipt_file_name)
+    .bind(req.expense_date)
+    .fetch_one(pool)
+    .await?;
+
+    let _ = crate::services::audit_service::log_action(
+        pool,
+        Some(actor_id),
+        "update_claim_admin",
+        "claim",
+        Some(updated.id),
+        Some(serde_json::to_value(&current).unwrap_or_default()),
+        Some(serde_json::to_value(&updated).unwrap_or_default()),
+        Some(&format!(
+            "Updated claim for employee {}",
+            updated.employee_id
+        )),
+    )
+    .await;
+
+    Ok(updated)
+}
+
+pub async fn delete_claim_admin(
+    pool: &PgPool,
+    company_id: Uuid,
+    claim_id: Uuid,
+    actor_id: Uuid,
+) -> AppResult<()> {
+    let current = sqlx::query_as::<_, Claim>(
+        r#"SELECT * FROM claims
+        WHERE id = $1 AND company_id = $2
+        AND status IN ('draft', 'pending', 'rejected')"#,
+    )
+    .bind(claim_id)
+    .bind(company_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::BadRequest("Claim not found or cannot be deleted".into()))?;
+
+    sqlx::query("DELETE FROM claims WHERE id = $1 AND company_id = $2")
+        .bind(claim_id)
+        .bind(company_id)
+        .execute(pool)
+        .await?;
+
+    let _ = crate::services::audit_service::log_action(
+        pool,
+        Some(actor_id),
+        "delete_claim_admin",
+        "claim",
+        Some(current.id),
+        Some(serde_json::to_value(&current).unwrap_or_default()),
+        None,
+        Some(&format!(
+            "Deleted claim for employee {}",
+            current.employee_id
+        )),
+    )
+    .await;
+
+    Ok(())
+}
+
+pub async fn create_overtime_admin(
+    pool: &PgPool,
+    company_id: Uuid,
+    employee_id: Uuid,
+    req: CreateOvertimeRequest,
+    actor_id: Uuid,
+) -> AppResult<OvertimeApplication> {
+    ensure_employee_in_company(pool, company_id, employee_id).await?;
+    let ot_type = req.ot_type.as_deref().unwrap_or("normal");
+    validate_overtime_type(ot_type)?;
+    let (start_time, end_time) = parse_overtime_times(&req.start_time, &req.end_time)?;
+
+    let overtime = sqlx::query_as::<_, OvertimeApplication>(
+        r#"INSERT INTO overtime_applications
+            (employee_id, company_id, ot_date, start_time, end_time, hours, ot_type, reason)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        RETURNING *"#,
+    )
+    .bind(employee_id)
+    .bind(company_id)
+    .bind(req.ot_date)
+    .bind(start_time)
+    .bind(end_time)
+    .bind(req.hours)
+    .bind(ot_type)
+    .bind(&req.reason)
+    .fetch_one(pool)
+    .await?;
+
+    let _ = crate::services::audit_service::log_action(
+        pool,
+        Some(actor_id),
+        "create_overtime_admin",
+        "overtime",
+        Some(overtime.id),
+        None,
+        Some(serde_json::to_value(&overtime).unwrap_or_default()),
+        Some(&format!(
+            "Created overtime application for employee {}",
+            overtime.employee_id
+        )),
+    )
+    .await;
+
+    Ok(overtime)
+}
+
+pub async fn update_overtime_admin(
+    pool: &PgPool,
+    company_id: Uuid,
+    ot_id: Uuid,
+    req: UpdateOvertimeRequest,
+    actor_id: Uuid,
+) -> AppResult<OvertimeApplication> {
+    let current = sqlx::query_as::<_, OvertimeApplication>(
+        r#"SELECT * FROM overtime_applications
+        WHERE id = $1 AND company_id = $2 AND status = 'pending'"#,
+    )
+    .bind(ot_id)
+    .bind(company_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::BadRequest("OT application not found or cannot be edited".into()))?;
+
+    let start_time_raw = req
+        .start_time
+        .as_deref()
+        .map(str::to_string)
+        .unwrap_or_else(|| current.start_time.format("%H:%M").to_string());
+    let end_time_raw = req
+        .end_time
+        .as_deref()
+        .map(str::to_string)
+        .unwrap_or_else(|| current.end_time.format("%H:%M").to_string());
+    let (start_time, end_time) = parse_overtime_times(&start_time_raw, &end_time_raw)?;
+
+    let ot_type = req.ot_type.as_deref().unwrap_or(&current.ot_type);
+    validate_overtime_type(ot_type)?;
+
+    let updated = sqlx::query_as::<_, OvertimeApplication>(
+        r#"UPDATE overtime_applications
+        SET ot_date = COALESCE($3, ot_date),
+            start_time = $4,
+            end_time = $5,
+            hours = COALESCE($6, hours),
+            ot_type = $7,
+            reason = CASE WHEN $8::text IS NULL THEN reason ELSE NULLIF($8, '') END,
+            updated_at = NOW()
+        WHERE id = $1 AND company_id = $2
+        RETURNING *"#,
+    )
+    .bind(ot_id)
+    .bind(company_id)
+    .bind(req.ot_date)
+    .bind(start_time)
+    .bind(end_time)
+    .bind(req.hours)
+    .bind(ot_type)
+    .bind(&req.reason)
+    .fetch_one(pool)
+    .await?;
+
+    let _ = crate::services::audit_service::log_action(
+        pool,
+        Some(actor_id),
+        "update_overtime_admin",
+        "overtime",
+        Some(updated.id),
+        Some(serde_json::to_value(&current).unwrap_or_default()),
+        Some(serde_json::to_value(&updated).unwrap_or_default()),
+        Some(&format!(
+            "Updated overtime application for employee {}",
+            updated.employee_id
+        )),
+    )
+    .await;
+
+    Ok(updated)
+}
+
+pub async fn delete_overtime_admin(
+    pool: &PgPool,
+    company_id: Uuid,
+    ot_id: Uuid,
+    actor_id: Uuid,
+) -> AppResult<()> {
+    let current = sqlx::query_as::<_, OvertimeApplication>(
+        r#"SELECT * FROM overtime_applications
+        WHERE id = $1 AND company_id = $2
+        AND status IN ('pending', 'rejected', 'cancelled')"#,
+    )
+    .bind(ot_id)
+    .bind(company_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::BadRequest("OT application not found or cannot be deleted".into()))?;
+
+    sqlx::query("DELETE FROM overtime_applications WHERE id = $1 AND company_id = $2")
+        .bind(ot_id)
+        .bind(company_id)
+        .execute(pool)
+        .await?;
+
+    let _ = crate::services::audit_service::log_action(
+        pool,
+        Some(actor_id),
+        "delete_overtime_admin",
+        "overtime",
+        Some(current.id),
+        Some(serde_json::to_value(&current).unwrap_or_default()),
+        None,
+        Some(&format!(
+            "Deleted overtime application for employee {}",
+            current.employee_id
+        )),
+    )
+    .await;
+
+    Ok(())
+}
 
 // ─── Leave Approval ───
 
