@@ -16,7 +16,7 @@ use crate::services::socso_service;
 /// 1. Fetch all active employees in the payroll group
 /// 2. For each employee, calculate gross, statutory deductions, net
 /// 3. Create PayrollRun + PayrollItems in a transaction
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub async fn process_payroll(
     pool: &PgPool,
     company_id: Uuid,
@@ -206,6 +206,46 @@ pub async fn process_payroll(
     .await?;
     let attendance_ot_map: HashMap<Uuid, f64> = ot_hours.into_iter().collect();
 
+    // 3b. Batch fetch approved overtime applications
+    let approved_ot: Vec<(Uuid, String, f64)> = sqlx::query_as(
+        r#"SELECT employee_id, ot_type, SUM(hours)::FLOAT
+           FROM overtime_applications
+           WHERE employee_id = ANY($1)
+             AND ot_date >= $2 AND ot_date <= $3
+             AND status = 'approved'
+           GROUP BY employee_id, ot_type"#,
+    )
+    .bind(&employee_ids)
+    .bind(period_start)
+    .bind(period_end)
+    .fetch_all(&mut *tx)
+    .await?;
+    let mut approved_ot_map: HashMap<Uuid, Vec<(String, f64)>> = HashMap::new();
+    for (emp_id, ot_type, hours) in approved_ot {
+        approved_ot_map
+            .entry(emp_id)
+            .or_default()
+            .push((ot_type, hours));
+    }
+
+    // 3c. Batch fetch approved claims
+    let approved_claims: Vec<(Uuid, i64)> = sqlx::query_as(
+        r#"SELECT employee_id, SUM(amount)::BIGINT
+           FROM claims
+           WHERE employee_id = ANY($1)
+             AND company_id = $2
+             AND status = 'approved'
+             AND expense_date >= $3 AND expense_date <= $4
+           GROUP BY employee_id"#,
+    )
+    .bind(&employee_ids)
+    .bind(company_id)
+    .bind(period_start)
+    .bind(period_end)
+    .fetch_all(&mut *tx)
+    .await?;
+    let claims_map: HashMap<Uuid, i64> = approved_claims.into_iter().collect();
+
     // 4. Batch fetch TP3 data
     let tp3_data: Vec<(Uuid, i64, i64, i64, i64)> = sqlx::query_as(
         r#"SELECT employee_id, previous_income_ytd, previous_epf_ytd, previous_pcb_ytd, previous_zakat_ytd
@@ -253,6 +293,8 @@ pub async fn process_payroll(
         variable_earnings: variable_earnings_map,
         variable_deductions: variable_deductions_map,
         attendance_ot_hours: attendance_ot_map,
+        approved_ot: approved_ot_map,
+        approved_claims: claims_map,
         tp3: tp3_map,
         ytd: ytd_map,
         monthly_allowances: monthly_allowances_map,
@@ -366,6 +408,7 @@ pub async fn process_payroll(
 }
 
 /// Process a single employee's payroll
+#[allow(clippy::too_many_arguments)]
 async fn process_employee(
     pool: &PgPool,
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
@@ -383,7 +426,7 @@ async fn process_employee(
     let is_foreigner = emp.residency_status == "foreigner";
     let epf_category = emp.epf_category.clone().unwrap_or_else(|| "A".to_string());
 
-    // Gross salary = basic + recurring allowances
+    // Gross salary = basic + recurring allowances + overtime
     let basic = emp.basic_salary;
 
     let allowances_total = *bulk.recurring_allowances.get(&emp.id).unwrap_or(&0);
@@ -393,17 +436,41 @@ async fn process_employee(
     let recurring_deductions = *bulk.recurring_deductions.get(&emp.id).unwrap_or(&0);
     let attendance_ot_hours = *bulk.attendance_ot_hours.get(&emp.id).unwrap_or(&0.0);
 
+    // Calculate hourly rate once for OT computations
+    let hourly_rate = emp.hourly_rate.unwrap_or({
+        // Default calculation: basic / 26 days / 8 hours
+        emp.basic_salary / 26 / 8
+    });
+
+    // Attendance-based OT (records without approved OT applications)
     let attendance_ot_pay = if attendance_ot_hours > 0.0 {
-        let hourly_rate = emp.hourly_rate.unwrap_or_else(|| {
-            // Default calculation: basic / 26 days / 8 hours
-            emp.basic_salary / 26 / 8
-        });
         (hourly_rate as f64 * 1.5 * attendance_ot_hours) as i64
     } else {
         0
     };
 
-    let gross = basic + allowances_total + variable_earnings + attendance_ot_pay;
+    // Approved OT applications with type-based rate multipliers
+    let approved_ot_pay = if let Some(ot_entries) = bulk.approved_ot.get(&emp.id) {
+        let mut total = 0i64;
+        for (ot_type, hours) in ot_entries {
+            let multiplier = match ot_type.as_str() {
+                "rest_day" => 2.0,
+                "public_holiday" => 3.0,
+                _ => 1.5, // normal
+            };
+            total += (hourly_rate as f64 * multiplier * hours) as i64;
+        }
+        total
+    } else {
+        0
+    };
+
+    let total_overtime = attendance_ot_pay + approved_ot_pay;
+
+    // Approved claims (reimbursements, not part of gross — added to net)
+    let total_claims = *bulk.approved_claims.get(&emp.id).unwrap_or(&0);
+
+    let gross = basic + allowances_total + variable_earnings + total_overtime;
     let total_allowances = allowances_total + monthly_allowances;
 
     // EPF
@@ -471,7 +538,7 @@ async fn process_employee(
         + recurring_deductions
         + variable_deductions;
 
-    let net = gross - total_deductions;
+    let net = gross - total_deductions + total_claims;
     let employer_cost = gross + epf.employer + socso.employer + eis.employer;
 
     // New YTD
@@ -488,7 +555,7 @@ async fn process_employee(
     let item = sqlx::query_as::<_, PayrollItem>(
         r#"INSERT INTO payroll_items (
             id, payroll_run_id, employee_id,
-            basic_salary, gross_salary, total_allowances,
+            basic_salary, gross_salary, total_allowances, total_overtime, total_claims,
             epf_employee, epf_employer, socso_employee, socso_employer,
             eis_employee, eis_employer, pcb_amount, zakat_amount,
             ptptn_amount, tabung_haji_amount,
@@ -498,7 +565,7 @@ async fn process_employee(
         ) VALUES (
             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
             $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
-            $21, $22, $23, $24, $25, $26, $27
+            $21, $22, $23, $24, $25, $26, $27, $28, $29
         ) RETURNING *"#,
     )
     .bind(item_id)
@@ -507,6 +574,8 @@ async fn process_employee(
     .bind(basic)
     .bind(gross)
     .bind(total_allowances)
+    .bind(total_overtime)
+    .bind(total_claims)
     .bind(epf.employee)
     .bind(epf.employer)
     .bind(socso.employee)
@@ -543,6 +612,22 @@ async fn process_employee(
     .execute(&mut **tx)
     .await?;
 
+    // Mark approved claims as processed
+    if total_claims > 0 {
+        sqlx::query(
+            r#"UPDATE claims SET status = 'processed', updated_at = NOW()
+            WHERE employee_id = $1 AND company_id = $2
+              AND status = 'approved'
+              AND expense_date >= $3 AND expense_date <= $4"#,
+        )
+        .bind(emp.id)
+        .bind(emp.company_id)
+        .bind(_period_start)
+        .bind(_period_end)
+        .execute(&mut **tx)
+        .await?;
+    }
+
     Ok(item)
 }
 
@@ -558,12 +643,15 @@ fn calculate_age(dob: Option<NaiveDate>, as_of: NaiveDate) -> i32 {
         None => 30, // default assumption if DOB not provided
     }
 }
+#[allow(clippy::type_complexity)]
 struct BulkPayrollData {
     recurring_allowances: HashMap<Uuid, i64>,
     recurring_deductions: HashMap<Uuid, i64>,
     variable_earnings: HashMap<Uuid, i64>,
     variable_deductions: HashMap<Uuid, i64>,
     attendance_ot_hours: HashMap<Uuid, f64>,
+    approved_ot: HashMap<Uuid, Vec<(String, f64)>>,
+    approved_claims: HashMap<Uuid, i64>,
     tp3: HashMap<Uuid, (i64, i64, i64, i64)>,
     ytd: HashMap<Uuid, (i64, i64, i64, i64, i64, i64, i64)>,
     monthly_allowances: HashMap<Uuid, i64>,
