@@ -20,7 +20,7 @@ const MONTHS = [
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
 
-const canDeletePayrollRun = (run: PayrollRun) => ['draft', 'processed', 'cancelled'].includes(run.status);
+const canDeletePayrollRun = (run: PayrollRun) => ['draft', 'processed', 'cancelled', 'approved', 'paid'].includes(run.status);
 
 const columns: Column<PayrollRun>[] = [
   {
@@ -74,6 +74,9 @@ export function PayrollList() {
   const deleteMutation = useMutation({
     mutationFn: deletePayrollRun,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['payrollRuns'] }),
+    onError: (error: any) => {
+      alert(error?.response?.data?.message || error?.message || 'Failed to delete payroll run');
+    },
   });
 
   const handleDelete = (run: PayrollRun) => {

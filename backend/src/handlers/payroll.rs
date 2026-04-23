@@ -206,6 +206,18 @@ pub async fn delete_run(
     .execute(&mut *tx)
     .await?;
 
+    // Revert processed claims for this period back to approved
+    sqlx::query(
+        r#"UPDATE claims SET status = 'approved', updated_at = NOW()
+        WHERE company_id = $1 AND status = 'processed'
+          AND expense_date >= $2 AND expense_date <= $3"#,
+    )
+    .bind(company_id)
+    .bind(run.period_start)
+    .bind(run.period_end)
+    .execute(&mut *tx)
+    .await?;
+
     sqlx::query(
         r#"DELETE FROM payroll_item_details pid
         USING payroll_items pi
