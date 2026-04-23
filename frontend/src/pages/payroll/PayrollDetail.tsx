@@ -17,7 +17,7 @@ const MONTHS = [
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
 
-const canDeletePayrollRun = (status: string) => ['draft', 'processed', 'cancelled'].includes(status);
+const canDeletePayrollRun = (status: string) => ['draft', 'processed', 'cancelled', 'approved', 'paid'].includes(status);
 
 export function PayrollDetail() {
   const { id } = useParams<{ id: string }>();

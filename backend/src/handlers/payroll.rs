@@ -187,12 +187,6 @@ pub async fn delete_run(
     .await?
     .ok_or_else(|| AppError::NotFound("Payroll run not found".into()))?;
 
-    if ["approved", "paid"].contains(&run.status.as_str()) {
-        return Err(AppError::BadRequest(
-            "Approved or paid payroll runs cannot be deleted".into(),
-        ));
-    }
-
     if run.status == "processing" {
         return Err(AppError::BadRequest(
             "Payroll run is currently processing and cannot be deleted".into(),
