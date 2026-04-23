@@ -143,6 +143,7 @@ pub async fn process_payroll(
     }
 
     // 2. Batch fetch staged payroll entries
+    let mut monthly_allowances_map = HashMap::new();
     let mut variable_earnings_map = HashMap::new();
     let mut variable_deductions_map = HashMap::new();
     let entries: Vec<(Uuid, String, i64)> = sqlx::query_as(
@@ -164,6 +165,25 @@ pub async fn process_payroll(
         } else {
             variable_deductions_map.insert(emp_id, total);
         }
+    }
+
+    let monthly_allowances: Vec<(Uuid, i64)> = sqlx::query_as(
+        r#"SELECT employee_id, SUM(amount)::BIGINT
+           FROM payroll_entries
+           WHERE employee_id = ANY($1) AND period_year = $2 AND period_month = $3
+             AND is_processed = FALSE
+             AND category = 'earning'
+             AND item_type IN ('allowance', 'monthly_allowance')
+           GROUP BY employee_id"#,
+    )
+    .bind(&employee_ids)
+    .bind(year)
+    .bind(month)
+    .fetch_all(&mut *tx)
+    .await?;
+
+    for (emp_id, total) in monthly_allowances {
+        monthly_allowances_map.insert(emp_id, total);
     }
 
     // 3. Batch fetch attendance OT hours
@@ -235,6 +255,7 @@ pub async fn process_payroll(
         attendance_ot_hours: attendance_ot_map,
         tp3: tp3_map,
         ytd: ytd_map,
+        monthly_allowances: monthly_allowances_map,
     };
 
     let mut total_gross: i64 = 0;
@@ -352,8 +373,8 @@ async fn process_employee(
     emp: &Employee,
     year: i32,
     month: i32,
-    period_start: NaiveDate,
-    period_end: NaiveDate,
+    _period_start: NaiveDate,
+    _period_end: NaiveDate,
     effective_date: NaiveDate,
     bulk: &BulkPayrollData,
 ) -> AppResult<PayrollItem> {
@@ -366,6 +387,7 @@ async fn process_employee(
     let basic = emp.basic_salary;
 
     let allowances_total = *bulk.recurring_allowances.get(&emp.id).unwrap_or(&0);
+    let monthly_allowances = *bulk.monthly_allowances.get(&emp.id).unwrap_or(&0);
     let variable_earnings = *bulk.variable_earnings.get(&emp.id).unwrap_or(&0);
     let variable_deductions = *bulk.variable_deductions.get(&emp.id).unwrap_or(&0);
     let recurring_deductions = *bulk.recurring_deductions.get(&emp.id).unwrap_or(&0);
@@ -382,6 +404,7 @@ async fn process_employee(
     };
 
     let gross = basic + allowances_total + variable_earnings + attendance_ot_pay;
+    let total_allowances = allowances_total + monthly_allowances;
 
     // EPF
     let epf = epf_service::calculate_epf(pool, gross, &epf_category, effective_date).await?;
@@ -483,7 +506,7 @@ async fn process_employee(
     .bind(emp.id)
     .bind(basic)
     .bind(gross)
-    .bind(allowances_total)
+    .bind(total_allowances)
     .bind(epf.employee)
     .bind(epf.employer)
     .bind(socso.employee)
@@ -543,4 +566,5 @@ struct BulkPayrollData {
     attendance_ot_hours: HashMap<Uuid, f64>,
     tp3: HashMap<Uuid, (i64, i64, i64, i64)>,
     ytd: HashMap<Uuid, (i64, i64, i64, i64, i64, i64, i64)>,
+    monthly_allowances: HashMap<Uuid, i64>,
 }

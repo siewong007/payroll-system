@@ -23,6 +23,22 @@ const MONTHS = [
   { value: 11, label: 'November' }, { value: 12, label: 'December' },
 ];
 
+type EntryKind = 'monthly_allowance' | 'other_earning' | 'deduction';
+
+function getEntryKind(entry: Pick<PayrollEntryWithEmployee, 'category' | 'item_type'>): EntryKind {
+  if (entry.category === 'earning' && ['allowance', 'monthly_allowance'].includes(entry.item_type)) {
+    return 'monthly_allowance';
+  }
+  return entry.category === 'deduction' ? 'deduction' : 'other_earning';
+}
+
+function getEntryKindLabel(entry: Pick<PayrollEntryWithEmployee, 'category' | 'item_type'>) {
+  const kind = getEntryKind(entry);
+  if (kind === 'monthly_allowance') return 'Monthly allowance';
+  if (kind === 'deduction') return 'Deduction';
+  return 'Other earning';
+}
+
 export function PayrollProcess() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -37,8 +53,8 @@ export function PayrollProcess() {
   const [entryForm, setEntryForm] = useState({
     employee_id: '',
     category: 'earning' as 'earning' | 'deduction',
-    item_type: 'manual_adjustment',
-    description: '',
+    item_type: 'monthly_allowance',
+    description: 'Monthly allowance',
     amount: '',
     quantity: '',
     rate: '',
@@ -120,8 +136,8 @@ export function PayrollProcess() {
     setEntryForm({
       employee_id: '',
       category: 'earning',
-      item_type: 'manual_adjustment',
-      description: '',
+      item_type: 'monthly_allowance',
+      description: 'Monthly allowance',
       amount: '',
       quantity: '',
       rate: '',
@@ -156,6 +172,8 @@ export function PayrollProcess() {
     }
     saveEntryMutation.mutate();
   };
+
+  const selectedEntryKind = getEntryKind(entryForm);
 
   return (
     <div className="max-w-6xl space-y-6">
@@ -248,8 +266,10 @@ export function PayrollProcess() {
       <div className="bg-white rounded-2xl shadow border border-gray-200 overflow-hidden">
         <div className="flex flex-col gap-2 border-b border-gray-100 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h2 className="font-semibold text-gray-900">Payroll Adjustments</h2>
-            <p className="text-sm text-gray-500">Create, edit, or delete one-off earnings and deductions before processing payroll.</p>
+            <h2 className="font-semibold text-gray-900">Monthly Allowances & Payroll Adjustments</h2>
+            <p className="text-sm text-gray-500">
+              Create employee-specific allowances for this month, or add other one-off earnings and deductions before processing payroll.
+            </p>
           </div>
           {editingEntry && (
             <button type="button" onClick={resetEntryForm} className="btn-secondary !py-2 text-sm">
@@ -275,13 +295,28 @@ export function PayrollProcess() {
             </select>
           </div>
           <div>
-            <label className="form-label">Category *</label>
+            <label className="form-label">Entry Kind *</label>
             <select
-              value={entryForm.category}
-              onChange={(e) => setEntryForm((prev) => ({ ...prev, category: e.target.value as 'earning' | 'deduction' }))}
+              value={selectedEntryKind}
+              onChange={(e) => {
+                const kind = e.target.value as EntryKind;
+                setEntryForm((prev) => ({
+                  ...prev,
+                  category: kind === 'deduction' ? 'deduction' : 'earning',
+                  item_type: kind === 'monthly_allowance'
+                    ? 'monthly_allowance'
+                    : kind === 'deduction'
+                      ? 'manual_deduction'
+                      : 'manual_adjustment',
+                  description: kind === 'monthly_allowance' && !prev.description
+                    ? 'Monthly allowance'
+                    : prev.description,
+                }));
+              }}
               className="form-input"
             >
-              <option value="earning">Earning</option>
+              <option value="monthly_allowance">Monthly Allowance</option>
+              <option value="other_earning">Other Earning</option>
               <option value="deduction">Deduction</option>
             </select>
           </div>
@@ -290,8 +325,9 @@ export function PayrollProcess() {
             <input
               value={entryForm.item_type}
               onChange={(e) => setEntryForm((prev) => ({ ...prev, item_type: e.target.value }))}
-              className="form-input"
-              placeholder="bonus"
+              disabled={selectedEntryKind === 'monthly_allowance'}
+              className="form-input disabled:bg-gray-50 disabled:text-gray-500"
+              placeholder="monthly_allowance"
             />
           </div>
           <div>
@@ -391,7 +427,7 @@ export function PayrollProcess() {
                   </td>
                   <td className="px-6 py-4 text-sm">
                     <span className={`badge ${entry.category === 'earning' ? 'badge-approved' : 'badge-rejected'}`}>
-                      {entry.category}
+                      {getEntryKindLabel(entry)}
                     </span>
                     <div className="mt-1 text-xs text-gray-400">{entry.item_type}</div>
                   </td>

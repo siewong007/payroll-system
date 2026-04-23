@@ -11,7 +11,7 @@ use crate::core::error::{AppError, AppResult};
 use crate::models::payroll::{
     CreatePayrollEntryRequest, PayrollEntry, PayrollEntryWithEmployee, PayrollGroup, PayrollItem,
     PayrollItemSummary, PayrollRun, PayrollSummary, ProcessPayrollRequest,
-    UpdatePayrollEntryRequest,
+    UpdatePayrollEntryRequest, UpdatePayrollPcbRequest,
 };
 use crate::services::payroll_engine;
 
@@ -47,6 +47,66 @@ pub async fn process(
     .await?;
 
     Ok(Json(run))
+}
+
+async fn load_payroll_summary(
+    pool: &sqlx::PgPool,
+    company_id: Uuid,
+    id: Uuid,
+) -> AppResult<PayrollSummary> {
+    let run = sqlx::query_as::<_, PayrollRun>(
+        r#"SELECT id, company_id, payroll_group_id, period_year, period_month,
+            period_start, period_end, pay_date, status::text as status,
+            total_gross, total_net, total_employer_cost,
+            total_epf_employee, total_epf_employer, total_socso_employee, total_socso_employer,
+            total_eis_employee, total_eis_employer, total_pcb, total_zakat,
+            employee_count, version, processed_by, processed_at, approved_by, approved_at,
+            locked_at, locked_by, notes, created_at, updated_at, created_by, updated_by
+        FROM payroll_runs WHERE id = $1 AND company_id = $2"#,
+    )
+    .bind(id)
+    .bind(company_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound("Payroll run not found".into()))?;
+
+    let items =
+        sqlx::query_as::<_, (Uuid, String, String, i64, i64, i64, i64, i64, i64, i64, i64)>(
+            r#"SELECT pi.employee_id, e.full_name, e.employee_number,
+           pi.basic_salary, pi.gross_salary, pi.total_deductions, pi.net_salary,
+           pi.epf_employee, pi.socso_employee, pi.eis_employee, pi.pcb_amount
+        FROM payroll_items pi
+        JOIN employees e ON pi.employee_id = e.id
+        WHERE pi.payroll_run_id = $1
+        ORDER BY e.employee_number"#,
+        )
+        .bind(id)
+        .fetch_all(pool)
+        .await?;
+
+    let item_summaries: Vec<PayrollItemSummary> = items
+        .into_iter()
+        .map(
+            |(eid, name, num, basic, gross, ded, net, epf, socso, eis, pcb)| PayrollItemSummary {
+                employee_id: eid,
+                employee_name: name,
+                employee_number: num,
+                basic_salary: basic,
+                gross_salary: gross,
+                total_deductions: ded,
+                net_salary: net,
+                epf_employee: epf,
+                socso_employee: socso,
+                eis_employee: eis,
+                pcb_amount: pcb,
+            },
+        )
+        .collect();
+
+    Ok(PayrollSummary {
+        payroll_run: run,
+        items: item_summaries,
+    })
 }
 
 pub async fn list_runs(
@@ -90,59 +150,9 @@ pub async fn get_run(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    let run = sqlx::query_as::<_, PayrollRun>(
-        r#"SELECT id, company_id, payroll_group_id, period_year, period_month,
-            period_start, period_end, pay_date, status::text as status,
-            total_gross, total_net, total_employer_cost,
-            total_epf_employee, total_epf_employer, total_socso_employee, total_socso_employer,
-            total_eis_employee, total_eis_employer, total_pcb, total_zakat,
-            employee_count, version, processed_by, processed_at, approved_by, approved_at,
-            locked_at, locked_by, notes, created_at, updated_at, created_by, updated_by
-        FROM payroll_runs WHERE id = $1 AND company_id = $2"#,
-    )
-    .bind(id)
-    .bind(company_id)
-    .fetch_optional(&state.pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound("Payroll run not found".into()))?;
-
-    let items =
-        sqlx::query_as::<_, (Uuid, String, String, i64, i64, i64, i64, i64, i64, i64, i64)>(
-            r#"SELECT pi.employee_id, e.full_name, e.employee_number,
-           pi.basic_salary, pi.gross_salary, pi.total_deductions, pi.net_salary,
-           pi.epf_employee, pi.socso_employee, pi.eis_employee, pi.pcb_amount
-        FROM payroll_items pi
-        JOIN employees e ON pi.employee_id = e.id
-        WHERE pi.payroll_run_id = $1
-        ORDER BY e.employee_number"#,
-        )
-        .bind(id)
-        .fetch_all(&state.pool)
-        .await?;
-
-    let item_summaries: Vec<PayrollItemSummary> = items
-        .into_iter()
-        .map(
-            |(eid, name, num, basic, gross, ded, net, epf, socso, eis, pcb)| PayrollItemSummary {
-                employee_id: eid,
-                employee_name: name,
-                employee_number: num,
-                basic_salary: basic,
-                gross_salary: gross,
-                total_deductions: ded,
-                net_salary: net,
-                epf_employee: epf,
-                socso_employee: socso,
-                eis_employee: eis,
-                pcb_amount: pcb,
-            },
-        )
-        .collect();
-
-    Ok(Json(PayrollSummary {
-        payroll_run: run,
-        items: item_summaries,
-    }))
+    Ok(Json(
+        load_payroll_summary(&state.pool, company_id, id).await?,
+    ))
 }
 
 pub async fn delete_run(
@@ -222,6 +232,122 @@ pub async fn delete_run(
     tx.commit().await?;
 
     Ok(Json(serde_json::json!({ "success": true })))
+}
+
+pub async fn update_item_pcb(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path((run_id, employee_id)): Path<(Uuid, Uuid)>,
+    Json(req): Json<UpdatePayrollPcbRequest>,
+) -> AppResult<Json<PayrollSummary>> {
+    auth.require_payroll_privileged()?;
+    let company_id = auth
+        .0
+        .company_id
+        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
+
+    if req.pcb_amount < 0 {
+        return Err(AppError::BadRequest("PCB amount cannot be negative".into()));
+    }
+
+    let mut tx = state.pool.begin().await?;
+
+    let (run_status, period_year, period_month) = sqlx::query_as::<_, (String, i32, i32)>(
+        r#"SELECT status::text, period_year, period_month
+        FROM payroll_runs
+        WHERE id = $1 AND company_id = $2
+        FOR UPDATE"#,
+    )
+    .bind(run_id)
+    .bind(company_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| AppError::NotFound("Payroll run not found".into()))?;
+
+    if run_status != "processed" {
+        return Err(AppError::BadRequest(
+            "PCB can only be edited while the payroll run is processed and not yet approved".into(),
+        ));
+    }
+
+    let has_later_run = sqlx::query_scalar::<_, bool>(
+        r#"SELECT EXISTS(
+            SELECT 1
+            FROM payroll_items pi
+            JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
+            WHERE pi.employee_id = $1
+              AND pr.company_id = $2
+              AND pr.status::text IN ('processed', 'approved', 'paid')
+              AND (pr.period_year > $3 OR (pr.period_year = $3 AND pr.period_month > $4))
+        )"#,
+    )
+    .bind(employee_id)
+    .bind(company_id)
+    .bind(period_year)
+    .bind(period_month)
+    .fetch_one(&mut *tx)
+    .await?;
+
+    if has_later_run {
+        return Err(AppError::BadRequest(
+            "PCB cannot be edited because a later payroll run already exists for this employee"
+                .into(),
+        ));
+    }
+
+    let current = sqlx::query_as::<_, (i64, i64, i64, i64)>(
+        r#"SELECT pcb_amount, total_deductions, net_salary, ytd_pcb
+        FROM payroll_items
+        WHERE payroll_run_id = $1 AND employee_id = $2
+        FOR UPDATE"#,
+    )
+    .bind(run_id)
+    .bind(employee_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| AppError::NotFound("Payroll item not found".into()))?;
+
+    let (old_pcb, total_deductions, net_salary, ytd_pcb) = current;
+    let delta = req.pcb_amount - old_pcb;
+
+    sqlx::query(
+        r#"UPDATE payroll_items
+        SET pcb_amount = $3,
+            total_deductions = $4,
+            net_salary = $5,
+            ytd_pcb = $6,
+            updated_at = NOW()
+        WHERE payroll_run_id = $1 AND employee_id = $2"#,
+    )
+    .bind(run_id)
+    .bind(employee_id)
+    .bind(req.pcb_amount)
+    .bind(total_deductions + delta)
+    .bind(net_salary - delta)
+    .bind(ytd_pcb + delta)
+    .execute(&mut *tx)
+    .await?;
+
+    sqlx::query(
+        r#"UPDATE payroll_runs
+        SET total_pcb = total_pcb + $3,
+            total_net = total_net - $3,
+            updated_at = NOW(),
+            updated_by = $4
+        WHERE id = $1 AND company_id = $2"#,
+    )
+    .bind(run_id)
+    .bind(company_id)
+    .bind(delta)
+    .bind(auth.0.sub)
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+
+    Ok(Json(
+        load_payroll_summary(&state.pool, company_id, run_id).await?,
+    ))
 }
 
 pub async fn approve_run(
@@ -317,6 +443,7 @@ pub struct PayrollEntryQuery {
     pub period_year: Option<i32>,
     pub period_month: Option<i32>,
     pub employee_id: Option<Uuid>,
+    pub item_type: Option<String>,
     pub include_processed: Option<bool>,
 }
 
@@ -408,13 +535,15 @@ pub async fn list_entries(
           AND ($2::int IS NULL OR pe.period_year = $2)
           AND ($3::int IS NULL OR pe.period_month = $3)
           AND ($4::uuid IS NULL OR pe.employee_id = $4)
-          AND ($5::bool = TRUE OR pe.is_processed = FALSE)
+          AND ($5::text IS NULL OR pe.item_type = $5)
+          AND ($6::bool = TRUE OR pe.is_processed = FALSE)
         ORDER BY pe.period_year DESC, pe.period_month DESC, e.employee_number, pe.created_at DESC"#,
     )
     .bind(company_id)
     .bind(q.period_year)
     .bind(q.period_month)
     .bind(q.employee_id)
+    .bind(q.item_type.as_deref())
     .bind(include_processed)
     .fetch_all(&state.pool)
     .await?;

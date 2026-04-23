@@ -291,6 +291,10 @@ export interface CreatePayrollEntryRequest {
 
 export type UpdatePayrollEntryRequest = Partial<CreatePayrollEntryRequest>;
 
+export interface UpdatePayrollPcbRequest {
+  pcb_amount: number;
+}
+
 export interface DashboardSummary {
   total_employees: number;
   active_employees: number;

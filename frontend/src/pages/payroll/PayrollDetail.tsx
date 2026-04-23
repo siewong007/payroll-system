@@ -1,8 +1,16 @@
+import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, CheckCircle, Lock, Download, Trash2 } from 'lucide-react';
-import { getPayrollRun, approvePayroll, lockPayroll, downloadRunPayslips, deletePayrollRun } from '@/api/payroll';
-import { formatMYR } from '@/lib/utils';
+import { ArrowLeft, CheckCircle, Lock, Download, Trash2, Pencil, Save, X } from 'lucide-react';
+import {
+  getPayrollRun,
+  approvePayroll,
+  lockPayroll,
+  downloadRunPayslips,
+  deletePayrollRun,
+  updatePayrollItemPcb,
+} from '@/api/payroll';
+import { formatMYR, getErrorMessage } from '@/lib/utils';
 
 const MONTHS = [
   '', 'January', 'February', 'March', 'April', 'May', 'June',
@@ -15,6 +23,9 @@ export function PayrollDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [editingPcbEmployeeId, setEditingPcbEmployeeId] = useState<string | null>(null);
+  const [pcbInput, setPcbInput] = useState('');
+  const [pcbError, setPcbError] = useState('');
 
   const { data, isLoading } = useQuery({
     queryKey: ['payrollRun', id],
@@ -40,6 +51,21 @@ export function PayrollDetail() {
     },
   });
 
+  const updatePcbMutation = useMutation({
+    mutationFn: ({ employeeId, pcbAmount }: { employeeId: string; pcbAmount: number }) =>
+      updatePayrollItemPcb(id!, employeeId, { pcb_amount: pcbAmount }),
+    onSuccess: (summary) => {
+      queryClient.setQueryData(['payrollRun', id], summary);
+      queryClient.invalidateQueries({ queryKey: ['payrollRuns'] });
+      setEditingPcbEmployeeId(null);
+      setPcbInput('');
+      setPcbError('');
+    },
+    onError: (err: unknown) => {
+      setPcbError(getErrorMessage(err, 'Failed to update PCB'));
+    },
+  });
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -51,6 +77,22 @@ export function PayrollDetail() {
   if (!data) return <div className="text-center text-gray-500 py-12">Payroll run not found</div>;
 
   const { payroll_run: run, items } = data;
+  const canEditPcb = run.status === 'processed';
+
+  const startEditPcb = (employeeId: string, pcbAmount: number) => {
+    setEditingPcbEmployeeId(employeeId);
+    setPcbInput((pcbAmount / 100).toFixed(2));
+    setPcbError('');
+  };
+
+  const savePcb = (employeeId: string) => {
+    const amount = Number(pcbInput);
+    if (!Number.isFinite(amount) || amount < 0) {
+      setPcbError('PCB amount must be zero or greater');
+      return;
+    }
+    updatePcbMutation.mutate({ employeeId, pcbAmount: Math.round(amount * 100) });
+  };
 
   return (
     <div>
@@ -166,6 +208,16 @@ export function PayrollDetail() {
       <div className="bg-white rounded-2xl shadow border border-gray-200 overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-200">
           <h2 className="font-semibold">Employee Breakdown</h2>
+          {canEditPcb && (
+            <p className="mt-1 text-sm text-gray-500">
+              PCB can be edited while this payroll run is processed and before it is approved.
+            </p>
+          )}
+          {pcbError && (
+            <div className="mt-3 rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {pcbError}
+            </div>
+          )}
         </div>
         <div className="overflow-x-auto">
           <table className="w-full">
@@ -194,7 +246,55 @@ export function PayrollDetail() {
                   <td className="px-4 py-3 text-sm text-right">{formatMYR(item.epf_employee)}</td>
                   <td className="px-4 py-3 text-sm text-right">{formatMYR(item.socso_employee)}</td>
                   <td className="px-4 py-3 text-sm text-right">{formatMYR(item.eis_employee)}</td>
-                  <td className="px-4 py-3 text-sm text-right">{formatMYR(item.pcb_amount)}</td>
+                  <td className="px-4 py-3 text-sm text-right">
+                    {editingPcbEmployeeId === item.employee_id ? (
+                      <div className="flex min-w-40 items-center justify-end gap-2">
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={pcbInput}
+                          onChange={(e) => setPcbInput(e.target.value)}
+                          className="w-24 rounded-lg border border-gray-200 px-2 py-1 text-right text-sm outline-none focus:border-gray-400"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => savePcb(item.employee_id)}
+                          disabled={updatePcbMutation.isPending}
+                          className="rounded-lg p-1.5 text-green-600 hover:bg-green-50 disabled:opacity-50"
+                          title="Save PCB"
+                        >
+                          <Save className="w-4 h-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingPcbEmployeeId(null);
+                            setPcbInput('');
+                            setPcbError('');
+                          }}
+                          className="rounded-lg p-1.5 text-gray-500 hover:bg-gray-100"
+                          title="Cancel PCB edit"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-end gap-2">
+                        <span>{formatMYR(item.pcb_amount)}</span>
+                        {canEditPcb && (
+                          <button
+                            type="button"
+                            onClick={() => startEditPcb(item.employee_id, item.pcb_amount)}
+                            className="rounded-lg p-1.5 text-gray-500 hover:bg-gray-100 hover:text-black"
+                            title="Edit PCB"
+                          >
+                            <Pencil className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-sm text-right text-red-600">{formatMYR(item.total_deductions)}</td>
                   <td className="px-4 py-3 text-sm text-right font-bold text-green-600">{formatMYR(item.net_salary)}</td>
                 </tr>

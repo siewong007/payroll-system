@@ -197,6 +197,11 @@ pub struct UpdatePayrollEntryRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct UpdatePayrollPcbRequest {
+    pub pcb_amount: i64,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct ProcessPayrollRequest {
     pub payroll_group_id: Uuid,
     pub period_year: i32,

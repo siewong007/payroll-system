@@ -8,6 +8,7 @@ import type {
   PayrollSummary,
   ProcessPayrollRequest,
   UpdatePayrollEntryRequest,
+  UpdatePayrollPcbRequest,
 } from '@/types';
 
 export async function getPayrollGroups(): Promise<PayrollGroup[]> {
@@ -38,6 +39,7 @@ export async function getPayrollEntries(params?: {
   period_year?: number;
   period_month?: number;
   employee_id?: string;
+  item_type?: string;
   include_processed?: boolean;
 }): Promise<PayrollEntryWithEmployee[]> {
   const { data } = await api.get('/payroll/entries', { params });
@@ -56,6 +58,15 @@ export async function updatePayrollEntry(id: string, req: UpdatePayrollEntryRequ
 
 export async function deletePayrollEntry(id: string): Promise<void> {
   await api.delete(`/payroll/entries/${id}`);
+}
+
+export async function updatePayrollItemPcb(
+  runId: string,
+  employeeId: string,
+  req: UpdatePayrollPcbRequest,
+): Promise<PayrollSummary> {
+  const { data } = await api.put(`/payroll/runs/${runId}/items/${employeeId}/pcb`, req);
+  return data;
 }
 
 export async function approvePayroll(id: string): Promise<PayrollRun> {
