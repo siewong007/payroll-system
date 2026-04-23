@@ -1,13 +1,15 @@
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, CheckCircle, Lock, Download } from 'lucide-react';
-import { getPayrollRun, approvePayroll, lockPayroll, downloadRunPayslips } from '@/api/payroll';
+import { ArrowLeft, CheckCircle, Lock, Download, Trash2 } from 'lucide-react';
+import { getPayrollRun, approvePayroll, lockPayroll, downloadRunPayslips, deletePayrollRun } from '@/api/payroll';
 import { formatMYR } from '@/lib/utils';
 
 const MONTHS = [
   '', 'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
+
+const canDeletePayrollRun = (status: string) => ['draft', 'processed', 'cancelled'].includes(status);
 
 export function PayrollDetail() {
   const { id } = useParams<{ id: string }>();
@@ -28,6 +30,14 @@ export function PayrollDetail() {
   const lockMutation = useMutation({
     mutationFn: () => lockPayroll(id!),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['payrollRun', id] }),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: () => deletePayrollRun(id!),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['payrollRuns'] });
+      navigate('/payroll');
+    },
   });
 
   if (isLoading) {
@@ -66,6 +76,20 @@ export function PayrollDetail() {
           >
             <Download className="w-4 h-4" /> Download Payslips
           </button>
+          {canDeletePayrollRun(run.status) && (
+            <button
+              onClick={() => {
+                if (confirm(`Delete ${MONTHS[run.period_month]} ${run.period_year} payroll run? This cannot be undone.`)) {
+                  deleteMutation.mutate();
+                }
+              }}
+              disabled={deleteMutation.isPending}
+              className="flex items-center gap-2 bg-white border border-red-200 text-red-600 px-4 py-2 rounded-lg hover:bg-red-50 disabled:opacity-50 text-sm font-medium"
+            >
+              <Trash2 className="w-4 h-4" />
+              {deleteMutation.isPending ? 'Deleting...' : 'Delete'}
+            </button>
+          )}
           {run.status === 'processed' && (
             <button
               onClick={() => approveMutation.mutate()}

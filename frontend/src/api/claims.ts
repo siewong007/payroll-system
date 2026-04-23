@@ -24,6 +24,10 @@ export async function submitClaim(id: string): Promise<Claim> {
   return data;
 }
 
+export async function cancelClaim(id: string): Promise<void> {
+  await api.put(`/portal/claims/${id}/cancel`);
+}
+
 export async function deleteClaim(id: string): Promise<void> {
   await api.delete(`/portal/claims/${id}`);
 }

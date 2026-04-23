@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { Modal } from './Modal';
 
@@ -42,6 +42,14 @@ interface DataTableProps<T> {
   disableRowClick?: boolean;
   /** Extra action column rendered after all columns */
   renderActions?: (row: T) => React.ReactNode;
+  /** Show row selection checkboxes and a select-all checkbox for the current page. */
+  selectable?: boolean;
+  /** Controlled list of selected row keys. */
+  selectedRowKeys?: string[];
+  /** Called when row selection changes. */
+  onSelectedRowKeysChange?: (keys: string[]) => void;
+  /** Disable selection for specific rows. Defaults to all rows selectable. */
+  isRowSelectable?: (row: T) => boolean;
 }
 
 export function DataTable<T>({
@@ -60,9 +68,14 @@ export function DataTable<T>({
   renderSummaryFooter,
   disableRowClick = false,
   renderActions,
+  selectable = false,
+  selectedRowKeys = [],
+  onSelectedRowKeysChange,
+  isRowSelectable,
 }: DataTableProps<T>) {
   const [selectedRow, setSelectedRow] = useState<T | null>(null);
   const [internalPage, setInternalPage] = useState(1);
+  const selectAllRef = useRef<HTMLInputElement>(null);
 
   const isServerSide = controlledPage !== undefined && onPageChange !== undefined;
   const currentPage = isServerSide ? controlledPage : internalPage;
@@ -74,7 +87,7 @@ export function DataTable<T>({
     ? data
     : data.slice((currentPage - 1) * perPage, currentPage * perPage);
 
-  const colCount = columns.length + (renderActions ? 1 : 0);
+  const colCount = columns.length + (renderActions ? 1 : 0) + (selectable ? 1 : 0);
 
   const getKey = (row: T, index: number) => {
     if (rowKey) return rowKey(row, index);
@@ -84,6 +97,46 @@ export function DataTable<T>({
 
   const handleRowClick = (row: T) => {
     if (!disableRowClick) setSelectedRow(row);
+  };
+
+  const selectedKeySet = new Set(selectedRowKeys);
+  const selectableDisplayData = selectable
+    ? displayData.filter((row) => isRowSelectable?.(row) ?? true)
+    : [];
+  const selectableDisplayKeys = selectableDisplayData.map((row, index) => getKey(row, index));
+  const selectedDisplayCount = selectableDisplayKeys.filter((key) => selectedKeySet.has(key)).length;
+  const hasSelectableRows = selectableDisplayKeys.length > 0;
+  const allDisplayRowsSelected = hasSelectableRows && selectedDisplayCount === selectableDisplayKeys.length;
+  const someDisplayRowsSelected = selectedDisplayCount > 0 && !allDisplayRowsSelected;
+
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = someDisplayRowsSelected;
+    }
+  }, [someDisplayRowsSelected]);
+
+  const updateSelection = (keys: string[]) => {
+    onSelectedRowKeysChange?.(Array.from(new Set(keys)));
+  };
+
+  const toggleRowSelection = (row: T, index: number) => {
+    if (!(isRowSelectable?.(row) ?? true)) return;
+
+    const key = getKey(row, index);
+    updateSelection(
+      selectedKeySet.has(key)
+        ? selectedRowKeys.filter((selectedKey) => selectedKey !== key)
+        : [...selectedRowKeys, key],
+    );
+  };
+
+  const toggleDisplaySelection = () => {
+    if (allDisplayRowsSelected) {
+      updateSelection(selectedRowKeys.filter((key) => !selectableDisplayKeys.includes(key)));
+      return;
+    }
+
+    updateSelection([...selectedRowKeys, ...selectableDisplayKeys]);
   };
 
   useEffect(() => {
@@ -154,6 +207,18 @@ export function DataTable<T>({
                 >
                   {/* Primary fields */}
                   <div className="flex items-start justify-between gap-3">
+                    {selectable && (
+                      <div className="pt-0.5" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={selectedKeySet.has(getKey(row, idx))}
+                          disabled={!(isRowSelectable?.(row) ?? true)}
+                          onChange={() => toggleRowSelection(row, idx)}
+                          className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-900 disabled:opacity-40"
+                          aria-label="Select row"
+                        />
+                      </div>
+                    )}
                     <div className="flex-1 min-w-0 space-y-0.5">
                       {mobilePrimary.map((col) => (
                         <div key={col.key} className="text-sm text-gray-900">
@@ -189,6 +254,19 @@ export function DataTable<T>({
           <table className="w-full">
             <thead className="bg-gray-50 text-left">
               <tr>
+                {selectable && (
+                  <th className="w-12 px-6 py-3">
+                    <input
+                      ref={selectAllRef}
+                      type="checkbox"
+                      checked={allDisplayRowsSelected}
+                      disabled={!hasSelectableRows}
+                      onChange={toggleDisplaySelection}
+                      className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-900 disabled:opacity-40"
+                      aria-label="Select all visible rows"
+                    />
+                  </th>
+                )}
                 {columns.map((col) => (
                   <th
                     key={col.key}
@@ -228,6 +306,18 @@ export function DataTable<T>({
                     className={`hover:bg-gray-50 transition-colors ${!disableRowClick ? 'cursor-pointer' : ''}`}
                     onClick={() => handleRowClick(row)}
                   >
+                    {selectable && (
+                      <td className="px-6 py-4" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={selectedKeySet.has(getKey(row, idx))}
+                          disabled={!(isRowSelectable?.(row) ?? true)}
+                          onChange={() => toggleRowSelection(row, idx)}
+                          className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-900 disabled:opacity-40"
+                          aria-label="Select row"
+                        />
+                      </td>
+                    )}
                     {columns.map((col) => (
                       <td
                         key={col.key}

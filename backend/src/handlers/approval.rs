@@ -128,6 +128,18 @@ pub async fn delete_leave_request(
     Ok(Json(serde_json::json!({ "success": true })))
 }
 
+pub async fn cancel_leave_request(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<LeaveRequest>> {
+    let company_id = require_admin(&auth)?;
+    let leave =
+        approval_service::cancel_leave_request_admin(&state.pool, company_id, id, auth.0.sub)
+            .await?;
+    Ok(Json(leave))
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ReviewRequest {
     pub notes: Option<String>,
@@ -232,6 +244,17 @@ pub async fn delete_claim(
     Ok(Json(serde_json::json!({ "success": true })))
 }
 
+pub async fn cancel_claim(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<Claim>> {
+    let company_id = require_admin(&auth)?;
+    let claim =
+        approval_service::cancel_claim_admin(&state.pool, company_id, id, auth.0.sub).await?;
+    Ok(Json(claim))
+}
+
 pub async fn approve_claim(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -330,6 +353,17 @@ pub async fn delete_overtime(
     let company_id = require_admin(&auth)?;
     approval_service::delete_overtime_admin(&state.pool, company_id, id, auth.0.sub).await?;
     Ok(Json(serde_json::json!({ "success": true })))
+}
+
+pub async fn cancel_overtime(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<OvertimeApplication>> {
+    let company_id = require_admin(&auth)?;
+    let ot =
+        approval_service::cancel_overtime_admin(&state.pool, company_id, id, auth.0.sub).await?;
+    Ok(Json(ot))
 }
 
 pub async fn approve_overtime(

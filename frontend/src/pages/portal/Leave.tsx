@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, ArrowLeft, Paperclip, ExternalLink, X, Calendar, FileText, AlertTriangle, Download } from 'lucide-react';
-import { getLeaveBalances, getLeaveRequests, getLeaveTypes, createLeaveRequest, cancelLeaveRequest, uploadFile, getMyProfile, exportLeaveIcs } from '@/api/portal';
+import { Plus, ArrowLeft, Paperclip, ExternalLink, X, Calendar, FileText, AlertTriangle, Download, Trash2 } from 'lucide-react';
+import { getLeaveBalances, getLeaveRequests, getLeaveTypes, createLeaveRequest, cancelLeaveRequest, deleteLeaveRequest, uploadFile, getMyProfile, exportLeaveIcs } from '@/api/portal';
 import { formatDate, getErrorMessage } from '@/lib/utils';
 import { DataTable, type Column } from '@/components/ui/DataTable';
 import type { Employee, LeaveBalance, LeaveRequest, LeaveType } from '@/types';
@@ -120,10 +120,14 @@ const requestColumns: Column<LeaveRequest>[] = [
   { key: 'status', header: 'Status', align: 'center', render: (r) => statusBadge(r.status) },
 ];
 
+const canCancelLeave = (request: LeaveRequest) => ['pending', 'approved', 'rejected'].includes(request.status);
+const canDeleteLeave = (request: LeaveRequest) => request.status === 'cancelled';
+
 export function Leave() {
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<'balances' | 'requests'>('balances');
   const [showApply, setShowApply] = useState(false);
+  const [selectedLeaveIds, setSelectedLeaveIds] = useState<string[]>([]);
 
   const { data: profile } = useQuery({
     queryKey: ['my-profile'],
@@ -152,6 +156,40 @@ export function Leave() {
       queryClient.invalidateQueries({ queryKey: ['leave-balances'] });
     },
   });
+
+  const deleteMutation = useMutation({
+    mutationFn: deleteLeaveRequest,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['leave-requests'] });
+      queryClient.invalidateQueries({ queryKey: ['leave-balances'] });
+    },
+  });
+
+  const bulkCancelMutation = useMutation({
+    mutationFn: async (ids: string[]) => {
+      await Promise.all(ids.map((id) => cancelLeaveRequest(id)));
+    },
+    onSuccess: () => {
+      setSelectedLeaveIds([]);
+      queryClient.invalidateQueries({ queryKey: ['leave-requests'] });
+      queryClient.invalidateQueries({ queryKey: ['leave-balances'] });
+    },
+  });
+
+  const bulkDeleteMutation = useMutation({
+    mutationFn: async (ids: string[]) => {
+      await Promise.all(ids.map((id) => deleteLeaveRequest(id)));
+    },
+    onSuccess: () => {
+      setSelectedLeaveIds([]);
+      queryClient.invalidateQueries({ queryKey: ['leave-requests'] });
+      queryClient.invalidateQueries({ queryKey: ['leave-balances'] });
+    },
+  });
+
+  const selectedLeaveRequests = (requests ?? []).filter((request) => selectedLeaveIds.includes(request.id));
+  const selectedCancelableLeaveIds = selectedLeaveRequests.filter(canCancelLeave).map((request) => request.id);
+  const selectedDeletableLeaveIds = selectedLeaveRequests.filter(canDeleteLeave).map((request) => request.id);
 
   if (loadingBalances) {
     return (
@@ -228,14 +266,52 @@ export function Leave() {
           }}
         />
       ) : (
-        <DataTable
-          columns={requestColumns}
-          data={requests ?? []}
-          perPage={10}
-          emptyMessage="No leave requests yet"
-          emptyIcon={<Calendar className="w-10 h-10 opacity-40" />}
-          summaryTitle={(r) => `${r.leave_type_name} — Leave Request`}
-          renderSummary={(r) => (
+        <div className="space-y-3">
+          {selectedLeaveIds.length > 0 && (
+            <div className="flex flex-col gap-2 rounded-xl border border-gray-200 bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <span className="text-sm font-medium text-gray-700">{selectedLeaveIds.length} selected</span>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (confirm(`Cancel ${selectedCancelableLeaveIds.length} selected leave request(s)?`)) {
+                      bulkCancelMutation.mutate(selectedCancelableLeaveIds);
+                    }
+                  }}
+                  disabled={selectedCancelableLeaveIds.length === 0 || bulkCancelMutation.isPending}
+                  className="btn-secondary !py-2 text-sm disabled:opacity-50"
+                >
+                  <X className="w-4 h-4" />
+                  {bulkCancelMutation.isPending ? 'Cancelling...' : 'Cancel Selected'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (confirm(`Permanently delete ${selectedDeletableLeaveIds.length} cancelled leave request(s)?`)) {
+                      bulkDeleteMutation.mutate(selectedDeletableLeaveIds);
+                    }
+                  }}
+                  disabled={selectedDeletableLeaveIds.length === 0 || bulkDeleteMutation.isPending}
+                  className="btn-secondary !py-2 text-sm text-red-600 hover:!bg-red-50 disabled:opacity-50"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  {bulkDeleteMutation.isPending ? 'Deleting...' : 'Delete Selected'}
+                </button>
+              </div>
+            </div>
+          )}
+          <DataTable
+            columns={requestColumns}
+            data={requests ?? []}
+            perPage={10}
+            emptyMessage="No leave requests yet"
+            emptyIcon={<Calendar className="w-10 h-10 opacity-40" />}
+            selectable
+            selectedRowKeys={selectedLeaveIds}
+            onSelectedRowKeysChange={setSelectedLeaveIds}
+            rowKey={(request) => request.id}
+            summaryTitle={(r) => `${r.leave_type_name} — Leave Request`}
+            renderSummary={(r) => (
             <div className="space-y-5">
               {/* Header */}
               <div className="flex items-center justify-between">
@@ -276,39 +352,70 @@ export function Leave() {
                 </div>
               )}
             </div>
-          )}
-          renderSummaryFooter={(r, close) =>
-            r.status === 'pending' ? (
-              <div className="flex items-center justify-end">
-                <button
-                  onClick={() => {
-                    cancelMutation.mutate(r.id, { onSuccess: close });
-                  }}
-                  disabled={cancelMutation.isPending}
-                  className="flex items-center gap-2 px-4 py-2.5 bg-white border border-red-200 text-red-600 text-sm font-medium rounded-lg hover:bg-red-50 hover:border-red-300 disabled:opacity-50 transition-colors"
-                >
-                  <X className="w-4 h-4" />
-                  {cancelMutation.isPending ? 'Cancelling...' : 'Cancel Request'}
-                </button>
+            )}
+            renderSummaryFooter={(r, close) =>
+            canCancelLeave(r) || canDeleteLeave(r) ? (
+              <div className="flex items-center justify-end gap-2">
+                {canCancelLeave(r) && (
+                  <button
+                    onClick={() => {
+                      if (confirm('Cancel this leave request?')) {
+                        cancelMutation.mutate(r.id, { onSuccess: close });
+                      }
+                    }}
+                    disabled={cancelMutation.isPending}
+                    className="flex items-center gap-2 px-4 py-2.5 bg-white border border-red-200 text-red-600 text-sm font-medium rounded-lg hover:bg-red-50 hover:border-red-300 disabled:opacity-50 transition-colors"
+                  >
+                    <X className="w-4 h-4" />
+                    {cancelMutation.isPending ? 'Cancelling...' : 'Cancel Request'}
+                  </button>
+                )}
+                {canDeleteLeave(r) && (
+                  <button
+                    onClick={() => {
+                      if (confirm('Permanently delete this cancelled leave request?')) {
+                        deleteMutation.mutate(r.id, { onSuccess: close });
+                      }
+                    }}
+                    disabled={deleteMutation.isPending}
+                    className="flex items-center gap-2 px-4 py-2.5 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 disabled:opacity-50 transition-colors"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    {deleteMutation.isPending ? 'Deleting...' : 'Delete Permanently'}
+                  </button>
+                )}
               </div>
             ) : null
-          }
-          renderActions={(r) => (
+            }
+            renderActions={(r) => (
             <>
-              {r.status === 'pending' && (
+              {canCancelLeave(r) && (
                 <button
-                  onClick={() => cancelMutation.mutate(r.id)}
+                  onClick={() => {
+                    if (confirm('Cancel this leave request?')) cancelMutation.mutate(r.id);
+                  }}
                   className="text-xs text-red-500 hover:text-red-700 font-medium"
                 >
                   Cancel
+                </button>
+              )}
+              {canDeleteLeave(r) && (
+                <button
+                  onClick={() => {
+                    if (confirm('Permanently delete this cancelled leave request?')) deleteMutation.mutate(r.id);
+                  }}
+                  className="text-xs text-red-500 hover:text-red-700 font-medium"
+                >
+                  Delete
                 </button>
               )}
               {r.review_notes && (
                 <div className="text-xs text-gray-400 mt-1">{r.review_notes}</div>
               )}
             </>
-          )}
-        />
+            )}
+          />
+        </div>
       )}
     </div>
   );

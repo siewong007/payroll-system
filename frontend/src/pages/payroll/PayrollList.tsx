@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import { Plus, Eye } from 'lucide-react';
-import { getPayrollRuns } from '@/api/payroll';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Plus, Eye, Trash2 } from 'lucide-react';
+import { deletePayrollRun, getPayrollRuns } from '@/api/payroll';
 import { formatMYR } from '@/lib/utils';
 import { DataTable, type Column } from '@/components/ui/DataTable';
 import type { PayrollRun } from '@/types';
@@ -19,6 +19,8 @@ const MONTHS = [
   '', 'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
+
+const canDeletePayrollRun = (run: PayrollRun) => ['draft', 'processed', 'cancelled'].includes(run.status);
 
 const columns: Column<PayrollRun>[] = [
   {
@@ -63,10 +65,22 @@ const columns: Column<PayrollRun>[] = [
 ];
 
 export function PayrollList() {
+  const queryClient = useQueryClient();
   const { data: runs, isLoading } = useQuery({
     queryKey: ['payrollRuns'],
     queryFn: getPayrollRuns,
   });
+
+  const deleteMutation = useMutation({
+    mutationFn: deletePayrollRun,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['payrollRuns'] }),
+  });
+
+  const handleDelete = (run: PayrollRun) => {
+    if (confirm(`Delete ${MONTHS[run.period_month]} ${run.period_year} payroll run? This cannot be undone.`)) {
+      deleteMutation.mutate(run.id);
+    }
+  };
 
   return (
     <div>
@@ -122,15 +136,37 @@ export function PayrollList() {
             >
               <Eye className="w-4 h-4" /> View Full Details
             </Link>
+            {canDeletePayrollRun(run) && (
+              <button
+                type="button"
+                onClick={() => handleDelete(run)}
+                disabled={deleteMutation.isPending}
+                className="flex items-center justify-center gap-1.5 w-full py-2 text-sm font-medium text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition-colors disabled:opacity-50"
+              >
+                <Trash2 className="w-4 h-4" /> Delete Payroll Run
+              </button>
+            )}
           </div>
         )}
         renderActions={(run) => (
-          <Link
-            to={`/payroll/${run.id}`}
-            className="inline-flex items-center gap-1 text-sm text-gray-900 hover:text-gray-600"
-          >
-            <Eye className="w-4 h-4" /> View
-          </Link>
+          <div className="flex items-center justify-center gap-2">
+            <Link
+              to={`/payroll/${run.id}`}
+              className="inline-flex items-center gap-1 text-sm text-gray-900 hover:text-gray-600"
+            >
+              <Eye className="w-4 h-4" /> View
+            </Link>
+            {canDeletePayrollRun(run) && (
+              <button
+                type="button"
+                onClick={() => handleDelete(run)}
+                disabled={deleteMutation.isPending}
+                className="inline-flex items-center gap-1 text-sm text-red-600 hover:text-red-700 disabled:opacity-50"
+              >
+                <Trash2 className="w-4 h-4" /> Delete
+              </button>
+            )}
+          </div>
         )}
       />
     </div>

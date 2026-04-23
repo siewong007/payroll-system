@@ -182,8 +182,19 @@ pub fn create_router(state: AppState) -> Router {
         .route("/payroll-groups", get(payroll::list_groups))
         // Payroll Runs
         .route("/payroll/run", post(payroll::process))
+        .route(
+            "/payroll/entries",
+            get(payroll::list_entries).post(payroll::create_entry),
+        )
+        .route(
+            "/payroll/entries/{id}",
+            put(payroll::update_entry).delete(payroll::delete_entry),
+        )
         .route("/payroll/runs", get(payroll::list_runs))
-        .route("/payroll/runs/{id}", get(payroll::get_run))
+        .route(
+            "/payroll/runs/{id}",
+            get(payroll::get_run).delete(payroll::delete_run),
+        )
         .route("/payroll/runs/{id}/items", get(payroll::get_items))
         .route("/payroll/runs/{id}/approve", put(payroll::approve_run))
         .route("/payroll/runs/{id}/lock", put(payroll::lock_run))
@@ -218,6 +229,7 @@ pub fn create_router(state: AppState) -> Router {
             "/portal/leave/requests",
             get(portal::leave_requests).post(portal::create_leave),
         )
+        .route("/portal/leave/requests/{id}", delete(portal::delete_leave))
         .route(
             "/portal/leave/requests/{id}/cancel",
             put(portal::cancel_leave),
@@ -230,6 +242,7 @@ pub fn create_router(state: AppState) -> Router {
             get(portal::list_claims).post(portal::create_claim),
         )
         .route("/portal/claims/{id}/submit", put(portal::submit_claim))
+        .route("/portal/claims/{id}/cancel", put(portal::cancel_claim))
         .route("/portal/claims/{id}", delete(portal::delete_claim))
         // Overtime (portal)
         .route(
@@ -237,6 +250,7 @@ pub fn create_router(state: AppState) -> Router {
             get(portal::list_overtime).post(portal::create_overtime),
         )
         .route("/portal/overtime/{id}/cancel", put(portal::cancel_overtime))
+        .route("/portal/overtime/{id}", delete(portal::delete_overtime))
         // File uploads
         .route("/uploads", post(portal::upload_file))
         .route("/uploads/{filename}", get(portal::serve_upload))
@@ -257,6 +271,10 @@ pub fn create_router(state: AppState) -> Router {
             put(approval::update_leave_request).delete(approval::delete_leave_request),
         )
         .route(
+            "/approvals/leave/{id}/cancel",
+            put(approval::cancel_leave_request),
+        )
+        .route(
             "/approvals/leave/{id}/approve",
             put(approval::approve_leave),
         )
@@ -269,6 +287,7 @@ pub fn create_router(state: AppState) -> Router {
             "/approvals/claims/{id}",
             put(approval::update_claim).delete(approval::delete_claim),
         )
+        .route("/approvals/claims/{id}/cancel", put(approval::cancel_claim))
         .route(
             "/approvals/claims/{id}/approve",
             put(approval::approve_claim),
@@ -282,6 +301,10 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/approvals/overtime/{id}",
             put(approval::update_overtime).delete(approval::delete_overtime),
+        )
+        .route(
+            "/approvals/overtime/{id}/cancel",
+            put(approval::cancel_overtime),
         )
         .route(
             "/approvals/overtime/{id}/approve",

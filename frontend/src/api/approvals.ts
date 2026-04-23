@@ -36,6 +36,9 @@ export const updateLeaveRequest = (id: string, req: UpdateLeaveRequest) =>
 export const deleteLeaveRequest = (id: string) =>
   api.delete(`/approvals/leave/${id}`).then(r => r.data);
 
+export const cancelLeaveRequest = (id: string) =>
+  api.put(`/approvals/leave/${id}/cancel`).then(r => r.data);
+
 export const approveLeave = (id: string, notes?: string) =>
   api.put(`/approvals/leave/${id}/approve`, { notes }).then(r => r.data);
 
@@ -53,6 +56,9 @@ export const updateClaim = (id: string, req: UpdateClaimRequest) =>
 
 export const deleteClaim = (id: string) =>
   api.delete(`/approvals/claims/${id}`).then(r => r.data);
+
+export const cancelClaim = (id: string) =>
+  api.put(`/approvals/claims/${id}/cancel`).then(r => r.data);
 
 export const approveClaim = (id: string, notes?: string) =>
   api.put(`/approvals/claims/${id}/approve`, { notes }).then(r => r.data);
@@ -72,6 +78,9 @@ export const updateOvertimeRequest = (id: string, req: UpdateOvertimeRequest) =>
 
 export const deleteOvertimeRequest = (id: string) =>
   api.delete(`/approvals/overtime/${id}`).then(r => r.data);
+
+export const cancelOvertimeRequest = (id: string) =>
+  api.put(`/approvals/overtime/${id}/cancel`).then(r => r.data);
 
 export const approveOvertime = (id: string, notes?: string) =>
   api.put(`/approvals/overtime/${id}/approve`, { notes }).then(r => r.data);

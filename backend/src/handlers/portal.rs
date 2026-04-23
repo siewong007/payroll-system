@@ -106,6 +106,16 @@ pub async fn cancel_leave(
     Ok(Json(serde_json::json!({ "success": true })))
 }
 
+pub async fn delete_leave(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<serde_json::Value>> {
+    let employee_id = get_employee_id(&auth)?;
+    portal_service::delete_leave_request(&state.pool, employee_id, id).await?;
+    Ok(Json(serde_json::json!({ "success": true })))
+}
+
 // ─── Claims ───
 
 #[derive(Debug, Deserialize)]
@@ -142,6 +152,16 @@ pub async fn submit_claim(
     let employee_id = get_employee_id(&auth)?;
     let claim = portal_service::submit_claim(&state.pool, employee_id, id).await?;
     Ok(Json(claim))
+}
+
+pub async fn cancel_claim(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<serde_json::Value>> {
+    let employee_id = get_employee_id(&auth)?;
+    portal_service::cancel_claim(&state.pool, employee_id, id).await?;
+    Ok(Json(serde_json::json!({ "success": true })))
 }
 
 pub async fn delete_claim(
@@ -185,6 +205,16 @@ pub async fn cancel_overtime(
 ) -> AppResult<Json<serde_json::Value>> {
     let employee_id = get_employee_id(&auth)?;
     portal_service::cancel_overtime_application(&state.pool, employee_id, id).await?;
+    Ok(Json(serde_json::json!({ "success": true })))
+}
+
+pub async fn delete_overtime(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<serde_json::Value>> {
+    let employee_id = get_employee_id(&auth)?;
+    portal_service::delete_overtime_application(&state.pool, employee_id, id).await?;
     Ok(Json(serde_json::json!({ "success": true })))
 }
 

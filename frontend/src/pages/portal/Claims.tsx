@@ -1,7 +1,7 @@
-import { useState, useRef } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, ArrowLeft, Send, Trash2, Receipt, Upload, X, FileText, Image, Paperclip, ExternalLink } from 'lucide-react';
-import { listMyClaims, createClaim, deleteClaim, submitClaim, uploadFile } from '@/api/claims';
+import { listMyClaims, createClaim, cancelClaim, deleteClaim, submitClaim, uploadFile } from '@/api/claims';
 import { formatMYR, formatDate, getErrorMessage } from '@/lib/utils';
 
 const STATUS_TABS = [
@@ -10,6 +10,7 @@ const STATUS_TABS = [
   { key: 'pending', label: 'Pending' },
   { key: 'approved', label: 'Approved' },
   { key: 'rejected', label: 'Rejected' },
+  { key: 'cancelled', label: 'Cancelled' },
   { key: 'processed', label: 'Processed' },
 ] as const;
 
@@ -20,8 +21,10 @@ const CATEGORIES = [
 
 export function Claims() {
   const queryClient = useQueryClient();
+  const selectAllRef = useRef<HTMLInputElement>(null);
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [selectedClaimIds, setSelectedClaimIds] = useState<string[]>([]);
 
   const { data: claims, isLoading } = useQuery({
     queryKey: ['my-claims', statusFilter],
@@ -38,15 +41,69 @@ export function Claims() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['my-claims'] }),
   });
 
+  const cancelMutation = useMutation({
+    mutationFn: cancelClaim,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['my-claims'] }),
+  });
+
+  const bulkCancelMutation = useMutation({
+    mutationFn: async (ids: string[]) => {
+      await Promise.all(ids.map((id) => cancelClaim(id)));
+    },
+    onSuccess: () => {
+      setSelectedClaimIds([]);
+      queryClient.invalidateQueries({ queryKey: ['my-claims'] });
+    },
+  });
+
+  const bulkDeleteMutation = useMutation({
+    mutationFn: async (ids: string[]) => {
+      await Promise.all(ids.map((id) => deleteClaim(id)));
+    },
+    onSuccess: () => {
+      setSelectedClaimIds([]);
+      queryClient.invalidateQueries({ queryKey: ['my-claims'] });
+    },
+  });
+
   const statusBadge = (status: string) => {
     const cls: Record<string, string> = {
       draft: 'badge-draft', pending: 'badge-pending', approved: 'badge-approved',
-      rejected: 'badge-rejected', processed: 'badge-processed',
+      rejected: 'badge-rejected', processed: 'badge-processed', cancelled: 'badge-cancelled',
     };
     return <span className={`badge ${cls[status] || 'badge-draft'}`}>{status}</span>;
   };
 
   const statusCount = (key: string) => claims?.filter((c) => c.status === key).length ?? 0;
+  const canCancel = (status: string) => ['pending', 'approved', 'rejected'].includes(status);
+  const canDelete = (status: string) => ['draft', 'cancelled'].includes(status);
+  const displayedClaimIds = (claims ?? []).map((claim) => claim.id);
+  const selectedDisplayedIds = selectedClaimIds.filter((id) => displayedClaimIds.includes(id));
+  const allDisplayedSelected = displayedClaimIds.length > 0 && selectedDisplayedIds.length === displayedClaimIds.length;
+  const someDisplayedSelected = selectedDisplayedIds.length > 0 && !allDisplayedSelected;
+  const selectedClaims = (claims ?? []).filter((claim) => selectedClaimIds.includes(claim.id));
+  const selectedCancelableClaimIds = selectedClaims.filter((claim) => canCancel(claim.status)).map((claim) => claim.id);
+  const selectedDeletableClaimIds = selectedClaims.filter((claim) => canDelete(claim.status)).map((claim) => claim.id);
+
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = someDisplayedSelected;
+    }
+  }, [someDisplayedSelected]);
+
+  const toggleClaimSelection = (id: string) => {
+    setSelectedClaimIds((current) => (
+      current.includes(id) ? current.filter((selectedId) => selectedId !== id) : [...current, id]
+    ));
+  };
+
+  const toggleAllDisplayedClaims = () => {
+    setSelectedClaimIds((current) => (
+      allDisplayedSelected
+        ? current.filter((id) => !displayedClaimIds.includes(id))
+        : Array.from(new Set([...current, ...displayedClaimIds]))
+    ));
+  };
 
   if (isLoading) {
     return (
@@ -82,7 +139,10 @@ export function Claims() {
           return (
             <button
               key={t.key ?? 'all'}
-              onClick={() => setStatusFilter(t.key)}
+              onClick={() => {
+                setSelectedClaimIds([]);
+                setStatusFilter(t.key);
+              }}
               className={`px-4 py-1.5 rounded-full text-sm font-medium transition-all-fast ${
                 isActive
                   ? 'bg-black text-white shadow-sm'
@@ -103,29 +163,82 @@ export function Claims() {
             <p>No expense claims found</p>
           </div>
         ) : (
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Expense / Transaction</th>
-                <th className="text-right">Amount</th>
-                <th>Category</th>
-                <th>Date</th>
-                <th>Receipt</th>
-                <th className="text-center">Status</th>
-                <th className="text-center">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {claims.map((c) => (
-                <tr key={c.id}>
-                  <td>
+          <>
+            {selectedClaimIds.length > 0 && (
+              <div className="flex flex-col gap-2 border-b border-gray-100 bg-gray-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                <span className="text-sm font-medium text-gray-700">{selectedClaimIds.length} selected</span>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (confirm(`Cancel ${selectedCancelableClaimIds.length} selected claim(s)?`)) {
+                        bulkCancelMutation.mutate(selectedCancelableClaimIds);
+                      }
+                    }}
+                    disabled={selectedCancelableClaimIds.length === 0 || bulkCancelMutation.isPending}
+                    className="btn-secondary !py-2 text-sm disabled:opacity-50"
+                  >
+                    <X className="w-4 h-4" />
+                    {bulkCancelMutation.isPending ? 'Cancelling...' : 'Cancel Selected'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (confirm(`Delete ${selectedDeletableClaimIds.length} selected draft/cancelled claim(s)?`)) {
+                        bulkDeleteMutation.mutate(selectedDeletableClaimIds);
+                      }
+                    }}
+                    disabled={selectedDeletableClaimIds.length === 0 || bulkDeleteMutation.isPending}
+                    className="btn-secondary !py-2 text-sm text-red-600 hover:!bg-red-50 disabled:opacity-50"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    {bulkDeleteMutation.isPending ? 'Deleting...' : 'Delete Selected'}
+                  </button>
+                </div>
+              </div>
+            )}
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th className="w-12">
+                    <input
+                      ref={selectAllRef}
+                      type="checkbox"
+                      checked={allDisplayedSelected}
+                      onChange={toggleAllDisplayedClaims}
+                      className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-900"
+                      aria-label="Select all claims"
+                    />
+                  </th>
+                  <th>Expense / Transaction</th>
+                  <th className="text-right">Amount</th>
+                  <th>Category</th>
+                  <th>Date</th>
+                  <th>Receipt</th>
+                  <th className="text-center">Status</th>
+                  <th className="text-center">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {claims.map((c) => (
+                  <tr key={c.id}>
+                    <td>
+                      <input
+                        type="checkbox"
+                        checked={selectedClaimIds.includes(c.id)}
+                        onChange={() => toggleClaimSelection(c.id)}
+                        className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-900"
+                        aria-label={`Select ${c.title}`}
+                      />
+                    </td>
+                    <td>
                     <span className="font-semibold text-gray-900">{c.title}</span>
                     {c.description && <p className="text-xs text-gray-400 mt-0.5 truncate max-w-xs">{c.description}</p>}
-                  </td>
-                  <td className="text-right"><span className="font-bold text-gray-900">{formatMYR(c.amount)}</span></td>
-                  <td className="text-gray-500">{c.category || '—'}</td>
-                  <td className="text-gray-500">{formatDate(c.expense_date)}</td>
-                  <td>
+                    </td>
+                    <td className="text-right"><span className="font-bold text-gray-900">{formatMYR(c.amount)}</span></td>
+                    <td className="text-gray-500">{c.category || '—'}</td>
+                    <td className="text-gray-500">{formatDate(c.expense_date)}</td>
+                    <td>
                     {c.receipt_url ? (
                       c.receipt_url.startsWith('blob:') ? (
                         <span className="inline-flex items-center gap-1 text-red-400 text-sm">
@@ -141,24 +254,45 @@ export function Claims() {
                         </a>
                       )
                     ) : <span className="text-gray-300">—</span>}
-                  </td>
-                  <td className="text-center">{statusBadge(c.status)}</td>
-                  <td className="text-center">
-                    {c.status === 'draft' && (
-                      <div className="flex items-center justify-center gap-2">
+                    </td>
+                    <td className="text-center">{statusBadge(c.status)}</td>
+                    <td className="text-center">
+                    <div className="flex items-center justify-center gap-2">
+                      {c.status === 'draft' && (
+                        <>
                         <button onClick={() => submitMutation.mutate(c.id)} title="Submit for approval" className="p-1.5 text-gray-900 hover:text-black hover:bg-gray-100 rounded-lg transition-all-fast">
                           <Send className="w-4 h-4" />
                         </button>
                         <button onClick={() => { if (confirm('Delete this claim?')) deleteMutation.mutate(c.id); }} title="Delete" className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-all-fast">
                           <Trash2 className="w-4 h-4" />
                         </button>
-                      </div>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                        </>
+                      )}
+                      {canCancel(c.status) && (
+                        <button
+                          onClick={() => { if (confirm('Cancel this claim?')) cancelMutation.mutate(c.id); }}
+                          title="Cancel"
+                          className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all-fast"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      )}
+                      {c.status === 'cancelled' && (
+                        <button
+                          onClick={() => { if (confirm('Permanently delete this cancelled claim?')) deleteMutation.mutate(c.id); }}
+                          title="Delete permanently"
+                          className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-all-fast"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
         )}
       </div>
     </div>

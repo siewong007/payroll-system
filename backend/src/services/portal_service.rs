@@ -243,6 +243,8 @@ pub async fn cancel_leave_request(
     employee_id: Uuid,
     request_id: Uuid,
 ) -> AppResult<()> {
+    let mut tx = pool.begin().await?;
+
     let lr = sqlx::query_as::<_, LeaveRequest>(
         r#"SELECT lr.id, lr.employee_id, lr.company_id, lr.leave_type_id,
             lr.start_date, lr.end_date, lr.days, lr.reason, lr.status,
@@ -252,31 +254,117 @@ pub async fn cancel_leave_request(
             lt.name as leave_type_name
         FROM leave_requests lr
         JOIN leave_types lt ON lr.leave_type_id = lt.id
-        WHERE lr.id = $1 AND lr.employee_id = $2 AND lr.status = 'pending'"#,
+        WHERE lr.id = $1
+          AND lr.employee_id = $2
+          AND lr.status IN ('pending', 'approved', 'rejected')"#,
     )
     .bind(request_id)
     .bind(employee_id)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| AppError::BadRequest("Leave request not found or cannot be cancelled".into()))?;
 
+    if lr.status == "approved" {
+        let is_paid: Option<bool> =
+            sqlx::query_scalar("SELECT is_paid FROM leave_types WHERE id = $1")
+                .bind(lr.leave_type_id)
+                .fetch_optional(&mut *tx)
+                .await?;
+
+        if is_paid == Some(false) {
+            let description = format!("Unpaid leave: {} to {}%", lr.start_date, lr.end_date);
+            let processed = sqlx::query_scalar::<_, bool>(
+                r#"SELECT EXISTS(
+                    SELECT 1 FROM payroll_entries
+                    WHERE employee_id = $1
+                      AND company_id = $2
+                      AND item_type = 'unpaid_leave'
+                      AND description LIKE $3
+                      AND is_processed = TRUE
+                )"#,
+            )
+            .bind(lr.employee_id)
+            .bind(lr.company_id)
+            .bind(&description)
+            .fetch_one(&mut *tx)
+            .await?;
+
+            if processed {
+                return Err(AppError::BadRequest(
+                    "Approved unpaid leave already included in processed payroll and cannot be cancelled".into(),
+                ));
+            }
+
+            sqlx::query(
+                r#"DELETE FROM payroll_entries
+                WHERE employee_id = $1
+                  AND company_id = $2
+                  AND item_type = 'unpaid_leave'
+                  AND description LIKE $3
+                  AND is_processed = FALSE"#,
+            )
+            .bind(lr.employee_id)
+            .bind(lr.company_id)
+            .bind(&description)
+            .execute(&mut *tx)
+            .await?;
+        }
+    }
+
     sqlx::query("UPDATE leave_requests SET status = 'cancelled', updated_at = NOW() WHERE id = $1")
         .bind(request_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
 
-    // Reduce pending days
     let year = lr.start_date.year();
-    sqlx::query(
-        r#"UPDATE leave_balances SET pending_days = GREATEST(pending_days - $3, 0), updated_at = NOW()
-        WHERE employee_id = $1 AND leave_type_id = $2 AND year = $4"#,
+    if lr.status == "pending" {
+        sqlx::query(
+            r#"UPDATE leave_balances SET pending_days = GREATEST(pending_days - $3, 0), updated_at = NOW()
+            WHERE employee_id = $1 AND leave_type_id = $2 AND year = $4"#,
+        )
+        .bind(employee_id)
+        .bind(lr.leave_type_id)
+        .bind(lr.days)
+        .bind(year)
+        .execute(&mut *tx)
+        .await?;
+    } else if lr.status == "approved" {
+        sqlx::query(
+            r#"UPDATE leave_balances SET taken_days = GREATEST(taken_days - $3, 0), updated_at = NOW()
+            WHERE employee_id = $1 AND leave_type_id = $2 AND year = $4"#,
+        )
+        .bind(employee_id)
+        .bind(lr.leave_type_id)
+        .bind(lr.days)
+        .bind(year)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    tx.commit().await?;
+
+    Ok(())
+}
+
+pub async fn delete_leave_request(
+    pool: &PgPool,
+    employee_id: Uuid,
+    request_id: Uuid,
+) -> AppResult<()> {
+    let rows = sqlx::query(
+        "DELETE FROM leave_requests WHERE id = $1 AND employee_id = $2 AND status = 'cancelled'",
     )
+    .bind(request_id)
     .bind(employee_id)
-    .bind(lr.leave_type_id)
-    .bind(lr.days)
-    .bind(year)
     .execute(pool)
-    .await?;
+    .await?
+    .rows_affected();
+
+    if rows == 0 {
+        return Err(AppError::BadRequest(
+            "Leave request not found or cannot be deleted".into(),
+        ));
+    }
 
     Ok(())
 }
@@ -365,14 +453,93 @@ pub async fn submit_claim(pool: &PgPool, employee_id: Uuid, claim_id: Uuid) -> A
     Ok(claim)
 }
 
+pub async fn cancel_claim(pool: &PgPool, employee_id: Uuid, claim_id: Uuid) -> AppResult<()> {
+    let mut tx = pool.begin().await?;
+
+    let claim = sqlx::query_as::<_, Claim>(
+        r#"SELECT * FROM claims
+        WHERE id = $1
+          AND employee_id = $2
+          AND status IN ('pending', 'approved', 'rejected')"#,
+    )
+    .bind(claim_id)
+    .bind(employee_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| AppError::BadRequest("Claim not found or cannot be cancelled".into()))?;
+
+    if claim.status == "approved" {
+        let staged_at = claim.reviewed_at.unwrap_or_else(chrono::Utc::now);
+        let description = format!("Claim: {}", claim.title);
+        let processed = sqlx::query_scalar::<_, bool>(
+            r#"SELECT EXISTS(
+                SELECT 1 FROM payroll_entries
+                WHERE employee_id = $1
+                  AND company_id = $2
+                  AND period_year = $3
+                  AND period_month = $4
+                  AND item_type = 'claim_reimbursement'
+                  AND description = $5
+                  AND amount = $6
+                  AND is_processed = TRUE
+            )"#,
+        )
+        .bind(claim.employee_id)
+        .bind(claim.company_id)
+        .bind(staged_at.year())
+        .bind(staged_at.month() as i32)
+        .bind(&description)
+        .bind(claim.amount)
+        .fetch_one(&mut *tx)
+        .await?;
+
+        if processed {
+            return Err(AppError::BadRequest(
+                "Approved claim already included in processed payroll and cannot be cancelled"
+                    .into(),
+            ));
+        }
+
+        sqlx::query(
+            r#"DELETE FROM payroll_entries
+            WHERE employee_id = $1
+              AND company_id = $2
+              AND period_year = $3
+              AND period_month = $4
+              AND item_type = 'claim_reimbursement'
+              AND description = $5
+              AND amount = $6
+              AND is_processed = FALSE"#,
+        )
+        .bind(claim.employee_id)
+        .bind(claim.company_id)
+        .bind(staged_at.year())
+        .bind(staged_at.month() as i32)
+        .bind(&description)
+        .bind(claim.amount)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    sqlx::query("UPDATE claims SET status = 'cancelled', updated_at = NOW() WHERE id = $1")
+        .bind(claim_id)
+        .execute(&mut *tx)
+        .await?;
+
+    tx.commit().await?;
+
+    Ok(())
+}
+
 pub async fn delete_claim(pool: &PgPool, employee_id: Uuid, claim_id: Uuid) -> AppResult<()> {
-    let rows =
-        sqlx::query("DELETE FROM claims WHERE id = $1 AND employee_id = $2 AND status = 'draft'")
-            .bind(claim_id)
-            .bind(employee_id)
-            .execute(pool)
-            .await?
-            .rows_affected();
+    let rows = sqlx::query(
+        "DELETE FROM claims WHERE id = $1 AND employee_id = $2 AND status IN ('draft', 'cancelled')",
+    )
+    .bind(claim_id)
+    .bind(employee_id)
+    .execute(pool)
+    .await?
+    .rows_affected();
 
     if rows == 0 {
         return Err(AppError::BadRequest(
@@ -465,8 +632,108 @@ pub async fn cancel_overtime_application(
     employee_id: Uuid,
     id: Uuid,
 ) -> AppResult<()> {
+    let mut tx = pool.begin().await?;
+
+    let app = sqlx::query_as::<_, OvertimeApplication>(
+        r#"SELECT * FROM overtime_applications
+        WHERE id = $1
+          AND employee_id = $2
+          AND status IN ('pending', 'approved', 'rejected')"#,
+    )
+    .bind(id)
+    .bind(employee_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| {
+        AppError::BadRequest("OT application not found or cannot be cancelled".into())
+    })?;
+
+    if app.status == "approved" {
+        let description = format!("OT {} - {}%", app.ot_date, app.ot_type.replace('_', " "));
+        let period_year = app.ot_date.year();
+        let period_month = app.ot_date.month() as i32;
+        let processed = sqlx::query_scalar::<_, bool>(
+            r#"SELECT EXISTS(
+                SELECT 1 FROM payroll_entries
+                WHERE employee_id = $1
+                  AND company_id = $2
+                  AND period_year = $3
+                  AND period_month = $4
+                  AND item_type = 'overtime'
+                  AND description LIKE $5
+                  AND is_processed = TRUE
+            )"#,
+        )
+        .bind(app.employee_id)
+        .bind(app.company_id)
+        .bind(period_year)
+        .bind(period_month)
+        .bind(&description)
+        .fetch_one(&mut *tx)
+        .await?;
+
+        if processed {
+            return Err(AppError::BadRequest(
+                "Approved OT already included in processed payroll and cannot be cancelled".into(),
+            ));
+        }
+
+        sqlx::query(
+            r#"DELETE FROM payroll_entries
+            WHERE employee_id = $1
+              AND company_id = $2
+              AND period_year = $3
+              AND period_month = $4
+              AND item_type = 'overtime'
+              AND description LIKE $5
+              AND is_processed = FALSE"#,
+        )
+        .bind(app.employee_id)
+        .bind(app.company_id)
+        .bind(period_year)
+        .bind(period_month)
+        .bind(&description)
+        .execute(&mut *tx)
+        .await?;
+
+        if app.ot_type == "public_holiday" {
+            sqlx::query(
+                r#"UPDATE leave_balances lb
+                SET entitled_days = GREATEST(lb.entitled_days - 1, 0), updated_at = NOW()
+                FROM leave_types lt
+                WHERE lb.leave_type_id = lt.id
+                  AND lb.employee_id = $1
+                  AND lb.year = $2
+                  AND lt.company_id = $3
+                  AND lt.name = 'Replacement Leave'"#,
+            )
+            .bind(app.employee_id)
+            .bind(period_year)
+            .bind(app.company_id)
+            .execute(&mut *tx)
+            .await?;
+        }
+    }
+
+    sqlx::query(
+        "UPDATE overtime_applications SET status = 'cancelled', updated_at = NOW() WHERE id = $1",
+    )
+    .bind(id)
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+
+    Ok(())
+}
+
+pub async fn delete_overtime_application(
+    pool: &PgPool,
+    employee_id: Uuid,
+    id: Uuid,
+) -> AppResult<()> {
     let rows = sqlx::query(
-        "UPDATE overtime_applications SET status = 'cancelled', updated_at = NOW() WHERE id = $1 AND employee_id = $2 AND status = 'pending'",
+        "DELETE FROM overtime_applications WHERE id = $1 AND employee_id = $2 AND status = 'cancelled'",
     )
     .bind(id)
     .bind(employee_id)
@@ -476,9 +743,10 @@ pub async fn cancel_overtime_application(
 
     if rows == 0 {
         return Err(AppError::BadRequest(
-            "OT application not found or cannot be cancelled".into(),
+            "OT application not found or cannot be deleted".into(),
         ));
     }
+
     Ok(())
 }
 

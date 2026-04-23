@@ -1,5 +1,14 @@
 import api from './client';
-import type { PayrollGroup, PayrollRun, PayrollSummary, ProcessPayrollRequest } from '@/types';
+import type {
+  CreatePayrollEntryRequest,
+  PayrollEntry,
+  PayrollEntryWithEmployee,
+  PayrollGroup,
+  PayrollRun,
+  PayrollSummary,
+  ProcessPayrollRequest,
+  UpdatePayrollEntryRequest,
+} from '@/types';
 
 export async function getPayrollGroups(): Promise<PayrollGroup[]> {
   const { data } = await api.get('/payroll-groups');
@@ -16,9 +25,37 @@ export async function getPayrollRun(id: string): Promise<PayrollSummary> {
   return data;
 }
 
+export async function deletePayrollRun(id: string): Promise<void> {
+  await api.delete(`/payroll/runs/${id}`);
+}
+
 export async function processPayroll(req: ProcessPayrollRequest): Promise<PayrollRun> {
   const { data } = await api.post('/payroll/run', req);
   return data;
+}
+
+export async function getPayrollEntries(params?: {
+  period_year?: number;
+  period_month?: number;
+  employee_id?: string;
+  include_processed?: boolean;
+}): Promise<PayrollEntryWithEmployee[]> {
+  const { data } = await api.get('/payroll/entries', { params });
+  return data;
+}
+
+export async function createPayrollEntry(req: CreatePayrollEntryRequest): Promise<PayrollEntry> {
+  const { data } = await api.post('/payroll/entries', req);
+  return data;
+}
+
+export async function updatePayrollEntry(id: string, req: UpdatePayrollEntryRequest): Promise<PayrollEntry> {
+  const { data } = await api.put(`/payroll/entries/${id}`, req);
+  return data;
+}
+
+export async function deletePayrollEntry(id: string): Promise<void> {
+  await api.delete(`/payroll/entries/${id}`);
 }
 
 export async function approvePayroll(id: string): Promise<PayrollRun> {

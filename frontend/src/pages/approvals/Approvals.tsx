@@ -19,6 +19,9 @@ import {
   approveClaim,
   approveLeave,
   approveOvertime,
+  cancelClaim,
+  cancelLeaveRequest,
+  cancelOvertimeRequest,
   createClaim,
   createLeaveRequest,
   createOvertimeRequest,
@@ -146,20 +149,25 @@ function SummaryField({ label, value, children }: { label: string; value?: strin
 }
 
 const canEditLeave = (request: LeaveRequestWithEmployee) => request.status === 'pending';
-const canDeleteLeave = (request: LeaveRequestWithEmployee) => request.status === 'pending';
+const canCancelLeave = (request: LeaveRequestWithEmployee) => ['pending', 'approved', 'rejected'].includes(request.status);
+const canDeleteLeave = (request: LeaveRequestWithEmployee) => request.status === 'cancelled';
 const canEditClaim = (claim: ClaimWithEmployee) => ['draft', 'pending', 'rejected'].includes(claim.status);
-const canDeleteClaim = (claim: ClaimWithEmployee) => ['draft', 'pending', 'rejected'].includes(claim.status);
+const canCancelClaim = (claim: ClaimWithEmployee) => ['pending', 'approved', 'rejected'].includes(claim.status);
+const canDeleteClaim = (claim: ClaimWithEmployee) => ['draft', 'cancelled'].includes(claim.status);
 const canEditOvertime = (request: OvertimeWithEmployee) => request.status === 'pending';
-const canDeleteOvertime = (request: OvertimeWithEmployee) => ['pending', 'rejected', 'cancelled'].includes(request.status);
+const canCancelOvertime = (request: OvertimeWithEmployee) => ['pending', 'approved', 'rejected'].includes(request.status);
+const canDeleteOvertime = (request: OvertimeWithEmployee) => request.status === 'cancelled';
 
 function ActionButtons({
   onEdit,
+  onCancel,
   onDelete,
 }: {
   onEdit?: () => void;
+  onCancel?: () => void;
   onDelete?: () => void;
 }) {
-  if (!onEdit && !onDelete) {
+  if (!onEdit && !onCancel && !onDelete) {
     return <span className="text-gray-300">—</span>;
   }
 
@@ -185,6 +193,16 @@ function ActionButtons({
           <Trash2 className="w-4 h-4" />
         </button>
       )}
+      {onCancel && (
+        <button
+          type="button"
+          onClick={onCancel}
+          className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+          title="Cancel"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      )}
     </div>
   );
 }
@@ -197,6 +215,7 @@ export function Approvals() {
   const [leaveEditor, setLeaveEditor] = useState<LeaveRequestWithEmployee | null>(null);
   const [claimEditor, setClaimEditor] = useState<ClaimWithEmployee | null>(null);
   const [overtimeEditor, setOvertimeEditor] = useState<OvertimeWithEmployee | null>(null);
+  const [selectedApprovalIds, setSelectedApprovalIds] = useState<string[]>([]);
   const [showLeaveModal, setShowLeaveModal] = useState(false);
   const [showClaimModal, setShowClaimModal] = useState(false);
   const [showOvertimeModal, setShowOvertimeModal] = useState(false);
@@ -272,6 +291,21 @@ export function Approvals() {
     onSuccess: () => refreshOvertime(),
   });
 
+  const cancelLeaveM = useMutation({
+    mutationFn: cancelLeaveRequest,
+    onSuccess: () => refreshLeave(),
+  });
+
+  const cancelClaimM = useMutation({
+    mutationFn: cancelClaim,
+    onSuccess: () => refreshClaims(),
+  });
+
+  const cancelOvertimeM = useMutation({
+    mutationFn: cancelOvertimeRequest,
+    onSuccess: () => refreshOvertime(),
+  });
+
   const deleteLeaveM = useMutation({
     mutationFn: deleteLeaveRequest,
     onSuccess: () => refreshLeave(),
@@ -285,6 +319,46 @@ export function Approvals() {
   const deleteOvertimeM = useMutation({
     mutationFn: deleteOvertimeRequest,
     onSuccess: () => refreshOvertime(),
+  });
+
+  const bulkCancelM = useMutation({
+    mutationFn: async ({ ids, target }: { ids: string[]; target: typeof tab }) => {
+      if (target === 'leave') {
+        await Promise.all(ids.map((id) => cancelLeaveRequest(id)));
+        return;
+      }
+      if (target === 'claims') {
+        await Promise.all(ids.map((id) => cancelClaim(id)));
+        return;
+      }
+      await Promise.all(ids.map((id) => cancelOvertimeRequest(id)));
+    },
+    onSuccess: () => {
+      setSelectedApprovalIds([]);
+      refreshLeave();
+      refreshClaims();
+      refreshOvertime();
+    },
+  });
+
+  const bulkDeleteM = useMutation({
+    mutationFn: async ({ ids, target }: { ids: string[]; target: typeof tab }) => {
+      if (target === 'leave') {
+        await Promise.all(ids.map((id) => deleteLeaveRequest(id)));
+        return;
+      }
+      if (target === 'claims') {
+        await Promise.all(ids.map((id) => deleteClaim(id)));
+        return;
+      }
+      await Promise.all(ids.map((id) => deleteOvertimeRequest(id)));
+    },
+    onSuccess: () => {
+      setSelectedApprovalIds([]);
+      refreshLeave();
+      refreshClaims();
+      refreshOvertime();
+    },
   });
 
   const otTypeLabel = (type: string) => {
@@ -319,6 +393,19 @@ export function Approvals() {
     setOvertimeEditor(null);
     setShowOvertimeModal(true);
   };
+
+  const activeRows = tab === 'leave'
+    ? leaveQuery.data ?? []
+    : tab === 'claims'
+      ? claimsQuery.data ?? []
+      : overtimeQuery.data ?? [];
+  const selectedRows = activeRows.filter((row) => selectedApprovalIds.includes(row.id));
+  const selectedCancelableIds = selectedRows
+    .filter((row) => ['pending', 'approved', 'rejected'].includes(row.status))
+    .map((row) => row.id);
+  const selectedDeletableIds = selectedRows
+    .filter((row) => (tab === 'claims' ? ['draft', 'cancelled'].includes(row.status) : row.status === 'cancelled'))
+    .map((row) => row.id);
 
   const leaveColumns: Column<LeaveRequestWithEmployee>[] = [
     {
@@ -466,6 +553,7 @@ export function Approvals() {
               onClick={() => {
                 setTab(itemTab);
                 setStatusFilter('pending');
+                setSelectedApprovalIds([]);
               }}
               className={`px-5 py-2.5 text-sm font-medium border-b-2 transition-all-fast ${
                 tab === itemTab ? 'border-black text-gray-900' : 'border-transparent text-gray-400 hover:text-gray-700'
@@ -481,7 +569,10 @@ export function Approvals() {
           {['pending', 'approved', 'rejected', 'cancelled', ''].map((status) => (
             <button
               key={status}
-              onClick={() => setStatusFilter(status)}
+              onClick={() => {
+                setSelectedApprovalIds([]);
+                setStatusFilter(status);
+              }}
               className={`px-3.5 py-1.5 text-xs font-medium rounded-full transition-all-fast ${
                 statusFilter === status
                   ? 'bg-black text-white shadow-sm'
@@ -493,6 +584,40 @@ export function Approvals() {
           ))}
         </div>
 
+        {selectedApprovalIds.length > 0 && (
+          <div className="flex flex-col gap-2 rounded-xl border border-gray-200 bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <span className="text-sm font-medium text-gray-700">{selectedApprovalIds.length} selected</span>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (confirm(`Cancel ${selectedCancelableIds.length} selected item(s)?`)) {
+                    bulkCancelM.mutate({ ids: selectedCancelableIds, target: tab });
+                  }
+                }}
+                disabled={selectedCancelableIds.length === 0 || bulkCancelM.isPending}
+                className="btn-secondary !py-2 text-sm disabled:opacity-50"
+              >
+                <X className="w-4 h-4" />
+                {bulkCancelM.isPending ? 'Cancelling...' : 'Cancel Selected'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (confirm(`Permanently delete ${selectedDeletableIds.length} selected item(s)?`)) {
+                    bulkDeleteM.mutate({ ids: selectedDeletableIds, target: tab });
+                  }
+                }}
+                disabled={selectedDeletableIds.length === 0 || bulkDeleteM.isPending}
+                className="btn-secondary !py-2 text-sm text-red-600 hover:!bg-red-50 disabled:opacity-50"
+              >
+                <Trash2 className="w-4 h-4" />
+                {bulkDeleteM.isPending ? 'Deleting...' : 'Delete Selected'}
+              </button>
+            </div>
+          </div>
+        )}
+
         {tab === 'leave' && (
           <DataTable
             columns={leaveColumns}
@@ -501,14 +626,23 @@ export function Approvals() {
             isLoading={leaveQuery.isLoading}
             emptyMessage="No leave requests found"
             emptyIcon={<Clock className="w-8 h-8 text-gray-200" />}
+            selectable
+            selectedRowKeys={selectedApprovalIds}
+            onSelectedRowKeysChange={setSelectedApprovalIds}
+            rowKey={(request) => request.id}
             renderActions={(request) => (
               <ActionButtons
                 onEdit={canEditLeave(request) ? () => {
                   setLeaveEditor(request);
                   setShowLeaveModal(true);
                 } : undefined}
+                onCancel={canCancelLeave(request) ? () => {
+                  if (confirm('Cancel this leave request?')) {
+                    cancelLeaveM.mutate(request.id);
+                  }
+                } : undefined}
                 onDelete={canDeleteLeave(request) ? () => {
-                  if (confirm('Delete this leave request?')) {
+                  if (confirm('Permanently delete this cancelled leave request?')) {
                     deleteLeaveM.mutate(request.id);
                   }
                 } : undefined}
@@ -600,14 +734,26 @@ export function Approvals() {
             isLoading={claimsQuery.isLoading}
             emptyMessage="No claims found"
             emptyIcon={<Clock className="w-8 h-8 text-gray-200" />}
+            selectable
+            selectedRowKeys={selectedApprovalIds}
+            onSelectedRowKeysChange={setSelectedApprovalIds}
+            rowKey={(claim) => claim.id}
             renderActions={(claim) => (
               <ActionButtons
                 onEdit={canEditClaim(claim) ? () => {
                   setClaimEditor(claim);
                   setShowClaimModal(true);
                 } : undefined}
+                onCancel={canCancelClaim(claim) ? () => {
+                  if (confirm('Cancel this claim?')) {
+                    cancelClaimM.mutate(claim.id);
+                  }
+                } : undefined}
                 onDelete={canDeleteClaim(claim) ? () => {
-                  if (confirm('Delete this claim?')) {
+                  const message = claim.status === 'cancelled'
+                    ? 'Permanently delete this cancelled claim?'
+                    : 'Delete this draft claim?';
+                  if (confirm(message)) {
                     deleteClaimM.mutate(claim.id);
                   }
                 } : undefined}
@@ -709,14 +855,23 @@ export function Approvals() {
             isLoading={overtimeQuery.isLoading}
             emptyMessage="No overtime applications found"
             emptyIcon={<Clock className="w-8 h-8 text-gray-200" />}
+            selectable
+            selectedRowKeys={selectedApprovalIds}
+            onSelectedRowKeysChange={setSelectedApprovalIds}
+            rowKey={(overtime) => overtime.id}
             renderActions={(overtime) => (
               <ActionButtons
                 onEdit={canEditOvertime(overtime) ? () => {
                   setOvertimeEditor(overtime);
                   setShowOvertimeModal(true);
                 } : undefined}
+                onCancel={canCancelOvertime(overtime) ? () => {
+                  if (confirm('Cancel this overtime application?')) {
+                    cancelOvertimeM.mutate(overtime.id);
+                  }
+                } : undefined}
                 onDelete={canDeleteOvertime(overtime) ? () => {
-                  if (confirm('Delete this overtime application?')) {
+                  if (confirm('Permanently delete this cancelled overtime application?')) {
                     deleteOvertimeM.mutate(overtime.id);
                   }
                 } : undefined}

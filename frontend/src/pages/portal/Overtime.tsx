@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Clock, X } from 'lucide-react';
+import { Plus, Clock, X, Trash2 } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
 import { TimeSelector } from '@/components/ui/TimeSelector';
-import { getOvertimeApplications, createOvertimeApplication, cancelOvertimeApplication } from '@/api/portal';
+import { getOvertimeApplications, createOvertimeApplication, cancelOvertimeApplication, deleteOvertimeApplication } from '@/api/portal';
 import { formatDate } from '@/lib/utils';
 import type { OvertimeApplication, CreateOvertimeRequest } from '@/types';
 
@@ -33,7 +33,9 @@ const otTypeMultiplier = (t: string) => {
 
 export function Overtime() {
   const queryClient = useQueryClient();
+  const selectAllRef = useRef<HTMLInputElement>(null);
   const [showModal, setShowModal] = useState(false);
+  const [selectedOvertimeIds, setSelectedOvertimeIds] = useState<string[]>([]);
   const [form, setForm] = useState<CreateOvertimeRequest>({
     ot_date: '',
     start_time: '',
@@ -60,6 +62,31 @@ export function Overtime() {
   const cancelMutation = useMutation({
     mutationFn: cancelOvertimeApplication,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['my-overtime'] }),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: deleteOvertimeApplication,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['my-overtime'] }),
+  });
+
+  const bulkCancelMutation = useMutation({
+    mutationFn: async (ids: string[]) => {
+      await Promise.all(ids.map((id) => cancelOvertimeApplication(id)));
+    },
+    onSuccess: () => {
+      setSelectedOvertimeIds([]);
+      queryClient.invalidateQueries({ queryKey: ['my-overtime'] });
+    },
+  });
+
+  const bulkDeleteMutation = useMutation({
+    mutationFn: async (ids: string[]) => {
+      await Promise.all(ids.map((id) => deleteOvertimeApplication(id)));
+    },
+    onSuccess: () => {
+      setSelectedOvertimeIds([]);
+      queryClient.invalidateQueries({ queryKey: ['my-overtime'] });
+    },
   });
 
   const resetForm = () => {
@@ -98,6 +125,41 @@ export function Overtime() {
     }
   };
 
+  const handleDelete = (app: OvertimeApplication) => {
+    if (confirm('Permanently delete this cancelled overtime application?')) {
+      deleteMutation.mutate(app.id);
+    }
+  };
+
+  const canCancel = (app: OvertimeApplication) => ['pending', 'approved', 'rejected'].includes(app.status);
+  const displayedOvertimeIds = applications.map((app) => app.id);
+  const selectedDisplayedIds = selectedOvertimeIds.filter((id) => displayedOvertimeIds.includes(id));
+  const allDisplayedSelected = displayedOvertimeIds.length > 0 && selectedDisplayedIds.length === displayedOvertimeIds.length;
+  const someDisplayedSelected = selectedDisplayedIds.length > 0 && !allDisplayedSelected;
+  const selectedApplications = applications.filter((app) => selectedOvertimeIds.includes(app.id));
+  const selectedCancelableIds = selectedApplications.filter(canCancel).map((app) => app.id);
+  const selectedDeletableIds = selectedApplications.filter((app) => app.status === 'cancelled').map((app) => app.id);
+
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = someDisplayedSelected;
+    }
+  }, [someDisplayedSelected]);
+
+  const toggleOvertimeSelection = (id: string) => {
+    setSelectedOvertimeIds((current) => (
+      current.includes(id) ? current.filter((selectedId) => selectedId !== id) : [...current, id]
+    ));
+  };
+
+  const toggleAllDisplayedOvertime = () => {
+    setSelectedOvertimeIds((current) => (
+      allDisplayedSelected
+        ? current.filter((id) => !displayedOvertimeIds.includes(id))
+        : Array.from(new Set([...current, ...displayedOvertimeIds]))
+    ));
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -116,9 +178,54 @@ export function Overtime() {
 
       {/* Applications List */}
       <div className="bg-white rounded-2xl border border-gray-200">
-        <div className="px-6 py-4 border-b border-gray-100">
+        <div className="flex items-center justify-between gap-3 px-6 py-4 border-b border-gray-100">
           <h3 className="text-sm font-semibold text-gray-900">My Applications</h3>
+          {applications.length > 0 && (
+            <label className="inline-flex items-center gap-2 text-xs font-medium text-gray-500">
+              <input
+                ref={selectAllRef}
+                type="checkbox"
+                checked={allDisplayedSelected}
+                onChange={toggleAllDisplayedOvertime}
+                className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-900"
+              />
+              Select all
+            </label>
+          )}
         </div>
+        {selectedOvertimeIds.length > 0 && (
+          <div className="flex flex-col gap-2 border-b border-gray-100 bg-gray-50 px-6 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <span className="text-sm font-medium text-gray-700">{selectedOvertimeIds.length} selected</span>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (confirm(`Cancel ${selectedCancelableIds.length} selected overtime application(s)?`)) {
+                    bulkCancelMutation.mutate(selectedCancelableIds);
+                  }
+                }}
+                disabled={selectedCancelableIds.length === 0 || bulkCancelMutation.isPending}
+                className="btn-secondary !py-2 text-sm disabled:opacity-50"
+              >
+                <X className="w-4 h-4" />
+                {bulkCancelMutation.isPending ? 'Cancelling...' : 'Cancel Selected'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (confirm(`Permanently delete ${selectedDeletableIds.length} cancelled overtime application(s)?`)) {
+                    bulkDeleteMutation.mutate(selectedDeletableIds);
+                  }
+                }}
+                disabled={selectedDeletableIds.length === 0 || bulkDeleteMutation.isPending}
+                className="btn-secondary !py-2 text-sm text-red-600 hover:!bg-red-50 disabled:opacity-50"
+              >
+                <Trash2 className="w-4 h-4" />
+                {bulkDeleteMutation.isPending ? 'Deleting...' : 'Delete Selected'}
+              </button>
+            </div>
+          </div>
+        )}
         {isLoading ? (
           <div className="p-8 text-center text-sm text-gray-400">Loading...</div>
         ) : applications.length === 0 ? (
@@ -131,7 +238,15 @@ export function Overtime() {
             {applications.map((app) => (
               <div key={app.id} className="px-6 py-4">
                 <div className="flex items-start justify-between">
-                  <div className="space-y-1">
+                  <div className="flex items-start gap-3">
+                    <input
+                      type="checkbox"
+                      checked={selectedOvertimeIds.includes(app.id)}
+                      onChange={() => toggleOvertimeSelection(app.id)}
+                      className="mt-1 h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-900"
+                      aria-label={`Select overtime application for ${formatDate(app.ot_date)}`}
+                    />
+                    <div className="space-y-1">
                     <div className="flex items-center gap-3">
                       <span className="text-sm font-semibold text-gray-900">{formatDate(app.ot_date)}</span>
                       {statusBadge(app.status)}
@@ -151,17 +266,30 @@ export function Overtime() {
                     {app.review_notes && (
                       <p className="text-sm text-amber-600 mt-1">Note: {app.review_notes}</p>
                     )}
+                    </div>
                   </div>
-                  {app.status === 'pending' && (
-                    <button
-                      onClick={() => handleCancel(app)}
-                      disabled={cancelMutation.isPending}
-                      className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50"
-                      title="Cancel"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  )}
+                  <div className="flex items-center gap-2">
+                    {canCancel(app) && (
+                      <button
+                        onClick={() => handleCancel(app)}
+                        disabled={cancelMutation.isPending}
+                        className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50"
+                        title="Cancel"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
+                    {app.status === 'cancelled' && (
+                      <button
+                        onClick={() => handleDelete(app)}
+                        disabled={deleteMutation.isPending}
+                        className="p-1.5 rounded-lg text-red-500 hover:text-red-700 hover:bg-red-50"
+                        title="Delete permanently"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             ))}

@@ -122,6 +122,80 @@ pub struct PayrollItemDetail {
     pub created_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct PayrollEntry {
+    pub id: Uuid,
+    pub employee_id: Uuid,
+    pub company_id: Uuid,
+    pub period_year: i32,
+    pub period_month: i32,
+    pub category: String,
+    pub item_type: String,
+    pub description: String,
+    pub amount: i64,
+    pub quantity: Option<rust_decimal::Decimal>,
+    pub rate: Option<i64>,
+    pub is_taxable: Option<bool>,
+    pub is_processed: Option<bool>,
+    pub payroll_run_id: Option<Uuid>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub created_by: Option<Uuid>,
+    pub updated_by: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct PayrollEntryWithEmployee {
+    pub id: Uuid,
+    pub employee_id: Uuid,
+    pub company_id: Uuid,
+    pub period_year: i32,
+    pub period_month: i32,
+    pub category: String,
+    pub item_type: String,
+    pub description: String,
+    pub amount: i64,
+    pub quantity: Option<rust_decimal::Decimal>,
+    pub rate: Option<i64>,
+    pub is_taxable: Option<bool>,
+    pub is_processed: Option<bool>,
+    pub payroll_run_id: Option<Uuid>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub created_by: Option<Uuid>,
+    pub updated_by: Option<Uuid>,
+    pub employee_name: Option<String>,
+    pub employee_number: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreatePayrollEntryRequest {
+    pub employee_id: Uuid,
+    pub period_year: i32,
+    pub period_month: i32,
+    pub category: String,
+    pub item_type: String,
+    pub description: String,
+    pub amount: i64,
+    pub quantity: Option<rust_decimal::Decimal>,
+    pub rate: Option<i64>,
+    pub is_taxable: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdatePayrollEntryRequest {
+    pub employee_id: Option<Uuid>,
+    pub period_year: Option<i32>,
+    pub period_month: Option<i32>,
+    pub category: Option<String>,
+    pub item_type: Option<String>,
+    pub description: Option<String>,
+    pub amount: Option<i64>,
+    pub quantity: Option<rust_decimal::Decimal>,
+    pub rate: Option<i64>,
+    pub is_taxable: Option<bool>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ProcessPayrollRequest {
     pub payroll_group_id: Uuid,

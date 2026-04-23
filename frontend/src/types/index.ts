@@ -252,6 +252,45 @@ export interface ProcessPayrollRequest {
   notes?: string;
 }
 
+export interface PayrollEntry {
+  id: string;
+  employee_id: string;
+  company_id: string;
+  period_year: number;
+  period_month: number;
+  category: 'earning' | 'deduction';
+  item_type: string;
+  description: string;
+  amount: number;
+  quantity: number | null;
+  rate: number | null;
+  is_taxable: boolean | null;
+  is_processed: boolean | null;
+  payroll_run_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PayrollEntryWithEmployee extends PayrollEntry {
+  employee_name: string | null;
+  employee_number: string | null;
+}
+
+export interface CreatePayrollEntryRequest {
+  employee_id: string;
+  period_year: number;
+  period_month: number;
+  category: 'earning' | 'deduction';
+  item_type: string;
+  description: string;
+  amount: number;
+  quantity?: number;
+  rate?: number;
+  is_taxable?: boolean;
+}
+
+export type UpdatePayrollEntryRequest = Partial<CreatePayrollEntryRequest>;
+
 export interface DashboardSummary {
   total_employees: number;
   active_employees: number;
@@ -504,7 +543,7 @@ export interface Claim {
   receipt_url: string | null;
   receipt_file_name: string | null;
   expense_date: string;
-  status: 'draft' | 'pending' | 'approved' | 'rejected' | 'processed';
+  status: 'draft' | 'pending' | 'approved' | 'rejected' | 'processed' | 'cancelled';
   submitted_at: string | null;
   reviewed_by: string | null;
   reviewed_at: string | null;

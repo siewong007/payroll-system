@@ -46,6 +46,10 @@ export async function cancelLeaveRequest(id: string): Promise<void> {
   await api.put(`/portal/leave/requests/${id}/cancel`);
 }
 
+export async function deleteLeaveRequest(id: string): Promise<void> {
+  await api.delete(`/portal/leave/requests/${id}`);
+}
+
 // File Upload
 export async function uploadFile(file: File): Promise<{ url: string; file_name: string; size: number }> {
   const formData = new FormData();
@@ -69,6 +73,10 @@ export async function createOvertimeApplication(req: CreateOvertimeRequest): Pro
 
 export async function cancelOvertimeApplication(id: string): Promise<void> {
   await api.put(`/portal/overtime/${id}/cancel`);
+}
+
+export async function deleteOvertimeApplication(id: string): Promise<void> {
+  await api.delete(`/portal/overtime/${id}`);
 }
 
 // My Teams
