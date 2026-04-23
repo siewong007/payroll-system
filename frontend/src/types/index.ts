@@ -230,6 +230,9 @@ export interface PayrollItemSummary {
   employee_name: string;
   employee_number: string;
   basic_salary: number;
+  total_allowances: number;
+  total_overtime: number;
+  total_claims: number;
   gross_salary: number;
   total_deductions: number;
   net_salary: number;

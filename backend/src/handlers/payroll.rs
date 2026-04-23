@@ -71,9 +71,10 @@ async fn load_payroll_summary(
     .ok_or_else(|| AppError::NotFound("Payroll run not found".into()))?;
 
     let items =
-        sqlx::query_as::<_, (Uuid, String, String, i64, i64, i64, i64, i64, i64, i64, i64)>(
+        sqlx::query_as::<_, (Uuid, String, String, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64)>(
             r#"SELECT pi.employee_id, e.full_name, e.employee_number,
-           pi.basic_salary, pi.gross_salary, pi.total_deductions, pi.net_salary,
+           pi.basic_salary, pi.total_allowances, pi.total_overtime, pi.total_claims,
+           pi.gross_salary, pi.total_deductions, pi.net_salary,
            pi.epf_employee, pi.socso_employee, pi.eis_employee, pi.pcb_amount
         FROM payroll_items pi
         JOIN employees e ON pi.employee_id = e.id
@@ -87,11 +88,14 @@ async fn load_payroll_summary(
     let item_summaries: Vec<PayrollItemSummary> = items
         .into_iter()
         .map(
-            |(eid, name, num, basic, gross, ded, net, epf, socso, eis, pcb)| PayrollItemSummary {
+            |(eid, name, num, basic, allowances, overtime, claims, gross, ded, net, epf, socso, eis, pcb)| PayrollItemSummary {
                 employee_id: eid,
                 employee_name: name,
                 employee_number: num,
                 basic_salary: basic,
+                total_allowances: allowances,
+                total_overtime: overtime,
+                total_claims: claims,
                 gross_salary: gross,
                 total_deductions: ded,
                 net_salary: net,

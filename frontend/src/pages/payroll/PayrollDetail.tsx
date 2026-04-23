@@ -225,12 +225,15 @@ export function PayrollDetail() {
               <tr>
                 <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Employee</th>
                 <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase">Basic</th>
+                <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase">Allowances</th>
+                <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase">OT</th>
                 <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase">Gross</th>
                 <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase">EPF</th>
                 <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase">SOCSO</th>
                 <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase">EIS</th>
                 <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase">PCB</th>
                 <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase">Deductions</th>
+                <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase">Claims</th>
                 <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase">Net</th>
               </tr>
             </thead>
@@ -242,6 +245,8 @@ export function PayrollDetail() {
                     <div className="text-xs text-gray-400">{item.employee_number}</div>
                   </td>
                   <td className="px-4 py-3 text-sm text-right">{formatMYR(item.basic_salary)}</td>
+                  <td className="px-4 py-3 text-sm text-right">{item.total_allowances > 0 ? formatMYR(item.total_allowances) : '-'}</td>
+                  <td className="px-4 py-3 text-sm text-right">{item.total_overtime > 0 ? formatMYR(item.total_overtime) : '-'}</td>
                   <td className="px-4 py-3 text-sm text-right">{formatMYR(item.gross_salary)}</td>
                   <td className="px-4 py-3 text-sm text-right">{formatMYR(item.epf_employee)}</td>
                   <td className="px-4 py-3 text-sm text-right">{formatMYR(item.socso_employee)}</td>
@@ -296,6 +301,7 @@ export function PayrollDetail() {
                     )}
                   </td>
                   <td className="px-4 py-3 text-sm text-right text-red-600">{formatMYR(item.total_deductions)}</td>
+                  <td className="px-4 py-3 text-sm text-right">{item.total_claims > 0 ? <span className="text-blue-600">{formatMYR(item.total_claims)}</span> : '-'}</td>
                   <td className="px-4 py-3 text-sm text-right font-bold text-green-600">{formatMYR(item.net_salary)}</td>
                 </tr>
               ))}
