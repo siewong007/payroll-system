@@ -30,9 +30,10 @@ export function getAccessToken(): string | null {
   return accessToken;
 }
 
-// Add auth token to requests
+// Add auth token to requests. Skip if the caller already set an Authorization
+// header (e.g. the public kiosk endpoint sends `Authorization: Kiosk <secret>`).
 api.interceptors.request.use((config) => {
-  if (accessToken) {
+  if (accessToken && !config.headers.Authorization) {
     config.headers.Authorization = `Bearer ${accessToken}`;
   }
   return config;
@@ -58,19 +59,26 @@ api.interceptors.response.use(
   async (error) => {
     const originalRequest = error.config;
 
+    // The public kiosk endpoint authenticates via a kiosk secret, not the user JWT.
+    // A 401 there means the kiosk credential was revoked — surface it to the caller
+    // verbatim, never refresh or redirect.
+    const isKioskEndpoint = originalRequest.url === '/attendance/kiosk/qr';
+
     // Don't retry refresh or login requests
     if (
       error.response?.status !== 401 ||
       originalRequest._retry ||
       originalRequest.url === '/auth/login' ||
-      originalRequest.url === '/auth/refresh'
+      originalRequest.url === '/auth/refresh' ||
+      isKioskEndpoint
     ) {
       // Only redirect for 401 on regular API calls, not auth endpoints
       if (
         error.response?.status === 401 &&
         originalRequest.url !== '/auth/login' &&
         originalRequest.url !== '/auth/refresh' &&
-        originalRequest.url !== '/auth/oauth2/providers'
+        originalRequest.url !== '/auth/oauth2/providers' &&
+        !isKioskEndpoint
       ) {
         accessToken = null;
         localStorage.removeItem('user');

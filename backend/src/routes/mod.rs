@@ -35,6 +35,15 @@ pub fn create_router(state: AppState) -> Router {
         .finish()
         .expect("Failed to build rate limiter");
 
+    // Public kiosk QR endpoint (~120/min/IP — comfortable for a tablet refreshing
+    // every minute, far below what a guesser would need to be effective against the
+    // ≥244-bit secret space).
+    let kiosk_rate_limit = GovernorConfigBuilder::default()
+        .per_second(2)
+        .burst_size(10)
+        .finish()
+        .expect("Failed to build rate limiter");
+
     // Rate-limited auth routes
     let rate_limited_auth = Router::new()
         .route("/auth/login", post(auth::login))
@@ -53,12 +62,17 @@ pub fn create_router(state: AppState) -> Router {
         .route("/auth/oauth2/google/callback", get(oauth2::google_callback))
         .layer(GovernorLayer::new(oauth2_rate_limit));
 
+    let rate_limited_kiosk = Router::new()
+        .route("/attendance/kiosk/qr", post(attendance::kiosk_qr))
+        .layer(GovernorLayer::new(kiosk_rate_limit));
+
     let api = Router::new()
         // Health check (no auth required, used by ALB)
         .route("/health", get(|| async { "ok" }))
         .merge(rate_limited_auth)
         .merge(rate_limited_forgot)
         .merge(rate_limited_oauth2)
+        .merge(rate_limited_kiosk)
         // Auth (non-rate-limited)
         .route("/auth/me", get(auth::me))
         .route("/auth/refresh", post(auth::refresh_token))
@@ -379,6 +393,16 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/attendance/qr/generate",
             post(attendance::generate_qr_token),
+        )
+        // Kiosk credentials (admin) — list/create + revoke. The public endpoint
+        // /attendance/kiosk/qr lives in `rate_limited_kiosk` above.
+        .route(
+            "/attendance/kiosks",
+            get(attendance::list_kiosk_credentials).post(attendance::create_kiosk_credential),
+        )
+        .route(
+            "/attendance/kiosks/{id}",
+            delete(attendance::revoke_kiosk_credential),
         )
         // Employee check-in
         .route("/attendance/check-in/qr", post(attendance::check_in_qr))

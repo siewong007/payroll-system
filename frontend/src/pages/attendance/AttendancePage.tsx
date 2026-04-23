@@ -5,6 +5,7 @@ import {
   Filter, Plus, MapPin, Fingerprint,
   AlertCircle, Calendar, User, LogIn, LogOut, MoreVertical,
   ChevronLeft, ChevronRight, Pencil, AlertTriangle, Timer, Download,
+  Link2, Copy, Trash2, ShieldCheck, X,
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import {
@@ -16,6 +17,12 @@ import {
   downloadAttendanceCsv,
   type AttendanceRecordWithEmployee,
 } from '@/api/attendance';
+import {
+  listKioskCredentials,
+  createKioskCredential,
+  revokeKioskCredential,
+  type CreateKioskCredentialResponse,
+} from '@/api/kiosk';
 import { useAuth } from '@/context/AuthContext';
 import { WorkScheduleCard } from '@/components/attendance/WorkScheduleCard';
 import { GeofenceCard } from '@/components/attendance/GeofenceCard';
@@ -42,12 +49,243 @@ function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString('en-MY', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
+// ─── Kiosk Credentials Modal ────────────────────────────────────────────────
+
+function formatDateTime(iso: string | null) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleString('en-MY', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function KioskCredentialsModal({ onClose }: { onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const [label, setLabel] = useState('');
+  const [created, setCreated] = useState<CreateKioskCredentialResponse | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState('');
+
+  const { data: credentials = [], isLoading } = useQuery({
+    queryKey: ['kiosk-credentials'],
+    queryFn: listKioskCredentials,
+  });
+
+  const createMut = useMutation({
+    mutationFn: (l: string) => createKioskCredential(l),
+    onSuccess: (data) => {
+      setCreated(data);
+      setLabel('');
+      setError('');
+      queryClient.invalidateQueries({ queryKey: ['kiosk-credentials'] });
+    },
+    onError: (e: Error & { response?: { data?: { error?: string } } }) => {
+      setError(e.response?.data?.error || 'Failed to create kiosk link');
+    },
+  });
+
+  const revokeMut = useMutation({
+    mutationFn: (id: string) => revokeKioskCredential(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['kiosk-credentials'] }),
+  });
+
+  const copyUrl = async (url: string) => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard write may fail in non-HTTPS contexts; user can copy manually.
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
+        <div className="flex items-start justify-between mb-1">
+          <div>
+            <h3 className="font-semibold text-gray-900">Kiosk links</h3>
+            <p className="text-sm text-gray-500">
+              Each link opens the rotating QR on a tablet without anyone needing to log in.
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* One-time URL display after creation */}
+        {created && (
+          <div className="mt-5 border border-emerald-200 bg-emerald-50 rounded-xl p-4">
+            <div className="flex items-start gap-2">
+              <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-emerald-900">
+                  Copy this link now — it will not be shown again.
+                </p>
+                <p className="text-xs text-emerald-700 mt-0.5">
+                  Anyone with the link can display the QR. Treat it like a password.
+                </p>
+                <div className="mt-3 flex items-center gap-2">
+                  <input
+                    readOnly
+                    value={created.public_url}
+                    onFocus={(e) => e.currentTarget.select()}
+                    className="flex-1 px-3 py-2 bg-white border border-emerald-300 rounded-lg text-xs font-mono text-gray-800 outline-none truncate"
+                  />
+                  <button
+                    onClick={() => copyUrl(created.public_url)}
+                    className="flex items-center gap-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium rounded-lg transition-colors"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                    {copied ? 'Copied' : 'Copy'}
+                  </button>
+                </div>
+                <button
+                  onClick={() => setCreated(null)}
+                  className="mt-3 text-xs text-emerald-800 hover:underline"
+                >
+                  Done — hide this link
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Create form */}
+        {!created && (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!label.trim()) {
+                setError('Please give this kiosk a name');
+                return;
+              }
+              createMut.mutate(label.trim());
+            }}
+            className="mt-5 flex gap-2"
+          >
+            <input
+              type="text"
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              placeholder="Reception tablet"
+              maxLength={100}
+              className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-1 focus:ring-black outline-none"
+            />
+            <button
+              type="submit"
+              disabled={createMut.isPending}
+              className="flex items-center gap-1.5 px-4 py-2 bg-black hover:bg-gray-800 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
+            >
+              <Plus className="w-4 h-4" />
+              {createMut.isPending ? 'Creating…' : 'Create link'}
+            </button>
+          </form>
+        )}
+        {error && (
+          <p className="mt-2 text-sm text-red-600 flex items-center gap-1">
+            <AlertCircle className="w-3.5 h-3.5" /> {error}
+          </p>
+        )}
+
+        {/* List */}
+        <div className="mt-6">
+          <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+            Existing links
+          </h4>
+          {isLoading ? (
+            <div className="flex items-center justify-center h-24">
+              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-black" />
+            </div>
+          ) : credentials.length === 0 ? (
+            <p className="text-sm text-gray-400 italic">No kiosk links yet.</p>
+          ) : (
+            <div className="border border-gray-200 rounded-xl overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50">
+                  <tr>
+                    {['Label', 'Prefix', 'Created', 'Last used', 'Status', ''].map((h) => (
+                      <th
+                        key={h}
+                        className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider"
+                      >
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {credentials.map((c) => {
+                    const revoked = c.revoked_at != null;
+                    return (
+                      <tr key={c.id} className={revoked ? 'opacity-60' : ''}>
+                        <td className="px-3 py-2.5 text-gray-900 font-medium">{c.label}</td>
+                        <td className="px-3 py-2.5 text-xs font-mono text-gray-500">
+                          {c.token_prefix}…
+                        </td>
+                        <td className="px-3 py-2.5 text-xs text-gray-500">
+                          {formatDateTime(c.created_at)}
+                        </td>
+                        <td className="px-3 py-2.5 text-xs text-gray-500">
+                          <div>{formatDateTime(c.last_used_at)}</div>
+                          {c.last_used_ip && (
+                            <div className="text-gray-400 font-mono">{c.last_used_ip}</div>
+                          )}
+                        </td>
+                        <td className="px-3 py-2.5">
+                          {revoked ? (
+                            <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500">
+                              Revoked
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700">
+                              Active
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2.5 text-right">
+                          {!revoked && (
+                            <button
+                              onClick={() => {
+                                if (confirm(`Revoke "${c.label}"? Tablets using this link will stop working within ~5 minutes.`)) {
+                                  revokeMut.mutate(c.id);
+                                }
+                              }}
+                              disabled={revokeMut.isPending}
+                              className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50"
+                              title="Revoke"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── QR Panel ────────────────────────────────────────────────────────────────
 
 function QrPanel() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [timeLeft, setTimeLeft] = useState(0);
   const [isExpired, setIsExpired] = useState(false);
+  const [showKiosks, setShowKiosks] = useState(false);
   const queryClient = useQueryClient();
 
   const { data: token, refetch: generateNew } = useQuery({
@@ -143,15 +381,23 @@ function QrPanel() {
         Display on kiosk screen. Employees scan with their phone.
       </p>
 
+      <button
+        onClick={() => setShowKiosks(true)}
+        className="w-full flex items-center justify-center gap-2 bg-violet-600 hover:bg-violet-700 text-white text-sm font-medium py-2.5 rounded-xl transition-colors"
+      >
+        <Link2 className="w-4 h-4" />
+        Kiosk links
+      </button>
       <a
         href="/attendance/kiosk"
         target="_blank"
         rel="noopener noreferrer"
-        className="w-full flex items-center justify-center gap-2 bg-violet-600 hover:bg-violet-700 text-white text-sm font-medium py-2.5 rounded-xl transition-colors"
+        className="text-xs text-gray-400 hover:text-gray-600 underline"
       >
-        <QrCode className="w-4 h-4" />
-        Open Kiosk Display
+        Open kiosk in this browser (legacy, requires login)
       </a>
+
+      {showKiosks && <KioskCredentialsModal onClose={() => setShowKiosks(false)} />}
     </div>
   );
 }

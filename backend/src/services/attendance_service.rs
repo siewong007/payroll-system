@@ -1,4 +1,7 @@
+use std::time::Duration;
+
 use chrono::{NaiveTime, Utc};
+use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -8,6 +11,7 @@ use crate::models::attendance::{
     AttendanceRecord, AttendanceRecordWithEmployee, AttendanceSummaryItem, AttendanceSummaryQuery,
     ManualAttendanceRequest, PaginatedAttendance, QrTokenResponse, UpdateAttendanceRecordRequest,
 };
+use crate::models::attendance_kiosk::{self, KioskCredential};
 use crate::models::work_schedule::WorkSchedule;
 use crate::services::geofence_service;
 
@@ -209,6 +213,106 @@ pub async fn validate_qr_token(pool: &PgPool, token: &str, company_id: Uuid) -> 
         )),
         Some(t) => Ok(t.id),
     }
+}
+
+// ─── Kiosk Credentials (public-URL kiosk display) ───
+
+fn sha256_hex(input: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(input.as_bytes());
+    let out = hasher.finalize();
+    let mut s = String::with_capacity(out.len() * 2);
+    for b in out.iter() {
+        use std::fmt::Write;
+        let _ = write!(&mut s, "{:02x}", b);
+    }
+    s
+}
+
+/// Mint a kiosk credential. Returns the model and the plaintext secret. The plaintext
+/// is the only chance the caller has to learn the secret — the server stores only its
+/// hash. Caller must surface it to the admin once and then drop it.
+pub async fn create_kiosk_credential(
+    pool: &PgPool,
+    company_id: Uuid,
+    label: &str,
+    created_by: Uuid,
+) -> AppResult<(KioskCredential, String)> {
+    let label = label.trim();
+    if label.is_empty() || label.len() > 100 {
+        return Err(AppError::BadRequest(
+            "Label must be 1–100 characters".into(),
+        ));
+    }
+
+    // 64 hex chars = ~244 bits of entropy (2 × Uuid v4). Mirrors the existing token
+    // shape used by `generate_qr_token`. Way beyond brute-forceable, especially with
+    // the route-level rate limit.
+    let secret = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+    let token_hash = sha256_hex(&secret);
+    let token_prefix = secret[..8].to_string();
+
+    let cred = attendance_kiosk::insert_kiosk_credential(
+        pool,
+        company_id,
+        label,
+        &token_hash,
+        &token_prefix,
+        created_by,
+    )
+    .await?;
+
+    Ok((cred, secret))
+}
+
+pub async fn list_kiosk_credentials(
+    pool: &PgPool,
+    company_id: Uuid,
+) -> AppResult<Vec<KioskCredential>> {
+    attendance_kiosk::list_kiosk_credentials(pool, company_id).await
+}
+
+pub async fn revoke_kiosk_credential(pool: &PgPool, id: Uuid, company_id: Uuid) -> AppResult<()> {
+    let revoked = attendance_kiosk::revoke(pool, id, company_id).await?;
+    if !revoked {
+        return Err(AppError::NotFound(
+            "Kiosk credential not found or already revoked".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Validate a kiosk secret presented by an unauthenticated tablet, then mint a fresh
+/// QR token for that kiosk's company. Reuses `generate_qr_token` so the QR rotation
+/// behaviour stays identical across the admin-logged-in flow and the public flow.
+///
+/// SECURITY: never log the presented secret. On rejection, sleep briefly to flatten
+/// any timing variance between "no such hash" and "found but revoked".
+pub async fn generate_qr_via_kiosk(
+    pool: &PgPool,
+    presented_secret: &str,
+    frontend_url: &str,
+    client_ip: Option<&str>,
+) -> AppResult<QrTokenResponse> {
+    let hash = sha256_hex(presented_secret);
+    let cred = attendance_kiosk::find_active_by_hash(pool, &hash).await?;
+
+    let cred = match cred {
+        Some(c) => c,
+        None => {
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            return Err(AppError::Unauthorized("Invalid kiosk credential".into()));
+        }
+    };
+
+    let resp = generate_qr_token(pool, cred.company_id, frontend_url).await?;
+
+    // Best-effort heartbeat; failure to record this should not block the kiosk.
+    if let Err(e) = attendance_kiosk::mark_used(pool, cred.id, client_ip).await {
+        tracing::warn!("Failed to update kiosk last_used: {}", e);
+    }
+
+    Ok(resp)
 }
 
 // ─── Auto Late Detection ───

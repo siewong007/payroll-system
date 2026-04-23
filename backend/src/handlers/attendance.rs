@@ -2,8 +2,9 @@ use axum::{
     Json,
     body::Body,
     extract::{Path, Query, State},
-    http::{Response, StatusCode, header},
+    http::{HeaderMap, Response, StatusCode, header},
 };
+use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::core::app_state::AppState;
@@ -16,6 +17,7 @@ use crate::models::attendance::{
     PaginatedAttendance, QrTokenResponse, SetAttendanceMethodRequest,
     SetCompanyAttendanceMethodRequest, UpdateAttendanceRecordRequest,
 };
+use crate::models::attendance_kiosk::KioskCredential;
 use crate::services::attendance_service;
 
 // ─── Effective Method ───
@@ -388,4 +390,157 @@ pub async fn update_attendance(
         attendance_service::update_attendance_record(&state.pool, company_id, id, &req, auth.0.sub)
             .await?;
     Ok(Json(record))
+}
+
+// ─── Kiosk Credentials (admin) ───
+
+#[derive(Debug, Deserialize)]
+pub struct CreateKioskCredentialRequest {
+    pub label: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct CreateKioskCredentialResponse {
+    pub credential: KioskCredential,
+    /// Plaintext secret. Only returned at creation time — never persisted in plaintext
+    /// and never returned by `list_kiosk_credentials`. Admin must copy it now.
+    pub secret: String,
+    pub public_url: String,
+}
+
+fn require_kiosk_admin(role: &str) -> AppResult<()> {
+    if matches!(
+        role,
+        "admin" | "super_admin" | "hr_manager" | "payroll_admin"
+    ) {
+        Ok(())
+    } else {
+        Err(AppError::Forbidden(
+            "Authorized role required to manage kiosk credentials".into(),
+        ))
+    }
+}
+
+pub async fn create_kiosk_credential(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Json(req): Json<CreateKioskCredentialRequest>,
+) -> AppResult<Json<CreateKioskCredentialResponse>> {
+    let company_id = auth
+        .0
+        .company_id
+        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
+    require_kiosk_admin(&auth.0.role)?;
+
+    let (credential, secret) = attendance_service::create_kiosk_credential(
+        &state.pool,
+        company_id,
+        &req.label,
+        auth.0.sub,
+    )
+    .await?;
+
+    let public_url = format!(
+        "{}/kiosk/{}",
+        state.config.frontend_url.trim_end_matches('/'),
+        secret
+    );
+
+    Ok(Json(CreateKioskCredentialResponse {
+        credential,
+        secret,
+        public_url,
+    }))
+}
+
+pub async fn list_kiosk_credentials(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> AppResult<Json<Vec<KioskCredential>>> {
+    let company_id = auth
+        .0
+        .company_id
+        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
+    require_kiosk_admin(&auth.0.role)?;
+
+    let creds = attendance_service::list_kiosk_credentials(&state.pool, company_id).await?;
+    Ok(Json(creds))
+}
+
+pub async fn revoke_kiosk_credential(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<serde_json::Value>> {
+    let company_id = auth
+        .0
+        .company_id
+        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
+    require_kiosk_admin(&auth.0.role)?;
+
+    attendance_service::revoke_kiosk_credential(&state.pool, id, company_id).await?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+// ─── Kiosk QR (PUBLIC — no AuthUser) ───
+
+/// Pull the bearer secret out of the `Authorization` header. Accepts either
+/// `Authorization: Kiosk <secret>` (preferred) or `Authorization: Bearer <secret>` so
+/// existing axios setups that always send Bearer keep working without a special case
+/// in the frontend interceptor.
+fn extract_kiosk_secret(headers: &HeaderMap) -> Option<String> {
+    let raw = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
+    let mut parts = raw.splitn(2, ' ');
+    let scheme = parts.next()?;
+    let value = parts.next()?.trim();
+    if value.is_empty() {
+        return None;
+    }
+    if scheme.eq_ignore_ascii_case("Kiosk") || scheme.eq_ignore_ascii_case("Bearer") {
+        Some(value.to_string())
+    } else {
+        None
+    }
+}
+
+/// Best-effort client IP for forensic audit. In prod the ALB/CloudFront sets
+/// `X-Forwarded-For`; locally this returns None which is fine.
+fn client_ip_string(headers: &HeaderMap) -> Option<String> {
+    let xff = headers
+        .get("x-forwarded-for")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|s| s.split(',').next())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    if xff.is_some() {
+        return xff;
+    }
+    headers
+        .get("x-real-ip")
+        .and_then(|h| h.to_str().ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// Public endpoint. Reads the kiosk secret from the `Authorization` header,
+/// validates it, and returns the same `QrTokenResponse` shape as the authenticated
+/// `generate_qr_token`. NEVER log the presented secret.
+pub async fn kiosk_qr(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> AppResult<Json<QrTokenResponse>> {
+    let secret = extract_kiosk_secret(&headers)
+        .ok_or_else(|| AppError::Unauthorized("Missing kiosk credential".into()))?;
+
+    let ip = client_ip_string(&headers);
+
+    let resp = attendance_service::generate_qr_via_kiosk(
+        &state.pool,
+        &secret,
+        &state.config.frontend_url,
+        ip.as_deref(),
+    )
+    .await?;
+
+    Ok(Json(resp))
 }

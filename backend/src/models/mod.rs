@@ -1,4 +1,5 @@
 pub mod attendance;
+pub mod attendance_kiosk;
 pub mod audit;
 pub mod backup;
 pub mod calendar;

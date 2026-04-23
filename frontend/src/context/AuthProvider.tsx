@@ -10,8 +10,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const queryClient = useQueryClient();
 
-  // On mount, try to restore session via cookie-based refresh
+  // On mount, try to restore session via cookie-based refresh.
+  // Skip on the public kiosk path so a tablet without a session doesn't churn /auth/refresh.
   useEffect(() => {
+    if (window.location.pathname.startsWith('/kiosk/')) {
+      setIsLoading(false);
+      return;
+    }
     const restoreSession = async () => {
       try {
         // Refresh token is sent automatically via httpOnly cookie

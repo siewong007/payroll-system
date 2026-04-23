@@ -37,6 +37,7 @@ import { BackupPage } from '@/pages/backup/BackupPage';
 import { AuditTrailPage } from '@/pages/audit/AuditTrailPage';
 import { AttendancePage } from '@/pages/attendance/AttendancePage';
 import { AttendanceKiosk } from '@/pages/attendance/AttendanceKiosk';
+import { AttendanceKioskPublic } from '@/pages/attendance/AttendanceKioskPublic';
 import { AttendanceScanPage } from '@/pages/attendance/AttendanceScanPage';
 import { MyAttendance } from '@/pages/portal/MyAttendance';
 import { AttendanceSettings } from '@/pages/admin/AttendanceSettings';
@@ -80,6 +81,9 @@ export default function App() {
             {/* Public attendance routes (no auth required) */}
             <Route path="/attendance/kiosk" element={<AttendanceKiosk />} />
             <Route path="/attendance/scan" element={<AttendanceScanPage />} />
+            {/* Bookmarkable kiosk URL — authenticated by the kiosk credential
+                embedded in the path. Designed to run on a tablet without any user login. */}
+            <Route path="/kiosk/:kioskKey" element={<AttendanceKioskPublic />} />
             {/* Admin Layout */}
             <Route element={<AppLayout />}>
               <Route path="/" element={<HomeRedirect />} />
