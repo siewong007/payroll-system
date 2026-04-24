@@ -12,7 +12,6 @@ use crate::models::attendance::{
     ManualAttendanceRequest, PaginatedAttendance, QrTokenResponse, UpdateAttendanceRecordRequest,
 };
 use crate::models::attendance_kiosk::{self, KioskCredential};
-use crate::models::work_schedule::WorkSchedule;
 use crate::services::geofence_service;
 
 // ─── QR Token TTL ───

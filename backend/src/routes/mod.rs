@@ -9,8 +9,8 @@ use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
 use crate::core::app_state::AppState;
 use crate::handlers::{
     admin, approval, attendance, audit, auth, backup, calendar, company, dashboard, document,
-    email, employee, employee_import, geofence, notification, oauth2, passkey, payroll, portal,
-    report, settings, team, work_schedule,
+    email, employee, employee_import, geofence, health, notification, oauth2, passkey, payroll,
+    portal, report, settings, team, work_schedule,
 };
 
 pub fn create_router(state: AppState) -> Router {
@@ -69,6 +69,8 @@ pub fn create_router(state: AppState) -> Router {
     let api = Router::new()
         // Health check (no auth required, used by ALB)
         .route("/health", get(|| async { "ok" }))
+        // Readiness probe: checks DB connectivity and migration state.
+        .route("/health/ready", get(health::ready))
         .merge(rate_limited_auth)
         .merge(rate_limited_forgot)
         .merge(rate_limited_oauth2)

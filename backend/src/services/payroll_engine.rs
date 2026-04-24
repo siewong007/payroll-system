@@ -1,6 +1,7 @@
 use chrono::{Datelike, NaiveDate};
 use sqlx::PgPool;
 use std::collections::HashMap;
+use tracing::{Instrument, info, info_span};
 use uuid::Uuid;
 
 use crate::core::error::{AppError, AppResult};
@@ -17,6 +18,18 @@ use crate::services::socso_service;
 /// 2. For each employee, calculate gross, statutory deductions, net
 /// 3. Create PayrollRun + PayrollItems in a transaction
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
+#[tracing::instrument(
+    name = "payroll.process",
+    skip(pool, notes),
+    fields(
+        company_id = %company_id,
+        payroll_group_id = %payroll_group_id,
+        year,
+        month,
+        run_id = tracing::field::Empty,
+        employee_count = tracing::field::Empty,
+    ),
+)]
 pub async fn process_payroll(
     pool: &PgPool,
     company_id: Uuid,
@@ -93,11 +106,15 @@ pub async fn process_payroll(
         ));
     }
 
+    tracing::Span::current().record("employee_count", employees.len());
+    info!(employees = employees.len(), "starting payroll run");
+
     // Begin transaction
     let mut tx = pool.begin().await?;
 
     // Create payroll run
     let run_id = Uuid::new_v4();
+    tracing::Span::current().record("run_id", tracing::field::display(run_id));
     sqlx::query(
         r#"INSERT INTO payroll_runs
         (id, company_id, payroll_group_id, period_year, period_month,
@@ -313,6 +330,7 @@ pub async fn process_payroll(
     let mut total_zakat: i64 = 0;
 
     for emp in &employees {
+        let emp_span = info_span!("payroll.employee", employee_id = %emp.id);
         let item = process_employee(
             pool,
             &mut tx,
@@ -325,6 +343,7 @@ pub async fn process_payroll(
             effective_date,
             &bulk_data,
         )
+        .instrument(emp_span)
         .await?;
 
         total_gross += item.gross_salary;
@@ -369,6 +388,11 @@ pub async fn process_payroll(
     .await?;
 
     tx.commit().await?;
+
+    info!(
+        total_gross,
+        total_net, total_pcb, total_employer_cost, "payroll run committed"
+    );
 
     // Audit Log
     let _ = crate::services::audit_service::log_action(

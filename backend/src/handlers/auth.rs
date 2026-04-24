@@ -4,6 +4,7 @@ use crate::core::app_state::AppState;
 use crate::core::auth::{AuthUser, create_token};
 use crate::core::cookie;
 use crate::core::error::{AppError, AppResult};
+use crate::core::extract::ValidatedJson;
 use crate::models::session::{ForgotPasswordRequest, ResetPasswordRequest};
 use crate::models::user::{LoginRequest, LoginResponse, User, UserResponse};
 use crate::models::user_company::{CompanySummary, SwitchCompanyRequest};
@@ -13,7 +14,7 @@ use crate::services::{
 
 pub async fn login(
     State(state): State<AppState>,
-    Json(req): Json<LoginRequest>,
+    ValidatedJson(req): ValidatedJson<LoginRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     let response = auth_service::login(
         &state.pool,
@@ -166,7 +167,7 @@ pub async fn logout(
 /// User requests a password reset. Sends reset link via email automatically.
 pub async fn forgot_password(
     State(state): State<AppState>,
-    Json(req): Json<ForgotPasswordRequest>,
+    ValidatedJson(req): ValidatedJson<ForgotPasswordRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
     let result = password_reset_service::request_reset(&state.pool, &req.email).await?;
 
@@ -204,7 +205,7 @@ pub async fn forgot_password(
 /// User resets password using an approved token.
 pub async fn reset_password(
     State(state): State<AppState>,
-    Json(req): Json<ResetPasswordRequest>,
+    ValidatedJson(req): ValidatedJson<ResetPasswordRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
     password_reset_service::reset_password(&state.pool, &req.token, &req.new_password).await?;
     Ok(Json(serde_json::json!({

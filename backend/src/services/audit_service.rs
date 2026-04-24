@@ -90,6 +90,7 @@ pub async fn list_audit_logs(
 
     Ok((logs, count))
 }
+#[allow(clippy::too_many_arguments)]
 pub async fn log_action(
     pool: &PgPool,
     user_id: Option<Uuid>,

@@ -38,14 +38,17 @@ pub struct LoginResponseWithRefresh {
     pub user: super::user::UserResponse,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, validator::Validate)]
 pub struct ForgotPasswordRequest {
+    #[validate(email(message = "must be a valid email address"))]
     pub email: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, validator::Validate)]
 pub struct ResetPasswordRequest {
+    #[validate(length(min = 1, message = "token is required"))]
     pub token: String,
+    #[validate(length(min = 8, message = "must be at least 8 characters"))]
     pub new_password: String,
 }
 
