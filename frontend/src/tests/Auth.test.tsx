@@ -1,8 +1,16 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { AuthProvider } from '../context/AuthProvider';
 import { useAuth } from '../context/AuthContext';
 import React from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+
+vi.mock('@/api/client', () => ({
+  default: {
+    post: vi.fn().mockRejectedValue(new Error('No session')),
+  },
+  setAccessToken: vi.fn(),
+}));
 
 // Helper component to test useAuth
 const TestComponent = () => {
@@ -17,10 +25,14 @@ const TestComponent = () => {
 
 describe('AuthContext', () => {
   it('should provide initial auth state', () => {
+    const queryClient = new QueryClient();
+
     render(
-      <AuthProvider>
-        <TestComponent />
-      </AuthProvider>
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider>
+          <TestComponent />
+        </AuthProvider>
+      </QueryClientProvider>
     );
 
     expect(screen.getByTestId('auth-status')).toHaveTextContent('not-authenticated');

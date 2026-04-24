@@ -1,26 +1,24 @@
 use axum::{
     Json,
     extract::{Path, State},
+    http::HeaderMap,
 };
 use uuid::Uuid;
 
 use crate::core::app_state::AppState;
 use crate::core::auth::AuthUser;
-use crate::core::error::{AppError, AppResult};
+use crate::core::error::AppResult;
 use crate::models::company_location::{
     CompanyLocation, CreateLocationRequest, SetGeofenceModeRequest, UpdateLocationRequest,
 };
-use crate::services::geofence_service;
+use crate::services::{audit_service::AuditRequestMeta, geofence_service};
 
 /// GET /geofence/locations
 pub async fn list_locations(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> AppResult<Json<Vec<CompanyLocation>>> {
-    let company_id = auth
-        .0
-        .company_id
-        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
+    let company_id = auth.company_id()?;
 
     let locs = geofence_service::list_locations(&state.pool, company_id).await?;
     Ok(Json(locs))
@@ -30,18 +28,21 @@ pub async fn list_locations(
 pub async fn create_location(
     State(state): State<AppState>,
     auth: AuthUser,
+    headers: HeaderMap,
     Json(req): Json<CreateLocationRequest>,
 ) -> AppResult<Json<CompanyLocation>> {
-    let company_id = auth
-        .0
-        .company_id
-        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
+    let company_id = auth.company_id()?;
+    auth.require_hr_admin()?;
+    let audit_meta = AuditRequestMeta::from_headers(&headers);
 
-    if !matches!(auth.0.role.as_str(), "admin" | "super_admin" | "hr_manager") {
-        return Err(AppError::Forbidden("Admin role required".into()));
-    }
-
-    let loc = geofence_service::create_location(&state.pool, company_id, &req).await?;
+    let loc = geofence_service::create_location(
+        &state.pool,
+        company_id,
+        &req,
+        auth.0.sub,
+        Some(&audit_meta),
+    )
+    .await?;
     Ok(Json(loc))
 }
 
@@ -49,19 +50,23 @@ pub async fn create_location(
 pub async fn update_location(
     State(state): State<AppState>,
     auth: AuthUser,
+    headers: HeaderMap,
     Path(id): Path<Uuid>,
     Json(req): Json<UpdateLocationRequest>,
 ) -> AppResult<Json<CompanyLocation>> {
-    let company_id = auth
-        .0
-        .company_id
-        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
+    let company_id = auth.company_id()?;
+    auth.require_hr_admin()?;
+    let audit_meta = AuditRequestMeta::from_headers(&headers);
 
-    if !matches!(auth.0.role.as_str(), "admin" | "super_admin" | "hr_manager") {
-        return Err(AppError::Forbidden("Admin role required".into()));
-    }
-
-    let loc = geofence_service::update_location(&state.pool, company_id, id, &req).await?;
+    let loc = geofence_service::update_location(
+        &state.pool,
+        company_id,
+        id,
+        &req,
+        auth.0.sub,
+        Some(&audit_meta),
+    )
+    .await?;
     Ok(Json(loc))
 }
 
@@ -69,18 +74,15 @@ pub async fn update_location(
 pub async fn delete_location(
     State(state): State<AppState>,
     auth: AuthUser,
+    headers: HeaderMap,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<serde_json::Value>> {
-    let company_id = auth
-        .0
-        .company_id
-        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
+    let company_id = auth.company_id()?;
+    auth.require_hr_admin()?;
+    let audit_meta = AuditRequestMeta::from_headers(&headers);
 
-    if !matches!(auth.0.role.as_str(), "admin" | "super_admin" | "hr_manager") {
-        return Err(AppError::Forbidden("Admin role required".into()));
-    }
-
-    geofence_service::delete_location(&state.pool, company_id, id).await?;
+    geofence_service::delete_location(&state.pool, company_id, id, auth.0.sub, Some(&audit_meta))
+        .await?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -89,10 +91,7 @@ pub async fn get_mode(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> AppResult<Json<serde_json::Value>> {
-    let company_id = auth
-        .0
-        .company_id
-        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
+    let company_id = auth.company_id()?;
 
     let mode = geofence_service::get_geofence_mode(&state.pool, company_id).await?;
     Ok(Json(serde_json::json!({ "mode": mode })))
@@ -102,17 +101,20 @@ pub async fn get_mode(
 pub async fn set_mode(
     State(state): State<AppState>,
     auth: AuthUser,
+    headers: HeaderMap,
     Json(req): Json<SetGeofenceModeRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
-    let company_id = auth
-        .0
-        .company_id
-        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
+    let company_id = auth.company_id()?;
+    auth.require_hr_admin()?;
+    let audit_meta = AuditRequestMeta::from_headers(&headers);
 
-    if !matches!(auth.0.role.as_str(), "admin" | "super_admin" | "hr_manager") {
-        return Err(AppError::Forbidden("Admin role required".into()));
-    }
-
-    geofence_service::set_geofence_mode(&state.pool, company_id, &req.mode).await?;
+    geofence_service::set_geofence_mode(
+        &state.pool,
+        company_id,
+        &req.mode,
+        auth.0.sub,
+        Some(&audit_meta),
+    )
+    .await?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }

@@ -1,7 +1,23 @@
 import type { User } from '@/types';
 
-type AppRole = User['role'] | undefined | null;
+export type AppRole = User['role'];
+type MaybeAppRole = AppRole | undefined | null;
 
-export function canAccessPayrollData(role: AppRole): boolean {
+export const ALL_ROLES: AppRole[] = [
+  'super_admin',
+  'admin',
+  'payroll_admin',
+  'hr_manager',
+  'finance',
+  'exec',
+  'employee',
+];
+
+export const PAYROLL_DATA_ROLES: AppRole[] = ['super_admin', 'payroll_admin'];
+export const REPORT_ROLES: AppRole[] = ALL_ROLES.filter((role) => role !== 'exec');
+export const SUPER_ADMIN_ROLES: AppRole[] = ['super_admin'];
+export const ADMIN_DATA_ROLES: AppRole[] = ['super_admin', 'admin'];
+
+export function canAccessPayrollData(role: MaybeAppRole): boolean {
   return role === 'super_admin' || role === 'payroll_admin';
 }

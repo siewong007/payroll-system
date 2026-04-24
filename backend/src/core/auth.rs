@@ -90,9 +90,37 @@ where
 }
 
 impl AuthUser {
+    fn has_any_role(&self, roles: &[&str]) -> bool {
+        roles.contains(&self.0.role.as_str())
+    }
+
+    /// Returns the active company ID or rejects users without company context.
+    pub fn company_id(&self) -> AppResult<Uuid> {
+        self.0
+            .company_id
+            .ok_or_else(|| AppError::Forbidden("No company assigned".into()))
+    }
+
+    /// Returns the linked employee ID or rejects users without an employee profile.
+    pub fn employee_id(&self) -> AppResult<Uuid> {
+        self.0
+            .employee_id
+            .ok_or_else(|| AppError::Forbidden("No employee profile linked".into()))
+    }
+
     /// Returns true if the user's role is 'exec'.
     pub fn is_exec(&self) -> bool {
         self.0.role == "exec"
+    }
+
+    /// Returns true for company-scoped admin roles that can manage HR setup.
+    pub fn is_hr_admin(&self) -> bool {
+        self.has_any_role(&["super_admin", "admin", "hr_manager"])
+    }
+
+    /// Returns true for company admins that can change company-level settings.
+    pub fn is_company_admin(&self) -> bool {
+        self.has_any_role(&["super_admin", "admin"])
     }
 
     /// Returns true if the role can access payroll and statutory data.
@@ -110,11 +138,69 @@ impl AuthUser {
         Ok(())
     }
 
+    /// Rejects the request unless the role is super_admin.
+    pub fn require_super_admin(&self) -> AppResult<()> {
+        if self.0.role != "super_admin" {
+            return Err(AppError::Forbidden("Super admin only".into()));
+        }
+        Ok(())
+    }
+
+    /// Rejects the request unless the role can manage company-level settings.
+    pub fn require_company_admin(&self) -> AppResult<()> {
+        if !self.is_company_admin() {
+            return Err(AppError::Forbidden("Admin role required".into()));
+        }
+        Ok(())
+    }
+
+    /// Rejects the request unless the role can manage HR operations.
+    pub fn require_hr_admin(&self) -> AppResult<()> {
+        if !self.is_hr_admin() {
+            return Err(AppError::Forbidden("Admin role required".into()));
+        }
+        Ok(())
+    }
+
     /// Rejects the request unless the role is allowed to access payroll data.
     pub fn require_payroll_privileged(&self) -> AppResult<()> {
         if !self.is_payroll_privileged() {
             return Err(AppError::Forbidden(
                 "Payroll access not available for this role".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Rejects employee self-service users from admin attendance views.
+    pub fn require_non_employee(&self) -> AppResult<()> {
+        if self.0.role == "employee" {
+            return Err(AppError::Forbidden("Not authorized".into()));
+        }
+        Ok(())
+    }
+
+    /// Rejects users that cannot generate attendance QR codes.
+    pub fn require_attendance_qr_generator(&self) -> AppResult<()> {
+        if !self.has_any_role(&[
+            "admin",
+            "super_admin",
+            "hr_manager",
+            "payroll_admin",
+            "exec",
+        ]) {
+            return Err(AppError::Forbidden(
+                "Authorized role required to generate QR code".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Rejects users that cannot manage kiosk credentials.
+    pub fn require_kiosk_admin(&self) -> AppResult<()> {
+        if !self.has_any_role(&["admin", "super_admin", "hr_manager", "payroll_admin"]) {
+            return Err(AppError::Forbidden(
+                "Authorized role required to manage kiosk credentials".into(),
             ));
         }
         Ok(())

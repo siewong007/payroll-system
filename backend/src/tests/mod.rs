@@ -1,6 +1,8 @@
 mod approval_flow_tests;
 mod attendance_tests;
+mod audit_tests;
 mod extractor_tests;
 mod payroll_tests;
+mod route_auth_tests;
 mod statutory_tests;
 mod support;

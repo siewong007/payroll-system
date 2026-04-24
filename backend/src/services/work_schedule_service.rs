@@ -6,6 +6,7 @@ use crate::core::error::{AppError, AppResult};
 use crate::models::work_schedule::{
     CreateWorkScheduleRequest, UpdateWorkScheduleRequest, WorkSchedule,
 };
+use crate::services::audit_service::{self, AuditRequestMeta};
 
 fn parse_time(s: &str) -> AppResult<NaiveTime> {
     NaiveTime::parse_from_str(s, "%H:%M")
@@ -43,6 +44,8 @@ pub async fn upsert_default_schedule(
     pool: &PgPool,
     company_id: Uuid,
     req: &CreateWorkScheduleRequest,
+    actor_id: Uuid,
+    audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<WorkSchedule> {
     let start = parse_time(&req.start_time)?;
     let end = parse_time(&req.end_time)?;
@@ -56,6 +59,8 @@ pub async fn upsert_default_schedule(
             "Grace minutes must be between 0 and 120".into(),
         ));
     }
+
+    let existing = get_default_schedule(pool, company_id).await?;
 
     let schedule = sqlx::query_as::<_, WorkSchedule>(
         r#"INSERT INTO company_work_schedules
@@ -82,6 +87,30 @@ pub async fn upsert_default_schedule(
     .fetch_one(pool)
     .await?;
 
+    let action = if existing.is_some() {
+        "update"
+    } else {
+        "create"
+    };
+    let description = if existing.is_some() {
+        "Default work schedule updated"
+    } else {
+        "Default work schedule created"
+    };
+
+    let _ = audit_service::log_action_with_metadata(
+        pool,
+        Some(actor_id),
+        action,
+        "work_schedule",
+        Some(schedule.id),
+        existing.and_then(|value| serde_json::to_value(value).ok()),
+        Some(serde_json::to_value(&schedule).unwrap_or_default()),
+        Some(description),
+        audit_meta,
+    )
+    .await;
+
     Ok(schedule)
 }
 
@@ -91,6 +120,8 @@ pub async fn update_schedule(
     company_id: Uuid,
     schedule_id: Uuid,
     req: &UpdateWorkScheduleRequest,
+    actor_id: Uuid,
+    audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<WorkSchedule> {
     // Verify it belongs to this company
     let existing = sqlx::query_as::<_, WorkSchedule>(
@@ -142,6 +173,19 @@ pub async fn update_schedule(
     .bind(tz)
     .fetch_one(pool)
     .await?;
+
+    let _ = audit_service::log_action_with_metadata(
+        pool,
+        Some(actor_id),
+        "update",
+        "work_schedule",
+        Some(schedule.id),
+        Some(serde_json::to_value(&existing).unwrap_or_default()),
+        Some(serde_json::to_value(&schedule).unwrap_or_default()),
+        Some("Work schedule updated"),
+        audit_meta,
+    )
+    .await;
 
     Ok(schedule)
 }

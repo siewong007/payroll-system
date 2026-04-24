@@ -18,7 +18,7 @@ use crate::models::attendance::{
     SetCompanyAttendanceMethodRequest, UpdateAttendanceRecordRequest,
 };
 use crate::models::attendance_kiosk::KioskCredential;
-use crate::services::attendance_service;
+use crate::services::{attendance_service, audit_service::AuditRequestMeta};
 
 // ─── Effective Method ───
 
@@ -27,10 +27,7 @@ pub async fn get_attendance_method(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> AppResult<Json<AttendanceMethodResponse>> {
-    let company_id = auth
-        .0
-        .company_id
-        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
+    let company_id = auth.company_id()?;
 
     let resp = attendance_service::get_effective_method(&state.pool, company_id).await?;
     Ok(Json(resp))
@@ -42,9 +39,7 @@ pub async fn get_platform_method(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> AppResult<Json<serde_json::Value>> {
-    if auth.0.role != "super_admin" {
-        return Err(AppError::Forbidden("Super admin only".into()));
-    }
+    auth.require_super_admin()?;
 
     let method = attendance_service::get_platform_attendance_method(&state.pool).await?;
     let allow_override = attendance_service::get_platform_allow_override(&state.pool).await?;
@@ -58,17 +53,18 @@ pub async fn get_platform_method(
 pub async fn set_platform_method(
     State(state): State<AppState>,
     auth: AuthUser,
+    headers: HeaderMap,
     Json(req): Json<SetAttendanceMethodRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
-    if auth.0.role != "super_admin" {
-        return Err(AppError::Forbidden("Super admin only".into()));
-    }
+    auth.require_super_admin()?;
+    let audit_meta = AuditRequestMeta::from_headers(&headers);
 
     attendance_service::set_platform_attendance_method(
         &state.pool,
         &req.method,
         req.allow_company_override.unwrap_or(false),
         auth.0.sub,
+        Some(&audit_meta),
     )
     .await?;
 
@@ -80,22 +76,19 @@ pub async fn set_platform_method(
 pub async fn set_company_method(
     State(state): State<AppState>,
     auth: AuthUser,
+    headers: HeaderMap,
     Json(req): Json<SetCompanyAttendanceMethodRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
-    let company_id = auth
-        .0
-        .company_id
-        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
-
-    // Only admins can set company-level override
-    if !matches!(auth.0.role.as_str(), "admin" | "super_admin") {
-        return Err(AppError::Forbidden("Admin role required".into()));
-    }
+    let company_id = auth.company_id()?;
+    auth.require_company_admin()?;
+    let audit_meta = AuditRequestMeta::from_headers(&headers);
 
     attendance_service::set_company_attendance_method(
         &state.pool,
         company_id,
         req.method.as_deref(),
+        auth.0.sub,
+        Some(&audit_meta),
     )
     .await?;
 
@@ -108,19 +101,8 @@ pub async fn generate_qr_token(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> AppResult<Json<QrTokenResponse>> {
-    let company_id = auth
-        .0
-        .company_id
-        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
-
-    if !matches!(
-        auth.0.role.as_str(),
-        "admin" | "super_admin" | "hr_manager" | "payroll_admin" | "exec"
-    ) {
-        return Err(AppError::Forbidden(
-            "Authorized role required to generate QR code".into(),
-        ));
-    }
+    let company_id = auth.company_id()?;
+    auth.require_attendance_qr_generator()?;
 
     // Also works for super_admin when managing a company
     let resp =
@@ -136,14 +118,8 @@ pub async fn check_in_qr(
     auth: AuthUser,
     Json(req): Json<CheckInQrRequest>,
 ) -> AppResult<Json<AttendanceRecord>> {
-    let employee_id = auth
-        .0
-        .employee_id
-        .ok_or_else(|| AppError::Forbidden("No employee profile linked".into()))?;
-    let company_id = auth
-        .0
-        .company_id
-        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
+    let employee_id = auth.employee_id()?;
+    let company_id = auth.company_id()?;
 
     // Verify method is QR
     let effective = attendance_service::get_effective_method(&state.pool, company_id).await?;
@@ -173,14 +149,8 @@ pub async fn check_in_face_id(
     auth: AuthUser,
     Json(req): Json<CheckInFaceIdRequest>,
 ) -> AppResult<Json<AttendanceRecord>> {
-    let employee_id = auth
-        .0
-        .employee_id
-        .ok_or_else(|| AppError::Forbidden("No employee profile linked".into()))?;
-    let company_id = auth
-        .0
-        .company_id
-        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
+    let employee_id = auth.employee_id()?;
+    let company_id = auth.company_id()?;
 
     // Verify method is face_id
     let effective = attendance_service::get_effective_method(&state.pool, company_id).await?;
@@ -219,14 +189,8 @@ pub async fn check_out(
     auth: AuthUser,
     Json(req): Json<CheckOutRequest>,
 ) -> AppResult<Json<AttendanceRecord>> {
-    let employee_id = auth
-        .0
-        .employee_id
-        .ok_or_else(|| AppError::Forbidden("No employee profile linked".into()))?;
-    let company_id = auth
-        .0
-        .company_id
-        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
+    let employee_id = auth.employee_id()?;
+    let company_id = auth.company_id()?;
 
     let record = attendance_service::check_out(
         &state.pool,
@@ -245,14 +209,8 @@ pub async fn my_today(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> AppResult<Json<serde_json::Value>> {
-    let employee_id = auth
-        .0
-        .employee_id
-        .ok_or_else(|| AppError::Forbidden("No employee profile linked".into()))?;
-    let company_id = auth
-        .0
-        .company_id
-        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
+    let employee_id = auth.employee_id()?;
+    let company_id = auth.company_id()?;
 
     let record =
         attendance_service::get_today_checkin(&state.pool, employee_id, company_id).await?;
@@ -267,10 +225,7 @@ pub async fn my_attendance(
     auth: AuthUser,
     Query(q): Query<AttendanceListQuery>,
 ) -> AppResult<Json<PaginatedAttendance<AttendanceRecord>>> {
-    let employee_id = auth
-        .0
-        .employee_id
-        .ok_or_else(|| AppError::Forbidden("No employee profile linked".into()))?;
+    let employee_id = auth.employee_id()?;
 
     let result = attendance_service::get_my_attendance(&state.pool, employee_id, &q).await?;
     Ok(Json(result))
@@ -283,15 +238,8 @@ pub async fn list_attendance(
     auth: AuthUser,
     Query(q): Query<AttendanceListQuery>,
 ) -> AppResult<Json<PaginatedAttendance<AttendanceRecordWithEmployee>>> {
-    let company_id = auth
-        .0
-        .company_id
-        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
-
-    // Employees cannot access the admin list
-    if auth.0.role == "employee" {
-        return Err(AppError::Forbidden("Not authorized".into()));
-    }
+    let company_id = auth.company_id()?;
+    auth.require_non_employee()?;
 
     let result = attendance_service::list_attendance(&state.pool, company_id, &q).await?;
     Ok(Json(result))
@@ -302,19 +250,21 @@ pub async fn list_attendance(
 pub async fn manual_attendance(
     State(state): State<AppState>,
     auth: AuthUser,
+    headers: HeaderMap,
     Json(req): Json<ManualAttendanceRequest>,
 ) -> AppResult<Json<AttendanceRecord>> {
-    let company_id = auth
-        .0
-        .company_id
-        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
+    let company_id = auth.company_id()?;
+    auth.require_hr_admin()?;
+    let audit_meta = AuditRequestMeta::from_headers(&headers);
 
-    if !matches!(auth.0.role.as_str(), "admin" | "super_admin" | "hr_manager") {
-        return Err(AppError::Forbidden("Admin role required".into()));
-    }
-
-    let record =
-        attendance_service::manual_attendance(&state.pool, company_id, req, auth.0.sub).await?;
+    let record = attendance_service::manual_attendance(
+        &state.pool,
+        company_id,
+        req,
+        auth.0.sub,
+        Some(&audit_meta),
+    )
+    .await?;
     Ok(Json(record))
 }
 
@@ -325,14 +275,8 @@ pub async fn attendance_summary(
     auth: AuthUser,
     Query(q): Query<AttendanceSummaryQuery>,
 ) -> AppResult<Json<Vec<AttendanceSummaryItem>>> {
-    let company_id = auth
-        .0
-        .company_id
-        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
-
-    if auth.0.role == "employee" {
-        return Err(AppError::Forbidden("Not authorized".into()));
-    }
+    let company_id = auth.company_id()?;
+    auth.require_non_employee()?;
 
     let items = attendance_service::get_attendance_summary(&state.pool, company_id, &q).await?;
     Ok(Json(items))
@@ -345,14 +289,8 @@ pub async fn export_attendance(
     auth: AuthUser,
     Query(q): Query<AttendanceExportQuery>,
 ) -> AppResult<Response<Body>> {
-    let company_id = auth
-        .0
-        .company_id
-        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
-
-    if auth.0.role == "employee" {
-        return Err(AppError::Forbidden("Not authorized".into()));
-    }
+    let company_id = auth.company_id()?;
+    auth.require_non_employee()?;
 
     let csv = attendance_service::export_attendance_csv(&state.pool, company_id, &q).await?;
 
@@ -377,14 +315,8 @@ pub async fn update_attendance(
     Path(id): Path<Uuid>,
     Json(req): Json<UpdateAttendanceRecordRequest>,
 ) -> AppResult<Json<AttendanceRecord>> {
-    let company_id = auth
-        .0
-        .company_id
-        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
-
-    if !matches!(auth.0.role.as_str(), "admin" | "super_admin" | "hr_manager") {
-        return Err(AppError::Forbidden("Admin role required".into()));
-    }
+    let company_id = auth.company_id()?;
+    auth.require_hr_admin()?;
 
     let record =
         attendance_service::update_attendance_record(&state.pool, company_id, id, &req, auth.0.sub)
@@ -408,35 +340,22 @@ pub struct CreateKioskCredentialResponse {
     pub public_url: String,
 }
 
-fn require_kiosk_admin(role: &str) -> AppResult<()> {
-    if matches!(
-        role,
-        "admin" | "super_admin" | "hr_manager" | "payroll_admin"
-    ) {
-        Ok(())
-    } else {
-        Err(AppError::Forbidden(
-            "Authorized role required to manage kiosk credentials".into(),
-        ))
-    }
-}
-
 pub async fn create_kiosk_credential(
     State(state): State<AppState>,
     auth: AuthUser,
+    headers: HeaderMap,
     Json(req): Json<CreateKioskCredentialRequest>,
 ) -> AppResult<Json<CreateKioskCredentialResponse>> {
-    let company_id = auth
-        .0
-        .company_id
-        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
-    require_kiosk_admin(&auth.0.role)?;
+    let company_id = auth.company_id()?;
+    auth.require_kiosk_admin()?;
+    let audit_meta = AuditRequestMeta::from_headers(&headers);
 
     let (credential, secret) = attendance_service::create_kiosk_credential(
         &state.pool,
         company_id,
         &req.label,
         auth.0.sub,
+        Some(&audit_meta),
     )
     .await?;
 
@@ -457,11 +376,8 @@ pub async fn list_kiosk_credentials(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> AppResult<Json<Vec<KioskCredential>>> {
-    let company_id = auth
-        .0
-        .company_id
-        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
-    require_kiosk_admin(&auth.0.role)?;
+    let company_id = auth.company_id()?;
+    auth.require_kiosk_admin()?;
 
     let creds = attendance_service::list_kiosk_credentials(&state.pool, company_id).await?;
     Ok(Json(creds))
@@ -470,15 +386,21 @@ pub async fn list_kiosk_credentials(
 pub async fn revoke_kiosk_credential(
     State(state): State<AppState>,
     auth: AuthUser,
+    headers: HeaderMap,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<serde_json::Value>> {
-    let company_id = auth
-        .0
-        .company_id
-        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
-    require_kiosk_admin(&auth.0.role)?;
+    let company_id = auth.company_id()?;
+    auth.require_kiosk_admin()?;
+    let audit_meta = AuditRequestMeta::from_headers(&headers);
 
-    attendance_service::revoke_kiosk_credential(&state.pool, id, company_id).await?;
+    attendance_service::revoke_kiosk_credential(
+        &state.pool,
+        id,
+        company_id,
+        auth.0.sub,
+        Some(&audit_meta),
+    )
+    .await?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 

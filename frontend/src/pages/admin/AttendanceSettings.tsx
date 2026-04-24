@@ -36,7 +36,6 @@ export function AttendanceSettings() {
 
   useEffect(() => {
     if (data && !initialized) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setMethod(data.method as 'qr_code' | 'face_id');
       setAllowOverride(data.allow_company_override);
       setInitialized(true);

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { Modal } from './Modal';
 
@@ -89,11 +89,11 @@ export function DataTable<T>({
 
   const colCount = columns.length + (renderActions ? 1 : 0) + (selectable ? 1 : 0);
 
-  const getKey = (row: T, index: number) => {
+  const getKey = useCallback((row: T, index: number) => {
     if (rowKey) return rowKey(row, index);
     if ((row as Record<string, unknown>).id) return String((row as Record<string, unknown>).id);
     return String(index);
-  };
+  }, [rowKey]);
 
   const handleRowClick = (row: T) => {
     if (!disableRowClick) setSelectedRow(row);
@@ -155,7 +155,7 @@ export function DataTable<T>({
     if (nextSelectedRow !== selectedRow) {
       setSelectedRow(nextSelectedRow);
     }
-  }, [data, selectedRow]);
+  }, [data, getKey, selectedRow]);
 
   const modalTitle = typeof summaryTitle === 'function' && selectedRow
     ? summaryTitle(selectedRow)

@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, Eye, Trash2 } from 'lucide-react';
 import { deletePayrollRun, getPayrollRuns } from '@/api/payroll';
-import { formatMYR } from '@/lib/utils';
+import { formatMYR, getErrorMessage } from '@/lib/utils';
 import { DataTable, type Column } from '@/components/ui/DataTable';
 import type { PayrollRun } from '@/types';
 
@@ -74,8 +74,8 @@ export function PayrollList() {
   const deleteMutation = useMutation({
     mutationFn: deletePayrollRun,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['payrollRuns'] }),
-    onError: (error: any) => {
-      alert(error?.response?.data?.message || error?.message || 'Failed to delete payroll run');
+    onError: (error: unknown) => {
+      alert(getErrorMessage(error, 'Failed to delete payroll run'));
     },
   });
 

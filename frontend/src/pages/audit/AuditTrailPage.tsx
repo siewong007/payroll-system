@@ -4,13 +4,43 @@ import { ScrollText, Search, X, ChevronLeft, ChevronRight } from 'lucide-react';
 import { getAuditLogs } from '@/api/audit';
 import type { AuditLog } from '@/types';
 
-const ENTITY_TYPES = [
-  'employee', 'payroll_run', 'payroll_item', 'leave_request', 'claim',
-  'overtime', 'company', 'user', 'team', 'document', 'holiday', 'setting',
-  'leave_type', 'leave_balance', 'email',
+const ENTITY_TYPES: { value: string; label: string }[] = [
+  { value: 'employee', label: 'Employee' },
+  { value: 'payroll_run', label: 'Payroll run' },
+  { value: 'payroll_item', label: 'Payroll item' },
+  { value: 'attendance_record', label: 'Attendance record' },
+  { value: 'platform_attendance_method', label: 'Platform attendance method' },
+  { value: 'company_attendance_method', label: 'Company attendance method' },
+  { value: 'attendance_kiosk_credential', label: 'Kiosk credential' },
+  { value: 'company_location', label: 'Geofence location' },
+  { value: 'geofence_mode', label: 'Geofence mode' },
+  { value: 'work_schedule', label: 'Work schedule' },
+  { value: 'leave_request', label: 'Leave request' },
+  { value: 'claim', label: 'Claim' },
+  { value: 'overtime', label: 'Overtime' },
+  { value: 'company', label: 'Company' },
+  { value: 'user', label: 'User' },
+  { value: 'team', label: 'Team' },
+  { value: 'document', label: 'Document' },
+  { value: 'holiday', label: 'Holiday' },
+  { value: 'setting', label: 'Setting' },
+  { value: 'leave_type', label: 'Leave type' },
+  { value: 'leave_balance', label: 'Leave balance' },
+  { value: 'email', label: 'Email' },
 ];
 
-const ACTIONS = ['create', 'update', 'delete', 'approve', 'reject', 'cancel', 'login', 'process'];
+const ACTIONS = ['create', 'update', 'delete', 'revoke', 'approve', 'reject', 'cancel', 'login', 'process'];
+
+const ENTITY_LABELS = Object.fromEntries(ENTITY_TYPES.map((type) => [type.value, type.label]));
+
+const formatEntityType = (entityType: string) =>
+  ENTITY_LABELS[entityType] ?? entityType.replace(/_/g, ' ');
+
+const formatTimestamp = (value: string) =>
+  new Date(value).toLocaleString('en-MY', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  });
 
 export function AuditTrailPage() {
   const [entityType, setEntityType] = useState('');
@@ -71,8 +101,8 @@ export function AuditTrailPage() {
               className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-black/5"
             >
               <option value="">All types</option>
-              {ENTITY_TYPES.map(t => (
-                <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>
+              {ENTITY_TYPES.map((type) => (
+                <option key={type.value} value={type.value}>{type.label}</option>
               ))}
             </select>
           </div>
@@ -149,7 +179,7 @@ export function AuditTrailPage() {
                     className="border-b border-gray-50 hover:bg-gray-50/50 cursor-pointer transition-colors"
                   >
                     <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
-                      {new Date(log.created_at).toLocaleString()}
+                      {formatTimestamp(log.created_at)}
                     </td>
                     <td className="px-4 py-3">
                       <div className="text-gray-900">{log.user_full_name || '-'}</div>
@@ -157,14 +187,19 @@ export function AuditTrailPage() {
                     </td>
                     <td className="px-4 py-3">
                       <span className="inline-flex px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-700 rounded-full">
-                        {log.entity_type.replace(/_/g, ' ')}
+                        {formatEntityType(log.entity_type)}
                       </span>
                     </td>
                     <td className="px-4 py-3">
                       <ActionBadge action={log.action} />
                     </td>
-                    <td className="px-4 py-3 text-gray-500 text-xs max-w-[200px] truncate">
-                      {log.entity_id ? `ID: ${log.entity_id.slice(0, 8)}...` : '-'}
+                    <td className="px-4 py-3 text-gray-500 text-xs max-w-[260px]">
+                      <div className="truncate">{log.description || '-'}</div>
+                      {log.entity_id && (
+                        <div className="mt-0.5 font-mono text-[11px] text-gray-400">
+                          {log.entity_id.slice(0, 8)}...
+                        </div>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -212,6 +247,7 @@ function ActionBadge({ action }: { action: string }) {
     create: 'bg-green-50 text-green-700',
     update: 'bg-blue-50 text-blue-700',
     delete: 'bg-red-50 text-red-700',
+    revoke: 'bg-red-50 text-red-700',
     approve: 'bg-emerald-50 text-emerald-700',
     reject: 'bg-orange-50 text-orange-700',
     cancel: 'bg-yellow-50 text-yellow-700',
@@ -236,7 +272,7 @@ function AuditDetailModal({ log, onClose }: { log: AuditLog; onClose: () => void
         <div className="flex items-center justify-between p-5 border-b border-gray-100">
           <div>
             <h2 className="text-lg font-semibold text-gray-900">Audit Log Detail</h2>
-            <p className="text-sm text-gray-500">{new Date(log.created_at).toLocaleString()}</p>
+            <p className="text-sm text-gray-500">{formatTimestamp(log.created_at)}</p>
           </div>
           <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-lg">
             <X className="w-5 h-5 text-gray-400" />
@@ -256,7 +292,7 @@ function AuditDetailModal({ log, onClose }: { log: AuditLog; onClose: () => void
             </div>
             <div>
               <p className="text-gray-500">Entity Type</p>
-              <p className="font-medium">{log.entity_type.replace(/_/g, ' ')}</p>
+              <p className="font-medium">{formatEntityType(log.entity_type)}</p>
             </div>
             <div>
               <p className="text-gray-500">Action</p>
@@ -265,6 +301,14 @@ function AuditDetailModal({ log, onClose }: { log: AuditLog; onClose: () => void
             <div className="col-span-2">
               <p className="text-gray-500">Entity ID</p>
               <p className="font-mono text-xs">{log.entity_id || '-'}</p>
+            </div>
+            <div className="col-span-2">
+              <p className="text-gray-500">Description</p>
+              <p className="font-medium">{log.description || '-'}</p>
+            </div>
+            <div className="col-span-2">
+              <p className="text-gray-500">User Agent</p>
+              <p className="text-xs text-gray-600 break-all">{log.user_agent || '-'}</p>
             </div>
           </div>
 

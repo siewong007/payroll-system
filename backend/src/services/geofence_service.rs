@@ -5,6 +5,7 @@ use crate::core::error::{AppError, AppResult};
 use crate::models::company_location::{
     CompanyLocation, CreateLocationRequest, GeofenceCheckResult, UpdateLocationRequest,
 };
+use crate::services::audit_service::{self, AuditRequestMeta};
 
 /// Haversine distance in meters between two lat/lng points
 fn haversine_meters(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
@@ -33,6 +34,8 @@ pub async fn create_location(
     pool: &PgPool,
     company_id: Uuid,
     req: &CreateLocationRequest,
+    actor_id: Uuid,
+    audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<CompanyLocation> {
     let radius = req.radius_meters.unwrap_or(200);
     if !(10..=10_000).contains(&radius) {
@@ -53,6 +56,20 @@ pub async fn create_location(
     .bind(radius)
     .fetch_one(pool)
     .await?;
+
+    let _ = audit_service::log_action_with_metadata(
+        pool,
+        Some(actor_id),
+        "create",
+        "company_location",
+        Some(loc.id),
+        None,
+        Some(serde_json::to_value(&loc).unwrap_or_default()),
+        Some("Geofence location created"),
+        audit_meta,
+    )
+    .await;
+
     Ok(loc)
 }
 
@@ -61,6 +78,8 @@ pub async fn update_location(
     company_id: Uuid,
     location_id: Uuid,
     req: &UpdateLocationRequest,
+    actor_id: Uuid,
+    audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<CompanyLocation> {
     let existing = sqlx::query_as::<_, CompanyLocation>(
         "SELECT * FROM company_locations WHERE id = $1 AND company_id = $2",
@@ -99,10 +118,39 @@ pub async fn update_location(
     .bind(active)
     .fetch_one(pool)
     .await?;
+
+    let _ = audit_service::log_action_with_metadata(
+        pool,
+        Some(actor_id),
+        "update",
+        "company_location",
+        Some(loc.id),
+        Some(serde_json::to_value(&existing).unwrap_or_default()),
+        Some(serde_json::to_value(&loc).unwrap_or_default()),
+        Some("Geofence location updated"),
+        audit_meta,
+    )
+    .await;
+
     Ok(loc)
 }
 
-pub async fn delete_location(pool: &PgPool, company_id: Uuid, location_id: Uuid) -> AppResult<()> {
+pub async fn delete_location(
+    pool: &PgPool,
+    company_id: Uuid,
+    location_id: Uuid,
+    actor_id: Uuid,
+    audit_meta: Option<&AuditRequestMeta>,
+) -> AppResult<()> {
+    let existing = sqlx::query_as::<_, CompanyLocation>(
+        "SELECT * FROM company_locations WHERE id = $1 AND company_id = $2",
+    )
+    .bind(location_id)
+    .bind(company_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound("Location not found".into()))?;
+
     let result = sqlx::query("DELETE FROM company_locations WHERE id = $1 AND company_id = $2")
         .bind(location_id)
         .bind(company_id)
@@ -112,6 +160,20 @@ pub async fn delete_location(pool: &PgPool, company_id: Uuid, location_id: Uuid)
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound("Location not found".into()));
     }
+
+    let _ = audit_service::log_action_with_metadata(
+        pool,
+        Some(actor_id),
+        "delete",
+        "company_location",
+        Some(location_id),
+        Some(serde_json::to_value(&existing).unwrap_or_default()),
+        None,
+        Some("Geofence location deleted"),
+        audit_meta,
+    )
+    .await;
+
     Ok(())
 }
 
@@ -126,18 +188,40 @@ pub async fn get_geofence_mode(pool: &PgPool, company_id: Uuid) -> AppResult<Str
     Ok(mode.unwrap_or_else(|| "none".to_string()))
 }
 
-pub async fn set_geofence_mode(pool: &PgPool, company_id: Uuid, mode: &str) -> AppResult<()> {
+pub async fn set_geofence_mode(
+    pool: &PgPool,
+    company_id: Uuid,
+    mode: &str,
+    actor_id: Uuid,
+    audit_meta: Option<&AuditRequestMeta>,
+) -> AppResult<()> {
     if !matches!(mode, "none" | "warn" | "enforce") {
         return Err(AppError::BadRequest(
             "Geofence mode must be 'none', 'warn', or 'enforce'".into(),
         ));
     }
 
+    let old_mode = get_geofence_mode(pool, company_id).await?;
+
     sqlx::query("UPDATE companies SET geofence_mode = $1 WHERE id = $2")
         .bind(mode)
         .bind(company_id)
         .execute(pool)
         .await?;
+
+    let _ = audit_service::log_action_with_metadata(
+        pool,
+        Some(actor_id),
+        "update",
+        "geofence_mode",
+        Some(company_id),
+        Some(serde_json::json!({ "mode": old_mode })),
+        Some(serde_json::json!({ "mode": mode })),
+        Some("Geofence mode updated"),
+        audit_meta,
+    )
+    .await;
+
     Ok(())
 }
 

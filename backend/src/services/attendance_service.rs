@@ -12,6 +12,7 @@ use crate::models::attendance::{
     ManualAttendanceRequest, PaginatedAttendance, QrTokenResponse, UpdateAttendanceRecordRequest,
 };
 use crate::models::attendance_kiosk::{self, KioskCredential};
+use crate::services::audit_service::{self, AuditRequestMeta};
 use crate::services::geofence_service;
 
 // ─── QR Token TTL ───
@@ -54,12 +55,16 @@ pub async fn set_platform_attendance_method(
     method: &str,
     allow_override: bool,
     updated_by: Uuid,
+    audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<()> {
     if method != "qr_code" && method != "face_id" {
         return Err(AppError::BadRequest(
             "Method must be 'qr_code' or 'face_id'".into(),
         ));
     }
+
+    let old_method = get_platform_attendance_method(pool).await?;
+    let old_allow_override = get_platform_allow_override(pool).await?;
 
     sqlx::query(
         "INSERT INTO platform_settings (key, value, updated_at, updated_by)
@@ -80,6 +85,25 @@ pub async fn set_platform_attendance_method(
     .bind(updated_by)
     .execute(pool)
     .await?;
+
+    let _ = audit_service::log_action_with_metadata(
+        pool,
+        Some(updated_by),
+        "update",
+        "platform_attendance_method",
+        None,
+        Some(serde_json::json!({
+            "method": old_method,
+            "allow_company_override": old_allow_override,
+        })),
+        Some(serde_json::json!({
+            "method": method,
+            "allow_company_override": allow_override,
+        })),
+        Some("Platform attendance method updated"),
+        audit_meta,
+    )
+    .await;
 
     Ok(())
 }
@@ -121,6 +145,8 @@ pub async fn set_company_attendance_method(
     pool: &PgPool,
     company_id: Uuid,
     method: Option<&str>,
+    updated_by: Uuid,
+    audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<()> {
     // Verify overrides are allowed
     let allow_override = get_platform_allow_override(pool).await?;
@@ -139,11 +165,31 @@ pub async fn set_company_attendance_method(
         ));
     }
 
+    let old_method: Option<String> =
+        sqlx::query_scalar("SELECT attendance_method FROM companies WHERE id = $1")
+            .bind(company_id)
+            .fetch_optional(pool)
+            .await?
+            .flatten();
+
     sqlx::query("UPDATE companies SET attendance_method = $1 WHERE id = $2")
         .bind(method)
         .bind(company_id)
         .execute(pool)
         .await?;
+
+    let _ = audit_service::log_action_with_metadata(
+        pool,
+        Some(updated_by),
+        "update",
+        "company_attendance_method",
+        Some(company_id),
+        Some(serde_json::json!({ "method": old_method })),
+        Some(serde_json::json!({ "method": method })),
+        Some("Company attendance method updated"),
+        audit_meta,
+    )
+    .await;
 
     Ok(())
 }
@@ -236,6 +282,7 @@ pub async fn create_kiosk_credential(
     company_id: Uuid,
     label: &str,
     created_by: Uuid,
+    audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<(KioskCredential, String)> {
     let label = label.trim();
     if label.is_empty() || label.len() > 100 {
@@ -261,6 +308,24 @@ pub async fn create_kiosk_credential(
     )
     .await?;
 
+    let _ = audit_service::log_action_with_metadata(
+        pool,
+        Some(created_by),
+        "create",
+        "attendance_kiosk_credential",
+        Some(cred.id),
+        None,
+        Some(serde_json::json!({
+            "id": cred.id,
+            "company_id": cred.company_id,
+            "label": cred.label,
+            "token_prefix": cred.token_prefix,
+        })),
+        Some("Attendance kiosk credential created"),
+        audit_meta,
+    )
+    .await;
+
     Ok((cred, secret))
 }
 
@@ -271,13 +336,47 @@ pub async fn list_kiosk_credentials(
     attendance_kiosk::list_kiosk_credentials(pool, company_id).await
 }
 
-pub async fn revoke_kiosk_credential(pool: &PgPool, id: Uuid, company_id: Uuid) -> AppResult<()> {
+pub async fn revoke_kiosk_credential(
+    pool: &PgPool,
+    id: Uuid,
+    company_id: Uuid,
+    revoked_by: Uuid,
+    audit_meta: Option<&AuditRequestMeta>,
+) -> AppResult<()> {
+    let existing = attendance_kiosk::list_kiosk_credentials(pool, company_id)
+        .await?
+        .into_iter()
+        .find(|credential| credential.id == id && credential.revoked_at.is_none())
+        .ok_or_else(|| {
+            AppError::NotFound("Kiosk credential not found or already revoked".into())
+        })?;
+
     let revoked = attendance_kiosk::revoke(pool, id, company_id).await?;
     if !revoked {
         return Err(AppError::NotFound(
             "Kiosk credential not found or already revoked".into(),
         ));
     }
+
+    let _ = audit_service::log_action_with_metadata(
+        pool,
+        Some(revoked_by),
+        "revoke",
+        "attendance_kiosk_credential",
+        Some(id),
+        Some(serde_json::json!({
+            "id": existing.id,
+            "company_id": existing.company_id,
+            "label": existing.label,
+            "token_prefix": existing.token_prefix,
+            "revoked_at": existing.revoked_at,
+        })),
+        Some(serde_json::json!({ "revoked": true })),
+        Some("Attendance kiosk credential revoked"),
+        audit_meta,
+    )
+    .await;
+
     Ok(())
 }
 
@@ -782,6 +881,7 @@ pub async fn manual_attendance(
     company_id: Uuid,
     req: ManualAttendanceRequest,
     created_by: Uuid,
+    audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<AttendanceRecord> {
     let status = req.status.as_deref().unwrap_or("present");
     let check_out_at = normalize_absent_check_out(status, req.check_in_at, req.check_out_at);
@@ -801,6 +901,19 @@ pub async fn manual_attendance(
     .bind(created_by)
     .fetch_one(pool)
     .await?;
+
+    let _ = audit_service::log_action_with_metadata(
+        pool,
+        Some(created_by),
+        "create",
+        "attendance_record",
+        Some(record.id),
+        None,
+        Some(serde_json::to_value(&record).unwrap_or_default()),
+        Some("Manual attendance record created"),
+        audit_meta,
+    )
+    .await;
 
     Ok(record)
 }

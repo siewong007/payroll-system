@@ -448,21 +448,25 @@ function employeeToForm(emp: Employee): CreateEmployeeRequest & { salaryDisplay:
 }
 
 function stripPayrollFields(form: CreateEmployeeRequest): Partial<CreateEmployeeRequest> {
-  const {
-    basic_salary: _basicSalary,
-    tax_identification_number: _taxIdentificationNumber,
-    epf_number: _epfNumber,
-    socso_number: _socsoNumber,
-    eis_number: _eisNumber,
-    working_spouse: _workingSpouse,
-    epf_category: _epfCategory,
-    is_muslim: _isMuslim,
-    zakat_eligible: _zakatEligible,
-    zakat_monthly_amount: _zakatMonthlyAmount,
-    ptptn_monthly_amount: _ptptnMonthlyAmount,
-    payroll_group_id: _payrollGroupId,
-    ...safeFields
-  } = form;
+  const safeFields: Partial<CreateEmployeeRequest> = { ...form };
+  const payrollFields: (keyof CreateEmployeeRequest)[] = [
+    'basic_salary',
+    'tax_identification_number',
+    'epf_number',
+    'socso_number',
+    'eis_number',
+    'working_spouse',
+    'epf_category',
+    'is_muslim',
+    'zakat_eligible',
+    'zakat_monthly_amount',
+    'ptptn_monthly_amount',
+    'payroll_group_id',
+  ];
+
+  payrollFields.forEach((field) => {
+    delete safeFields[field];
+  });
 
   return safeFields;
 }

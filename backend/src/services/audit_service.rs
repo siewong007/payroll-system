@@ -1,9 +1,48 @@
+use axum::http::{HeaderMap, header};
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::core::error::AppResult;
+
+#[derive(Debug, Clone, Default)]
+pub struct AuditRequestMeta {
+    pub ip_address: Option<String>,
+    pub user_agent: Option<String>,
+}
+
+impl AuditRequestMeta {
+    pub fn from_headers(headers: &HeaderMap) -> Self {
+        let ip_address = headers
+            .get("x-forwarded-for")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.split(',').next())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+            .or_else(|| {
+                headers
+                    .get("x-real-ip")
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToOwned::to_owned)
+            });
+
+        let user_agent = headers
+            .get(header::USER_AGENT)
+            .and_then(|value| value.to_str().ok())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| value.chars().take(500).collect());
+
+        Self {
+            ip_address,
+            user_agent,
+        }
+    }
+}
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct AuditLogWithUser {
@@ -101,9 +140,39 @@ pub async fn log_action(
     new_values: Option<serde_json::Value>,
     description: Option<&str>,
 ) -> AppResult<()> {
+    log_action_with_metadata(
+        pool,
+        user_id,
+        action,
+        entity_type,
+        entity_id,
+        old_values,
+        new_values,
+        description,
+        None,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn log_action_with_metadata(
+    pool: &PgPool,
+    user_id: Option<Uuid>,
+    action: &str,
+    entity_type: &str,
+    entity_id: Option<Uuid>,
+    old_values: Option<serde_json::Value>,
+    new_values: Option<serde_json::Value>,
+    description: Option<&str>,
+    metadata: Option<&AuditRequestMeta>,
+) -> AppResult<()> {
+    let ip_address = metadata.and_then(|meta| meta.ip_address.as_deref());
+    let user_agent = metadata.and_then(|meta| meta.user_agent.as_deref());
+
     sqlx::query(
-        r#"INSERT INTO audit_logs (user_id, action, entity_type, entity_id, old_values, new_values, description)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)"#,
+        r#"INSERT INTO audit_logs
+        (user_id, action, entity_type, entity_id, old_values, new_values, description, ip_address, user_agent)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"#,
     )
     .bind(user_id)
     .bind(action)
@@ -112,6 +181,8 @@ pub async fn log_action(
     .bind(old_values)
     .bind(new_values)
     .bind(description)
+    .bind(ip_address)
+    .bind(user_agent)
     .execute(pool)
     .await?;
     Ok(())

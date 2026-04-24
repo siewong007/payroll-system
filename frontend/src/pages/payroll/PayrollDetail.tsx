@@ -49,8 +49,8 @@ export function PayrollDetail() {
       queryClient.invalidateQueries({ queryKey: ['payrollRuns'] });
       navigate('/payroll');
     },
-    onError: (error: any) => {
-      alert(error?.response?.data?.message || error?.message || 'Failed to delete payroll run');
+    onError: (error: unknown) => {
+      alert(getErrorMessage(error, 'Failed to delete payroll run'));
     },
   });
 
