@@ -1,6 +1,7 @@
 use axum::{
     Json,
     extract::{Path, Query, State},
+    http::HeaderMap,
 };
 use serde::Deserialize;
 use uuid::Uuid;
@@ -13,11 +14,13 @@ use crate::models::payroll::{
     PayrollItemSummary, PayrollRun, PayrollSummary, ProcessPayrollRequest,
     UpdatePayrollEntryRequest, UpdatePayrollPcbRequest,
 };
+use crate::services::audit_service::AuditRequestMeta;
 use crate::services::payroll_engine;
 
 pub async fn process(
     State(state): State<AppState>,
     auth: AuthUser,
+    headers: HeaderMap,
     Json(req): Json<ProcessPayrollRequest>,
 ) -> AppResult<Json<PayrollRun>> {
     auth.require_payroll_privileged()?;
@@ -25,6 +28,7 @@ pub async fn process(
         .0
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
+    let audit_meta = AuditRequestMeta::from_headers(&headers);
 
     let pay_date = req.pay_date.unwrap_or_else(|| {
         chrono::NaiveDate::from_ymd_opt(req.period_year, req.period_month as u32, 28)
@@ -43,6 +47,7 @@ pub async fn process(
         pay_date,
         auth.0.sub,
         req.notes,
+        Some(&audit_meta),
     )
     .await?;
 

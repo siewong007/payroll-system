@@ -7,6 +7,7 @@ use crate::models::employee::{
     CreateEmployeeRequest, CreateTp3Request, Employee, SalaryHistory, Tp3Record,
     UpdateEmployeeRequest,
 };
+use crate::services::audit_service::AuditRequestMeta;
 
 pub async fn list_employees(
     pool: &PgPool,
@@ -92,6 +93,7 @@ pub async fn create_employee(
     company_id: Uuid,
     req: CreateEmployeeRequest,
     created_by: Uuid,
+    audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<(Employee, Option<EmployeeAccountInfo>)> {
     // Check for duplicate employee number within the same company
     let exists: bool = sqlx::query_scalar(
@@ -210,7 +212,7 @@ pub async fn create_employee(
     .await;
 
     // Audit Log
-    let _ = crate::services::audit_service::log_action(
+    let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
         Some(created_by),
         "create_employee",
@@ -222,6 +224,7 @@ pub async fn create_employee(
             "Created employee {} ({})",
             emp.full_name, emp.employee_number
         )),
+        audit_meta,
     )
     .await;
 
@@ -328,6 +331,7 @@ pub async fn update_employee(
     company_id: Uuid,
     req: UpdateEmployeeRequest,
     updated_by: Uuid,
+    audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<Employee> {
     let existing = get_employee(pool, id, company_id).await?;
 
@@ -469,7 +473,7 @@ pub async fn update_employee(
     .await?;
 
     // Audit Log
-    let _ = crate::services::audit_service::log_action(
+    let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
         Some(updated_by),
         "update_employee",
@@ -481,6 +485,7 @@ pub async fn update_employee(
             "Updated employee {} ({})",
             emp.full_name, emp.employee_number
         )),
+        audit_meta,
     )
     .await;
 

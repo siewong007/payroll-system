@@ -7,6 +7,7 @@ use uuid::Uuid;
 use crate::core::error::{AppError, AppResult};
 use crate::models::employee::Employee;
 use crate::models::payroll::{PayrollItem, PayrollRun};
+use crate::services::audit_service::AuditRequestMeta;
 use crate::services::eis_service;
 use crate::services::epf_service;
 use crate::services::pcb_calculator::{self, PcbInput};
@@ -39,6 +40,7 @@ pub async fn process_payroll(
     pay_date: NaiveDate,
     processed_by: Uuid,
     notes: Option<String>,
+    audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<PayrollRun> {
     // Check for existing run
     let existing = sqlx::query_scalar::<_, i64>(
@@ -395,7 +397,7 @@ pub async fn process_payroll(
     );
 
     // Audit Log
-    let _ = crate::services::audit_service::log_action(
+    let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
         Some(processed_by),
         "process_payroll",
@@ -410,6 +412,7 @@ pub async fn process_payroll(
             "employee_count": employees.len()
         })),
         Some(&format!("Processed payroll for {:02}/{}", month, year)),
+        audit_meta,
     )
     .await;
 

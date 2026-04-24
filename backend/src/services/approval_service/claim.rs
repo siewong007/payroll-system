@@ -7,6 +7,7 @@ use uuid::Uuid;
 use crate::core::config::AppConfig;
 use crate::core::error::{AppError, AppResult};
 use crate::models::portal::{Claim, CreateClaimRequest, UpdateClaimRequest};
+use crate::services::audit_service::AuditRequestMeta;
 use crate::services::email_service;
 use crate::services::notification_service;
 
@@ -18,6 +19,7 @@ pub async fn create_claim_admin(
     employee_id: Uuid,
     req: CreateClaimRequest,
     actor_id: Uuid,
+    audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<Claim> {
     ensure_employee_in_company(pool, company_id, employee_id).await?;
     ensure_positive_amount(req.amount)?;
@@ -40,7 +42,7 @@ pub async fn create_claim_admin(
     .fetch_one(pool)
     .await?;
 
-    let _ = crate::services::audit_service::log_action(
+    let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
         Some(actor_id),
         "create_claim_admin",
@@ -49,6 +51,7 @@ pub async fn create_claim_admin(
         None,
         Some(serde_json::to_value(&claim).unwrap_or_default()),
         Some(&format!("Created claim for employee {}", claim.employee_id)),
+        audit_meta,
     )
     .await;
 
@@ -61,6 +64,7 @@ pub async fn update_claim_admin(
     claim_id: Uuid,
     req: UpdateClaimRequest,
     actor_id: Uuid,
+    audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<Claim> {
     let current = sqlx::query_as::<_, Claim>(
         r#"SELECT * FROM claims
@@ -108,7 +112,7 @@ pub async fn update_claim_admin(
     .fetch_one(pool)
     .await?;
 
-    let _ = crate::services::audit_service::log_action(
+    let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
         Some(actor_id),
         "update_claim_admin",
@@ -120,6 +124,7 @@ pub async fn update_claim_admin(
             "Updated claim for employee {}",
             updated.employee_id
         )),
+        audit_meta,
     )
     .await;
 
@@ -131,6 +136,7 @@ pub async fn delete_claim_admin(
     company_id: Uuid,
     claim_id: Uuid,
     actor_id: Uuid,
+    audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<()> {
     let current = sqlx::query_as::<_, Claim>(
         r#"SELECT * FROM claims
@@ -149,7 +155,7 @@ pub async fn delete_claim_admin(
         .execute(pool)
         .await?;
 
-    let _ = crate::services::audit_service::log_action(
+    let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
         Some(actor_id),
         "delete_claim_admin",
@@ -161,6 +167,7 @@ pub async fn delete_claim_admin(
             "Deleted claim for employee {}",
             current.employee_id
         )),
+        audit_meta,
     )
     .await;
 
@@ -172,6 +179,7 @@ pub async fn cancel_claim_admin(
     company_id: Uuid,
     claim_id: Uuid,
     actor_id: Uuid,
+    audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<Claim> {
     let mut tx = pool.begin().await?;
 
@@ -253,7 +261,7 @@ pub async fn cancel_claim_admin(
 
     tx.commit().await?;
 
-    let _ = crate::services::audit_service::log_action(
+    let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
         Some(actor_id),
         "cancel_claim_admin",
@@ -265,6 +273,7 @@ pub async fn cancel_claim_admin(
             "Cancelled claim for employee {}",
             cancelled.employee_id
         )),
+        audit_meta,
     )
     .await;
 
@@ -346,6 +355,7 @@ pub async fn approve_claim(
     claim_id: Uuid,
     reviewer_id: Uuid,
     notes: Option<&str>,
+    audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<Claim> {
     let claim = sqlx::query_as::<_, Claim>(
         r#"UPDATE claims SET
@@ -451,6 +461,20 @@ pub async fn approve_claim(
         .await;
     }
 
+    // Audit Log
+    let _ = crate::services::audit_service::log_action_with_metadata(
+        pool,
+        Some(reviewer_id),
+        "approve_claim",
+        "claim",
+        Some(claim.id),
+        None,
+        Some(serde_json::to_value(&claim).unwrap_or_default()),
+        Some(&format!("Approved claim for employee {}", claim.employee_id)),
+        audit_meta,
+    )
+    .await;
+
     Ok(claim)
 }
 
@@ -460,6 +484,7 @@ pub async fn reject_claim(
     claim_id: Uuid,
     reviewer_id: Uuid,
     notes: Option<&str>,
+    audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<Claim> {
     let claim = sqlx::query_as::<_, Claim>(
         r#"UPDATE claims SET
@@ -500,6 +525,20 @@ pub async fn reject_claim(
         )
         .await;
     }
+
+    // Audit Log
+    let _ = crate::services::audit_service::log_action_with_metadata(
+        pool,
+        Some(reviewer_id),
+        "reject_claim",
+        "claim",
+        Some(claim.id),
+        None,
+        Some(serde_json::to_value(&claim).unwrap_or_default()),
+        Some(&format!("Rejected claim for employee {}", claim.employee_id)),
+        audit_meta,
+    )
+    .await;
 
     Ok(claim)
 }

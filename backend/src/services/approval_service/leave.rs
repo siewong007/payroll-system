@@ -7,6 +7,7 @@ use uuid::Uuid;
 use crate::core::config::AppConfig;
 use crate::core::error::{AppError, AppResult};
 use crate::models::portal::{CreateLeaveRequest, LeaveRequest, UpdateLeaveRequest};
+use crate::services::audit_service::AuditRequestMeta;
 use crate::services::calendar_service;
 use crate::services::email_service;
 use crate::services::notification_service;
@@ -21,6 +22,7 @@ pub async fn create_leave_request_admin(
     employee_id: Uuid,
     req: CreateLeaveRequest,
     actor_id: Uuid,
+    audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<LeaveRequest> {
     ensure_employee_in_company(pool, company_id, employee_id).await?;
     ensure_leave_type_in_company(pool, company_id, req.leave_type_id).await?;
@@ -77,7 +79,7 @@ pub async fn create_leave_request_admin(
 
     tx.commit().await?;
 
-    let _ = crate::services::audit_service::log_action(
+    let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
         Some(actor_id),
         "create_leave_request_admin",
@@ -89,6 +91,7 @@ pub async fn create_leave_request_admin(
             "Created leave request for employee {}",
             leave.employee_id
         )),
+        audit_meta,
     )
     .await;
 
@@ -101,6 +104,7 @@ pub async fn update_leave_request_admin(
     request_id: Uuid,
     req: UpdateLeaveRequest,
     actor_id: Uuid,
+    audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<LeaveRequest> {
     let mut tx = pool.begin().await?;
 
@@ -193,7 +197,7 @@ pub async fn update_leave_request_admin(
 
     tx.commit().await?;
 
-    let _ = crate::services::audit_service::log_action(
+    let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
         Some(actor_id),
         "update_leave_request_admin",
@@ -205,6 +209,7 @@ pub async fn update_leave_request_admin(
             "Updated leave request for employee {}",
             updated.employee_id
         )),
+        audit_meta,
     )
     .await;
 
@@ -216,6 +221,7 @@ pub async fn delete_leave_request_admin(
     company_id: Uuid,
     request_id: Uuid,
     actor_id: Uuid,
+    audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<()> {
     let current = sqlx::query_as::<_, LeaveRequest>(
         r#"SELECT lr.id, lr.employee_id, lr.company_id, lr.leave_type_id,
@@ -240,7 +246,7 @@ pub async fn delete_leave_request_admin(
         .execute(pool)
         .await?;
 
-    let _ = crate::services::audit_service::log_action(
+    let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
         Some(actor_id),
         "delete_leave_request_admin",
@@ -252,6 +258,7 @@ pub async fn delete_leave_request_admin(
             "Deleted leave request for employee {}",
             current.employee_id
         )),
+        audit_meta,
     )
     .await;
 
@@ -263,6 +270,7 @@ pub async fn cancel_leave_request_admin(
     company_id: Uuid,
     request_id: Uuid,
     actor_id: Uuid,
+    audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<LeaveRequest> {
     let mut tx = pool.begin().await?;
 
@@ -375,7 +383,7 @@ pub async fn cancel_leave_request_admin(
 
     tx.commit().await?;
 
-    let _ = crate::services::audit_service::log_action(
+    let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
         Some(actor_id),
         "cancel_leave_request_admin",
@@ -387,6 +395,7 @@ pub async fn cancel_leave_request_admin(
             "Cancelled leave request for employee {}",
             cancelled.employee_id
         )),
+        audit_meta,
     )
     .await;
 
@@ -454,6 +463,7 @@ pub async fn approve_leave(
     request_id: Uuid,
     reviewer_id: Uuid,
     notes: Option<&str>,
+    audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<LeaveRequest> {
     let lr = sqlx::query_as::<_, LeaveRequest>(
         r#"UPDATE leave_requests SET
@@ -649,7 +659,7 @@ pub async fn approve_leave(
     }
 
     // Audit Log
-    let _ = crate::services::audit_service::log_action(
+    let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
         Some(reviewer_id),
         "approve_leave",
@@ -658,6 +668,7 @@ pub async fn approve_leave(
         None,
         Some(serde_json::to_value(&lr).unwrap_or_default()),
         Some(&format!("Approved leave for employee {}", lr.employee_id)),
+        audit_meta,
     )
     .await;
 
@@ -670,6 +681,7 @@ pub async fn reject_leave(
     request_id: Uuid,
     reviewer_id: Uuid,
     notes: Option<&str>,
+    audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<LeaveRequest> {
     let lr = sqlx::query_as::<_, LeaveRequest>(
         r#"UPDATE leave_requests SET
@@ -730,7 +742,7 @@ pub async fn reject_leave(
     }
 
     // Audit Log
-    let _ = crate::services::audit_service::log_action(
+    let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
         Some(reviewer_id),
         "reject_leave",
@@ -739,6 +751,7 @@ pub async fn reject_leave(
         None,
         Some(serde_json::to_value(&lr).unwrap_or_default()),
         Some(&format!("Rejected leave for employee {}", lr.employee_id)),
+        audit_meta,
     )
     .await;
 

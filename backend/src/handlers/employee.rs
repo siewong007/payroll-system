@@ -1,6 +1,7 @@
 use axum::{
     Json,
     extract::{Path, Query, State},
+    http::HeaderMap,
 };
 use serde::Deserialize;
 use uuid::Uuid;
@@ -12,6 +13,7 @@ use crate::models::employee::{
     CreateEmployeeRequest, CreateTp3Request, Employee, SalaryHistory, Tp3Record,
     UpdateEmployeeRequest,
 };
+use crate::services::audit_service::AuditRequestMeta;
 use crate::services::{company_service, email_service, employee_service, portal_service};
 
 fn redact_payroll_fields(employee: &mut Employee) {
@@ -149,6 +151,7 @@ pub async fn get(
 pub async fn create(
     State(state): State<AppState>,
     auth: AuthUser,
+    headers: HeaderMap,
     Json(req): Json<CreateEmployeeRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
     if !auth.is_payroll_privileged() && create_request_touches_payroll_fields(&req) {
@@ -160,9 +163,10 @@ pub async fn create(
         .0
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
+    let audit_meta = AuditRequestMeta::from_headers(&headers);
 
     let (emp, account_info) =
-        employee_service::create_employee(&state.pool, company_id, req, auth.0.sub).await?;
+        employee_service::create_employee(&state.pool, company_id, req, auth.0.sub, Some(&audit_meta)).await?;
 
     // Auto-send welcome email if a new user account was created
     if let Some(ref info) = account_info
@@ -223,6 +227,7 @@ pub async fn create(
 pub async fn update(
     State(state): State<AppState>,
     auth: AuthUser,
+    headers: HeaderMap,
     Path(id): Path<Uuid>,
     Json(req): Json<UpdateEmployeeRequest>,
 ) -> AppResult<Json<Employee>> {
@@ -235,9 +240,10 @@ pub async fn update(
         .0
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
+    let audit_meta = AuditRequestMeta::from_headers(&headers);
 
     let emp =
-        employee_service::update_employee(&state.pool, id, company_id, req, auth.0.sub).await?;
+        employee_service::update_employee(&state.pool, id, company_id, req, auth.0.sub, Some(&audit_meta)).await?;
     Ok(Json(emp))
 }
 

@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 use crate::core::error::{AppError, AppResult};
 use crate::models::portal::{CreateOvertimeRequest, OvertimeApplication, UpdateOvertimeRequest};
+use crate::services::audit_service::AuditRequestMeta;
 use crate::services::notification_service;
 use crate::services::settings_service;
 
@@ -17,6 +18,7 @@ pub async fn create_overtime_admin(
     employee_id: Uuid,
     req: CreateOvertimeRequest,
     actor_id: Uuid,
+    audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<OvertimeApplication> {
     ensure_employee_in_company(pool, company_id, employee_id).await?;
     let ot_type = req.ot_type.as_deref().unwrap_or("normal");
@@ -40,7 +42,7 @@ pub async fn create_overtime_admin(
     .fetch_one(pool)
     .await?;
 
-    let _ = crate::services::audit_service::log_action(
+    let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
         Some(actor_id),
         "create_overtime_admin",
@@ -52,6 +54,7 @@ pub async fn create_overtime_admin(
             "Created overtime application for employee {}",
             overtime.employee_id
         )),
+        audit_meta,
     )
     .await;
 
@@ -64,6 +67,7 @@ pub async fn update_overtime_admin(
     ot_id: Uuid,
     req: UpdateOvertimeRequest,
     actor_id: Uuid,
+    audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<OvertimeApplication> {
     let current = sqlx::query_as::<_, OvertimeApplication>(
         r#"SELECT * FROM overtime_applications
@@ -119,7 +123,7 @@ pub async fn update_overtime_admin(
     .fetch_one(pool)
     .await?;
 
-    let _ = crate::services::audit_service::log_action(
+    let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
         Some(actor_id),
         "update_overtime_admin",
@@ -131,6 +135,7 @@ pub async fn update_overtime_admin(
             "Updated overtime application for employee {}",
             updated.employee_id
         )),
+        audit_meta,
     )
     .await;
 
@@ -142,6 +147,7 @@ pub async fn delete_overtime_admin(
     company_id: Uuid,
     ot_id: Uuid,
     actor_id: Uuid,
+    audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<()> {
     let current = sqlx::query_as::<_, OvertimeApplication>(
         r#"SELECT * FROM overtime_applications
@@ -160,7 +166,7 @@ pub async fn delete_overtime_admin(
         .execute(pool)
         .await?;
 
-    let _ = crate::services::audit_service::log_action(
+    let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
         Some(actor_id),
         "delete_overtime_admin",
@@ -172,6 +178,7 @@ pub async fn delete_overtime_admin(
             "Deleted overtime application for employee {}",
             current.employee_id
         )),
+        audit_meta,
     )
     .await;
 
@@ -183,6 +190,7 @@ pub async fn cancel_overtime_admin(
     company_id: Uuid,
     ot_id: Uuid,
     actor_id: Uuid,
+    audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<OvertimeApplication> {
     let mut tx = pool.begin().await?;
 
@@ -284,7 +292,7 @@ pub async fn cancel_overtime_admin(
 
     tx.commit().await?;
 
-    let _ = crate::services::audit_service::log_action(
+    let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
         Some(actor_id),
         "cancel_overtime_admin",
@@ -296,6 +304,7 @@ pub async fn cancel_overtime_admin(
             "Cancelled overtime application for employee {}",
             cancelled.employee_id
         )),
+        audit_meta,
     )
     .await;
 
@@ -374,6 +383,7 @@ pub async fn approve_overtime(
     ot_id: Uuid,
     reviewer_id: Uuid,
     notes: Option<&str>,
+    audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<OvertimeApplication> {
     let ot = sqlx::query_as::<_, OvertimeApplication>(
         r#"UPDATE overtime_applications SET
@@ -520,6 +530,20 @@ pub async fn approve_overtime(
         .await;
     }
 
+    // Audit Log
+    let _ = crate::services::audit_service::log_action_with_metadata(
+        pool,
+        Some(reviewer_id),
+        "approve_overtime",
+        "overtime",
+        Some(ot.id),
+        None,
+        Some(serde_json::to_value(&ot).unwrap_or_default()),
+        Some(&format!("Approved overtime for employee {}", ot.employee_id)),
+        audit_meta,
+    )
+    .await;
+
     Ok(ot)
 }
 
@@ -529,6 +553,7 @@ pub async fn reject_overtime(
     ot_id: Uuid,
     reviewer_id: Uuid,
     notes: Option<&str>,
+    audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<OvertimeApplication> {
     let ot = sqlx::query_as::<_, OvertimeApplication>(
         r#"UPDATE overtime_applications SET
@@ -569,6 +594,20 @@ pub async fn reject_overtime(
         )
         .await;
     }
+
+    // Audit Log
+    let _ = crate::services::audit_service::log_action_with_metadata(
+        pool,
+        Some(reviewer_id),
+        "reject_overtime",
+        "overtime",
+        Some(ot.id),
+        None,
+        Some(serde_json::to_value(&ot).unwrap_or_default()),
+        Some(&format!("Rejected overtime for employee {}", ot.employee_id)),
+        audit_meta,
+    )
+    .await;
 
     Ok(ot)
 }
