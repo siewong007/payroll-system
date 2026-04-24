@@ -199,6 +199,7 @@ pub async fn get_run(
 pub async fn delete_run(
     State(state): State<AppState>,
     auth: AuthUser,
+    headers: HeaderMap,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<serde_json::Value>> {
     auth.require_payroll_privileged()?;
@@ -277,6 +278,23 @@ pub async fn delete_run(
         .await?;
 
     tx.commit().await?;
+
+    let audit_meta = AuditRequestMeta::from_headers(&headers);
+    let _ = crate::services::audit_service::log_action_with_metadata(
+        &state.pool,
+        Some(auth.0.sub),
+        "delete",
+        "payroll_run",
+        Some(id),
+        Some(serde_json::to_value(&run).unwrap_or_default()),
+        None,
+        Some(&format!(
+            "Deleted payroll run {} for {:02}/{}",
+            id, run.period_month, run.period_year
+        )),
+        Some(&audit_meta),
+    )
+    .await;
 
     Ok(Json(serde_json::json!({ "success": true })))
 }

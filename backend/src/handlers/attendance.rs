@@ -100,6 +100,7 @@ pub async fn set_company_method(
 pub async fn generate_qr_token(
     State(state): State<AppState>,
     auth: AuthUser,
+    headers: HeaderMap,
 ) -> AppResult<Json<QrTokenResponse>> {
     let company_id = auth.company_id()?;
     auth.require_attendance_qr_generator()?;
@@ -108,6 +109,21 @@ pub async fn generate_qr_token(
     let resp =
         attendance_service::generate_qr_token(&state.pool, company_id, &state.config.frontend_url)
             .await?;
+
+    let audit_meta = AuditRequestMeta::from_headers(&headers);
+    let _ = crate::services::audit_service::log_action_with_metadata(
+        &state.pool,
+        Some(auth.0.sub),
+        "create",
+        "attendance_kiosk_credential",
+        None,
+        None,
+        Some(serde_json::to_value(&resp).unwrap_or_default()),
+        Some("Generated new attendance QR token"),
+        Some(&audit_meta),
+    )
+    .await;
+
     Ok(Json(resp))
 }
 
@@ -116,6 +132,7 @@ pub async fn generate_qr_token(
 pub async fn check_in_qr(
     State(state): State<AppState>,
     auth: AuthUser,
+    headers: HeaderMap,
     Json(req): Json<CheckInQrRequest>,
 ) -> AppResult<Json<AttendanceRecord>> {
     let employee_id = auth.employee_id()?;
@@ -138,6 +155,20 @@ pub async fn check_in_qr(
         req.longitude,
     )
     .await?;
+
+    let audit_meta = AuditRequestMeta::from_headers(&headers);
+    let _ = crate::services::audit_service::log_action_with_metadata(
+        &state.pool,
+        Some(auth.0.sub),
+        "create",
+        "attendance_record",
+        Some(record.id),
+        None,
+        Some(serde_json::to_value(&record).unwrap_or_default()),
+        Some("Employee checked in via QR code"),
+        Some(&audit_meta),
+    )
+    .await;
 
     Ok(Json(record))
 }
@@ -463,6 +494,20 @@ pub async fn kiosk_qr(
         ip.as_deref(),
     )
     .await?;
+
+    let audit_meta = AuditRequestMeta::from_headers(&headers);
+    let _ = crate::services::audit_service::log_action_with_metadata(
+        &state.pool,
+        None, // No specific user for public kiosk endpoint
+        "create",
+        "attendance_kiosk_credential",
+        None,
+        None,
+        Some(serde_json::to_value(&resp).unwrap_or_default()),
+        Some("Generated new attendance QR token via kiosk"),
+        Some(&audit_meta),
+    )
+    .await;
 
     Ok(Json(resp))
 }
