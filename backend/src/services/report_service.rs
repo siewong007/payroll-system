@@ -41,7 +41,7 @@ pub async fn payroll_summary(
             total_pcb, total_zakat, total_employer_cost
         FROM payroll_runs
         WHERE company_id = $1 AND period_year = $2
-        AND status::text IN ('processed', 'approved', 'paid')
+        AND status::text IN ('approved', 'paid')
         ORDER BY period_month ASC"#,
     )
     .bind(company_id)
@@ -79,7 +79,7 @@ pub async fn payroll_by_department(
         JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
         JOIN employees e ON pi.employee_id = e.id
         WHERE pr.company_id = $1 AND pr.period_year = $2 AND pr.period_month = $3
-        AND pr.status::text IN ('processed', 'approved', 'paid')
+        AND pr.status::text IN ('approved', 'paid')
         GROUP BY e.department
         ORDER BY total_gross DESC"#,
     )
@@ -231,7 +231,7 @@ pub async fn statutory_report(
         JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
         JOIN employees e ON pi.employee_id = e.id
         WHERE pr.company_id = $1 AND pr.period_year = $2 AND pr.period_month = $3
-        AND pr.status::text IN ('processed', 'approved', 'paid')
+        AND pr.status::text IN ('approved', 'paid')
         ORDER BY e.employee_number"#,
     )
     .bind(company_id)
@@ -277,7 +277,7 @@ pub async fn report_periods(pool: &PgPool, company_id: Uuid) -> AppResult<Report
         r#"SELECT DISTINCT period_year, period_month
         FROM payroll_runs
         WHERE company_id = $1
-        AND status::text IN ('processed', 'approved', 'paid')
+        AND status::text IN ('approved', 'paid')
         ORDER BY period_year ASC, period_month ASC"#,
     )
     .bind(company_id)

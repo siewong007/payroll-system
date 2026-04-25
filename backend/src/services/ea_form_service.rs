@@ -68,7 +68,7 @@ pub async fn list_employees_for_ea(
         JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
         JOIN employees e ON pi.employee_id = e.id
         WHERE pr.company_id = $1 AND pr.period_year = $2
-        AND pr.status::text IN ('processed', 'approved', 'paid')
+        AND pr.status::text IN ('approved', 'paid')
         AND e.deleted_at IS NULL
         GROUP BY pi.employee_id, e.full_name, e.employee_number, e.ic_number
         ORDER BY e.employee_number"#,
@@ -166,7 +166,7 @@ pub async fn get_ea_form_data(
         FROM payroll_items pi
         JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
         WHERE pi.employee_id = $1 AND pr.company_id = $2 AND pr.period_year = $3
-        AND pr.status::text IN ('processed', 'approved', 'paid')"#,
+        AND pr.status::text IN ('approved', 'paid')"#,
     )
     .bind(employee_id)
     .bind(company_id)

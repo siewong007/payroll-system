@@ -197,12 +197,24 @@ pub fn create_router(state: AppState) -> Router {
             "/payroll/runs/{id}",
             get(payroll::get_run).delete(payroll::delete_run),
         )
+        .route(
+            "/payroll/runs/{id}/audit-logs",
+            get(payroll::list_run_audit_logs),
+        )
         .route("/payroll/runs/{id}/items", get(payroll::get_items))
         .route(
             "/payroll/runs/{run_id}/items/{employee_id}/pcb",
             put(payroll::update_item_pcb),
         )
+        .route(
+            "/payroll/runs/{id}/submit-approval",
+            put(payroll::submit_run_for_approval),
+        )
         .route("/payroll/runs/{id}/approve", put(payroll::approve_run))
+        .route(
+            "/payroll/runs/{id}/return",
+            put(payroll::return_run_for_changes),
+        )
         .route("/payroll/runs/{id}/lock", put(payroll::lock_run))
         // Documents (static routes before {id})
         .route("/documents", get(document::list).post(document::create))

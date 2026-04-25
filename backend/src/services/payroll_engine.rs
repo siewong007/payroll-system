@@ -293,7 +293,7 @@ pub async fn process_payroll(
         FROM payroll_items pi
         JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
         WHERE pi.employee_id = ANY($1) AND pr.period_year = $2 AND pr.period_month < $3
-        AND pr.status::text IN ('processed', 'approved', 'paid')
+        AND pr.status::text IN ('processed', 'pending_approval', 'approved', 'paid')
         GROUP BY pi.employee_id"#,
     )
     .bind(&employee_ids)

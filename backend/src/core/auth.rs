@@ -62,6 +62,15 @@ pub fn verify_token(token: &str, secret: &str) -> AppResult<Claims> {
 #[derive(Debug, Clone)]
 pub struct AuthUser(pub Claims);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Permission {
+    ViewPayroll,
+    ManagePayrollDraft,
+    SubmitPayroll,
+    ApprovePayroll,
+    MarkPayrollPaid,
+}
+
 impl<S> FromRequestParts<S> for AuthUser
 where
     S: Send + Sync,
@@ -125,7 +134,33 @@ impl AuthUser {
 
     /// Returns true if the role can access payroll and statutory data.
     pub fn is_payroll_privileged(&self) -> bool {
-        matches!(self.0.role.as_str(), "super_admin" | "payroll_admin")
+        self.can(Permission::ViewPayroll)
+    }
+
+    pub fn can(&self, permission: Permission) -> bool {
+        match self.0.role.as_str() {
+            "super_admin" => true,
+            "payroll_admin" => matches!(
+                permission,
+                Permission::ViewPayroll
+                    | Permission::ManagePayrollDraft
+                    | Permission::SubmitPayroll
+            ),
+            "finance" => matches!(
+                permission,
+                Permission::ViewPayroll | Permission::ApprovePayroll | Permission::MarkPayrollPaid
+            ),
+            _ => false,
+        }
+    }
+
+    pub fn require_permission(&self, permission: Permission) -> AppResult<()> {
+        if !self.can(permission) {
+            return Err(AppError::Forbidden(
+                "Not authorized for this payroll action".into(),
+            ));
+        }
+        Ok(())
     }
 
     /// Rejects the request if role is 'exec'. Use to guard payroll endpoints.
@@ -164,12 +199,7 @@ impl AuthUser {
 
     /// Rejects the request unless the role is allowed to access payroll data.
     pub fn require_payroll_privileged(&self) -> AppResult<()> {
-        if !self.is_payroll_privileged() {
-            return Err(AppError::Forbidden(
-                "Payroll access not available for this role".into(),
-            ));
-        }
-        Ok(())
+        self.require_permission(Permission::ViewPayroll)
     }
 
     /// Rejects employee self-service users from admin attendance views.

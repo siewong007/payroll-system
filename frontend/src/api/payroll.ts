@@ -1,5 +1,6 @@
 import api from './client';
 import type {
+  AuditLog,
   CreatePayrollEntryRequest,
   PayrollEntry,
   PayrollEntryWithEmployee,
@@ -23,6 +24,11 @@ export async function getPayrollRuns(): Promise<PayrollRun[]> {
 
 export async function getPayrollRun(id: string): Promise<PayrollSummary> {
   const { data } = await api.get(`/payroll/runs/${id}`);
+  return data;
+}
+
+export async function getPayrollRunAuditLogs(id: string): Promise<AuditLog[]> {
+  const { data } = await api.get(`/payroll/runs/${id}/audit-logs`);
   return data;
 }
 
@@ -69,8 +75,18 @@ export async function updatePayrollItemPcb(
   return data;
 }
 
+export async function submitPayrollForApproval(id: string): Promise<PayrollRun> {
+  const { data } = await api.put(`/payroll/runs/${id}/submit-approval`);
+  return data;
+}
+
 export async function approvePayroll(id: string): Promise<PayrollRun> {
   const { data } = await api.put(`/payroll/runs/${id}/approve`);
+  return data;
+}
+
+export async function returnPayrollForChanges(id: string, reason?: string): Promise<PayrollRun> {
+  const { data } = await api.put(`/payroll/runs/${id}/return`, { reason });
   return data;
 }
 

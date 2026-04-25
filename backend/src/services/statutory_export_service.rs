@@ -57,7 +57,7 @@ async fn get_statutory_data(
         JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
         JOIN employees e ON pi.employee_id = e.id
         WHERE pr.company_id = $1 AND pr.period_year = $2 AND pr.period_month = $3
-        AND pr.status::text IN ('processed', 'approved', 'paid')
+        AND pr.status::text IN ('approved', 'paid')
         ORDER BY e.employee_number"#,
     )
     .bind(company_id)
@@ -65,6 +65,12 @@ async fn get_statutory_data(
     .bind(month)
     .fetch_all(pool)
     .await?;
+
+    if rows.is_empty() {
+        return Err(AppError::NotFound(
+            "No approved or paid payroll found for this period".into(),
+        ));
+    }
 
     Ok((company, rows))
 }

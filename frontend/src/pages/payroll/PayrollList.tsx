@@ -4,15 +4,28 @@ import { Plus, Eye, Trash2 } from 'lucide-react';
 import { deletePayrollRun, getPayrollRuns } from '@/api/payroll';
 import { formatMYR, getErrorMessage } from '@/lib/utils';
 import { DataTable, type Column } from '@/components/ui/DataTable';
+import { useAuth } from '@/context/AuthContext';
+import { canPreparePayroll } from '@/lib/roles';
 import type { PayrollRun } from '@/types';
 
 const STATUS_STYLES: Record<string, string> = {
   draft: 'bg-gray-100 text-gray-600',
   processing: 'bg-yellow-50 text-yellow-700',
   processed: 'bg-gray-100 text-gray-900',
+  pending_approval: 'bg-blue-50 text-blue-700',
   approved: 'bg-green-50 text-green-700',
   paid: 'bg-emerald-50 text-emerald-700',
   cancelled: 'bg-red-50 text-red-700',
+};
+
+const STATUS_LABELS: Record<string, string> = {
+  draft: 'Draft',
+  processing: 'Processing',
+  processed: 'Processed',
+  pending_approval: 'Pending Approval',
+  approved: 'Approved',
+  paid: 'Paid',
+  cancelled: 'Cancelled',
 };
 
 const MONTHS = [
@@ -20,7 +33,7 @@ const MONTHS = [
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
 
-const canDeletePayrollRun = (run: PayrollRun) => ['draft', 'processed', 'cancelled', 'approved', 'paid'].includes(run.status);
+const canDeletePayrollRun = (run: PayrollRun) => ['draft', 'processed', 'cancelled'].includes(run.status);
 
 const columns: Column<PayrollRun>[] = [
   {
@@ -58,7 +71,7 @@ const columns: Column<PayrollRun>[] = [
     align: 'center',
     render: (run) => (
       <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${STATUS_STYLES[run.status] || ''}`}>
-        {run.status}
+        {STATUS_LABELS[run.status] ?? run.status}
       </span>
     ),
   },
@@ -66,6 +79,8 @@ const columns: Column<PayrollRun>[] = [
 
 export function PayrollList() {
   const queryClient = useQueryClient();
+  const { user } = useAuth();
+  const canPrepare = canPreparePayroll(user?.role);
   const { data: runs, isLoading } = useQuery({
     queryKey: ['payrollRuns'],
     queryFn: getPayrollRuns,
@@ -89,13 +104,15 @@ export function PayrollList() {
     <div>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-6">
         <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Payroll Runs</h1>
-        <Link
-          to="/payroll/process"
-          className="flex items-center justify-center gap-2 bg-black text-white px-4 py-2 rounded-lg hover:bg-gray-800 transition-colors text-sm font-medium w-full sm:w-auto min-h-[44px]"
-        >
-          <Plus className="w-4 h-4" />
-          Process Payroll
-        </Link>
+        {canPrepare && (
+          <Link
+            to="/payroll/process"
+            className="flex items-center justify-center gap-2 bg-black text-white px-4 py-2 rounded-lg hover:bg-gray-800 transition-colors text-sm font-medium w-full sm:w-auto min-h-[44px]"
+          >
+            <Plus className="w-4 h-4" />
+            Process Payroll
+          </Link>
+        )}
       </div>
 
       <DataTable
@@ -110,7 +127,7 @@ export function PayrollList() {
             <div className="flex items-center justify-between">
               <span className="text-lg font-semibold">{MONTHS[run.period_month]} {run.period_year}</span>
               <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-medium ${STATUS_STYLES[run.status] || ''}`}>
-                {run.status}
+                {STATUS_LABELS[run.status] ?? run.status}
               </span>
             </div>
             <div className="grid grid-cols-2 gap-4">
@@ -139,7 +156,7 @@ export function PayrollList() {
             >
               <Eye className="w-4 h-4" /> View Full Details
             </Link>
-            {canDeletePayrollRun(run) && (
+            {canPrepare && canDeletePayrollRun(run) && (
               <button
                 type="button"
                 onClick={() => handleDelete(run)}
@@ -159,7 +176,7 @@ export function PayrollList() {
             >
               <Eye className="w-4 h-4" /> View
             </Link>
-            {canDeletePayrollRun(run) && (
+            {canPrepare && canDeletePayrollRun(run) && (
               <button
                 type="button"
                 onClick={() => handleDelete(run)}

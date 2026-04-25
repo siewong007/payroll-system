@@ -7,15 +7,20 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::core::app_state::AppState;
-use crate::core::auth::AuthUser;
+use crate::core::auth::{AuthUser, Permission};
 use crate::core::error::{AppError, AppResult};
 use crate::models::payroll::{
     CreatePayrollEntryRequest, PayrollEntry, PayrollEntryWithEmployee, PayrollGroup, PayrollItem,
     PayrollItemSummary, PayrollRun, PayrollSummary, ProcessPayrollRequest,
     UpdatePayrollEntryRequest, UpdatePayrollPcbRequest,
 };
-use crate::services::audit_service::AuditRequestMeta;
+use crate::services::audit_service::{AuditLogWithUser, AuditRequestMeta};
 use crate::services::payroll_engine;
+
+#[derive(Debug, Deserialize)]
+pub struct ReturnPayrollRunRequest {
+    pub reason: Option<String>,
+}
 
 pub async fn process(
     State(state): State<AppState>,
@@ -23,7 +28,7 @@ pub async fn process(
     headers: HeaderMap,
     Json(req): Json<ProcessPayrollRequest>,
 ) -> AppResult<Json<PayrollRun>> {
-    auth.require_payroll_privileged()?;
+    auth.require_permission(Permission::ManagePayrollDraft)?;
     let company_id = auth
         .0
         .company_id
@@ -154,7 +159,7 @@ pub async fn list_runs(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> AppResult<Json<Vec<PayrollRun>>> {
-    auth.require_payroll_privileged()?;
+    auth.require_permission(Permission::ViewPayroll)?;
     let company_id = auth
         .0
         .company_id
@@ -185,7 +190,7 @@ pub async fn get_run(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<PayrollSummary>> {
-    auth.require_payroll_privileged()?;
+    auth.require_permission(Permission::ViewPayroll)?;
     let company_id = auth
         .0
         .company_id
@@ -196,13 +201,67 @@ pub async fn get_run(
     ))
 }
 
+pub async fn list_run_audit_logs(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<Vec<AuditLogWithUser>>> {
+    auth.require_permission(Permission::ViewPayroll)?;
+    let company_id = auth
+        .0
+        .company_id
+        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
+
+    let run_exists = sqlx::query_scalar::<_, bool>(
+        r#"SELECT EXISTS(
+            SELECT 1 FROM payroll_runs WHERE id = $1 AND company_id = $2
+        )"#,
+    )
+    .bind(id)
+    .bind(company_id)
+    .fetch_one(&state.pool)
+    .await?;
+
+    if !run_exists {
+        return Err(AppError::NotFound("Payroll run not found".into()));
+    }
+
+    let logs = sqlx::query_as::<_, AuditLogWithUser>(
+        r#"SELECT al.id, al.user_id, al.action, al.entity_type, al.entity_id,
+            al.old_values, al.new_values, al.ip_address, al.user_agent,
+            al.description, al.created_at,
+            u.email as user_email, u.full_name as user_full_name
+        FROM audit_logs al
+        LEFT JOIN users u ON al.user_id = u.id
+        WHERE al.company_id = $1
+          AND (
+            (al.entity_type = 'payroll_run' AND al.entity_id = $2)
+            OR (
+                al.entity_type = 'payroll_item'
+                AND (
+                    al.old_values->>'payroll_run_id' = $2::text
+                    OR al.new_values->>'payroll_run_id' = $2::text
+                )
+            )
+          )
+        ORDER BY al.created_at DESC
+        LIMIT 100"#,
+    )
+    .bind(company_id)
+    .bind(id)
+    .fetch_all(&state.pool)
+    .await?;
+
+    Ok(Json(logs))
+}
+
 pub async fn delete_run(
     State(state): State<AppState>,
     auth: AuthUser,
     headers: HeaderMap,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<serde_json::Value>> {
-    auth.require_payroll_privileged()?;
+    auth.require_permission(Permission::ManagePayrollDraft)?;
     let company_id = auth
         .0
         .company_id
@@ -228,6 +287,16 @@ pub async fn delete_run(
     if run.status == "processing" {
         return Err(AppError::BadRequest(
             "Payroll run is currently processing and cannot be deleted".into(),
+        ));
+    }
+
+    if matches!(
+        run.status.as_str(),
+        "pending_approval" | "approved" | "paid"
+    ) || run.locked_at.is_some()
+    {
+        return Err(AppError::BadRequest(
+            "Submitted, approved, or paid payroll runs are locked and cannot be deleted".into(),
         ));
     }
 
@@ -303,10 +372,11 @@ pub async fn delete_run(
 pub async fn update_item_pcb(
     State(state): State<AppState>,
     auth: AuthUser,
+    headers: HeaderMap,
     Path((run_id, employee_id)): Path<(Uuid, Uuid)>,
     Json(req): Json<UpdatePayrollPcbRequest>,
 ) -> AppResult<Json<PayrollSummary>> {
-    auth.require_payroll_privileged()?;
+    auth.require_permission(Permission::ManagePayrollDraft)?;
     let company_id = auth
         .0
         .company_id
@@ -343,7 +413,7 @@ pub async fn update_item_pcb(
             JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
             WHERE pi.employee_id = $1
               AND pr.company_id = $2
-              AND pr.status::text IN ('processed', 'approved', 'paid')
+              AND pr.status::text IN ('processed', 'pending_approval', 'approved', 'paid')
               AND (pr.period_year > $3 OR (pr.period_year = $3 AND pr.period_month > $4))
         )"#,
     )
@@ -411,42 +481,104 @@ pub async fn update_item_pcb(
 
     tx.commit().await?;
 
-    Ok(Json(
-        load_payroll_summary(&state.pool, company_id, run_id).await?,
-    ))
+    let summary = load_payroll_summary(&state.pool, company_id, run_id).await?;
+
+    let audit_meta = AuditRequestMeta::from_headers(&headers);
+    let _ = crate::services::audit_service::log_action_with_metadata(
+        &state.pool,
+        Some(company_id),
+        Some(auth.0.sub),
+        "update",
+        "payroll_item",
+        None,
+        Some(serde_json::json!({
+            "payroll_run_id": run_id,
+            "employee_id": employee_id,
+            "pcb_amount": old_pcb
+        })),
+        Some(serde_json::json!({
+            "payroll_run_id": run_id,
+            "employee_id": employee_id,
+            "pcb_amount": req.pcb_amount
+        })),
+        Some("Updated payroll item PCB amount"),
+        Some(&audit_meta),
+    )
+    .await;
+
+    Ok(Json(summary))
+}
+
+pub async fn submit_run_for_approval(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<PayrollRun>> {
+    auth.require_permission(Permission::SubmitPayroll)?;
+    let company_id = auth
+        .0
+        .company_id
+        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
+    let audit_meta = AuditRequestMeta::from_headers(&headers);
+    let run = crate::services::payroll_lifecycle_service::submit_for_approval(
+        &state.pool,
+        company_id,
+        id,
+        auth.0.sub,
+        Some(&audit_meta),
+    )
+    .await?;
+
+    Ok(Json(run))
 }
 
 pub async fn approve_run(
     State(state): State<AppState>,
     auth: AuthUser,
+    headers: HeaderMap,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<PayrollRun>> {
-    auth.require_payroll_privileged()?;
+    auth.require_permission(Permission::ApprovePayroll)?;
     let company_id = auth
         .0
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
-
-    let run = sqlx::query_as::<_, PayrollRun>(
-        r#"UPDATE payroll_runs SET
-            status = 'approved', approved_by = $3, approved_at = NOW(), updated_at = NOW()
-        WHERE id = $1 AND company_id = $2 AND status = 'processed'
-        RETURNING id, company_id, payroll_group_id, period_year, period_month,
-            period_start, period_end, pay_date, status::text as status,
-            total_gross, total_net, total_employer_cost,
-            total_epf_employee, total_epf_employer, total_socso_employee, total_socso_employer,
-            total_eis_employee, total_eis_employer, total_pcb, total_zakat,
-            employee_count, version, processed_by, processed_at, approved_by, approved_at,
-            locked_at, locked_by, notes, created_at, updated_at, created_by, updated_by"#,
+    let audit_meta = AuditRequestMeta::from_headers(&headers);
+    let run = crate::services::payroll_lifecycle_service::approve(
+        &state.pool,
+        company_id,
+        id,
+        auth.0.sub,
+        Some(&audit_meta),
     )
-    .bind(id)
-    .bind(company_id)
-    .bind(auth.0.sub)
-    .fetch_optional(&state.pool)
-    .await?
-    .ok_or_else(|| {
-        AppError::BadRequest("Payroll run not found or not in processed status".into())
-    })?;
+    .await?;
+
+    Ok(Json(run))
+}
+
+pub async fn return_run_for_changes(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Json(req): Json<ReturnPayrollRunRequest>,
+) -> AppResult<Json<PayrollRun>> {
+    auth.require_permission(Permission::ApprovePayroll)?;
+    let company_id = auth
+        .0
+        .company_id
+        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
+    let audit_meta = AuditRequestMeta::from_headers(&headers);
+    let run = crate::services::payroll_lifecycle_service::return_for_changes(
+        &state.pool,
+        company_id,
+        id,
+        auth.0.sub,
+        req.reason,
+        Some(&audit_meta),
+    )
+    .await?;
 
     Ok(Json(run))
 }
@@ -454,32 +586,23 @@ pub async fn approve_run(
 pub async fn lock_run(
     State(state): State<AppState>,
     auth: AuthUser,
+    headers: HeaderMap,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<PayrollRun>> {
-    auth.require_payroll_privileged()?;
+    auth.require_permission(Permission::MarkPayrollPaid)?;
     let company_id = auth
         .0
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
-
-    let run = sqlx::query_as::<_, PayrollRun>(
-        r#"UPDATE payroll_runs SET
-            status = 'paid', locked_by = $3, locked_at = NOW(), updated_at = NOW()
-        WHERE id = $1 AND company_id = $2 AND status = 'approved'
-        RETURNING id, company_id, payroll_group_id, period_year, period_month,
-            period_start, period_end, pay_date, status::text as status,
-            total_gross, total_net, total_employer_cost,
-            total_epf_employee, total_epf_employer, total_socso_employee, total_socso_employer,
-            total_eis_employee, total_eis_employer, total_pcb, total_zakat,
-            employee_count, version, processed_by, processed_at, approved_by, approved_at,
-            locked_at, locked_by, notes, created_at, updated_at, created_by, updated_by"#,
+    let audit_meta = AuditRequestMeta::from_headers(&headers);
+    let run = crate::services::payroll_lifecycle_service::lock_as_paid(
+        &state.pool,
+        company_id,
+        id,
+        auth.0.sub,
+        Some(&audit_meta),
     )
-    .bind(id)
-    .bind(company_id)
-    .bind(auth.0.sub)
-    .fetch_optional(&state.pool)
-    .await?
-    .ok_or_else(|| AppError::BadRequest("Payroll run not found or not approved".into()))?;
+    .await?;
 
     Ok(Json(run))
 }
@@ -488,7 +611,7 @@ pub async fn list_groups(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> AppResult<Json<Vec<PayrollGroup>>> {
-    auth.require_payroll_privileged()?;
+    auth.require_permission(Permission::ViewPayroll)?;
     let company_id = auth
         .0
         .company_id
@@ -582,7 +705,7 @@ pub async fn list_entries(
     auth: AuthUser,
     Query(q): Query<PayrollEntryQuery>,
 ) -> AppResult<Json<Vec<PayrollEntryWithEmployee>>> {
-    auth.require_payroll_privileged()?;
+    auth.require_permission(Permission::ManagePayrollDraft)?;
     let company_id = auth
         .0
         .company_id
@@ -620,9 +743,10 @@ pub async fn list_entries(
 pub async fn create_entry(
     State(state): State<AppState>,
     auth: AuthUser,
+    headers: HeaderMap,
     Json(req): Json<CreatePayrollEntryRequest>,
 ) -> AppResult<Json<PayrollEntry>> {
-    auth.require_payroll_privileged()?;
+    auth.require_permission(Permission::ManagePayrollDraft)?;
     let company_id = auth
         .0
         .company_id
@@ -660,16 +784,32 @@ pub async fn create_entry(
     .fetch_one(&state.pool)
     .await?;
 
+    let audit_meta = AuditRequestMeta::from_headers(&headers);
+    let _ = crate::services::audit_service::log_action_with_metadata(
+        &state.pool,
+        Some(company_id),
+        Some(auth.0.sub),
+        "create",
+        "payroll_entry",
+        Some(entry.id),
+        None,
+        Some(serde_json::to_value(&entry).unwrap_or_default()),
+        Some("Created payroll adjustment entry"),
+        Some(&audit_meta),
+    )
+    .await;
+
     Ok(Json(entry))
 }
 
 pub async fn update_entry(
     State(state): State<AppState>,
     auth: AuthUser,
+    headers: HeaderMap,
     Path(id): Path<Uuid>,
     Json(req): Json<UpdatePayrollEntryRequest>,
 ) -> AppResult<Json<PayrollEntry>> {
-    auth.require_payroll_privileged()?;
+    auth.require_permission(Permission::ManagePayrollDraft)?;
     let company_id = auth
         .0
         .company_id
@@ -687,9 +827,11 @@ pub async fn update_entry(
     let employee_id = req.employee_id.unwrap_or(current.employee_id);
     let period_year = req.period_year.unwrap_or(current.period_year);
     let period_month = req.period_month.unwrap_or(current.period_month);
-    let category = req.category.unwrap_or(current.category);
-    let item_type = req.item_type.unwrap_or(current.item_type);
-    let description = req.description.unwrap_or(current.description);
+    let category = req.category.unwrap_or_else(|| current.category.clone());
+    let item_type = req.item_type.unwrap_or_else(|| current.item_type.clone());
+    let description = req
+        .description
+        .unwrap_or_else(|| current.description.clone());
     let amount = req.amount.unwrap_or(current.amount);
 
     validate_payroll_entry(
@@ -735,34 +877,67 @@ pub async fn update_entry(
     .fetch_one(&state.pool)
     .await?;
 
+    let audit_meta = AuditRequestMeta::from_headers(&headers);
+    let _ = crate::services::audit_service::log_action_with_metadata(
+        &state.pool,
+        Some(company_id),
+        Some(auth.0.sub),
+        "update",
+        "payroll_entry",
+        Some(id),
+        Some(serde_json::to_value(&current).unwrap_or_default()),
+        Some(serde_json::to_value(&updated).unwrap_or_default()),
+        Some("Updated payroll adjustment entry"),
+        Some(&audit_meta),
+    )
+    .await;
+
     Ok(Json(updated))
 }
 
 pub async fn delete_entry(
     State(state): State<AppState>,
     auth: AuthUser,
+    headers: HeaderMap,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<serde_json::Value>> {
-    auth.require_payroll_privileged()?;
+    auth.require_permission(Permission::ManagePayrollDraft)?;
     let company_id = auth
         .0
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    let rows = sqlx::query(
+    let current = sqlx::query_as::<_, PayrollEntry>(
+        "SELECT * FROM payroll_entries WHERE id = $1 AND company_id = $2 AND is_processed = FALSE",
+    )
+    .bind(id)
+    .bind(company_id)
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or_else(|| AppError::BadRequest("Payroll entry not found or already processed".into()))?;
+
+    sqlx::query(
         "DELETE FROM payroll_entries WHERE id = $1 AND company_id = $2 AND is_processed = FALSE",
     )
     .bind(id)
     .bind(company_id)
     .execute(&state.pool)
-    .await?
-    .rows_affected();
+    .await?;
 
-    if rows == 0 {
-        return Err(AppError::BadRequest(
-            "Payroll entry not found or already processed".into(),
-        ));
-    }
+    let audit_meta = AuditRequestMeta::from_headers(&headers);
+    let _ = crate::services::audit_service::log_action_with_metadata(
+        &state.pool,
+        Some(company_id),
+        Some(auth.0.sub),
+        "delete",
+        "payroll_entry",
+        Some(id),
+        Some(serde_json::to_value(&current).unwrap_or_default()),
+        None,
+        Some("Deleted payroll adjustment entry"),
+        Some(&audit_meta),
+    )
+    .await;
 
     Ok(Json(serde_json::json!({ "success": true })))
 }
@@ -775,7 +950,7 @@ pub async fn download_run_payslips_pdf(
     use axum::body::Body;
     use axum::http::{Response, StatusCode, header};
 
-    auth.require_payroll_privileged()?;
+    auth.require_permission(Permission::ViewPayroll)?;
     let company_id = auth
         .0
         .company_id
@@ -804,7 +979,7 @@ pub async fn get_items(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<Vec<PayrollItem>>> {
-    auth.require_payroll_privileged()?;
+    auth.require_permission(Permission::ViewPayroll)?;
     let items = sqlx::query_as::<_, PayrollItem>(
         "SELECT * FROM payroll_items WHERE payroll_run_id = $1 ORDER BY created_at",
     )

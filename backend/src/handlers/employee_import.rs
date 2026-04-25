@@ -7,7 +7,7 @@ use axum::{
 use uuid::Uuid;
 
 use crate::core::app_state::AppState;
-use crate::core::auth::AuthUser;
+use crate::core::auth::{AuthUser, Permission};
 use crate::core::error::{AppError, AppResult};
 use crate::models::employee_import::{
     ImportConfirmRequest, ImportValidationResponse, TemplateQuery,
@@ -15,7 +15,7 @@ use crate::models::employee_import::{
 use crate::services::employee_import_service;
 
 fn require_payroll_admin(auth: &AuthUser) -> AppResult<(Uuid, Uuid)> {
-    auth.require_payroll_privileged()?;
+    auth.require_permission(Permission::ManagePayrollDraft)?;
     let company_id = auth
         .0
         .company_id

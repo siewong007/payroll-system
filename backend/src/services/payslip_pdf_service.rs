@@ -89,7 +89,8 @@ pub async fn generate_payslip_pdf(
         FROM payroll_items pi
         JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
         JOIN employees e ON pi.employee_id = e.id
-        WHERE pi.id = $1 AND pi.employee_id = $2"#,
+        WHERE pi.id = $1 AND pi.employee_id = $2
+        AND pr.status::text IN ('approved', 'paid')"#,
     )
     .bind(payslip_id)
     .bind(employee_id)
@@ -528,6 +529,7 @@ pub async fn generate_bulk_payslips(
         FROM payroll_items pi
         JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
         WHERE pr.id = $1 AND pr.company_id = $2
+        AND pr.status::text IN ('approved', 'paid')
         ORDER BY (SELECT employee_number FROM employees WHERE id = pi.employee_id)"#,
     )
     .bind(payroll_run_id)

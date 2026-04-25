@@ -1,31 +1,49 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, CheckCircle, Lock, Download, Trash2, Pencil, Save, X } from 'lucide-react';
+import { ArrowLeft, CheckCircle, Clock, Download, Lock, Pencil, RotateCcw, Save, Send, Trash2, X } from 'lucide-react';
 import {
   getPayrollRun,
+  getPayrollRunAuditLogs,
   approvePayroll,
   lockPayroll,
   downloadRunPayslips,
   deletePayrollRun,
+  returnPayrollForChanges,
+  submitPayrollForApproval,
   updatePayrollItemPcb,
 } from '@/api/payroll';
 import { formatMYR, getErrorMessage } from '@/lib/utils';
+import { useAuth } from '@/context/AuthContext';
+import { canApprovePayroll, canPreparePayroll } from '@/lib/roles';
 
 const MONTHS = [
   '', 'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
 
-const canDeletePayrollRun = (status: string) => ['draft', 'processed', 'cancelled', 'approved', 'paid'].includes(status);
+const STATUS_LABELS: Record<string, string> = {
+  draft: 'Draft',
+  processing: 'Processing',
+  processed: 'Processed',
+  pending_approval: 'Pending Approval',
+  approved: 'Approved',
+  paid: 'Paid',
+  cancelled: 'Cancelled',
+};
+
+const canDeletePayrollRun = (status: string) => ['draft', 'processed', 'cancelled'].includes(status);
+const canDownloadPayslips = (status: string) => ['approved', 'paid'].includes(status);
 
 export function PayrollDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { user } = useAuth();
   const [editingPcbEmployeeId, setEditingPcbEmployeeId] = useState<string | null>(null);
   const [pcbInput, setPcbInput] = useState('');
   const [pcbError, setPcbError] = useState('');
+  const [lifecycleError, setLifecycleError] = useState('');
 
   const { data, isLoading } = useQuery({
     queryKey: ['payrollRun', id],
@@ -33,14 +51,62 @@ export function PayrollDetail() {
     enabled: !!id,
   });
 
+  const { data: auditLogs = [] } = useQuery({
+    queryKey: ['payrollRunAuditLogs', id],
+    queryFn: () => getPayrollRunAuditLogs(id!),
+    enabled: !!id,
+  });
+
+  const submitMutation = useMutation({
+    mutationFn: () => submitPayrollForApproval(id!),
+    onSuccess: () => {
+      setLifecycleError('');
+      queryClient.invalidateQueries({ queryKey: ['payrollRun', id] });
+      queryClient.invalidateQueries({ queryKey: ['payrollRuns'] });
+      queryClient.invalidateQueries({ queryKey: ['payrollRunAuditLogs', id] });
+    },
+    onError: (error: unknown) => {
+      setLifecycleError(getErrorMessage(error, 'Failed to submit payroll run for approval'));
+    },
+  });
+
   const approveMutation = useMutation({
     mutationFn: () => approvePayroll(id!),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['payrollRun', id] }),
+    onSuccess: () => {
+      setLifecycleError('');
+      queryClient.invalidateQueries({ queryKey: ['payrollRun', id] });
+      queryClient.invalidateQueries({ queryKey: ['payrollRuns'] });
+      queryClient.invalidateQueries({ queryKey: ['payrollRunAuditLogs', id] });
+    },
+    onError: (error: unknown) => {
+      setLifecycleError(getErrorMessage(error, 'Failed to approve payroll run'));
+    },
+  });
+
+  const returnMutation = useMutation({
+    mutationFn: (reason?: string) => returnPayrollForChanges(id!, reason),
+    onSuccess: () => {
+      setLifecycleError('');
+      queryClient.invalidateQueries({ queryKey: ['payrollRun', id] });
+      queryClient.invalidateQueries({ queryKey: ['payrollRuns'] });
+      queryClient.invalidateQueries({ queryKey: ['payrollRunAuditLogs', id] });
+    },
+    onError: (error: unknown) => {
+      setLifecycleError(getErrorMessage(error, 'Failed to return payroll run for changes'));
+    },
   });
 
   const lockMutation = useMutation({
     mutationFn: () => lockPayroll(id!),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['payrollRun', id] }),
+    onSuccess: () => {
+      setLifecycleError('');
+      queryClient.invalidateQueries({ queryKey: ['payrollRun', id] });
+      queryClient.invalidateQueries({ queryKey: ['payrollRuns'] });
+      queryClient.invalidateQueries({ queryKey: ['payrollRunAuditLogs', id] });
+    },
+    onError: (error: unknown) => {
+      setLifecycleError(getErrorMessage(error, 'Failed to lock payroll run'));
+    },
   });
 
   const deleteMutation = useMutation({
@@ -50,7 +116,7 @@ export function PayrollDetail() {
       navigate('/payroll');
     },
     onError: (error: unknown) => {
-      alert(getErrorMessage(error, 'Failed to delete payroll run'));
+      setLifecycleError(getErrorMessage(error, 'Failed to delete payroll run'));
     },
   });
 
@@ -60,6 +126,7 @@ export function PayrollDetail() {
     onSuccess: (summary) => {
       queryClient.setQueryData(['payrollRun', id], summary);
       queryClient.invalidateQueries({ queryKey: ['payrollRuns'] });
+      queryClient.invalidateQueries({ queryKey: ['payrollRunAuditLogs', id] });
       setEditingPcbEmployeeId(null);
       setPcbInput('');
       setPcbError('');
@@ -80,7 +147,9 @@ export function PayrollDetail() {
   if (!data) return <div className="text-center text-gray-500 py-12">Payroll run not found</div>;
 
   const { payroll_run: run, items } = data;
-  const canEditPcb = run.status === 'processed';
+  const canPrepare = canPreparePayroll(user?.role);
+  const canApprove = canApprovePayroll(user?.role);
+  const canEditPcb = canPrepare && run.status === 'processed';
 
   const startEditPcb = (employeeId: string, pcbAmount: number) => {
     setEditingPcbEmployeeId(employeeId);
@@ -115,13 +184,15 @@ export function PayrollDetail() {
           <p className="text-gray-500">{run.employee_count} employees processed</p>
         </div>
         <div className="flex items-center gap-3">
-          <button
-            onClick={() => downloadRunPayslips(id!)}
-            className="flex items-center gap-2 bg-white border border-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-50 text-sm font-medium"
-          >
-            <Download className="w-4 h-4" /> Download Payslips
-          </button>
-          {canDeletePayrollRun(run.status) && (
+          {canDownloadPayslips(run.status) && (
+            <button
+              onClick={() => downloadRunPayslips(id!)}
+              className="flex items-center gap-2 bg-white border border-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-50 text-sm font-medium"
+            >
+              <Download className="w-4 h-4" /> Download Payslips
+            </button>
+          )}
+          {canPrepare && canDeletePayrollRun(run.status) && (
             <button
               onClick={() => {
                 if (confirm(`Delete ${MONTHS[run.period_month]} ${run.period_year} payroll run? This cannot be undone.`)) {
@@ -135,17 +206,40 @@ export function PayrollDetail() {
               {deleteMutation.isPending ? 'Deleting...' : 'Delete'}
             </button>
           )}
-          {run.status === 'processed' && (
+          {canPrepare && run.status === 'processed' && (
             <button
-              onClick={() => approveMutation.mutate()}
-              disabled={approveMutation.isPending}
-              className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 disabled:opacity-50 text-sm font-medium"
+              onClick={() => submitMutation.mutate()}
+              disabled={submitMutation.isPending}
+              className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm font-medium"
             >
-              <CheckCircle className="w-4 h-4" />
-              {approveMutation.isPending ? 'Approving...' : 'Approve'}
+              <Send className="w-4 h-4" />
+              {submitMutation.isPending ? 'Submitting...' : 'Submit for Approval'}
             </button>
           )}
-          {run.status === 'approved' && (
+          {canApprove && run.status === 'pending_approval' && (
+            <>
+              <button
+                onClick={() => {
+                  const reason = prompt('Reason for returning this payroll run?')?.trim();
+                  if (reason !== undefined) returnMutation.mutate(reason || undefined);
+                }}
+                disabled={returnMutation.isPending}
+                className="flex items-center gap-2 bg-white border border-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-50 disabled:opacity-50 text-sm font-medium"
+              >
+                <RotateCcw className="w-4 h-4" />
+                {returnMutation.isPending ? 'Returning...' : 'Return'}
+              </button>
+              <button
+                onClick={() => approveMutation.mutate()}
+                disabled={approveMutation.isPending}
+                className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 disabled:opacity-50 text-sm font-medium"
+              >
+                <CheckCircle className="w-4 h-4" />
+                {approveMutation.isPending ? 'Approving...' : 'Approve'}
+              </button>
+            </>
+          )}
+          {canApprove && run.status === 'approved' && (
             <button
               onClick={() => lockMutation.mutate()}
               disabled={lockMutation.isPending}
@@ -158,12 +252,30 @@ export function PayrollDetail() {
           <span className={`px-3 py-1 rounded-full text-sm font-medium ${
             run.status === 'paid' ? 'bg-emerald-50 text-emerald-700' :
             run.status === 'approved' ? 'bg-green-50 text-green-700' :
+            run.status === 'pending_approval' ? 'bg-blue-50 text-blue-700' :
             'bg-gray-100 text-gray-900'
           }`}>
-            {run.status}
+            {STATUS_LABELS[run.status] ?? run.status}
           </span>
         </div>
       </div>
+      {lifecycleError && (
+        <div className="mb-6 rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {lifecycleError}
+        </div>
+      )}
+      {run.status === 'paid' && (
+        <div className="mb-6 rounded-lg border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+          This payroll run is paid and locked. Create an adjustment in a future payroll run for corrections.
+        </div>
+      )}
+      {run.status === 'pending_approval' && (
+        <div className="mb-6 rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-700">
+          This payroll run is submitted for approval. PCB edits and deletion are disabled while it is under review.
+        </div>
+      )}
+
+      <PayrollAuditTimeline logs={auditLogs} />
 
       {/* Summary Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
@@ -213,7 +325,7 @@ export function PayrollDetail() {
           <h2 className="font-semibold">Employee Breakdown</h2>
           {canEditPcb && (
             <p className="mt-1 text-sm text-gray-500">
-              PCB can be edited while this payroll run is processed and before it is approved.
+              PCB can be edited while this payroll run is processed and before it is submitted for approval.
             </p>
           )}
           {pcbError && (
@@ -314,4 +426,64 @@ export function PayrollDetail() {
       </div>
     </div>
   );
+}
+
+function PayrollAuditTimeline({ logs }: { logs: Awaited<ReturnType<typeof getPayrollRunAuditLogs>> }) {
+  const visibleLogs = logs.slice(0, 6);
+
+  return (
+    <div className="mb-6 bg-white rounded-2xl shadow border border-gray-200 p-4">
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-gray-900">Audit Trail</h2>
+        <span className="text-xs text-gray-400">{logs.length} records</span>
+      </div>
+      {visibleLogs.length === 0 ? (
+        <p className="text-sm text-gray-400">No payroll lifecycle events recorded yet.</p>
+      ) : (
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {visibleLogs.map((log) => (
+            <div key={log.id} className="rounded-lg border border-gray-100 px-3 py-2">
+              <div className="mb-1 flex items-center justify-between gap-2">
+                <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${getAuditActionClass(log.action)}`}>
+                  {formatAuditAction(log.action)}
+                </span>
+                <span className="inline-flex items-center gap-1 text-xs text-gray-400">
+                  <Clock className="h-3 w-3" />
+                  {formatAuditTimestamp(log.created_at)}
+                </span>
+              </div>
+              <p className="truncate text-sm text-gray-700">{log.description || 'Payroll event'}</p>
+              <p className="mt-0.5 truncate text-xs text-gray-400">{log.user_full_name || log.user_email || 'System'}</p>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function getAuditActionClass(action: string) {
+  const classes: Record<string, string> = {
+    process: 'bg-indigo-50 text-indigo-700',
+    approve: 'bg-emerald-50 text-emerald-700',
+    submit_approval: 'bg-blue-50 text-blue-700',
+    return_changes: 'bg-amber-50 text-amber-700',
+    lock: 'bg-gray-900 text-white',
+    update: 'bg-blue-50 text-blue-700',
+    delete: 'bg-red-50 text-red-700',
+  };
+  return classes[action] ?? 'bg-gray-100 text-gray-700';
+}
+
+function formatAuditAction(action: string) {
+  return action.replace(/_/g, ' ').replace(/^\w/, (char) => char.toUpperCase());
+}
+
+function formatAuditTimestamp(value: string) {
+  return new Date(value).toLocaleString('en-MY', {
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }

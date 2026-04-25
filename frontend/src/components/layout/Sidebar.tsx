@@ -26,7 +26,7 @@ import { BrandLogo } from '@/components/ui/BrandLogo';
 const navigation = [
   { name: 'Company', href: '/company', icon: Building2, hideFor: ['super_admin'] },
   { name: 'Employees', href: '/employees', icon: Users, hideFor: ['super_admin'] },
-  { name: 'Payroll', href: '/payroll', icon: Calculator, showFor: ['super_admin', 'payroll_admin'] },
+  { name: 'Payroll', href: '/payroll', icon: Calculator, showFor: ['super_admin', 'payroll_admin', 'finance'] },
   { name: 'Teams', href: '/teams', icon: Users2, hideFor: ['super_admin'] },
   { name: 'Calendar', href: '/calendar', icon: CalendarDays, hideFor: ['super_admin'] },
   { name: 'Attendance', href: '/attendance', icon: ScanLine, hideFor: ['super_admin'] },

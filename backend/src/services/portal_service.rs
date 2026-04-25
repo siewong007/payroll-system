@@ -94,7 +94,7 @@ pub async fn get_my_payslips(pool: &PgPool, employee_id: Uuid) -> AppResult<Vec<
         FROM payroll_items pi
         JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
         WHERE pi.employee_id = $1
-        AND pr.status::text IN ('processed', 'approved', 'paid')
+        AND pr.status::text IN ('approved', 'paid')
         ORDER BY pr.period_year DESC, pr.period_month DESC"#,
     )
     .bind(employee_id)

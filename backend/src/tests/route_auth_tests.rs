@@ -3,6 +3,7 @@ use std::sync::Arc;
 use axum::Extension;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
+use chrono::NaiveDate;
 use tower::ServiceExt;
 use url::Url;
 use webauthn_rs::prelude::*;
@@ -11,7 +12,10 @@ use crate::core::app_state::AppState;
 use crate::core::auth::{JwtSecret, create_token};
 use crate::core::config::AppConfig;
 use crate::routes;
-use crate::tests::support::{seed_company, seed_user, skip_if_no_db};
+use crate::services::payroll_engine;
+use crate::tests::support::{
+    seed_company, seed_employee, seed_payroll_group, seed_user, skip_if_no_db,
+};
 
 const JWT_SECRET: &str = "route-auth-test-secret";
 
@@ -196,4 +200,83 @@ async fn audited_route_writes_request_metadata() {
 
     assert_eq!(row.0.as_deref(), Some("203.0.113.10"));
     assert_eq!(row.1.as_deref(), Some("PayrollRouteTest/1.0"));
+}
+
+#[tokio::test]
+async fn finance_can_approve_but_not_prepare_payroll_routes() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+
+    let company_id = seed_company(&pool).await;
+    let group_id = seed_payroll_group(&pool, company_id).await;
+    let _employee_id = seed_employee(&pool, company_id, Some(group_id), 350_000).await;
+    let (_, processor_id) = token_and_user_for(&pool, company_id, "payroll_admin").await;
+    let payroll_admin_token = token_for(&pool, company_id, "payroll_admin").await;
+    let finance_token = token_for(&pool, company_id, "finance").await;
+
+    let run = payroll_engine::process_payroll(
+        &pool,
+        company_id,
+        group_id,
+        2024,
+        6,
+        NaiveDate::from_ymd_opt(2024, 7, 5).unwrap(),
+        processor_id,
+        None,
+        None,
+    )
+    .await
+    .expect("process payroll");
+
+    let finance_submit_response = app_for(pool.clone())
+        .await
+        .oneshot(request(
+            "PUT",
+            &format!("/api/payroll/runs/{}/submit-approval", run.id),
+            &finance_token,
+            "{}",
+        ))
+        .await
+        .expect("finance submit response");
+    assert_eq!(finance_submit_response.status(), StatusCode::FORBIDDEN);
+
+    let payroll_admin_submit_response = app_for(pool.clone())
+        .await
+        .oneshot(request(
+            "PUT",
+            &format!("/api/payroll/runs/{}/submit-approval", run.id),
+            &payroll_admin_token,
+            "{}",
+        ))
+        .await
+        .expect("payroll admin submit response");
+    assert_eq!(payroll_admin_submit_response.status(), StatusCode::OK);
+
+    let payroll_admin_approve_response = app_for(pool.clone())
+        .await
+        .oneshot(request(
+            "PUT",
+            &format!("/api/payroll/runs/{}/approve", run.id),
+            &payroll_admin_token,
+            "{}",
+        ))
+        .await
+        .expect("payroll admin approve response");
+    assert_eq!(
+        payroll_admin_approve_response.status(),
+        StatusCode::FORBIDDEN
+    );
+
+    let finance_approve_response = app_for(pool)
+        .await
+        .oneshot(request(
+            "PUT",
+            &format!("/api/payroll/runs/{}/approve", run.id),
+            &finance_token,
+            "{}",
+        ))
+        .await
+        .expect("finance approve response");
+    assert_eq!(finance_approve_response.status(), StatusCode::OK);
 }

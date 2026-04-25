@@ -8,6 +8,7 @@ const ENTITY_TYPES: { value: string; label: string }[] = [
   { value: 'employee', label: 'Employee' },
   { value: 'payroll_run', label: 'Payroll run' },
   { value: 'payroll_item', label: 'Payroll item' },
+  { value: 'payroll_entry', label: 'Payroll entry' },
   { value: 'attendance_record', label: 'Attendance record' },
   { value: 'platform_attendance_method', label: 'Platform attendance method' },
   { value: 'company_attendance_method', label: 'Company attendance method' },
@@ -29,7 +30,7 @@ const ENTITY_TYPES: { value: string; label: string }[] = [
   { value: 'email', label: 'Email' },
 ];
 
-const ACTIONS = ['create', 'update', 'delete', 'revoke', 'approve', 'reject', 'cancel', 'login', 'process'];
+const ACTIONS = ['create', 'update', 'delete', 'revoke', 'approve', 'submit_approval', 'return_changes', 'lock', 'reject', 'cancel', 'login', 'process'];
 
 const ENTITY_LABELS = Object.fromEntries(ENTITY_TYPES.map((type) => [type.value, type.label]));
 
@@ -249,6 +250,9 @@ function ActionBadge({ action }: { action: string }) {
     delete: 'bg-red-50 text-red-700',
     revoke: 'bg-red-50 text-red-700',
     approve: 'bg-emerald-50 text-emerald-700',
+    submit_approval: 'bg-blue-50 text-blue-700',
+    return_changes: 'bg-amber-50 text-amber-700',
+    lock: 'bg-gray-900 text-white',
     reject: 'bg-orange-50 text-orange-700',
     cancel: 'bg-yellow-50 text-yellow-700',
     login: 'bg-purple-50 text-purple-700',

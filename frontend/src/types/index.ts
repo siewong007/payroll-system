@@ -207,7 +207,7 @@ export interface PayrollRun {
   period_start: string;
   period_end: string;
   pay_date: string;
-  status: 'draft' | 'processing' | 'processed' | 'approved' | 'paid' | 'cancelled';
+  status: 'draft' | 'processing' | 'processed' | 'pending_approval' | 'approved' | 'paid' | 'cancelled';
   total_gross: number;
   total_net: number;
   total_employer_cost: number;
@@ -220,8 +220,13 @@ export interface PayrollRun {
   total_pcb: number;
   total_zakat: number;
   employee_count: number;
+  version: number;
+  processed_by: string | null;
   processed_at: string | null;
+  approved_by: string | null;
   approved_at: string | null;
+  locked_by: string | null;
+  locked_at: string | null;
   notes: string | null;
 }
 

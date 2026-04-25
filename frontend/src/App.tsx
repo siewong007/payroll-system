@@ -8,6 +8,7 @@ import { PortalLayout } from '@/components/layout/PortalLayout';
 import {
   ADMIN_DATA_ROLES,
   PAYROLL_DATA_ROLES,
+  PAYROLL_PREP_ROLES,
   REPORT_ROLES,
   SUPER_ADMIN_ROLES,
   type AppRole,
@@ -118,7 +119,7 @@ export default function App() {
                 <Route
                   path="/employees/import"
                   element={(
-                    <RoleGuard allowedRoles={PAYROLL_DATA_ROLES}>
+                    <RoleGuard allowedRoles={PAYROLL_PREP_ROLES}>
                       <EmployeeImport />
                     </RoleGuard>
                   )}
@@ -135,7 +136,7 @@ export default function App() {
                 <Route
                   path="/payroll/process"
                   element={(
-                    <RoleGuard allowedRoles={PAYROLL_DATA_ROLES}>
+                    <RoleGuard allowedRoles={PAYROLL_PREP_ROLES}>
                       <PayrollProcess />
                     </RoleGuard>
                   )}

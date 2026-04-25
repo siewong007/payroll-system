@@ -5,7 +5,20 @@ use axum::response::IntoResponse;
 use serde::Deserialize;
 use validator::Validate;
 
+use crate::core::auth::{AuthUser, Claims, Permission};
 use crate::core::extract::ValidatedJson;
+
+fn auth_with_role(role: &str) -> AuthUser {
+    AuthUser(Claims {
+        sub: uuid::Uuid::new_v4(),
+        email: format!("{role}@example.invalid"),
+        role: role.to_string(),
+        company_id: Some(uuid::Uuid::new_v4()),
+        employee_id: None,
+        exp: 2_000_000_000,
+        iat: 1_700_000_000,
+    })
+}
 
 #[derive(Debug, Deserialize, Validate)]
 struct LoginLike {
@@ -66,4 +79,21 @@ async fn malformed_json_becomes_400() {
 
     let resp = err.into_response();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[test]
+fn payroll_permissions_separate_preparation_and_approval() {
+    let payroll_admin = auth_with_role("payroll_admin");
+    assert!(payroll_admin.can(Permission::ManagePayrollDraft));
+    assert!(payroll_admin.can(Permission::SubmitPayroll));
+    assert!(!payroll_admin.can(Permission::ApprovePayroll));
+
+    let finance = auth_with_role("finance");
+    assert!(finance.can(Permission::ViewPayroll));
+    assert!(finance.can(Permission::ApprovePayroll));
+    assert!(finance.can(Permission::MarkPayrollPaid));
+    assert!(!finance.can(Permission::ManagePayrollDraft));
+
+    let exec = auth_with_role("exec");
+    assert!(!exec.can(Permission::ViewPayroll));
 }

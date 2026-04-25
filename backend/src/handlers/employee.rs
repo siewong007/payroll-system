@@ -7,7 +7,7 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::core::app_state::AppState;
-use crate::core::auth::AuthUser;
+use crate::core::auth::{AuthUser, Permission};
 use crate::core::error::{AppError, AppResult};
 use crate::models::employee::{
     CreateEmployeeRequest, CreateTp3Request, Employee, SalaryHistory, Tp3Record,
@@ -279,7 +279,7 @@ pub async fn salary_history(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<Vec<SalaryHistory>>> {
-    auth.require_payroll_privileged()?;
+    auth.require_permission(Permission::ViewPayroll)?;
     let history = employee_service::get_salary_history(&state.pool, id).await?;
     Ok(Json(history))
 }
@@ -290,7 +290,7 @@ pub async fn create_tp3(
     Path(id): Path<Uuid>,
     Json(req): Json<CreateTp3Request>,
 ) -> AppResult<Json<Tp3Record>> {
-    auth.require_payroll_privileged()?;
+    auth.require_permission(Permission::ManagePayrollDraft)?;
     let record = employee_service::create_tp3(&state.pool, id, req, auth.0.sub).await?;
     Ok(Json(record))
 }

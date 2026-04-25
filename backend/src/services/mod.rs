@@ -18,6 +18,7 @@ pub mod oauth2_service;
 pub mod passkey_service;
 pub mod password_reset_service;
 pub mod payroll_engine;
+pub mod payroll_lifecycle_service;
 pub mod payslip_pdf_service;
 pub mod pcb_calculator;
 pub mod pdf_helpers;
