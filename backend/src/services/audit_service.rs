@@ -81,10 +81,12 @@ pub async fn list_audit_logs(
     let per_page = query.per_page.unwrap_or(25).min(100);
     let offset = (page - 1) * per_page;
 
+    // Filter by al.company_id so NULL-user rows (public kiosk endpoints etc.)
+    // remain visible. Legacy rows missing company_id are excluded; migration
+    // 024 backfills them from the associated user where possible.
     let count: i64 = sqlx::query_scalar(
         r#"SELECT COUNT(*) FROM audit_logs al
-        LEFT JOIN users u ON al.user_id = u.id
-        WHERE (u.company_id = $1 OR al.user_id IN (SELECT id FROM users WHERE company_id = $1))
+        WHERE al.company_id = $1
         AND ($2::text IS NULL OR al.entity_type = $2)
         AND ($3::text IS NULL OR al.action = $3)
         AND ($4::uuid IS NULL OR al.user_id = $4)
@@ -107,7 +109,7 @@ pub async fn list_audit_logs(
             u.email as user_email, u.full_name as user_full_name
         FROM audit_logs al
         LEFT JOIN users u ON al.user_id = u.id
-        WHERE (u.company_id = $1 OR al.user_id IN (SELECT id FROM users WHERE company_id = $1))
+        WHERE al.company_id = $1
         AND ($2::text IS NULL OR al.entity_type = $2)
         AND ($3::text IS NULL OR al.action = $3)
         AND ($4::uuid IS NULL OR al.user_id = $4)
@@ -142,6 +144,7 @@ pub async fn log_action(
 ) -> AppResult<()> {
     log_action_with_metadata(
         pool,
+        None,
         user_id,
         action,
         entity_type,
@@ -157,6 +160,7 @@ pub async fn log_action(
 #[allow(clippy::too_many_arguments)]
 pub async fn log_action_with_metadata(
     pool: &PgPool,
+    company_id: Option<Uuid>,
     user_id: Option<Uuid>,
     action: &str,
     entity_type: &str,
@@ -169,11 +173,12 @@ pub async fn log_action_with_metadata(
     let ip_address = metadata.and_then(|meta| meta.ip_address.as_deref());
     let user_agent = metadata.and_then(|meta| meta.user_agent.as_deref());
 
-    sqlx::query(
+    let result = sqlx::query(
         r#"INSERT INTO audit_logs
-        (user_id, action, entity_type, entity_id, old_values, new_values, description, ip_address, user_agent)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"#,
+        (company_id, user_id, action, entity_type, entity_id, old_values, new_values, description, ip_address, user_agent)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"#,
     )
+    .bind(company_id)
     .bind(user_id)
     .bind(action)
     .bind(entity_type)
@@ -184,6 +189,22 @@ pub async fn log_action_with_metadata(
     .bind(ip_address)
     .bind(user_agent)
     .execute(pool)
-    .await?;
+    .await;
+
+    // Call sites intentionally discard the Result (audit logging must never
+    // fail the caller), so surface the error here — otherwise insert failures
+    // in production (FK violations, column-length overflow, etc.) are invisible.
+    if let Err(e) = &result {
+        tracing::warn!(
+            error = %e,
+            action = action,
+            entity_type = entity_type,
+            company_id = ?company_id,
+            user_id = ?user_id,
+            "Failed to write audit_logs row"
+        );
+    }
+
+    result?;
     Ok(())
 }

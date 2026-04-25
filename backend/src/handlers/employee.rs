@@ -165,8 +165,14 @@ pub async fn create(
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
     let audit_meta = AuditRequestMeta::from_headers(&headers);
 
-    let (emp, account_info) =
-        employee_service::create_employee(&state.pool, company_id, req, auth.0.sub, Some(&audit_meta)).await?;
+    let (emp, account_info) = employee_service::create_employee(
+        &state.pool,
+        company_id,
+        req,
+        auth.0.sub,
+        Some(&audit_meta),
+    )
+    .await?;
 
     // Auto-send welcome email if a new user account was created
     if let Some(ref info) = account_info
@@ -242,8 +248,15 @@ pub async fn update(
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
     let audit_meta = AuditRequestMeta::from_headers(&headers);
 
-    let emp =
-        employee_service::update_employee(&state.pool, id, company_id, req, auth.0.sub, Some(&audit_meta)).await?;
+    let emp = employee_service::update_employee(
+        &state.pool,
+        id,
+        company_id,
+        req,
+        auth.0.sub,
+        Some(&audit_meta),
+    )
+    .await?;
     Ok(Json(emp))
 }
 

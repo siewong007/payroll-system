@@ -28,6 +28,7 @@ async fn process_payroll_single_employee_rm5000() {
         NaiveDate::from_ymd_opt(2024, 2, 5).unwrap(),
         user_id,
         None,
+        None,
     )
     .await
     .expect("process_payroll should succeed");
@@ -128,6 +129,7 @@ async fn process_payroll_rejects_duplicate_period() {
         NaiveDate::from_ymd_opt(2024, 3, 5).unwrap(),
         user_id,
         None,
+        None,
     )
     .await;
     assert!(first.is_ok(), "first run should succeed: {first:?}");
@@ -140,6 +142,7 @@ async fn process_payroll_rejects_duplicate_period() {
         2,
         NaiveDate::from_ymd_opt(2024, 3, 5).unwrap(),
         user_id,
+        None,
         None,
     )
     .await;
@@ -170,6 +173,7 @@ async fn process_payroll_rejects_empty_group() {
         3,
         NaiveDate::from_ymd_opt(2024, 4, 5).unwrap(),
         user_id,
+        None,
         None,
     )
     .await

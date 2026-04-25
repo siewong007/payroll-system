@@ -81,6 +81,7 @@ pub async fn create_leave_request_admin(
 
     let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
+        Some(company_id),
         Some(actor_id),
         "create_leave_request_admin",
         "leave_request",
@@ -199,6 +200,7 @@ pub async fn update_leave_request_admin(
 
     let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
+        Some(company_id),
         Some(actor_id),
         "update_leave_request_admin",
         "leave_request",
@@ -248,6 +250,7 @@ pub async fn delete_leave_request_admin(
 
     let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
+        Some(company_id),
         Some(actor_id),
         "delete_leave_request_admin",
         "leave_request",
@@ -385,6 +388,7 @@ pub async fn cancel_leave_request_admin(
 
     let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
+        Some(company_id),
         Some(actor_id),
         "cancel_leave_request_admin",
         "leave_request",
@@ -661,6 +665,7 @@ pub async fn approve_leave(
     // Audit Log
     let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
+        Some(company_id),
         Some(reviewer_id),
         "approve_leave",
         "leave_request",
@@ -744,6 +749,7 @@ pub async fn reject_leave(
     // Audit Log
     let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
+        Some(company_id),
         Some(reviewer_id),
         "reject_leave",
         "leave_request",

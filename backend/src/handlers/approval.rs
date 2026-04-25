@@ -119,9 +119,15 @@ pub async fn update_leave_request(
 ) -> AppResult<Json<LeaveRequest>> {
     let company_id = require_admin(&auth)?;
     let audit_meta = AuditRequestMeta::from_headers(&headers);
-    let leave =
-        approval_service::update_leave_request_admin(&state.pool, company_id, id, req, auth.0.sub, Some(&audit_meta))
-            .await?;
+    let leave = approval_service::update_leave_request_admin(
+        &state.pool,
+        company_id,
+        id,
+        req,
+        auth.0.sub,
+        Some(&audit_meta),
+    )
+    .await?;
     Ok(Json(leave))
 }
 
@@ -133,7 +139,14 @@ pub async fn delete_leave_request(
 ) -> AppResult<Json<serde_json::Value>> {
     let company_id = require_admin(&auth)?;
     let audit_meta = AuditRequestMeta::from_headers(&headers);
-    approval_service::delete_leave_request_admin(&state.pool, company_id, id, auth.0.sub, Some(&audit_meta)).await?;
+    approval_service::delete_leave_request_admin(
+        &state.pool,
+        company_id,
+        id,
+        auth.0.sub,
+        Some(&audit_meta),
+    )
+    .await?;
     Ok(Json(serde_json::json!({ "success": true })))
 }
 
@@ -145,9 +158,14 @@ pub async fn cancel_leave_request(
 ) -> AppResult<Json<LeaveRequest>> {
     let company_id = require_admin(&auth)?;
     let audit_meta = AuditRequestMeta::from_headers(&headers);
-    let leave =
-        approval_service::cancel_leave_request_admin(&state.pool, company_id, id, auth.0.sub, Some(&audit_meta))
-            .await?;
+    let leave = approval_service::cancel_leave_request_admin(
+        &state.pool,
+        company_id,
+        id,
+        auth.0.sub,
+        Some(&audit_meta),
+    )
+    .await?;
     Ok(Json(leave))
 }
 
@@ -249,8 +267,15 @@ pub async fn update_claim(
 ) -> AppResult<Json<ClaimWithEmployee>> {
     let company_id = require_admin(&auth)?;
     let audit_meta = AuditRequestMeta::from_headers(&headers);
-    let claim =
-        approval_service::update_claim_admin(&state.pool, company_id, id, req, auth.0.sub, Some(&audit_meta)).await?;
+    let claim = approval_service::update_claim_admin(
+        &state.pool,
+        company_id,
+        id,
+        req,
+        auth.0.sub,
+        Some(&audit_meta),
+    )
+    .await?;
     let enriched =
         approval_service::get_claim_with_employee_by_id(&state.pool, company_id, claim.id).await?;
     Ok(Json(enriched))
@@ -264,7 +289,14 @@ pub async fn delete_claim(
 ) -> AppResult<Json<serde_json::Value>> {
     let company_id = require_admin(&auth)?;
     let audit_meta = AuditRequestMeta::from_headers(&headers);
-    approval_service::delete_claim_admin(&state.pool, company_id, id, auth.0.sub, Some(&audit_meta)).await?;
+    approval_service::delete_claim_admin(
+        &state.pool,
+        company_id,
+        id,
+        auth.0.sub,
+        Some(&audit_meta),
+    )
+    .await?;
     Ok(Json(serde_json::json!({ "success": true })))
 }
 
@@ -276,8 +308,14 @@ pub async fn cancel_claim(
 ) -> AppResult<Json<Claim>> {
     let company_id = require_admin(&auth)?;
     let audit_meta = AuditRequestMeta::from_headers(&headers);
-    let claim =
-        approval_service::cancel_claim_admin(&state.pool, company_id, id, auth.0.sub, Some(&audit_meta)).await?;
+    let claim = approval_service::cancel_claim_admin(
+        &state.pool,
+        company_id,
+        id,
+        auth.0.sub,
+        Some(&audit_meta),
+    )
+    .await?;
     Ok(Json(claim))
 }
 
@@ -373,9 +411,15 @@ pub async fn update_overtime(
 ) -> AppResult<Json<OvertimeWithEmployee>> {
     let company_id = require_admin(&auth)?;
     let audit_meta = AuditRequestMeta::from_headers(&headers);
-    let overtime =
-        approval_service::update_overtime_admin(&state.pool, company_id, id, req, auth.0.sub, Some(&audit_meta))
-            .await?;
+    let overtime = approval_service::update_overtime_admin(
+        &state.pool,
+        company_id,
+        id,
+        req,
+        auth.0.sub,
+        Some(&audit_meta),
+    )
+    .await?;
     let enriched =
         approval_service::get_overtime_with_employee_by_id(&state.pool, company_id, overtime.id)
             .await?;
@@ -390,7 +434,14 @@ pub async fn delete_overtime(
 ) -> AppResult<Json<serde_json::Value>> {
     let company_id = require_admin(&auth)?;
     let audit_meta = AuditRequestMeta::from_headers(&headers);
-    approval_service::delete_overtime_admin(&state.pool, company_id, id, auth.0.sub, Some(&audit_meta)).await?;
+    approval_service::delete_overtime_admin(
+        &state.pool,
+        company_id,
+        id,
+        auth.0.sub,
+        Some(&audit_meta),
+    )
+    .await?;
     Ok(Json(serde_json::json!({ "success": true })))
 }
 
@@ -402,8 +453,14 @@ pub async fn cancel_overtime(
 ) -> AppResult<Json<OvertimeApplication>> {
     let company_id = require_admin(&auth)?;
     let audit_meta = AuditRequestMeta::from_headers(&headers);
-    let ot =
-        approval_service::cancel_overtime_admin(&state.pool, company_id, id, auth.0.sub, Some(&audit_meta)).await?;
+    let ot = approval_service::cancel_overtime_admin(
+        &state.pool,
+        company_id,
+        id,
+        auth.0.sub,
+        Some(&audit_meta),
+    )
+    .await?;
     Ok(Json(ot))
 }
 

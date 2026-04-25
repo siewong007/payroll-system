@@ -44,6 +44,7 @@ pub async fn create_overtime_admin(
 
     let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
+        Some(company_id),
         Some(actor_id),
         "create_overtime_admin",
         "overtime",
@@ -125,6 +126,7 @@ pub async fn update_overtime_admin(
 
     let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
+        Some(company_id),
         Some(actor_id),
         "update_overtime_admin",
         "overtime",
@@ -168,6 +170,7 @@ pub async fn delete_overtime_admin(
 
     let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
+        Some(company_id),
         Some(actor_id),
         "delete_overtime_admin",
         "overtime",
@@ -294,6 +297,7 @@ pub async fn cancel_overtime_admin(
 
     let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
+        Some(company_id),
         Some(actor_id),
         "cancel_overtime_admin",
         "overtime",
@@ -533,13 +537,17 @@ pub async fn approve_overtime(
     // Audit Log
     let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
+        Some(company_id),
         Some(reviewer_id),
         "approve_overtime",
         "overtime",
         Some(ot.id),
         None,
         Some(serde_json::to_value(&ot).unwrap_or_default()),
-        Some(&format!("Approved overtime for employee {}", ot.employee_id)),
+        Some(&format!(
+            "Approved overtime for employee {}",
+            ot.employee_id
+        )),
         audit_meta,
     )
     .await;
@@ -598,13 +606,17 @@ pub async fn reject_overtime(
     // Audit Log
     let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
+        Some(company_id),
         Some(reviewer_id),
         "reject_overtime",
         "overtime",
         Some(ot.id),
         None,
         Some(serde_json::to_value(&ot).unwrap_or_default()),
-        Some(&format!("Rejected overtime for employee {}", ot.employee_id)),
+        Some(&format!(
+            "Rejected overtime for employee {}",
+            ot.employee_id
+        )),
         audit_meta,
     )
     .await;

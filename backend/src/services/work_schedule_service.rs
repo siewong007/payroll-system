@@ -100,6 +100,7 @@ pub async fn upsert_default_schedule(
 
     let _ = audit_service::log_action_with_metadata(
         pool,
+        Some(company_id),
         Some(actor_id),
         action,
         "work_schedule",
@@ -176,6 +177,7 @@ pub async fn update_schedule(
 
     let _ = audit_service::log_action_with_metadata(
         pool,
+        Some(company_id),
         Some(actor_id),
         "update",
         "work_schedule",

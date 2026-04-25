@@ -59,6 +59,7 @@ pub async fn create_location(
 
     let _ = audit_service::log_action_with_metadata(
         pool,
+        Some(company_id),
         Some(actor_id),
         "create",
         "company_location",
@@ -121,6 +122,7 @@ pub async fn update_location(
 
     let _ = audit_service::log_action_with_metadata(
         pool,
+        Some(company_id),
         Some(actor_id),
         "update",
         "company_location",
@@ -163,6 +165,7 @@ pub async fn delete_location(
 
     let _ = audit_service::log_action_with_metadata(
         pool,
+        Some(company_id),
         Some(actor_id),
         "delete",
         "company_location",
@@ -211,6 +214,7 @@ pub async fn set_geofence_mode(
 
     let _ = audit_service::log_action_with_metadata(
         pool,
+        Some(company_id),
         Some(actor_id),
         "update",
         "geofence_mode",

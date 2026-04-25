@@ -42,6 +42,7 @@ async fn approved_claim_flows_into_payroll_item() {
         NaiveDate::from_ymd_opt(2024, 5, 5).unwrap(),
         user_id,
         None,
+        None,
     )
     .await
     .expect("process_payroll");
@@ -114,6 +115,7 @@ async fn approved_overtime_rest_day_adds_2x_to_gross() {
         NaiveDate::from_ymd_opt(2024, 6, 5).unwrap(),
         user_id,
         None,
+        None,
     )
     .await
     .expect("process_payroll");
@@ -174,6 +176,7 @@ async fn pending_overtime_does_not_affect_payroll() {
         6,
         NaiveDate::from_ymd_opt(2024, 7, 5).unwrap(),
         user_id,
+        None,
         None,
     )
     .await

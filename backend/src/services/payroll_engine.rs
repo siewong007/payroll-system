@@ -399,6 +399,7 @@ pub async fn process_payroll(
     // Audit Log
     let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
+        Some(company_id),
         Some(processed_by),
         "process",
         "payroll_run",

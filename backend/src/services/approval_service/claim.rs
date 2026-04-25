@@ -44,6 +44,7 @@ pub async fn create_claim_admin(
 
     let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
+        Some(company_id),
         Some(actor_id),
         "create_claim_admin",
         "claim",
@@ -114,6 +115,7 @@ pub async fn update_claim_admin(
 
     let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
+        Some(company_id),
         Some(actor_id),
         "update_claim_admin",
         "claim",
@@ -157,6 +159,7 @@ pub async fn delete_claim_admin(
 
     let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
+        Some(company_id),
         Some(actor_id),
         "delete_claim_admin",
         "claim",
@@ -263,6 +266,7 @@ pub async fn cancel_claim_admin(
 
     let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
+        Some(company_id),
         Some(actor_id),
         "cancel_claim_admin",
         "claim",
@@ -464,13 +468,17 @@ pub async fn approve_claim(
     // Audit Log
     let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
+        Some(company_id),
         Some(reviewer_id),
         "approve_claim",
         "claim",
         Some(claim.id),
         None,
         Some(serde_json::to_value(&claim).unwrap_or_default()),
-        Some(&format!("Approved claim for employee {}", claim.employee_id)),
+        Some(&format!(
+            "Approved claim for employee {}",
+            claim.employee_id
+        )),
         audit_meta,
     )
     .await;
@@ -529,13 +537,17 @@ pub async fn reject_claim(
     // Audit Log
     let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
+        Some(company_id),
         Some(reviewer_id),
         "reject_claim",
         "claim",
         Some(claim.id),
         None,
         Some(serde_json::to_value(&claim).unwrap_or_default()),
-        Some(&format!("Rejected claim for employee {}", claim.employee_id)),
+        Some(&format!(
+            "Rejected claim for employee {}",
+            claim.employee_id
+        )),
         audit_meta,
     )
     .await;

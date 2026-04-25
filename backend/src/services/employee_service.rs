@@ -214,6 +214,7 @@ pub async fn create_employee(
     // Audit Log
     let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
+        Some(company_id),
         Some(created_by),
         "create_employee",
         "employee",
@@ -475,6 +476,7 @@ pub async fn update_employee(
     // Audit Log
     let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
+        Some(company_id),
         Some(updated_by),
         "update_employee",
         "employee",

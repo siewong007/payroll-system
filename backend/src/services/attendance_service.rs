@@ -88,6 +88,7 @@ pub async fn set_platform_attendance_method(
 
     let _ = audit_service::log_action_with_metadata(
         pool,
+        None, // Platform-level setting, not scoped to a company
         Some(updated_by),
         "update",
         "platform_attendance_method",
@@ -180,6 +181,7 @@ pub async fn set_company_attendance_method(
 
     let _ = audit_service::log_action_with_metadata(
         pool,
+        Some(company_id),
         Some(updated_by),
         "update",
         "company_attendance_method",
@@ -310,6 +312,7 @@ pub async fn create_kiosk_credential(
 
     let _ = audit_service::log_action_with_metadata(
         pool,
+        Some(company_id),
         Some(created_by),
         "create",
         "attendance_kiosk_credential",
@@ -360,6 +363,7 @@ pub async fn revoke_kiosk_credential(
 
     let _ = audit_service::log_action_with_metadata(
         pool,
+        Some(company_id),
         Some(revoked_by),
         "revoke",
         "attendance_kiosk_credential",
@@ -391,7 +395,7 @@ pub async fn generate_qr_via_kiosk(
     presented_secret: &str,
     frontend_url: &str,
     client_ip: Option<&str>,
-) -> AppResult<QrTokenResponse> {
+) -> AppResult<(QrTokenResponse, Uuid)> {
     let hash = sha256_hex(presented_secret);
     let cred = attendance_kiosk::find_active_by_hash(pool, &hash).await?;
 
@@ -410,7 +414,7 @@ pub async fn generate_qr_via_kiosk(
         tracing::warn!("Failed to update kiosk last_used: {}", e);
     }
 
-    Ok(resp)
+    Ok((resp, cred.company_id))
 }
 
 // ─── Auto Late Detection ───
@@ -904,6 +908,7 @@ pub async fn manual_attendance(
 
     let _ = audit_service::log_action_with_metadata(
         pool,
+        Some(company_id),
         Some(created_by),
         "create",
         "attendance_record",

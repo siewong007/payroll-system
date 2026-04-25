@@ -282,6 +282,7 @@ pub async fn delete_run(
     let audit_meta = AuditRequestMeta::from_headers(&headers);
     let _ = crate::services::audit_service::log_action_with_metadata(
         &state.pool,
+        Some(company_id),
         Some(auth.0.sub),
         "delete",
         "payroll_run",

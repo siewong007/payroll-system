@@ -113,6 +113,7 @@ pub async fn generate_qr_token(
     let audit_meta = AuditRequestMeta::from_headers(&headers);
     let _ = crate::services::audit_service::log_action_with_metadata(
         &state.pool,
+        Some(company_id),
         Some(auth.0.sub),
         "create",
         "attendance_kiosk_credential",
@@ -159,6 +160,7 @@ pub async fn check_in_qr(
     let audit_meta = AuditRequestMeta::from_headers(&headers);
     let _ = crate::services::audit_service::log_action_with_metadata(
         &state.pool,
+        Some(company_id),
         Some(auth.0.sub),
         "create",
         "attendance_record",
@@ -487,7 +489,7 @@ pub async fn kiosk_qr(
 
     let ip = client_ip_string(&headers);
 
-    let resp = attendance_service::generate_qr_via_kiosk(
+    let (resp, company_id) = attendance_service::generate_qr_via_kiosk(
         &state.pool,
         &secret,
         &state.config.frontend_url,
@@ -498,6 +500,7 @@ pub async fn kiosk_qr(
     let audit_meta = AuditRequestMeta::from_headers(&headers);
     let _ = crate::services::audit_service::log_action_with_metadata(
         &state.pool,
+        Some(company_id),
         None, // No specific user for public kiosk endpoint
         "create",
         "attendance_kiosk_credential",
