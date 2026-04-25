@@ -27,8 +27,8 @@ export function CompanySwitcher() {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  // Don't render for super_admin or if user has 0-1 companies
-  if (user?.role === 'super_admin') return null;
+  // Hide if user has only 0 or 1 companies — switcher would be a no-op.
+  // Visible to super_admin and admin alike when they have multi-company access.
   if (!companies || companies.length <= 1) return null;
 
   const current = companies.find((c) => c.id === user?.company_id);
