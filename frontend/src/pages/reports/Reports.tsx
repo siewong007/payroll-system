@@ -130,7 +130,7 @@ function groupByEmployee(rows: LeaveReportRow[]): EmployeeLeaveGroup[] {
 
 export function Reports() {
   const { user } = useAuth();
-  const canViewPayroll = canAccessPayrollData(user?.role);
+  const canViewPayroll = canAccessPayrollData(user);
   const [tab, setTab] = useState<ReportTab>(canViewPayroll ? 'payroll' : 'leave');
   const today = new Date();
   const fallbackYear = today.getFullYear();

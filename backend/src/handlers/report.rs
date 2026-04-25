@@ -11,20 +11,21 @@ use crate::core::error::{AppError, AppResult};
 use crate::services::report_service::{self, *};
 
 fn require_admin(auth: &AuthUser) -> AppResult<uuid::Uuid> {
-    match auth.0.role.as_str() {
-        "super_admin" | "admin" | "payroll_admin" | "hr_manager" | "finance" => Ok(auth
-            .0
-            .company_id
-            .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?),
-        _ => Err(AppError::Forbidden("Admin access required".into())),
+    if auth.has_any_role(&[
+        "super_admin",
+        "admin",
+        "payroll_admin",
+        "hr_manager",
+        "finance",
+    ]) {
+        return auth.company_id();
     }
+    Err(AppError::Forbidden("Admin access required".into()))
 }
 
 fn require_payroll_access(auth: &AuthUser) -> AppResult<uuid::Uuid> {
     auth.require_payroll_privileged()?;
-    auth.0
-        .company_id
-        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))
+    auth.company_id()
 }
 
 #[derive(Debug, Deserialize)]

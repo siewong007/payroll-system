@@ -18,7 +18,7 @@ const CATEGORY_ORDER = ['payroll', 'statutory', 'system', 'notifications'];
 
 export function SettingsPage() {
   const { user } = useAuth();
-  const canViewPayroll = canAccessPayrollData(user?.role);
+  const canViewPayroll = canAccessPayrollData(user);
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState(canViewPayroll ? 'payroll' : 'system');
   const [edits, setEdits] = useState<Record<string, unknown>>({});

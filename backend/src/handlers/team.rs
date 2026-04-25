@@ -13,16 +13,16 @@ use crate::models::team::{
 use crate::services::team_service;
 
 fn require_admin(auth: &AuthUser) -> AppResult<(Uuid, Uuid)> {
-    match auth.0.role.as_str() {
-        "super_admin" | "admin" | "payroll_admin" | "hr_manager" | "exec" => {
-            let company_id = auth
-                .0
-                .company_id
-                .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
-            Ok((auth.0.sub, company_id))
-        }
-        _ => Err(AppError::Forbidden("Admin access required".into())),
+    if auth.has_any_role(&[
+        "super_admin",
+        "admin",
+        "payroll_admin",
+        "hr_manager",
+        "exec",
+    ]) {
+        return Ok((auth.0.sub, auth.company_id()?));
     }
+    Err(AppError::Forbidden("Admin access required".into()))
 }
 
 // ─── Teams CRUD ───

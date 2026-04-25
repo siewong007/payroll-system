@@ -130,8 +130,8 @@ pub async fn seed_user(pool: &PgPool, company_id: Uuid, role: &str) -> Uuid {
     let user_id = Uuid::new_v4();
     let email = format!("test-{seq}-{}@example.invalid", &user_id.to_string()[..8]);
     sqlx::query(
-        r#"INSERT INTO users (id, email, password_hash, full_name, role, company_id)
-           VALUES ($1, $2, 'x', 'Test User', $3, $4)"#,
+        r#"INSERT INTO users (id, email, password_hash, full_name, role, roles, company_id)
+           VALUES ($1, $2, 'x', 'Test User', $3, ARRAY[$3]::VARCHAR(50)[], $4)"#,
     )
     .bind(user_id)
     .bind(&email)

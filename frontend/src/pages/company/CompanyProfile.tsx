@@ -50,7 +50,7 @@ const STATES = [
 
 export function CompanyProfile() {
   const { user } = useAuth();
-  const canViewPayroll = canAccessPayrollData(user?.role);
+  const canViewPayroll = canAccessPayrollData(user);
   const queryClient = useQueryClient();
   const [activeSection, setActiveSection] = useState<Section | null>(null);
   const [form, setForm] = useState<UpdateCompanyRequest>({});

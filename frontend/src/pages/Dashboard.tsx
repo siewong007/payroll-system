@@ -38,7 +38,7 @@ function StatCard({
 
 export function Dashboard() {
   const { user } = useAuth();
-  const canViewPayroll = canAccessPayrollData(user?.role);
+  const canViewPayroll = canAccessPayrollData(user);
   const { data, isLoading } = useQuery({
     queryKey: ['dashboard'],
     queryFn: getDashboardSummary,

@@ -9,7 +9,7 @@ use uuid::Uuid;
 use webauthn_rs::prelude::*;
 
 use crate::core::app_state::AppState;
-use crate::core::auth::{AuthUser, create_token};
+use crate::core::auth::{AuthUser, create_token_with_roles};
 use crate::core::cookie;
 use crate::core::error::{AppError, AppResult};
 use crate::models::passkey::{PasskeyInfo, RenamePasskeyRequest};
@@ -199,10 +199,11 @@ pub async fn authentication_complete(
         .execute(&state.pool)
         .await?;
 
-    let token = create_token(
+    let token = create_token_with_roles(
         user.id,
         &user.email,
         &user.role,
+        &user.roles,
         user.company_id,
         user.employee_id,
         &state.config.jwt_secret,
@@ -319,10 +320,11 @@ pub async fn discoverable_auth_complete(
         .execute(&state.pool)
         .await?;
 
-    let token = create_token(
+    let token = create_token_with_roles(
         user.id,
         &user.email,
         &user.role,
+        &user.roles,
         user.company_id,
         user.employee_id,
         &state.config.jwt_secret,

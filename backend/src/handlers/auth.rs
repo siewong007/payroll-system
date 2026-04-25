@@ -1,7 +1,7 @@
 use axum::{Json, extract::State, http::HeaderMap, response::IntoResponse};
 
 use crate::core::app_state::AppState;
-use crate::core::auth::{AuthUser, create_token};
+use crate::core::auth::{AuthUser, create_token_with_roles};
 use crate::core::cookie;
 use crate::core::error::{AppError, AppResult};
 use crate::core::extract::ValidatedJson;
@@ -71,10 +71,11 @@ pub async fn switch_company(
         .await?;
 
     // Issue new token with updated company_id
-    let token = create_token(
+    let token = create_token_with_roles(
         user.id,
         &user.email,
         &user.role,
+        &user.roles,
         user.company_id,
         user.employee_id,
         &state.config.jwt_secret,
@@ -125,10 +126,11 @@ pub async fn refresh_token(
     session_service::revoke_refresh_token(&state.pool, &refresh).await?;
     let new_refresh = session_service::create_refresh_token(&state.pool, user.id).await?;
 
-    let token = create_token(
+    let token = create_token_with_roles(
         user.id,
         &user.email,
         &user.role,
+        &user.roles,
         user.company_id,
         user.employee_id,
         &state.config.jwt_secret,

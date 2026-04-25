@@ -24,6 +24,7 @@ import {
   type CreateKioskCredentialResponse,
 } from '@/api/kiosk';
 import { useAuth } from '@/context/AuthContext';
+import { hasAnyRole } from '@/lib/roles';
 import { WorkScheduleCard } from '@/components/attendance/WorkScheduleCard';
 import { GeofenceCard } from '@/components/attendance/GeofenceCard';
 
@@ -644,7 +645,7 @@ export function AttendancePage() {
   const totalPages = result?.total_pages ?? 1;
   const total = result?.total ?? 0;
 
-  const isAdmin = ['admin', 'super_admin', 'hr_manager', 'payroll_admin', 'exec'].includes(user?.role ?? '');
+  const isAdmin = hasAnyRole(user, ['admin', 'super_admin', 'hr_manager', 'payroll_admin', 'exec']);
 
   // Reset to page 1 when filters change
   const updateFilter = (key: string, value: string) => {

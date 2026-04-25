@@ -16,20 +16,26 @@ const VALID_ROLES: &[&str] = &[
     "employee",
 ];
 
-pub async fn create_user(pool: &PgPool, req: CreateUserRequest) -> AppResult<UserWithCompanies> {
-    // Validate role
-    if !VALID_ROLES.contains(&req.role.as_str()) {
-        return Err(AppError::BadRequest(format!(
-            "Invalid role '{}'. Valid roles: {}",
-            req.role,
-            VALID_ROLES.join(", ")
-        )));
-    }
+const PRIMARY_ROLE_PRIORITY: &[&str] = &[
+    "super_admin",
+    "admin",
+    "payroll_admin",
+    "hr_manager",
+    "finance",
+    "exec",
+    "employee",
+];
 
-    // Exec can only have one company
-    if req.role == "exec" && req.company_ids.len() != 1 {
+pub async fn create_user(pool: &PgPool, req: CreateUserRequest) -> AppResult<UserWithCompanies> {
+    let (primary_role, roles) = normalize_requested_roles(Some(&req.role), req.roles.as_ref())?;
+
+    if roles
+        .iter()
+        .any(|role| role == "exec" || role == "employee")
+        && req.company_ids.len() != 1
+    {
         return Err(AppError::BadRequest(
-            "Exec role must be assigned to exactly one company".into(),
+            "Employee and exec roles must be assigned to exactly one company".into(),
         ));
     }
 
@@ -58,14 +64,15 @@ pub async fn create_user(pool: &PgPool, req: CreateUserRequest) -> AppResult<Use
     // Insert user with first company as active
     let active_company_id = req.company_ids[0];
     let user = sqlx::query_as::<_, UserWithCompanies>(
-        r#"INSERT INTO users (email, password_hash, full_name, role, company_id)
-        VALUES ($1, $2, $3, $4, $5)
-        RETURNING id, email, full_name, role, company_id, employee_id, is_active, created_at"#,
+        r#"INSERT INTO users (email, password_hash, full_name, role, roles, company_id)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING id, email, full_name, role, roles, company_id, employee_id, is_active, created_at"#,
     )
     .bind(&req.email)
     .bind(&password_hash)
     .bind(&req.full_name)
-    .bind(&req.role)
+    .bind(&primary_role)
+    .bind(&roles)
     .bind(active_company_id)
     .fetch_one(pool)
     .await?;
@@ -93,7 +100,7 @@ pub async fn list_users(
 ) -> AppResult<Vec<UserWithCompanies>> {
     let mut users = if caller_role == "super_admin" {
         sqlx::query_as::<_, UserWithCompanies>(
-            r#"SELECT id, email, full_name, role, company_id, employee_id, is_active, created_at
+            r#"SELECT id, email, full_name, role, roles, company_id, employee_id, is_active, created_at
             FROM users
             ORDER BY created_at DESC"#,
         )
@@ -102,14 +109,14 @@ pub async fn list_users(
     } else {
         // Admin sees users who share at least one company
         sqlx::query_as::<_, UserWithCompanies>(
-            r#"SELECT DISTINCT u.id, u.email, u.full_name, u.role, u.company_id,
+            r#"SELECT DISTINCT u.id, u.email, u.full_name, u.role, u.roles, u.company_id,
                 u.employee_id, u.is_active, u.created_at
             FROM users u
             JOIN user_companies uc ON u.id = uc.user_id
             WHERE uc.company_id IN (
                 SELECT company_id FROM user_companies WHERE user_id = $1
             )
-            AND u.role != 'employee'
+            AND NOT (u.roles = ARRAY['employee']::VARCHAR(50)[])
             ORDER BY u.created_at DESC"#,
         )
         .bind(caller_id)
@@ -138,7 +145,7 @@ pub async fn update_user_companies(
 
     // Get user to check role
     let user = sqlx::query_as::<_, UserWithCompanies>(
-        "SELECT id, email, full_name, role, company_id, employee_id, is_active, created_at FROM users WHERE id = $1",
+        "SELECT id, email, full_name, role, roles, company_id, employee_id, is_active, created_at FROM users WHERE id = $1",
     )
     .bind(user_id)
     .fetch_optional(pool)
@@ -146,7 +153,7 @@ pub async fn update_user_companies(
     .ok_or_else(|| AppError::NotFound("User not found".into()))?;
 
     // Exec can only have one company
-    if user.role == "exec" && company_ids.len() != 1 {
+    if user.roles.iter().any(|role| role == "exec") && company_ids.len() != 1 {
         return Err(AppError::BadRequest(
             "Exec role can only be assigned to one company".into(),
         ));
@@ -181,7 +188,7 @@ pub async fn update_user_companies(
 
     // Fetch updated user
     let mut updated = sqlx::query_as::<_, UserWithCompanies>(
-        "SELECT id, email, full_name, role, company_id, employee_id, is_active, created_at FROM users WHERE id = $1",
+        "SELECT id, email, full_name, role, roles, company_id, employee_id, is_active, created_at FROM users WHERE id = $1",
     )
     .bind(user_id)
     .fetch_one(pool)
@@ -239,25 +246,25 @@ pub async fn update_user(
     user_id: Uuid,
     req: UpdateUserRequest,
 ) -> AppResult<UserWithCompanies> {
-    // Validate role if provided
-    if let Some(ref role) = req.role
-        && !VALID_ROLES.contains(&role.as_str())
-    {
-        return Err(AppError::BadRequest(format!(
-            "Invalid role '{}'. Valid roles: {}",
-            role,
-            VALID_ROLES.join(", ")
-        )));
-    }
-
     // Check user exists
     let existing = sqlx::query_as::<_, UserWithCompanies>(
-        "SELECT id, email, full_name, role, company_id, employee_id, is_active, created_at FROM users WHERE id = $1",
+        "SELECT id, email, full_name, role, roles, company_id, employee_id, is_active, created_at FROM users WHERE id = $1",
     )
     .bind(user_id)
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| AppError::NotFound("User not found".into()))?;
+
+    let (primary_role, roles) = if req.role.is_some() || req.roles.is_some() {
+        let fallback_role = if req.roles.is_some() {
+            req.role.as_deref()
+        } else {
+            req.role.as_deref().or(Some(&existing.role))
+        };
+        normalize_requested_roles(fallback_role, req.roles.as_ref())?
+    } else {
+        (existing.role.clone(), existing.roles.clone())
+    };
 
     // Check email uniqueness if changing
     if let Some(ref email) = req.email {
@@ -279,26 +286,31 @@ pub async fn update_user(
         r#"UPDATE users SET
             full_name = COALESCE($2, full_name),
             email = COALESCE($3, email),
-            role = COALESCE($4, role),
-            is_active = COALESCE($5, is_active),
+            role = $4,
+            roles = $5,
+            is_active = COALESCE($6, is_active),
             updated_at = NOW()
         WHERE id = $1"#,
     )
     .bind(user_id)
     .bind(&req.full_name)
     .bind(&req.email)
-    .bind(&req.role)
+    .bind(&primary_role)
+    .bind(&roles)
     .bind(req.is_active)
     .execute(pool)
     .await?;
 
     // Update companies if provided
     if let Some(company_ids) = req.company_ids {
-        let effective_role = req.role.as_deref().unwrap_or(&existing.role);
-        if (effective_role == "exec" || effective_role == "employee") && company_ids.len() > 1 {
+        if roles
+            .iter()
+            .any(|role| role == "exec" || role == "employee")
+            && company_ids.len() > 1
+        {
             return Err(AppError::BadRequest(format!(
                 "{} role can only be assigned to one company",
-                effective_role
+                primary_role
             )));
         }
         if !company_ids.is_empty() {
@@ -326,13 +338,74 @@ pub async fn update_user(
     }
 
     let mut updated = sqlx::query_as::<_, UserWithCompanies>(
-        "SELECT id, email, full_name, role, company_id, employee_id, is_active, created_at FROM users WHERE id = $1",
+        "SELECT id, email, full_name, role, roles, company_id, employee_id, is_active, created_at FROM users WHERE id = $1",
     )
     .bind(user_id)
     .fetch_one(pool)
     .await?;
     updated.companies = get_user_companies(pool, user_id).await?;
     Ok(updated)
+}
+
+fn normalize_requested_roles(
+    primary_role: Option<&str>,
+    requested_roles: Option<&Vec<String>>,
+) -> AppResult<(String, Vec<String>)> {
+    let mut roles = requested_roles.cloned().unwrap_or_default();
+    if roles.is_empty()
+        && let Some(role) = primary_role
+    {
+        roles.push(role.to_string());
+    }
+
+    let mut normalized = Vec::new();
+    for role in roles {
+        let role = role.trim().to_string();
+        if role.is_empty() {
+            continue;
+        }
+        if !VALID_ROLES.contains(&role.as_str()) {
+            return Err(AppError::BadRequest(format!(
+                "Invalid role '{}'. Valid roles: {}",
+                role,
+                VALID_ROLES.join(", ")
+            )));
+        }
+        if !normalized.iter().any(|existing| existing == &role) {
+            normalized.push(role);
+        }
+    }
+
+    if normalized.is_empty() {
+        return Err(AppError::BadRequest("At least one role is required".into()));
+    }
+
+    if normalized.len() > 1
+        && normalized
+            .iter()
+            .any(|role| role == "employee" || role == "exec")
+    {
+        return Err(AppError::BadRequest(
+            "Employee and exec roles cannot be combined with other roles".into(),
+        ));
+    }
+
+    if let Some(role) = primary_role
+        && !role.trim().is_empty()
+        && !normalized.iter().any(|candidate| candidate == role)
+    {
+        return Err(AppError::BadRequest(
+            "Primary role must be included in roles".into(),
+        ));
+    }
+
+    let primary_role = PRIMARY_ROLE_PRIORITY
+        .iter()
+        .find(|role| normalized.iter().any(|candidate| candidate == **role))
+        .expect("validated role list must have a primary role")
+        .to_string();
+
+    Ok((primary_role, normalized))
 }
 
 pub async fn delete_user(pool: &PgPool, user_id: Uuid) -> AppResult<()> {

@@ -154,7 +154,9 @@ pub async fn notify_admins(
         r#"INSERT INTO notifications (user_id, company_id, notification_type, title, message, entity_type, entity_id)
         SELECT id, company_id, $2, $3, $4, $5, $6
         FROM users
-        WHERE company_id = $1 AND role IN ('super_admin', 'payroll_admin', 'hr_manager') AND is_active = TRUE"#,
+        WHERE company_id = $1
+            AND roles && ARRAY['super_admin', 'payroll_admin', 'hr_manager']::VARCHAR(50)[]
+            AND is_active = TRUE"#,
     )
     .bind(company_id)
     .bind(notification_type)

@@ -1,8 +1,11 @@
+export type AppRole = 'super_admin' | 'admin' | 'payroll_admin' | 'hr_manager' | 'finance' | 'exec' | 'employee';
+
 export interface User {
   id: string;
   email: string;
   full_name: string;
-  role: 'super_admin' | 'admin' | 'payroll_admin' | 'hr_manager' | 'finance' | 'exec' | 'employee';
+  role: AppRole;
+  roles: AppRole[];
   company_id: string | null;
   employee_id: string | null;
   must_change_password?: boolean;
@@ -58,6 +61,7 @@ export interface UserWithCompanies {
   email: string;
   full_name: string;
   role: string;
+  roles: AppRole[];
   company_id: string | null;
   employee_id: string | null;
   is_active: boolean | null;
@@ -69,7 +73,8 @@ export interface CreateUserRequest {
   email: string;
   password: string;
   full_name: string;
-  role: 'super_admin' | 'admin' | 'payroll_admin' | 'hr_manager' | 'finance' | 'exec' | 'employee';
+  role: AppRole;
+  roles?: AppRole[];
   company_ids: string[];
 }
 
@@ -77,6 +82,7 @@ export interface UpdateUserRequest {
   full_name?: string;
   email?: string;
   role?: string;
+  roles?: AppRole[];
   is_active?: boolean;
   company_ids?: string[];
 }

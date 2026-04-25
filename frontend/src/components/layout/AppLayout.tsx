@@ -4,6 +4,7 @@ import { Menu } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { Sidebar } from './Sidebar';
 import { BrandLogo } from '@/components/ui/BrandLogo';
+import { hasOnlyEmployeeRole } from '@/lib/roles';
 
 export function AppLayout() {
   const { user, isAuthenticated, isLoading } = useAuth();
@@ -25,7 +26,7 @@ export function AppLayout() {
     return <Navigate to="/change-password" replace />;
   }
 
-  if (user?.role === 'employee') {
+  if (hasOnlyEmployeeRole(user)) {
     return <Navigate to="/portal" replace />;
   }
 

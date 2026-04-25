@@ -21,7 +21,7 @@ export function EmployeeCreate() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { user } = useAuth();
-  const canViewPayroll = canAccessPayrollData(user?.role);
+  const canViewPayroll = canAccessPayrollData(user);
 
   const { data: payrollGroups } = useQuery({
     queryKey: ['payrollGroups'],

@@ -147,8 +147,8 @@ export function PayrollDetail() {
   if (!data) return <div className="text-center text-gray-500 py-12">Payroll run not found</div>;
 
   const { payroll_run: run, items } = data;
-  const canPrepare = canPreparePayroll(user?.role);
-  const canApprove = canApprovePayroll(user?.role);
+  const canPrepare = canPreparePayroll(user);
+  const canApprove = canApprovePayroll(user);
   const canEditPcb = canPrepare && run.status === 'processed';
 
   const startEditPcb = (employeeId: string, pcbAmount: number) => {

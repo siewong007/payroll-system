@@ -17,7 +17,7 @@ export function EmployeeDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { user } = useAuth();
-  const canViewPayroll = canAccessPayrollData(user?.role);
+  const canViewPayroll = canAccessPayrollData(user);
 
   const { data: employee, isLoading } = useQuery({
     queryKey: ['employee', id],

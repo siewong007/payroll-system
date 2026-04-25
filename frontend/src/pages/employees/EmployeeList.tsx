@@ -75,7 +75,7 @@ const columns: Column<Employee>[] = [
 export function EmployeeList() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const canViewPayroll = canAccessPayrollData(user?.role);
+  const canViewPayroll = canAccessPayrollData(user);
   const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
@@ -248,7 +248,7 @@ function InfoField({ label, value }: { label: string; value: string | null | und
 
 function EmployeeProfile({ employeeId }: { employeeId: string }) {
   const { user } = useAuth();
-  const canViewPayroll = canAccessPayrollData(user?.role);
+  const canViewPayroll = canAccessPayrollData(user);
   const { data: employee, isLoading } = useQuery({
     queryKey: ['employee', employeeId],
     queryFn: () => getEmployee(employeeId),
@@ -477,7 +477,7 @@ function EmployeeFormModal({ mode, employeeId, onClose }: {
   onClose: () => void;
 }) {
   const { user } = useAuth();
-  const canViewPayroll = canAccessPayrollData(user?.role);
+  const canViewPayroll = canAccessPayrollData(user);
   const queryClient = useQueryClient();
 
   const { data: existingEmployee, isLoading: loadingEmployee } = useQuery({

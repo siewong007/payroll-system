@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
+import { hasOnlyEmployeeRole } from '@/lib/roles';
 
 export function OAuth2Callback() {
   const navigate = useNavigate();
@@ -28,7 +29,7 @@ export function OAuth2Callback() {
       window.history.replaceState(null, '', window.location.pathname);
 
       // Redirect based on role
-      navigate(user.role === 'employee' ? '/portal' : '/', { replace: true });
+      navigate(hasOnlyEmployeeRole(user) ? '/portal' : '/', { replace: true });
     } catch {
       setError('Failed to process OAuth2 response.');
     }

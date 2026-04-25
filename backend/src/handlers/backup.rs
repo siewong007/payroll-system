@@ -15,17 +15,13 @@ use crate::models::backup::{CompanyBackup, ImportResult};
 use crate::services::backup_service;
 
 fn require_admin(auth: &AuthUser) -> AppResult<(Option<Uuid>, Uuid)> {
-    match auth.0.role.as_str() {
-        "super_admin" => Ok((auth.0.company_id, auth.0.sub)),
-        "admin" => {
-            let company_id = auth
-                .0
-                .company_id
-                .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
-            Ok((Some(company_id), auth.0.sub))
-        }
-        _ => Err(AppError::Forbidden("Admin access required".into())),
+    if auth.has_any_role(&["super_admin"]) {
+        return Ok((auth.0.company_id, auth.0.sub));
     }
+    if auth.has_any_role(&["admin"]) {
+        return Ok((Some(auth.company_id()?), auth.0.sub));
+    }
+    Err(AppError::Forbidden("Admin access required".into()))
 }
 
 #[derive(Deserialize)]
@@ -40,7 +36,7 @@ pub async fn export_company(
 ) -> Result<impl IntoResponse, AppError> {
     let (user_company_id, _user_id) = require_admin(&auth)?;
 
-    let company_id = if auth.0.role == "super_admin" {
+    let company_id = if auth.has_any_role(&["super_admin"]) {
         query.company_id.ok_or_else(|| {
             AppError::BadRequest("company_id query parameter is required for super_admin".into())
         })?

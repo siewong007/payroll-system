@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import api from '@/api/client';
+import { hasOnlyEmployeeRole } from '@/lib/roles';
 
 export function ChangePassword() {
   const { user, logout } = useAuth();
@@ -19,10 +20,10 @@ export function ChangePassword() {
         const updatedUser = { ...user, must_change_password: false };
         localStorage.setItem('user', JSON.stringify(updatedUser));
       }
-      navigate(user?.role === 'employee' ? '/portal' : '/');
+      navigate(hasOnlyEmployeeRole(user) ? '/portal' : '/');
       window.location.reload();
     } catch {
-      navigate(user?.role === 'employee' ? '/portal' : '/');
+      navigate(hasOnlyEmployeeRole(user) ? '/portal' : '/');
     }
   };
 

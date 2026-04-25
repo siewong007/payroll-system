@@ -19,13 +19,16 @@ use crate::services::approval_service::{
 use crate::services::audit_service::AuditRequestMeta;
 
 fn require_admin(auth: &AuthUser) -> AppResult<Uuid> {
-    match auth.0.role.as_str() {
-        "super_admin" | "admin" | "payroll_admin" | "hr_manager" | "exec" => Ok(auth
-            .0
-            .company_id
-            .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?),
-        _ => Err(AppError::Forbidden("Admin access required".into())),
+    if auth.has_any_role(&[
+        "super_admin",
+        "admin",
+        "payroll_admin",
+        "hr_manager",
+        "exec",
+    ]) {
+        return auth.company_id();
     }
+    Err(AppError::Forbidden("Admin access required".into()))
 }
 
 // ─── Leave ───

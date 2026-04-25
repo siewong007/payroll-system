@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Users, Search, X, Building2, Plus, Pencil, Trash2 } from 'lucide-react';
 import { listUsers, listCompanies, createUser, updateUser, deleteUser } from '@/api/admin';
 import { getErrorMessage } from '@/lib/utils';
-import type { CreateUserRequest, UpdateUserRequest, UserWithCompanies } from '@/types';
+import type { AppRole, CreateUserRequest, UpdateUserRequest, UserWithCompanies } from '@/types';
 
 const ALL_ROLES = [
   { value: 'super_admin', label: 'Super Admin' },
@@ -14,6 +14,24 @@ const ALL_ROLES = [
   { value: 'exec', label: 'Executive' },
   { value: 'employee', label: 'Employee' },
 ] as const;
+
+const userRoles = (user: Pick<UserWithCompanies, 'role' | 'roles'>): AppRole[] =>
+  user.roles?.length ? user.roles : [user.role as AppRole];
+
+const primaryRoleFor = (roles: AppRole[]): AppRole =>
+  ALL_ROLES.find((role) => roles.includes(role.value))?.value ?? roles[0] ?? 'employee';
+
+const isSingleCompanyRoleSet = (roles: AppRole[]) => roles.includes('exec') || roles.includes('employee');
+
+const toggleRole = (roles: AppRole[], role: AppRole): AppRole[] => {
+  if (roles.includes(role)) {
+    return roles.length === 1 ? roles : roles.filter((existing) => existing !== role);
+  }
+  if (role === 'exec' || role === 'employee') {
+    return [role];
+  }
+  return [...roles.filter((existing) => existing !== 'exec' && existing !== 'employee'), role];
+};
 
 const roleBadge = (role: string) => {
   const cls: Record<string, string> = {
@@ -32,6 +50,10 @@ const roleBadge = (role: string) => {
     </span>
   );
 };
+
+const roleBadges = (roles: AppRole[]) => (
+  <div className="flex flex-wrap gap-1.5">{roles.map((role) => <div key={role}>{roleBadge(role)}</div>)}</div>
+);
 
 export function UserManagement() {
   const queryClient = useQueryClient();
@@ -65,7 +87,7 @@ export function UserManagement() {
       const q = search.toLowerCase();
       if (!u.full_name.toLowerCase().includes(q) && !u.email.toLowerCase().includes(q)) return false;
     }
-    if (roleFilter !== 'all' && u.role !== roleFilter) return false;
+    if (roleFilter !== 'all' && !userRoles(u).includes(roleFilter as AppRole)) return false;
     if (companyFilter !== 'all') {
       if (!u.companies.some((c) => c.id === companyFilter)) return false;
     }
@@ -144,7 +166,7 @@ export function UserManagement() {
                 <tr key={u.id}>
                   <td><span className="font-semibold text-gray-900">{u.full_name}</span></td>
                   <td className="text-gray-500">{u.email}</td>
-                  <td>{roleBadge(u.role)}</td>
+                  <td>{roleBadges(userRoles(u))}</td>
                   <td>
                     <div className="flex flex-wrap gap-1">
                       {u.companies.length === 0 ? (
@@ -251,6 +273,7 @@ function CreateUserModal({
     password: '',
     full_name: '',
     role: 'payroll_admin',
+    roles: ['payroll_admin'],
     company_ids: [],
   });
   const [error, setError] = useState('');
@@ -261,7 +284,8 @@ function CreateUserModal({
     onError: (err: unknown) => setError(getErrorMessage(err, 'Failed to create user')),
   });
 
-  const isSingleCompany = form.role === 'exec' || form.role === 'employee';
+  const selectedRoles = form.roles?.length ? form.roles : [form.role];
+  const isSingleCompany = isSingleCompanyRoleSet(selectedRoles);
 
   const toggleCompany = (id: string) => {
     if (isSingleCompany) {
@@ -285,7 +309,7 @@ function CreateUserModal({
       setError('Select at least one company');
       return;
     }
-    mutation.mutate(form);
+    mutation.mutate({ ...form, role: primaryRoleFor(selectedRoles), roles: selectedRoles });
   };
 
   return (
@@ -329,23 +353,28 @@ function CreateUserModal({
             />
           </div>
           <div>
-            <label className="form-label">Role *</label>
-            <select
-              value={form.role}
-              onChange={(e) => {
-                const role = e.target.value as CreateUserRequest['role'];
-                setForm((p) => ({
-                  ...p,
-                  role,
-                  company_ids: (role === 'exec' || role === 'employee') ? p.company_ids.slice(0, 1) : p.company_ids,
-                }));
-              }}
-              className="form-input"
-            >
+            <label className="form-label">Roles *</label>
+            <div className="grid grid-cols-2 gap-2">
               {ALL_ROLES.map((r) => (
-                <option key={r.value} value={r.value}>{r.label}</option>
+                <label key={r.value} className="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={selectedRoles.includes(r.value)}
+                    onChange={() => {
+                      const roles = toggleRole(selectedRoles, r.value);
+                      setForm((p) => ({
+                        ...p,
+                        role: primaryRoleFor(roles),
+                        roles,
+                        company_ids: isSingleCompanyRoleSet(roles) ? p.company_ids.slice(0, 1) : p.company_ids,
+                      }));
+                    }}
+                    className="accent-black"
+                  />
+                  {r.label}
+                </label>
               ))}
-            </select>
+            </div>
           </div>
           <div>
             <label className="form-label">
@@ -406,6 +435,7 @@ function EditUserModal({
     full_name: user.full_name,
     email: user.email,
     role: user.role,
+    roles: userRoles(user),
     is_active: user.is_active !== false,
     company_ids: user.companies.map((c) => c.id),
   });
@@ -417,7 +447,8 @@ function EditUserModal({
     onError: (err: unknown) => setError(getErrorMessage(err, 'Failed to update user')),
   });
 
-  const isSingleCompany = form.role === 'exec' || form.role === 'employee';
+  const selectedRoles = form.roles?.length ? form.roles : userRoles(user);
+  const isSingleCompany = isSingleCompanyRoleSet(selectedRoles);
 
   const toggleCompany = (id: string) => {
     if (isSingleCompany) {
@@ -474,23 +505,28 @@ function EditUserModal({
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="form-label">Role</label>
-              <select
-                value={form.role || user.role}
-                onChange={(e) => {
-                  const role = e.target.value;
-                  setForm((p) => ({
-                    ...p,
-                    role,
-                    company_ids: (role === 'exec' || role === 'employee') ? (p.company_ids ?? []).slice(0, 1) : p.company_ids,
-                  }));
-                }}
-                className="form-input"
-              >
+              <label className="form-label">Roles</label>
+              <div className="grid gap-2">
                 {ALL_ROLES.map((r) => (
-                  <option key={r.value} value={r.value}>{r.label}</option>
+                  <label key={r.value} className="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={selectedRoles.includes(r.value)}
+                      onChange={() => {
+                        const roles = toggleRole(selectedRoles, r.value);
+                        setForm((p) => ({
+                          ...p,
+                          role: primaryRoleFor(roles),
+                          roles,
+                          company_ids: isSingleCompanyRoleSet(roles) ? (p.company_ids ?? []).slice(0, 1) : p.company_ids,
+                        }));
+                      }}
+                      className="accent-black"
+                    />
+                    {r.label}
+                  </label>
                 ))}
-              </select>
+              </div>
             </div>
             <div>
               <label className="form-label">Status</label>

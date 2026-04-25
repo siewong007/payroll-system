@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { QrCode, Fingerprint, Shield, CheckCircle2, AlertCircle, Info, Building2 } from 'lucide-react';
 import { getPlatformAttendanceMethod, setPlatformAttendanceMethod } from '@/api/attendance';
 import { useAuth } from '@/context/AuthContext';
+import { hasAnyRole } from '@/lib/roles';
 import { Navigate } from 'react-router-dom';
 
 export function AttendanceSettings() {
@@ -14,7 +15,7 @@ export function AttendanceSettings() {
   const { data, isLoading } = useQuery({
     queryKey: ['platform-attendance-method'],
     queryFn: getPlatformAttendanceMethod,
-    enabled: user?.role === 'super_admin',
+    enabled: hasAnyRole(user, ['super_admin']),
   });
 
   const [method, setMethod] = useState<'qr_code' | 'face_id'>('qr_code');
@@ -42,7 +43,7 @@ export function AttendanceSettings() {
     }
   }, [data, initialized]);
 
-  if (user?.role !== 'super_admin') {
+  if (!hasAnyRole(user, ['super_admin'])) {
     return <Navigate to="/companies" replace />;
   }
 

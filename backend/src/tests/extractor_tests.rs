@@ -13,6 +13,7 @@ fn auth_with_role(role: &str) -> AuthUser {
         sub: uuid::Uuid::new_v4(),
         email: format!("{role}@example.invalid"),
         role: role.to_string(),
+        roles: vec![role.to_string()],
         company_id: Some(uuid::Uuid::new_v4()),
         employee_id: None,
         exp: 2_000_000_000,
@@ -96,4 +97,23 @@ fn payroll_permissions_separate_preparation_and_approval() {
 
     let exec = auth_with_role("exec");
     assert!(!exec.can(Permission::ViewPayroll));
+}
+
+#[test]
+fn payroll_permissions_are_combined_across_multiple_roles() {
+    let auth = AuthUser(Claims {
+        sub: uuid::Uuid::new_v4(),
+        email: "combo@example.invalid".to_string(),
+        role: "payroll_admin".to_string(),
+        roles: vec!["payroll_admin".to_string(), "finance".to_string()],
+        company_id: Some(uuid::Uuid::new_v4()),
+        employee_id: None,
+        exp: 2_000_000_000,
+        iat: 1_700_000_000,
+    });
+
+    assert!(auth.can(Permission::ManagePayrollDraft));
+    assert!(auth.can(Permission::SubmitPayroll));
+    assert!(auth.can(Permission::ApprovePayroll));
+    assert!(auth.can(Permission::MarkPayrollPaid));
 }

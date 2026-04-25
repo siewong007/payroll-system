@@ -22,6 +22,7 @@ import { useAuth } from '@/context/AuthContext';
 import { CompanySwitcher } from './CompanySwitcher';
 import { AnimatePresence, motion } from 'framer-motion';
 import { BrandLogo } from '@/components/ui/BrandLogo';
+import { hasAnyRole, roleList, type AppRole } from '@/lib/roles';
 
 const navigation = [
   { name: 'Company', href: '/company', icon: Building2, hideFor: ['super_admin'] },
@@ -78,9 +79,10 @@ function SidebarContent({ onClose }: { onClose?: () => void }) {
       {/* Navigation */}
       <nav className="flex-1 py-4 px-3 space-y-0.5 overflow-y-auto">
         {navigation.filter((item) => {
-          const role = user?.role ?? '';
-          if (item.hideFor?.includes(role)) return false;
-          if (item.showFor && !item.showFor.includes(role)) return false;
+          const hideFor = item.hideFor as AppRole[] | undefined;
+          const showFor = item.showFor as AppRole[] | undefined;
+          if (hideFor && hasAnyRole(user, hideFor)) return false;
+          if (showFor && !hasAnyRole(user, showFor)) return false;
           return true;
         }).map((item) => {
           const isActive = location.pathname === item.href ||
@@ -111,7 +113,7 @@ function SidebarContent({ onClose }: { onClose?: () => void }) {
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-semibold text-gray-900 truncate">{user?.full_name || 'User'}</p>
-            <p className="text-xs text-gray-400 truncate capitalize">{user?.role?.replace('_', ' ')}</p>
+            <p className="text-xs text-gray-400 truncate capitalize">{roleList(user).join(', ').replaceAll('_', ' ')}</p>
           </div>
           <button
             onClick={logout}

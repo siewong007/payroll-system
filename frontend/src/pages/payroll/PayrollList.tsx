@@ -80,7 +80,7 @@ const columns: Column<PayrollRun>[] = [
 export function PayrollList() {
   const queryClient = useQueryClient();
   const { user } = useAuth();
-  const canPrepare = canPreparePayroll(user?.role);
+  const canPrepare = canPreparePayroll(user);
   const { data: runs, isLoading } = useQuery({
     queryKey: ['payrollRuns'],
     queryFn: getPayrollRuns,

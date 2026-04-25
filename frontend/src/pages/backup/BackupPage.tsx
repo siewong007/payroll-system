@@ -5,11 +5,12 @@ import { exportCompanyBackup, importCompanyBackup } from '@/api/backup';
 import { listCompanies } from '@/api/admin';
 import { getErrorMessage } from '@/lib/utils';
 import { useAuth } from '@/context/AuthContext';
+import { hasAnyRole } from '@/lib/roles';
 import type { ImportResult } from '@/types';
 
 export function BackupPage() {
   const { user } = useAuth();
-  const isSuperAdmin = user?.role === 'super_admin';
+  const isSuperAdmin = hasAnyRole(user, ['super_admin']);
 
   const [selectedCompanyId, setSelectedCompanyId] = useState('');
   const [exporting, setExporting] = useState(false);

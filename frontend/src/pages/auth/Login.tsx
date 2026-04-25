@@ -6,6 +6,7 @@ import { Fingerprint } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { getErrorMessage } from '@/lib/utils';
 import api from '@/api/client';
+import { hasOnlyEmployeeRole } from '@/lib/roles';
 import { checkPasskey, passkeyAuthBegin, passkeyAuthComplete, passkeyDiscoverableBegin, passkeyDiscoverableComplete } from '@/api/passkey';
 import { getPasskeyCredential, isWebAuthnSupported } from '@/lib/webauthn';
 import { BrandLogo } from '@/components/ui/BrandLogo';
@@ -76,7 +77,7 @@ export function Login() {
   }, [email, webauthnSupported]);
 
   if (isAuthenticated && user) {
-    return <Navigate to={user.role === 'employee' ? '/portal' : '/'} replace />;
+    return <Navigate to={hasOnlyEmployeeRole(user) ? '/portal' : '/'} replace />;
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -88,7 +89,7 @@ export function Login() {
       if (loggedInUser.must_change_password) {
         navigate('/change-password');
       } else {
-        navigate(loggedInUser.role === 'employee' ? '/portal' : '/');
+        navigate(hasOnlyEmployeeRole(loggedInUser) ? '/portal' : '/');
       }
     } catch (err: unknown) {
       setError(getErrorMessage(err, 'Invalid email or password'));
@@ -116,7 +117,7 @@ export function Login() {
       }
 
       setSession(response.token, response.user);
-      navigate(response.user.role === 'employee' ? '/portal' : '/');
+      navigate(hasOnlyEmployeeRole(response.user) ? '/portal' : '/');
     } catch (err: unknown) {
       setError(getErrorMessage(err, 'Passkey authentication failed'));
     } finally {

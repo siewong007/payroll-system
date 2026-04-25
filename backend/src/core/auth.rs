@@ -14,6 +14,8 @@ pub struct Claims {
     pub sub: Uuid, // user ID
     pub email: String,
     pub role: String,
+    #[serde(default)]
+    pub roles: Vec<String>,
     pub company_id: Option<Uuid>,
     pub employee_id: Option<Uuid>,
     pub exp: i64,
@@ -29,11 +31,34 @@ pub fn create_token(
     secret: &str,
     expiry_hours: i64,
 ) -> AppResult<String> {
+    create_token_with_roles(
+        user_id,
+        email,
+        role,
+        &[role.to_string()],
+        company_id,
+        employee_id,
+        secret,
+        expiry_hours,
+    )
+}
+
+pub fn create_token_with_roles(
+    user_id: Uuid,
+    email: &str,
+    role: &str,
+    roles: &[String],
+    company_id: Option<Uuid>,
+    employee_id: Option<Uuid>,
+    secret: &str,
+    expiry_hours: i64,
+) -> AppResult<String> {
     let now = Utc::now();
     let claims = Claims {
         sub: user_id,
         email: email.to_string(),
         role: role.to_string(),
+        roles: normalized_roles(role, roles),
         company_id,
         employee_id,
         exp: (now + Duration::hours(expiry_hours)).timestamp(),
@@ -46,6 +71,19 @@ pub fn create_token(
         &EncodingKey::from_secret(secret.as_bytes()),
     )
     .map_err(|e| AppError::Internal(format!("Failed to create token: {}", e)))
+}
+
+fn normalized_roles(primary_role: &str, roles: &[String]) -> Vec<String> {
+    let mut normalized = Vec::new();
+    for role in roles {
+        if !normalized.iter().any(|existing| existing == role) {
+            normalized.push(role.clone());
+        }
+    }
+    if normalized.is_empty() {
+        normalized.push(primary_role.to_string());
+    }
+    normalized
 }
 
 pub fn verify_token(token: &str, secret: &str) -> AppResult<Claims> {
@@ -99,8 +137,15 @@ where
 }
 
 impl AuthUser {
-    fn has_any_role(&self, roles: &[&str]) -> bool {
-        roles.contains(&self.0.role.as_str())
+    pub fn roles(&self) -> Vec<&str> {
+        if self.0.roles.is_empty() {
+            return vec![self.0.role.as_str()];
+        }
+        self.0.roles.iter().map(String::as_str).collect()
+    }
+
+    pub fn has_any_role(&self, roles: &[&str]) -> bool {
+        self.roles().iter().any(|role| roles.contains(role))
     }
 
     /// Returns the active company ID or rejects users without company context.
@@ -119,7 +164,7 @@ impl AuthUser {
 
     /// Returns true if the user's role is 'exec'.
     pub fn is_exec(&self) -> bool {
-        self.0.role == "exec"
+        self.has_any_role(&["exec"])
     }
 
     /// Returns true for company-scoped admin roles that can manage HR setup.
@@ -138,20 +183,24 @@ impl AuthUser {
     }
 
     pub fn can(&self, permission: Permission) -> bool {
-        match self.0.role.as_str() {
-            "super_admin" => true,
-            "payroll_admin" => matches!(
+        if self.has_any_role(&["super_admin"]) {
+            return true;
+        }
+        if self.has_any_role(&["payroll_admin"])
+            && matches!(
                 permission,
                 Permission::ViewPayroll
                     | Permission::ManagePayrollDraft
                     | Permission::SubmitPayroll
-            ),
-            "finance" => matches!(
+            )
+        {
+            return true;
+        }
+        self.has_any_role(&["finance"])
+            && matches!(
                 permission,
                 Permission::ViewPayroll | Permission::ApprovePayroll | Permission::MarkPayrollPaid
-            ),
-            _ => false,
-        }
+            )
     }
 
     pub fn require_permission(&self, permission: Permission) -> AppResult<()> {
@@ -175,7 +224,7 @@ impl AuthUser {
 
     /// Rejects the request unless the role is super_admin.
     pub fn require_super_admin(&self) -> AppResult<()> {
-        if self.0.role != "super_admin" {
+        if !self.has_any_role(&["super_admin"]) {
             return Err(AppError::Forbidden("Super admin only".into()));
         }
         Ok(())
@@ -204,7 +253,7 @@ impl AuthUser {
 
     /// Rejects employee self-service users from admin attendance views.
     pub fn require_non_employee(&self) -> AppResult<()> {
-        if self.0.role == "employee" {
+        if self.has_any_role(&["employee"]) && self.roles().len() == 1 {
             return Err(AppError::Forbidden("Not authorized".into()));
         }
         Ok(())

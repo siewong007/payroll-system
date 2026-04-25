@@ -11,6 +11,7 @@ import {
   PAYROLL_PREP_ROLES,
   REPORT_ROLES,
   SUPER_ADMIN_ROLES,
+  hasAnyRole,
   type AppRole,
 } from '@/lib/roles';
 
@@ -72,15 +73,15 @@ function RouteFallback() {
 
 function RoleGuard({ allowedRoles, children }: { allowedRoles: AppRole[]; children: ReactNode }) {
   const { user } = useAuth();
-  if (user && !allowedRoles.includes(user.role)) {
-    return <Navigate to={user.role === 'super_admin' ? '/companies' : '/company'} replace />;
+  if (user && !hasAnyRole(user, allowedRoles)) {
+    return <Navigate to={hasAnyRole(user, SUPER_ADMIN_ROLES) ? '/companies' : '/company'} replace />;
   }
   return <>{children}</>;
 }
 
 function HomeRedirect() {
   const { user } = useAuth();
-  if (user?.role === 'super_admin') {
+  if (hasAnyRole(user, SUPER_ADMIN_ROLES)) {
     return <Navigate to="/companies" replace />;
   }
   return <Navigate to="/company" replace />;
