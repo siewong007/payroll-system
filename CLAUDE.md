@@ -74,7 +74,7 @@ Key design decisions to be aware of:
 - **CSV export** `GET /api/attendance/export` streams a downloadable CSV with the active filter set.
 
 ### Payroll engine
-`services/payroll_engine.rs` is the entry point. It enforces one active run per `(company, payroll_group, year, month)`, then loops employees and composes `epf_service` + `socso_service` + `eis_service` + `pcb_calculator` to produce `PayrollItem`s inside a transaction. PCB (monthly tax deduction) uses progressive rules driven by seed data in migration `007_seed_statutory_data.sql`. PDFs are produced by `payslip_pdf_service` / `pdf_helpers` (printpdf), and statutory exports (EPF/SOCSO/EIS/PCB files + EA form) by `statutory_export_service` / `ea_form_service`.
+`services/payroll_engine.rs` is the entry point. It enforces one active run per `(company, payroll_group, year, month)`, then loops employees and composes `epf_service` + `socso_service` + `eis_service` + `pcb_calculator` to produce `PayrollItem`s inside a transaction. PCB (monthly tax deduction) uses progressive rules driven by seed data in migration `001_seed.sql`. PDFs are produced by `payslip_pdf_service` / `pdf_helpers` (printpdf), and statutory exports (EPF/SOCSO/EIS/PCB files + EA form) by `statutory_export_service` / `ea_form_service`.
 
 ### Frontend layout
 - `App.tsx` is the router. Two shells: `AppLayout` for admin/HR, `PortalLayout` for employee self-service. `RoleGuard` wraps routes that a role must not see (e.g. `exec` is blocked from `/payroll/*` and `/reports`). `/attendance/kiosk` and `/attendance/scan` are unauthenticated public routes used by the check-in kiosk.

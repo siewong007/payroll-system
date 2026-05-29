@@ -26,12 +26,14 @@ Thank you for your interest in contributing! This guide will help you get starte
 ### Running Locally
 
 ```bash
+# Configure local environment
+cp .env.example .env
+
 # Start services
 docker compose up -d
 
 # Backend
 cd backend
-cp .env.example .env
 cargo run
 
 # Frontend (new terminal)

@@ -18,7 +18,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Vite](https://img.shields.io/badge/Vite-8-646CFF?style=flat-square&logo=vite&logoColor=white)](https://vitejs.dev/)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-4-06B6D4?style=flat-square&logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-14+-4169E1?style=flat-square&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-18+-4169E1?style=flat-square&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 
 </div>
 
@@ -154,12 +154,14 @@
 git clone https://github.com/your-username/payroll-system.git
 cd payroll-system
 
+# Configure local environment
+cp .env.example .env
+
 # Start PostgreSQL and Redis
 docker compose up -d
 
 # Backend
 cd backend
-cp .env.example .env    # Configure your environment
 cargo run
 
 # Frontend (in a new terminal)
