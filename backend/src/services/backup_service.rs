@@ -9,32 +9,35 @@ use crate::core::error::{AppError, AppResult};
 use crate::models::backup::*;
 
 pub async fn export_company(pool: &PgPool, company_id: Uuid) -> AppResult<CompanyBackup> {
-    let company = sqlx::query_as::<_, CompanyExport>(
+    let company = sqlx::query_as!(
+        CompanyExport,
         r#"SELECT id, name, registration_number, tax_number, epf_number, socso_code, eis_code,
                   hrdf_number, address_line1, address_line2, city, state, postcode, country,
                   phone, email, logo_url, hrdf_enabled, unpaid_leave_divisor, is_active,
                   created_at, updated_at
            FROM companies WHERE id = $1"#,
+        company_id,
     )
-    .bind(company_id)
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| AppError::NotFound("Company not found".into()))?;
 
-    let payroll_groups = sqlx::query_as::<_, PayrollGroupExport>(
+    let payroll_groups = sqlx::query_as!(
+        PayrollGroupExport,
         r#"SELECT id, company_id, name, description, cutoff_day, payment_day, is_active,
                   created_at, updated_at
            FROM payroll_groups WHERE company_id = $1"#,
+        company_id,
     )
-    .bind(company_id)
     .fetch_all(pool)
     .await?;
 
-    let employees = sqlx::query_as::<_, EmployeeExport>(
+    let employees = sqlx::query_as!(
+        EmployeeExport,
         r#"SELECT id, company_id, employee_number, full_name, ic_number, passport_number,
-                  date_of_birth, gender::text, nationality, race::text, residency_status::text, marital_status::text,
+                  date_of_birth, gender::text AS "gender?", nationality, race::text AS "race?", residency_status::text AS "residency_status!", marital_status::text AS "marital_status?",
                   email, phone, address_line1, address_line2, city, state, postcode,
-                  department, designation, cost_centre, branch, employment_type::text,
+                  department, designation, cost_centre, branch, employment_type::text AS "employment_type!",
                   date_joined, probation_start, probation_end, confirmation_date,
                   date_resigned, resignation_reason,
                   basic_salary, hourly_rate, daily_rate,
@@ -45,99 +48,108 @@ pub async fn export_company(pool: &PgPool, company_id: Uuid) -> AppResult<Compan
                   hrdf_contribution, payroll_group_id, salary_group,
                   is_active, deleted_at, created_at, updated_at
            FROM employees WHERE company_id = $1"#,
+        company_id,
     )
-    .bind(company_id)
     .fetch_all(pool)
     .await?;
 
-    let employee_allowances = sqlx::query_as::<_, EmployeeAllowanceExport>(
+    let employee_allowances = sqlx::query_as!(
+        EmployeeAllowanceExport,
         r#"SELECT ea.id, ea.employee_id, ea.category, ea.name, ea.description, ea.amount,
                   ea.is_taxable, ea.is_recurring, ea.effective_from, ea.effective_to,
                   ea.is_active, ea.created_at, ea.updated_at
            FROM employee_allowances ea
            JOIN employees e ON ea.employee_id = e.id
            WHERE e.company_id = $1"#,
+        company_id,
     )
-    .bind(company_id)
     .fetch_all(pool)
     .await?;
 
-    let salary_history = sqlx::query_as::<_, SalaryHistoryExport>(
+    let salary_history = sqlx::query_as!(
+        SalaryHistoryExport,
         r#"SELECT sh.id, sh.employee_id, sh.old_salary, sh.new_salary,
                   sh.effective_date, sh.reason, sh.created_at
            FROM salary_history sh
            JOIN employees e ON sh.employee_id = e.id
            WHERE e.company_id = $1"#,
+        company_id,
     )
-    .bind(company_id)
     .fetch_all(pool)
     .await?;
 
-    let tp3_records = sqlx::query_as::<_, Tp3RecordExport>(
+    let tp3_records = sqlx::query_as!(
+        Tp3RecordExport,
         r#"SELECT t.id, t.employee_id, t.tax_year, t.previous_employer_name,
                   t.previous_income_ytd, t.previous_epf_ytd, t.previous_pcb_ytd,
                   t.previous_socso_ytd, t.previous_zakat_ytd, t.created_at
            FROM tp3_records t
            JOIN employees e ON t.employee_id = e.id
            WHERE e.company_id = $1"#,
+        company_id,
     )
-    .bind(company_id)
     .fetch_all(pool)
     .await?;
 
-    let leave_types = sqlx::query_as::<_, LeaveTypeExport>(
+    let leave_types = sqlx::query_as!(
+        LeaveTypeExport,
         r#"SELECT id, company_id, name, description, default_days, is_paid, is_active,
                   created_at, updated_at
            FROM leave_types WHERE company_id = $1"#,
+        company_id,
     )
-    .bind(company_id)
     .fetch_all(pool)
     .await?;
 
-    let leave_balances = sqlx::query_as::<_, LeaveBalanceExport>(
+    let leave_balances = sqlx::query_as!(
+        LeaveBalanceExport,
         r#"SELECT lb.id, lb.employee_id, lb.leave_type_id, lb.year,
                   lb.entitled_days, lb.taken_days, lb.pending_days, lb.carried_forward,
                   lb.created_at, lb.updated_at
            FROM leave_balances lb
            JOIN employees e ON lb.employee_id = e.id
            WHERE e.company_id = $1"#,
+        company_id,
     )
-    .bind(company_id)
     .fetch_all(pool)
     .await?;
 
-    let leave_requests = sqlx::query_as::<_, LeaveRequestExport>(
+    let leave_requests = sqlx::query_as!(
+        LeaveRequestExport,
         r#"SELECT id, employee_id, company_id, leave_type_id, start_date, end_date, days,
                   reason, status, review_notes, attachment_url, attachment_name,
                   created_at, updated_at
            FROM leave_requests WHERE company_id = $1"#,
+        company_id,
     )
-    .bind(company_id)
     .fetch_all(pool)
     .await?;
 
-    let claims = sqlx::query_as::<_, ClaimExport>(
+    let claims = sqlx::query_as!(
+        ClaimExport,
         r#"SELECT id, employee_id, company_id, title, description, amount, category,
                   receipt_url, receipt_file_name, expense_date, status,
                   submitted_at, review_notes, created_at, updated_at
            FROM claims WHERE company_id = $1"#,
+        company_id,
     )
-    .bind(company_id)
     .fetch_all(pool)
     .await?;
 
-    let overtime_applications = sqlx::query_as::<_, OvertimeExport>(
+    let overtime_applications = sqlx::query_as!(
+        OvertimeExport,
         r#"SELECT id, employee_id, company_id, ot_date, start_time, end_time, hours,
                   ot_type, reason, status, review_notes, created_at, updated_at
            FROM overtime_applications WHERE company_id = $1"#,
+        company_id,
     )
-    .bind(company_id)
     .fetch_all(pool)
     .await?;
 
-    let payroll_runs = sqlx::query_as::<_, PayrollRunExport>(
+    let payroll_runs = sqlx::query_as!(
+        PayrollRunExport,
         r#"SELECT id, company_id, payroll_group_id, period_year, period_month,
-                  period_start, period_end, pay_date, status::text,
+                  period_start, period_end, pay_date, status::text AS "status!",
                   total_gross, total_net, total_employer_cost,
                   total_epf_employee, total_epf_employer,
                   total_socso_employee, total_socso_employer,
@@ -145,12 +157,13 @@ pub async fn export_company(pool: &PgPool, company_id: Uuid) -> AppResult<Compan
                   total_pcb, total_zakat, employee_count, version, notes,
                   created_at, updated_at
            FROM payroll_runs WHERE company_id = $1"#,
+        company_id,
     )
-    .bind(company_id)
     .fetch_all(pool)
     .await?;
 
-    let payroll_items = sqlx::query_as::<_, PayrollItemExport>(
+    let payroll_items = sqlx::query_as!(
+        PayrollItemExport,
         r#"SELECT pi.id, pi.payroll_run_id, pi.employee_id,
                   pi.basic_salary, pi.gross_salary, pi.total_allowances, pi.total_overtime,
                   pi.total_bonus, pi.total_commission, pi.total_claims,
@@ -167,101 +180,111 @@ pub async fn export_company(pool: &PgPool, company_id: Uuid) -> AppResult<Compan
            FROM payroll_items pi
            JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
            WHERE pr.company_id = $1"#,
+        company_id,
     )
-    .bind(company_id)
     .fetch_all(pool)
     .await?;
 
-    let payroll_item_details = sqlx::query_as::<_, PayrollItemDetailExport>(
+    let payroll_item_details = sqlx::query_as!(
+        PayrollItemDetailExport,
         r#"SELECT pid.id, pid.payroll_item_id, pid.category, pid.item_type,
                   pid.description, pid.amount, pid.is_taxable, pid.is_statutory, pid.created_at
            FROM payroll_item_details pid
            JOIN payroll_items pi ON pid.payroll_item_id = pi.id
            JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
            WHERE pr.company_id = $1"#,
+        company_id,
     )
-    .bind(company_id)
     .fetch_all(pool)
     .await?;
 
-    let payroll_entries = sqlx::query_as::<_, PayrollEntryExport>(
+    let payroll_entries = sqlx::query_as!(
+        PayrollEntryExport,
         r#"SELECT id, employee_id, company_id, period_year, period_month,
-                  category, item_type, description, amount, quantity, rate,
+                  category, item_type, description AS "description?", amount, quantity, rate,
                   is_taxable, is_processed, payroll_run_id, created_at, updated_at
            FROM payroll_entries WHERE company_id = $1"#,
+        company_id,
     )
-    .bind(company_id)
     .fetch_all(pool)
     .await?;
 
-    let document_categories = sqlx::query_as::<_, DocumentCategoryExport>(
+    let document_categories = sqlx::query_as!(
+        DocumentCategoryExport,
         r#"SELECT id, company_id, name, description, is_active, created_at
            FROM document_categories WHERE company_id = $1"#,
+        company_id,
     )
-    .bind(company_id)
     .fetch_all(pool)
     .await?;
 
-    let documents = sqlx::query_as::<_, DocumentExport>(
+    let documents = sqlx::query_as!(
+        DocumentExport,
         r#"SELECT id, company_id, employee_id, category_id, title, description,
-                  file_name, file_url, file_size, mime_type, status::text,
+                  file_name, file_url, file_size, mime_type, status::text AS "status!",
                   issue_date, expiry_date, is_confidential, tags,
                   deleted_at, created_at, updated_at
            FROM documents WHERE company_id = $1"#,
+        company_id,
     )
-    .bind(company_id)
     .fetch_all(pool)
     .await?;
 
-    let teams = sqlx::query_as::<_, TeamExport>(
+    let teams = sqlx::query_as!(
+        TeamExport,
         r#"SELECT id, company_id, name, description, tag, is_active, created_at, updated_at
            FROM teams WHERE company_id = $1"#,
+        company_id,
     )
-    .bind(company_id)
     .fetch_all(pool)
     .await?;
 
-    let team_members = sqlx::query_as::<_, TeamMemberExport>(
+    let team_members = sqlx::query_as!(
+        TeamMemberExport,
         r#"SELECT tm.id, tm.team_id, tm.employee_id, tm.role, tm.joined_at
            FROM team_members tm
            JOIN teams t ON tm.team_id = t.id
            WHERE t.company_id = $1"#,
+        company_id,
     )
-    .bind(company_id)
     .fetch_all(pool)
     .await?;
 
-    let holidays = sqlx::query_as::<_, HolidayExport>(
+    let holidays = sqlx::query_as!(
+        HolidayExport,
         r#"SELECT id, company_id, name, date, holiday_type, description, is_recurring, state,
                   created_at, updated_at
            FROM holidays WHERE company_id = $1"#,
+        company_id,
     )
-    .bind(company_id)
     .fetch_all(pool)
     .await?;
 
-    let working_day_config = sqlx::query_as::<_, WorkingDayConfigExport>(
+    let working_day_config = sqlx::query_as!(
+        WorkingDayConfigExport,
         r#"SELECT id, company_id, day_of_week, is_working_day, created_at, updated_at
            FROM working_day_config WHERE company_id = $1"#,
+        company_id,
     )
-    .bind(company_id)
     .fetch_all(pool)
     .await?;
 
-    let email_templates = sqlx::query_as::<_, EmailTemplateExport>(
-        r#"SELECT id, company_id, name, letter_type, subject, body_html, is_active,
+    let email_templates = sqlx::query_as!(
+        EmailTemplateExport,
+        r#"SELECT id, company_id, name, letter_type, subject, body_html, is_active AS "is_active?",
                   created_at, updated_at
            FROM email_templates WHERE company_id = $1"#,
+        company_id,
     )
-    .bind(company_id)
     .fetch_all(pool)
     .await?;
 
-    let company_settings = sqlx::query_as::<_, CompanySettingExport>(
+    let company_settings = sqlx::query_as!(
+        CompanySettingExport,
         r#"SELECT id, company_id, category, key, value, label, description, updated_at
            FROM company_settings WHERE company_id = $1"#,
+        company_id,
     )
-    .bind(company_id)
     .fetch_all(pool)
     .await?;
 
@@ -365,20 +388,19 @@ pub async fn import_company(
     }
 
     // Check if company with same name already exists
-    let existing_company: Option<(Uuid,)> =
-        sqlx::query_as("SELECT id FROM companies WHERE LOWER(name) = LOWER($1)")
-            .bind(&backup.company.name)
-            .fetch_optional(pool)
-            .await?;
+    let existing_company = sqlx::query_scalar!(
+        "SELECT id FROM companies WHERE LOWER(name) = LOWER($1)",
+        backup.company.name,
+    )
+    .fetch_optional(pool)
+    .await?;
 
     let is_overwrite = existing_company.is_some();
 
     // Build UUID remap table
     let mut remap: HashMap<Uuid, Uuid> = HashMap::new();
 
-    let new_company_id = existing_company
-        .map(|(id,)| id)
-        .unwrap_or_else(Uuid::new_v4);
+    let new_company_id = existing_company.unwrap_or_else(Uuid::new_v4);
     remap.insert(backup.company.id, new_company_id);
 
     for pg in &backup.payroll_groups {
@@ -463,127 +485,184 @@ pub async fn import_company(
         ));
 
         // Delete in reverse dependency order
-        sqlx::query("DELETE FROM company_settings WHERE company_id = $1")
-            .bind(new_company_id)
+        sqlx::query!(
+            "DELETE FROM company_settings WHERE company_id = $1",
+            new_company_id
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query!(
+            "DELETE FROM email_templates WHERE company_id = $1",
+            new_company_id
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query!(
+            "DELETE FROM working_day_config WHERE company_id = $1",
+            new_company_id
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query!("DELETE FROM holidays WHERE company_id = $1", new_company_id)
             .execute(&mut *tx)
             .await?;
-        sqlx::query("DELETE FROM email_templates WHERE company_id = $1")
-            .bind(new_company_id)
+        sqlx::query!("DELETE FROM team_members WHERE team_id IN (SELECT id FROM teams WHERE company_id = $1)", new_company_id).execute(&mut *tx).await?;
+        sqlx::query!("DELETE FROM teams WHERE company_id = $1", new_company_id)
             .execute(&mut *tx)
             .await?;
-        sqlx::query("DELETE FROM working_day_config WHERE company_id = $1")
-            .bind(new_company_id)
+        sqlx::query!(
+            "DELETE FROM documents WHERE company_id = $1",
+            new_company_id
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query!(
+            "DELETE FROM document_categories WHERE company_id = $1",
+            new_company_id
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query!(
+            "DELETE FROM payroll_entries WHERE company_id = $1",
+            new_company_id
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query!("DELETE FROM payroll_item_details WHERE payroll_item_id IN (SELECT pi.id FROM payroll_items pi JOIN payroll_runs pr ON pi.payroll_run_id = pr.id WHERE pr.company_id = $1)", new_company_id).execute(&mut *tx).await?;
+        sqlx::query!("DELETE FROM payroll_items WHERE payroll_run_id IN (SELECT id FROM payroll_runs WHERE company_id = $1)", new_company_id).execute(&mut *tx).await?;
+        sqlx::query!(
+            "DELETE FROM payroll_runs WHERE company_id = $1",
+            new_company_id
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query!(
+            "DELETE FROM overtime_applications WHERE company_id = $1",
+            new_company_id
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query!("DELETE FROM claims WHERE company_id = $1", new_company_id)
             .execute(&mut *tx)
             .await?;
-        sqlx::query("DELETE FROM holidays WHERE company_id = $1")
-            .bind(new_company_id)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM team_members WHERE team_id IN (SELECT id FROM teams WHERE company_id = $1)").bind(new_company_id).execute(&mut *tx).await?;
-        sqlx::query("DELETE FROM teams WHERE company_id = $1")
-            .bind(new_company_id)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM documents WHERE company_id = $1")
-            .bind(new_company_id)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM document_categories WHERE company_id = $1")
-            .bind(new_company_id)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM payroll_entries WHERE company_id = $1")
-            .bind(new_company_id)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM payroll_item_details WHERE payroll_item_id IN (SELECT pi.id FROM payroll_items pi JOIN payroll_runs pr ON pi.payroll_run_id = pr.id WHERE pr.company_id = $1)").bind(new_company_id).execute(&mut *tx).await?;
-        sqlx::query("DELETE FROM payroll_items WHERE payroll_run_id IN (SELECT id FROM payroll_runs WHERE company_id = $1)").bind(new_company_id).execute(&mut *tx).await?;
-        sqlx::query("DELETE FROM payroll_runs WHERE company_id = $1")
-            .bind(new_company_id)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM overtime_applications WHERE company_id = $1")
-            .bind(new_company_id)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM claims WHERE company_id = $1")
-            .bind(new_company_id)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM leave_requests WHERE company_id = $1")
-            .bind(new_company_id)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM leave_balances WHERE employee_id IN (SELECT id FROM employees WHERE company_id = $1)").bind(new_company_id).execute(&mut *tx).await?;
-        sqlx::query("DELETE FROM leave_types WHERE company_id = $1")
-            .bind(new_company_id)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM tp3_records WHERE employee_id IN (SELECT id FROM employees WHERE company_id = $1)").bind(new_company_id).execute(&mut *tx).await?;
-        sqlx::query("DELETE FROM salary_history WHERE employee_id IN (SELECT id FROM employees WHERE company_id = $1)").bind(new_company_id).execute(&mut *tx).await?;
-        sqlx::query("DELETE FROM employee_allowances WHERE employee_id IN (SELECT id FROM employees WHERE company_id = $1)").bind(new_company_id).execute(&mut *tx).await?;
-        sqlx::query("DELETE FROM employees WHERE company_id = $1")
-            .bind(new_company_id)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM payroll_groups WHERE company_id = $1")
-            .bind(new_company_id)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM leave_requests WHERE company_id = $1",
+            new_company_id
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query!("DELETE FROM leave_balances WHERE employee_id IN (SELECT id FROM employees WHERE company_id = $1)", new_company_id).execute(&mut *tx).await?;
+        sqlx::query!(
+            "DELETE FROM leave_types WHERE company_id = $1",
+            new_company_id
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query!("DELETE FROM tp3_records WHERE employee_id IN (SELECT id FROM employees WHERE company_id = $1)", new_company_id).execute(&mut *tx).await?;
+        sqlx::query!("DELETE FROM salary_history WHERE employee_id IN (SELECT id FROM employees WHERE company_id = $1)", new_company_id).execute(&mut *tx).await?;
+        sqlx::query!("DELETE FROM employee_allowances WHERE employee_id IN (SELECT id FROM employees WHERE company_id = $1)", new_company_id).execute(&mut *tx).await?;
+        sqlx::query!(
+            "DELETE FROM employees WHERE company_id = $1",
+            new_company_id
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query!(
+            "DELETE FROM payroll_groups WHERE company_id = $1",
+            new_company_id
+        )
+        .execute(&mut *tx)
+        .await?;
 
         // Update the company record
         let c = &backup.company;
-        sqlx::query(
+        sqlx::query!(
             r#"UPDATE companies SET registration_number=$2, tax_number=$3, epf_number=$4, socso_code=$5,
                eis_code=$6, hrdf_number=$7, address_line1=$8, address_line2=$9, city=$10, state=$11,
                postcode=$12, country=$13, phone=$14, email=$15, logo_url=$16, hrdf_enabled=$17,
                unpaid_leave_divisor=$18, is_active=$19, updated_at=$20
                WHERE id = $1"#,
+            new_company_id,
+            c.registration_number,
+            c.tax_number,
+            c.epf_number,
+            c.socso_code,
+            c.eis_code,
+            c.hrdf_number,
+            c.address_line1,
+            c.address_line2,
+            c.city,
+            c.state,
+            c.postcode,
+            c.country,
+            c.phone,
+            c.email,
+            c.logo_url,
+            c.hrdf_enabled,
+            c.unpaid_leave_divisor,
+            c.is_active,
+            now,
         )
-        .bind(new_company_id).bind(&c.registration_number).bind(&c.tax_number)
-        .bind(&c.epf_number).bind(&c.socso_code).bind(&c.eis_code).bind(&c.hrdf_number)
-        .bind(&c.address_line1).bind(&c.address_line2).bind(&c.city).bind(&c.state)
-        .bind(&c.postcode).bind(&c.country).bind(&c.phone).bind(&c.email).bind(&c.logo_url)
-        .bind(c.hrdf_enabled).bind(c.unpaid_leave_divisor).bind(c.is_active)
-        .bind(now)
         .execute(&mut *tx)
         .await?;
     } else {
         // 1. Create new company
         let c = &backup.company;
-        sqlx::query(
+        sqlx::query!(
             r#"INSERT INTO companies (id, name, registration_number, tax_number, epf_number, socso_code,
                eis_code, hrdf_number, address_line1, address_line2, city, state, postcode, country,
                phone, email, logo_url, hrdf_enabled, unpaid_leave_divisor, is_active, created_at, updated_at)
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)"#,
+            new_company_id,
+            c.name,
+            c.registration_number,
+            c.tax_number,
+            c.epf_number,
+            c.socso_code,
+            c.eis_code,
+            c.hrdf_number,
+            c.address_line1,
+            c.address_line2,
+            c.city,
+            c.state,
+            c.postcode,
+            c.country,
+            c.phone,
+            c.email,
+            c.logo_url,
+            c.hrdf_enabled,
+            c.unpaid_leave_divisor,
+            c.is_active,
+            now,
+            now,
         )
-        .bind(new_company_id).bind(&c.name).bind(&c.registration_number).bind(&c.tax_number)
-        .bind(&c.epf_number).bind(&c.socso_code).bind(&c.eis_code).bind(&c.hrdf_number)
-        .bind(&c.address_line1).bind(&c.address_line2).bind(&c.city).bind(&c.state)
-        .bind(&c.postcode).bind(&c.country).bind(&c.phone).bind(&c.email).bind(&c.logo_url)
-        .bind(c.hrdf_enabled).bind(c.unpaid_leave_divisor).bind(c.is_active)
-        .bind(now).bind(now)
         .execute(&mut *tx)
         .await?;
     }
 
     // 2. Payroll groups
     for pg in &backup.payroll_groups {
-        sqlx::query(
+        sqlx::query!(
             r#"INSERT INTO payroll_groups (id, company_id, name, description, cutoff_day, payment_day,
                is_active, created_at, updated_at)
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)"#,
+            r(pg.id),
+            new_company_id,
+            pg.name,
+            pg.description,
+            pg.cutoff_day,
+            pg.payment_day,
+            pg.is_active,
+            now,
+            now,
         )
-        .bind(r(pg.id)).bind(new_company_id).bind(&pg.name).bind(&pg.description)
-        .bind(pg.cutoff_day).bind(pg.payment_day).bind(pg.is_active)
-        .bind(now).bind(now)
         .execute(&mut *tx)
         .await?;
     }
 
     // 3. Employees
     for e in &backup.employees {
-        sqlx::query(
+        sqlx::query!(
             r#"INSERT INTO employees (id, company_id, employee_number, full_name, ic_number, passport_number,
                date_of_birth, gender, nationality, race, residency_status, marital_status,
                email, phone, address_line1, address_line2, city, state, postcode,
@@ -597,181 +676,253 @@ pub async fn import_company(
                is_muslim, zakat_eligible, zakat_monthly_amount, ptptn_monthly_amount, tabung_haji_amount,
                hrdf_contribution, payroll_group_id, salary_group,
                is_active, deleted_at, created_at, updated_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8::gender_type,$9,$10::race_type,$11::residency_status,$12::marital_status,$13,$14,$15,$16,$17,$18,$19,$20,
-                       $21,$22,$23,$24::employment_type,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8::text::gender_type,$9,$10::text::race_type,$11::text::residency_status,$12::text::marital_status,$13,$14,$15,$16,$17,$18,$19,$20,
+                       $21,$22,$23,$24::text::employment_type,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,
                        $39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55)"#,
+            r(e.id),
+            new_company_id,
+            e.employee_number,
+            e.full_name,
+            e.ic_number,
+            e.passport_number,
+            e.date_of_birth,
+            e.gender,
+            e.nationality,
+            e.race,
+            e.residency_status,
+            e.marital_status,
+            e.email,
+            e.phone,
+            e.address_line1,
+            e.address_line2,
+            e.city,
+            e.state,
+            e.postcode,
+            e.department,
+            e.designation,
+            e.cost_centre,
+            e.branch,
+            e.employment_type,
+            e.date_joined,
+            e.probation_start,
+            e.probation_end,
+            e.confirmation_date,
+            e.date_resigned,
+            e.resignation_reason,
+            e.basic_salary,
+            e.hourly_rate,
+            e.daily_rate,
+            e.bank_name,
+            e.bank_account_number,
+            e.bank_account_type,
+            e.tax_identification_number,
+            e.epf_number,
+            e.socso_number,
+            e.eis_number,
+            e.working_spouse,
+            e.num_children,
+            e.epf_category,
+            e.is_muslim,
+            e.zakat_eligible,
+            e.zakat_monthly_amount,
+            e.ptptn_monthly_amount,
+            e.tabung_haji_amount,
+            e.hrdf_contribution,
+            ro(e.payroll_group_id),
+            e.salary_group,
+            e.is_active,
+            e.deleted_at,
+            now,
+            now,
         )
-        .bind(r(e.id)).bind(new_company_id).bind(&e.employee_number).bind(&e.full_name)
-        .bind(&e.ic_number).bind(&e.passport_number).bind(e.date_of_birth).bind(&e.gender)
-        .bind(&e.nationality).bind(&e.race).bind(&e.residency_status).bind(&e.marital_status)
-        .bind(&e.email).bind(&e.phone).bind(&e.address_line1).bind(&e.address_line2)
-        .bind(&e.city).bind(&e.state).bind(&e.postcode)
-        .bind(&e.department).bind(&e.designation).bind(&e.cost_centre).bind(&e.branch)
-        .bind(&e.employment_type).bind(e.date_joined).bind(e.probation_start).bind(e.probation_end)
-        .bind(e.confirmation_date).bind(e.date_resigned).bind(&e.resignation_reason)
-        .bind(e.basic_salary).bind(e.hourly_rate).bind(e.daily_rate)
-        .bind(&e.bank_name).bind(&e.bank_account_number).bind(&e.bank_account_type)
-        .bind(&e.tax_identification_number).bind(&e.epf_number).bind(&e.socso_number)
-        .bind(&e.eis_number).bind(e.working_spouse).bind(e.num_children).bind(&e.epf_category)
-        .bind(e.is_muslim).bind(e.zakat_eligible).bind(e.zakat_monthly_amount)
-        .bind(e.ptptn_monthly_amount).bind(e.tabung_haji_amount)
-        .bind(e.hrdf_contribution).bind(ro(e.payroll_group_id)).bind(&e.salary_group)
-        .bind(e.is_active).bind(e.deleted_at).bind(now).bind(now)
         .execute(&mut *tx)
         .await?;
     }
 
     // 4. Employee allowances
     for a in &backup.employee_allowances {
-        sqlx::query(
+        sqlx::query!(
             r#"INSERT INTO employee_allowances (id, employee_id, category, name, description, amount,
                is_taxable, is_recurring, effective_from, effective_to, is_active, created_at, updated_at)
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)"#,
+            r(a.id),
+            r(a.employee_id),
+            a.category,
+            a.name,
+            a.description,
+            a.amount,
+            a.is_taxable,
+            a.is_recurring,
+            a.effective_from,
+            a.effective_to,
+            a.is_active,
+            now,
+            now,
         )
-        .bind(r(a.id)).bind(r(a.employee_id)).bind(&a.category).bind(&a.name)
-        .bind(&a.description).bind(a.amount).bind(a.is_taxable).bind(a.is_recurring)
-        .bind(a.effective_from).bind(a.effective_to).bind(a.is_active).bind(now).bind(now)
         .execute(&mut *tx)
         .await?;
     }
 
     // 5. Salary history
     for s in &backup.salary_history {
-        sqlx::query(
+        sqlx::query!(
             r#"INSERT INTO salary_history (id, employee_id, old_salary, new_salary, effective_date, reason, created_at)
                VALUES ($1,$2,$3,$4,$5,$6,$7)"#,
+            r(s.id),
+            r(s.employee_id),
+            s.old_salary,
+            s.new_salary,
+            s.effective_date,
+            s.reason,
+            now,
         )
-        .bind(r(s.id)).bind(r(s.employee_id)).bind(s.old_salary).bind(s.new_salary)
-        .bind(s.effective_date).bind(&s.reason).bind(now)
         .execute(&mut *tx)
         .await?;
     }
 
     // 6. TP3 records
     for t in &backup.tp3_records {
-        sqlx::query(
+        sqlx::query!(
             r#"INSERT INTO tp3_records (id, employee_id, tax_year, previous_employer_name,
                previous_income_ytd, previous_epf_ytd, previous_pcb_ytd, previous_socso_ytd,
                previous_zakat_ytd, created_at)
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"#,
+            r(t.id),
+            r(t.employee_id),
+            t.tax_year,
+            t.previous_employer_name,
+            t.previous_income_ytd,
+            t.previous_epf_ytd,
+            t.previous_pcb_ytd,
+            t.previous_socso_ytd,
+            t.previous_zakat_ytd,
+            now,
         )
-        .bind(r(t.id))
-        .bind(r(t.employee_id))
-        .bind(t.tax_year)
-        .bind(&t.previous_employer_name)
-        .bind(t.previous_income_ytd)
-        .bind(t.previous_epf_ytd)
-        .bind(t.previous_pcb_ytd)
-        .bind(t.previous_socso_ytd)
-        .bind(t.previous_zakat_ytd)
-        .bind(now)
         .execute(&mut *tx)
         .await?;
     }
 
     // 7. Leave types
     for lt in &backup.leave_types {
-        sqlx::query(
+        sqlx::query!(
             r#"INSERT INTO leave_types (id, company_id, name, description, default_days, is_paid, is_active,
                created_at, updated_at)
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)"#,
+            r(lt.id),
+            new_company_id,
+            lt.name,
+            lt.description,
+            lt.default_days,
+            lt.is_paid,
+            lt.is_active,
+            now,
+            now,
         )
-        .bind(r(lt.id)).bind(new_company_id).bind(&lt.name).bind(&lt.description)
-        .bind(lt.default_days).bind(lt.is_paid).bind(lt.is_active).bind(now).bind(now)
         .execute(&mut *tx)
         .await?;
     }
 
     // 8. Leave balances
     for lb in &backup.leave_balances {
-        sqlx::query(
+        sqlx::query!(
             r#"INSERT INTO leave_balances (id, employee_id, leave_type_id, year,
                entitled_days, taken_days, pending_days, carried_forward, created_at, updated_at)
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"#,
+            r(lb.id),
+            r(lb.employee_id),
+            r(lb.leave_type_id),
+            lb.year,
+            lb.entitled_days,
+            lb.taken_days,
+            lb.pending_days,
+            lb.carried_forward,
+            now,
+            now,
         )
-        .bind(r(lb.id))
-        .bind(r(lb.employee_id))
-        .bind(r(lb.leave_type_id))
-        .bind(lb.year)
-        .bind(lb.entitled_days)
-        .bind(lb.taken_days)
-        .bind(lb.pending_days)
-        .bind(lb.carried_forward)
-        .bind(now)
-        .bind(now)
         .execute(&mut *tx)
         .await?;
     }
 
     // 9. Leave requests
     for lr in &backup.leave_requests {
-        sqlx::query(
+        sqlx::query!(
             r#"INSERT INTO leave_requests (id, employee_id, company_id, leave_type_id,
                start_date, end_date, days, reason, status, review_notes,
                attachment_url, attachment_name, created_at, updated_at)
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)"#,
+            r(lr.id),
+            r(lr.employee_id),
+            new_company_id,
+            r(lr.leave_type_id),
+            lr.start_date,
+            lr.end_date,
+            lr.days,
+            lr.reason,
+            lr.status,
+            lr.review_notes,
+            lr.attachment_url,
+            lr.attachment_name,
+            now,
+            now,
         )
-        .bind(r(lr.id))
-        .bind(r(lr.employee_id))
-        .bind(new_company_id)
-        .bind(r(lr.leave_type_id))
-        .bind(lr.start_date)
-        .bind(lr.end_date)
-        .bind(lr.days)
-        .bind(&lr.reason)
-        .bind(&lr.status)
-        .bind(&lr.review_notes)
-        .bind(&lr.attachment_url)
-        .bind(&lr.attachment_name)
-        .bind(now)
-        .bind(now)
         .execute(&mut *tx)
         .await?;
     }
 
     // 10. Claims
     for cl in &backup.claims {
-        sqlx::query(
+        sqlx::query!(
             r#"INSERT INTO claims (id, employee_id, company_id, title, description, amount, category,
                receipt_url, receipt_file_name, expense_date, status, submitted_at,
                review_notes, created_at, updated_at)
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)"#,
+            r(cl.id),
+            r(cl.employee_id),
+            new_company_id,
+            cl.title,
+            cl.description,
+            cl.amount,
+            cl.category,
+            cl.receipt_url,
+            cl.receipt_file_name,
+            cl.expense_date,
+            cl.status,
+            cl.submitted_at,
+            cl.review_notes,
+            now,
+            now,
         )
-        .bind(r(cl.id)).bind(r(cl.employee_id)).bind(new_company_id).bind(&cl.title)
-        .bind(&cl.description).bind(cl.amount).bind(&cl.category).bind(&cl.receipt_url)
-        .bind(&cl.receipt_file_name).bind(cl.expense_date).bind(&cl.status)
-        .bind(cl.submitted_at).bind(&cl.review_notes).bind(now).bind(now)
         .execute(&mut *tx)
         .await?;
     }
 
     // 11. Overtime applications
     for ot in &backup.overtime_applications {
-        sqlx::query(
+        sqlx::query!(
             r#"INSERT INTO overtime_applications (id, employee_id, company_id, ot_date, start_time,
                end_time, hours, ot_type, reason, status, review_notes, created_at, updated_at)
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)"#,
+            r(ot.id),
+            r(ot.employee_id),
+            new_company_id,
+            ot.ot_date,
+            ot.start_time,
+            ot.end_time,
+            ot.hours,
+            ot.ot_type,
+            ot.reason,
+            ot.status,
+            ot.review_notes,
+            now,
+            now,
         )
-        .bind(r(ot.id))
-        .bind(r(ot.employee_id))
-        .bind(new_company_id)
-        .bind(ot.ot_date)
-        .bind(ot.start_time)
-        .bind(ot.end_time)
-        .bind(ot.hours)
-        .bind(&ot.ot_type)
-        .bind(&ot.reason)
-        .bind(&ot.status)
-        .bind(&ot.review_notes)
-        .bind(now)
-        .bind(now)
         .execute(&mut *tx)
         .await?;
     }
 
     // 12. Payroll runs
     for pr in &backup.payroll_runs {
-        sqlx::query(
+        sqlx::query!(
             r#"INSERT INTO payroll_runs (id, company_id, payroll_group_id, period_year, period_month,
                period_start, period_end, pay_date, status,
                total_gross, total_net, total_employer_cost,
@@ -780,24 +931,40 @@ pub async fn import_company(
                total_eis_employee, total_eis_employer,
                total_pcb, total_zakat, employee_count, version, notes,
                created_at, updated_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::payroll_status,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)"#,
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::text::payroll_status,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)"#,
+            r(pr.id),
+            new_company_id,
+            r(pr.payroll_group_id),
+            pr.period_year,
+            pr.period_month,
+            pr.period_start,
+            pr.period_end,
+            pr.pay_date,
+            pr.status,
+            pr.total_gross,
+            pr.total_net,
+            pr.total_employer_cost,
+            pr.total_epf_employee,
+            pr.total_epf_employer,
+            pr.total_socso_employee,
+            pr.total_socso_employer,
+            pr.total_eis_employee,
+            pr.total_eis_employer,
+            pr.total_pcb,
+            pr.total_zakat,
+            pr.employee_count,
+            pr.version,
+            pr.notes,
+            now,
+            now,
         )
-        .bind(r(pr.id)).bind(new_company_id).bind(r(pr.payroll_group_id))
-        .bind(pr.period_year).bind(pr.period_month).bind(pr.period_start).bind(pr.period_end)
-        .bind(pr.pay_date).bind(&pr.status)
-        .bind(pr.total_gross).bind(pr.total_net).bind(pr.total_employer_cost)
-        .bind(pr.total_epf_employee).bind(pr.total_epf_employer)
-        .bind(pr.total_socso_employee).bind(pr.total_socso_employer)
-        .bind(pr.total_eis_employee).bind(pr.total_eis_employer)
-        .bind(pr.total_pcb).bind(pr.total_zakat).bind(pr.employee_count)
-        .bind(pr.version).bind(&pr.notes).bind(now).bind(now)
         .execute(&mut *tx)
         .await?;
     }
 
     // 13. Payroll items
     for pi in &backup.payroll_items {
-        sqlx::query(
+        sqlx::query!(
             r#"INSERT INTO payroll_items (id, payroll_run_id, employee_id,
                basic_salary, gross_salary, total_allowances, total_overtime,
                total_bonus, total_commission, total_claims,
@@ -813,190 +980,249 @@ pub async fn import_company(
                created_at, updated_at)
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
                        $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39)"#,
+            r(pi.id),
+            r(pi.payroll_run_id),
+            r(pi.employee_id),
+            pi.basic_salary,
+            pi.gross_salary,
+            pi.total_allowances,
+            pi.total_overtime,
+            pi.total_bonus,
+            pi.total_commission,
+            pi.total_claims,
+            pi.epf_employee,
+            pi.epf_employer,
+            pi.socso_employee,
+            pi.socso_employer,
+            pi.eis_employee,
+            pi.eis_employer,
+            pi.pcb_amount,
+            pi.zakat_amount,
+            pi.ptptn_amount,
+            pi.tabung_haji_amount,
+            pi.total_loan_deductions,
+            pi.total_other_deductions,
+            pi.unpaid_leave_deduction,
+            pi.unpaid_leave_days,
+            pi.total_deductions,
+            pi.net_salary,
+            pi.employer_cost,
+            pi.ytd_gross,
+            pi.ytd_epf_employee,
+            pi.ytd_pcb,
+            pi.ytd_socso_employee,
+            pi.ytd_eis_employee,
+            pi.ytd_zakat,
+            pi.ytd_net,
+            pi.working_days,
+            pi.days_worked,
+            pi.is_prorated,
+            now,
+            now,
         )
-        .bind(r(pi.id)).bind(r(pi.payroll_run_id)).bind(r(pi.employee_id))
-        .bind(pi.basic_salary).bind(pi.gross_salary).bind(pi.total_allowances)
-        .bind(pi.total_overtime).bind(pi.total_bonus).bind(pi.total_commission).bind(pi.total_claims)
-        .bind(pi.epf_employee).bind(pi.epf_employer).bind(pi.socso_employee).bind(pi.socso_employer)
-        .bind(pi.eis_employee).bind(pi.eis_employer).bind(pi.pcb_amount).bind(pi.zakat_amount)
-        .bind(pi.ptptn_amount).bind(pi.tabung_haji_amount)
-        .bind(pi.total_loan_deductions).bind(pi.total_other_deductions)
-        .bind(pi.unpaid_leave_deduction).bind(pi.unpaid_leave_days)
-        .bind(pi.total_deductions).bind(pi.net_salary).bind(pi.employer_cost)
-        .bind(pi.ytd_gross).bind(pi.ytd_epf_employee).bind(pi.ytd_pcb)
-        .bind(pi.ytd_socso_employee).bind(pi.ytd_eis_employee).bind(pi.ytd_zakat).bind(pi.ytd_net)
-        .bind(pi.working_days).bind(pi.days_worked).bind(pi.is_prorated)
-        .bind(now).bind(now)
         .execute(&mut *tx)
         .await?;
     }
 
     // 14. Payroll item details
     for pid in &backup.payroll_item_details {
-        sqlx::query(
+        sqlx::query!(
             r#"INSERT INTO payroll_item_details (id, payroll_item_id, category, item_type,
                description, amount, is_taxable, is_statutory, created_at)
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)"#,
+            r(pid.id),
+            r(pid.payroll_item_id),
+            pid.category,
+            pid.item_type,
+            pid.description,
+            pid.amount,
+            pid.is_taxable,
+            pid.is_statutory,
+            now,
         )
-        .bind(r(pid.id))
-        .bind(r(pid.payroll_item_id))
-        .bind(&pid.category)
-        .bind(&pid.item_type)
-        .bind(&pid.description)
-        .bind(pid.amount)
-        .bind(pid.is_taxable)
-        .bind(pid.is_statutory)
-        .bind(now)
         .execute(&mut *tx)
         .await?;
     }
 
     // 15. Payroll entries
     for pe in &backup.payroll_entries {
-        sqlx::query(
+        sqlx::query!(
             r#"INSERT INTO payroll_entries (id, employee_id, company_id, period_year, period_month,
                category, item_type, description, amount, quantity, rate,
                is_taxable, is_processed, payroll_run_id, created_at, updated_at)
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)"#,
+            r(pe.id),
+            r(pe.employee_id),
+            new_company_id,
+            pe.period_year,
+            pe.period_month,
+            pe.category,
+            pe.item_type,
+            pe.description,
+            pe.amount,
+            pe.quantity,
+            pe.rate,
+            pe.is_taxable,
+            pe.is_processed,
+            ro(pe.payroll_run_id),
+            now,
+            now,
         )
-        .bind(r(pe.id))
-        .bind(r(pe.employee_id))
-        .bind(new_company_id)
-        .bind(pe.period_year)
-        .bind(pe.period_month)
-        .bind(&pe.category)
-        .bind(&pe.item_type)
-        .bind(&pe.description)
-        .bind(pe.amount)
-        .bind(pe.quantity)
-        .bind(pe.rate)
-        .bind(pe.is_taxable)
-        .bind(pe.is_processed)
-        .bind(ro(pe.payroll_run_id))
-        .bind(now)
-        .bind(now)
         .execute(&mut *tx)
         .await?;
     }
 
     // 16. Document categories
     for dc in &backup.document_categories {
-        sqlx::query(
+        sqlx::query!(
             r#"INSERT INTO document_categories (id, company_id, name, description, is_active, created_at)
                VALUES ($1,$2,$3,$4,$5,$6)"#,
+            r(dc.id),
+            new_company_id,
+            dc.name,
+            dc.description,
+            dc.is_active,
+            now,
         )
-        .bind(r(dc.id)).bind(new_company_id).bind(&dc.name).bind(&dc.description)
-        .bind(dc.is_active).bind(now)
         .execute(&mut *tx)
         .await?;
     }
 
     // 17. Documents
     for d in &backup.documents {
-        sqlx::query(
+        sqlx::query!(
             r#"INSERT INTO documents (id, company_id, employee_id, category_id, title, description,
                file_name, file_url, file_size, mime_type, status,
                issue_date, expiry_date, is_confidential, tags,
                deleted_at, created_at, updated_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::document_status,$12,$13,$14,$15,$16,$17,$18)"#,
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::text::document_status,$12,$13,$14,$15,$16,$17,$18)"#,
+            r(d.id),
+            new_company_id,
+            ro(d.employee_id),
+            ro(d.category_id),
+            d.title,
+            d.description,
+            d.file_name,
+            d.file_url,
+            d.file_size,
+            d.mime_type,
+            d.status,
+            d.issue_date,
+            d.expiry_date,
+            d.is_confidential,
+            d.tags,
+            d.deleted_at,
+            now,
+            now,
         )
-        .bind(r(d.id)).bind(new_company_id).bind(ro(d.employee_id)).bind(ro(d.category_id))
-        .bind(&d.title).bind(&d.description).bind(&d.file_name).bind(&d.file_url)
-        .bind(d.file_size).bind(&d.mime_type).bind(&d.status)
-        .bind(d.issue_date).bind(d.expiry_date).bind(d.is_confidential).bind(&d.tags)
-        .bind(d.deleted_at).bind(now).bind(now)
         .execute(&mut *tx)
         .await?;
     }
 
     // 18. Teams
     for t in &backup.teams {
-        sqlx::query(
+        sqlx::query!(
             r#"INSERT INTO teams (id, company_id, name, description, tag, is_active, created_at, updated_at)
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8)"#,
+            r(t.id),
+            new_company_id,
+            t.name,
+            t.description,
+            t.tag,
+            t.is_active,
+            now,
+            now,
         )
-        .bind(r(t.id)).bind(new_company_id).bind(&t.name).bind(&t.description)
-        .bind(&t.tag).bind(t.is_active).bind(now).bind(now)
         .execute(&mut *tx)
         .await?;
     }
 
     // 19. Team members
     for tm in &backup.team_members {
-        sqlx::query(
+        sqlx::query!(
             r#"INSERT INTO team_members (id, team_id, employee_id, role, joined_at)
                VALUES ($1,$2,$3,$4,$5)"#,
+            r(tm.id),
+            r(tm.team_id),
+            r(tm.employee_id),
+            tm.role,
+            now,
         )
-        .bind(r(tm.id))
-        .bind(r(tm.team_id))
-        .bind(r(tm.employee_id))
-        .bind(&tm.role)
-        .bind(now)
         .execute(&mut *tx)
         .await?;
     }
 
     // 20. Holidays
     for h in &backup.holidays {
-        sqlx::query(
+        sqlx::query!(
             r#"INSERT INTO holidays (id, company_id, name, date, holiday_type, description,
                is_recurring, state, created_at, updated_at)
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"#,
+            r(h.id),
+            new_company_id,
+            h.name,
+            h.date,
+            h.holiday_type,
+            h.description,
+            h.is_recurring,
+            h.state,
+            now,
+            now,
         )
-        .bind(r(h.id))
-        .bind(new_company_id)
-        .bind(&h.name)
-        .bind(h.date)
-        .bind(&h.holiday_type)
-        .bind(&h.description)
-        .bind(h.is_recurring)
-        .bind(&h.state)
-        .bind(now)
-        .bind(now)
         .execute(&mut *tx)
         .await?;
     }
 
     // 21. Working day config
     for w in &backup.working_day_config {
-        sqlx::query(
+        sqlx::query!(
             r#"INSERT INTO working_day_config (id, company_id, day_of_week, is_working_day, created_at, updated_at)
                VALUES ($1,$2,$3,$4,$5,$6)"#,
+            r(w.id),
+            new_company_id,
+            w.day_of_week,
+            w.is_working_day,
+            now,
+            now,
         )
-        .bind(r(w.id)).bind(new_company_id).bind(w.day_of_week).bind(w.is_working_day)
-        .bind(now).bind(now)
         .execute(&mut *tx)
         .await?;
     }
 
     // 22. Email templates
     for et in &backup.email_templates {
-        sqlx::query(
+        sqlx::query!(
             r#"INSERT INTO email_templates (id, company_id, name, letter_type, subject, body_html,
                is_active, created_at, updated_at)
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)"#,
+            r(et.id),
+            new_company_id,
+            et.name,
+            et.letter_type,
+            et.subject,
+            et.body_html,
+            et.is_active,
+            now,
+            now,
         )
-        .bind(r(et.id))
-        .bind(new_company_id)
-        .bind(&et.name)
-        .bind(&et.letter_type)
-        .bind(&et.subject)
-        .bind(&et.body_html)
-        .bind(et.is_active)
-        .bind(now)
-        .bind(now)
         .execute(&mut *tx)
         .await?;
     }
 
     // 23. Company settings
     for cs in &backup.company_settings {
-        sqlx::query(
+        sqlx::query!(
             r#"INSERT INTO company_settings (id, company_id, category, key, value, label, description, updated_at)
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8)"#,
+            r(cs.id),
+            new_company_id,
+            cs.category,
+            cs.key,
+            cs.value,
+            cs.label,
+            cs.description,
+            now,
         )
-        .bind(r(cs.id)).bind(new_company_id).bind(&cs.category).bind(&cs.key)
-        .bind(&cs.value).bind(&cs.label).bind(&cs.description).bind(now)
         .execute(&mut *tx)
         .await?;
     }

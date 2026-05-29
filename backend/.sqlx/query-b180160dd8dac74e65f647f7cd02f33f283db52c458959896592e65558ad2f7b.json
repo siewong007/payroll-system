@@ -1,0 +1,71 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT lb.id, lb.leave_type_id, lt.name AS leave_type_name, lt.is_paid,\n            lb.year, lb.entitled_days, lb.taken_days, lb.pending_days, lb.carried_forward\n        FROM leave_balances lb\n        JOIN leave_types lt ON lb.leave_type_id = lt.id\n        WHERE lb.employee_id = $1 AND lb.year = $2 AND lt.is_active = TRUE\n        ORDER BY lt.name",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "leave_type_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "leave_type_name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "is_paid",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 4,
+        "name": "year",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 5,
+        "name": "entitled_days",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 6,
+        "name": "taken_days",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 7,
+        "name": "pending_days",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 8,
+        "name": "carried_forward",
+        "type_info": "Numeric"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "b180160dd8dac74e65f647f7cd02f33f283db52c458959896592e65558ad2f7b"
+}

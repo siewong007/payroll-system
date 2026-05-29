@@ -1,0 +1,166 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, company_id, payroll_group_id, period_year, period_month,\n                  period_start, period_end, pay_date, status::text AS \"status!\",\n                  total_gross, total_net, total_employer_cost,\n                  total_epf_employee, total_epf_employer,\n                  total_socso_employee, total_socso_employer,\n                  total_eis_employee, total_eis_employer,\n                  total_pcb, total_zakat, employee_count, version, notes,\n                  created_at, updated_at\n           FROM payroll_runs WHERE company_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "company_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "payroll_group_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "period_year",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 4,
+        "name": "period_month",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 5,
+        "name": "period_start",
+        "type_info": "Date"
+      },
+      {
+        "ordinal": 6,
+        "name": "period_end",
+        "type_info": "Date"
+      },
+      {
+        "ordinal": 7,
+        "name": "pay_date",
+        "type_info": "Date"
+      },
+      {
+        "ordinal": 8,
+        "name": "status!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "total_gross",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 10,
+        "name": "total_net",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 11,
+        "name": "total_employer_cost",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 12,
+        "name": "total_epf_employee",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 13,
+        "name": "total_epf_employer",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 14,
+        "name": "total_socso_employee",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 15,
+        "name": "total_socso_employer",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 16,
+        "name": "total_eis_employee",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 17,
+        "name": "total_eis_employer",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 18,
+        "name": "total_pcb",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 19,
+        "name": "total_zakat",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 20,
+        "name": "employee_count",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 21,
+        "name": "version",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 22,
+        "name": "notes",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 23,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 24,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      null,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "39bb9a8ab93b5e77f5f77dbb5934a7f885843b366282fd625a16321474be4611"
+}

@@ -1,0 +1,27 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO leave_requests (id, employee_id, company_id, leave_type_id,\n               start_date, end_date, days, reason, status, review_notes,\n               attachment_url, attachment_name, created_at, updated_at)\n               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Date",
+        "Date",
+        "Numeric",
+        "Text",
+        "Varchar",
+        "Text",
+        "Varchar",
+        "Varchar",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b6504fcb2aeb7b52754e4dacc1fa64ac15198f75e3d14af3839ba6d99e2ded39"
+}
