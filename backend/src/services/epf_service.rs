@@ -22,7 +22,7 @@ pub async fn calculate_epf(
     effective_date: NaiveDate,
 ) -> AppResult<EpfContribution> {
     // Try table lookup first
-    let rate = sqlx::query_as::<_, (i64, i64)>(
+    let rate = sqlx::query!(
         r#"
         SELECT employee_contribution, employer_contribution
         FROM epf_rates
@@ -33,15 +33,18 @@ pub async fn calculate_epf(
         ORDER BY effective_from DESC
         LIMIT 1
         "#,
+        category,
+        wage,
+        effective_date,
     )
-    .bind(category)
-    .bind(wage)
-    .bind(effective_date)
     .fetch_optional(pool)
     .await?;
 
-    if let Some((employee, employer)) = rate {
-        return Ok(EpfContribution { employee, employer });
+    if let Some(r) = rate {
+        return Ok(EpfContribution {
+            employee: r.employee_contribution,
+            employer: r.employer_contribution,
+        });
     }
 
     // If wage exceeds table range, use flat percentage calculation
