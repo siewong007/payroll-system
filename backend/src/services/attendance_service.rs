@@ -34,16 +34,16 @@ fn normalize_absent_check_out(
 // ─── Platform Settings ───
 
 pub async fn get_platform_attendance_method(pool: &PgPool) -> AppResult<String> {
-    let method: Option<String> =
-        sqlx::query_scalar("SELECT value FROM platform_settings WHERE key = 'attendance_method'")
+    let method =
+        sqlx::query_scalar!("SELECT value FROM platform_settings WHERE key = 'attendance_method'")
             .fetch_optional(pool)
             .await?;
     Ok(method.unwrap_or_else(|| "qr_code".to_string()))
 }
 
 pub async fn get_platform_allow_override(pool: &PgPool) -> AppResult<bool> {
-    let val: Option<String> = sqlx::query_scalar(
-        "SELECT value FROM platform_settings WHERE key = 'allow_company_override'",
+    let val = sqlx::query_scalar!(
+        "SELECT value FROM platform_settings WHERE key = 'allow_company_override'"
     )
     .fetch_optional(pool)
     .await?;
@@ -66,23 +66,23 @@ pub async fn set_platform_attendance_method(
     let old_method = get_platform_attendance_method(pool).await?;
     let old_allow_override = get_platform_allow_override(pool).await?;
 
-    sqlx::query(
+    sqlx::query!(
         "INSERT INTO platform_settings (key, value, updated_at, updated_by)
          VALUES ('attendance_method', $1, NOW(), $2)
          ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW(), updated_by = $2",
+        method,
+        updated_by,
     )
-    .bind(method)
-    .bind(updated_by)
     .execute(pool)
     .await?;
 
-    sqlx::query(
+    sqlx::query!(
         "INSERT INTO platform_settings (key, value, updated_at, updated_by)
          VALUES ('allow_company_override', $1, NOW(), $2)
          ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW(), updated_by = $2",
+        if allow_override { "true" } else { "false" },
+        updated_by,
     )
-    .bind(if allow_override { "true" } else { "false" })
-    .bind(updated_by)
     .execute(pool)
     .await?;
 
@@ -118,12 +118,13 @@ pub async fn get_effective_method(
     let allow_override = get_platform_allow_override(pool).await?;
 
     // Check if company has an override
-    let company_method: Option<String> =
-        sqlx::query_scalar("SELECT attendance_method FROM companies WHERE id = $1")
-            .bind(company_id)
-            .fetch_optional(pool)
-            .await?
-            .flatten();
+    let company_method = sqlx::query_scalar!(
+        "SELECT attendance_method FROM companies WHERE id = $1",
+        company_id,
+    )
+    .fetch_optional(pool)
+    .await?
+    .flatten();
 
     let (method, is_override) = if allow_override {
         if let Some(m) = company_method {
@@ -166,18 +167,21 @@ pub async fn set_company_attendance_method(
         ));
     }
 
-    let old_method: Option<String> =
-        sqlx::query_scalar("SELECT attendance_method FROM companies WHERE id = $1")
-            .bind(company_id)
-            .fetch_optional(pool)
-            .await?
-            .flatten();
+    let old_method = sqlx::query_scalar!(
+        "SELECT attendance_method FROM companies WHERE id = $1",
+        company_id,
+    )
+    .fetch_optional(pool)
+    .await?
+    .flatten();
 
-    sqlx::query("UPDATE companies SET attendance_method = $1 WHERE id = $2")
-        .bind(method)
-        .bind(company_id)
-        .execute(pool)
-        .await?;
+    sqlx::query!(
+        "UPDATE companies SET attendance_method = $1 WHERE id = $2",
+        method,
+        company_id,
+    )
+    .execute(pool)
+    .await?;
 
     let _ = audit_service::log_action_with_metadata(
         pool,
@@ -204,24 +208,24 @@ pub async fn generate_qr_token(
     frontend_url: &str,
 ) -> AppResult<QrTokenResponse> {
     // Expire any existing unused tokens for this company
-    sqlx::query(
+    sqlx::query!(
         "UPDATE attendance_qr_tokens SET used = TRUE
          WHERE company_id = $1 AND used = FALSE",
+        company_id,
     )
-    .bind(company_id)
     .execute(pool)
     .await?;
 
     let token = Uuid::new_v4().to_string().replace('-', "");
     let expires_at = Utc::now() + chrono::Duration::seconds(QR_TOKEN_TTL_SECONDS);
 
-    sqlx::query(
+    sqlx::query!(
         "INSERT INTO attendance_qr_tokens (company_id, token, expires_at)
          VALUES ($1, $2, $3)",
+        company_id,
+        token,
+        expires_at,
     )
-    .bind(company_id)
-    .bind(&token)
-    .bind(expires_at)
     .execute(pool)
     .await?;
 
@@ -239,11 +243,14 @@ pub async fn generate_qr_token(
 /// same active token during its TTL window. The `used` flag means admin-revoked (a new
 /// token was generated), not employee-scanned.
 pub async fn validate_qr_token(pool: &PgPool, token: &str, company_id: Uuid) -> AppResult<Uuid> {
-    let row: Option<AttendanceQrToken> =
-        sqlx::query_as("SELECT * FROM attendance_qr_tokens WHERE token = $1")
-            .bind(token)
-            .fetch_optional(pool)
-            .await?;
+    let row = sqlx::query_as!(
+        AttendanceQrToken,
+        "SELECT id, company_id, token, expires_at, used, created_at
+         FROM attendance_qr_tokens WHERE token = $1",
+        token,
+    )
+    .fetch_optional(pool)
+    .await?;
 
     match row {
         None => Err(AppError::BadRequest(
@@ -508,19 +515,22 @@ pub async fn check_in_qr(
     let token_id = validate_qr_token(pool, token, company_id).await?;
     let status = determine_checkin_status(pool, employee_id, company_id).await;
 
-    let result = sqlx::query_as::<_, AttendanceRecord>(
+    let result = sqlx::query_as!(
+        AttendanceRecord,
         r#"INSERT INTO attendance_records
            (company_id, employee_id, method, status, latitude, longitude, qr_token_id, is_outside_geofence)
            VALUES ($1, $2, 'qr_code', $3, $4, $5, $6, $7)
-           RETURNING *"#,
+           RETURNING id, company_id, employee_id, check_in_at, check_out_at, method, status,
+                     latitude, longitude, checkout_latitude, checkout_longitude, notes, qr_token_id,
+                     created_by, hours_worked, overtime_hours, is_outside_geofence, created_at, updated_at"#,
+        company_id,
+        employee_id,
+        status,
+        latitude,
+        longitude,
+        token_id,
+        outside_geofence,
     )
-    .bind(company_id)
-    .bind(employee_id)
-    .bind(&status)
-    .bind(latitude)
-    .bind(longitude)
-    .bind(token_id)
-    .bind(outside_geofence)
     .fetch_one(pool)
     .await;
 
@@ -528,10 +538,14 @@ pub async fn check_in_qr(
         Ok(record) => Ok(record),
         Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("23505") => {
             // Handle race condition: if already checked in, return the existing open record
-            let record = sqlx::query_as::<_, AttendanceRecord>(
-                "SELECT * FROM attendance_records WHERE employee_id = $1 AND check_out_at IS NULL LIMIT 1"
+            let record = sqlx::query_as!(
+                AttendanceRecord,
+                "SELECT id, company_id, employee_id, check_in_at, check_out_at, method, status,
+                        latitude, longitude, checkout_latitude, checkout_longitude, notes, qr_token_id,
+                        created_by, hours_worked, overtime_hours, is_outside_geofence, created_at, updated_at
+                 FROM attendance_records WHERE employee_id = $1 AND check_out_at IS NULL LIMIT 1",
+                employee_id,
             )
-            .bind(employee_id)
             .fetch_optional(pool)
             .await?;
 
@@ -558,18 +572,21 @@ pub async fn check_in_face_id(
 
     let status = determine_checkin_status(pool, employee_id, company_id).await;
 
-    let result = sqlx::query_as::<_, AttendanceRecord>(
+    let result = sqlx::query_as!(
+        AttendanceRecord,
         r#"INSERT INTO attendance_records
            (company_id, employee_id, method, status, latitude, longitude, is_outside_geofence)
            VALUES ($1, $2, 'face_id', $3, $4, $5, $6)
-           RETURNING *"#,
+           RETURNING id, company_id, employee_id, check_in_at, check_out_at, method, status,
+                     latitude, longitude, checkout_latitude, checkout_longitude, notes, qr_token_id,
+                     created_by, hours_worked, overtime_hours, is_outside_geofence, created_at, updated_at"#,
+        company_id,
+        employee_id,
+        status,
+        latitude,
+        longitude,
+        outside_geofence,
     )
-    .bind(company_id)
-    .bind(employee_id)
-    .bind(&status)
-    .bind(latitude)
-    .bind(longitude)
-    .bind(outside_geofence)
     .fetch_one(pool)
     .await;
 
@@ -577,10 +594,14 @@ pub async fn check_in_face_id(
         Ok(record) => Ok(record),
         Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("23505") => {
             // Handle race condition: if already checked in, return the existing open record
-            let record = sqlx::query_as::<_, AttendanceRecord>(
-                "SELECT * FROM attendance_records WHERE employee_id = $1 AND check_out_at IS NULL LIMIT 1"
+            let record = sqlx::query_as!(
+                AttendanceRecord,
+                "SELECT id, company_id, employee_id, check_in_at, check_out_at, method, status,
+                        latitude, longitude, checkout_latitude, checkout_longitude, notes, qr_token_id,
+                        created_by, hours_worked, overtime_hours, is_outside_geofence, created_at, updated_at
+                 FROM attendance_records WHERE employee_id = $1 AND check_out_at IS NULL LIMIT 1",
+                employee_id,
             )
-            .bind(employee_id)
             .fetch_optional(pool)
             .await?;
 
@@ -601,7 +622,8 @@ pub async fn check_out(
     // Use a subquery to find the most recent open check-in within 24 hours.
     // The 24-hour window (instead of same-calendar-day) handles overnight shifts
     // where check-in and check-out span midnight.
-    let record = sqlx::query_as::<_, AttendanceRecord>(
+    let record = sqlx::query_as!(
+        AttendanceRecord,
         r#"UPDATE attendance_records ar
            SET check_out_at = NOW(),
                checkout_latitude = $2,
@@ -625,12 +647,16 @@ pub async fn check_out(
                ORDER BY check_in_at DESC
                LIMIT 1
            )
-           RETURNING ar.*"#,
+           RETURNING ar.id, ar.company_id, ar.employee_id, ar.check_in_at, ar.check_out_at,
+                     ar.method, ar.status, ar.latitude, ar.longitude, ar.checkout_latitude,
+                     ar.checkout_longitude, ar.notes, ar.qr_token_id, ar.created_by,
+                     ar.hours_worked, ar.overtime_hours, ar.is_outside_geofence,
+                     ar.created_at, ar.updated_at"#,
+        employee_id,
+        latitude,
+        longitude,
+        company_id,
     )
-    .bind(employee_id)
-    .bind(latitude)
-    .bind(longitude)
-    .bind(company_id)
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| {
@@ -644,16 +670,16 @@ pub async fn check_out(
 
 /// Prevent double check-in on the same calendar day (using company timezone)
 async fn ensure_no_active_checkin(pool: &PgPool, employee_id: Uuid, tz: &str) -> AppResult<()> {
-    let exists: bool = sqlx::query_scalar(
+    let exists = sqlx::query_scalar!(
         r#"SELECT EXISTS(
             SELECT 1 FROM attendance_records
             WHERE employee_id = $1
               AND DATE(check_in_at AT TIME ZONE $2) = DATE(NOW() AT TIME ZONE $2)
               AND check_out_at IS NULL
-        )"#,
+        ) AS "exists!""#,
+        employee_id,
+        tz,
     )
-    .bind(employee_id)
-    .bind(tz)
     .fetch_one(pool)
     .await?;
 
@@ -865,15 +891,19 @@ pub async fn get_today_checkin(
 ) -> AppResult<Option<AttendanceRecord>> {
     let tz = get_company_timezone(pool, company_id).await;
 
-    let record = sqlx::query_as::<_, AttendanceRecord>(
-        "SELECT * FROM attendance_records
+    let record = sqlx::query_as!(
+        AttendanceRecord,
+        "SELECT id, company_id, employee_id, check_in_at, check_out_at, method, status,
+                latitude, longitude, checkout_latitude, checkout_longitude, notes, qr_token_id,
+                created_by, hours_worked, overtime_hours, is_outside_geofence, created_at, updated_at
+         FROM attendance_records
          WHERE employee_id = $1
            AND DATE(check_in_at AT TIME ZONE $2) = DATE(NOW() AT TIME ZONE $2)
          ORDER BY check_in_at DESC
          LIMIT 1",
+        employee_id,
+        tz,
     )
-    .bind(employee_id)
-    .bind(&tz)
     .fetch_optional(pool)
     .await?;
 
@@ -890,19 +920,22 @@ pub async fn manual_attendance(
     let status = req.status.as_deref().unwrap_or("present");
     let check_out_at = normalize_absent_check_out(status, req.check_in_at, req.check_out_at);
 
-    let record = sqlx::query_as::<_, AttendanceRecord>(
+    let record = sqlx::query_as!(
+        AttendanceRecord,
         r#"INSERT INTO attendance_records
            (company_id, employee_id, check_in_at, check_out_at, method, status, notes, created_by)
            VALUES ($1, $2, $3, $4, 'manual', $5, $6, $7)
-           RETURNING *"#,
+           RETURNING id, company_id, employee_id, check_in_at, check_out_at, method, status,
+                     latitude, longitude, checkout_latitude, checkout_longitude, notes, qr_token_id,
+                     created_by, hours_worked, overtime_hours, is_outside_geofence, created_at, updated_at"#,
+        company_id,
+        req.employee_id,
+        req.check_in_at,
+        check_out_at,
+        status,
+        req.notes,
+        created_by,
     )
-    .bind(company_id)
-    .bind(req.employee_id)
-    .bind(req.check_in_at)
-    .bind(check_out_at)
-    .bind(status)
-    .bind(req.notes)
-    .bind(created_by)
     .fetch_one(pool)
     .await?;
 
@@ -933,11 +966,15 @@ pub async fn update_attendance_record(
     updated_by: Uuid,
 ) -> AppResult<AttendanceRecord> {
     // Fetch existing record
-    let existing = sqlx::query_as::<_, AttendanceRecord>(
-        "SELECT * FROM attendance_records WHERE id = $1 AND company_id = $2",
+    let existing = sqlx::query_as!(
+        AttendanceRecord,
+        "SELECT id, company_id, employee_id, check_in_at, check_out_at, method, status,
+                latitude, longitude, checkout_latitude, checkout_longitude, notes, qr_token_id,
+                created_by, hours_worked, overtime_hours, is_outside_geofence, created_at, updated_at
+         FROM attendance_records WHERE id = $1 AND company_id = $2",
+        record_id,
+        company_id,
     )
-    .bind(record_id)
-    .bind(company_id)
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| AppError::NotFound("Attendance record not found".into()))?;
@@ -961,20 +998,23 @@ pub async fn update_attendance_record(
         (diff * 100.0).round() / 100.0
     });
 
-    let record = sqlx::query_as::<_, AttendanceRecord>(
+    let record = sqlx::query_as!(
+        AttendanceRecord,
         r#"UPDATE attendance_records
            SET check_in_at = $3, check_out_at = $4, status = $5, notes = $6,
-               hours_worked = $7, updated_at = NOW()
+               hours_worked = $7::float8, updated_at = NOW()
            WHERE id = $1 AND company_id = $2
-           RETURNING *"#,
+           RETURNING id, company_id, employee_id, check_in_at, check_out_at, method, status,
+                     latitude, longitude, checkout_latitude, checkout_longitude, notes, qr_token_id,
+                     created_by, hours_worked, overtime_hours, is_outside_geofence, created_at, updated_at"#,
+        record_id,
+        company_id,
+        check_in,
+        check_out,
+        status,
+        notes,
+        hours_worked,
     )
-    .bind(record_id)
-    .bind(company_id)
-    .bind(check_in)
-    .bind(check_out)
-    .bind(status)
-    .bind(notes)
-    .bind(hours_worked)
     .fetch_one(pool)
     .await?;
 
@@ -992,14 +1032,14 @@ pub async fn update_attendance_record(
         "notes": record.notes,
     });
 
-    sqlx::query(
+    sqlx::query!(
         r#"INSERT INTO audit_logs (user_id, action, entity_type, entity_id, old_values, new_values, description)
            VALUES ($1, 'update', 'attendance_record', $2, $3, $4, 'Attendance record corrected')"#,
+        updated_by,
+        record_id,
+        old_vals,
+        new_vals,
     )
-    .bind(updated_by)
-    .bind(record_id)
-    .bind(&old_vals)
-    .bind(&new_vals)
     .execute(pool)
     .await?;
 
@@ -1016,7 +1056,7 @@ pub async fn mark_absent_for_date(pool: &PgPool, tz: &str) -> AppResult<i64> {
     // 2. Work on this day of week (working_day_config)
     // 3. Don't have a holiday today
     // 4. Don't already have an attendance record today
-    let result = sqlx::query(
+    let result = sqlx::query!(
         r#"INSERT INTO attendance_records
            (company_id, employee_id, check_in_at, check_out_at, method, status, notes)
            SELECT
@@ -1054,8 +1094,8 @@ pub async fn mark_absent_for_date(pool: &PgPool, tz: &str) -> AppResult<i64> {
                  WHERE ar.employee_id = e.id
                    AND DATE(ar.check_in_at AT TIME ZONE $1) = DATE(NOW() AT TIME ZONE $1)
              )"#,
+        tz,
     )
-    .bind(tz)
     .execute(pool)
     .await?;
 

@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO attendance_qr_tokens (company_id, token, expires_at)\n         VALUES ($1, $2, $3)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Varchar",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "79e2120627b83e8cb1b0e8eaab1ac7271a7a0bbccd27f79ccc72680fe3d9d601"
+}
