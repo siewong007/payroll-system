@@ -1,6 +1,41 @@
 use crate::services::attendance_service;
 use crate::tests::support::{seed_company_and_employee, skip_if_no_db};
 
+/// Regression test for the `::int16` day-of-week bug: an employee-specific work
+/// schedule for *today's* weekday must be matched so a check-in after the start
+/// time is flagged "late". The employee-schedule lookup filters on day_of_week,
+/// so before the fix (dow always 0/Sunday) this row was missed on weekdays and
+/// the status wrongly fell through to "present".
+#[tokio::test]
+async fn checkin_status_matches_employee_schedule_for_today() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let (company_id, employee_id) = seed_company_and_employee(&pool).await;
+
+    // Schedule for today's KL weekday starting at 00:00:01 with no grace, so any
+    // real-time check-in is "late". day_of_week is computed in the same timezone
+    // determine_checkin_status uses (no company default row => Asia/Kuala_Lumpur).
+    sqlx::query(
+        r#"INSERT INTO employee_work_schedules
+           (employee_id, company_id, day_of_week, start_time, end_time, grace_minutes, is_active)
+           VALUES ($1, $2, EXTRACT(DOW FROM (NOW() AT TIME ZONE 'Asia/Kuala_Lumpur'))::int2,
+                   TIME '00:00:01', TIME '23:59:59', 0, TRUE)"#,
+    )
+    .bind(employee_id)
+    .bind(company_id)
+    .execute(&pool)
+    .await
+    .expect("insert employee work schedule");
+
+    let status = attendance_service::determine_checkin_status(&pool, employee_id, company_id).await;
+
+    assert_eq!(
+        status, "late",
+        "employee schedule for today's weekday should be matched (requires the ::int2 fix)"
+    );
+}
+
 /// Helper: insert an open (no check_out_at) attendance record whose
 /// `check_in_at` is `hours_ago` hours in the past. Returns the new row's id.
 async fn insert_open_record(

@@ -428,11 +428,18 @@ pub async fn generate_qr_via_kiosk(
 
 /// Determine attendance status based on the company's work schedule.
 /// Returns "present" or "late".
-async fn determine_checkin_status(pool: &PgPool, employee_id: Uuid, company_id: Uuid) -> String {
+pub(crate) async fn determine_checkin_status(
+    pool: &PgPool,
+    employee_id: Uuid,
+    company_id: Uuid,
+) -> String {
     let tz = get_company_timezone(pool, company_id).await;
 
-    // Get current day of week (0=Sunday, 6=Saturday)
-    let dow: i16 = sqlx::query_scalar("SELECT EXTRACT(DOW FROM (NOW() AT TIME ZONE $1))::int16")
+    // Get current day of week (0=Sunday, 6=Saturday).
+    // NOTE: int2 (smallint), not int16 — Postgres has no int16 type, and the
+    // earlier typo errored on every call, silently defaulting dow to 0 (Sunday)
+    // via the unwrap_or(0) below, which broke weekday late detection.
+    let dow: i16 = sqlx::query_scalar("SELECT EXTRACT(DOW FROM (NOW() AT TIME ZONE $1))::int2")
         .bind(&tz)
         .fetch_one(pool)
         .await
