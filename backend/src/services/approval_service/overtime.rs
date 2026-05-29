@@ -25,20 +25,21 @@ pub async fn create_overtime_admin(
     validate_overtime_type(ot_type)?;
     let (start_time, end_time) = parse_overtime_times(&req.start_time, &req.end_time)?;
 
-    let overtime = sqlx::query_as::<_, OvertimeApplication>(
+    let overtime = sqlx::query_as!(
+        OvertimeApplication,
         r#"INSERT INTO overtime_applications
             (employee_id, company_id, ot_date, start_time, end_time, hours, ot_type, reason)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         RETURNING *"#,
+        employee_id,
+        company_id,
+        req.ot_date,
+        start_time,
+        end_time,
+        req.hours,
+        ot_type,
+        req.reason,
     )
-    .bind(employee_id)
-    .bind(company_id)
-    .bind(req.ot_date)
-    .bind(start_time)
-    .bind(end_time)
-    .bind(req.hours)
-    .bind(ot_type)
-    .bind(&req.reason)
     .fetch_one(pool)
     .await?;
 
@@ -70,12 +71,13 @@ pub async fn update_overtime_admin(
     actor_id: Uuid,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<OvertimeApplication> {
-    let current = sqlx::query_as::<_, OvertimeApplication>(
+    let current = sqlx::query_as!(
+        OvertimeApplication,
         r#"SELECT * FROM overtime_applications
         WHERE id = $1 AND company_id = $2 AND status = 'pending'"#,
+        ot_id,
+        company_id,
     )
-    .bind(ot_id)
-    .bind(company_id)
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| AppError::BadRequest("OT application not found or cannot be edited".into()))?;
@@ -99,7 +101,8 @@ pub async fn update_overtime_admin(
     let ot_type = req.ot_type.as_deref().unwrap_or(&current.ot_type);
     validate_overtime_type(ot_type)?;
 
-    let updated = sqlx::query_as::<_, OvertimeApplication>(
+    let updated = sqlx::query_as!(
+        OvertimeApplication,
         r#"UPDATE overtime_applications
         SET employee_id = COALESCE($3, employee_id),
             ot_date = COALESCE($4, ot_date),
@@ -111,16 +114,16 @@ pub async fn update_overtime_admin(
             updated_at = NOW()
         WHERE id = $1 AND company_id = $2
         RETURNING *"#,
+        ot_id,
+        company_id,
+        req.employee_id,
+        req.ot_date,
+        start_time,
+        end_time,
+        req.hours,
+        ot_type,
+        req.reason,
     )
-    .bind(ot_id)
-    .bind(company_id)
-    .bind(req.employee_id)
-    .bind(req.ot_date)
-    .bind(start_time)
-    .bind(end_time)
-    .bind(req.hours)
-    .bind(ot_type)
-    .bind(&req.reason)
     .fetch_one(pool)
     .await?;
 
@@ -151,22 +154,25 @@ pub async fn delete_overtime_admin(
     actor_id: Uuid,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<()> {
-    let current = sqlx::query_as::<_, OvertimeApplication>(
+    let current = sqlx::query_as!(
+        OvertimeApplication,
         r#"SELECT * FROM overtime_applications
         WHERE id = $1 AND company_id = $2
         AND status = 'cancelled'"#,
+        ot_id,
+        company_id,
     )
-    .bind(ot_id)
-    .bind(company_id)
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| AppError::BadRequest("OT application not found or cannot be deleted".into()))?;
 
-    sqlx::query("DELETE FROM overtime_applications WHERE id = $1 AND company_id = $2")
-        .bind(ot_id)
-        .bind(company_id)
-        .execute(pool)
-        .await?;
+    sqlx::query!(
+        "DELETE FROM overtime_applications WHERE id = $1 AND company_id = $2",
+        ot_id,
+        company_id,
+    )
+    .execute(pool)
+    .await?;
 
     let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
@@ -197,14 +203,15 @@ pub async fn cancel_overtime_admin(
 ) -> AppResult<OvertimeApplication> {
     let mut tx = pool.begin().await?;
 
-    let current = sqlx::query_as::<_, OvertimeApplication>(
+    let current = sqlx::query_as!(
+        OvertimeApplication,
         r#"SELECT * FROM overtime_applications
         WHERE id = $1
           AND company_id = $2
           AND status IN ('pending', 'approved', 'rejected')"#,
+        ot_id,
+        company_id,
     )
-    .bind(ot_id)
-    .bind(company_id)
     .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| {
@@ -219,7 +226,7 @@ pub async fn cancel_overtime_admin(
         );
         let period_year = current.ot_date.year();
         let period_month = current.ot_date.month() as i32;
-        let processed = sqlx::query_scalar::<_, bool>(
+        let processed = sqlx::query_scalar!(
             r#"SELECT EXISTS(
                 SELECT 1 FROM payroll_entries
                 WHERE employee_id = $1
@@ -229,13 +236,13 @@ pub async fn cancel_overtime_admin(
                   AND item_type = 'overtime'
                   AND description LIKE $5
                   AND is_processed = TRUE
-            )"#,
+            ) AS "exists!""#,
+            current.employee_id,
+            company_id,
+            period_year,
+            period_month,
+            &description,
         )
-        .bind(current.employee_id)
-        .bind(company_id)
-        .bind(period_year)
-        .bind(period_month)
-        .bind(&description)
         .fetch_one(&mut *tx)
         .await?;
 
@@ -245,7 +252,7 @@ pub async fn cancel_overtime_admin(
             ));
         }
 
-        sqlx::query(
+        sqlx::query!(
             r#"DELETE FROM payroll_entries
             WHERE employee_id = $1
               AND company_id = $2
@@ -254,17 +261,17 @@ pub async fn cancel_overtime_admin(
               AND item_type = 'overtime'
               AND description LIKE $5
               AND is_processed = FALSE"#,
+            current.employee_id,
+            company_id,
+            period_year,
+            period_month,
+            &description,
         )
-        .bind(current.employee_id)
-        .bind(company_id)
-        .bind(period_year)
-        .bind(period_month)
-        .bind(&description)
         .execute(&mut *tx)
         .await?;
 
         if current.ot_type == "public_holiday" {
-            sqlx::query(
+            sqlx::query!(
                 r#"UPDATE leave_balances lb
                 SET entitled_days = GREATEST(lb.entitled_days - 1, 0), updated_at = NOW()
                 FROM leave_types lt
@@ -273,23 +280,24 @@ pub async fn cancel_overtime_admin(
                   AND lb.year = $2
                   AND lt.company_id = $3
                   AND lt.name = 'Replacement Leave'"#,
+                current.employee_id,
+                period_year,
+                company_id,
             )
-            .bind(current.employee_id)
-            .bind(period_year)
-            .bind(company_id)
             .execute(&mut *tx)
             .await?;
         }
     }
 
-    let cancelled = sqlx::query_as::<_, OvertimeApplication>(
+    let cancelled = sqlx::query_as!(
+        OvertimeApplication,
         r#"UPDATE overtime_applications
         SET status = 'cancelled', updated_at = NOW()
         WHERE id = $1 AND company_id = $2
         RETURNING *"#,
+        ot_id,
+        company_id,
     )
-    .bind(ot_id)
-    .bind(company_id)
     .fetch_one(&mut *tx)
     .await?;
 
@@ -343,16 +351,17 @@ pub async fn get_overtime_with_employee_by_id(
     company_id: Uuid,
     overtime_id: Uuid,
 ) -> AppResult<OvertimeWithEmployee> {
-    sqlx::query_as::<_, OvertimeWithEmployee>(
+    sqlx::query_as!(
+        OvertimeWithEmployee,
         r#"SELECT oa.*,
-            e.full_name as employee_name,
-            e.employee_number
+            e.full_name AS "employee_name?",
+            e.employee_number AS "employee_number?"
         FROM overtime_applications oa
         JOIN employees e ON oa.employee_id = e.id
         WHERE oa.id = $1 AND oa.company_id = $2"#,
+        overtime_id,
+        company_id,
     )
-    .bind(overtime_id)
-    .bind(company_id)
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| AppError::NotFound("Overtime application not found".into()))
@@ -363,19 +372,20 @@ pub async fn get_pending_overtime(
     company_id: Uuid,
     status: Option<&str>,
 ) -> AppResult<Vec<OvertimeWithEmployee>> {
-    let apps = sqlx::query_as::<_, OvertimeWithEmployee>(
+    let apps = sqlx::query_as!(
+        OvertimeWithEmployee,
         r#"SELECT oa.*,
-            e.full_name as employee_name,
-            e.employee_number
+            e.full_name AS "employee_name?",
+            e.employee_number AS "employee_number?"
         FROM overtime_applications oa
         JOIN employees e ON oa.employee_id = e.id
         WHERE oa.company_id = $1
         AND ($2::text IS NULL OR oa.status = $2)
         ORDER BY oa.created_at DESC
         LIMIT 100"#,
+        company_id,
+        status,
     )
-    .bind(company_id)
-    .bind(status)
     .fetch_all(pool)
     .await?;
     Ok(apps)
@@ -389,29 +399,31 @@ pub async fn approve_overtime(
     notes: Option<&str>,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<OvertimeApplication> {
-    let ot = sqlx::query_as::<_, OvertimeApplication>(
+    let ot = sqlx::query_as!(
+        OvertimeApplication,
         r#"UPDATE overtime_applications SET
             status = 'approved', reviewed_by = $3, reviewed_at = NOW(),
             review_notes = $4, updated_at = NOW()
         WHERE id = $1 AND company_id = $2 AND status = 'pending'
         RETURNING *"#,
+        ot_id,
+        company_id,
+        reviewer_id,
+        notes,
     )
-    .bind(ot_id)
-    .bind(company_id)
-    .bind(reviewer_id)
-    .bind(notes)
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| AppError::BadRequest("OT application not found or not pending".into()))?;
 
     // Get employee hourly rate
-    let hourly_rate: Option<(Option<i64>, i64)> =
-        sqlx::query_as("SELECT hourly_rate, basic_salary FROM employees WHERE id = $1")
-            .bind(ot.employee_id)
-            .fetch_optional(pool)
-            .await?;
+    let hourly_rate = sqlx::query!(
+        "SELECT hourly_rate, basic_salary FROM employees WHERE id = $1",
+        ot.employee_id,
+    )
+    .fetch_optional(pool)
+    .await?;
 
-    if let Some((hr, basic_salary)) = hourly_rate {
+    if let Some(row) = hourly_rate {
         // Use hourly_rate if set, otherwise calculate from basic: basic / working_days / effective_hours
         // effective_hours_per_day excludes rest time (e.g. 8h for a 9h day with 1h lunch)
         let effective_hours: i64 =
@@ -426,7 +438,9 @@ pub async fn approve_overtime(
                 .ok()
                 .and_then(|s| s.value.as_str().and_then(|v| v.parse::<i64>().ok()))
                 .unwrap_or(26);
-        let base_hourly = hr.unwrap_or_else(|| basic_salary / working_days / effective_hours);
+        let base_hourly = row
+            .hourly_rate
+            .unwrap_or_else(|| row.basic_salary / working_days / effective_hours);
 
         // Get OT multiplier from company settings
         let multiplier_key = match ot.ot_type.as_str() {
@@ -454,29 +468,29 @@ pub async fn approve_overtime(
         let period_year = ot.ot_date.year();
         let period_month = ot.ot_date.month0() as i32 + 1;
 
-        let _ = sqlx::query(
+        let _ = sqlx::query!(
             r#"INSERT INTO payroll_entries
                 (id, employee_id, company_id, period_year, period_month, category, item_type,
                  description, amount, quantity, rate, is_taxable, created_by)
             VALUES ($1, $2, $3, $4, $5, 'earning', 'overtime', $6, $7, $8, $9, TRUE, $10)"#,
-        )
-        .bind(Uuid::now_v7())
-        .bind(ot.employee_id)
-        .bind(company_id)
-        .bind(period_year)
-        .bind(period_month)
-        .bind(format!(
-            "OT {} - {} ({} {}h @ {:.1}x)",
-            ot.ot_date,
-            ot.ot_type.replace('_', " "),
-            ot.start_time.format("%H:%M"),
+            Uuid::now_v7(),
+            ot.employee_id,
+            company_id,
+            period_year,
+            period_month,
+            format!(
+                "OT {} - {} ({} {}h @ {:.1}x)",
+                ot.ot_date,
+                ot.ot_type.replace('_', " "),
+                ot.start_time.format("%H:%M"),
+                ot.hours,
+                multiplier
+            ),
+            ot_amount,
             ot.hours,
-            multiplier
-        ))
-        .bind(ot_amount)
-        .bind(ot.hours)
-        .bind(ot_rate)
-        .bind(reviewer_id)
+            ot_rate,
+            reviewer_id,
+        )
         .execute(pool)
         .await;
     }
@@ -484,40 +498,40 @@ pub async fn approve_overtime(
     // Replacement leave: if OT was on a public holiday, grant 1 day replacement leave
     if ot.ot_type == "public_holiday" {
         // Find or create system "Replacement Leave" type for this company
-        let rl_type_id: Uuid = sqlx::query_scalar(
+        let rl_type_id = sqlx::query_scalar!(
             r#"INSERT INTO leave_types (company_id, name, description, default_days, is_paid, is_system)
             VALUES ($1, 'Replacement Leave', 'Auto-granted when working on public holidays', 0, TRUE, TRUE)
             ON CONFLICT (company_id, name) DO UPDATE SET updated_at = NOW()
             RETURNING id"#,
+            company_id,
         )
-        .bind(company_id)
         .fetch_one(pool)
         .await?;
 
         // UPSERT leave balance: increment entitled_days by 1
         let year = ot.ot_date.year();
-        sqlx::query(
+        sqlx::query!(
             r#"INSERT INTO leave_balances (employee_id, leave_type_id, year, entitled_days)
             VALUES ($1, $2, $3, 1)
             ON CONFLICT (employee_id, leave_type_id, year)
             DO UPDATE SET entitled_days = leave_balances.entitled_days + 1, updated_at = NOW()"#,
+            ot.employee_id,
+            rl_type_id,
+            year,
         )
-        .bind(ot.employee_id)
-        .bind(rl_type_id)
-        .bind(year)
         .execute(pool)
         .await?;
     }
 
     // Notify employee
-    let employee_user = sqlx::query_as::<_, (Uuid,)>(
+    let employee_user = sqlx::query_scalar!(
         "SELECT id FROM users WHERE employee_id = $1 AND is_active = TRUE",
+        ot.employee_id,
     )
-    .bind(ot.employee_id)
     .fetch_optional(pool)
     .await?;
 
-    if let Some((user_id,)) = employee_user {
+    if let Some(user_id) = employee_user {
         let _ = notification_service::create_notification(
             pool,
             user_id,
@@ -563,29 +577,30 @@ pub async fn reject_overtime(
     notes: Option<&str>,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<OvertimeApplication> {
-    let ot = sqlx::query_as::<_, OvertimeApplication>(
+    let ot = sqlx::query_as!(
+        OvertimeApplication,
         r#"UPDATE overtime_applications SET
             status = 'rejected', reviewed_by = $3, reviewed_at = NOW(),
             review_notes = $4, updated_at = NOW()
         WHERE id = $1 AND company_id = $2 AND status = 'pending'
         RETURNING *"#,
+        ot_id,
+        company_id,
+        reviewer_id,
+        notes,
     )
-    .bind(ot_id)
-    .bind(company_id)
-    .bind(reviewer_id)
-    .bind(notes)
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| AppError::BadRequest("OT application not found or not pending".into()))?;
 
-    let employee_user = sqlx::query_as::<_, (Uuid,)>(
+    let employee_user = sqlx::query_scalar!(
         "SELECT id FROM users WHERE employee_id = $1 AND is_active = TRUE",
+        ot.employee_id,
     )
-    .bind(ot.employee_id)
     .fetch_optional(pool)
     .await?;
 
-    if let Some((user_id,)) = employee_user {
+    if let Some(user_id) = employee_user {
         let _ = notification_service::create_notification(
             pool,
             user_id,
