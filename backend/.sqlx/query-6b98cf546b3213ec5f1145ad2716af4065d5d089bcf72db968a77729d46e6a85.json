@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE attendance_kiosk_credentials\n         SET last_used_at = NOW(), last_used_ip = $2\n         WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6b98cf546b3213ec5f1145ad2716af4065d5d089bcf72db968a77729d46e6a85"
+}
