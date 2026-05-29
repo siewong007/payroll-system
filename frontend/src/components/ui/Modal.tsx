@@ -90,7 +90,7 @@ export function Modal({ open, onClose, title, children, footer, maxWidth = 'max-
 
           {/* Centering container — grid places modal in center */}
           <motion.div
-            className="fixed top-0 left-0 z-50 w-screen h-screen grid place-items-end sm:place-items-center p-0 sm:p-4 pointer-events-none"
+            className="fixed top-0 left-0 z-50 w-screen h-[100dvh] grid place-items-end sm:place-items-center p-0 sm:p-4 pointer-events-none"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
