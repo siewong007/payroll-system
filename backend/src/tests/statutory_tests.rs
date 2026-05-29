@@ -30,7 +30,7 @@ fn test_epf_rounding() {
 }
 
 // ---------------------------------------------------------------------------
-// EPF — values come from seed in migrations/007_seed_statutory_data.sql.
+// EPF — values come from seed in migrations/001_seed.sql.
 // ---------------------------------------------------------------------------
 
 fn test_date() -> NaiveDate {
@@ -233,7 +233,7 @@ async fn eis_foreigner_exempt() {
 // PCB — golden-file tests.
 //
 // Values pin the CURRENT output of `calculate_pcb` against the seed data in
-// migrations/007_seed_statutory_data.sql. If you revise the seed (e.g. update
+// migrations/001_seed.sql. If you revise the seed (e.g. update
 // the `cumulative_tax` column on `pcb_brackets` or bump any relief amount),
 // re-derive these expected values rather than editing them to match.
 // ---------------------------------------------------------------------------

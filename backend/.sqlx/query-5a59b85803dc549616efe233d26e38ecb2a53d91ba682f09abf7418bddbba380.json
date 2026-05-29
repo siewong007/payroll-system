@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM oauth2_states WHERE state = $1 AND expires_at > NOW() RETURNING code_verifier",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "code_verifier",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "5a59b85803dc549616efe233d26e38ecb2a53d91ba682f09abf7418bddbba380"
+}

@@ -8,10 +8,11 @@ use crate::models::passkey::{PasskeyCredential, PasskeyInfo};
 // ── Credential CRUD ────────────────────────────────────────────────────
 
 pub async fn list_passkeys(pool: &PgPool, user_id: Uuid) -> AppResult<Vec<PasskeyInfo>> {
-    let rows = sqlx::query_as::<_, PasskeyCredential>(
+    let rows = sqlx::query_as!(
+        PasskeyCredential,
         "SELECT * FROM passkey_credentials WHERE user_id = $1 ORDER BY created_at",
+        user_id,
     )
-    .bind(user_id)
     .fetch_all(pool)
     .await?;
 
@@ -27,10 +28,11 @@ pub async fn list_passkeys(pool: &PgPool, user_id: Uuid) -> AppResult<Vec<Passke
 }
 
 pub async fn get_passkeys_for_user(pool: &PgPool, user_id: Uuid) -> AppResult<Vec<Passkey>> {
-    let rows = sqlx::query_as::<_, PasskeyCredential>(
+    let rows = sqlx::query_as!(
+        PasskeyCredential,
         "SELECT * FROM passkey_credentials WHERE user_id = $1",
+        user_id,
     )
-    .bind(user_id)
     .fetch_all(pool)
     .await?;
 
@@ -51,13 +53,13 @@ pub async fn save_passkey(
     let json = serde_json::to_value(passkey)
         .map_err(|e| AppError::Internal(format!("Failed to serialize passkey: {}", e)))?;
 
-    sqlx::query(
+    sqlx::query!(
         r#"INSERT INTO passkey_credentials (user_id, credential_name, credential_json)
         VALUES ($1, $2, $3)"#,
+        user_id,
+        name,
+        json,
     )
-    .bind(user_id)
-    .bind(name)
-    .bind(&json)
     .execute(pool)
     .await?;
 
@@ -77,15 +79,15 @@ pub async fn update_passkey_after_auth(
     let cred_id = serde_json::to_value(updated_passkey.cred_id())
         .map_err(|e| AppError::Internal(format!("Failed to serialize cred_id: {}", e)))?;
 
-    sqlx::query(
+    sqlx::query!(
         r#"UPDATE passkey_credentials
         SET credential_json = $3, last_used_at = NOW()
         WHERE user_id = $1 AND credential_json->'cred' ->> 'cred_id' = $2::jsonb ->> 0
         "#,
+        user_id,
+        cred_id,
+        json,
     )
-    .bind(user_id)
-    .bind(&cred_id)
-    .bind(&json)
     .execute(pool)
     .await?;
 
@@ -98,12 +100,12 @@ pub async fn rename_passkey(
     passkey_id: Uuid,
     name: &str,
 ) -> AppResult<()> {
-    let result = sqlx::query(
+    let result = sqlx::query!(
         "UPDATE passkey_credentials SET credential_name = $3 WHERE id = $1 AND user_id = $2",
+        passkey_id,
+        user_id,
+        name,
     )
-    .bind(passkey_id)
-    .bind(user_id)
-    .bind(name)
     .execute(pool)
     .await?;
 
@@ -114,11 +116,13 @@ pub async fn rename_passkey(
 }
 
 pub async fn delete_passkey(pool: &PgPool, user_id: Uuid, passkey_id: Uuid) -> AppResult<()> {
-    let result = sqlx::query("DELETE FROM passkey_credentials WHERE id = $1 AND user_id = $2")
-        .bind(passkey_id)
-        .bind(user_id)
-        .execute(pool)
-        .await?;
+    let result = sqlx::query!(
+        "DELETE FROM passkey_credentials WHERE id = $1 AND user_id = $2",
+        passkey_id,
+        user_id,
+    )
+    .execute(pool)
+    .await?;
 
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound("Passkey not found".into()));
@@ -136,22 +140,22 @@ pub async fn store_challenge(
     state: &serde_json::Value,
 ) -> AppResult<Uuid> {
     // Clean up expired challenges first
-    sqlx::query("DELETE FROM passkey_challenges WHERE expires_at < NOW()")
+    sqlx::query!("DELETE FROM passkey_challenges WHERE expires_at < NOW()")
         .execute(pool)
         .await?;
 
-    let id: (Uuid,) = sqlx::query_as(
+    let id = sqlx::query_scalar!(
         r#"INSERT INTO passkey_challenges (user_id, email, challenge_type, state_json)
         VALUES ($1, $2, $3, $4) RETURNING id"#,
+        user_id,
+        email,
+        challenge_type,
+        state,
     )
-    .bind(user_id)
-    .bind(email)
-    .bind(challenge_type)
-    .bind(state)
     .fetch_one(pool)
     .await?;
 
-    Ok(id.0)
+    Ok(id)
 }
 
 pub async fn get_and_delete_challenge(
@@ -159,18 +163,17 @@ pub async fn get_and_delete_challenge(
     challenge_id: Uuid,
     challenge_type: &str,
 ) -> AppResult<serde_json::Value> {
-    let row: Option<(serde_json::Value,)> = sqlx::query_as(
+    let state_json = sqlx::query_scalar!(
         r#"DELETE FROM passkey_challenges
         WHERE id = $1 AND challenge_type = $2 AND expires_at > NOW()
         RETURNING state_json"#,
+        challenge_id,
+        challenge_type,
     )
-    .bind(challenge_id)
-    .bind(challenge_type)
     .fetch_optional(pool)
     .await?;
 
-    row.map(|r| r.0)
-        .ok_or_else(|| AppError::BadRequest("Challenge expired or not found".into()))
+    state_json.ok_or_else(|| AppError::BadRequest("Challenge expired or not found".into()))
 }
 
 // ── Find users with passkeys by email ──────────────────────────────────
@@ -179,15 +182,15 @@ pub async fn get_user_id_by_email_with_passkeys(
     pool: &PgPool,
     email: &str,
 ) -> AppResult<Option<Uuid>> {
-    let row: Option<(Uuid,)> = sqlx::query_as(
+    let user_id = sqlx::query_scalar!(
         r#"SELECT u.id FROM users u
         INNER JOIN passkey_credentials pc ON pc.user_id = u.id
         WHERE u.email = $1 AND u.is_active = TRUE
         LIMIT 1"#,
+        email,
     )
-    .bind(email)
     .fetch_optional(pool)
     .await?;
 
-    Ok(row.map(|r| r.0))
+    Ok(user_id)
 }

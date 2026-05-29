@@ -21,10 +21,11 @@ fn haversine_meters(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
 // ─── CRUD ───
 
 pub async fn list_locations(pool: &PgPool, company_id: Uuid) -> AppResult<Vec<CompanyLocation>> {
-    let locs = sqlx::query_as::<_, CompanyLocation>(
+    let locs = sqlx::query_as!(
+        CompanyLocation,
         "SELECT * FROM company_locations WHERE company_id = $1 ORDER BY name",
+        company_id,
     )
-    .bind(company_id)
     .fetch_all(pool)
     .await?;
     Ok(locs)
@@ -44,16 +45,17 @@ pub async fn create_location(
         ));
     }
 
-    let loc = sqlx::query_as::<_, CompanyLocation>(
+    let loc = sqlx::query_as!(
+        CompanyLocation,
         r#"INSERT INTO company_locations (company_id, name, latitude, longitude, radius_meters)
            VALUES ($1, $2, $3, $4, $5)
            RETURNING *"#,
+        company_id,
+        &req.name,
+        req.latitude,
+        req.longitude,
+        radius,
     )
-    .bind(company_id)
-    .bind(&req.name)
-    .bind(req.latitude)
-    .bind(req.longitude)
-    .bind(radius)
     .fetch_one(pool)
     .await?;
 
@@ -82,11 +84,12 @@ pub async fn update_location(
     actor_id: Uuid,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<CompanyLocation> {
-    let existing = sqlx::query_as::<_, CompanyLocation>(
+    let existing = sqlx::query_as!(
+        CompanyLocation,
         "SELECT * FROM company_locations WHERE id = $1 AND company_id = $2",
+        location_id,
+        company_id,
     )
-    .bind(location_id)
-    .bind(company_id)
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| AppError::NotFound("Location not found".into()))?;
@@ -103,20 +106,21 @@ pub async fn update_location(
         ));
     }
 
-    let loc = sqlx::query_as::<_, CompanyLocation>(
+    let loc = sqlx::query_as!(
+        CompanyLocation,
         r#"UPDATE company_locations
            SET name = $3, latitude = $4, longitude = $5, radius_meters = $6,
                is_active = $7, updated_at = NOW()
            WHERE id = $1 AND company_id = $2
            RETURNING *"#,
+        location_id,
+        company_id,
+        name,
+        lat,
+        lng,
+        radius,
+        active,
     )
-    .bind(location_id)
-    .bind(company_id)
-    .bind(name)
-    .bind(lat)
-    .bind(lng)
-    .bind(radius)
-    .bind(active)
     .fetch_one(pool)
     .await?;
 
@@ -144,20 +148,23 @@ pub async fn delete_location(
     actor_id: Uuid,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<()> {
-    let existing = sqlx::query_as::<_, CompanyLocation>(
+    let existing = sqlx::query_as!(
+        CompanyLocation,
         "SELECT * FROM company_locations WHERE id = $1 AND company_id = $2",
+        location_id,
+        company_id,
     )
-    .bind(location_id)
-    .bind(company_id)
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| AppError::NotFound("Location not found".into()))?;
 
-    let result = sqlx::query("DELETE FROM company_locations WHERE id = $1 AND company_id = $2")
-        .bind(location_id)
-        .bind(company_id)
-        .execute(pool)
-        .await?;
+    let result = sqlx::query!(
+        "DELETE FROM company_locations WHERE id = $1 AND company_id = $2",
+        location_id,
+        company_id,
+    )
+    .execute(pool)
+    .await?;
 
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound("Location not found".into()));
@@ -183,11 +190,12 @@ pub async fn delete_location(
 // ─── Geofence Mode ───
 
 pub async fn get_geofence_mode(pool: &PgPool, company_id: Uuid) -> AppResult<String> {
-    let mode: Option<String> =
-        sqlx::query_scalar("SELECT geofence_mode FROM companies WHERE id = $1")
-            .bind(company_id)
-            .fetch_optional(pool)
-            .await?;
+    let mode = sqlx::query_scalar!(
+        "SELECT geofence_mode FROM companies WHERE id = $1",
+        company_id
+    )
+    .fetch_optional(pool)
+    .await?;
     Ok(mode.unwrap_or_else(|| "none".to_string()))
 }
 
@@ -206,11 +214,13 @@ pub async fn set_geofence_mode(
 
     let old_mode = get_geofence_mode(pool, company_id).await?;
 
-    sqlx::query("UPDATE companies SET geofence_mode = $1 WHERE id = $2")
-        .bind(mode)
-        .bind(company_id)
-        .execute(pool)
-        .await?;
+    sqlx::query!(
+        "UPDATE companies SET geofence_mode = $1 WHERE id = $2",
+        mode,
+        company_id,
+    )
+    .execute(pool)
+    .await?;
 
     let _ = audit_service::log_action_with_metadata(
         pool,
@@ -239,10 +249,11 @@ pub async fn check_geofence(
     lat: f64,
     lng: f64,
 ) -> AppResult<GeofenceCheckResult> {
-    let locations = sqlx::query_as::<_, CompanyLocation>(
+    let locations = sqlx::query_as!(
+        CompanyLocation,
         "SELECT * FROM company_locations WHERE company_id = $1 AND is_active = TRUE",
+        company_id,
     )
-    .bind(company_id)
     .fetch_all(pool)
     .await?;
 

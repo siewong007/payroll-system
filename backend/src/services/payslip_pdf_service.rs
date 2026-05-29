@@ -72,9 +72,10 @@ pub async fn generate_payslip_pdf(
     payslip_id: Uuid,
     employee_id: Uuid,
 ) -> AppResult<Vec<u8>> {
-    let data = sqlx::query_as::<_, PayslipData>(
+    let data = sqlx::query_as!(
+        PayslipData,
         r#"SELECT
-            e.full_name as employee_name, e.employee_number, e.ic_number,
+            e.full_name AS employee_name, e.employee_number, e.ic_number,
             e.department, e.designation, e.bank_name, e.bank_account_number,
             pr.period_year, pr.period_month, pr.period_start, pr.period_end, pr.pay_date,
             pi.basic_salary, pi.gross_salary, pi.total_allowances, pi.total_overtime,
@@ -91,18 +92,19 @@ pub async fn generate_payslip_pdf(
         JOIN employees e ON pi.employee_id = e.id
         WHERE pi.id = $1 AND pi.employee_id = $2
         AND pr.status::text IN ('approved', 'paid')"#,
+        payslip_id,
+        employee_id,
     )
-    .bind(payslip_id)
-    .bind(employee_id)
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| AppError::NotFound("Payslip not found".into()))?;
 
-    let company = sqlx::query_as::<_, CompanyInfo>(
+    let company = sqlx::query_as!(
+        CompanyInfo,
         r#"SELECT name, registration_number, address_line1, address_line2, city, state, postcode
         FROM companies WHERE id = (SELECT company_id FROM employees WHERE id = $1)"#,
+        employee_id,
     )
-    .bind(employee_id)
     .fetch_one(pool)
     .await?;
 
@@ -524,16 +526,16 @@ pub async fn generate_bulk_payslips(
     payroll_run_id: Uuid,
     company_id: Uuid,
 ) -> AppResult<Vec<u8>> {
-    let items: Vec<(Uuid, Uuid)> = sqlx::query_as(
+    let items = sqlx::query!(
         r#"SELECT pi.id, pi.employee_id
         FROM payroll_items pi
         JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
         WHERE pr.id = $1 AND pr.company_id = $2
         AND pr.status::text IN ('approved', 'paid')
         ORDER BY (SELECT employee_number FROM employees WHERE id = pi.employee_id)"#,
+        payroll_run_id,
+        company_id,
     )
-    .bind(payroll_run_id)
-    .bind(company_id)
     .fetch_all(pool)
     .await?;
 
@@ -544,10 +546,13 @@ pub async fn generate_bulk_payslips(
     // Generate individual PDFs and merge using append_document
     let mut main_doc = PdfDocument::new("Payslips");
 
-    for (item_id, emp_id) in &items {
-        let data = sqlx::query_as::<_, PayslipData>(
+    for item in &items {
+        let item_id = item.id;
+        let emp_id = item.employee_id;
+        let data = sqlx::query_as!(
+            PayslipData,
             r#"SELECT
-                e.full_name as employee_name, e.employee_number, e.ic_number,
+                e.full_name AS employee_name, e.employee_number, e.ic_number,
                 e.department, e.designation, e.bank_name, e.bank_account_number,
                 pr.period_year, pr.period_month, pr.period_start, pr.period_end, pr.pay_date,
                 pi.basic_salary, pi.gross_salary, pi.total_allowances, pi.total_overtime,
@@ -563,17 +568,18 @@ pub async fn generate_bulk_payslips(
             JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
             JOIN employees e ON pi.employee_id = e.id
             WHERE pi.id = $1 AND pi.employee_id = $2"#,
+            item_id,
+            emp_id,
         )
-        .bind(item_id)
-        .bind(emp_id)
         .fetch_optional(pool)
         .await?;
 
-        let company = sqlx::query_as::<_, CompanyInfo>(
+        let company = sqlx::query_as!(
+            CompanyInfo,
             r#"SELECT name, registration_number, address_line1, address_line2, city, state, postcode
             FROM companies WHERE id = (SELECT company_id FROM employees WHERE id = $1)"#,
+            emp_id,
         )
-        .bind(emp_id)
         .fetch_one(pool)
         .await?;
 

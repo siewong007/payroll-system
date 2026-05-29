@@ -1,0 +1,70 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT name, registration_number, tax_number, epf_number, address_line1, address_line2, city, state, postcode FROM companies WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "registration_number",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "tax_number",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "epf_number",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "address_line1",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "address_line2",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "city",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 7,
+        "name": "state",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 8,
+        "name": "postcode",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "aff80167c022a8c3232dd8be2e6f0d44288b6d31594d3173fede077f3bc8ad95"
+}

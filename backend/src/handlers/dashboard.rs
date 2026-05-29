@@ -36,58 +36,56 @@ pub async fn summary(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    let total_employees: Option<i64> = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM employees WHERE company_id = $1 AND deleted_at IS NULL",
+    let total_employees = sqlx::query_scalar!(
+        r#"SELECT COUNT(*) AS "count!" FROM employees WHERE company_id = $1 AND deleted_at IS NULL"#,
+        company_id,
     )
-    .bind(company_id)
     .fetch_one(&state.pool)
     .await?;
-    let total_employees = total_employees.unwrap_or(0);
 
-    let active_employees: Option<i64> = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM employees WHERE company_id = $1 AND is_active = TRUE AND deleted_at IS NULL",
+    let active_employees = sqlx::query_scalar!(
+        r#"SELECT COUNT(*) AS "count!" FROM employees WHERE company_id = $1 AND is_active = TRUE AND deleted_at IS NULL"#,
+        company_id,
     )
-    .bind(company_id)
     .fetch_one(&state.pool)
     .await?;
-    let active_employees = active_employees.unwrap_or(0);
 
-    let last_payroll = sqlx::query_as::<_, (String, i64, i64, i32)>(
+    let last_payroll = sqlx::query!(
         r#"SELECT
-            period_year::text || '-' || LPAD(period_month::text, 2, '0'),
+            period_year::text || '-' || LPAD(period_month::text, 2, '0') AS "period!",
             total_net, total_gross, employee_count
         FROM payroll_runs
         WHERE company_id = $1 AND status NOT IN ('cancelled', 'draft')
         ORDER BY period_year DESC, period_month DESC
         LIMIT 1"#,
+        company_id,
     )
-    .bind(company_id)
     .fetch_optional(&state.pool)
     .await?;
 
     let current_year = chrono::Utc::now().year();
-    let ytd = sqlx::query_as::<_, (i64, i64, i64, i64)>(
+    let ytd = sqlx::query!(
         r#"SELECT
-            COALESCE(SUM(total_gross), 0)::BIGINT,
-            COALESCE(SUM(total_epf_employer), 0)::BIGINT,
-            COALESCE(SUM(total_socso_employer), 0)::BIGINT,
-            COALESCE(SUM(total_eis_employer), 0)::BIGINT
+            COALESCE(SUM(total_gross), 0)::BIGINT AS "total_gross!",
+            COALESCE(SUM(total_epf_employer), 0)::BIGINT AS "total_epf_employer!",
+            COALESCE(SUM(total_socso_employer), 0)::BIGINT AS "total_socso_employer!",
+            COALESCE(SUM(total_eis_employer), 0)::BIGINT AS "total_eis_employer!"
         FROM payroll_runs
         WHERE company_id = $1 AND period_year = $2
         AND status NOT IN ('cancelled', 'draft')"#,
+        company_id,
+        current_year,
     )
-    .bind(company_id)
-    .bind(current_year)
     .fetch_one(&state.pool)
     .await?;
 
-    let departments = sqlx::query_as::<_, (Option<String>, Option<i64>)>(
-        r#"SELECT department, COUNT(*)
+    let departments = sqlx::query!(
+        r#"SELECT department, COUNT(*) AS "count!"
         FROM employees
         WHERE company_id = $1 AND is_active = TRUE AND deleted_at IS NULL
         GROUP BY department ORDER BY COUNT(*) DESC"#,
+        company_id,
     )
-    .bind(company_id)
     .fetch_all(&state.pool)
     .await?;
 
@@ -97,34 +95,50 @@ pub async fn summary(
         total_employees,
         active_employees,
         last_payroll_period: if can_access_payroll {
-            last_payroll.as_ref().map(|p| p.0.clone())
+            last_payroll.as_ref().map(|p| p.period.clone())
         } else {
             None
         },
         last_payroll_total_net: if can_access_payroll {
-            last_payroll.as_ref().map(|p| p.1)
+            last_payroll.as_ref().map(|p| p.total_net)
         } else {
             None
         },
         last_payroll_total_gross: if can_access_payroll {
-            last_payroll.as_ref().map(|p| p.2)
+            last_payroll.as_ref().map(|p| p.total_gross)
         } else {
             None
         },
         last_payroll_employee_count: if can_access_payroll {
-            last_payroll.as_ref().map(|p| p.3)
+            last_payroll.as_ref().map(|p| p.employee_count)
         } else {
             None
         },
-        ytd_total_gross: if can_access_payroll { ytd.0 } else { 0 },
-        ytd_total_epf_employer: if can_access_payroll { ytd.1 } else { 0 },
-        ytd_total_socso_employer: if can_access_payroll { ytd.2 } else { 0 },
-        ytd_total_eis_employer: if can_access_payroll { ytd.3 } else { 0 },
+        ytd_total_gross: if can_access_payroll {
+            ytd.total_gross
+        } else {
+            0
+        },
+        ytd_total_epf_employer: if can_access_payroll {
+            ytd.total_epf_employer
+        } else {
+            0
+        },
+        ytd_total_socso_employer: if can_access_payroll {
+            ytd.total_socso_employer
+        } else {
+            0
+        },
+        ytd_total_eis_employer: if can_access_payroll {
+            ytd.total_eis_employer
+        } else {
+            0
+        },
         departments: departments
             .into_iter()
-            .map(|(dept, count)| DepartmentCount {
-                department: dept.unwrap_or_else(|| "Unassigned".into()),
-                count: count.unwrap_or(0),
+            .map(|row| DepartmentCount {
+                department: row.department.unwrap_or_else(|| "Unassigned".into()),
+                count: row.count,
             })
             .collect(),
     }))

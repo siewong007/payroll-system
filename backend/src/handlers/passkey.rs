@@ -153,20 +153,20 @@ pub async fn authentication_complete(
     Json(req): Json<AuthCompleteRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     // Get the challenge (which includes user_id)
-    let challenge_row: Option<(Option<Uuid>, serde_json::Value)> = sqlx::query_as(
+    let challenge_row = sqlx::query!(
         r#"DELETE FROM passkey_challenges
         WHERE id = $1 AND challenge_type = 'authentication' AND expires_at > NOW()
         RETURNING user_id, state_json"#,
+        req.challenge_id,
     )
-    .bind(req.challenge_id)
     .fetch_optional(&state.pool)
-    .await?;
+    .await?
+    .ok_or_else(|| AppError::BadRequest("Challenge expired or not found".into()))?;
 
-    let (user_id, state_json) = challenge_row
-        .ok_or_else(|| AppError::BadRequest("Challenge expired or not found".into()))?;
-
-    let user_id =
-        user_id.ok_or_else(|| AppError::Internal("Missing user_id in challenge".into()))?;
+    let state_json = challenge_row.state_json;
+    let user_id = challenge_row
+        .user_id
+        .ok_or_else(|| AppError::Internal("Missing user_id in challenge".into()))?;
 
     let auth_state: PasskeyAuthentication = serde_json::from_value(state_json)
         .map_err(|e| AppError::BadRequest(format!("Invalid auth state: {}", e)))?;
@@ -187,15 +187,19 @@ pub async fn authentication_complete(
     }
 
     // Fetch user and issue tokens (same as password login)
-    let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1 AND is_active = TRUE")
-        .bind(user_id)
-        .fetch_optional(&state.pool)
-        .await?
-        .ok_or_else(|| AppError::Unauthorized("User not found or inactive".into()))?;
+    let user = sqlx::query_as!(
+        User,
+        r#"SELECT id, email, password_hash, full_name, role, roles, company_id,
+            employee_id, is_active, must_change_password, last_login, created_at, updated_at
+        FROM users WHERE id = $1 AND is_active = TRUE"#,
+        user_id,
+    )
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or_else(|| AppError::Unauthorized("User not found or inactive".into()))?;
 
     // Update last login
-    sqlx::query("UPDATE users SET last_login = NOW() WHERE id = $1")
-        .bind(user.id)
+    sqlx::query!("UPDATE users SET last_login = NOW() WHERE id = $1", user.id)
         .execute(&state.pool)
         .await?;
 
@@ -265,17 +269,17 @@ pub async fn discoverable_auth_complete(
     Json(req): Json<AuthCompleteRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     // Get the challenge
-    let challenge_row: Option<(serde_json::Value,)> = sqlx::query_as(
+    let challenge_row = sqlx::query!(
         r#"DELETE FROM passkey_challenges
         WHERE id = $1 AND challenge_type = 'discoverable' AND expires_at > NOW()
         RETURNING state_json"#,
+        req.challenge_id,
     )
-    .bind(req.challenge_id)
     .fetch_optional(&state.pool)
-    .await?;
+    .await?
+    .ok_or_else(|| AppError::BadRequest("Challenge expired or not found".into()))?;
 
-    let (state_json,) = challenge_row
-        .ok_or_else(|| AppError::BadRequest("Challenge expired or not found".into()))?;
+    let state_json = challenge_row.state_json;
 
     let auth_state: DiscoverableAuthentication = serde_json::from_value(state_json)
         .map_err(|e| AppError::BadRequest(format!("Invalid auth state: {}", e)))?;
@@ -309,14 +313,18 @@ pub async fn discoverable_auth_complete(
     }
 
     // Fetch user and issue tokens
-    let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1 AND is_active = TRUE")
-        .bind(user_id)
-        .fetch_optional(&state.pool)
-        .await?
-        .ok_or_else(|| AppError::Unauthorized("User not found or inactive".into()))?;
+    let user = sqlx::query_as!(
+        User,
+        r#"SELECT id, email, password_hash, full_name, role, roles, company_id,
+            employee_id, is_active, must_change_password, last_login, created_at, updated_at
+        FROM users WHERE id = $1 AND is_active = TRUE"#,
+        user_id,
+    )
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or_else(|| AppError::Unauthorized("User not found or inactive".into()))?;
 
-    sqlx::query("UPDATE users SET last_login = NOW() WHERE id = $1")
-        .bind(user.id)
+    sqlx::query!("UPDATE users SET last_login = NOW() WHERE id = $1", user.id)
         .execute(&state.pool)
         .await?;
 

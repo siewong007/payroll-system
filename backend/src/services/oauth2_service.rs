@@ -83,16 +83,18 @@ pub async fn store_oauth2_state(pool: &PgPool, state: &str, code_verifier: &str)
     let expires_at = Utc::now() + Duration::minutes(STATE_EXPIRY_MINUTES);
 
     // Clean up expired states opportunistically
-    sqlx::query("DELETE FROM oauth2_states WHERE expires_at < NOW()")
+    sqlx::query!("DELETE FROM oauth2_states WHERE expires_at < NOW()")
         .execute(pool)
         .await?;
 
-    sqlx::query("INSERT INTO oauth2_states (state, code_verifier, expires_at) VALUES ($1, $2, $3)")
-        .bind(state)
-        .bind(code_verifier)
-        .bind(expires_at)
-        .execute(pool)
-        .await?;
+    sqlx::query!(
+        "INSERT INTO oauth2_states (state, code_verifier, expires_at) VALUES ($1, $2, $3)",
+        state,
+        code_verifier,
+        expires_at,
+    )
+    .execute(pool)
+    .await?;
 
     Ok(())
 }
@@ -100,14 +102,14 @@ pub async fn store_oauth2_state(pool: &PgPool, state: &str, code_verifier: &str)
 /// Consume and validate an OAuth2 state, returning the code verifier.
 /// The state is deleted after retrieval (single-use).
 pub async fn consume_oauth2_state(pool: &PgPool, state: &str) -> AppResult<String> {
-    let row: Option<(String,)> = sqlx::query_as(
+    let code_verifier = sqlx::query_scalar!(
         "DELETE FROM oauth2_states WHERE state = $1 AND expires_at > NOW() RETURNING code_verifier",
+        state,
     )
-    .bind(state)
     .fetch_optional(pool)
     .await?;
 
-    row.map(|r| r.0).ok_or_else(|| {
+    code_verifier.ok_or_else(|| {
         AppError::BadRequest("Invalid or expired OAuth2 state. Please try signing in again.".into())
     })
 }
@@ -193,11 +195,12 @@ pub async fn find_oauth2_account(
     provider: &str,
     provider_user_id: &str,
 ) -> AppResult<Option<OAuth2Account>> {
-    let account = sqlx::query_as::<_, OAuth2Account>(
+    let account = sqlx::query_as!(
+        OAuth2Account,
         "SELECT * FROM oauth2_accounts WHERE provider = $1 AND provider_user_id = $2",
+        provider,
+        provider_user_id,
     )
-    .bind(provider)
-    .bind(provider_user_id)
     .fetch_optional(pool)
     .await?;
     Ok(account)
@@ -205,11 +208,15 @@ pub async fn find_oauth2_account(
 
 /// Find a user by their email.
 pub async fn find_user_by_email(pool: &PgPool, email: &str) -> AppResult<Option<User>> {
-    let user =
-        sqlx::query_as::<_, User>("SELECT * FROM users WHERE email = $1 AND is_active = TRUE")
-            .bind(email)
-            .fetch_optional(pool)
-            .await?;
+    let user = sqlx::query_as!(
+        User,
+        r#"SELECT id, email, password_hash, full_name, role, roles, company_id,
+            employee_id, is_active, must_change_password, last_login, created_at, updated_at
+        FROM users WHERE email = $1 AND is_active = TRUE"#,
+        email,
+    )
+    .fetch_optional(pool)
+    .await?;
     Ok(user)
 }
 
@@ -231,7 +238,8 @@ pub async fn link_oauth2_account(
     let refresh_token_hash = refresh_token.map(hash_token);
     let token_expires_at = token_expires_in.map(|secs| Utc::now() + Duration::seconds(secs));
 
-    let account = sqlx::query_as::<_, OAuth2Account>(
+    let account = sqlx::query_as!(
+        OAuth2Account,
         r#"INSERT INTO oauth2_accounts (user_id, provider, provider_user_id, provider_email, provider_name, avatar_url, access_token_hash, refresh_token_hash, token_expires_at)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         ON CONFLICT (provider, provider_user_id) DO UPDATE SET
@@ -243,16 +251,16 @@ pub async fn link_oauth2_account(
             token_expires_at = COALESCE(EXCLUDED.token_expires_at, oauth2_accounts.token_expires_at),
             updated_at = NOW()
         RETURNING *"#,
+        user_id,
+        provider,
+        provider_user_id,
+        provider_email,
+        provider_name,
+        avatar_url,
+        access_token_hash,
+        refresh_token_hash,
+        token_expires_at,
     )
-    .bind(user_id)
-    .bind(provider)
-    .bind(provider_user_id)
-    .bind(provider_email)
-    .bind(provider_name)
-    .bind(avatar_url)
-    .bind(access_token_hash)
-    .bind(refresh_token_hash)
-    .bind(token_expires_at)
     .fetch_one(pool)
     .await?;
     Ok(account)
@@ -271,19 +279,19 @@ pub async fn update_oauth2_tokens(
     let refresh_hash = refresh_token.map(hash_token);
     let token_expires_at = expires_in.map(|secs| Utc::now() + Duration::seconds(secs));
 
-    sqlx::query(
+    sqlx::query!(
         r#"UPDATE oauth2_accounts SET
             access_token_hash = $1,
             refresh_token_hash = COALESCE($2, refresh_token_hash),
             token_expires_at = COALESCE($3, token_expires_at),
             updated_at = NOW()
         WHERE provider = $4 AND provider_user_id = $5"#,
+        access_hash,
+        refresh_hash,
+        token_expires_at,
+        provider,
+        provider_user_id,
     )
-    .bind(&access_hash)
-    .bind(&refresh_hash)
-    .bind(token_expires_at)
-    .bind(provider)
-    .bind(provider_user_id)
     .execute(pool)
     .await?;
 
@@ -292,11 +300,13 @@ pub async fn update_oauth2_tokens(
 
 /// Unlink an OAuth2 account from a user.
 pub async fn unlink_oauth2_account(pool: &PgPool, user_id: Uuid, provider: &str) -> AppResult<()> {
-    let result = sqlx::query("DELETE FROM oauth2_accounts WHERE user_id = $1 AND provider = $2")
-        .bind(user_id)
-        .bind(provider)
-        .execute(pool)
-        .await?;
+    let result = sqlx::query!(
+        "DELETE FROM oauth2_accounts WHERE user_id = $1 AND provider = $2",
+        user_id,
+        provider,
+    )
+    .execute(pool)
+    .await?;
 
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound("OAuth2 account not linked".into()));
@@ -306,12 +316,13 @@ pub async fn unlink_oauth2_account(pool: &PgPool, user_id: Uuid, provider: &str)
 
 /// List linked OAuth2 accounts for a user.
 pub async fn list_linked_accounts(pool: &PgPool, user_id: Uuid) -> AppResult<Vec<LinkedAccount>> {
-    let accounts = sqlx::query_as::<_, LinkedAccount>(
-        r#"SELECT id, provider, provider_email, provider_name, avatar_url, created_at as linked_at
+    let accounts = sqlx::query_as!(
+        LinkedAccount,
+        r#"SELECT id, provider, provider_email, provider_name, avatar_url, created_at AS linked_at
         FROM oauth2_accounts WHERE user_id = $1
         ORDER BY created_at"#,
+        user_id,
     )
-    .bind(user_id)
     .fetch_all(pool)
     .await?;
     Ok(accounts)
@@ -323,13 +334,16 @@ pub async fn find_user_by_oauth2(
     provider: &str,
     provider_user_id: &str,
 ) -> AppResult<Option<User>> {
-    let user = sqlx::query_as::<_, User>(
-        r#"SELECT u.* FROM users u
+    let user = sqlx::query_as!(
+        User,
+        r#"SELECT u.id, u.email, u.password_hash, u.full_name, u.role, u.roles, u.company_id,
+            u.employee_id, u.is_active, u.must_change_password, u.last_login, u.created_at, u.updated_at
+        FROM users u
         JOIN oauth2_accounts oa ON u.id = oa.user_id
         WHERE oa.provider = $1 AND oa.provider_user_id = $2 AND u.is_active = TRUE"#,
+        provider,
+        provider_user_id,
     )
-    .bind(provider)
-    .bind(provider_user_id)
     .fetch_optional(pool)
     .await?;
     Ok(user)

@@ -84,29 +84,30 @@ pub async fn list_audit_logs(
     // Filter by al.company_id so NULL-user rows (public kiosk endpoints etc.)
     // remain visible. Legacy rows missing company_id are excluded; migration
     // 024 backfills them from the associated user where possible.
-    let count: i64 = sqlx::query_scalar(
-        r#"SELECT COUNT(*) FROM audit_logs al
+    let count = sqlx::query_scalar!(
+        r#"SELECT COUNT(*) AS "count!" FROM audit_logs al
         WHERE al.company_id = $1
         AND ($2::text IS NULL OR al.entity_type = $2)
         AND ($3::text IS NULL OR al.action = $3)
         AND ($4::uuid IS NULL OR al.user_id = $4)
         AND ($5::date IS NULL OR al.created_at >= $5::date)
         AND ($6::date IS NULL OR al.created_at < ($6::date + INTERVAL '1 day'))"#,
+        company_id,
+        query.entity_type.as_deref(),
+        query.action.as_deref(),
+        query.user_id,
+        query.start_date,
+        query.end_date,
     )
-    .bind(company_id)
-    .bind(&query.entity_type)
-    .bind(&query.action)
-    .bind(query.user_id)
-    .bind(query.start_date)
-    .bind(query.end_date)
     .fetch_one(pool)
     .await?;
 
-    let logs = sqlx::query_as::<_, AuditLogWithUser>(
+    let logs = sqlx::query_as!(
+        AuditLogWithUser,
         r#"SELECT al.id, al.user_id, al.action, al.entity_type, al.entity_id,
             al.old_values, al.new_values, al.ip_address, al.user_agent,
             al.description, al.created_at,
-            u.email as user_email, u.full_name as user_full_name
+            u.email AS "user_email?", u.full_name AS "user_full_name?"
         FROM audit_logs al
         LEFT JOIN users u ON al.user_id = u.id
         WHERE al.company_id = $1
@@ -117,15 +118,15 @@ pub async fn list_audit_logs(
         AND ($6::date IS NULL OR al.created_at < ($6::date + INTERVAL '1 day'))
         ORDER BY al.created_at DESC
         LIMIT $7 OFFSET $8"#,
+        company_id,
+        query.entity_type.as_deref(),
+        query.action.as_deref(),
+        query.user_id,
+        query.start_date,
+        query.end_date,
+        per_page,
+        offset,
     )
-    .bind(company_id)
-    .bind(&query.entity_type)
-    .bind(&query.action)
-    .bind(query.user_id)
-    .bind(query.start_date)
-    .bind(query.end_date)
-    .bind(per_page)
-    .bind(offset)
     .fetch_all(pool)
     .await?;
 
@@ -148,21 +149,21 @@ pub async fn log_action_with_metadata(
     let ip_address = metadata.and_then(|meta| meta.ip_address.as_deref());
     let user_agent = metadata.and_then(|meta| meta.user_agent.as_deref());
 
-    let result = sqlx::query(
+    let result = sqlx::query!(
         r#"INSERT INTO audit_logs
         (company_id, user_id, action, entity_type, entity_id, old_values, new_values, description, ip_address, user_agent)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"#,
+        company_id,
+        user_id,
+        action,
+        entity_type,
+        entity_id,
+        old_values,
+        new_values,
+        description,
+        ip_address,
+        user_agent,
     )
-    .bind(company_id)
-    .bind(user_id)
-    .bind(action)
-    .bind(entity_type)
-    .bind(entity_id)
-    .bind(old_values)
-    .bind(new_values)
-    .bind(description)
-    .bind(ip_address)
-    .bind(user_agent)
     .execute(pool)
     .await;
 

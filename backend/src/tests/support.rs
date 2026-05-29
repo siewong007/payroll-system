@@ -23,7 +23,21 @@ pub async fn test_pool() -> Option<PgPool> {
 
     let lock = MIGRATE_LOCK.get_or_init(|| Mutex::new(()));
     let _guard = lock.lock().await;
-    sqlx::migrate!("./migrations").run(&pool).await.ok()?;
+    sqlx::migrate!("./migrations/schema")
+        .run(&pool)
+        .await
+        .ok()?;
+
+    // Apply the seed once (statutory tables, system data). `epf_rates` is the
+    // first thing the seed populates, so its presence means we can skip.
+    let already_seeded: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM epf_rates)")
+        .fetch_one(&pool)
+        .await
+        .ok()?;
+    if !already_seeded {
+        let seed_sql = include_str!("../../migrations/seed/001_seed.sql");
+        sqlx::raw_sql(seed_sql).execute(&pool).await.ok()?;
+    }
 
     Some(pool)
 }

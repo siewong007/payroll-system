@@ -1,0 +1,33 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE companies SET registration_number=$2, tax_number=$3, epf_number=$4, socso_code=$5,\n               eis_code=$6, hrdf_number=$7, address_line1=$8, address_line2=$9, city=$10, state=$11,\n               postcode=$12, country=$13, phone=$14, email=$15, logo_url=$16, hrdf_enabled=$17,\n               unpaid_leave_divisor=$18, is_active=$19, updated_at=$20\n               WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Bool",
+        "Int4",
+        "Bool",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "313c24751d60fa17361f154cab8ab7b01d452995e2f7aec0274d4f971121c6ea"
+}

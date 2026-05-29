@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO holidays (id, company_id, name, date, holiday_type, description,\n               is_recurring, state, created_at, updated_at)\n               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Varchar",
+        "Date",
+        "Varchar",
+        "Text",
+        "Bool",
+        "Varchar",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3e53823a892ec3dd92ba2d8893594a7d04741d120fa40e9bd0d5cf5e3438caeb"
+}

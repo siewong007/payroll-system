@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM passkey_challenges\n        WHERE id = $1 AND challenge_type = 'authentication' AND expires_at > NOW()\n        RETURNING user_id, state_json",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "user_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "state_json",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      true,
+      false
+    ]
+  },
+  "hash": "822c040c3f49f762a06d271ce2a3e75bf09ae80a930d9cd0384937c05d2cf90d"
+}

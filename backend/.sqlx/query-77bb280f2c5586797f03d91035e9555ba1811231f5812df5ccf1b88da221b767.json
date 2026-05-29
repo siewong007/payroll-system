@@ -1,0 +1,83 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n            e.full_name AS employee_name,\n            e.employee_number,\n            e.department,\n            e.gender::text AS \"gender?\",\n            e.marital_status::text AS \"marital_status?\",\n            e.num_children,\n            lt.name AS leave_type_name,\n            (lb.entitled_days + lb.carried_forward) AS \"entitled_days!\",\n            lb.taken_days,\n            lb.pending_days,\n            (lb.entitled_days + lb.carried_forward - lb.taken_days - lb.pending_days) AS \"balance!\"\n        FROM leave_balances lb\n        JOIN employees e ON lb.employee_id = e.id\n        JOIN leave_types lt ON lb.leave_type_id = lt.id\n        WHERE e.company_id = $1 AND lb.year = $2 AND e.is_active = TRUE\n        ORDER BY e.full_name, lt.name",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "employee_name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "employee_number",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "department",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "gender?",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "marital_status?",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "num_children",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 6,
+        "name": "leave_type_name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 7,
+        "name": "entitled_days!",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 8,
+        "name": "taken_days",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 9,
+        "name": "pending_days",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 10,
+        "name": "balance!",
+        "type_info": "Numeric"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      null,
+      null,
+      true,
+      false,
+      null,
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "77bb280f2c5586797f03d91035e9555ba1811231f5812df5ccf1b88da221b767"
+}

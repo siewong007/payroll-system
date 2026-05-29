@@ -136,8 +136,7 @@ pub async fn google_callback(
     .await?;
 
     // Update last login
-    sqlx::query("UPDATE users SET last_login = NOW() WHERE id = $1")
-        .bind(user.id)
+    sqlx::query!("UPDATE users SET last_login = NOW() WHERE id = $1", user.id)
         .execute(&state.pool)
         .await?;
 

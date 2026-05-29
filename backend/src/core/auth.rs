@@ -43,6 +43,7 @@ pub fn create_token(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn create_token_with_roles(
     user_id: Uuid,
     email: &str,

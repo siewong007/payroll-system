@@ -56,14 +56,15 @@ pub async fn list_employees_for_ea(
     company_id: Uuid,
     year: i32,
 ) -> AppResult<Vec<EaEmployeeSummary>> {
-    let rows = sqlx::query_as::<_, EaEmployeeSummary>(
+    let rows = sqlx::query_as!(
+        EaEmployeeSummary,
         r#"SELECT
             pi.employee_id,
-            e.full_name as employee_name,
+            e.full_name AS employee_name,
             e.employee_number,
             e.ic_number,
-            SUM(pi.gross_salary) as ytd_gross,
-            COUNT(DISTINCT pr.period_month) as months_worked
+            SUM(pi.gross_salary)::bigint AS "ytd_gross!",
+            COUNT(DISTINCT pr.period_month) AS "months_worked!"
         FROM payroll_items pi
         JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
         JOIN employees e ON pi.employee_id = e.id
@@ -72,9 +73,9 @@ pub async fn list_employees_for_ea(
         AND e.deleted_at IS NULL
         GROUP BY pi.employee_id, e.full_name, e.employee_number, e.ic_number
         ORDER BY e.employee_number"#,
+        company_id,
+        year,
     )
-    .bind(company_id)
-    .bind(year)
     .fetch_all(pool)
     .await?;
     Ok(rows)
@@ -99,10 +100,11 @@ pub async fn get_ea_form_data(
         postcode: Option<String>,
     }
 
-    let company = sqlx::query_as::<_, CompanyRow>(
+    let company = sqlx::query_as!(
+        CompanyRow,
         "SELECT name, registration_number, tax_number, epf_number, address_line1, address_line2, city, state, postcode FROM companies WHERE id = $1",
+        company_id,
     )
-    .bind(company_id)
     .fetch_one(pool)
     .await?;
 
@@ -122,13 +124,14 @@ pub async fn get_ea_form_data(
         date_joined: chrono::NaiveDate,
     }
 
-    let emp = sqlx::query_as::<_, EmployeeRow>(
+    let emp = sqlx::query_as!(
+        EmployeeRow,
         r#"SELECT full_name, employee_number, ic_number, tax_identification_number,
             epf_number, socso_number, address_line1, address_line2, city, state, postcode, date_joined
         FROM employees WHERE id = $1 AND company_id = $2"#,
+        employee_id,
+        company_id,
     )
-    .bind(employee_id)
-    .bind(company_id)
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| AppError::NotFound("Employee not found".into()))?;
@@ -149,28 +152,29 @@ pub async fn get_ea_form_data(
         months_worked: i64,
     }
 
-    let agg = sqlx::query_as::<_, AggRow>(
+    let agg = sqlx::query_as!(
+        AggRow,
         r#"SELECT
-            COALESCE(SUM(pi.basic_salary), 0) as ytd_basic,
-            COALESCE(SUM(pi.total_allowances), 0) as ytd_allowances,
-            COALESCE(SUM(pi.total_bonus), 0) as ytd_bonus,
-            COALESCE(SUM(pi.total_commission), 0) as ytd_commission,
-            COALESCE(SUM(pi.total_overtime), 0) as ytd_overtime,
-            COALESCE(SUM(pi.gross_salary), 0) as ytd_gross,
-            COALESCE(SUM(pi.epf_employee), 0) as ytd_epf_employee,
-            COALESCE(SUM(pi.socso_employee), 0) as ytd_socso_employee,
-            COALESCE(SUM(pi.eis_employee), 0) as ytd_eis_employee,
-            COALESCE(SUM(pi.pcb_amount), 0) as ytd_pcb,
-            COALESCE(SUM(pi.zakat_amount), 0) as ytd_zakat,
-            COUNT(DISTINCT pr.period_month) as months_worked
+            COALESCE(SUM(pi.basic_salary), 0)::bigint AS "ytd_basic!",
+            COALESCE(SUM(pi.total_allowances), 0)::bigint AS "ytd_allowances!",
+            COALESCE(SUM(pi.total_bonus), 0)::bigint AS "ytd_bonus!",
+            COALESCE(SUM(pi.total_commission), 0)::bigint AS "ytd_commission!",
+            COALESCE(SUM(pi.total_overtime), 0)::bigint AS "ytd_overtime!",
+            COALESCE(SUM(pi.gross_salary), 0)::bigint AS "ytd_gross!",
+            COALESCE(SUM(pi.epf_employee), 0)::bigint AS "ytd_epf_employee!",
+            COALESCE(SUM(pi.socso_employee), 0)::bigint AS "ytd_socso_employee!",
+            COALESCE(SUM(pi.eis_employee), 0)::bigint AS "ytd_eis_employee!",
+            COALESCE(SUM(pi.pcb_amount), 0)::bigint AS "ytd_pcb!",
+            COALESCE(SUM(pi.zakat_amount), 0)::bigint AS "ytd_zakat!",
+            COUNT(DISTINCT pr.period_month) AS "months_worked!"
         FROM payroll_items pi
         JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
         WHERE pi.employee_id = $1 AND pr.company_id = $2 AND pr.period_year = $3
         AND pr.status::text IN ('approved', 'paid')"#,
+        employee_id,
+        company_id,
+        year,
     )
-    .bind(employee_id)
-    .bind(company_id)
-    .bind(year)
     .fetch_one(pool)
     .await?;
 

@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO notifications (user_id, company_id, notification_type, title, message, entity_type, entity_id)\n        SELECT id, company_id, $2, $3, $4, $5, $6\n        FROM users\n        WHERE company_id = $1\n            AND roles && ARRAY['super_admin', 'payroll_admin', 'hr_manager']::VARCHAR(50)[]\n            AND is_active = TRUE",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Varchar",
+        "Varchar",
+        "Text",
+        "Varchar",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3ff726d7a5b0fd1bdf928e5c1b29afbffe653345b289046a2cf49e5ec16d794d"
+}

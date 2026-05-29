@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO payroll_items (id, payroll_run_id, employee_id,\n               basic_salary, gross_salary, total_allowances, total_overtime,\n               total_bonus, total_commission, total_claims,\n               epf_employee, epf_employer, socso_employee, socso_employer,\n               eis_employee, eis_employer, pcb_amount, zakat_amount,\n               ptptn_amount, tabung_haji_amount,\n               total_loan_deductions, total_other_deductions,\n               unpaid_leave_deduction, unpaid_leave_days,\n               total_deductions, net_salary, employer_cost,\n               ytd_gross, ytd_epf_employee, ytd_pcb,\n               ytd_socso_employee, ytd_eis_employee, ytd_zakat, ytd_net,\n               working_days, days_worked, is_prorated,\n               created_at, updated_at)\n               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,\n                       $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Numeric",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int4",
+        "Numeric",
+        "Bool",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "44769a8a80f1fe8d2b792f3da93d628d34b44bf02117843da5a97567eac5c522"
+}

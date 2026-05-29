@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM leave_balances WHERE employee_id IN (SELECT id FROM employees WHERE company_id = $1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f5362a0c5d2494368f521fd7bcc345810eed7916c177516ade62bf758b80e8a1"
+}

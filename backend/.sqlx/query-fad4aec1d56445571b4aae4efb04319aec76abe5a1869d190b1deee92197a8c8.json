@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM payroll_entries WHERE id = $1 AND company_id = $2 AND is_processed = FALSE",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "fad4aec1d56445571b4aae4efb04319aec76abe5a1869d190b1deee92197a8c8"
+}
