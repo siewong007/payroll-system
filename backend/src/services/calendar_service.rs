@@ -7,14 +7,15 @@ use crate::models::calendar::{Holiday, MonthCalendar, WorkingDayConfig};
 
 /// Get all holidays for a company in a given year
 pub async fn get_holidays(pool: &PgPool, company_id: Uuid, year: i32) -> AppResult<Vec<Holiday>> {
-    let holidays = sqlx::query_as::<_, Holiday>(
+    let holidays = sqlx::query_as!(
+        Holiday,
         r#"SELECT * FROM holidays
         WHERE company_id = $1
-        AND EXTRACT(YEAR FROM date) = $2
+        AND EXTRACT(YEAR FROM date)::int = $2
         ORDER BY date"#,
+        company_id,
+        year,
     )
-    .bind(company_id)
-    .bind(year as f64)
     .fetch_all(pool)
     .await?;
     Ok(holidays)
@@ -22,12 +23,15 @@ pub async fn get_holidays(pool: &PgPool, company_id: Uuid, year: i32) -> AppResu
 
 /// Get a single holiday
 pub async fn get_holiday(pool: &PgPool, company_id: Uuid, id: Uuid) -> AppResult<Holiday> {
-    sqlx::query_as::<_, Holiday>("SELECT * FROM holidays WHERE id = $1 AND company_id = $2")
-        .bind(id)
-        .bind(company_id)
-        .fetch_optional(pool)
-        .await?
-        .ok_or_else(|| AppError::NotFound("Holiday not found".into()))
+    sqlx::query_as!(
+        Holiday,
+        "SELECT * FROM holidays WHERE id = $1 AND company_id = $2",
+        id,
+        company_id,
+    )
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound("Holiday not found".into()))
 }
 
 /// Create a holiday
@@ -43,19 +47,20 @@ pub async fn create_holiday(
     state: Option<&str>,
     created_by: Uuid,
 ) -> AppResult<Holiday> {
-    let holiday = sqlx::query_as::<_, Holiday>(
+    let holiday = sqlx::query_as!(
+        Holiday,
         r#"INSERT INTO holidays (company_id, name, date, holiday_type, description, is_recurring, state, created_by)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         RETURNING *"#,
+        company_id,
+        name,
+        date,
+        holiday_type,
+        description,
+        is_recurring,
+        state,
+        created_by,
     )
-    .bind(company_id)
-    .bind(name)
-    .bind(date)
-    .bind(holiday_type)
-    .bind(description)
-    .bind(is_recurring)
-    .bind(state)
-    .bind(created_by)
     .fetch_one(pool)
     .await?;
     Ok(holiday)
@@ -75,7 +80,8 @@ pub async fn update_holiday(
     state: Option<&str>,
     updated_by: Uuid,
 ) -> AppResult<Holiday> {
-    let holiday = sqlx::query_as::<_, Holiday>(
+    let holiday = sqlx::query_as!(
+        Holiday,
         r#"UPDATE holidays SET
             name = COALESCE($3, name),
             date = COALESCE($4, date),
@@ -87,16 +93,16 @@ pub async fn update_holiday(
             updated_at = NOW()
         WHERE id = $1 AND company_id = $2
         RETURNING *"#,
+        id,
+        company_id,
+        name,
+        date,
+        holiday_type,
+        description,
+        is_recurring,
+        state,
+        updated_by,
     )
-    .bind(id)
-    .bind(company_id)
-    .bind(name)
-    .bind(date)
-    .bind(holiday_type)
-    .bind(description)
-    .bind(is_recurring)
-    .bind(state)
-    .bind(updated_by)
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| AppError::NotFound("Holiday not found".into()))?;
@@ -105,11 +111,13 @@ pub async fn update_holiday(
 
 /// Delete a holiday
 pub async fn delete_holiday(pool: &PgPool, company_id: Uuid, id: Uuid) -> AppResult<()> {
-    let result = sqlx::query("DELETE FROM holidays WHERE id = $1 AND company_id = $2")
-        .bind(id)
-        .bind(company_id)
-        .execute(pool)
-        .await?;
+    let result = sqlx::query!(
+        "DELETE FROM holidays WHERE id = $1 AND company_id = $2",
+        id,
+        company_id,
+    )
+    .execute(pool)
+    .await?;
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound("Holiday not found".into()));
     }
@@ -118,10 +126,11 @@ pub async fn delete_holiday(pool: &PgPool, company_id: Uuid, id: Uuid) -> AppRes
 
 /// Get working day configuration for a company
 pub async fn get_working_days(pool: &PgPool, company_id: Uuid) -> AppResult<Vec<WorkingDayConfig>> {
-    let config = sqlx::query_as::<_, WorkingDayConfig>(
+    let config = sqlx::query_as!(
+        WorkingDayConfig,
         "SELECT * FROM working_day_config WHERE company_id = $1 ORDER BY day_of_week",
+        company_id,
     )
-    .bind(company_id)
     .fetch_all(pool)
     .await?;
     Ok(config)
@@ -140,15 +149,15 @@ pub async fn update_working_days(
                 day
             )));
         }
-        sqlx::query(
+        sqlx::query!(
             r#"INSERT INTO working_day_config (company_id, day_of_week, is_working_day)
             VALUES ($1, $2, $3)
             ON CONFLICT (company_id, day_of_week) DO UPDATE SET
                 is_working_day = $3, updated_at = NOW()"#,
+            company_id,
+            day,
+            is_working,
         )
-        .bind(company_id)
-        .bind(day)
-        .bind(is_working)
         .execute(pool)
         .await?;
     }
@@ -328,14 +337,14 @@ pub async fn import_from_ics_text(
                 && let (n, Some(d)) = (&name, date)
                 && !n.is_empty()
             {
-                let exists: i64 = sqlx::query_scalar(
-                            "SELECT COUNT(*) FROM holidays WHERE company_id = $1 AND date = $2 AND name = $3"
-                        )
-                        .bind(company_id)
-                        .bind(d)
-                        .bind(n.as_str())
-                        .fetch_one(pool)
-                        .await?;
+                let exists = sqlx::query_scalar!(
+                    r#"SELECT COUNT(*) AS "count!" FROM holidays WHERE company_id = $1 AND date = $2 AND name = $3"#,
+                    company_id,
+                    d,
+                    n.as_str(),
+                )
+                .fetch_one(pool)
+                .await?;
 
                 if exists == 0 {
                     let h = create_holiday(

@@ -17,24 +17,30 @@ pub async fn list_templates(
     company_id: Uuid,
     letter_type: Option<&str>,
 ) -> AppResult<Vec<EmailTemplate>> {
-    let templates = sqlx::query_as::<_, EmailTemplate>(
-        r#"SELECT * FROM email_templates
+    let templates = sqlx::query_as!(
+        EmailTemplate,
+        r#"SELECT id, company_id, name, letter_type, subject, body_html,
+            is_active AS "is_active?", created_at, updated_at, created_by, updated_by
+        FROM email_templates
         WHERE company_id = $1 AND ($2::text IS NULL OR letter_type = $2)
         ORDER BY letter_type, name"#,
+        company_id,
+        letter_type,
     )
-    .bind(company_id)
-    .bind(letter_type)
     .fetch_all(pool)
     .await?;
     Ok(templates)
 }
 
 pub async fn get_template(pool: &PgPool, id: Uuid, company_id: Uuid) -> AppResult<EmailTemplate> {
-    sqlx::query_as::<_, EmailTemplate>(
-        "SELECT * FROM email_templates WHERE id = $1 AND company_id = $2",
+    sqlx::query_as!(
+        EmailTemplate,
+        r#"SELECT id, company_id, name, letter_type, subject, body_html,
+            is_active AS "is_active?", created_at, updated_at, created_by, updated_by
+        FROM email_templates WHERE id = $1 AND company_id = $2"#,
+        id,
+        company_id,
     )
-    .bind(id)
-    .bind(company_id)
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| AppError::NotFound("Template not found".into()))
@@ -46,17 +52,19 @@ pub async fn create_template(
     req: CreateEmailTemplateRequest,
     created_by: Uuid,
 ) -> AppResult<EmailTemplate> {
-    let template = sqlx::query_as::<_, EmailTemplate>(
+    let template = sqlx::query_as!(
+        EmailTemplate,
         r#"INSERT INTO email_templates (company_id, name, letter_type, subject, body_html, created_by, updated_by)
         VALUES ($1, $2, $3, $4, $5, $6, $6)
-        RETURNING *"#,
+        RETURNING id, company_id, name, letter_type, subject, body_html,
+            is_active AS "is_active?", created_at, updated_at, created_by, updated_by"#,
+        company_id,
+        req.name,
+        req.letter_type,
+        req.subject,
+        req.body_html,
+        created_by,
     )
-    .bind(company_id)
-    .bind(&req.name)
-    .bind(&req.letter_type)
-    .bind(&req.subject)
-    .bind(&req.body_html)
-    .bind(created_by)
     .fetch_one(pool)
     .await?;
     Ok(template)
@@ -69,7 +77,8 @@ pub async fn update_template(
     req: UpdateEmailTemplateRequest,
     updated_by: Uuid,
 ) -> AppResult<EmailTemplate> {
-    let template = sqlx::query_as::<_, EmailTemplate>(
+    let template = sqlx::query_as!(
+        EmailTemplate,
         r#"UPDATE email_templates SET
             name = COALESCE($3, name),
             subject = COALESCE($4, subject),
@@ -78,15 +87,16 @@ pub async fn update_template(
             updated_by = $7,
             updated_at = NOW()
         WHERE id = $1 AND company_id = $2
-        RETURNING *"#,
+        RETURNING id, company_id, name, letter_type, subject, body_html,
+            is_active AS "is_active?", created_at, updated_at, created_by, updated_by"#,
+        id,
+        company_id,
+        req.name,
+        req.subject,
+        req.body_html,
+        req.is_active,
+        updated_by,
     )
-    .bind(id)
-    .bind(company_id)
-    .bind(&req.name)
-    .bind(&req.subject)
-    .bind(&req.body_html)
-    .bind(req.is_active)
-    .bind(updated_by)
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| AppError::NotFound("Template not found".into()))?;
@@ -94,11 +104,13 @@ pub async fn update_template(
 }
 
 pub async fn delete_template(pool: &PgPool, id: Uuid, company_id: Uuid) -> AppResult<()> {
-    let result = sqlx::query("DELETE FROM email_templates WHERE id = $1 AND company_id = $2")
-        .bind(id)
-        .bind(company_id)
-        .execute(pool)
-        .await?;
+    let result = sqlx::query!(
+        "DELETE FROM email_templates WHERE id = $1 AND company_id = $2",
+        id,
+        company_id,
+    )
+    .execute(pool)
+    .await?;
 
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound("Template not found".into()));
@@ -115,29 +127,30 @@ pub async fn list_email_logs(
     limit: i64,
     offset: i64,
 ) -> AppResult<(Vec<EmailLog>, i64)> {
-    let total: (i64,) = sqlx::query_as(
-        r#"SELECT COUNT(*) FROM email_logs
+    let total = sqlx::query_scalar!(
+        r#"SELECT COUNT(*) AS "count!" FROM email_logs
         WHERE company_id = $1 AND ($2::uuid IS NULL OR employee_id = $2)"#,
+        company_id,
+        employee_id,
     )
-    .bind(company_id)
-    .bind(employee_id)
     .fetch_one(pool)
     .await?;
 
-    let logs = sqlx::query_as::<_, EmailLog>(
+    let logs = sqlx::query_as!(
+        EmailLog,
         r#"SELECT * FROM email_logs
         WHERE company_id = $1 AND ($2::uuid IS NULL OR employee_id = $2)
         ORDER BY created_at DESC
         LIMIT $3 OFFSET $4"#,
+        company_id,
+        employee_id,
+        limit,
+        offset,
     )
-    .bind(company_id)
-    .bind(employee_id)
-    .bind(limit)
-    .bind(offset)
     .fetch_all(pool)
     .await?;
 
-    Ok((logs, total.0))
+    Ok((logs, total))
 }
 
 // ── Variable Substitution ──────────────────────────────────────────────
@@ -181,31 +194,33 @@ pub async fn send_email(
     created_by: Uuid,
 ) -> AppResult<EmailLog> {
     // Create log entry first as pending
-    let log = sqlx::query_as::<_, EmailLog>(
+    let log = sqlx::query_as!(
+        EmailLog,
         r#"INSERT INTO email_logs
         (company_id, employee_id, template_id, letter_type, recipient_email, recipient_name, subject, body_html, status, created_by)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', $9)
         RETURNING *"#,
+        company_id,
+        employee_id,
+        template_id,
+        letter_type,
+        recipient_email,
+        recipient_name,
+        subject,
+        body_html,
+        created_by,
     )
-    .bind(company_id)
-    .bind(employee_id)
-    .bind(template_id)
-    .bind(letter_type)
-    .bind(recipient_email)
-    .bind(recipient_name)
-    .bind(subject)
-    .bind(body_html)
-    .bind(created_by)
     .fetch_one(pool)
     .await?;
 
     if !config.smtp_enabled() {
         // Mark as failed if SMTP not configured
-        let log = sqlx::query_as::<_, EmailLog>(
+        let log = sqlx::query_as!(
+            EmailLog,
             r#"UPDATE email_logs SET status = 'failed', error_message = 'SMTP not configured'
             WHERE id = $1 RETURNING *"#,
+            log.id,
         )
-        .bind(log.id)
         .fetch_one(pool)
         .await?;
         tracing::warn!("SMTP not configured, email logged but not sent: {}", log.id);
@@ -254,11 +269,12 @@ pub async fn send_email(
     // Send
     match transport.send(email).await {
         Ok(_) => {
-            let log = sqlx::query_as::<_, EmailLog>(
+            let log = sqlx::query_as!(
+                EmailLog,
                 r#"UPDATE email_logs SET status = 'sent', sent_at = NOW()
                 WHERE id = $1 RETURNING *"#,
+                log.id,
             )
-            .bind(log.id)
             .fetch_one(pool)
             .await?;
             tracing::info!("Email sent successfully: {} to {}", log.id, recipient_email);
@@ -266,12 +282,13 @@ pub async fn send_email(
         }
         Err(e) => {
             let error_msg = format!("{}", e);
-            let log = sqlx::query_as::<_, EmailLog>(
+            let log = sqlx::query_as!(
+                EmailLog,
                 r#"UPDATE email_logs SET status = 'failed', error_message = $2
                 WHERE id = $1 RETURNING *"#,
+                log.id,
+                error_msg,
             )
-            .bind(log.id)
-            .bind(&error_msg)
             .fetch_one(pool)
             .await?;
             tracing::error!("Failed to send email {}: {}", log.id, error_msg);

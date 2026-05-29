@@ -1,0 +1,158 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH updated AS (\n            UPDATE documents SET\n                title = COALESCE($3, title),\n                description = COALESCE($4, description),\n                category_id = COALESCE($5, category_id),\n                status = COALESCE($6::text::document_status, status),\n                issue_date = COALESCE($7, issue_date),\n                expiry_date = COALESCE($8, expiry_date),\n                is_confidential = COALESCE($9, is_confidential),\n                tags = COALESCE($10, tags),\n                updated_by = $11,\n                updated_at = NOW()\n            WHERE id = $1 AND company_id = $2 AND deleted_at IS NULL\n            RETURNING *\n        )\n        SELECT\n            u.id AS \"id!\", u.company_id AS \"company_id!\", u.employee_id, u.category_id, u.title AS \"title!\", u.description,\n            u.file_name AS \"file_name!\", u.file_url AS \"file_url!\", u.file_size, u.mime_type, u.status::text AS \"status!\", u.issue_date, u.expiry_date,\n            u.is_confidential, u.tags, u.deleted_at, u.created_at AS \"created_at!\", u.updated_at AS \"updated_at!\", u.created_by, u.updated_by,\n            e.full_name AS \"employee_name?\", e.employee_number AS \"employee_number?\"\n        FROM updated u\n        LEFT JOIN employees e ON u.employee_id = e.id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "company_id!",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "employee_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "category_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 4,
+        "name": "title!",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "description",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "file_name!",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 7,
+        "name": "file_url!",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 8,
+        "name": "file_size",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 9,
+        "name": "mime_type",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 10,
+        "name": "status!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "issue_date",
+        "type_info": "Date"
+      },
+      {
+        "ordinal": 12,
+        "name": "expiry_date",
+        "type_info": "Date"
+      },
+      {
+        "ordinal": 13,
+        "name": "is_confidential",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 14,
+        "name": "tags",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 15,
+        "name": "deleted_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 16,
+        "name": "created_at!",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 17,
+        "name": "updated_at!",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 18,
+        "name": "created_by",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 19,
+        "name": "updated_by",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 20,
+        "name": "employee_name?",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 21,
+        "name": "employee_number?",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Varchar",
+        "Varchar",
+        "Uuid",
+        "Text",
+        "Date",
+        "Date",
+        "Bool",
+        "Varchar",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      null,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "dc3e61dd643e46adf58a9cfae6fe979d1bf78f3d4e7af0b6e356d26c73e33870"
+}

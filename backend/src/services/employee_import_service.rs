@@ -613,18 +613,18 @@ struct ExistingEmployees {
 }
 
 async fn load_existing(pool: &PgPool, company_id: Uuid) -> AppResult<ExistingEmployees> {
-    let rows: Vec<(String, Option<String>)> = sqlx::query_as(
+    let rows = sqlx::query!(
         "SELECT employee_number, ic_number FROM employees WHERE company_id = $1 AND deleted_at IS NULL",
+        company_id,
     )
-    .bind(company_id)
     .fetch_all(pool)
     .await?;
 
     let mut employee_numbers = HashSet::new();
     let mut ic_numbers = HashSet::new();
-    for (emp_no, ic) in rows {
-        employee_numbers.insert(emp_no.to_lowercase());
-        if let Some(ic) = ic
+    for r in rows {
+        employee_numbers.insert(r.employee_number.to_lowercase());
+        if let Some(ic) = r.ic_number
             && !ic.is_empty()
         {
             ic_numbers.insert(ic.to_lowercase());
@@ -773,17 +773,17 @@ pub async fn validate_file(
     let validated_json = serde_json::to_value(&validated_rows)
         .map_err(|e| AppError::Internal(format!("Failed to serialize validation data: {}", e)))?;
 
-    sqlx::query(
+    sqlx::query!(
         r#"INSERT INTO bulk_import_sessions (id, company_id, user_id, file_name, row_count, valid_count, validated_data, status)
         VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')"#,
+        session_id,
+        company_id,
+        user_id,
+        file_name,
+        total_rows as i32,
+        valid_rows as i32,
+        validated_json,
     )
-    .bind(session_id)
-    .bind(company_id)
-    .bind(user_id)
-    .bind(file_name)
-    .bind(total_rows as i32)
-    .bind(valid_rows as i32)
-    .bind(&validated_json)
     .execute(pool)
     .await?;
 
@@ -883,23 +883,20 @@ pub async fn confirm_import(
     req: ImportConfirmRequest,
 ) -> AppResult<ImportConfirmResponse> {
     // Load and verify session
-    let session: (
-        Uuid,
-        Uuid,
-        String,
-        serde_json::Value,
-        String,
-        chrono::DateTime<chrono::Utc>,
-    ) = sqlx::query_as(
+    let session = sqlx::query!(
         r#"SELECT company_id, user_id, file_name, validated_data, status, expires_at
             FROM bulk_import_sessions WHERE id = $1"#,
+        req.session_id,
     )
-    .bind(req.session_id)
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| AppError::NotFound("Import session not found".into()))?;
 
-    let (sess_company_id, sess_user_id, _file_name, validated_data, status, expires_at) = session;
+    let sess_company_id = session.company_id;
+    let sess_user_id = session.user_id;
+    let validated_data = session.validated_data;
+    let status = session.status;
+    let expires_at = session.expires_at;
 
     if sess_company_id != company_id || sess_user_id != user_id {
         return Err(AppError::Forbidden(
@@ -943,7 +940,7 @@ pub async fn confirm_import(
         let create_req = row_to_create_request(&row_validation.data);
         let id = Uuid::now_v7();
 
-        let result = sqlx::query(
+        let result = sqlx::query!(
             r#"INSERT INTO employees (
                 id, company_id, employee_number, full_name, ic_number, passport_number,
                 date_of_birth, gender, nationality, race, residency_status, marital_status,
@@ -959,76 +956,77 @@ pub async fn confirm_import(
                 payroll_group_id, salary_group,
                 created_by
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+                $1, $2, $3, $4, $5, $6, $7, $8::text::gender_type, $9, $10::text::race_type,
+                $11::text::residency_status, $12::text::marital_status,
                 $13, $14, $15, $16, $17, $18, $19,
-                $20, $21, $22, $23, $24, $25, $26, $27,
+                $20, $21, $22, $23, $24::text::employment_type, $25, $26, $27,
                 $28, $29, $30, $31, $32, $33, $34, $35, $36, $37,
                 $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48
             )"#,
+            id,
+            company_id,
+            create_req.employee_number,
+            create_req.full_name,
+            create_req.ic_number,
+            create_req.passport_number,
+            create_req.date_of_birth,
+            create_req.gender,
+            create_req.nationality,
+            create_req.race,
+            create_req.residency_status.as_deref().unwrap_or("citizen"),
+            create_req.marital_status,
+            create_req.email,
+            create_req.phone,
+            create_req.address_line1,
+            create_req.address_line2,
+            create_req.city,
+            create_req.state,
+            create_req.postcode,
+            create_req.department,
+            create_req.designation,
+            create_req.cost_centre,
+            create_req.branch,
+            create_req.employment_type.as_deref().unwrap_or("permanent"),
+            create_req.date_joined,
+            create_req.probation_start,
+            create_req.probation_end,
+            create_req.basic_salary,
+            create_req.hourly_rate,
+            create_req.daily_rate,
+            create_req.bank_name,
+            create_req.bank_account_number,
+            create_req.bank_account_type,
+            create_req.tax_identification_number,
+            create_req.epf_number,
+            create_req.socso_number,
+            create_req.eis_number,
+            create_req.working_spouse,
+            create_req.num_children,
+            create_req.epf_category,
+            create_req.is_muslim,
+            create_req.zakat_eligible,
+            create_req.zakat_monthly_amount,
+            create_req.ptptn_monthly_amount,
+            create_req.tabung_haji_amount,
+            create_req.payroll_group_id,
+            create_req.salary_group,
+            user_id,
         )
-        .bind(id)
-        .bind(company_id)
-        .bind(&create_req.employee_number)
-        .bind(&create_req.full_name)
-        .bind(&create_req.ic_number)
-        .bind(&create_req.passport_number)
-        .bind(create_req.date_of_birth)
-        .bind(&create_req.gender)
-        .bind(&create_req.nationality)
-        .bind(&create_req.race)
-        .bind(create_req.residency_status.as_deref().unwrap_or("citizen"))
-        .bind(&create_req.marital_status)
-        .bind(&create_req.email)
-        .bind(&create_req.phone)
-        .bind(&create_req.address_line1)
-        .bind(&create_req.address_line2)
-        .bind(&create_req.city)
-        .bind(&create_req.state)
-        .bind(&create_req.postcode)
-        .bind(&create_req.department)
-        .bind(&create_req.designation)
-        .bind(&create_req.cost_centre)
-        .bind(&create_req.branch)
-        .bind(create_req.employment_type.as_deref().unwrap_or("permanent"))
-        .bind(create_req.date_joined)
-        .bind(create_req.probation_start)
-        .bind(create_req.probation_end)
-        .bind(create_req.basic_salary)
-        .bind(create_req.hourly_rate)
-        .bind(create_req.daily_rate)
-        .bind(&create_req.bank_name)
-        .bind(&create_req.bank_account_number)
-        .bind(&create_req.bank_account_type)
-        .bind(&create_req.tax_identification_number)
-        .bind(&create_req.epf_number)
-        .bind(&create_req.socso_number)
-        .bind(&create_req.eis_number)
-        .bind(create_req.working_spouse)
-        .bind(create_req.num_children)
-        .bind(&create_req.epf_category)
-        .bind(create_req.is_muslim)
-        .bind(create_req.zakat_eligible)
-        .bind(create_req.zakat_monthly_amount)
-        .bind(create_req.ptptn_monthly_amount)
-        .bind(create_req.tabung_haji_amount)
-        .bind(create_req.payroll_group_id)
-        .bind(&create_req.salary_group)
-        .bind(user_id)
         .execute(&mut *tx)
         .await;
 
         match result {
             Ok(_) => {
                 // Also create salary history record
-                let _ = sqlx::query(
-                    r#"INSERT INTO salary_history (id, employee_id, basic_salary, effective_date, reason, created_by)
-                    VALUES ($1, $2, $3, $4, 'Initial salary (bulk import)', $5)"#,
+                let _ = sqlx::query!(
+                    r#"INSERT INTO salary_history (id, employee_id, old_salary, new_salary, effective_date, reason, created_by)
+                    VALUES ($1, $2, 0, $3, $4, 'Initial salary (bulk import)', $5)"#,
+                    Uuid::now_v7(),
+                    id,
+                    create_req.basic_salary,
+                    create_req.date_joined,
+                    user_id,
                 )
-                .bind(Uuid::now_v7())
-                .bind(id)
-                .bind(create_req.basic_salary)
-                .bind(create_req.date_joined)
-                .bind(user_id)
                 .execute(&mut *tx)
                 .await;
 
@@ -1058,10 +1056,10 @@ pub async fn confirm_import(
     tx.commit().await?;
 
     // Update session status
-    sqlx::query(
+    sqlx::query!(
         "UPDATE bulk_import_sessions SET status = 'confirmed', confirmed_at = NOW() WHERE id = $1",
+        req.session_id,
     )
-    .bind(req.session_id)
     .execute(pool)
     .await?;
 
@@ -1072,14 +1070,14 @@ pub async fn confirm_import(
         "skipped": failed_rows.len() + invalid_rows.len(),
     });
 
-    sqlx::query(
+    sqlx::query!(
         r#"INSERT INTO audit_logs (id, user_id, action, entity_type, description, new_values)
         VALUES ($1, $2, 'bulk_import', 'employee', $3, $4)"#,
+        Uuid::now_v7(),
+        user_id,
+        format!("Bulk imported {} employees", imported_count),
+        audit_data,
     )
-    .bind(Uuid::now_v7())
-    .bind(user_id)
-    .bind(format!("Bulk imported {} employees", imported_count))
-    .bind(&audit_data)
     .execute(pool)
     .await?;
 

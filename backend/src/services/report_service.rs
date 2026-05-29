@@ -31,9 +31,10 @@ pub async fn payroll_summary(
     company_id: Uuid,
     year: i32,
 ) -> AppResult<Vec<PayrollSummaryRow>> {
-    let rows = sqlx::query_as::<_, PayrollSummaryRow>(
+    let rows = sqlx::query_as!(
+        PayrollSummaryRow,
         r#"SELECT
-            TO_CHAR(period_start, 'YYYY-MM') as period,
+            TO_CHAR(period_start, 'YYYY-MM') AS "period!",
             employee_count, total_gross, total_net,
             total_epf_employee, total_epf_employer,
             total_socso_employee, total_socso_employer,
@@ -43,9 +44,9 @@ pub async fn payroll_summary(
         WHERE company_id = $1 AND period_year = $2
         AND status::text IN ('approved', 'paid')
         ORDER BY period_month ASC"#,
+        company_id,
+        year,
     )
-    .bind(company_id)
-    .bind(year)
     .fetch_all(pool)
     .await?;
     Ok(rows)
@@ -68,24 +69,25 @@ pub async fn payroll_by_department(
     year: i32,
     month: i32,
 ) -> AppResult<Vec<DepartmentPayrollRow>> {
-    let rows = sqlx::query_as::<_, DepartmentPayrollRow>(
+    let rows = sqlx::query_as!(
+        DepartmentPayrollRow,
         r#"SELECT
             e.department,
-            COUNT(DISTINCT pi.employee_id) as employee_count,
-            COALESCE(SUM(pi.gross_salary), 0) as total_gross,
-            COALESCE(SUM(pi.net_salary), 0) as total_net,
-            COALESCE(SUM(pi.employer_cost), 0) as total_employer_cost
+            COUNT(DISTINCT pi.employee_id) AS "employee_count!",
+            COALESCE(SUM(pi.gross_salary), 0)::bigint AS "total_gross!",
+            COALESCE(SUM(pi.net_salary), 0)::bigint AS "total_net!",
+            COALESCE(SUM(pi.employer_cost), 0)::bigint AS "total_employer_cost!"
         FROM payroll_items pi
         JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
         JOIN employees e ON pi.employee_id = e.id
         WHERE pr.company_id = $1 AND pr.period_year = $2 AND pr.period_month = $3
         AND pr.status::text IN ('approved', 'paid')
         GROUP BY e.department
-        ORDER BY total_gross DESC"#,
+        ORDER BY COALESCE(SUM(pi.gross_salary), 0) DESC"#,
+        company_id,
+        year,
+        month,
     )
-    .bind(company_id)
-    .bind(year)
-    .bind(month)
     .fetch_all(pool)
     .await?;
     Ok(rows)
@@ -113,27 +115,28 @@ pub async fn leave_report(
     company_id: Uuid,
     year: i32,
 ) -> AppResult<Vec<LeaveReportRow>> {
-    let rows = sqlx::query_as::<_, LeaveReportRow>(
+    let rows = sqlx::query_as!(
+        LeaveReportRow,
         r#"SELECT
-            e.full_name as employee_name,
+            e.full_name AS employee_name,
             e.employee_number,
             e.department,
-            e.gender::text as gender,
-            e.marital_status::text as marital_status,
+            e.gender::text AS "gender?",
+            e.marital_status::text AS "marital_status?",
             e.num_children,
-            lt.name as leave_type_name,
-            lb.entitled_days + lb.carried_forward as entitled_days,
+            lt.name AS leave_type_name,
+            (lb.entitled_days + lb.carried_forward) AS "entitled_days!",
             lb.taken_days,
             lb.pending_days,
-            (lb.entitled_days + lb.carried_forward - lb.taken_days - lb.pending_days) as balance
+            (lb.entitled_days + lb.carried_forward - lb.taken_days - lb.pending_days) AS "balance!"
         FROM leave_balances lb
         JOIN employees e ON lb.employee_id = e.id
         JOIN leave_types lt ON lb.leave_type_id = lt.id
         WHERE e.company_id = $1 AND lb.year = $2 AND e.is_active = TRUE
         ORDER BY e.full_name, lt.name"#,
+        company_id,
+        year,
     )
-    .bind(company_id)
-    .bind(year)
     .fetch_all(pool)
     .await?;
     Ok(rows)
@@ -161,27 +164,28 @@ pub async fn claims_report(
     start_date: NaiveDate,
     end_date: NaiveDate,
 ) -> AppResult<Vec<ClaimsReportRow>> {
-    let rows = sqlx::query_as::<_, ClaimsReportRow>(
+    let rows = sqlx::query_as!(
+        ClaimsReportRow,
         r#"SELECT
-            e.full_name as employee_name,
+            e.full_name AS employee_name,
             e.employee_number,
             e.department,
-            COUNT(*) as total_claims,
-            COALESCE(SUM(c.amount), 0) as total_amount,
-            COUNT(*) FILTER (WHERE c.status = 'approved') as approved_count,
-            COALESCE(SUM(c.amount) FILTER (WHERE c.status = 'approved'), 0) as approved_amount,
-            COUNT(*) FILTER (WHERE c.status = 'pending') as pending_count,
-            COALESCE(SUM(c.amount) FILTER (WHERE c.status = 'pending'), 0) as pending_amount,
-            COUNT(*) FILTER (WHERE c.status = 'rejected') as rejected_count
+            COUNT(*) AS "total_claims!",
+            COALESCE(SUM(c.amount), 0)::bigint AS "total_amount!",
+            COUNT(*) FILTER (WHERE c.status = 'approved') AS "approved_count!",
+            COALESCE(SUM(c.amount) FILTER (WHERE c.status = 'approved'), 0)::bigint AS "approved_amount!",
+            COUNT(*) FILTER (WHERE c.status = 'pending') AS "pending_count!",
+            COALESCE(SUM(c.amount) FILTER (WHERE c.status = 'pending'), 0)::bigint AS "pending_amount!",
+            COUNT(*) FILTER (WHERE c.status = 'rejected') AS "rejected_count!"
         FROM claims c
         JOIN employees e ON c.employee_id = e.id
         WHERE c.company_id = $1 AND c.expense_date BETWEEN $2 AND $3
         GROUP BY e.id, e.full_name, e.employee_number, e.department
-        ORDER BY total_amount DESC"#,
+        ORDER BY COALESCE(SUM(c.amount), 0) DESC"#,
+        company_id,
+        start_date,
+        end_date,
     )
-    .bind(company_id)
-    .bind(start_date)
-    .bind(end_date)
     .fetch_all(pool)
     .await?;
     Ok(rows)
@@ -214,9 +218,10 @@ pub async fn statutory_report(
     year: i32,
     month: i32,
 ) -> AppResult<Vec<StatutoryReportRow>> {
-    let rows = sqlx::query_as::<_, StatutoryReportRow>(
+    let rows = sqlx::query_as!(
+        StatutoryReportRow,
         r#"SELECT
-            e.full_name as employee_name,
+            e.full_name AS employee_name,
             e.employee_number,
             e.ic_number,
             e.epf_number,
@@ -233,10 +238,10 @@ pub async fn statutory_report(
         WHERE pr.company_id = $1 AND pr.period_year = $2 AND pr.period_month = $3
         AND pr.status::text IN ('approved', 'paid')
         ORDER BY e.employee_number"#,
+        company_id,
+        year,
+        month,
     )
-    .bind(company_id)
-    .bind(year)
-    .bind(month)
     .fetch_all(pool)
     .await?;
     Ok(rows)
@@ -273,14 +278,15 @@ pub fn current_report_year_month() -> (i32, i32) {
 }
 
 pub async fn report_periods(pool: &PgPool, company_id: Uuid) -> AppResult<ReportPeriodsResponse> {
-    let payroll_periods = sqlx::query_as::<_, PayrollPeriodRow>(
+    let payroll_periods = sqlx::query_as!(
+        PayrollPeriodRow,
         r#"SELECT DISTINCT period_year, period_month
         FROM payroll_runs
         WHERE company_id = $1
         AND status::text IN ('approved', 'paid')
         ORDER BY period_year ASC, period_month ASC"#,
+        company_id,
     )
-    .bind(company_id)
     .fetch_all(pool)
     .await?;
 
@@ -298,24 +304,24 @@ pub async fn report_periods(pool: &PgPool, company_id: Uuid) -> AppResult<Report
         .map(|(year, months)| YearMonthsOption { year, months })
         .collect::<Vec<_>>();
 
-    let leave_years = sqlx::query_scalar::<_, i32>(
+    let leave_years = sqlx::query_scalar!(
         r#"SELECT DISTINCT lb.year
         FROM leave_balances lb
         JOIN employees e ON lb.employee_id = e.id
         WHERE e.company_id = $1
         ORDER BY lb.year ASC"#,
+        company_id,
     )
-    .bind(company_id)
     .fetch_all(pool)
     .await?;
 
-    let claims_years = sqlx::query_scalar::<_, i32>(
-        r#"SELECT DISTINCT EXTRACT(YEAR FROM expense_date)::INT
+    let claims_years = sqlx::query_scalar!(
+        r#"SELECT DISTINCT EXTRACT(YEAR FROM expense_date)::INT AS "year!"
         FROM claims
         WHERE company_id = $1
         ORDER BY EXTRACT(YEAR FROM expense_date)::INT ASC"#,
+        company_id,
     )
-    .bind(company_id)
     .fetch_all(pool)
     .await?;
 

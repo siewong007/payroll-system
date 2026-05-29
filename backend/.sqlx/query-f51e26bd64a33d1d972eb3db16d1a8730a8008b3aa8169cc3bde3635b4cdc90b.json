@@ -1,0 +1,88 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE email_templates SET\n            name = COALESCE($3, name),\n            subject = COALESCE($4, subject),\n            body_html = COALESCE($5, body_html),\n            is_active = COALESCE($6, is_active),\n            updated_by = $7,\n            updated_at = NOW()\n        WHERE id = $1 AND company_id = $2\n        RETURNING id, company_id, name, letter_type, subject, body_html,\n            is_active AS \"is_active?\", created_at, updated_at, created_by, updated_by",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "company_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "letter_type",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "subject",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "body_html",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "is_active?",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 7,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 8,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 9,
+        "name": "created_by",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 10,
+        "name": "updated_by",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Varchar",
+        "Varchar",
+        "Text",
+        "Bool",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "f51e26bd64a33d1d972eb3db16d1a8730a8008b3aa8169cc3bde3635b4cdc90b"
+}

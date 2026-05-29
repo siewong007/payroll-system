@@ -439,46 +439,50 @@ pub(crate) async fn determine_checkin_status(
     // NOTE: int2 (smallint), not int16 — Postgres has no int16 type, and the
     // earlier typo errored on every call, silently defaulting dow to 0 (Sunday)
     // via the unwrap_or(0) below, which broke weekday late detection.
-    let dow: i16 = sqlx::query_scalar("SELECT EXTRACT(DOW FROM (NOW() AT TIME ZONE $1))::int2")
-        .bind(&tz)
-        .fetch_one(pool)
-        .await
-        .unwrap_or(0);
+    let dow: i16 = sqlx::query_scalar!(
+        r#"SELECT EXTRACT(DOW FROM (NOW() AT TIME ZONE $1))::int2 AS "dow!""#,
+        &tz,
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
 
     // 1. Try employee-specific schedule
-    let emp_schedule: Option<(NaiveTime, i32)> = sqlx::query_as(
+    let emp_schedule = sqlx::query!(
         "SELECT start_time, grace_minutes FROM employee_work_schedules
          WHERE employee_id = $1 AND day_of_week = $2 AND is_active = TRUE",
+        employee_id,
+        dow,
     )
-    .bind(employee_id)
-    .bind(dow)
     .fetch_optional(pool)
     .await
     .unwrap_or(None);
 
     let (start_time, grace_minutes) = if let Some(s) = emp_schedule {
-        s
+        (s.start_time, s.grace_minutes)
     } else {
         // 2. Fallback to company default
-        let company_schedule: Option<(NaiveTime, i32)> = sqlx::query_as(
+        let company_schedule = sqlx::query!(
             "SELECT start_time, grace_minutes FROM company_work_schedules WHERE company_id = $1 AND is_default = TRUE",
+            company_id,
         )
-        .bind(company_id)
         .fetch_optional(pool)
         .await
         .unwrap_or(None);
 
         match company_schedule {
-            Some(s) => s,
+            Some(s) => (s.start_time, s.grace_minutes),
             None => return "present".to_string(),
         }
     };
 
-    let now_local: NaiveTime = sqlx::query_scalar("SELECT (NOW() AT TIME ZONE $1)::time")
-        .bind(&tz)
-        .fetch_one(pool)
-        .await
-        .unwrap_or_else(|_| Utc::now().time());
+    let now_local: NaiveTime = sqlx::query_scalar!(
+        r#"SELECT (NOW() AT TIME ZONE $1)::time AS "now_local!""#,
+        &tz,
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or_else(|_| Utc::now().time());
 
     let cutoff = start_time + chrono::Duration::minutes(grace_minutes as i64);
 
@@ -491,10 +495,10 @@ pub(crate) async fn determine_checkin_status(
 
 /// Get the timezone for a company from its work schedule (fallback to default)
 async fn get_company_timezone(pool: &PgPool, company_id: Uuid) -> String {
-    let tz: Option<String> = sqlx::query_scalar(
+    let tz = sqlx::query_scalar!(
         "SELECT timezone FROM company_work_schedules WHERE company_id = $1 AND is_default = TRUE",
+        company_id,
     )
-    .bind(company_id)
     .fetch_optional(pool)
     .await
     .unwrap_or(None);

@@ -1,0 +1,87 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO email_templates (company_id, name, letter_type, subject, body_html, created_by, updated_by)\n        VALUES ($1, $2, $3, $4, $5, $6, $6)\n        RETURNING id, company_id, name, letter_type, subject, body_html,\n            is_active AS \"is_active?\", created_at, updated_at, created_by, updated_by",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "company_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "letter_type",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "subject",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "body_html",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "is_active?",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 7,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 8,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 9,
+        "name": "created_by",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 10,
+        "name": "updated_by",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "ce409a546227ff693d2f0dddda29780e2042674339e4f546c9052cfef000152d"
+}

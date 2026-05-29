@@ -22,23 +22,23 @@ pub async fn request_reset(
     email: &str,
 ) -> AppResult<Option<(String, String, String)>> {
     // Find user by email
-    let user: Option<(Uuid, String, String)> = sqlx::query_as(
+    let user = sqlx::query!(
         "SELECT id, email, full_name FROM users WHERE email = $1 AND is_active = TRUE",
+        email,
     )
-    .bind(email)
     .fetch_optional(pool)
     .await?;
 
     let (user_id, user_email, user_name) = match user {
-        Some(u) => u,
+        Some(u) => (u.id, u.email, u.full_name),
         None => return Ok(None),
     };
 
     // Expire any existing pending/approved requests for this user
-    sqlx::query(
+    sqlx::query!(
         "UPDATE password_reset_requests SET status = 'expired' WHERE user_id = $1 AND status IN ('pending', 'approved')",
+        user_id,
     )
-    .bind(user_id)
     .execute(pool)
     .await?;
 
@@ -47,13 +47,13 @@ pub async fn request_reset(
     let token_hash = hash_token(&raw_token);
     let expires_at = Utc::now() + Duration::hours(RESET_TOKEN_HOURS);
 
-    sqlx::query(
+    sqlx::query!(
         r#"INSERT INTO password_reset_requests (user_id, status, reset_token_hash, reset_token_expires_at)
         VALUES ($1, 'approved', $2, $3)"#,
+        user_id,
+        token_hash,
+        expires_at,
     )
-    .bind(user_id)
-    .bind(&token_hash)
-    .bind(expires_at)
     .execute(pool)
     .await?;
 
@@ -64,18 +64,17 @@ pub async fn request_reset(
 pub async fn validate_reset_token(pool: &PgPool, raw_token: &str) -> AppResult<Uuid> {
     let token_hash = hash_token(raw_token);
 
-    let row: Option<(Uuid,)> = sqlx::query_as(
+    let user_id = sqlx::query_scalar!(
         r#"SELECT user_id FROM password_reset_requests
         WHERE reset_token_hash = $1
             AND status = 'approved'
             AND reset_token_expires_at > NOW()"#,
+        token_hash,
     )
-    .bind(&token_hash)
     .fetch_optional(pool)
     .await?;
 
-    row.map(|r| r.0)
-        .ok_or_else(|| AppError::BadRequest("Invalid or expired reset link".into()))
+    user_id.ok_or_else(|| AppError::BadRequest("Invalid or expired reset link".into()))
 }
 
 /// Resets the user's password using a valid reset token.
@@ -85,13 +84,14 @@ pub async fn reset_password(pool: &PgPool, raw_token: &str, new_password: &str) 
     let token_hash = hash_token(raw_token);
 
     // Validate token
-    let request = sqlx::query_as::<_, PasswordResetRequest>(
+    let request = sqlx::query_as!(
+        PasswordResetRequest,
         r#"SELECT * FROM password_reset_requests
         WHERE reset_token_hash = $1
             AND status = 'approved'
             AND reset_token_expires_at > NOW()"#,
+        token_hash,
     )
-    .bind(&token_hash)
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| AppError::BadRequest("Invalid or expired reset link".into()))?;
@@ -101,25 +101,29 @@ pub async fn reset_password(pool: &PgPool, raw_token: &str, new_password: &str) 
         .map_err(|e| AppError::Internal(format!("Failed to hash password: {}", e)))?;
 
     // Update password
-    sqlx::query("UPDATE users SET password_hash = $2, updated_at = NOW() WHERE id = $1")
-        .bind(request.user_id)
-        .bind(&password_hash)
-        .execute(pool)
-        .await?;
+    sqlx::query!(
+        "UPDATE users SET password_hash = $2, updated_at = NOW() WHERE id = $1",
+        request.user_id,
+        password_hash,
+    )
+    .execute(pool)
+    .await?;
 
     // Mark request as completed
-    sqlx::query(
+    sqlx::query!(
         "UPDATE password_reset_requests SET status = 'completed', completed_at = NOW() WHERE id = $1",
+        request.id,
     )
-    .bind(request.id)
     .execute(pool)
     .await?;
 
     // Revoke all refresh tokens for this user
-    sqlx::query("UPDATE refresh_tokens SET revoked = TRUE WHERE user_id = $1 AND revoked = FALSE")
-        .bind(request.user_id)
-        .execute(pool)
-        .await?;
+    sqlx::query!(
+        "UPDATE refresh_tokens SET revoked = TRUE WHERE user_id = $1 AND revoked = FALSE",
+        request.user_id,
+    )
+    .execute(pool)
+    .await?;
 
     Ok(())
 }

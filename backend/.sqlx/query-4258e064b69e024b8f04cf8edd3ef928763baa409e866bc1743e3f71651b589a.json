@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT period_year, period_month\n        FROM payroll_runs\n        WHERE company_id = $1\n        AND status::text IN ('approved', 'paid')\n        ORDER BY period_year ASC, period_month ASC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "period_year",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 1,
+        "name": "period_month",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "4258e064b69e024b8f04cf8edd3ef928763baa409e866bc1743e3f71651b589a"
+}
