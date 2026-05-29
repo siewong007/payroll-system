@@ -64,41 +64,24 @@ async fn load_payroll_summary(
     company_id: Uuid,
     id: Uuid,
 ) -> AppResult<PayrollSummary> {
-    let run = sqlx::query_as::<_, PayrollRun>(
+    let run = sqlx::query_as!(
+        PayrollRun,
         r#"SELECT id, company_id, payroll_group_id, period_year, period_month,
-            period_start, period_end, pay_date, status::text as status,
+            period_start, period_end, pay_date, status::text AS "status!",
             total_gross, total_net, total_employer_cost,
             total_epf_employee, total_epf_employer, total_socso_employee, total_socso_employer,
             total_eis_employee, total_eis_employer, total_pcb, total_zakat,
             employee_count, version, processed_by, processed_at, approved_by, approved_at,
             locked_at, locked_by, notes, created_at, updated_at, created_by, updated_by
         FROM payroll_runs WHERE id = $1 AND company_id = $2"#,
+        id,
+        company_id,
     )
-    .bind(id)
-    .bind(company_id)
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| AppError::NotFound("Payroll run not found".into()))?;
 
-    let items = sqlx::query_as::<
-        _,
-        (
-            Uuid,
-            String,
-            String,
-            i64,
-            i64,
-            i64,
-            i64,
-            i64,
-            i64,
-            i64,
-            i64,
-            i64,
-            i64,
-            i64,
-        ),
-    >(
+    let items = sqlx::query!(
         r#"SELECT pi.employee_id, e.full_name, e.employee_number,
            pi.basic_salary, pi.total_allowances, pi.total_overtime, pi.total_claims,
            pi.gross_salary, pi.total_deductions, pi.net_salary,
@@ -107,46 +90,29 @@ async fn load_payroll_summary(
         JOIN employees e ON pi.employee_id = e.id
         WHERE pi.payroll_run_id = $1
         ORDER BY e.employee_number"#,
+        id,
     )
-    .bind(id)
     .fetch_all(pool)
     .await?;
 
     let item_summaries: Vec<PayrollItemSummary> = items
         .into_iter()
-        .map(
-            |(
-                eid,
-                name,
-                num,
-                basic,
-                allowances,
-                overtime,
-                claims,
-                gross,
-                ded,
-                net,
-                epf,
-                socso,
-                eis,
-                pcb,
-            )| PayrollItemSummary {
-                employee_id: eid,
-                employee_name: name,
-                employee_number: num,
-                basic_salary: basic,
-                total_allowances: allowances,
-                total_overtime: overtime,
-                total_claims: claims,
-                gross_salary: gross,
-                total_deductions: ded,
-                net_salary: net,
-                epf_employee: epf,
-                socso_employee: socso,
-                eis_employee: eis,
-                pcb_amount: pcb,
-            },
-        )
+        .map(|row| PayrollItemSummary {
+            employee_id: row.employee_id,
+            employee_name: row.full_name,
+            employee_number: row.employee_number,
+            basic_salary: row.basic_salary,
+            total_allowances: row.total_allowances,
+            total_overtime: row.total_overtime,
+            total_claims: row.total_claims,
+            gross_salary: row.gross_salary,
+            total_deductions: row.total_deductions,
+            net_salary: row.net_salary,
+            epf_employee: row.epf_employee,
+            socso_employee: row.socso_employee,
+            eis_employee: row.eis_employee,
+            pcb_amount: row.pcb_amount,
+        })
         .collect();
 
     Ok(PayrollSummary {
@@ -165,9 +131,10 @@ pub async fn list_runs(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    let runs = sqlx::query_as::<_, PayrollRun>(
+    let runs = sqlx::query_as!(
+        PayrollRun,
         r#"SELECT id, company_id, payroll_group_id, period_year, period_month,
-            period_start, period_end, pay_date, status::text as status,
+            period_start, period_end, pay_date, status::text AS "status!",
             total_gross, total_net, total_employer_cost,
             total_epf_employee, total_epf_employer, total_socso_employee, total_socso_employer,
             total_eis_employee, total_eis_employer, total_pcb, total_zakat,
@@ -177,8 +144,8 @@ pub async fn list_runs(
         WHERE company_id = $1
         ORDER BY period_year DESC, period_month DESC, created_at DESC
         LIMIT 50"#,
+        company_id,
     )
-    .bind(company_id)
     .fetch_all(&state.pool)
     .await?;
 
@@ -212,13 +179,13 @@ pub async fn list_run_audit_logs(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    let run_exists = sqlx::query_scalar::<_, bool>(
+    let run_exists = sqlx::query_scalar!(
         r#"SELECT EXISTS(
             SELECT 1 FROM payroll_runs WHERE id = $1 AND company_id = $2
-        )"#,
+        ) AS "exists!""#,
+        id,
+        company_id,
     )
-    .bind(id)
-    .bind(company_id)
     .fetch_one(&state.pool)
     .await?;
 
@@ -226,11 +193,12 @@ pub async fn list_run_audit_logs(
         return Err(AppError::NotFound("Payroll run not found".into()));
     }
 
-    let logs = sqlx::query_as::<_, AuditLogWithUser>(
+    let logs = sqlx::query_as!(
+        AuditLogWithUser,
         r#"SELECT al.id, al.user_id, al.action, al.entity_type, al.entity_id,
             al.old_values, al.new_values, al.ip_address, al.user_agent,
             al.description, al.created_at,
-            u.email as user_email, u.full_name as user_full_name
+            u.email AS "user_email?", u.full_name AS "user_full_name?"
         FROM audit_logs al
         LEFT JOIN users u ON al.user_id = u.id
         WHERE al.company_id = $1
@@ -246,9 +214,9 @@ pub async fn list_run_audit_logs(
           )
         ORDER BY al.created_at DESC
         LIMIT 100"#,
+        company_id,
+        id,
     )
-    .bind(company_id)
-    .bind(id)
     .fetch_all(&state.pool)
     .await?;
 
@@ -267,9 +235,10 @@ pub async fn delete_run(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    let run = sqlx::query_as::<_, PayrollRun>(
+    let run = sqlx::query_as!(
+        PayrollRun,
         r#"SELECT id, company_id, payroll_group_id, period_year, period_month,
-            period_start, period_end, pay_date, status::text as status,
+            period_start, period_end, pay_date, status::text AS "status!",
             total_gross, total_net, total_employer_cost,
             total_epf_employee, total_epf_employer, total_socso_employee, total_socso_employer,
             total_eis_employee, total_eis_employer, total_pcb, total_zakat,
@@ -277,9 +246,9 @@ pub async fn delete_run(
             locked_at, locked_by, notes, created_at, updated_at, created_by, updated_by
         FROM payroll_runs
         WHERE id = $1 AND company_id = $2"#,
+        id,
+        company_id,
     )
-    .bind(id)
-    .bind(company_id)
     .fetch_optional(&state.pool)
     .await?
     .ok_or_else(|| AppError::NotFound("Payroll run not found".into()))?;
@@ -302,49 +271,50 @@ pub async fn delete_run(
 
     let mut tx = state.pool.begin().await?;
 
-    sqlx::query(
+    sqlx::query!(
         r#"UPDATE payroll_entries
         SET is_processed = FALSE, payroll_run_id = NULL, updated_at = NOW(), updated_by = $3
         WHERE payroll_run_id = $1 AND company_id = $2"#,
+        id,
+        company_id,
+        auth.0.sub,
     )
-    .bind(id)
-    .bind(company_id)
-    .bind(auth.0.sub)
     .execute(&mut *tx)
     .await?;
 
     // Revert processed claims for this period back to approved
-    sqlx::query(
+    sqlx::query!(
         r#"UPDATE claims SET status = 'approved', updated_at = NOW()
         WHERE company_id = $1 AND status = 'processed'
           AND expense_date >= $2 AND expense_date <= $3"#,
+        company_id,
+        run.period_start,
+        run.period_end,
     )
-    .bind(company_id)
-    .bind(run.period_start)
-    .bind(run.period_end)
     .execute(&mut *tx)
     .await?;
 
-    sqlx::query(
+    sqlx::query!(
         r#"DELETE FROM payroll_item_details pid
         USING payroll_items pi
         WHERE pid.payroll_item_id = pi.id
           AND pi.payroll_run_id = $1"#,
+        id,
     )
-    .bind(id)
     .execute(&mut *tx)
     .await?;
 
-    sqlx::query("DELETE FROM payroll_items WHERE payroll_run_id = $1")
-        .bind(id)
+    sqlx::query!("DELETE FROM payroll_items WHERE payroll_run_id = $1", id)
         .execute(&mut *tx)
         .await?;
 
-    sqlx::query("DELETE FROM payroll_runs WHERE id = $1 AND company_id = $2")
-        .bind(id)
-        .bind(company_id)
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query!(
+        "DELETE FROM payroll_runs WHERE id = $1 AND company_id = $2",
+        id,
+        company_id,
+    )
+    .execute(&mut *tx)
+    .await?;
 
     tx.commit().await?;
 
@@ -388,17 +358,20 @@ pub async fn update_item_pcb(
 
     let mut tx = state.pool.begin().await?;
 
-    let (run_status, period_year, period_month) = sqlx::query_as::<_, (String, i32, i32)>(
-        r#"SELECT status::text, period_year, period_month
+    let run_row = sqlx::query!(
+        r#"SELECT status::text AS "status!", period_year, period_month
         FROM payroll_runs
         WHERE id = $1 AND company_id = $2
         FOR UPDATE"#,
+        run_id,
+        company_id,
     )
-    .bind(run_id)
-    .bind(company_id)
     .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| AppError::NotFound("Payroll run not found".into()))?;
+
+    let (run_status, period_year, period_month) =
+        (run_row.status, run_row.period_year, run_row.period_month);
 
     if run_status != "processed" {
         return Err(AppError::BadRequest(
@@ -406,7 +379,7 @@ pub async fn update_item_pcb(
         ));
     }
 
-    let has_later_run = sqlx::query_scalar::<_, bool>(
+    let has_later_run = sqlx::query_scalar!(
         r#"SELECT EXISTS(
             SELECT 1
             FROM payroll_items pi
@@ -415,12 +388,12 @@ pub async fn update_item_pcb(
               AND pr.company_id = $2
               AND pr.status::text IN ('processed', 'pending_approval', 'approved', 'paid')
               AND (pr.period_year > $3 OR (pr.period_year = $3 AND pr.period_month > $4))
-        )"#,
+        ) AS "exists!""#,
+        employee_id,
+        company_id,
+        period_year,
+        period_month,
     )
-    .bind(employee_id)
-    .bind(company_id)
-    .bind(period_year)
-    .bind(period_month)
     .fetch_one(&mut *tx)
     .await?;
 
@@ -431,22 +404,25 @@ pub async fn update_item_pcb(
         ));
     }
 
-    let current = sqlx::query_as::<_, (i64, i64, i64, i64)>(
+    let current = sqlx::query!(
         r#"SELECT pcb_amount, total_deductions, net_salary, ytd_pcb
         FROM payroll_items
         WHERE payroll_run_id = $1 AND employee_id = $2
         FOR UPDATE"#,
+        run_id,
+        employee_id,
     )
-    .bind(run_id)
-    .bind(employee_id)
     .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| AppError::NotFound("Payroll item not found".into()))?;
 
-    let (old_pcb, total_deductions, net_salary, ytd_pcb) = current;
+    let old_pcb = current.pcb_amount;
     let delta = req.pcb_amount - old_pcb;
+    let new_total_deductions = current.total_deductions + delta;
+    let new_net_salary = current.net_salary - delta;
+    let new_ytd_pcb = current.ytd_pcb + delta;
 
-    sqlx::query(
+    sqlx::query!(
         r#"UPDATE payroll_items
         SET pcb_amount = $3,
             total_deductions = $4,
@@ -454,28 +430,28 @@ pub async fn update_item_pcb(
             ytd_pcb = $6,
             updated_at = NOW()
         WHERE payroll_run_id = $1 AND employee_id = $2"#,
+        run_id,
+        employee_id,
+        req.pcb_amount,
+        new_total_deductions,
+        new_net_salary,
+        new_ytd_pcb,
     )
-    .bind(run_id)
-    .bind(employee_id)
-    .bind(req.pcb_amount)
-    .bind(total_deductions + delta)
-    .bind(net_salary - delta)
-    .bind(ytd_pcb + delta)
     .execute(&mut *tx)
     .await?;
 
-    sqlx::query(
+    sqlx::query!(
         r#"UPDATE payroll_runs
         SET total_pcb = total_pcb + $3,
             total_net = total_net - $3,
             updated_at = NOW(),
             updated_by = $4
         WHERE id = $1 AND company_id = $2"#,
+        run_id,
+        company_id,
+        delta,
+        auth.0.sub,
     )
-    .bind(run_id)
-    .bind(company_id)
-    .bind(delta)
-    .bind(auth.0.sub)
     .execute(&mut *tx)
     .await?;
 
@@ -617,10 +593,11 @@ pub async fn list_groups(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    let groups = sqlx::query_as::<_, PayrollGroup>(
+    let groups = sqlx::query_as!(
+        PayrollGroup,
         "SELECT * FROM payroll_groups WHERE company_id = $1 AND is_active = TRUE ORDER BY name",
+        company_id,
     )
-    .bind(company_id)
     .fetch_all(&state.pool)
     .await?;
 
@@ -680,14 +657,14 @@ async fn ensure_employee_in_company(
     company_id: Uuid,
     employee_id: Uuid,
 ) -> AppResult<()> {
-    let exists = sqlx::query_scalar::<_, bool>(
+    let exists = sqlx::query_scalar!(
         r#"SELECT EXISTS(
             SELECT 1 FROM employees
             WHERE id = $1 AND company_id = $2 AND deleted_at IS NULL
-        )"#,
+        ) AS "exists!""#,
+        employee_id,
+        company_id,
     )
-    .bind(employee_id)
-    .bind(company_id)
     .fetch_one(pool)
     .await?;
 
@@ -712,12 +689,13 @@ pub async fn list_entries(
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
     let include_processed = q.include_processed.unwrap_or(false);
 
-    let entries = sqlx::query_as::<_, PayrollEntryWithEmployee>(
+    let entries = sqlx::query_as!(
+        PayrollEntryWithEmployee,
         r#"SELECT pe.id, pe.employee_id, pe.company_id, pe.period_year, pe.period_month,
             pe.category, pe.item_type, pe.description, pe.amount, pe.quantity, pe.rate,
             pe.is_taxable, pe.is_processed, pe.payroll_run_id, pe.created_at, pe.updated_at,
             pe.created_by, pe.updated_by,
-            e.full_name as employee_name, e.employee_number
+            e.full_name AS "employee_name?", e.employee_number AS "employee_number?"
         FROM payroll_entries pe
         JOIN employees e ON pe.employee_id = e.id
         WHERE pe.company_id = $1
@@ -727,13 +705,13 @@ pub async fn list_entries(
           AND ($5::text IS NULL OR pe.item_type = $5)
           AND ($6::bool = TRUE OR pe.is_processed = FALSE)
         ORDER BY pe.period_year DESC, pe.period_month DESC, e.employee_number, pe.created_at DESC"#,
+        company_id,
+        q.period_year,
+        q.period_month,
+        q.employee_id,
+        q.item_type.as_deref(),
+        include_processed,
     )
-    .bind(company_id)
-    .bind(q.period_year)
-    .bind(q.period_month)
-    .bind(q.employee_id)
-    .bind(q.item_type.as_deref())
-    .bind(include_processed)
     .fetch_all(&state.pool)
     .await?;
 
@@ -762,25 +740,26 @@ pub async fn create_entry(
     )?;
     ensure_employee_in_company(&state.pool, company_id, req.employee_id).await?;
 
-    let entry = sqlx::query_as::<_, PayrollEntry>(
+    let entry = sqlx::query_as!(
+        PayrollEntry,
         r#"INSERT INTO payroll_entries
             (employee_id, company_id, period_year, period_month, category, item_type,
              description, amount, quantity, rate, is_taxable, created_by)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, COALESCE($11, TRUE), $12)
         RETURNING *"#,
+        req.employee_id,
+        company_id,
+        req.period_year,
+        req.period_month,
+        req.category.trim(),
+        req.item_type.trim(),
+        req.description.trim(),
+        req.amount,
+        req.quantity,
+        req.rate,
+        req.is_taxable,
+        auth.0.sub,
     )
-    .bind(req.employee_id)
-    .bind(company_id)
-    .bind(req.period_year)
-    .bind(req.period_month)
-    .bind(req.category.trim())
-    .bind(req.item_type.trim())
-    .bind(req.description.trim())
-    .bind(req.amount)
-    .bind(req.quantity)
-    .bind(req.rate)
-    .bind(req.is_taxable)
-    .bind(auth.0.sub)
     .fetch_one(&state.pool)
     .await?;
 
@@ -815,11 +794,12 @@ pub async fn update_entry(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    let current = sqlx::query_as::<_, PayrollEntry>(
+    let current = sqlx::query_as!(
+        PayrollEntry,
         "SELECT * FROM payroll_entries WHERE id = $1 AND company_id = $2 AND is_processed = FALSE",
+        id,
+        company_id,
     )
-    .bind(id)
-    .bind(company_id)
     .fetch_optional(&state.pool)
     .await?
     .ok_or_else(|| AppError::BadRequest("Payroll entry not found or already processed".into()))?;
@@ -844,7 +824,8 @@ pub async fn update_entry(
     )?;
     ensure_employee_in_company(&state.pool, company_id, employee_id).await?;
 
-    let updated = sqlx::query_as::<_, PayrollEntry>(
+    let updated = sqlx::query_as!(
+        PayrollEntry,
         r#"UPDATE payroll_entries
         SET employee_id = $3,
             period_year = $4,
@@ -860,20 +841,20 @@ pub async fn update_entry(
             updated_at = NOW()
         WHERE id = $1 AND company_id = $2 AND is_processed = FALSE
         RETURNING *"#,
+        id,
+        company_id,
+        employee_id,
+        period_year,
+        period_month,
+        category.trim(),
+        item_type.trim(),
+        description.trim(),
+        amount,
+        req.quantity.or(current.quantity),
+        req.rate.or(current.rate),
+        req.is_taxable,
+        auth.0.sub,
     )
-    .bind(id)
-    .bind(company_id)
-    .bind(employee_id)
-    .bind(period_year)
-    .bind(period_month)
-    .bind(category.trim())
-    .bind(item_type.trim())
-    .bind(description.trim())
-    .bind(amount)
-    .bind(req.quantity.or(current.quantity))
-    .bind(req.rate.or(current.rate))
-    .bind(req.is_taxable)
-    .bind(auth.0.sub)
     .fetch_one(&state.pool)
     .await?;
 
@@ -907,20 +888,21 @@ pub async fn delete_entry(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    let current = sqlx::query_as::<_, PayrollEntry>(
+    let current = sqlx::query_as!(
+        PayrollEntry,
         "SELECT * FROM payroll_entries WHERE id = $1 AND company_id = $2 AND is_processed = FALSE",
+        id,
+        company_id,
     )
-    .bind(id)
-    .bind(company_id)
     .fetch_optional(&state.pool)
     .await?
     .ok_or_else(|| AppError::BadRequest("Payroll entry not found or already processed".into()))?;
 
-    sqlx::query(
+    sqlx::query!(
         "DELETE FROM payroll_entries WHERE id = $1 AND company_id = $2 AND is_processed = FALSE",
+        id,
+        company_id,
     )
-    .bind(id)
-    .bind(company_id)
     .execute(&state.pool)
     .await?;
 
@@ -980,10 +962,11 @@ pub async fn get_items(
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<Vec<PayrollItem>>> {
     auth.require_permission(Permission::ViewPayroll)?;
-    let items = sqlx::query_as::<_, PayrollItem>(
+    let items = sqlx::query_as!(
+        PayrollItem,
         "SELECT * FROM payroll_items WHERE payroll_run_id = $1 ORDER BY created_at",
+        id,
     )
-    .bind(id)
     .fetch_all(&state.pool)
     .await?;
 

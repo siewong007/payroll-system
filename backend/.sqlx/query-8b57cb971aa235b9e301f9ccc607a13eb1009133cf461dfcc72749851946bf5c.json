@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n            period_year::text || '-' || LPAD(period_month::text, 2, '0') AS \"period!\",\n            total_net, total_gross, employee_count\n        FROM payroll_runs\n        WHERE company_id = $1 AND status NOT IN ('cancelled', 'draft')\n        ORDER BY period_year DESC, period_month DESC\n        LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "period!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "total_net",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "total_gross",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "employee_count",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "8b57cb971aa235b9e301f9ccc607a13eb1009133cf461dfcc72749851946bf5c"
+}

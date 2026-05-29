@@ -1,0 +1,141 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT pe.id, pe.employee_id, pe.company_id, pe.period_year, pe.period_month,\n            pe.category, pe.item_type, pe.description, pe.amount, pe.quantity, pe.rate,\n            pe.is_taxable, pe.is_processed, pe.payroll_run_id, pe.created_at, pe.updated_at,\n            pe.created_by, pe.updated_by,\n            e.full_name AS \"employee_name?\", e.employee_number AS \"employee_number?\"\n        FROM payroll_entries pe\n        JOIN employees e ON pe.employee_id = e.id\n        WHERE pe.company_id = $1\n          AND ($2::int IS NULL OR pe.period_year = $2)\n          AND ($3::int IS NULL OR pe.period_month = $3)\n          AND ($4::uuid IS NULL OR pe.employee_id = $4)\n          AND ($5::text IS NULL OR pe.item_type = $5)\n          AND ($6::bool = TRUE OR pe.is_processed = FALSE)\n        ORDER BY pe.period_year DESC, pe.period_month DESC, e.employee_number, pe.created_at DESC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "employee_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "company_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "period_year",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 4,
+        "name": "period_month",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 5,
+        "name": "category",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "item_type",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 7,
+        "name": "description",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 8,
+        "name": "amount",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 9,
+        "name": "quantity",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 10,
+        "name": "rate",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 11,
+        "name": "is_taxable",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 12,
+        "name": "is_processed",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 13,
+        "name": "payroll_run_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 14,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 15,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 16,
+        "name": "created_by",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 17,
+        "name": "updated_by",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 18,
+        "name": "employee_name?",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 19,
+        "name": "employee_number?",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4",
+        "Int4",
+        "Uuid",
+        "Text",
+        "Bool"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "0341faed3b3ca0b6496ca63eefa0faa29477a6b4ee34e85e21eb537d51344751"
+}

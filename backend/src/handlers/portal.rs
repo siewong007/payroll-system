@@ -358,21 +358,22 @@ pub async fn export_leave_ics(
     let employee_id = get_employee_id(&auth)?;
     let year = q.year.unwrap_or(chrono::Utc::now().year());
 
-    let leaves = sqlx::query_as::<_, LeaveRequest>(
+    let leaves = sqlx::query_as!(
+        LeaveRequest,
         r#"SELECT lr.id, lr.employee_id, lr.company_id, lr.leave_type_id,
             lr.start_date, lr.end_date, lr.days, lr.reason, lr.status,
             lr.reviewed_by, lr.reviewed_at, lr.review_notes,
             lr.attachment_url, lr.attachment_name,
             lr.created_at, lr.updated_at,
-            lt.name as leave_type_name
+            lt.name AS "leave_type_name?"
         FROM leave_requests lr
         JOIN leave_types lt ON lr.leave_type_id = lt.id
         WHERE lr.employee_id = $1 AND lr.status = 'approved'
-        AND EXTRACT(YEAR FROM lr.start_date) = $2
+        AND EXTRACT(YEAR FROM lr.start_date)::int = $2
         ORDER BY lr.start_date"#,
+        employee_id,
+        year,
     )
-    .bind(employee_id)
-    .bind(year)
     .fetch_all(&state.pool)
     .await?;
 

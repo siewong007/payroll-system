@@ -41,10 +41,15 @@ pub async fn login(
 }
 
 pub async fn me(State(state): State<AppState>, auth: AuthUser) -> AppResult<Json<UserResponse>> {
-    let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
-        .bind(auth.0.sub)
-        .fetch_one(&state.pool)
-        .await?;
+    let user = sqlx::query_as!(
+        User,
+        r#"SELECT id, email, password_hash, full_name, role, roles, company_id,
+            employee_id, is_active, must_change_password, last_login, created_at, updated_at
+        FROM users WHERE id = $1"#,
+        auth.0.sub,
+    )
+    .fetch_one(&state.pool)
+    .await?;
     Ok(Json(UserResponse::from(user)))
 }
 
@@ -65,10 +70,15 @@ pub async fn switch_company(
     user_service::switch_company(&state.pool, auth.0.sub, req.company_id).await?;
 
     // Fetch updated user
-    let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
-        .bind(auth.0.sub)
-        .fetch_one(&state.pool)
-        .await?;
+    let user = sqlx::query_as!(
+        User,
+        r#"SELECT id, email, password_hash, full_name, role, roles, company_id,
+            employee_id, is_active, must_change_password, last_login, created_at, updated_at
+        FROM users WHERE id = $1"#,
+        auth.0.sub,
+    )
+    .fetch_one(&state.pool)
+    .await?;
 
     // Issue new token with updated company_id
     let token = create_token_with_roles(
@@ -100,19 +110,25 @@ pub async fn refresh_token(
     let user_id = session_service::verify_refresh_token(&state.pool, &refresh).await?;
 
     // Fetch user
-    let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1 AND is_active = TRUE")
-        .bind(user_id)
-        .fetch_optional(&state.pool)
-        .await?
-        .ok_or_else(|| AppError::Unauthorized("User not found or inactive".into()))?;
+    let user = sqlx::query_as!(
+        User,
+        r#"SELECT id, email, password_hash, full_name, role, roles, company_id,
+            employee_id, is_active, must_change_password, last_login, created_at, updated_at
+        FROM users WHERE id = $1 AND is_active = TRUE"#,
+        user_id,
+    )
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or_else(|| AppError::Unauthorized("User not found or inactive".into()))?;
 
     // Check if linked employee has been deleted
     if let Some(employee_id) = user.employee_id {
-        let employee_active: Option<bool> =
-            sqlx::query_scalar("SELECT is_active FROM employees WHERE id = $1")
-                .bind(employee_id)
-                .fetch_optional(&state.pool)
-                .await?;
+        let employee_active = sqlx::query_scalar!(
+            r#"SELECT is_active AS "is_active!" FROM employees WHERE id = $1"#,
+            employee_id,
+        )
+        .fetch_optional(&state.pool)
+        .await?;
 
         if matches!(employee_active, Some(false) | None) {
             session_service::revoke_refresh_token(&state.pool, &refresh).await?;
@@ -241,10 +257,15 @@ pub async fn change_password(
 ) -> AppResult<Json<serde_json::Value>> {
     auth_service::validate_password_strength(&req.new_password)?;
 
-    let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
-        .bind(auth.0.sub)
-        .fetch_one(&state.pool)
-        .await?;
+    let user = sqlx::query_as!(
+        User,
+        r#"SELECT id, email, password_hash, full_name, role, roles, company_id,
+            employee_id, is_active, must_change_password, last_login, created_at, updated_at
+        FROM users WHERE id = $1"#,
+        auth.0.sub,
+    )
+    .fetch_one(&state.pool)
+    .await?;
 
     let valid = bcrypt::verify(&req.current_password, &user.password_hash)
         .map_err(|_| AppError::Internal("Password verification failed".into()))?;
@@ -256,11 +277,13 @@ pub async fn change_password(
     let new_hash = bcrypt::hash(&req.new_password, 10)
         .map_err(|_| AppError::Internal("Password hashing failed".into()))?;
 
-    sqlx::query("UPDATE users SET password_hash = $1, must_change_password = FALSE, updated_at = NOW() WHERE id = $2")
-        .bind(&new_hash)
-        .bind(auth.0.sub)
-        .execute(&state.pool)
-        .await?;
+    sqlx::query!(
+        "UPDATE users SET password_hash = $1, must_change_password = FALSE, updated_at = NOW() WHERE id = $2",
+        new_hash,
+        auth.0.sub,
+    )
+    .execute(&state.pool)
+    .await?;
 
     Ok(Json(serde_json::json!({
         "message": "Password changed successfully."
@@ -271,10 +294,12 @@ pub async fn skip_change_password(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> AppResult<Json<serde_json::Value>> {
-    sqlx::query("UPDATE users SET must_change_password = FALSE, updated_at = NOW() WHERE id = $1")
-        .bind(auth.0.sub)
-        .execute(&state.pool)
-        .await?;
+    sqlx::query!(
+        "UPDATE users SET must_change_password = FALSE, updated_at = NOW() WHERE id = $1",
+        auth.0.sub,
+    )
+    .execute(&state.pool)
+    .await?;
 
     Ok(Json(serde_json::json!({
         "message": "Password change skipped."

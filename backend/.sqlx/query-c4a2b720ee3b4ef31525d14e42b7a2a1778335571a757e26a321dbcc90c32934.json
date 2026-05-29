@@ -1,0 +1,41 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n            COALESCE(SUM(total_gross), 0)::BIGINT AS \"total_gross!\",\n            COALESCE(SUM(total_epf_employer), 0)::BIGINT AS \"total_epf_employer!\",\n            COALESCE(SUM(total_socso_employer), 0)::BIGINT AS \"total_socso_employer!\",\n            COALESCE(SUM(total_eis_employer), 0)::BIGINT AS \"total_eis_employer!\"\n        FROM payroll_runs\n        WHERE company_id = $1 AND period_year = $2\n        AND status NOT IN ('cancelled', 'draft')",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "total_gross!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "total_epf_employer!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "total_socso_employer!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "total_eis_employer!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "c4a2b720ee3b4ef31525d14e42b7a2a1778335571a757e26a321dbcc90c32934"
+}

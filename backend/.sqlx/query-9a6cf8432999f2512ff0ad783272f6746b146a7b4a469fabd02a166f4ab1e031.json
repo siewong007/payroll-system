@@ -1,0 +1,250 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT * FROM payroll_items WHERE payroll_run_id = $1 ORDER BY created_at",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "payroll_run_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "employee_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "basic_salary",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "gross_salary",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "total_allowances",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 6,
+        "name": "total_overtime",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 7,
+        "name": "total_bonus",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 8,
+        "name": "total_commission",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 9,
+        "name": "total_claims",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 10,
+        "name": "epf_employee",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 11,
+        "name": "epf_employer",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 12,
+        "name": "socso_employee",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 13,
+        "name": "socso_employer",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 14,
+        "name": "eis_employee",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 15,
+        "name": "eis_employer",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 16,
+        "name": "pcb_amount",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 17,
+        "name": "zakat_amount",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 18,
+        "name": "ptptn_amount",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 19,
+        "name": "tabung_haji_amount",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 20,
+        "name": "total_loan_deductions",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 21,
+        "name": "total_other_deductions",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 22,
+        "name": "unpaid_leave_deduction",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 23,
+        "name": "unpaid_leave_days",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 24,
+        "name": "total_deductions",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 25,
+        "name": "net_salary",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 26,
+        "name": "employer_cost",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 27,
+        "name": "ytd_gross",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 28,
+        "name": "ytd_epf_employee",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 29,
+        "name": "ytd_pcb",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 30,
+        "name": "ytd_socso_employee",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 31,
+        "name": "ytd_eis_employee",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 32,
+        "name": "ytd_zakat",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 33,
+        "name": "ytd_net",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 34,
+        "name": "working_days",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 35,
+        "name": "days_worked",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 36,
+        "name": "is_prorated",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 37,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 38,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "9a6cf8432999f2512ff0ad783272f6746b146a7b4a469fabd02a166f4ab1e031"
+}
