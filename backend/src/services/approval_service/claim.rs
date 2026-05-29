@@ -24,21 +24,22 @@ pub async fn create_claim_admin(
     ensure_employee_in_company(pool, company_id, employee_id).await?;
     ensure_positive_amount(req.amount)?;
 
-    let claim = sqlx::query_as::<_, Claim>(
+    let claim = sqlx::query_as!(
+        Claim,
         r#"INSERT INTO claims
             (employee_id, company_id, title, description, amount, category, receipt_url, receipt_file_name, expense_date, status, submitted_at)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', NOW())
         RETURNING *"#,
+        employee_id,
+        company_id,
+        req.title,
+        req.description,
+        req.amount,
+        req.category,
+        req.receipt_url,
+        req.receipt_file_name,
+        req.expense_date,
     )
-    .bind(employee_id)
-    .bind(company_id)
-    .bind(&req.title)
-    .bind(&req.description)
-    .bind(req.amount)
-    .bind(&req.category)
-    .bind(&req.receipt_url)
-    .bind(&req.receipt_file_name)
-    .bind(req.expense_date)
     .fetch_one(pool)
     .await?;
 
@@ -67,13 +68,14 @@ pub async fn update_claim_admin(
     actor_id: Uuid,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<Claim> {
-    let current = sqlx::query_as::<_, Claim>(
+    let current = sqlx::query_as!(
+        Claim,
         r#"SELECT * FROM claims
         WHERE id = $1 AND company_id = $2
         AND status IN ('draft', 'pending', 'rejected')"#,
+        claim_id,
+        company_id,
     )
-    .bind(claim_id)
-    .bind(company_id)
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| AppError::BadRequest("Claim not found or cannot be edited".into()))?;
@@ -86,7 +88,8 @@ pub async fn update_claim_admin(
         ensure_positive_amount(amount)?;
     }
 
-    let updated = sqlx::query_as::<_, Claim>(
+    let updated = sqlx::query_as!(
+        Claim,
         r#"UPDATE claims
         SET employee_id = COALESCE($3, employee_id),
             title = COALESCE($4, title),
@@ -99,17 +102,17 @@ pub async fn update_claim_admin(
             updated_at = NOW()
         WHERE id = $1 AND company_id = $2
         RETURNING *"#,
+        claim_id,
+        company_id,
+        req.employee_id,
+        req.title,
+        req.description,
+        req.amount,
+        req.category,
+        req.receipt_url,
+        req.receipt_file_name,
+        req.expense_date,
     )
-    .bind(claim_id)
-    .bind(company_id)
-    .bind(req.employee_id)
-    .bind(&req.title)
-    .bind(&req.description)
-    .bind(req.amount)
-    .bind(&req.category)
-    .bind(&req.receipt_url)
-    .bind(&req.receipt_file_name)
-    .bind(req.expense_date)
     .fetch_one(pool)
     .await?;
 
@@ -140,22 +143,25 @@ pub async fn delete_claim_admin(
     actor_id: Uuid,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<()> {
-    let current = sqlx::query_as::<_, Claim>(
+    let current = sqlx::query_as!(
+        Claim,
         r#"SELECT * FROM claims
         WHERE id = $1 AND company_id = $2
         AND status IN ('draft', 'cancelled')"#,
+        claim_id,
+        company_id,
     )
-    .bind(claim_id)
-    .bind(company_id)
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| AppError::BadRequest("Claim not found or cannot be deleted".into()))?;
 
-    sqlx::query("DELETE FROM claims WHERE id = $1 AND company_id = $2")
-        .bind(claim_id)
-        .bind(company_id)
-        .execute(pool)
-        .await?;
+    sqlx::query!(
+        "DELETE FROM claims WHERE id = $1 AND company_id = $2",
+        claim_id,
+        company_id,
+    )
+    .execute(pool)
+    .await?;
 
     let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
@@ -186,14 +192,15 @@ pub async fn cancel_claim_admin(
 ) -> AppResult<Claim> {
     let mut tx = pool.begin().await?;
 
-    let current = sqlx::query_as::<_, Claim>(
+    let current = sqlx::query_as!(
+        Claim,
         r#"SELECT * FROM claims
         WHERE id = $1
           AND company_id = $2
           AND status IN ('pending', 'approved', 'rejected')"#,
+        claim_id,
+        company_id,
     )
-    .bind(claim_id)
-    .bind(company_id)
     .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| AppError::BadRequest("Claim not found or cannot be cancelled".into()))?;
@@ -201,7 +208,7 @@ pub async fn cancel_claim_admin(
     if current.status == "approved" {
         let staged_at = current.reviewed_at.unwrap_or_else(chrono::Utc::now);
         let description = format!("Claim: {}", current.title);
-        let processed = sqlx::query_scalar::<_, bool>(
+        let processed = sqlx::query_scalar!(
             r#"SELECT EXISTS(
                 SELECT 1 FROM payroll_entries
                 WHERE employee_id = $1
@@ -212,14 +219,14 @@ pub async fn cancel_claim_admin(
                   AND description = $5
                   AND amount = $6
                   AND is_processed = TRUE
-            )"#,
+            ) AS "exists!""#,
+            current.employee_id,
+            company_id,
+            staged_at.year(),
+            staged_at.month() as i32,
+            &description,
+            current.amount,
         )
-        .bind(current.employee_id)
-        .bind(company_id)
-        .bind(staged_at.year())
-        .bind(staged_at.month() as i32)
-        .bind(&description)
-        .bind(current.amount)
         .fetch_one(&mut *tx)
         .await?;
 
@@ -230,7 +237,7 @@ pub async fn cancel_claim_admin(
             ));
         }
 
-        sqlx::query(
+        sqlx::query!(
             r#"DELETE FROM payroll_entries
             WHERE employee_id = $1
               AND company_id = $2
@@ -240,25 +247,26 @@ pub async fn cancel_claim_admin(
               AND description = $5
               AND amount = $6
               AND is_processed = FALSE"#,
+            current.employee_id,
+            company_id,
+            staged_at.year(),
+            staged_at.month() as i32,
+            &description,
+            current.amount,
         )
-        .bind(current.employee_id)
-        .bind(company_id)
-        .bind(staged_at.year())
-        .bind(staged_at.month() as i32)
-        .bind(&description)
-        .bind(current.amount)
         .execute(&mut *tx)
         .await?;
     }
 
-    let cancelled = sqlx::query_as::<_, Claim>(
+    let cancelled = sqlx::query_as!(
+        Claim,
         r#"UPDATE claims
         SET status = 'cancelled', updated_at = NOW()
         WHERE id = $1 AND company_id = $2
         RETURNING *"#,
+        claim_id,
+        company_id,
     )
-    .bind(claim_id)
-    .bind(company_id)
     .fetch_one(&mut *tx)
     .await?;
 
@@ -314,16 +322,17 @@ pub async fn get_claim_with_employee_by_id(
     company_id: Uuid,
     claim_id: Uuid,
 ) -> AppResult<ClaimWithEmployee> {
-    sqlx::query_as::<_, ClaimWithEmployee>(
+    sqlx::query_as!(
+        ClaimWithEmployee,
         r#"SELECT c.*,
-            e.full_name as employee_name,
-            e.employee_number
+            e.full_name AS "employee_name?",
+            e.employee_number AS "employee_number?"
         FROM claims c
         JOIN employees e ON c.employee_id = e.id
         WHERE c.id = $1 AND c.company_id = $2"#,
+        claim_id,
+        company_id,
     )
-    .bind(claim_id)
-    .bind(company_id)
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| AppError::NotFound("Claim not found".into()))
@@ -334,19 +343,20 @@ pub async fn get_pending_claims(
     company_id: Uuid,
     status: Option<&str>,
 ) -> AppResult<Vec<ClaimWithEmployee>> {
-    let claims = sqlx::query_as::<_, ClaimWithEmployee>(
+    let claims = sqlx::query_as!(
+        ClaimWithEmployee,
         r#"SELECT c.*,
-            e.full_name as employee_name,
-            e.employee_number
+            e.full_name AS "employee_name?",
+            e.employee_number AS "employee_number?"
         FROM claims c
         JOIN employees e ON c.employee_id = e.id
         WHERE c.company_id = $1
         AND ($2::text IS NULL OR c.status = $2)
         ORDER BY c.created_at DESC
         LIMIT 100"#,
+        company_id,
+        status,
     )
-    .bind(company_id)
-    .bind(status)
     .fetch_all(pool)
     .await?;
     Ok(claims)
@@ -361,17 +371,18 @@ pub async fn approve_claim(
     notes: Option<&str>,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<Claim> {
-    let claim = sqlx::query_as::<_, Claim>(
+    let claim = sqlx::query_as!(
+        Claim,
         r#"UPDATE claims SET
             status = 'approved', reviewed_by = $3, reviewed_at = NOW(),
             review_notes = $4, updated_at = NOW()
         WHERE id = $1 AND company_id = $2 AND status = 'pending'
         RETURNING *"#,
+        claim_id,
+        company_id,
+        reviewer_id,
+        notes,
     )
-    .bind(claim_id)
-    .bind(company_id)
-    .bind(reviewer_id)
-    .bind(notes)
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| AppError::BadRequest("Claim not found or not pending".into()))?;
@@ -382,31 +393,31 @@ pub async fn approve_claim(
     let period_year = now.year();
     let period_month = now.month() as i32;
 
-    let _ = sqlx::query(
+    let _ = sqlx::query!(
         r#"INSERT INTO payroll_entries
             (id, employee_id, company_id, period_year, period_month, category, item_type, description, amount, created_by)
         VALUES ($1, $2, $3, $4, $5, 'earning', 'claim_reimbursement', $6, $7, $8)"#,
+        Uuid::now_v7(),
+        claim.employee_id,
+        company_id,
+        period_year,
+        period_month,
+        format!("Claim: {}", claim.title),
+        claim.amount,
+        reviewer_id,
     )
-    .bind(Uuid::now_v7())
-    .bind(claim.employee_id)
-    .bind(company_id)
-    .bind(period_year)
-    .bind(period_month)
-    .bind(format!("Claim: {}", claim.title))
-    .bind(claim.amount)
-    .bind(reviewer_id)
     .execute(pool)
     .await;
 
     // Notify employee
-    let employee_user = sqlx::query_as::<_, (Uuid,)>(
+    let employee_user = sqlx::query_scalar!(
         "SELECT id FROM users WHERE employee_id = $1 AND is_active = TRUE",
+        claim.employee_id,
     )
-    .bind(claim.employee_id)
     .fetch_optional(pool)
     .await?;
 
-    if let Some((user_id,)) = employee_user {
+    if let Some(user_id) = employee_user {
         let _ = notification_service::create_notification(
             pool,
             user_id,
@@ -424,17 +435,17 @@ pub async fn approve_claim(
     }
 
     // Send approval email
-    let emp_info: Option<(String, String, String)> = sqlx::query_as(
-        r#"SELECT e.full_name, e.email, COALESCE(c.name, '') as company_name
+    let emp_info = sqlx::query!(
+        r#"SELECT e.full_name, e.email AS "email!", COALESCE(c.name, '') AS "company_name!"
         FROM employees e
         JOIN companies c ON e.company_id = c.id
         WHERE e.id = $1"#,
+        claim.employee_id,
     )
-    .bind(claim.employee_id)
     .fetch_optional(pool)
     .await?;
 
-    if let Some((emp_name, emp_email, company_name)) = emp_info {
+    if let Some(emp) = emp_info {
         let amount_rm = claim.amount as f64 / 100.0;
         let details = format!(
             "<strong>Claim:</strong> {}<br><strong>Amount:</strong> RM {:.2}<br><strong>Category:</strong> {}",
@@ -443,8 +454,8 @@ pub async fn approve_claim(
             claim.category.as_deref().unwrap_or("General")
         );
         let body = email_service::approval_email_html(
-            &emp_name,
-            &company_name,
+            &emp.full_name,
+            &emp.company_name,
             "Claim",
             &details,
             "The approved amount will be included in your next payroll.",
@@ -456,8 +467,8 @@ pub async fn approve_claim(
             Some(claim.employee_id),
             None,
             "claim_approved",
-            &emp_email,
-            &emp_name,
+            &emp.email,
+            &emp.full_name,
             &format!("Claim Approved - {} (RM {:.2})", claim.title, amount_rm),
             &body,
             reviewer_id,
@@ -494,29 +505,30 @@ pub async fn reject_claim(
     notes: Option<&str>,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<Claim> {
-    let claim = sqlx::query_as::<_, Claim>(
+    let claim = sqlx::query_as!(
+        Claim,
         r#"UPDATE claims SET
             status = 'rejected', reviewed_by = $3, reviewed_at = NOW(),
             review_notes = $4, updated_at = NOW()
         WHERE id = $1 AND company_id = $2 AND status = 'pending'
         RETURNING *"#,
+        claim_id,
+        company_id,
+        reviewer_id,
+        notes,
     )
-    .bind(claim_id)
-    .bind(company_id)
-    .bind(reviewer_id)
-    .bind(notes)
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| AppError::BadRequest("Claim not found or not pending".into()))?;
 
-    let employee_user = sqlx::query_as::<_, (Uuid,)>(
+    let employee_user = sqlx::query_scalar!(
         "SELECT id FROM users WHERE employee_id = $1 AND is_active = TRUE",
+        claim.employee_id,
     )
-    .bind(claim.employee_id)
     .fetch_optional(pool)
     .await?;
 
-    if let Some((user_id,)) = employee_user {
+    if let Some(user_id) = employee_user {
         let _ = notification_service::create_notification(
             pool,
             user_id,
