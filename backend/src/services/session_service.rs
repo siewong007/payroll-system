@@ -20,13 +20,13 @@ pub async fn create_refresh_token(pool: &PgPool, user_id: Uuid) -> AppResult<Str
     let token_hash = hash_token(&raw_token);
     let expires_at = Utc::now() + Duration::days(REFRESH_TOKEN_DAYS);
 
-    sqlx::query(
+    sqlx::query!(
         r#"INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
         VALUES ($1, $2, $3)"#,
+        user_id,
+        token_hash,
+        expires_at,
     )
-    .bind(user_id)
-    .bind(&token_hash)
-    .bind(expires_at)
     .execute(pool)
     .await?;
 
@@ -37,15 +37,15 @@ pub async fn create_refresh_token(pool: &PgPool, user_id: Uuid) -> AppResult<Str
 pub async fn verify_refresh_token(pool: &PgPool, raw_token: &str) -> AppResult<Uuid> {
     let token_hash = hash_token(raw_token);
 
-    let row: Option<(Uuid,)> = sqlx::query_as(
+    let user_id = sqlx::query_scalar!(
         r#"SELECT user_id FROM refresh_tokens
         WHERE token_hash = $1 AND revoked = FALSE AND expires_at > NOW()"#,
+        token_hash,
     )
-    .bind(&token_hash)
     .fetch_optional(pool)
     .await?;
 
-    row.map(|r| r.0).ok_or_else(|| {
+    user_id.ok_or_else(|| {
         crate::core::error::AppError::Unauthorized("Invalid or expired refresh token".into())
     })
 }
@@ -53,9 +53,11 @@ pub async fn verify_refresh_token(pool: &PgPool, raw_token: &str) -> AppResult<U
 /// Revokes a specific refresh token.
 pub async fn revoke_refresh_token(pool: &PgPool, raw_token: &str) -> AppResult<()> {
     let token_hash = hash_token(raw_token);
-    sqlx::query("UPDATE refresh_tokens SET revoked = TRUE WHERE token_hash = $1")
-        .bind(&token_hash)
-        .execute(pool)
-        .await?;
+    sqlx::query!(
+        "UPDATE refresh_tokens SET revoked = TRUE WHERE token_hash = $1",
+        token_hash
+    )
+    .execute(pool)
+    .await?;
     Ok(())
 }

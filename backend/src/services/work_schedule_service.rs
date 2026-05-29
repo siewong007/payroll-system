@@ -19,10 +19,11 @@ pub async fn get_default_schedule(
     pool: &PgPool,
     company_id: Uuid,
 ) -> AppResult<Option<WorkSchedule>> {
-    let schedule = sqlx::query_as::<_, WorkSchedule>(
+    let schedule = sqlx::query_as!(
+        WorkSchedule,
         "SELECT * FROM company_work_schedules WHERE company_id = $1 AND is_default = TRUE",
+        company_id,
     )
-    .bind(company_id)
     .fetch_optional(pool)
     .await?;
     Ok(schedule)
@@ -30,10 +31,11 @@ pub async fn get_default_schedule(
 
 /// Get all work schedules for a company
 pub async fn list_schedules(pool: &PgPool, company_id: Uuid) -> AppResult<Vec<WorkSchedule>> {
-    let schedules = sqlx::query_as::<_, WorkSchedule>(
+    let schedules = sqlx::query_as!(
+        WorkSchedule,
         "SELECT * FROM company_work_schedules WHERE company_id = $1 ORDER BY is_default DESC, name",
+        company_id,
     )
-    .bind(company_id)
     .fetch_all(pool)
     .await?;
     Ok(schedules)
@@ -62,10 +64,11 @@ pub async fn upsert_default_schedule(
 
     let existing = get_default_schedule(pool, company_id).await?;
 
-    let schedule = sqlx::query_as::<_, WorkSchedule>(
+    let schedule = sqlx::query_as!(
+        WorkSchedule,
         r#"INSERT INTO company_work_schedules
            (company_id, name, start_time, end_time, grace_minutes, half_day_hours, timezone, is_default)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE)
+           VALUES ($1, $2, $3, $4, $5, $6::float8, $7, TRUE)
            ON CONFLICT (company_id) WHERE is_default = TRUE
            DO UPDATE SET
                name = EXCLUDED.name,
@@ -76,14 +79,14 @@ pub async fn upsert_default_schedule(
                timezone = EXCLUDED.timezone,
                updated_at = NOW()
            RETURNING *"#,
+        company_id,
+        name,
+        start,
+        end,
+        grace,
+        half_day,
+        tz,
     )
-    .bind(company_id)
-    .bind(name)
-    .bind(start)
-    .bind(end)
-    .bind(grace)
-    .bind(half_day)
-    .bind(tz)
     .fetch_one(pool)
     .await?;
 
@@ -125,11 +128,12 @@ pub async fn update_schedule(
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<WorkSchedule> {
     // Verify it belongs to this company
-    let existing = sqlx::query_as::<_, WorkSchedule>(
+    let existing = sqlx::query_as!(
+        WorkSchedule,
         "SELECT * FROM company_work_schedules WHERE id = $1 AND company_id = $2",
+        schedule_id,
+        company_id,
     )
-    .bind(schedule_id)
-    .bind(company_id)
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| AppError::NotFound("Work schedule not found".into()))?;
@@ -156,22 +160,23 @@ pub async fn update_schedule(
         ));
     }
 
-    let schedule = sqlx::query_as::<_, WorkSchedule>(
+    let schedule = sqlx::query_as!(
+        WorkSchedule,
         r#"UPDATE company_work_schedules
            SET name = $3, start_time = $4, end_time = $5,
-               grace_minutes = $6, half_day_hours = $7, timezone = $8,
+               grace_minutes = $6, half_day_hours = $7::float8, timezone = $8,
                updated_at = NOW()
            WHERE id = $1 AND company_id = $2
            RETURNING *"#,
+        schedule_id,
+        company_id,
+        name,
+        start,
+        end,
+        grace,
+        half_day,
+        tz,
     )
-    .bind(schedule_id)
-    .bind(company_id)
-    .bind(name)
-    .bind(start)
-    .bind(end)
-    .bind(grace)
-    .bind(half_day)
-    .bind(tz)
     .fetch_one(pool)
     .await?;
 

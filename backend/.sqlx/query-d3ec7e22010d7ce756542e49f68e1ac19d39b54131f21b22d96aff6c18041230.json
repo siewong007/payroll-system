@@ -1,0 +1,90 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n            COALESCE(SUM(pi.basic_salary), 0)::bigint AS \"ytd_basic!\",\n            COALESCE(SUM(pi.total_allowances), 0)::bigint AS \"ytd_allowances!\",\n            COALESCE(SUM(pi.total_bonus), 0)::bigint AS \"ytd_bonus!\",\n            COALESCE(SUM(pi.total_commission), 0)::bigint AS \"ytd_commission!\",\n            COALESCE(SUM(pi.total_overtime), 0)::bigint AS \"ytd_overtime!\",\n            COALESCE(SUM(pi.gross_salary), 0)::bigint AS \"ytd_gross!\",\n            COALESCE(SUM(pi.epf_employee), 0)::bigint AS \"ytd_epf_employee!\",\n            COALESCE(SUM(pi.socso_employee), 0)::bigint AS \"ytd_socso_employee!\",\n            COALESCE(SUM(pi.eis_employee), 0)::bigint AS \"ytd_eis_employee!\",\n            COALESCE(SUM(pi.pcb_amount), 0)::bigint AS \"ytd_pcb!\",\n            COALESCE(SUM(pi.zakat_amount), 0)::bigint AS \"ytd_zakat!\",\n            COUNT(DISTINCT pr.period_month) AS \"months_worked!\"\n        FROM payroll_items pi\n        JOIN payroll_runs pr ON pi.payroll_run_id = pr.id\n        WHERE pi.employee_id = $1 AND pr.company_id = $2 AND pr.period_year = $3\n        AND pr.status::text IN ('approved', 'paid')",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "ytd_basic!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "ytd_allowances!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "ytd_bonus!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "ytd_commission!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "ytd_overtime!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "ytd_gross!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 6,
+        "name": "ytd_epf_employee!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 7,
+        "name": "ytd_socso_employee!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 8,
+        "name": "ytd_eis_employee!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 9,
+        "name": "ytd_pcb!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 10,
+        "name": "ytd_zakat!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 11,
+        "name": "months_worked!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "d3ec7e22010d7ce756542e49f68e1ac19d39b54131f21b22d96aff6c18041230"
+}

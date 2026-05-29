@@ -28,12 +28,16 @@ pub async fn login(
     jwt_secret: &str,
     jwt_expiry: i64,
 ) -> AppResult<LoginResponse> {
-    let user =
-        sqlx::query_as::<_, User>("SELECT * FROM users WHERE email = $1 AND is_active = TRUE")
-            .bind(&req.email)
-            .fetch_optional(pool)
-            .await?
-            .ok_or_else(|| AppError::Unauthorized("Invalid email or password".into()))?;
+    let user = sqlx::query_as!(
+        User,
+        r#"SELECT id, email, password_hash, full_name, role, roles, company_id,
+            employee_id, is_active, must_change_password, last_login, created_at, updated_at
+        FROM users WHERE email = $1 AND is_active = TRUE"#,
+        req.email,
+    )
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::Unauthorized("Invalid email or password".into()))?;
 
     let valid = bcrypt::verify(&req.password, &user.password_hash)
         .map_err(|_| AppError::Internal("Password verification failed".into()))?;
@@ -44,11 +48,12 @@ pub async fn login(
 
     // Check if linked employee has been deleted
     if let Some(employee_id) = user.employee_id {
-        let employee_active: Option<bool> =
-            sqlx::query_scalar("SELECT is_active FROM employees WHERE id = $1")
-                .bind(employee_id)
-                .fetch_optional(pool)
-                .await?;
+        let employee_active = sqlx::query_scalar!(
+            r#"SELECT is_active AS "is_active!" FROM employees WHERE id = $1"#,
+            employee_id,
+        )
+        .fetch_optional(pool)
+        .await?;
 
         match employee_active {
             Some(false) | None => {
@@ -62,8 +67,7 @@ pub async fn login(
     }
 
     // Update last login
-    sqlx::query("UPDATE users SET last_login = NOW() WHERE id = $1")
-        .bind(user.id)
+    sqlx::query!("UPDATE users SET last_login = NOW() WHERE id = $1", user.id)
         .execute(pool)
         .await?;
 

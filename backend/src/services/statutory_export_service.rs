@@ -37,32 +37,34 @@ async fn get_statutory_data(
     year: i32,
     month: i32,
 ) -> AppResult<(CompanyStatutoryInfo, Vec<StatutoryRow>)> {
-    let company = sqlx::query_as::<_, CompanyStatutoryInfo>(
+    let company = sqlx::query_as!(
+        CompanyStatutoryInfo,
         "SELECT name, epf_number, socso_code, eis_code, tax_number FROM companies WHERE id = $1",
+        company_id,
     )
-    .bind(company_id)
     .fetch_one(pool)
     .await?;
 
-    let rows = sqlx::query_as::<_, StatutoryRow>(
+    let rows = sqlx::query_as!(
+        StatutoryRow,
         r#"SELECT
-            e.full_name as employee_name, e.employee_number, e.ic_number,
+            e.full_name AS employee_name, e.ic_number,
             e.tax_identification_number, e.epf_number, e.socso_number, e.eis_number,
             pi.gross_salary,
             pi.epf_employee, pi.epf_employer,
             pi.socso_employee, pi.socso_employer,
             pi.eis_employee, pi.eis_employer,
-            pi.pcb_amount, pi.zakat_amount
+            pi.pcb_amount
         FROM payroll_items pi
         JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
         JOIN employees e ON pi.employee_id = e.id
         WHERE pr.company_id = $1 AND pr.period_year = $2 AND pr.period_month = $3
         AND pr.status::text IN ('approved', 'paid')
         ORDER BY e.employee_number"#,
+        company_id,
+        year,
+        month,
     )
-    .bind(company_id)
-    .bind(year)
-    .bind(month)
     .fetch_all(pool)
     .await?;
 
