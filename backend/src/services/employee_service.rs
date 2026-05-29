@@ -18,25 +18,26 @@ pub async fn list_employees(
     limit: i64,
     offset: i64,
 ) -> AppResult<(Vec<Employee>, i64)> {
-    let count: i64 = sqlx::query_scalar(
-        r#"SELECT COUNT(*) FROM employees
+    let count = sqlx::query_scalar!(
+        r#"SELECT COUNT(*) AS "count!" FROM employees
         WHERE company_id = $1 AND deleted_at IS NULL
         AND ($2::bool IS NULL OR is_active = $2)
         AND ($3::text IS NULL OR full_name ILIKE '%' || $3 || '%' OR employee_number ILIKE '%' || $3 || '%')
         AND ($4::text IS NULL OR department = $4)"#,
+        company_id,
+        is_active,
+        search,
+        department,
     )
-    .bind(company_id)
-    .bind(is_active)
-    .bind(search)
-    .bind(department)
     .fetch_one(pool)
     .await?;
 
-    let employees = sqlx::query_as::<_, Employee>(
+    let employees = sqlx::query_as!(
+        Employee,
         r#"SELECT id, company_id, employee_number, full_name, ic_number, passport_number,
-            date_of_birth, gender::text, nationality, race::text, residency_status::text,
-            marital_status::text, email, phone, address_line1, address_line2, city, state, postcode,
-            department, designation, cost_centre, branch, employment_type::text,
+            date_of_birth, gender::text AS "gender?", nationality, race::text AS "race?", residency_status::text AS "residency_status!",
+            marital_status::text AS "marital_status?", email, phone, address_line1, address_line2, city, state, postcode,
+            department, designation, cost_centre, branch, employment_type::text AS "employment_type!",
             date_joined, probation_start, probation_end, confirmation_date,
             date_resigned, resignation_reason, basic_salary, hourly_rate, daily_rate,
             bank_name, bank_account_number, bank_account_type,
@@ -52,13 +53,13 @@ pub async fn list_employees(
         AND ($4::text IS NULL OR department = $4)
         ORDER BY employee_number ASC
         LIMIT $5 OFFSET $6"#,
+        company_id,
+        is_active,
+        search,
+        department,
+        limit,
+        offset,
     )
-    .bind(company_id)
-    .bind(is_active)
-    .bind(search)
-    .bind(department)
-    .bind(limit)
-    .bind(offset)
     .fetch_all(pool)
     .await?;
 
@@ -66,11 +67,12 @@ pub async fn list_employees(
 }
 
 pub async fn get_employee(pool: &PgPool, id: Uuid, company_id: Uuid) -> AppResult<Employee> {
-    sqlx::query_as::<_, Employee>(
+    sqlx::query_as!(
+        Employee,
         r#"SELECT id, company_id, employee_number, full_name, ic_number, passport_number,
-            date_of_birth, gender::text, nationality, race::text, residency_status::text,
-            marital_status::text, email, phone, address_line1, address_line2, city, state, postcode,
-            department, designation, cost_centre, branch, employment_type::text,
+            date_of_birth, gender::text AS "gender?", nationality, race::text AS "race?", residency_status::text AS "residency_status!",
+            marital_status::text AS "marital_status?", email, phone, address_line1, address_line2, city, state, postcode,
+            department, designation, cost_centre, branch, employment_type::text AS "employment_type!",
             date_joined, probation_start, probation_end, confirmation_date,
             date_resigned, resignation_reason, basic_salary, hourly_rate, daily_rate,
             bank_name, bank_account_number, bank_account_type,
@@ -80,9 +82,9 @@ pub async fn get_employee(pool: &PgPool, id: Uuid, company_id: Uuid) -> AppResul
             hrdf_contribution, payroll_group_id, salary_group, is_active,
             deleted_at, created_at, updated_at, created_by, updated_by
         FROM employees WHERE id = $1 AND company_id = $2 AND deleted_at IS NULL"#,
+        id,
+        company_id,
     )
-    .bind(id)
-    .bind(company_id)
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| AppError::NotFound("Employee not found".into()))
@@ -96,11 +98,11 @@ pub async fn create_employee(
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<(Employee, Option<EmployeeAccountInfo>)> {
     // Check for duplicate employee number within the same company
-    let exists: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM employees WHERE company_id = $1 AND employee_number = $2 AND deleted_at IS NULL)",
+    let exists = sqlx::query_scalar!(
+        r#"SELECT EXISTS(SELECT 1 FROM employees WHERE company_id = $1 AND employee_number = $2 AND deleted_at IS NULL) AS "exists!""#,
+        company_id,
+        req.employee_number,
     )
-    .bind(company_id)
-    .bind(&req.employee_number)
     .fetch_one(pool)
     .await?;
 
@@ -112,7 +114,8 @@ pub async fn create_employee(
     }
 
     let id = Uuid::now_v7();
-    let emp = sqlx::query_as::<_, Employee>(
+    let emp = sqlx::query_as!(
+        Employee,
         r#"INSERT INTO employees (
             id, company_id, employee_number, full_name, ic_number, passport_number,
             date_of_birth, gender, nationality, race, residency_status, marital_status,
@@ -128,15 +131,15 @@ pub async fn create_employee(
             payroll_group_id, salary_group,
             created_by
         ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8::gender_type, $9, $10::race_type, $11::residency_status, $12::marital_status,
+            $1, $2, $3, $4, $5, $6, $7, $8::text::gender_type, $9, $10::text::race_type, $11::text::residency_status, $12::text::marital_status,
             $13, $14, $15, $16, $17, $18, $19,
-            $20, $21, $22, $23, $24::employment_type, $25, $26, $27,
+            $20, $21, $22, $23, $24::text::employment_type, $25, $26, $27,
             $28, $29, $30, $31, $32, $33, $34, $35, $36, $37,
             $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48
         ) RETURNING id, company_id, employee_number, full_name, ic_number, passport_number,
-            date_of_birth, gender::text, nationality, race::text, residency_status::text,
-            marital_status::text, email, phone, address_line1, address_line2, city, state, postcode,
-            department, designation, cost_centre, branch, employment_type::text,
+            date_of_birth, gender::text AS "gender?", nationality, race::text AS "race?", residency_status::text AS "residency_status!",
+            marital_status::text AS "marital_status?", email, phone, address_line1, address_line2, city, state, postcode,
+            department, designation, cost_centre, branch, employment_type::text AS "employment_type!",
             date_joined, probation_start, probation_end, confirmation_date,
             date_resigned, resignation_reason, basic_salary, hourly_rate, daily_rate,
             bank_name, bank_account_number, bank_account_type,
@@ -145,55 +148,55 @@ pub async fn create_employee(
             zakat_monthly_amount, ptptn_monthly_amount, tabung_haji_amount,
             hrdf_contribution, payroll_group_id, salary_group, is_active,
             deleted_at, created_at, updated_at, created_by, updated_by"#,
+        id,
+        company_id,
+        req.employee_number,
+        req.full_name,
+        req.ic_number,
+        req.passport_number,
+        req.date_of_birth,
+        req.gender,
+        req.nationality,
+        req.race,
+        req.residency_status.as_deref().unwrap_or("citizen"),
+        req.marital_status,
+        req.email,
+        req.phone,
+        req.address_line1,
+        req.address_line2,
+        req.city,
+        req.state,
+        req.postcode,
+        req.department,
+        req.designation,
+        req.cost_centre,
+        req.branch,
+        req.employment_type.as_deref().unwrap_or("permanent"),
+        req.date_joined,
+        req.probation_start,
+        req.probation_end,
+        req.basic_salary,
+        req.hourly_rate,
+        req.daily_rate,
+        req.bank_name,
+        req.bank_account_number,
+        req.bank_account_type,
+        req.tax_identification_number,
+        req.epf_number,
+        req.socso_number,
+        req.eis_number,
+        req.working_spouse,
+        req.num_children,
+        req.epf_category,
+        req.is_muslim,
+        req.zakat_eligible,
+        req.zakat_monthly_amount,
+        req.ptptn_monthly_amount,
+        req.tabung_haji_amount,
+        req.payroll_group_id,
+        req.salary_group,
+        created_by,
     )
-    .bind(id)
-    .bind(company_id)
-    .bind(&req.employee_number)
-    .bind(&req.full_name)
-    .bind(&req.ic_number)
-    .bind(&req.passport_number)
-    .bind(req.date_of_birth)
-    .bind(&req.gender)
-    .bind(&req.nationality)
-    .bind(&req.race)
-    .bind(req.residency_status.as_deref().unwrap_or("citizen"))
-    .bind(&req.marital_status)
-    .bind(&req.email)
-    .bind(&req.phone)
-    .bind(&req.address_line1)
-    .bind(&req.address_line2)
-    .bind(&req.city)
-    .bind(&req.state)
-    .bind(&req.postcode)
-    .bind(&req.department)
-    .bind(&req.designation)
-    .bind(&req.cost_centre)
-    .bind(&req.branch)
-    .bind(req.employment_type.as_deref().unwrap_or("permanent"))
-    .bind(req.date_joined)
-    .bind(req.probation_start)
-    .bind(req.probation_end)
-    .bind(req.basic_salary)
-    .bind(req.hourly_rate)
-    .bind(req.daily_rate)
-    .bind(&req.bank_name)
-    .bind(&req.bank_account_number)
-    .bind(&req.bank_account_type)
-    .bind(&req.tax_identification_number)
-    .bind(&req.epf_number)
-    .bind(&req.socso_number)
-    .bind(&req.eis_number)
-    .bind(req.working_spouse)
-    .bind(req.num_children)
-    .bind(&req.epf_category)
-    .bind(req.is_muslim)
-    .bind(req.zakat_eligible)
-    .bind(req.zakat_monthly_amount)
-    .bind(req.ptptn_monthly_amount)
-    .bind(req.tabung_haji_amount)
-    .bind(req.payroll_group_id)
-    .bind(&req.salary_group)
-    .bind(created_by)
     .fetch_one(pool)
     .await?;
 
@@ -250,37 +253,40 @@ pub async fn create_user_for_employee(
     };
 
     // Check if email already exists
-    let existing: Option<(Uuid, String)> =
-        sqlx::query_as("SELECT id, role FROM users WHERE email = $1")
-            .bind(email)
-            .fetch_optional(pool)
-            .await?;
+    let existing = sqlx::query!("SELECT id, role FROM users WHERE email = $1", email)
+        .fetch_optional(pool)
+        .await?;
 
-    if let Some((existing_id, existing_role)) = existing {
-        if existing_role == "employee" {
+    if let Some(row) = existing {
+        let existing_id = row.id;
+        if row.role == "employee" {
             // Stale employee account — clean up and recreate below
-            sqlx::query("DELETE FROM user_companies WHERE user_id = $1")
-                .bind(existing_id)
+            sqlx::query!("DELETE FROM user_companies WHERE user_id = $1", existing_id)
                 .execute(pool)
                 .await?;
-            sqlx::query("DELETE FROM refresh_tokens WHERE user_id = $1")
-                .bind(existing_id)
+            sqlx::query!("DELETE FROM refresh_tokens WHERE user_id = $1", existing_id)
                 .execute(pool)
                 .await?;
-            sqlx::query("DELETE FROM users WHERE id = $1")
-                .bind(existing_id)
+            sqlx::query!("DELETE FROM users WHERE id = $1", existing_id)
                 .execute(pool)
                 .await?;
         } else {
             // Non-employee user (admin, etc.) — link to this employee silently
-            sqlx::query("UPDATE users SET employee_id = $1, company_id = $2 WHERE id = $3")
-                .bind(emp.id)
-                .bind(emp.company_id)
-                .bind(existing_id)
-                .execute(pool)
-                .await?;
-            sqlx::query("INSERT INTO user_companies (user_id, company_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
-                .bind(existing_id).bind(emp.company_id).execute(pool).await?;
+            sqlx::query!(
+                "UPDATE users SET employee_id = $1, company_id = $2 WHERE id = $3",
+                emp.id,
+                emp.company_id,
+                existing_id,
+            )
+            .execute(pool)
+            .await?;
+            sqlx::query!(
+                "INSERT INTO user_companies (user_id, company_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+                existing_id,
+                emp.company_id,
+            )
+            .execute(pool)
+            .await?;
             return Ok(None);
         }
     }
@@ -291,26 +297,26 @@ pub async fn create_user_for_employee(
         .map_err(|e| AppError::Internal(format!("Failed to hash password: {}", e)))?;
 
     let user_id = Uuid::now_v7();
-    sqlx::query(
+    sqlx::query!(
         r#"INSERT INTO users (id, email, password_hash, full_name, role, company_id, employee_id, must_change_password)
         VALUES ($1, $2, $3, $4, 'employee', $5, $6, TRUE)"#,
+        user_id,
+        email,
+        password_hash,
+        emp.full_name,
+        emp.company_id,
+        emp.id,
     )
-    .bind(user_id)
-    .bind(email)
-    .bind(&password_hash)
-    .bind(&emp.full_name)
-    .bind(emp.company_id)
-    .bind(emp.id)
     .execute(pool)
     .await?;
 
     // Link user to company
-    sqlx::query(
+    sqlx::query!(
         r#"INSERT INTO user_companies (user_id, company_id)
         VALUES ($1, $2) ON CONFLICT DO NOTHING"#,
+        user_id,
+        emp.company_id,
     )
-    .bind(user_id)
-    .bind(emp.company_id)
     .execute(pool)
     .await?;
 
@@ -340,30 +346,31 @@ pub async fn update_employee(
     if let Some(new_salary) = req.basic_salary
         && new_salary != existing.basic_salary
     {
-        sqlx::query(
-                r#"INSERT INTO salary_history (id, employee_id, old_salary, new_salary, effective_date, created_by)
+        sqlx::query!(
+            r#"INSERT INTO salary_history (id, employee_id, old_salary, new_salary, effective_date, created_by)
                 VALUES ($1, $2, $3, $4, NOW()::date, $5)"#,
-            )
-            .bind(Uuid::now_v7())
-            .bind(id)
-            .bind(existing.basic_salary)
-            .bind(new_salary)
-            .bind(updated_by)
-            .execute(pool)
-            .await?;
+            Uuid::now_v7(),
+            id,
+            existing.basic_salary,
+            new_salary,
+            updated_by,
+        )
+        .execute(pool)
+        .await?;
     }
 
-    let emp = sqlx::query_as::<_, Employee>(
+    let emp = sqlx::query_as!(
+        Employee,
         r#"UPDATE employees SET
             full_name = COALESCE($3, full_name),
             ic_number = COALESCE($4, ic_number),
             passport_number = COALESCE($5, passport_number),
             date_of_birth = COALESCE($6, date_of_birth),
-            gender = COALESCE($7::gender_type, gender),
+            gender = COALESCE($7::text::gender_type, gender),
             nationality = COALESCE($8, nationality),
-            race = COALESCE($9::race_type, race),
-            residency_status = COALESCE($10::residency_status, residency_status),
-            marital_status = COALESCE($11::marital_status, marital_status),
+            race = COALESCE($9::text::race_type, race),
+            residency_status = COALESCE($10::text::residency_status, residency_status),
+            marital_status = COALESCE($11::text::marital_status, marital_status),
             email = COALESCE($12, email),
             phone = COALESCE($13, phone),
             address_line1 = COALESCE($14, address_line1),
@@ -375,7 +382,7 @@ pub async fn update_employee(
             designation = COALESCE($20, designation),
             cost_centre = COALESCE($21, cost_centre),
             branch = COALESCE($22, branch),
-            employment_type = COALESCE($23::employment_type, employment_type),
+            employment_type = COALESCE($23::text::employment_type, employment_type),
             probation_start = COALESCE($24, probation_start),
             probation_end = COALESCE($25, probation_end),
             confirmation_date = COALESCE($26, confirmation_date),
@@ -407,9 +414,9 @@ pub async fn update_employee(
             updated_at = NOW()
         WHERE id = $1 AND company_id = $2 AND deleted_at IS NULL
         RETURNING id, company_id, employee_number, full_name, ic_number, passport_number,
-            date_of_birth, gender::text, nationality, race::text, residency_status::text,
-            marital_status::text, email, phone, address_line1, address_line2, city, state, postcode,
-            department, designation, cost_centre, branch, employment_type::text,
+            date_of_birth, gender::text AS "gender?", nationality, race::text AS "race?", residency_status::text AS "residency_status!",
+            marital_status::text AS "marital_status?", email, phone, address_line1, address_line2, city, state, postcode,
+            department, designation, cost_centre, branch, employment_type::text AS "employment_type!",
             date_joined, probation_start, probation_end, confirmation_date,
             date_resigned, resignation_reason, basic_salary, hourly_rate, daily_rate,
             bank_name, bank_account_number, bank_account_type,
@@ -418,58 +425,58 @@ pub async fn update_employee(
             zakat_monthly_amount, ptptn_monthly_amount, tabung_haji_amount,
             hrdf_contribution, payroll_group_id, salary_group, is_active,
             deleted_at, created_at, updated_at, created_by, updated_by"#,
+        id,
+        company_id,
+        req.full_name,
+        req.ic_number,
+        req.passport_number,
+        req.date_of_birth,
+        req.gender,
+        req.nationality,
+        req.race,
+        req.residency_status,
+        req.marital_status,
+        req.email,
+        req.phone,
+        req.address_line1,
+        req.address_line2,
+        req.city,
+        req.state,
+        req.postcode,
+        req.department,
+        req.designation,
+        req.cost_centre,
+        req.branch,
+        req.employment_type,
+        req.probation_start,
+        req.probation_end,
+        req.confirmation_date,
+        req.date_resigned,
+        req.resignation_reason,
+        req.basic_salary,
+        req.hourly_rate,
+        req.daily_rate,
+        req.bank_name,
+        req.bank_account_number,
+        req.bank_account_type,
+        req.tax_identification_number,
+        req.epf_number,
+        req.socso_number,
+        req.eis_number,
+        req.working_spouse,
+        req.num_children,
+        req.epf_category,
+        req.is_muslim,
+        req.zakat_eligible,
+        req.zakat_monthly_amount,
+        req.ptptn_monthly_amount,
+        req.tabung_haji_amount,
+        req.hrdf_contribution,
+        req.payroll_group_id,
+        req.salary_group,
+        req.is_active,
+        updated_by,
     )
-    .bind(id)
-    .bind(company_id)
-    .bind(&req.full_name)
-    .bind(&req.ic_number)
-    .bind(&req.passport_number)
-    .bind(req.date_of_birth)
-    .bind(&req.gender)
-    .bind(&req.nationality)
-    .bind(&req.race)
-    .bind(&req.residency_status)
-    .bind(&req.marital_status)
-    .bind(&req.email)
-    .bind(&req.phone)
-    .bind(&req.address_line1)
-    .bind(&req.address_line2)
-    .bind(&req.city)
-    .bind(&req.state)
-    .bind(&req.postcode)
-    .bind(&req.department)
-    .bind(&req.designation)
-    .bind(&req.cost_centre)
-    .bind(&req.branch)
-    .bind(&req.employment_type)
-    .bind(req.probation_start)
-    .bind(req.probation_end)
-    .bind(req.confirmation_date)
-    .bind(req.date_resigned)
-    .bind(&req.resignation_reason)
-    .bind(req.basic_salary)
-    .bind(req.hourly_rate)
-    .bind(req.daily_rate)
-    .bind(&req.bank_name)
-    .bind(&req.bank_account_number)
-    .bind(&req.bank_account_type)
-    .bind(&req.tax_identification_number)
-    .bind(&req.epf_number)
-    .bind(&req.socso_number)
-    .bind(&req.eis_number)
-    .bind(req.working_spouse)
-    .bind(req.num_children)
-    .bind(&req.epf_category)
-    .bind(req.is_muslim)
-    .bind(req.zakat_eligible)
-    .bind(req.zakat_monthly_amount)
-    .bind(req.ptptn_monthly_amount)
-    .bind(req.tabung_haji_amount)
-    .bind(req.hrdf_contribution)
-    .bind(req.payroll_group_id)
-    .bind(&req.salary_group)
-    .bind(req.is_active)
-    .bind(updated_by)
     .fetch_one(pool)
     .await?;
 
@@ -495,11 +502,11 @@ pub async fn update_employee(
 }
 
 pub async fn soft_delete_employee(pool: &PgPool, id: Uuid, company_id: Uuid) -> AppResult<()> {
-    let rows = sqlx::query(
+    let rows = sqlx::query!(
         "UPDATE employees SET deleted_at = NOW(), is_active = FALSE, employee_number = employee_number || '_DEL_' || id::text WHERE id = $1 AND company_id = $2",
+        id,
+        company_id,
     )
-    .bind(id)
-    .bind(company_id)
     .execute(pool)
     .await?
     .rows_affected();
@@ -509,20 +516,19 @@ pub async fn soft_delete_employee(pool: &PgPool, id: Uuid, company_id: Uuid) -> 
     }
 
     // Delete the user account linked to this employee
-    sqlx::query(
+    sqlx::query!(
         "DELETE FROM user_companies WHERE user_id IN (SELECT id FROM users WHERE employee_id = $1)",
+        id,
     )
-    .bind(id)
     .execute(pool)
     .await?;
-    sqlx::query(
+    sqlx::query!(
         "DELETE FROM refresh_tokens WHERE user_id IN (SELECT id FROM users WHERE employee_id = $1)",
+        id,
     )
-    .bind(id)
     .execute(pool)
     .await?;
-    sqlx::query("DELETE FROM users WHERE employee_id = $1")
-        .bind(id)
+    sqlx::query!("DELETE FROM users WHERE employee_id = $1", id)
         .execute(pool)
         .await?;
 
@@ -530,10 +536,11 @@ pub async fn soft_delete_employee(pool: &PgPool, id: Uuid, company_id: Uuid) -> 
 }
 
 pub async fn get_salary_history(pool: &PgPool, employee_id: Uuid) -> AppResult<Vec<SalaryHistory>> {
-    let history = sqlx::query_as::<_, SalaryHistory>(
+    let history = sqlx::query_as!(
+        SalaryHistory,
         "SELECT * FROM salary_history WHERE employee_id = $1 ORDER BY effective_date DESC",
+        employee_id,
     )
-    .bind(employee_id)
     .fetch_all(pool)
     .await?;
     Ok(history)
@@ -545,7 +552,8 @@ pub async fn create_tp3(
     req: CreateTp3Request,
     created_by: Uuid,
 ) -> AppResult<Tp3Record> {
-    let record = sqlx::query_as::<_, Tp3Record>(
+    let record = sqlx::query_as!(
+        Tp3Record,
         r#"INSERT INTO tp3_records (
             id, employee_id, tax_year, previous_employer_name,
             previous_income_ytd, previous_epf_ytd, previous_pcb_ytd,
@@ -560,17 +568,17 @@ pub async fn create_tp3(
             previous_socso_ytd = EXCLUDED.previous_socso_ytd,
             previous_zakat_ytd = EXCLUDED.previous_zakat_ytd
         RETURNING *"#,
+        Uuid::now_v7(),
+        employee_id,
+        req.tax_year,
+        req.previous_employer_name,
+        req.previous_income_ytd,
+        req.previous_epf_ytd,
+        req.previous_pcb_ytd,
+        req.previous_socso_ytd,
+        req.previous_zakat_ytd.unwrap_or(0),
+        created_by,
     )
-    .bind(Uuid::now_v7())
-    .bind(employee_id)
-    .bind(req.tax_year)
-    .bind(&req.previous_employer_name)
-    .bind(req.previous_income_ytd)
-    .bind(req.previous_epf_ytd)
-    .bind(req.previous_pcb_ytd)
-    .bind(req.previous_socso_ytd)
-    .bind(req.previous_zakat_ytd.unwrap_or(0))
-    .bind(created_by)
     .fetch_one(pool)
     .await?;
 

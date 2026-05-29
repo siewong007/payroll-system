@@ -1,0 +1,64 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT * FROM salary_history WHERE employee_id = $1 ORDER BY effective_date DESC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "employee_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "old_salary",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "new_salary",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "effective_date",
+        "type_info": "Date"
+      },
+      {
+        "ordinal": 5,
+        "name": "reason",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "created_by",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "17fb631b97c914dd81e66146ede7e19fa02c5f44b74b08a2743d0352b780df08"
+}

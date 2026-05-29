@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM users WHERE employee_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "301f635b588e1b631fe844e6a53d29bb06ad6f2aa3883ef40dfb74b9d4bade53"
+}
