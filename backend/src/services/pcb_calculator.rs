@@ -153,15 +153,15 @@ async fn calculate_tax_from_brackets(
     chargeable_income: i64,
     tax_year: i32,
 ) -> AppResult<i64> {
-    let brackets = sqlx::query_as::<_, (i64, i64, rust_decimal::Decimal, i64)>(
+    let brackets = sqlx::query!(
         r#"
         SELECT chargeable_income_from, chargeable_income_to, tax_rate_percent, cumulative_tax
         FROM pcb_brackets
         WHERE effective_year = $1
         ORDER BY chargeable_income_from ASC
         "#,
+        tax_year,
     )
-    .bind(tax_year)
     .fetch_all(pool)
     .await?;
 
@@ -171,14 +171,15 @@ async fn calculate_tax_from_brackets(
 
     let mut tax: i64 = 0;
 
-    for (from, to, rate_pct, cumulative) in &brackets {
-        if chargeable_income > *from {
-            let taxable_in_bracket = chargeable_income.min(*to) - from;
-            let rate = *rate_pct;
-            let bracket_tax = Decimal::from(taxable_in_bracket) * rate / Decimal::from(100);
-            tax = cumulative + bracket_tax.to_i64().unwrap_or(0);
+    for b in &brackets {
+        if chargeable_income > b.chargeable_income_from {
+            let taxable_in_bracket =
+                chargeable_income.min(b.chargeable_income_to) - b.chargeable_income_from;
+            let bracket_tax =
+                Decimal::from(taxable_in_bracket) * b.tax_rate_percent / Decimal::from(100);
+            tax = b.cumulative_tax + bracket_tax.to_i64().unwrap_or(0);
 
-            if chargeable_income <= *to {
+            if chargeable_income <= b.chargeable_income_to {
                 break;
             }
         }
@@ -214,11 +215,11 @@ async fn calculate_bonus_pcb(
 }
 
 async fn get_relief_amount(pool: &PgPool, relief_type: &str, tax_year: i32) -> AppResult<i64> {
-    let result = sqlx::query_scalar::<_, i64>(
+    let result = sqlx::query_scalar!(
         "SELECT amount FROM pcb_reliefs WHERE relief_type = $1 AND effective_year = $2",
+        relief_type,
+        tax_year,
     )
-    .bind(relief_type)
-    .bind(tax_year)
     .fetch_optional(pool)
     .await?;
 

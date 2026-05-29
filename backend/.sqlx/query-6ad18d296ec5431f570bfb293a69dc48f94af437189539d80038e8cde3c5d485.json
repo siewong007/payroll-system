@@ -1,0 +1,36 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT employee_id, category, SUM(amount)::BIGINT AS \"total!\"\n           FROM payroll_entries\n           WHERE employee_id = ANY($1) AND period_year = $2 AND period_month = $3\n             AND is_processed = FALSE\n           GROUP BY employee_id, category",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "employee_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "category",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "total!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "UuidArray",
+        "Int4",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "6ad18d296ec5431f570bfb293a69dc48f94af437189539d80038e8cde3c5d485"
+}

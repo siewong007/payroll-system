@@ -177,21 +177,6 @@ pub struct UpdateOvertimeRequest {
     pub reason: Option<String>,
 }
 
-// Employee self-update (limited fields)
-#[derive(Debug, Deserialize)]
-pub struct UpdateMyProfileRequest {
-    pub phone: Option<String>,
-    pub email: Option<String>,
-    pub address_line1: Option<String>,
-    pub address_line2: Option<String>,
-    pub city: Option<String>,
-    pub state: Option<String>,
-    pub postcode: Option<String>,
-    pub marital_status: Option<String>,
-    pub bank_name: Option<String>,
-    pub bank_account_number: Option<String>,
-}
-
 // Payslip view for employee
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct MyPayslip {

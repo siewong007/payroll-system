@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE attendance_kiosk_credentials\n         SET revoked_at = NOW()\n         WHERE id = $1 AND company_id = $2 AND revoked_at IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a1c9502c590869ebf238c778592390c5aff34d3e7eacd94e1dbdde07aae53bfb"
+}

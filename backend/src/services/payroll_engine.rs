@@ -43,16 +43,16 @@ pub async fn process_payroll(
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<PayrollRun> {
     // Check for existing run
-    let existing = sqlx::query_scalar::<_, i64>(
-        r#"SELECT COUNT(*) FROM payroll_runs
+    let existing = sqlx::query_scalar!(
+        r#"SELECT COUNT(*) AS "count!" FROM payroll_runs
         WHERE company_id = $1 AND payroll_group_id = $2
         AND period_year = $3 AND period_month = $4
         AND status NOT IN ('cancelled')"#,
+        company_id,
+        payroll_group_id,
+        year,
+        month,
     )
-    .bind(company_id)
-    .bind(payroll_group_id)
-    .bind(year)
-    .bind(month)
     .fetch_one(pool)
     .await?;
 
@@ -76,11 +76,13 @@ pub async fn process_payroll(
     let effective_date = period_end;
 
     // Fetch active employees in this payroll group
-    let employees = sqlx::query_as::<_, Employee>(
+    let employees = sqlx::query_as!(
+        Employee,
         r#"SELECT id, company_id, employee_number, full_name, ic_number, passport_number,
-            date_of_birth, gender::text, nationality, race::text, residency_status::text,
-            marital_status::text, email, phone, address_line1, address_line2, city, state, postcode,
-            department, designation, cost_centre, branch, employment_type::text,
+            date_of_birth, gender::text AS "gender?", nationality, race::text AS "race?",
+            residency_status::text AS "residency_status!", marital_status::text AS "marital_status?",
+            email, phone, address_line1, address_line2, city, state, postcode,
+            department, designation, cost_centre, branch, employment_type::text AS "employment_type!",
             date_joined, probation_start, probation_end, confirmation_date,
             date_resigned, resignation_reason, basic_salary, hourly_rate, daily_rate,
             bank_name, bank_account_number, bank_account_type,
@@ -94,11 +96,11 @@ pub async fn process_payroll(
         AND is_active = TRUE AND deleted_at IS NULL
         AND date_joined <= $3
         AND (date_resigned IS NULL OR date_resigned >= $4)"#,
+        company_id,
+        payroll_group_id,
+        period_end,
+        period_start,
     )
-    .bind(company_id)
-    .bind(payroll_group_id)
-    .bind(period_end)
-    .bind(period_start)
     .fetch_all(pool)
     .await?;
 
@@ -115,24 +117,24 @@ pub async fn process_payroll(
     let mut tx = pool.begin().await?;
 
     // Create payroll run
-    let run_id = Uuid::new_v4();
+    let run_id = Uuid::now_v7();
     tracing::Span::current().record("run_id", tracing::field::display(run_id));
-    sqlx::query(
+    sqlx::query!(
         r#"INSERT INTO payroll_runs
         (id, company_id, payroll_group_id, period_year, period_month,
          period_start, period_end, pay_date, status, processed_by, processed_at, notes, created_by)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'processing', $9, NOW(), $10, $9)"#,
+        run_id,
+        company_id,
+        payroll_group_id,
+        year,
+        month,
+        period_start,
+        period_end,
+        pay_date,
+        processed_by,
+        notes,
     )
-    .bind(run_id)
-    .bind(company_id)
-    .bind(payroll_group_id)
-    .bind(year)
-    .bind(month)
-    .bind(period_start)
-    .bind(period_end)
-    .bind(pay_date)
-    .bind(processed_by)
-    .bind(&notes)
     .execute(&mut *tx)
     .await?;
 
@@ -141,23 +143,23 @@ pub async fn process_payroll(
     // 1. Batch fetch recurring allowances and deductions
     let mut recurring_allowances_map = HashMap::new();
     let mut recurring_deductions_map = HashMap::new();
-    let allowances: Vec<(Uuid, String, i64)> = sqlx::query_as(
-        r#"SELECT employee_id, category, SUM(amount)::BIGINT
+    let allowances = sqlx::query!(
+        r#"SELECT employee_id, category, SUM(amount)::BIGINT AS "total!"
            FROM employee_allowances
            WHERE employee_id = ANY($1) AND is_active = TRUE AND is_recurring = TRUE
              AND effective_from <= $2 AND (effective_to IS NULL OR effective_to >= $2)
            GROUP BY employee_id, category"#,
+        &employee_ids,
+        effective_date,
     )
-    .bind(&employee_ids)
-    .bind(effective_date)
     .fetch_all(&mut *tx)
     .await?;
 
-    for (emp_id, cat, total) in allowances {
-        if cat == "earning" {
-            recurring_allowances_map.insert(emp_id, total);
+    for row in allowances {
+        if row.category == "earning" {
+            recurring_allowances_map.insert(row.employee_id, row.total);
         } else {
-            recurring_deductions_map.insert(emp_id, total);
+            recurring_deductions_map.insert(row.employee_id, row.total);
         }
     }
 
@@ -165,145 +167,166 @@ pub async fn process_payroll(
     let mut monthly_allowances_map = HashMap::new();
     let mut variable_earnings_map = HashMap::new();
     let mut variable_deductions_map = HashMap::new();
-    let entries: Vec<(Uuid, String, i64)> = sqlx::query_as(
-        r#"SELECT employee_id, category, SUM(amount)::BIGINT
+    let entries = sqlx::query!(
+        r#"SELECT employee_id, category, SUM(amount)::BIGINT AS "total!"
            FROM payroll_entries
            WHERE employee_id = ANY($1) AND period_year = $2 AND period_month = $3
              AND is_processed = FALSE
            GROUP BY employee_id, category"#,
+        &employee_ids,
+        year,
+        month,
     )
-    .bind(&employee_ids)
-    .bind(year)
-    .bind(month)
     .fetch_all(&mut *tx)
     .await?;
 
-    for (emp_id, cat, total) in entries {
-        if cat == "earning" {
-            variable_earnings_map.insert(emp_id, total);
+    for row in entries {
+        if row.category == "earning" {
+            variable_earnings_map.insert(row.employee_id, row.total);
         } else {
-            variable_deductions_map.insert(emp_id, total);
+            variable_deductions_map.insert(row.employee_id, row.total);
         }
     }
 
-    let monthly_allowances: Vec<(Uuid, i64)> = sqlx::query_as(
-        r#"SELECT employee_id, SUM(amount)::BIGINT
+    let monthly_allowances = sqlx::query!(
+        r#"SELECT employee_id, SUM(amount)::BIGINT AS "total!"
            FROM payroll_entries
            WHERE employee_id = ANY($1) AND period_year = $2 AND period_month = $3
              AND is_processed = FALSE
              AND category = 'earning'
              AND item_type IN ('allowance', 'monthly_allowance')
            GROUP BY employee_id"#,
+        &employee_ids,
+        year,
+        month,
     )
-    .bind(&employee_ids)
-    .bind(year)
-    .bind(month)
     .fetch_all(&mut *tx)
     .await?;
 
-    for (emp_id, total) in monthly_allowances {
-        monthly_allowances_map.insert(emp_id, total);
+    for row in monthly_allowances {
+        monthly_allowances_map.insert(row.employee_id, row.total);
     }
 
     // 3. Batch fetch attendance OT hours
-    let ot_hours: Vec<(Uuid, f64)> = sqlx::query_as(
-        r#"SELECT ar.employee_id, SUM(ar.overtime_hours)::FLOAT
+    let ot_hours = sqlx::query!(
+        r#"SELECT ar.employee_id, SUM(ar.overtime_hours)::FLOAT AS "hours!"
            FROM attendance_records ar
            LEFT JOIN overtime_applications oa
                ON ar.employee_id = oa.employee_id
                AND DATE(ar.check_in_at) = oa.ot_date
                AND oa.status = 'approved'
            WHERE ar.employee_id = ANY($1)
-             AND ar.check_in_at >= $2 AND ar.check_in_at <= $3 + INTERVAL '1 day'
+             AND ar.check_in_at >= $2::date AND ar.check_in_at <= $3::date + INTERVAL '1 day'
              AND oa.id IS NULL
            GROUP BY ar.employee_id"#,
+        &employee_ids,
+        period_start,
+        period_end,
     )
-    .bind(&employee_ids)
-    .bind(period_start)
-    .bind(period_end)
     .fetch_all(&mut *tx)
     .await?;
-    let attendance_ot_map: HashMap<Uuid, f64> = ot_hours.into_iter().collect();
+    let attendance_ot_map: HashMap<Uuid, f64> = ot_hours
+        .into_iter()
+        .map(|r| (r.employee_id, r.hours))
+        .collect();
 
     // 3b. Batch fetch approved overtime applications
-    let approved_ot: Vec<(Uuid, String, f64)> = sqlx::query_as(
-        r#"SELECT employee_id, ot_type, SUM(hours)::FLOAT
+    let approved_ot = sqlx::query!(
+        r#"SELECT employee_id, ot_type, SUM(hours)::FLOAT AS "hours!"
            FROM overtime_applications
            WHERE employee_id = ANY($1)
              AND ot_date >= $2 AND ot_date <= $3
              AND status = 'approved'
            GROUP BY employee_id, ot_type"#,
+        &employee_ids,
+        period_start,
+        period_end,
     )
-    .bind(&employee_ids)
-    .bind(period_start)
-    .bind(period_end)
     .fetch_all(&mut *tx)
     .await?;
     let mut approved_ot_map: HashMap<Uuid, Vec<(String, f64)>> = HashMap::new();
-    for (emp_id, ot_type, hours) in approved_ot {
+    for row in approved_ot {
         approved_ot_map
-            .entry(emp_id)
+            .entry(row.employee_id)
             .or_default()
-            .push((ot_type, hours));
+            .push((row.ot_type, row.hours));
     }
 
     // 3c. Batch fetch approved claims
-    let approved_claims: Vec<(Uuid, i64)> = sqlx::query_as(
-        r#"SELECT employee_id, SUM(amount)::BIGINT
+    let approved_claims = sqlx::query!(
+        r#"SELECT employee_id, SUM(amount)::BIGINT AS "total!"
            FROM claims
            WHERE employee_id = ANY($1)
              AND company_id = $2
              AND status = 'approved'
              AND expense_date >= $3 AND expense_date <= $4
            GROUP BY employee_id"#,
+        &employee_ids,
+        company_id,
+        period_start,
+        period_end,
     )
-    .bind(&employee_ids)
-    .bind(company_id)
-    .bind(period_start)
-    .bind(period_end)
     .fetch_all(&mut *tx)
     .await?;
-    let claims_map: HashMap<Uuid, i64> = approved_claims.into_iter().collect();
+    let claims_map: HashMap<Uuid, i64> = approved_claims
+        .into_iter()
+        .map(|r| (r.employee_id, r.total))
+        .collect();
 
     // 4. Batch fetch TP3 data
-    let tp3_data: Vec<(Uuid, i64, i64, i64, i64)> = sqlx::query_as(
+    let tp3_data = sqlx::query!(
         r#"SELECT employee_id, previous_income_ytd, previous_epf_ytd, previous_pcb_ytd, previous_zakat_ytd
-           FROM tp3_records WHERE employee_id = ANY($1) AND tax_year = $2"#
+           FROM tp3_records WHERE employee_id = ANY($1) AND tax_year = $2"#,
+        &employee_ids,
+        year,
     )
-    .bind(&employee_ids)
-    .bind(year)
     .fetch_all(&mut *tx)
     .await?;
     let tp3_map: HashMap<Uuid, (i64, i64, i64, i64)> = tp3_data
         .into_iter()
-        .map(|(id, i, e, p, z)| (id, (i, e, p, z)))
+        .map(|r| {
+            (
+                r.employee_id,
+                (
+                    r.previous_income_ytd,
+                    r.previous_epf_ytd,
+                    r.previous_pcb_ytd,
+                    r.previous_zakat_ytd,
+                ),
+            )
+        })
         .collect();
 
     // 5. Batch fetch YTD figures
-    let ytd_data: Vec<(Uuid, i64, i64, i64, i64, i64, i64, i64)> = sqlx::query_as(
+    let ytd_data = sqlx::query!(
         r#"SELECT
             pi.employee_id,
-            COALESCE(SUM(pi.gross_salary), 0)::BIGINT,
-            COALESCE(SUM(pi.pcb_amount), 0)::BIGINT,
-            COALESCE(SUM(pi.epf_employee), 0)::BIGINT,
-            COALESCE(SUM(pi.socso_employee), 0)::BIGINT,
-            COALESCE(SUM(pi.eis_employee), 0)::BIGINT,
-            COALESCE(SUM(pi.zakat_amount), 0)::BIGINT,
-            COALESCE(SUM(pi.net_salary), 0)::BIGINT
+            COALESCE(SUM(pi.gross_salary), 0)::BIGINT AS "gross!",
+            COALESCE(SUM(pi.pcb_amount), 0)::BIGINT AS "pcb!",
+            COALESCE(SUM(pi.epf_employee), 0)::BIGINT AS "epf!",
+            COALESCE(SUM(pi.socso_employee), 0)::BIGINT AS "socso!",
+            COALESCE(SUM(pi.eis_employee), 0)::BIGINT AS "eis!",
+            COALESCE(SUM(pi.zakat_amount), 0)::BIGINT AS "zakat!",
+            COALESCE(SUM(pi.net_salary), 0)::BIGINT AS "net!"
         FROM payroll_items pi
         JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
         WHERE pi.employee_id = ANY($1) AND pr.period_year = $2 AND pr.period_month < $3
         AND pr.status::text IN ('processed', 'pending_approval', 'approved', 'paid')
         GROUP BY pi.employee_id"#,
+        &employee_ids,
+        year,
+        month,
     )
-    .bind(&employee_ids)
-    .bind(year)
-    .bind(month)
     .fetch_all(&mut *tx)
     .await?;
     let ytd_map: HashMap<Uuid, (i64, i64, i64, i64, i64, i64, i64)> = ytd_data
         .into_iter()
-        .map(|(id, g, p, e, s, ei, z, n)| (id, (g, p, e, s, ei, z, n)))
+        .map(|r| {
+            (
+                r.employee_id,
+                (r.gross, r.pcb, r.epf, r.socso, r.eis, r.zakat, r.net),
+            )
+        })
         .collect();
 
     let bulk_data = BulkPayrollData {
@@ -362,7 +385,7 @@ pub async fn process_payroll(
     }
 
     // Update run totals
-    sqlx::query(
+    sqlx::query!(
         r#"UPDATE payroll_runs SET
         status = 'processed',
         total_gross = $2, total_net = $3, total_employer_cost = $4,
@@ -372,20 +395,20 @@ pub async fn process_payroll(
         total_pcb = $11, total_zakat = $12,
         employee_count = $13, updated_at = NOW()
         WHERE id = $1"#,
+        run_id,
+        total_gross,
+        total_net,
+        total_employer_cost,
+        total_epf_ee,
+        total_epf_er,
+        total_socso_ee,
+        total_socso_er,
+        total_eis_ee,
+        total_eis_er,
+        total_pcb,
+        total_zakat,
+        employees.len() as i32,
     )
-    .bind(run_id)
-    .bind(total_gross)
-    .bind(total_net)
-    .bind(total_employer_cost)
-    .bind(total_epf_ee)
-    .bind(total_epf_er)
-    .bind(total_socso_ee)
-    .bind(total_socso_er)
-    .bind(total_eis_ee)
-    .bind(total_eis_er)
-    .bind(total_pcb)
-    .bind(total_zakat)
-    .bind(employees.len() as i32)
     .execute(&mut *tx)
     .await?;
 
@@ -418,17 +441,18 @@ pub async fn process_payroll(
     .await;
 
     // Return the completed run
-    let run = sqlx::query_as::<_, PayrollRun>(
+    let run = sqlx::query_as!(
+        PayrollRun,
         r#"SELECT id, company_id, payroll_group_id, period_year, period_month,
-            period_start, period_end, pay_date, status::text as status,
+            period_start, period_end, pay_date, status::text AS "status!",
             total_gross, total_net, total_employer_cost,
             total_epf_employee, total_epf_employer, total_socso_employee, total_socso_employer,
             total_eis_employee, total_eis_employer, total_pcb, total_zakat,
             employee_count, version, processed_by, processed_at, approved_by, approved_at,
             locked_at, locked_by, notes, created_at, updated_at, created_by, updated_by
         FROM payroll_runs WHERE id = $1"#,
+        run_id,
     )
-    .bind(run_id)
     .fetch_one(pool)
     .await?;
 
@@ -579,8 +603,9 @@ async fn process_employee(
     let new_ytd_net = ytd_net + net;
 
     // Insert payroll item
-    let item_id = Uuid::new_v4();
-    let item = sqlx::query_as::<_, PayrollItem>(
+    let item_id = Uuid::now_v7();
+    let item = sqlx::query_as!(
+        PayrollItem,
         r#"INSERT INTO payroll_items (
             id, payroll_run_id, employee_id,
             basic_salary, gross_salary, total_allowances, total_overtime, total_claims,
@@ -595,63 +620,63 @@ async fn process_employee(
             $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
             $21, $22, $23, $24, $25, $26, $27, $28, $29
         ) RETURNING *"#,
+        item_id,
+        run_id,
+        emp.id,
+        basic,
+        gross,
+        total_allowances,
+        total_overtime,
+        total_claims,
+        epf.employee,
+        epf.employer,
+        socso.employee,
+        socso.employer,
+        eis.employee,
+        eis.employer,
+        pcb,
+        zakat,
+        ptptn,
+        tabung_haji,
+        recurring_deductions + variable_deductions,
+        total_deductions,
+        net,
+        employer_cost,
+        new_ytd_gross,
+        new_ytd_epf,
+        new_ytd_pcb,
+        new_ytd_socso,
+        new_ytd_eis,
+        new_ytd_zakat,
+        new_ytd_net,
     )
-    .bind(item_id)
-    .bind(run_id)
-    .bind(emp.id)
-    .bind(basic)
-    .bind(gross)
-    .bind(total_allowances)
-    .bind(total_overtime)
-    .bind(total_claims)
-    .bind(epf.employee)
-    .bind(epf.employer)
-    .bind(socso.employee)
-    .bind(socso.employer)
-    .bind(eis.employee)
-    .bind(eis.employer)
-    .bind(pcb)
-    .bind(zakat)
-    .bind(ptptn)
-    .bind(tabung_haji)
-    .bind(recurring_deductions + variable_deductions)
-    .bind(total_deductions)
-    .bind(net)
-    .bind(employer_cost)
-    .bind(new_ytd_gross)
-    .bind(new_ytd_epf)
-    .bind(new_ytd_pcb)
-    .bind(new_ytd_socso)
-    .bind(new_ytd_eis)
-    .bind(new_ytd_zakat)
-    .bind(new_ytd_net)
     .fetch_one(&mut **tx)
     .await?;
 
     // Mark staged entries as processed
-    sqlx::query(
+    sqlx::query!(
         r#"UPDATE payroll_entries SET is_processed = TRUE, payroll_run_id = $1
         WHERE employee_id = $2 AND period_year = $3 AND period_month = $4 AND is_processed = FALSE"#,
+        run_id,
+        emp.id,
+        year,
+        month,
     )
-    .bind(run_id)
-    .bind(emp.id)
-    .bind(year)
-    .bind(month)
     .execute(&mut **tx)
     .await?;
 
     // Mark approved claims as processed
     if total_claims > 0 {
-        sqlx::query(
+        sqlx::query!(
             r#"UPDATE claims SET status = 'processed', updated_at = NOW()
             WHERE employee_id = $1 AND company_id = $2
               AND status = 'approved'
               AND expense_date >= $3 AND expense_date <= $4"#,
+            emp.id,
+            emp.company_id,
+            _period_start,
+            _period_end,
         )
-        .bind(emp.id)
-        .bind(emp.company_id)
-        .bind(_period_start)
-        .bind(_period_end)
         .execute(&mut **tx)
         .await?;
     }

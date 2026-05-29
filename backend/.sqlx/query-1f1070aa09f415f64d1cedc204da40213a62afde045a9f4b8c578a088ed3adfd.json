@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT employee_id, SUM(amount)::BIGINT AS \"total!\"\n           FROM claims\n           WHERE employee_id = ANY($1)\n             AND company_id = $2\n             AND status = 'approved'\n             AND expense_date >= $3 AND expense_date <= $4\n           GROUP BY employee_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "employee_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "total!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "UuidArray",
+        "Uuid",
+        "Date",
+        "Date"
+      ]
+    },
+    "nullable": [
+      false,
+      null
+    ]
+  },
+  "hash": "1f1070aa09f415f64d1cedc204da40213a62afde045a9f4b8c578a088ed3adfd"
+}

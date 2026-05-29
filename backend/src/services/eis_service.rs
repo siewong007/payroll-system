@@ -36,7 +36,7 @@ pub async fn calculate_eis(
     // Cap wage at ceiling (RM5,000 = 500000 sen)
     let capped_wage = wage.min(500000);
 
-    let rate = sqlx::query_as::<_, (i64, i64)>(
+    let rate = sqlx::query!(
         r#"
         SELECT employee_contribution, employer_contribution
         FROM eis_rates
@@ -46,14 +46,17 @@ pub async fn calculate_eis(
         ORDER BY effective_from DESC
         LIMIT 1
         "#,
+        capped_wage,
+        effective_date,
     )
-    .bind(capped_wage)
-    .bind(effective_date)
     .fetch_optional(pool)
     .await?;
 
     match rate {
-        Some((employee, employer)) => Ok(EisContribution { employee, employer }),
+        Some(r) => Ok(EisContribution {
+            employee: r.employee_contribution,
+            employer: r.employer_contribution,
+        }),
         None => Ok(EisContribution {
             employee: 0,
             employer: 0,

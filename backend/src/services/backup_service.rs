@@ -382,70 +382,70 @@ pub async fn import_company(
     remap.insert(backup.company.id, new_company_id);
 
     for pg in &backup.payroll_groups {
-        remap.insert(pg.id, Uuid::new_v4());
+        remap.insert(pg.id, Uuid::now_v7());
     }
     for e in &backup.employees {
-        remap.insert(e.id, Uuid::new_v4());
+        remap.insert(e.id, Uuid::now_v7());
     }
     for a in &backup.employee_allowances {
-        remap.insert(a.id, Uuid::new_v4());
+        remap.insert(a.id, Uuid::now_v7());
     }
     for s in &backup.salary_history {
-        remap.insert(s.id, Uuid::new_v4());
+        remap.insert(s.id, Uuid::now_v7());
     }
     for t in &backup.tp3_records {
-        remap.insert(t.id, Uuid::new_v4());
+        remap.insert(t.id, Uuid::now_v7());
     }
     for lt in &backup.leave_types {
-        remap.insert(lt.id, Uuid::new_v4());
+        remap.insert(lt.id, Uuid::now_v7());
     }
     for lb in &backup.leave_balances {
-        remap.insert(lb.id, Uuid::new_v4());
+        remap.insert(lb.id, Uuid::now_v7());
     }
     for lr in &backup.leave_requests {
-        remap.insert(lr.id, Uuid::new_v4());
+        remap.insert(lr.id, Uuid::now_v7());
     }
     for c in &backup.claims {
-        remap.insert(c.id, Uuid::new_v4());
+        remap.insert(c.id, Uuid::now_v7());
     }
     for o in &backup.overtime_applications {
-        remap.insert(o.id, Uuid::new_v4());
+        remap.insert(o.id, Uuid::now_v7());
     }
     for pr in &backup.payroll_runs {
-        remap.insert(pr.id, Uuid::new_v4());
+        remap.insert(pr.id, Uuid::now_v7());
     }
     for pi in &backup.payroll_items {
-        remap.insert(pi.id, Uuid::new_v4());
+        remap.insert(pi.id, Uuid::now_v7());
     }
     for pid in &backup.payroll_item_details {
-        remap.insert(pid.id, Uuid::new_v4());
+        remap.insert(pid.id, Uuid::now_v7());
     }
     for pe in &backup.payroll_entries {
-        remap.insert(pe.id, Uuid::new_v4());
+        remap.insert(pe.id, Uuid::now_v7());
     }
     for dc in &backup.document_categories {
-        remap.insert(dc.id, Uuid::new_v4());
+        remap.insert(dc.id, Uuid::now_v7());
     }
     for d in &backup.documents {
-        remap.insert(d.id, Uuid::new_v4());
+        remap.insert(d.id, Uuid::now_v7());
     }
     for t in &backup.teams {
-        remap.insert(t.id, Uuid::new_v4());
+        remap.insert(t.id, Uuid::now_v7());
     }
     for tm in &backup.team_members {
-        remap.insert(tm.id, Uuid::new_v4());
+        remap.insert(tm.id, Uuid::now_v7());
     }
     for h in &backup.holidays {
-        remap.insert(h.id, Uuid::new_v4());
+        remap.insert(h.id, Uuid::now_v7());
     }
     for w in &backup.working_day_config {
-        remap.insert(w.id, Uuid::new_v4());
+        remap.insert(w.id, Uuid::now_v7());
     }
     for et in &backup.email_templates {
-        remap.insert(et.id, Uuid::new_v4());
+        remap.insert(et.id, Uuid::now_v7());
     }
     for cs in &backup.company_settings {
-        remap.insert(cs.id, Uuid::new_v4());
+        remap.insert(cs.id, Uuid::now_v7());
     }
 
     let r = |old: Uuid| -> Uuid { *remap.get(&old).unwrap_or(&old) };

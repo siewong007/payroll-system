@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE leave_balances lb\n                SET entitled_days = GREATEST(lb.entitled_days - 1, 0), updated_at = NOW()\n                FROM leave_types lt\n                WHERE lb.leave_type_id = lt.id\n                  AND lb.employee_id = $1\n                  AND lb.year = $2\n                  AND lt.company_id = $3\n                  AND lt.name = 'Replacement Leave'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1d8828fce3e3c2e06508fb7d506ab2589cf9a2fae7283652ddead88fd9fb58dd"
+}

@@ -49,7 +49,7 @@ pub async fn calculate_socso(
         SocsoCategory::FirstCategory
     };
 
-    let rate = sqlx::query_as::<_, (i64, i64, i64)>(
+    let rate = sqlx::query!(
         r#"
         SELECT first_cat_employee, first_cat_employer, second_cat_employer
         FROM socso_rates
@@ -59,22 +59,22 @@ pub async fn calculate_socso(
         ORDER BY effective_from DESC
         LIMIT 1
         "#,
+        capped_wage,
+        effective_date,
     )
-    .bind(capped_wage)
-    .bind(effective_date)
     .fetch_optional(pool)
     .await?;
 
     match rate {
-        Some((first_emp, first_er, second_er)) => match category {
+        Some(r) => match category {
             SocsoCategory::FirstCategory => Ok(SocsoContribution {
-                employee: first_emp,
-                employer: first_er,
+                employee: r.first_cat_employee,
+                employer: r.first_cat_employer,
                 category,
             }),
             SocsoCategory::SecondCategory => Ok(SocsoContribution {
                 employee: 0,
-                employer: second_er,
+                employer: r.second_cat_employer,
                 category,
             }),
             SocsoCategory::Exempt => Ok(SocsoContribution {

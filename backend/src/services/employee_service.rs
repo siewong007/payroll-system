@@ -111,7 +111,7 @@ pub async fn create_employee(
         )));
     }
 
-    let id = Uuid::new_v4();
+    let id = Uuid::now_v7();
     let emp = sqlx::query_as::<_, Employee>(
         r#"INSERT INTO employees (
             id, company_id, employee_number, full_name, ic_number, passport_number,
@@ -290,7 +290,7 @@ pub async fn create_user_for_employee(
     let password_hash = bcrypt::hash(default_password, 10)
         .map_err(|e| AppError::Internal(format!("Failed to hash password: {}", e)))?;
 
-    let user_id = Uuid::new_v4();
+    let user_id = Uuid::now_v7();
     sqlx::query(
         r#"INSERT INTO users (id, email, password_hash, full_name, role, company_id, employee_id, must_change_password)
         VALUES ($1, $2, $3, $4, 'employee', $5, $6, TRUE)"#,
@@ -344,7 +344,7 @@ pub async fn update_employee(
                 r#"INSERT INTO salary_history (id, employee_id, old_salary, new_salary, effective_date, created_by)
                 VALUES ($1, $2, $3, $4, NOW()::date, $5)"#,
             )
-            .bind(Uuid::new_v4())
+            .bind(Uuid::now_v7())
             .bind(id)
             .bind(existing.basic_salary)
             .bind(new_salary)
@@ -561,7 +561,7 @@ pub async fn create_tp3(
             previous_zakat_ytd = EXCLUDED.previous_zakat_ytd
         RETURNING *"#,
     )
-    .bind(Uuid::new_v4())
+    .bind(Uuid::now_v7())
     .bind(employee_id)
     .bind(req.tax_year)
     .bind(&req.previous_employer_name)

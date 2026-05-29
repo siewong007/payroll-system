@@ -19,14 +19,14 @@ pub(super) async fn ensure_employee_in_company(
     company_id: Uuid,
     employee_id: Uuid,
 ) -> AppResult<()> {
-    let exists = sqlx::query_scalar::<_, bool>(
+    let exists = sqlx::query_scalar!(
         r#"SELECT EXISTS(
             SELECT 1 FROM employees
             WHERE id = $1 AND company_id = $2 AND deleted_at IS NULL
-        )"#,
+        ) AS "exists!""#,
+        employee_id,
+        company_id,
     )
-    .bind(employee_id)
-    .bind(company_id)
     .fetch_one(pool)
     .await?;
 
@@ -44,14 +44,14 @@ pub(super) async fn ensure_leave_type_in_company(
     company_id: Uuid,
     leave_type_id: Uuid,
 ) -> AppResult<()> {
-    let exists = sqlx::query_scalar::<_, bool>(
+    let exists = sqlx::query_scalar!(
         r#"SELECT EXISTS(
             SELECT 1 FROM leave_types
             WHERE id = $1 AND company_id = $2 AND is_active = TRUE
-        )"#,
+        ) AS "exists!""#,
+        leave_type_id,
+        company_id,
     )
-    .bind(leave_type_id)
-    .bind(company_id)
     .fetch_one(pool)
     .await?;
 

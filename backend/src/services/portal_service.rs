@@ -29,53 +29,6 @@ pub async fn get_my_profile(pool: &PgPool, employee_id: Uuid) -> AppResult<Emplo
     .ok_or_else(|| AppError::NotFound("Employee profile not found".into()))
 }
 
-pub async fn update_my_profile(
-    pool: &PgPool,
-    employee_id: Uuid,
-    req: UpdateMyProfileRequest,
-) -> AppResult<Employee> {
-    sqlx::query_as::<_, Employee>(
-        r#"UPDATE employees SET
-            phone = COALESCE($2, phone),
-            email = COALESCE($3, email),
-            address_line1 = COALESCE($4, address_line1),
-            address_line2 = COALESCE($5, address_line2),
-            city = COALESCE($6, city),
-            state = COALESCE($7, state),
-            postcode = COALESCE($8, postcode),
-            marital_status = COALESCE($9, marital_status),
-            bank_name = COALESCE($10, bank_name),
-            bank_account_number = COALESCE($11, bank_account_number),
-            updated_at = NOW()
-        WHERE id = $1 AND deleted_at IS NULL
-        RETURNING id, company_id, employee_number, full_name, ic_number, passport_number,
-            date_of_birth, gender::text, nationality, race::text, residency_status::text,
-            marital_status::text, email, phone, address_line1, address_line2, city, state,
-            postcode, department, designation, cost_centre, branch, employment_type::text,
-            date_joined, probation_start, probation_end, confirmation_date, date_resigned,
-            resignation_reason, basic_salary, hourly_rate, daily_rate, bank_name,
-            bank_account_number, bank_account_type, tax_identification_number, epf_number,
-            socso_number, eis_number, working_spouse, num_children, epf_category, is_muslim,
-            zakat_eligible, zakat_monthly_amount, ptptn_monthly_amount, tabung_haji_amount,
-            hrdf_contribution, payroll_group_id, salary_group, is_active, deleted_at,
-            created_at, updated_at, created_by, updated_by"#,
-    )
-    .bind(employee_id)
-    .bind(&req.phone)
-    .bind(&req.email)
-    .bind(&req.address_line1)
-    .bind(&req.address_line2)
-    .bind(&req.city)
-    .bind(&req.state)
-    .bind(&req.postcode)
-    .bind(&req.marital_status)
-    .bind(&req.bank_name)
-    .bind(&req.bank_account_number)
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound("Employee not found".into()))
-}
-
 // ─── Payslips ───
 
 pub async fn get_my_payslips(pool: &PgPool, employee_id: Uuid) -> AppResult<Vec<MyPayslip>> {

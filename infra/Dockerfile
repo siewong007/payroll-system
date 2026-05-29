@@ -1,20 +1,32 @@
-# ─── Stage 1: Build ───
-FROM rust:1-bookworm AS builder
-
+# ─── Stage 0: cargo-chef base ───
+# cargo-chef caches the dependency build as its own layer keyed on the
+# dependency graph, so application code changes don't trigger a full rebuild.
+FROM rust:1-bookworm AS chef
+RUN cargo install cargo-chef --locked
 WORKDIR /app
 
-# Cache dependencies by building with dummy main
-COPY backend/Cargo.toml backend/Cargo.lock* ./
-RUN mkdir src && echo "fn main() {}" > src/main.rs
-RUN cargo build --release 2>/dev/null || true
-RUN rm -rf src
+# ─── Stage 1: Plan the dependency recipe ───
+FROM chef AS planner
+COPY backend/Cargo.toml backend/Cargo.lock ./
+COPY backend/src ./src
+RUN cargo chef prepare --recipe-path recipe.json
 
-# Build the real application
+# ─── Stage 2: Build ───
+FROM chef AS builder
+# Build (and cache) dependencies only — reused unless Cargo.lock changes.
+COPY --from=planner /app/recipe.json recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json
+
+# Build the real application. sqlx query!/query_as! macros are verified against
+# the committed .sqlx offline cache (no database available during the build).
+ENV SQLX_OFFLINE=true
+COPY backend/Cargo.toml backend/Cargo.lock ./
 COPY backend/src ./src
 COPY backend/migrations ./migrations
+COPY backend/.sqlx ./.sqlx
 RUN cargo build --release
 
-# ─── Stage 2: Runtime ───
+# ─── Stage 3: Runtime ───
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \

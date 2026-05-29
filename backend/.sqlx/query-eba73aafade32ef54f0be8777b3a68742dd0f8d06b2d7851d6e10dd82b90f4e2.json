@@ -1,0 +1,127 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE claims\n        SET employee_id = COALESCE($3, employee_id),\n            title = COALESCE($4, title),\n            description = CASE WHEN $5::text IS NULL THEN description ELSE NULLIF($5, '') END,\n            amount = COALESCE($6, amount),\n            category = CASE WHEN $7::text IS NULL THEN category ELSE NULLIF($7, '') END,\n            receipt_url = CASE WHEN $8::text IS NULL THEN receipt_url ELSE NULLIF($8, '') END,\n            receipt_file_name = CASE WHEN $9::text IS NULL THEN receipt_file_name ELSE NULLIF($9, '') END,\n            expense_date = COALESCE($10, expense_date),\n            updated_at = NOW()\n        WHERE id = $1 AND company_id = $2\n        RETURNING *",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "employee_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "company_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "title",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "description",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "amount",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 6,
+        "name": "category",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 7,
+        "name": "receipt_url",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 8,
+        "name": "receipt_file_name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 9,
+        "name": "expense_date",
+        "type_info": "Date"
+      },
+      {
+        "ordinal": 10,
+        "name": "status",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 11,
+        "name": "submitted_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 12,
+        "name": "reviewed_by",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 13,
+        "name": "reviewed_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 14,
+        "name": "review_notes",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 15,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 16,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Varchar",
+        "Text",
+        "Int8",
+        "Text",
+        "Text",
+        "Text",
+        "Date"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "eba73aafade32ef54f0be8777b3a68742dd0f8d06b2d7851d6e10dd82b90f4e2"
+}

@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO payroll_entries\n            (id, employee_id, company_id, period_year, period_month, category, item_type, description, amount, created_by)\n        VALUES ($1, $2, $3, $4, $5, 'earning', 'claim_reimbursement', $6, $7, $8)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Int4",
+        "Int4",
+        "Varchar",
+        "Int8",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b9b70f920eeda92763ddc6379599c18eae277323305e3a9df0115ce21f25d126"
+}

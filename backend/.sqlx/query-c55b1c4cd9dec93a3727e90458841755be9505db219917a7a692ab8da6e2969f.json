@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO leave_balances (employee_id, leave_type_id, year, entitled_days)\n            VALUES ($1, $2, $3, 1)\n            ON CONFLICT (employee_id, leave_type_id, year)\n            DO UPDATE SET entitled_days = leave_balances.entitled_days + 1, updated_at = NOW()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c55b1c4cd9dec93a3727e90458841755be9505db219917a7a692ab8da6e2969f"
+}
