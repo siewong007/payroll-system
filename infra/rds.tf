@@ -10,9 +10,9 @@ resource "aws_db_subnet_group" "postgres" {
   tags = { Name = "${local.name_prefix}-db-subnet" }
 }
 
-resource "aws_db_parameter_group" "postgres16" {
-  name   = "${local.name_prefix}-pg16"
-  family = "postgres16"
+resource "aws_db_parameter_group" "postgres18" {
+  name   = "${local.name_prefix}-pg18"
+  family = "postgres18"
 
   parameter {
     name  = "log_statement"
@@ -24,15 +24,27 @@ resource "aws_db_parameter_group" "postgres16" {
     value = "1000"
   }
 
-  tags = { Name = "${local.name_prefix}-pg16-params" }
+  # PostgreSQL 18 ships asynchronous I/O. "worker" is the portable default;
+  # switch to "io_uring" only on kernels that support it. io_method is a
+  # postmaster-level GUC, so it only takes effect after a reboot.
+  parameter {
+    name         = "io_method"
+    value        = "worker"
+    apply_method = "pending-reboot"
+  }
+
+  tags = { Name = "${local.name_prefix}-pg18-params" }
 }
 
 resource "aws_db_instance" "postgres" {
   identifier = "${local.name_prefix}-db"
 
   engine         = "postgres"
-  engine_version = "16"
+  engine_version = "18.4"
   instance_class = var.db_instance_class
+
+  # Required for the 16 -> 18 major-version upgrade to apply in place.
+  allow_major_version_upgrade = true
 
   allocated_storage     = var.db_allocated_storage
   max_allocated_storage = var.db_allocated_storage * 2
@@ -45,7 +57,7 @@ resource "aws_db_instance" "postgres" {
   multi_az               = var.enable_multi_az
   db_subnet_group_name   = aws_db_subnet_group.postgres.name
   vpc_security_group_ids = [aws_security_group.rds.id]
-  parameter_group_name   = aws_db_parameter_group.postgres16.name
+  parameter_group_name   = aws_db_parameter_group.postgres18.name
 
   backup_retention_period = 7
   backup_window           = "03:00-04:00"

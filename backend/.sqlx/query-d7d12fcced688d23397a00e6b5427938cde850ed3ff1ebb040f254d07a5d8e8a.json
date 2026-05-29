@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT COUNT(*) AS \"count!\" FROM payroll_runs\n        WHERE company_id = $1 AND payroll_group_id = $2\n        AND period_year = $3 AND period_month = $4\n        AND status NOT IN ('cancelled')",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int4",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "d7d12fcced688d23397a00e6b5427938cde850ed3ff1ebb040f254d07a5d8e8a"
+}

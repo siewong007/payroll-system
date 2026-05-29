@@ -1,0 +1,47 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT employee_id, previous_income_ytd, previous_epf_ytd, previous_pcb_ytd, previous_zakat_ytd\n           FROM tp3_records WHERE employee_id = ANY($1) AND tax_year = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "employee_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "previous_income_ytd",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "previous_epf_ytd",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "previous_pcb_ytd",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "previous_zakat_ytd",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "UuidArray",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "24e3513db7c2f6a89ef1c15b2456c6902a690ac2397895b59212736b8cf219b9"
+}

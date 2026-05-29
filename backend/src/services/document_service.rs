@@ -90,7 +90,7 @@ pub async fn create_document(
     req: CreateDocumentRequest,
     created_by: Uuid,
 ) -> AppResult<Document> {
-    let id = Uuid::new_v4();
+    let id = Uuid::now_v7();
 
     let query = r#"WITH new_doc AS (
             INSERT INTO documents (

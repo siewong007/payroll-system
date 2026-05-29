@@ -59,12 +59,3 @@ pub async fn revoke_refresh_token(pool: &PgPool, raw_token: &str) -> AppResult<(
         .await?;
     Ok(())
 }
-
-/// Revokes all refresh tokens for a user (e.g., on password change).
-pub async fn revoke_all_user_tokens(pool: &PgPool, user_id: Uuid) -> AppResult<()> {
-    sqlx::query("UPDATE refresh_tokens SET revoked = TRUE WHERE user_id = $1 AND revoked = FALSE")
-        .bind(user_id)
-        .execute(pool)
-        .await?;
-    Ok(())
-}

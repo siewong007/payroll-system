@@ -561,7 +561,7 @@ pub async fn approve_leave(
                             (id, employee_id, company_id, period_year, period_month, category, item_type, description, amount, created_by)
                         VALUES ($1, $2, $3, $4, $5, 'deduction', 'unpaid_leave', $6, $7, $8)"#,
                     )
-                    .bind(Uuid::new_v4())
+                    .bind(Uuid::now_v7())
                     .bind(lr.employee_id)
                     .bind(company_id)
                     .bind(period_year)

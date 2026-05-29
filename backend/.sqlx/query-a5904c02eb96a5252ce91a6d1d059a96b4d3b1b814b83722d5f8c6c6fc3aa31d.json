@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE payroll_entries SET is_processed = TRUE, payroll_run_id = $1\n        WHERE employee_id = $2 AND period_year = $3 AND period_month = $4 AND is_processed = FALSE",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int4",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a5904c02eb96a5252ce91a6d1d059a96b4d3b1b814b83722d5f8c6c6fc3aa31d"
+}

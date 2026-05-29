@@ -387,7 +387,7 @@ pub async fn approve_claim(
             (id, employee_id, company_id, period_year, period_month, category, item_type, description, amount, created_by)
         VALUES ($1, $2, $3, $4, $5, 'earning', 'claim_reimbursement', $6, $7, $8)"#,
     )
-    .bind(Uuid::new_v4())
+    .bind(Uuid::now_v7())
     .bind(claim.employee_id)
     .bind(company_id)
     .bind(period_year)

@@ -131,31 +131,6 @@ pub async fn list_audit_logs(
 
     Ok((logs, count))
 }
-#[allow(clippy::too_many_arguments)]
-pub async fn log_action(
-    pool: &PgPool,
-    user_id: Option<Uuid>,
-    action: &str,
-    entity_type: &str,
-    entity_id: Option<Uuid>,
-    old_values: Option<serde_json::Value>,
-    new_values: Option<serde_json::Value>,
-    description: Option<&str>,
-) -> AppResult<()> {
-    log_action_with_metadata(
-        pool,
-        None,
-        user_id,
-        action,
-        entity_type,
-        entity_id,
-        old_values,
-        new_values,
-        description,
-        None,
-    )
-    .await
-}
 
 #[allow(clippy::too_many_arguments)]
 pub async fn log_action_with_metadata(

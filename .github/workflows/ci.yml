@@ -9,6 +9,10 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  # Compile-time-checked sqlx queries (query!/query_as!) are verified against the
+  # committed `.sqlx/` offline cache instead of a live database. Regenerate with
+  # `cargo sqlx prepare` (needs a migrated DB) whenever a macro query changes.
+  SQLX_OFFLINE: "true"
 
 jobs:
   backend-lint:
@@ -36,7 +40,7 @@ jobs:
         working-directory: backend
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:18.4-alpine
         env:
           POSTGRES_DB: payroll_db_test
           POSTGRES_USER: payroll

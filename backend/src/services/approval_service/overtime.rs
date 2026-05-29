@@ -460,7 +460,7 @@ pub async fn approve_overtime(
                  description, amount, quantity, rate, is_taxable, created_by)
             VALUES ($1, $2, $3, $4, $5, 'earning', 'overtime', $6, $7, $8, $9, TRUE, $10)"#,
         )
-        .bind(Uuid::new_v4())
+        .bind(Uuid::now_v7())
         .bind(ot.employee_id)
         .bind(company_id)
         .bind(period_year)

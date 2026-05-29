@@ -1,0 +1,214 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, company_id, payroll_group_id, period_year, period_month,\n            period_start, period_end, pay_date, status::text AS \"status!\",\n            total_gross, total_net, total_employer_cost,\n            total_epf_employee, total_epf_employer, total_socso_employee, total_socso_employer,\n            total_eis_employee, total_eis_employer, total_pcb, total_zakat,\n            employee_count, version, processed_by, processed_at, approved_by, approved_at,\n            locked_at, locked_by, notes, created_at, updated_at, created_by, updated_by\n        FROM payroll_runs WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "company_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "payroll_group_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "period_year",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 4,
+        "name": "period_month",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 5,
+        "name": "period_start",
+        "type_info": "Date"
+      },
+      {
+        "ordinal": 6,
+        "name": "period_end",
+        "type_info": "Date"
+      },
+      {
+        "ordinal": 7,
+        "name": "pay_date",
+        "type_info": "Date"
+      },
+      {
+        "ordinal": 8,
+        "name": "status!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "total_gross",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 10,
+        "name": "total_net",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 11,
+        "name": "total_employer_cost",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 12,
+        "name": "total_epf_employee",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 13,
+        "name": "total_epf_employer",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 14,
+        "name": "total_socso_employee",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 15,
+        "name": "total_socso_employer",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 16,
+        "name": "total_eis_employee",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 17,
+        "name": "total_eis_employer",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 18,
+        "name": "total_pcb",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 19,
+        "name": "total_zakat",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 20,
+        "name": "employee_count",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 21,
+        "name": "version",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 22,
+        "name": "processed_by",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 23,
+        "name": "processed_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 24,
+        "name": "approved_by",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 25,
+        "name": "approved_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 26,
+        "name": "locked_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 27,
+        "name": "locked_by",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 28,
+        "name": "notes",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 29,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 30,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 31,
+        "name": "created_by",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 32,
+        "name": "updated_by",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      null,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "099c3b447c9406b5fb901f1402c79c393870f8c4050666adea63298a00423851"
+}

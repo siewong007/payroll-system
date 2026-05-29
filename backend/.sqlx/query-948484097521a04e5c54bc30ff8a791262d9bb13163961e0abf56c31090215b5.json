@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO payroll_runs\n        (id, company_id, payroll_group_id, period_year, period_month,\n         period_start, period_end, pay_date, status, processed_by, processed_at, notes, created_by)\n        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'processing', $9, NOW(), $10, $9)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Int4",
+        "Int4",
+        "Date",
+        "Date",
+        "Date",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "948484097521a04e5c54bc30ff8a791262d9bb13163961e0abf56c31090215b5"
+}

@@ -769,7 +769,7 @@ pub async fn validate_file(
         .count();
 
     // Store session
-    let session_id = Uuid::new_v4();
+    let session_id = Uuid::now_v7();
     let validated_json = serde_json::to_value(&validated_rows)
         .map_err(|e| AppError::Internal(format!("Failed to serialize validation data: {}", e)))?;
 
@@ -941,7 +941,7 @@ pub async fn confirm_import(
 
     for row_validation in &valid_rows {
         let create_req = row_to_create_request(&row_validation.data);
-        let id = Uuid::new_v4();
+        let id = Uuid::now_v7();
 
         let result = sqlx::query(
             r#"INSERT INTO employees (
@@ -1024,7 +1024,7 @@ pub async fn confirm_import(
                     r#"INSERT INTO salary_history (id, employee_id, basic_salary, effective_date, reason, created_by)
                     VALUES ($1, $2, $3, $4, 'Initial salary (bulk import)', $5)"#,
                 )
-                .bind(Uuid::new_v4())
+                .bind(Uuid::now_v7())
                 .bind(id)
                 .bind(create_req.basic_salary)
                 .bind(create_req.date_joined)
@@ -1076,7 +1076,7 @@ pub async fn confirm_import(
         r#"INSERT INTO audit_logs (id, user_id, action, entity_type, description, new_values)
         VALUES ($1, $2, 'bulk_import', 'employee', $3, $4)"#,
     )
-    .bind(Uuid::new_v4())
+    .bind(Uuid::now_v7())
     .bind(user_id)
     .bind(format!("Bulk imported {} employees", imported_count))
     .bind(&audit_data)
