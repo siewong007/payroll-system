@@ -1,7 +1,7 @@
 use axum::{Json, extract::State, http::HeaderMap, response::IntoResponse};
 
 use crate::core::app_state::AppState;
-use crate::core::auth::{AuthUser, create_token_with_roles};
+use crate::core::auth::{AuthUser, create_token};
 use crate::core::cookie;
 use crate::core::error::{AppError, AppResult};
 use crate::core::extract::ValidatedJson;
@@ -43,7 +43,7 @@ pub async fn login(
 pub async fn me(State(state): State<AppState>, auth: AuthUser) -> AppResult<Json<UserResponse>> {
     let user = sqlx::query_as!(
         User,
-        r#"SELECT id, email, password_hash, full_name, role, roles, company_id,
+        r#"SELECT id, email, password_hash, full_name, roles, company_id,
             employee_id, is_active, must_change_password, last_login, created_at, updated_at
         FROM users WHERE id = $1"#,
         auth.0.sub,
@@ -72,7 +72,7 @@ pub async fn switch_company(
     // Fetch updated user
     let user = sqlx::query_as!(
         User,
-        r#"SELECT id, email, password_hash, full_name, role, roles, company_id,
+        r#"SELECT id, email, password_hash, full_name, roles, company_id,
             employee_id, is_active, must_change_password, last_login, created_at, updated_at
         FROM users WHERE id = $1"#,
         auth.0.sub,
@@ -81,10 +81,9 @@ pub async fn switch_company(
     .await?;
 
     // Issue new token with updated company_id
-    let token = create_token_with_roles(
+    let token = create_token(
         user.id,
         &user.email,
-        &user.role,
         &user.roles,
         user.company_id,
         user.employee_id,
@@ -112,7 +111,7 @@ pub async fn refresh_token(
     // Fetch user
     let user = sqlx::query_as!(
         User,
-        r#"SELECT id, email, password_hash, full_name, role, roles, company_id,
+        r#"SELECT id, email, password_hash, full_name, roles, company_id,
             employee_id, is_active, must_change_password, last_login, created_at, updated_at
         FROM users WHERE id = $1 AND is_active = TRUE"#,
         user_id,
@@ -142,10 +141,9 @@ pub async fn refresh_token(
     session_service::revoke_refresh_token(&state.pool, &refresh).await?;
     let new_refresh = session_service::create_refresh_token(&state.pool, user.id).await?;
 
-    let token = create_token_with_roles(
+    let token = create_token(
         user.id,
         &user.email,
-        &user.role,
         &user.roles,
         user.company_id,
         user.employee_id,
@@ -259,7 +257,7 @@ pub async fn change_password(
 
     let user = sqlx::query_as!(
         User,
-        r#"SELECT id, email, password_hash, full_name, role, roles, company_id,
+        r#"SELECT id, email, password_hash, full_name, roles, company_id,
             employee_id, is_active, must_change_password, last_login, created_at, updated_at
         FROM users WHERE id = $1"#,
         auth.0.sub,

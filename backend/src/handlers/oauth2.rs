@@ -8,7 +8,7 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::core::app_state::AppState;
-use crate::core::auth::{AuthUser, create_token_with_roles};
+use crate::core::auth::{AuthUser, create_token};
 use crate::core::cookie;
 use crate::core::error::{AppError, AppResult};
 use crate::models::oauth2::{LinkedAccount, OAuth2ProviderInfo};
@@ -141,10 +141,9 @@ pub async fn google_callback(
         .await?;
 
     // Issue JWT + refresh token
-    let jwt = create_token_with_roles(
+    let jwt = create_token(
         user.id,
         &user.email,
-        &user.role,
         &user.roles,
         user.company_id,
         user.employee_id,

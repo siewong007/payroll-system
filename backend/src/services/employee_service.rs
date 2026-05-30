@@ -253,13 +253,13 @@ pub async fn create_user_for_employee(
     };
 
     // Check if email already exists
-    let existing = sqlx::query!("SELECT id, role FROM users WHERE email = $1", email)
+    let existing = sqlx::query!("SELECT id, roles FROM users WHERE email = $1", email)
         .fetch_optional(pool)
         .await?;
 
     if let Some(row) = existing {
         let existing_id = row.id;
-        if row.role == "employee" {
+        if row.roles.as_slice() == ["employee"] {
             // Stale employee account — clean up and recreate below
             sqlx::query!("DELETE FROM user_companies WHERE user_id = $1", existing_id)
                 .execute(pool)
@@ -298,8 +298,8 @@ pub async fn create_user_for_employee(
 
     let user_id = Uuid::now_v7();
     sqlx::query!(
-        r#"INSERT INTO users (id, email, password_hash, full_name, role, company_id, employee_id, must_change_password)
-        VALUES ($1, $2, $3, $4, 'employee', $5, $6, TRUE)"#,
+        r#"INSERT INTO users (id, email, password_hash, full_name, roles, company_id, employee_id, must_change_password)
+        VALUES ($1, $2, $3, $4, ARRAY['employee']::VARCHAR(50)[], $5, $6, TRUE)"#,
         user_id,
         email,
         password_hash,

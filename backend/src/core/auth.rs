@@ -13,8 +13,6 @@ use super::error::{AppError, AppResult};
 pub struct Claims {
     pub sub: Uuid, // user ID
     pub email: String,
-    pub role: String,
-    #[serde(default)]
     pub roles: Vec<String>,
     pub company_id: Option<Uuid>,
     pub employee_id: Option<Uuid>,
@@ -22,32 +20,10 @@ pub struct Claims {
     pub iat: i64,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn create_token(
     user_id: Uuid,
     email: &str,
-    role: &str,
-    company_id: Option<Uuid>,
-    employee_id: Option<Uuid>,
-    secret: &str,
-    expiry_hours: i64,
-) -> AppResult<String> {
-    create_token_with_roles(
-        user_id,
-        email,
-        role,
-        &[role.to_string()],
-        company_id,
-        employee_id,
-        secret,
-        expiry_hours,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn create_token_with_roles(
-    user_id: Uuid,
-    email: &str,
-    role: &str,
     roles: &[String],
     company_id: Option<Uuid>,
     employee_id: Option<Uuid>,
@@ -58,8 +34,7 @@ pub fn create_token_with_roles(
     let claims = Claims {
         sub: user_id,
         email: email.to_string(),
-        role: role.to_string(),
-        roles: normalized_roles(role, roles),
+        roles: normalized_roles(roles),
         company_id,
         employee_id,
         exp: (now + Duration::hours(expiry_hours)).timestamp(),
@@ -74,15 +49,12 @@ pub fn create_token_with_roles(
     .map_err(|e| AppError::Internal(format!("Failed to create token: {}", e)))
 }
 
-fn normalized_roles(primary_role: &str, roles: &[String]) -> Vec<String> {
+fn normalized_roles(roles: &[String]) -> Vec<String> {
     let mut normalized = Vec::new();
     for role in roles {
         if !normalized.iter().any(|existing| existing == role) {
             normalized.push(role.clone());
         }
-    }
-    if normalized.is_empty() {
-        normalized.push(primary_role.to_string());
     }
     normalized
 }
@@ -139,9 +111,6 @@ where
 
 impl AuthUser {
     pub fn roles(&self) -> Vec<&str> {
-        if self.0.roles.is_empty() {
-            return vec![self.0.role.as_str()];
-        }
         self.0.roles.iter().map(String::as_str).collect()
     }
 

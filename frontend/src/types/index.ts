@@ -4,7 +4,6 @@ export interface User {
   id: string;
   email: string;
   full_name: string;
-  role: AppRole;
   roles: AppRole[];
   company_id: string | null;
   employee_id: string | null;
@@ -60,7 +59,6 @@ export interface UserWithCompanies {
   id: string;
   email: string;
   full_name: string;
-  role: string;
   roles: AppRole[];
   company_id: string | null;
   employee_id: string | null;
@@ -73,15 +71,13 @@ export interface CreateUserRequest {
   email: string;
   password: string;
   full_name: string;
-  role: AppRole;
-  roles?: AppRole[];
+  roles: AppRole[];
   company_ids: string[];
 }
 
 export interface UpdateUserRequest {
   full_name?: string;
   email?: string;
-  role?: string;
   roles?: AppRole[];
   is_active?: boolean;
   company_ids?: string[];

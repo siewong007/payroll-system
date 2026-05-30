@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, email, password_hash, full_name, role, roles, company_id,\n            employee_id, is_active, must_change_password, last_login, created_at, updated_at\n        FROM users WHERE id = $1 AND is_active = TRUE",
+  "query": "SELECT u.id, u.email, u.password_hash, u.full_name, u.roles, u.company_id,\n            u.employee_id, u.is_active, u.must_change_password, u.last_login, u.created_at, u.updated_at\n        FROM users u\n        JOIN oauth2_accounts oa ON u.id = oa.user_id\n        WHERE oa.provider = $1 AND oa.provider_user_id = $2 AND u.is_active = TRUE",
   "describe": {
     "columns": [
       {
@@ -25,57 +25,52 @@
       },
       {
         "ordinal": 4,
-        "name": "role",
-        "type_info": "Varchar"
-      },
-      {
-        "ordinal": 5,
         "name": "roles",
         "type_info": "VarcharArray"
       },
       {
-        "ordinal": 6,
+        "ordinal": 5,
         "name": "company_id",
         "type_info": "Uuid"
       },
       {
-        "ordinal": 7,
+        "ordinal": 6,
         "name": "employee_id",
         "type_info": "Uuid"
       },
       {
-        "ordinal": 8,
+        "ordinal": 7,
         "name": "is_active",
         "type_info": "Bool"
       },
       {
-        "ordinal": 9,
+        "ordinal": 8,
         "name": "must_change_password",
         "type_info": "Bool"
       },
       {
-        "ordinal": 10,
+        "ordinal": 9,
         "name": "last_login",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 11,
+        "ordinal": 10,
         "name": "created_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 12,
+        "ordinal": 11,
         "name": "updated_at",
         "type_info": "Timestamptz"
       }
     ],
     "parameters": {
       "Left": [
-        "Uuid"
+        "Text",
+        "Text"
       ]
     },
     "nullable": [
-      false,
       false,
       false,
       false,
@@ -90,5 +85,5 @@
       false
     ]
   },
-  "hash": "b26ddf0a94917d1862961fc7f2b77712e002e46964e774cd619c6ad369f62fa8"
+  "hash": "3608a35a7befe7b8870f4d273bac7840cfee7c7976e5b0227296d431ba74abd9"
 }

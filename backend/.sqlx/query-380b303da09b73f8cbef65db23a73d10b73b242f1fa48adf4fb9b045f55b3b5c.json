@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT DISTINCT u.id, u.email, u.full_name, u.role, u.roles, u.company_id,\n                u.employee_id, u.is_active, u.created_at\n            FROM users u\n            JOIN user_companies uc ON u.id = uc.user_id\n            WHERE uc.company_id IN (\n                SELECT company_id FROM user_companies WHERE user_id = $1\n            )\n            AND NOT (u.roles = ARRAY['employee']::VARCHAR(50)[])\n            ORDER BY u.created_at DESC",
+  "query": "INSERT INTO users (email, password_hash, full_name, roles, company_id)\n        VALUES ($1, $2, $3, $4, $5)\n        RETURNING id, email, full_name, roles, company_id, employee_id, is_active, created_at",
   "describe": {
     "columns": [
       {
@@ -20,42 +20,40 @@
       },
       {
         "ordinal": 3,
-        "name": "role",
-        "type_info": "Varchar"
-      },
-      {
-        "ordinal": 4,
         "name": "roles",
         "type_info": "VarcharArray"
       },
       {
-        "ordinal": 5,
+        "ordinal": 4,
         "name": "company_id",
         "type_info": "Uuid"
       },
       {
-        "ordinal": 6,
+        "ordinal": 5,
         "name": "employee_id",
         "type_info": "Uuid"
       },
       {
-        "ordinal": 7,
+        "ordinal": 6,
         "name": "is_active",
         "type_info": "Bool"
       },
       {
-        "ordinal": 8,
+        "ordinal": 7,
         "name": "created_at",
         "type_info": "Timestamptz"
       }
     ],
     "parameters": {
       "Left": [
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "VarcharArray",
         "Uuid"
       ]
     },
     "nullable": [
-      false,
       false,
       false,
       false,
@@ -66,5 +64,5 @@
       false
     ]
   },
-  "hash": "6e3a10ee201d3cdb64da08cf5db79c6e08527c5dd286b8b14e14e9e44dc553d9"
+  "hash": "380b303da09b73f8cbef65db23a73d10b73b242f1fa48adf4fb9b045f55b3b5c"
 }

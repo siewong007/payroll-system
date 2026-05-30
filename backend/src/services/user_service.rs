@@ -15,7 +15,6 @@ struct UserRow {
     id: Uuid,
     email: String,
     full_name: String,
-    role: String,
     roles: Vec<String>,
     company_id: Option<Uuid>,
     employee_id: Option<Uuid>,
@@ -29,7 +28,6 @@ impl UserRow {
             id: self.id,
             email: self.email,
             full_name: self.full_name,
-            role: self.role,
             roles: self.roles,
             company_id: self.company_id,
             employee_id: self.employee_id,
@@ -50,18 +48,8 @@ const VALID_ROLES: &[&str] = &[
     "employee",
 ];
 
-const PRIMARY_ROLE_PRIORITY: &[&str] = &[
-    "super_admin",
-    "admin",
-    "payroll_admin",
-    "hr_manager",
-    "finance",
-    "exec",
-    "employee",
-];
-
 pub async fn create_user(pool: &PgPool, req: CreateUserRequest) -> AppResult<UserWithCompanies> {
-    let (primary_role, roles) = normalize_requested_roles(Some(&req.role), req.roles.as_ref())?;
+    let roles = normalize_requested_roles(&req.roles)?;
 
     if roles
         .iter()
@@ -98,13 +86,12 @@ pub async fn create_user(pool: &PgPool, req: CreateUserRequest) -> AppResult<Use
     let active_company_id = req.company_ids[0];
     let user = sqlx::query_as!(
         UserRow,
-        r#"INSERT INTO users (email, password_hash, full_name, role, roles, company_id)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        RETURNING id, email, full_name, role, roles, company_id, employee_id, is_active, created_at"#,
+        r#"INSERT INTO users (email, password_hash, full_name, roles, company_id)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING id, email, full_name, roles, company_id, employee_id, is_active, created_at"#,
         req.email,
         password_hash,
         req.full_name,
-        primary_role,
         &roles,
         active_company_id,
     )
@@ -130,13 +117,13 @@ pub async fn create_user(pool: &PgPool, req: CreateUserRequest) -> AppResult<Use
 
 pub async fn list_users(
     pool: &PgPool,
-    caller_role: &str,
+    caller_is_super_admin: bool,
     caller_id: Uuid,
 ) -> AppResult<Vec<UserWithCompanies>> {
-    let mut users: Vec<UserWithCompanies> = if caller_role == "super_admin" {
+    let mut users: Vec<UserWithCompanies> = if caller_is_super_admin {
         sqlx::query_as!(
             UserRow,
-            r#"SELECT id, email, full_name, role, roles, company_id, employee_id, is_active, created_at
+            r#"SELECT id, email, full_name, roles, company_id, employee_id, is_active, created_at
             FROM users
             ORDER BY created_at DESC"#,
         )
@@ -149,7 +136,7 @@ pub async fn list_users(
         // Admin sees users who share at least one company
         sqlx::query_as!(
             UserRow,
-            r#"SELECT DISTINCT u.id, u.email, u.full_name, u.role, u.roles, u.company_id,
+            r#"SELECT DISTINCT u.id, u.email, u.full_name, u.roles, u.company_id,
                 u.employee_id, u.is_active, u.created_at
             FROM users u
             JOIN user_companies uc ON u.id = uc.user_id
@@ -189,7 +176,7 @@ pub async fn update_user_companies(
     // Get user to check role
     let user = sqlx::query_as!(
         UserRow,
-        "SELECT id, email, full_name, role, roles, company_id, employee_id, is_active, created_at FROM users WHERE id = $1",
+        "SELECT id, email, full_name, roles, company_id, employee_id, is_active, created_at FROM users WHERE id = $1",
         user_id,
     )
     .fetch_optional(pool)
@@ -236,7 +223,7 @@ pub async fn update_user_companies(
     // Fetch updated user
     let mut updated = sqlx::query_as!(
         UserRow,
-        "SELECT id, email, full_name, role, roles, company_id, employee_id, is_active, created_at FROM users WHERE id = $1",
+        "SELECT id, email, full_name, roles, company_id, employee_id, is_active, created_at FROM users WHERE id = $1",
         user_id,
     )
     .fetch_one(pool)
@@ -302,22 +289,16 @@ pub async fn update_user(
     // Check user exists
     let existing = sqlx::query_as!(
         UserRow,
-        "SELECT id, email, full_name, role, roles, company_id, employee_id, is_active, created_at FROM users WHERE id = $1",
+        "SELECT id, email, full_name, roles, company_id, employee_id, is_active, created_at FROM users WHERE id = $1",
         user_id,
     )
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| AppError::NotFound("User not found".into()))?;
 
-    let (primary_role, roles) = if req.role.is_some() || req.roles.is_some() {
-        let fallback_role = if req.roles.is_some() {
-            req.role.as_deref()
-        } else {
-            req.role.as_deref().or(Some(&existing.role))
-        };
-        normalize_requested_roles(fallback_role, req.roles.as_ref())?
-    } else {
-        (existing.role.clone(), existing.roles.clone())
+    let roles = match req.roles.as_ref() {
+        Some(requested) => normalize_requested_roles(requested)?,
+        None => existing.roles.clone(),
     };
 
     // Check email uniqueness if changing
@@ -341,15 +322,13 @@ pub async fn update_user(
         r#"UPDATE users SET
             full_name = COALESCE($2, full_name),
             email = COALESCE($3, email),
-            role = $4,
-            roles = $5,
-            is_active = COALESCE($6, is_active),
+            roles = $4,
+            is_active = COALESCE($5, is_active),
             updated_at = NOW()
         WHERE id = $1"#,
         user_id,
         req.full_name,
         req.email,
-        primary_role,
         &roles,
         req.is_active,
     )
@@ -363,10 +342,9 @@ pub async fn update_user(
             .any(|role| role == "exec" || role == "employee")
             && company_ids.len() > 1
         {
-            return Err(AppError::BadRequest(format!(
-                "{} role can only be assigned to one company",
-                primary_role
-            )));
+            return Err(AppError::BadRequest(
+                "Employee and exec roles can only be assigned to one company".into(),
+            ));
         }
         if !company_ids.is_empty() {
             sqlx::query!("DELETE FROM user_companies WHERE user_id = $1", user_id)
@@ -397,7 +375,7 @@ pub async fn update_user(
 
     let mut updated = sqlx::query_as!(
         UserRow,
-        "SELECT id, email, full_name, role, roles, company_id, employee_id, is_active, created_at FROM users WHERE id = $1",
+        "SELECT id, email, full_name, roles, company_id, employee_id, is_active, created_at FROM users WHERE id = $1",
         user_id,
     )
     .fetch_one(pool)
@@ -407,19 +385,9 @@ pub async fn update_user(
     Ok(updated)
 }
 
-fn normalize_requested_roles(
-    primary_role: Option<&str>,
-    requested_roles: Option<&Vec<String>>,
-) -> AppResult<(String, Vec<String>)> {
-    let mut roles = requested_roles.cloned().unwrap_or_default();
-    if roles.is_empty()
-        && let Some(role) = primary_role
-    {
-        roles.push(role.to_string());
-    }
-
+fn normalize_requested_roles(requested_roles: &[String]) -> AppResult<Vec<String>> {
     let mut normalized = Vec::new();
-    for role in roles {
+    for role in requested_roles {
         let role = role.trim().to_string();
         if role.is_empty() {
             continue;
@@ -450,22 +418,7 @@ fn normalize_requested_roles(
         ));
     }
 
-    if let Some(role) = primary_role
-        && !role.trim().is_empty()
-        && !normalized.iter().any(|candidate| candidate == role)
-    {
-        return Err(AppError::BadRequest(
-            "Primary role must be included in roles".into(),
-        ));
-    }
-
-    let primary_role = PRIMARY_ROLE_PRIORITY
-        .iter()
-        .find(|role| normalized.iter().any(|candidate| candidate == **role))
-        .expect("validated role list must have a primary role")
-        .to_string();
-
-    Ok((primary_role, normalized))
+    Ok(normalized)
 }
 
 pub async fn delete_user(pool: &PgPool, user_id: Uuid) -> AppResult<()> {

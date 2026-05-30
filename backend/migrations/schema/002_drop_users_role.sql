@@ -1,0 +1,12 @@
+-- Collapse the user role model to a single source of truth.
+--
+-- `users` previously carried both a singular `role` and a `roles` array. The two
+-- could silently diverge (a user seeded with role='super_admin' but
+-- roles='{employee}' was bounced to the employee portal). `roles` is the
+-- authoritative set used for access control everywhere (frontend `roleList`,
+-- backend `AuthUser::roles`, JWT claims); `role` was only ever a derived
+-- "primary" role. Drop it so divergence is impossible.
+--
+-- Dropping the column also drops its dependent `users_role_check` constraint.
+-- The `roles` array remains guarded by `users_roles_valid`.
+ALTER TABLE public.users DROP COLUMN role;

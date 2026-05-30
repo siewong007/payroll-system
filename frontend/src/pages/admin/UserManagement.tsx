@@ -15,11 +15,7 @@ const ALL_ROLES = [
   { value: 'employee', label: 'Employee' },
 ] as const;
 
-const userRoles = (user: Pick<UserWithCompanies, 'role' | 'roles'>): AppRole[] =>
-  user.roles?.length ? user.roles : [user.role as AppRole];
-
-const primaryRoleFor = (roles: AppRole[]): AppRole =>
-  ALL_ROLES.find((role) => roles.includes(role.value))?.value ?? roles[0] ?? 'employee';
+const userRoles = (user: Pick<UserWithCompanies, 'roles'>): AppRole[] => user.roles ?? [];
 
 const isSingleCompanyRoleSet = (roles: AppRole[]) => roles.includes('exec') || roles.includes('employee');
 
@@ -272,7 +268,6 @@ function CreateUserModal({
     email: '',
     password: '',
     full_name: '',
-    role: 'payroll_admin',
     roles: ['payroll_admin'],
     company_ids: [],
   });
@@ -284,7 +279,7 @@ function CreateUserModal({
     onError: (err: unknown) => setError(getErrorMessage(err, 'Failed to create user')),
   });
 
-  const selectedRoles = form.roles?.length ? form.roles : [form.role];
+  const selectedRoles = form.roles;
   const isSingleCompany = isSingleCompanyRoleSet(selectedRoles);
 
   const toggleCompany = (id: string) => {
@@ -309,7 +304,7 @@ function CreateUserModal({
       setError('Select at least one company');
       return;
     }
-    mutation.mutate({ ...form, role: primaryRoleFor(selectedRoles), roles: selectedRoles });
+    mutation.mutate({ ...form, roles: selectedRoles });
   };
 
   return (
@@ -364,7 +359,6 @@ function CreateUserModal({
                       const roles = toggleRole(selectedRoles, r.value);
                       setForm((p) => ({
                         ...p,
-                        role: primaryRoleFor(roles),
                         roles,
                         company_ids: isSingleCompanyRoleSet(roles) ? p.company_ids.slice(0, 1) : p.company_ids,
                       }));
@@ -434,7 +428,6 @@ function EditUserModal({
   const [form, setForm] = useState<UpdateUserRequest>({
     full_name: user.full_name,
     email: user.email,
-    role: user.role,
     roles: userRoles(user),
     is_active: user.is_active !== false,
     company_ids: user.companies.map((c) => c.id),
@@ -516,7 +509,6 @@ function EditUserModal({
                         const roles = toggleRole(selectedRoles, r.value);
                         setForm((p) => ({
                           ...p,
-                          role: primaryRoleFor(roles),
                           roles,
                           company_ids: isSingleCompanyRoleSet(roles) ? (p.company_ids ?? []).slice(0, 1) : p.company_ids,
                         }));

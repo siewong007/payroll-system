@@ -65,7 +65,9 @@ pub async fn list_users(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> AppResult<Json<Vec<UserWithCompanies>>> {
-    let users = user_service::list_users(&state.pool, &auth.0.role, auth.0.sub).await?;
+    let users =
+        user_service::list_users(&state.pool, auth.has_any_role(&["super_admin"]), auth.0.sub)
+            .await?;
     Ok(Json(users))
 }
 

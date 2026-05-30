@@ -12,7 +12,6 @@ fn auth_with_role(role: &str) -> AuthUser {
     AuthUser(Claims {
         sub: uuid::Uuid::new_v4(),
         email: format!("{role}@example.invalid"),
-        role: role.to_string(),
         roles: vec![role.to_string()],
         company_id: Some(uuid::Uuid::new_v4()),
         employee_id: None,
@@ -104,7 +103,6 @@ fn payroll_permissions_are_combined_across_multiple_roles() {
     let auth = AuthUser(Claims {
         sub: uuid::Uuid::new_v4(),
         email: "combo@example.invalid".to_string(),
-        role: "payroll_admin".to_string(),
         roles: vec!["payroll_admin".to_string(), "finance".to_string()],
         company_id: Some(uuid::Uuid::new_v4()),
         employee_id: None,

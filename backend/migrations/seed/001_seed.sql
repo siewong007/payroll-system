@@ -231,46 +231,46 @@ VALUES ('00000000-0000-0000-0000-000000000001', 'Demo Company Sdn Bhd', '2023010
 
 -- Password: admin123 (bcrypt hash)
 -- Super Admin user (superadmin@demo.com)
-INSERT INTO users (id, email, password_hash, full_name, role, company_id)
+INSERT INTO users (id, email, password_hash, full_name, roles, company_id)
 VALUES (
     '00000000-0000-0000-0000-000000000002',
     'superadmin@demo.com',
     '$2b$12$fRjUOo/hbE.JoyBkrDmmg.0nkGxVzL6dQXJuUHZ2dgDBZcdvX3yA2',
     'Super Administrator',
-    'super_admin',
+    ARRAY['super_admin']::varchar(50)[],
     '00000000-0000-0000-0000-000000000001'
 );
 
 -- Admin user (admin@demo.com)
-INSERT INTO users (id, email, password_hash, full_name, role, company_id)
+INSERT INTO users (id, email, password_hash, full_name, roles, company_id)
 VALUES (
     '00000000-0000-0000-0000-000000000021',
     'admin@demo.com',
     '$2b$12$fRjUOo/hbE.JoyBkrDmmg.0nkGxVzL6dQXJuUHZ2dgDBZcdvX3yA2',
     'Company Administrator',
-    'admin',
+    ARRAY['admin']::varchar(50)[],
     '00000000-0000-0000-0000-000000000001'
 );
 
 -- Executive Director user (exec@demo.com)
-INSERT INTO users (id, email, password_hash, full_name, role, company_id)
+INSERT INTO users (id, email, password_hash, full_name, roles, company_id)
 VALUES (
     '00000000-0000-0000-0000-000000000020',
     'exec@demo.com',
     '$2b$12$fRjUOo/hbE.JoyBkrDmmg.0nkGxVzL6dQXJuUHZ2dgDBZcdvX3yA2',
     'Executive Director',
-    'exec',
+    ARRAY['exec']::varchar(50)[],
     '00000000-0000-0000-0000-000000000001'
 );
 
 -- Employee portal user (sarah@demo.com)
-INSERT INTO users (id, email, password_hash, full_name, role, company_id)
+INSERT INTO users (id, email, password_hash, full_name, roles, company_id)
 VALUES (
     '00000000-0000-0000-0000-000000000010',
     'sarah@demo.com',
     '$2b$12$fRjUOo/hbE.JoyBkrDmmg.0nkGxVzL6dQXJuUHZ2dgDBZcdvX3yA2',
     'Sarah Lee',
-    'employee',
+    ARRAY['employee']::varchar(50)[],
     '00000000-0000-0000-0000-000000000001'
 );
 
@@ -736,17 +736,17 @@ AND e.id IN (
 ON CONFLICT (employee_id, leave_type_id, year) DO NOTHING;
 
 -- User accounts for new employees (password: admin123)
-INSERT INTO users (id, email, password_hash, full_name, role, company_id, employee_id) VALUES
-('00000000-0000-0000-0000-000000000111', 'chee.keong@demo.com', '$2b$12$fRjUOo/hbE.JoyBkrDmmg.0nkGxVzL6dQXJuUHZ2dgDBZcdvX3yA2', 'Lim Chee Keong', 'employee', '00000000-0000-0000-0000-000000000001', 'a0000000-0000-0000-0000-000000000011'),
-('00000000-0000-0000-0000-000000000112', 'kavitha.s@demo.com', '$2b$12$fRjUOo/hbE.JoyBkrDmmg.0nkGxVzL6dQXJuUHZ2dgDBZcdvX3yA2', 'Kavitha Subramaniam', 'employee', '00000000-0000-0000-0000-000000000001', 'a0000000-0000-0000-0000-000000000012'),
-('00000000-0000-0000-0000-000000000113', 'azman.yusof@demo.com', '$2b$12$fRjUOo/hbE.JoyBkrDmmg.0nkGxVzL6dQXJuUHZ2dgDBZcdvX3yA2', 'Azman Yusof', 'employee', '00000000-0000-0000-0000-000000000001', 'a0000000-0000-0000-0000-000000000013'),
-('00000000-0000-0000-0000-000000000114', 'siew.mei@demo.com', '$2b$12$fRjUOo/hbE.JoyBkrDmmg.0nkGxVzL6dQXJuUHZ2dgDBZcdvX3yA2', 'Ng Siew Mei', 'employee', '00000000-0000-0000-0000-000000000001', 'a0000000-0000-0000-0000-000000000014'),
-('00000000-0000-0000-0000-000000000115', 'hafiz.rahman@demo.com', '$2b$12$fRjUOo/hbE.JoyBkrDmmg.0nkGxVzL6dQXJuUHZ2dgDBZcdvX3yA2', 'Hafiz Rahman', 'employee', '00000000-0000-0000-0000-000000000001', 'a0000000-0000-0000-0000-000000000015'),
-('00000000-0000-0000-0000-000000000116', 'yee.ling@demo.com', '$2b$12$fRjUOo/hbE.JoyBkrDmmg.0nkGxVzL6dQXJuUHZ2dgDBZcdvX3yA2', 'Chen Yee Ling', 'employee', '00000000-0000-0000-0000-000000000001', 'a0000000-0000-0000-0000-000000000016'),
-('00000000-0000-0000-0000-000000000117', 'ravi.krishnan@demo.com', '$2b$12$fRjUOo/hbE.JoyBkrDmmg.0nkGxVzL6dQXJuUHZ2dgDBZcdvX3yA2', 'Ravi Krishnan', 'employee', '00000000-0000-0000-0000-000000000001', 'a0000000-0000-0000-0000-000000000017'),
-('00000000-0000-0000-0000-000000000118', 'zainab.osman@demo.com', '$2b$12$fRjUOo/hbE.JoyBkrDmmg.0nkGxVzL6dQXJuUHZ2dgDBZcdvX3yA2', 'Zainab Osman', 'employee', '00000000-0000-0000-0000-000000000001', 'a0000000-0000-0000-0000-000000000018'),
-('00000000-0000-0000-0000-000000000119', 'daniel.tan@demo.com', '$2b$12$fRjUOo/hbE.JoyBkrDmmg.0nkGxVzL6dQXJuUHZ2dgDBZcdvX3yA2', 'Daniel Tan', 'employee', '00000000-0000-0000-0000-000000000001', 'a0000000-0000-0000-0000-000000000019'),
-('00000000-0000-0000-0000-000000000120', 'farah.aziz@demo.com', '$2b$12$fRjUOo/hbE.JoyBkrDmmg.0nkGxVzL6dQXJuUHZ2dgDBZcdvX3yA2', 'Farah Aziz', 'employee', '00000000-0000-0000-0000-000000000001', 'a0000000-0000-0000-0000-000000000020')
+INSERT INTO users (id, email, password_hash, full_name, roles, company_id, employee_id) VALUES
+('00000000-0000-0000-0000-000000000111', 'chee.keong@demo.com', '$2b$12$fRjUOo/hbE.JoyBkrDmmg.0nkGxVzL6dQXJuUHZ2dgDBZcdvX3yA2', 'Lim Chee Keong', ARRAY['employee']::varchar(50)[], '00000000-0000-0000-0000-000000000001', 'a0000000-0000-0000-0000-000000000011'),
+('00000000-0000-0000-0000-000000000112', 'kavitha.s@demo.com', '$2b$12$fRjUOo/hbE.JoyBkrDmmg.0nkGxVzL6dQXJuUHZ2dgDBZcdvX3yA2', 'Kavitha Subramaniam', ARRAY['employee']::varchar(50)[], '00000000-0000-0000-0000-000000000001', 'a0000000-0000-0000-0000-000000000012'),
+('00000000-0000-0000-0000-000000000113', 'azman.yusof@demo.com', '$2b$12$fRjUOo/hbE.JoyBkrDmmg.0nkGxVzL6dQXJuUHZ2dgDBZcdvX3yA2', 'Azman Yusof', ARRAY['employee']::varchar(50)[], '00000000-0000-0000-0000-000000000001', 'a0000000-0000-0000-0000-000000000013'),
+('00000000-0000-0000-0000-000000000114', 'siew.mei@demo.com', '$2b$12$fRjUOo/hbE.JoyBkrDmmg.0nkGxVzL6dQXJuUHZ2dgDBZcdvX3yA2', 'Ng Siew Mei', ARRAY['employee']::varchar(50)[], '00000000-0000-0000-0000-000000000001', 'a0000000-0000-0000-0000-000000000014'),
+('00000000-0000-0000-0000-000000000115', 'hafiz.rahman@demo.com', '$2b$12$fRjUOo/hbE.JoyBkrDmmg.0nkGxVzL6dQXJuUHZ2dgDBZcdvX3yA2', 'Hafiz Rahman', ARRAY['employee']::varchar(50)[], '00000000-0000-0000-0000-000000000001', 'a0000000-0000-0000-0000-000000000015'),
+('00000000-0000-0000-0000-000000000116', 'yee.ling@demo.com', '$2b$12$fRjUOo/hbE.JoyBkrDmmg.0nkGxVzL6dQXJuUHZ2dgDBZcdvX3yA2', 'Chen Yee Ling', ARRAY['employee']::varchar(50)[], '00000000-0000-0000-0000-000000000001', 'a0000000-0000-0000-0000-000000000016'),
+('00000000-0000-0000-0000-000000000117', 'ravi.krishnan@demo.com', '$2b$12$fRjUOo/hbE.JoyBkrDmmg.0nkGxVzL6dQXJuUHZ2dgDBZcdvX3yA2', 'Ravi Krishnan', ARRAY['employee']::varchar(50)[], '00000000-0000-0000-0000-000000000001', 'a0000000-0000-0000-0000-000000000017'),
+('00000000-0000-0000-0000-000000000118', 'zainab.osman@demo.com', '$2b$12$fRjUOo/hbE.JoyBkrDmmg.0nkGxVzL6dQXJuUHZ2dgDBZcdvX3yA2', 'Zainab Osman', ARRAY['employee']::varchar(50)[], '00000000-0000-0000-0000-000000000001', 'a0000000-0000-0000-0000-000000000018'),
+('00000000-0000-0000-0000-000000000119', 'daniel.tan@demo.com', '$2b$12$fRjUOo/hbE.JoyBkrDmmg.0nkGxVzL6dQXJuUHZ2dgDBZcdvX3yA2', 'Daniel Tan', ARRAY['employee']::varchar(50)[], '00000000-0000-0000-0000-000000000001', 'a0000000-0000-0000-0000-000000000019'),
+('00000000-0000-0000-0000-000000000120', 'farah.aziz@demo.com', '$2b$12$fRjUOo/hbE.JoyBkrDmmg.0nkGxVzL6dQXJuUHZ2dgDBZcdvX3yA2', 'Farah Aziz', ARRAY['employee']::varchar(50)[], '00000000-0000-0000-0000-000000000001', 'a0000000-0000-0000-0000-000000000020')
 ON CONFLICT (email) DO NOTHING;
 
 -- Update user_companies for new users
@@ -831,13 +831,13 @@ ON CONFLICT (id) DO NOTHING;
 -- source: 005_seed_male_employee_user.sql
 
 -- Male employee portal user (ahmad@demo.com) linked to EMP001
-INSERT INTO users (id, email, password_hash, full_name, role, company_id, employee_id)
+INSERT INTO users (id, email, password_hash, full_name, roles, company_id, employee_id)
 VALUES (
     '00000000-0000-0000-0000-000000000011',
     'ahmad@demo.com',
     '$2b$12$fRjUOo/hbE.JoyBkrDmmg.0nkGxVzL6dQXJuUHZ2dgDBZcdvX3yA2',
     'Ahmad bin Razak',
-    'employee',
+    ARRAY['employee']::varchar(50)[],
     '00000000-0000-0000-0000-000000000001',
     'a0000000-0000-0000-0000-000000000001'
 ) ON CONFLICT (id) DO NOTHING;

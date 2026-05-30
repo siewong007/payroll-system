@@ -89,7 +89,7 @@ async fn token_and_user_for(
     let token = create_token(
         user_id,
         "route-test@example.invalid",
-        role,
+        &[role.to_string()],
         Some(company_id),
         None,
         JWT_SECRET,

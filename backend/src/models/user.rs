@@ -10,7 +10,6 @@ pub struct User {
     #[serde(skip_serializing)]
     pub password_hash: String,
     pub full_name: String,
-    pub role: String,
     pub roles: Vec<String>,
     pub company_id: Option<Uuid>,
     pub employee_id: Option<Uuid>,
@@ -42,7 +41,6 @@ pub struct UserResponse {
     pub id: Uuid,
     pub email: String,
     pub full_name: String,
-    pub role: String,
     pub roles: Vec<String>,
     pub company_id: Option<Uuid>,
     pub employee_id: Option<Uuid>,
@@ -55,7 +53,6 @@ impl From<User> for UserResponse {
             id: u.id,
             email: u.email,
             full_name: u.full_name,
-            role: u.role,
             roles: u.roles,
             company_id: u.company_id,
             employee_id: u.employee_id,

@@ -9,7 +9,7 @@ use uuid::Uuid;
 use webauthn_rs::prelude::*;
 
 use crate::core::app_state::AppState;
-use crate::core::auth::{AuthUser, create_token_with_roles};
+use crate::core::auth::{AuthUser, create_token};
 use crate::core::cookie;
 use crate::core::error::{AppError, AppResult};
 use crate::models::passkey::{PasskeyInfo, RenamePasskeyRequest};
@@ -189,7 +189,7 @@ pub async fn authentication_complete(
     // Fetch user and issue tokens (same as password login)
     let user = sqlx::query_as!(
         User,
-        r#"SELECT id, email, password_hash, full_name, role, roles, company_id,
+        r#"SELECT id, email, password_hash, full_name, roles, company_id,
             employee_id, is_active, must_change_password, last_login, created_at, updated_at
         FROM users WHERE id = $1 AND is_active = TRUE"#,
         user_id,
@@ -203,10 +203,9 @@ pub async fn authentication_complete(
         .execute(&state.pool)
         .await?;
 
-    let token = create_token_with_roles(
+    let token = create_token(
         user.id,
         &user.email,
-        &user.role,
         &user.roles,
         user.company_id,
         user.employee_id,
@@ -315,7 +314,7 @@ pub async fn discoverable_auth_complete(
     // Fetch user and issue tokens
     let user = sqlx::query_as!(
         User,
-        r#"SELECT id, email, password_hash, full_name, role, roles, company_id,
+        r#"SELECT id, email, password_hash, full_name, roles, company_id,
             employee_id, is_active, must_change_password, last_login, created_at, updated_at
         FROM users WHERE id = $1 AND is_active = TRUE"#,
         user_id,
@@ -328,10 +327,9 @@ pub async fn discoverable_auth_complete(
         .execute(&state.pool)
         .await?;
 
-    let token = create_token_with_roles(
+    let token = create_token(
         user.id,
         &user.email,
-        &user.role,
         &user.roles,
         user.company_id,
         user.employee_id,

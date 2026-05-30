@@ -13,7 +13,6 @@ pub struct UserWithCompanies {
     pub id: Uuid,
     pub email: String,
     pub full_name: String,
-    pub role: String,
     pub roles: Vec<String>,
     pub company_id: Option<Uuid>,
     pub employee_id: Option<Uuid>,
@@ -29,8 +28,7 @@ pub struct CreateUserRequest {
     pub email: String,
     pub password: String,
     pub full_name: String,
-    pub role: String,
-    pub roles: Option<Vec<String>>,
+    pub roles: Vec<String>,
     pub company_ids: Vec<Uuid>,
 }
 
@@ -38,7 +36,6 @@ pub struct CreateUserRequest {
 pub struct UpdateUserRequest {
     pub full_name: Option<String>,
     pub email: Option<String>,
-    pub role: Option<String>,
     pub roles: Option<Vec<String>>,
     pub is_active: Option<bool>,
     pub company_ids: Option<Vec<Uuid>>,

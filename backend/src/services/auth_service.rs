@@ -1,6 +1,6 @@
 use sqlx::PgPool;
 
-use crate::core::auth::create_token_with_roles;
+use crate::core::auth::create_token;
 use crate::core::error::{AppError, AppResult};
 use crate::models::user::{LoginRequest, LoginResponse, User, UserResponse};
 use crate::services::session_service;
@@ -30,7 +30,7 @@ pub async fn login(
 ) -> AppResult<LoginResponse> {
     let user = sqlx::query_as!(
         User,
-        r#"SELECT id, email, password_hash, full_name, role, roles, company_id,
+        r#"SELECT id, email, password_hash, full_name, roles, company_id,
             employee_id, is_active, must_change_password, last_login, created_at, updated_at
         FROM users WHERE email = $1 AND is_active = TRUE"#,
         req.email,
@@ -71,10 +71,9 @@ pub async fn login(
         .execute(pool)
         .await?;
 
-    let token = create_token_with_roles(
+    let token = create_token(
         user.id,
         &user.email,
-        &user.role,
         &user.roles,
         user.company_id,
         user.employee_id,

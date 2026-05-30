@@ -25,7 +25,7 @@ export function roleList(value: MaybeAppRole): AppRole[] {
   if (!value) return [];
   if (Array.isArray(value)) return value;
   if (typeof value === 'string') return [value];
-  return value.roles?.length ? value.roles : [value.role];
+  return value.roles ?? [];
 }
 
 export function hasAnyRole(value: MaybeAppRole, allowedRoles: AppRole[]): boolean {

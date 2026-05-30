@@ -210,7 +210,7 @@ pub async fn find_oauth2_account(
 pub async fn find_user_by_email(pool: &PgPool, email: &str) -> AppResult<Option<User>> {
     let user = sqlx::query_as!(
         User,
-        r#"SELECT id, email, password_hash, full_name, role, roles, company_id,
+        r#"SELECT id, email, password_hash, full_name, roles, company_id,
             employee_id, is_active, must_change_password, last_login, created_at, updated_at
         FROM users WHERE email = $1 AND is_active = TRUE"#,
         email,
@@ -336,7 +336,7 @@ pub async fn find_user_by_oauth2(
 ) -> AppResult<Option<User>> {
     let user = sqlx::query_as!(
         User,
-        r#"SELECT u.id, u.email, u.password_hash, u.full_name, u.role, u.roles, u.company_id,
+        r#"SELECT u.id, u.email, u.password_hash, u.full_name, u.roles, u.company_id,
             u.employee_id, u.is_active, u.must_change_password, u.last_login, u.created_at, u.updated_at
         FROM users u
         JOIN oauth2_accounts oa ON u.id = oa.user_id

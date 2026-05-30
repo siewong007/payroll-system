@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, email, full_name, role, roles, company_id, employee_id, is_active, created_at\n            FROM users\n            ORDER BY created_at DESC",
+  "query": "SELECT DISTINCT u.id, u.email, u.full_name, u.roles, u.company_id,\n                u.employee_id, u.is_active, u.created_at\n            FROM users u\n            JOIN user_companies uc ON u.id = uc.user_id\n            WHERE uc.company_id IN (\n                SELECT company_id FROM user_companies WHERE user_id = $1\n            )\n            AND NOT (u.roles = ARRAY['employee']::VARCHAR(50)[])\n            ORDER BY u.created_at DESC",
   "describe": {
     "columns": [
       {
@@ -20,40 +20,36 @@
       },
       {
         "ordinal": 3,
-        "name": "role",
-        "type_info": "Varchar"
-      },
-      {
-        "ordinal": 4,
         "name": "roles",
         "type_info": "VarcharArray"
       },
       {
-        "ordinal": 5,
+        "ordinal": 4,
         "name": "company_id",
         "type_info": "Uuid"
       },
       {
-        "ordinal": 6,
+        "ordinal": 5,
         "name": "employee_id",
         "type_info": "Uuid"
       },
       {
-        "ordinal": 7,
+        "ordinal": 6,
         "name": "is_active",
         "type_info": "Bool"
       },
       {
-        "ordinal": 8,
+        "ordinal": 7,
         "name": "created_at",
         "type_info": "Timestamptz"
       }
     ],
     "parameters": {
-      "Left": []
+      "Left": [
+        "Uuid"
+      ]
     },
     "nullable": [
-      false,
       false,
       false,
       false,
@@ -64,5 +60,5 @@
       false
     ]
   },
-  "hash": "c2bbe8ba9c7a503a47f605fa46d4f29c86b3890996a2e1fdff4b8a4d5e3c457a"
+  "hash": "60abf29ac40c4e01f23a1b22a0014f93909439157cde325e4a828745e9567aad"
 }
