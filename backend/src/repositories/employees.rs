@@ -120,6 +120,34 @@ pub async fn get_active_status(
     Ok(status)
 }
 
+/// Count of active employees for a company.
+pub async fn count_active(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+) -> AppResult<i64> {
+    let count = sqlx::query_scalar!(
+        r#"SELECT COUNT(*) AS "count!" FROM employees WHERE company_id = $1 AND is_active = TRUE"#,
+        company_id,
+    )
+    .fetch_one(executor)
+    .await?;
+    Ok(count)
+}
+
+/// Count of distinct non-null departments among active employees for a company.
+pub async fn count_distinct_departments(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+) -> AppResult<i64> {
+    let count = sqlx::query_scalar!(
+        r#"SELECT COUNT(DISTINCT department) AS "count!" FROM employees WHERE company_id = $1 AND is_active = TRUE AND department IS NOT NULL"#,
+        company_id,
+    )
+    .fetch_one(executor)
+    .await?;
+    Ok(count)
+}
+
 pub async fn exists_by_number(
     executor: impl Executor<'_, Database = Postgres>,
     company_id: Uuid,

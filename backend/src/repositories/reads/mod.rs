@@ -6,4 +6,5 @@
 
 pub mod oauth2;
 pub mod passkey;
+pub mod teams;
 pub mod user_management;

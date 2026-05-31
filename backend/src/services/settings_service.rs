@@ -3,24 +3,14 @@ use uuid::Uuid;
 
 use crate::core::error::{AppError, AppResult};
 use crate::models::setting::{CompanySetting, SettingUpdate};
+use crate::repositories::company_settings;
 
 pub async fn get_all_settings(
     pool: &PgPool,
     company_id: Uuid,
     category: Option<&str>,
 ) -> AppResult<Vec<CompanySetting>> {
-    let settings = sqlx::query_as!(
-        CompanySetting,
-        r#"SELECT * FROM company_settings
-        WHERE company_id = $1
-        AND ($2::text IS NULL OR category = $2)
-        ORDER BY category, key"#,
-        company_id,
-        category,
-    )
-    .fetch_all(pool)
-    .await?;
-    Ok(settings)
+    company_settings::list(pool, company_id, category).await
 }
 
 pub async fn get_setting(
@@ -29,16 +19,9 @@ pub async fn get_setting(
     category: &str,
     key: &str,
 ) -> AppResult<CompanySetting> {
-    sqlx::query_as!(
-        CompanySetting,
-        "SELECT * FROM company_settings WHERE company_id = $1 AND category = $2 AND key = $3",
-        company_id,
-        category,
-        key,
-    )
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound("Setting not found".into()))
+    company_settings::get(pool, company_id, category, key)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Setting not found".into()))
 }
 
 pub async fn update_setting(
@@ -49,23 +32,9 @@ pub async fn update_setting(
     value: serde_json::Value,
     updated_by: Uuid,
 ) -> AppResult<CompanySetting> {
-    let setting = sqlx::query_as!(
-        CompanySetting,
-        r#"UPDATE company_settings
-        SET value = $4, updated_by = $5, updated_at = NOW()
-        WHERE company_id = $1 AND category = $2 AND key = $3
-        RETURNING *"#,
-        company_id,
-        category,
-        key,
-        value,
-        updated_by,
-    )
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound("Setting not found".into()))?;
-
-    Ok(setting)
+    company_settings::update(pool, company_id, category, key, &value, updated_by)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Setting not found".into()))
 }
 
 pub async fn bulk_update_settings(
@@ -78,19 +47,14 @@ pub async fn bulk_update_settings(
     let mut results = Vec::with_capacity(updates.len());
 
     for update in updates {
-        let setting = sqlx::query_as!(
-            CompanySetting,
-            r#"UPDATE company_settings
-            SET value = $4, updated_by = $5, updated_at = NOW()
-            WHERE company_id = $1 AND category = $2 AND key = $3
-            RETURNING *"#,
+        let setting = company_settings::update(
+            &mut *tx,
             company_id,
             &update.category,
             &update.key,
             &update.value,
             updated_by,
         )
-        .fetch_optional(&mut *tx)
         .await?
         .ok_or_else(|| {
             AppError::NotFound(format!(
