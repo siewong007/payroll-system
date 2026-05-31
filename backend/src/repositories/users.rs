@@ -1,13 +1,10 @@
 //! Data access for the `users` table.
-//!
-//! Partial: seeded with the operations `employee_service` needs to provision and
-//! tear down employee-linked accounts. Other domains (auth, passkey, oauth2, …) will
-//! add their own functions here as they migrate.
 
 use sqlx::{Executor, Postgres};
 use uuid::Uuid;
 
 use crate::core::error::AppResult;
+use crate::models::user::User;
 
 /// Minimal projection used when resolving an existing account by email.
 #[derive(Debug)]
@@ -28,6 +25,54 @@ pub async fn find_by_email(
     .fetch_optional(executor)
     .await?;
     Ok(row)
+}
+
+pub async fn get_by_id(
+    executor: impl Executor<'_, Database = Postgres>,
+    id: Uuid,
+) -> AppResult<Option<User>> {
+    let user = sqlx::query_as!(
+        User,
+        r#"SELECT id, email, password_hash, full_name, roles, company_id,
+            employee_id, is_active, must_change_password, last_login, created_at, updated_at
+        FROM users WHERE id = $1"#,
+        id,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(user)
+}
+
+pub async fn get_active_by_id(
+    executor: impl Executor<'_, Database = Postgres>,
+    id: Uuid,
+) -> AppResult<Option<User>> {
+    let user = sqlx::query_as!(
+        User,
+        r#"SELECT id, email, password_hash, full_name, roles, company_id,
+            employee_id, is_active, must_change_password, last_login, created_at, updated_at
+        FROM users WHERE id = $1 AND is_active = TRUE"#,
+        id,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(user)
+}
+
+pub async fn find_active_by_email(
+    executor: impl Executor<'_, Database = Postgres>,
+    email: &str,
+) -> AppResult<Option<User>> {
+    let user = sqlx::query_as!(
+        User,
+        r#"SELECT id, email, password_hash, full_name, roles, company_id,
+            employee_id, is_active, must_change_password, last_login, created_at, updated_at
+        FROM users WHERE email = $1 AND is_active = TRUE"#,
+        email,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(user)
 }
 
 /// Link an existing (non-employee) account to an employee record.
@@ -67,6 +112,44 @@ pub async fn insert_employee_user(
         full_name,
         company_id,
         employee_id,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
+pub async fn update_last_login(
+    executor: impl Executor<'_, Database = Postgres>,
+    id: Uuid,
+) -> AppResult<()> {
+    sqlx::query!("UPDATE users SET last_login = NOW() WHERE id = $1", id)
+        .execute(executor)
+        .await?;
+    Ok(())
+}
+
+pub async fn update_password(
+    executor: impl Executor<'_, Database = Postgres>,
+    id: Uuid,
+    password_hash: &str,
+) -> AppResult<()> {
+    sqlx::query!(
+        "UPDATE users SET password_hash = $1, must_change_password = FALSE, updated_at = NOW() WHERE id = $2",
+        password_hash,
+        id,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
+pub async fn clear_must_change_password(
+    executor: impl Executor<'_, Database = Postgres>,
+    id: Uuid,
+) -> AppResult<()> {
+    sqlx::query!(
+        "UPDATE users SET must_change_password = FALSE, updated_at = NOW() WHERE id = $1",
+        id,
     )
     .execute(executor)
     .await?;

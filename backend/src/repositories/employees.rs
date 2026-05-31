@@ -105,6 +105,21 @@ pub async fn get(
     Ok(employee)
 }
 
+/// Active flag for an employee, used by auth to reject logins for deleted staff.
+/// `None` means the row is absent (also treated as inactive by callers).
+pub async fn get_active_status(
+    executor: impl Executor<'_, Database = Postgres>,
+    id: Uuid,
+) -> AppResult<Option<bool>> {
+    let status = sqlx::query_scalar!(
+        r#"SELECT is_active AS "is_active!" FROM employees WHERE id = $1"#,
+        id,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(status)
+}
+
 pub async fn exists_by_number(
     executor: impl Executor<'_, Database = Postgres>,
     company_id: Uuid,

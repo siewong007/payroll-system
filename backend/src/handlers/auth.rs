@@ -6,7 +6,7 @@ use crate::core::cookie;
 use crate::core::error::{AppError, AppResult};
 use crate::core::extract::ValidatedJson;
 use crate::models::session::{ForgotPasswordRequest, ResetPasswordRequest};
-use crate::models::user::{LoginRequest, LoginResponse, User, UserResponse};
+use crate::models::user::{LoginRequest, LoginResponse, UserResponse};
 use crate::models::user_company::{CompanySummary, SwitchCompanyRequest};
 use crate::services::{
     auth_service, email_service, password_reset_service, session_service, user_service,
@@ -41,15 +41,7 @@ pub async fn login(
 }
 
 pub async fn me(State(state): State<AppState>, auth: AuthUser) -> AppResult<Json<UserResponse>> {
-    let user = sqlx::query_as!(
-        User,
-        r#"SELECT id, email, password_hash, full_name, roles, company_id,
-            employee_id, is_active, must_change_password, last_login, created_at, updated_at
-        FROM users WHERE id = $1"#,
-        auth.0.sub,
-    )
-    .fetch_one(&state.pool)
-    .await?;
+    let user = auth_service::get_user_by_id(&state.pool, auth.0.sub).await?;
     Ok(Json(UserResponse::from(user)))
 }
 
@@ -70,15 +62,7 @@ pub async fn switch_company(
     user_service::switch_company(&state.pool, auth.0.sub, req.company_id).await?;
 
     // Fetch updated user
-    let user = sqlx::query_as!(
-        User,
-        r#"SELECT id, email, password_hash, full_name, roles, company_id,
-            employee_id, is_active, must_change_password, last_login, created_at, updated_at
-        FROM users WHERE id = $1"#,
-        auth.0.sub,
-    )
-    .fetch_one(&state.pool)
-    .await?;
+    let user = auth_service::get_user_by_id(&state.pool, auth.0.sub).await?;
 
     // Issue new token with updated company_id
     let token = create_token(
@@ -106,59 +90,23 @@ pub async fn refresh_token(
     let refresh = cookie::extract_refresh_token(&headers)
         .ok_or_else(|| AppError::Unauthorized("No refresh token".into()))?;
 
-    let user_id = session_service::verify_refresh_token(&state.pool, &refresh).await?;
-
-    // Fetch user
-    let user = sqlx::query_as!(
-        User,
-        r#"SELECT id, email, password_hash, full_name, roles, company_id,
-            employee_id, is_active, must_change_password, last_login, created_at, updated_at
-        FROM users WHERE id = $1 AND is_active = TRUE"#,
-        user_id,
-    )
-    .fetch_optional(&state.pool)
-    .await?
-    .ok_or_else(|| AppError::Unauthorized("User not found or inactive".into()))?;
-
-    // Check if linked employee has been deleted
-    if let Some(employee_id) = user.employee_id {
-        let employee_active = sqlx::query_scalar!(
-            r#"SELECT is_active AS "is_active!" FROM employees WHERE id = $1"#,
-            employee_id,
-        )
-        .fetch_optional(&state.pool)
-        .await?;
-
-        if matches!(employee_active, Some(false) | None) {
-            session_service::revoke_refresh_token(&state.pool, &refresh).await?;
-            return Err(AppError::Unauthorized(
-                "Your employee account has been deleted. Please contact your administrator.".into(),
-            ));
-        }
-    }
-
-    // Revoke old refresh token and issue new one (rotation)
-    session_service::revoke_refresh_token(&state.pool, &refresh).await?;
-    let new_refresh = session_service::create_refresh_token(&state.pool, user.id).await?;
-
-    let token = create_token(
-        user.id,
-        &user.email,
-        &user.roles,
-        user.company_id,
-        user.employee_id,
+    let refreshed = auth_service::refresh_session(
+        &state.pool,
+        &refresh,
         &state.config.jwt_secret,
         state.config.jwt_expiry_hours,
-    )?;
+    )
+    .await?;
 
     let mut resp_headers = HeaderMap::new();
-    let (name, value) = cookie::set_refresh_cookie(&new_refresh, &state.config.frontend_url);
+    let (name, value) =
+        cookie::set_refresh_cookie(&refreshed.refresh_token, &state.config.frontend_url);
     resp_headers.insert(name, value.parse().unwrap());
 
     let body = LoginResponse {
-        token,
+        token: refreshed.token,
         refresh_token: None,
-        user: UserResponse::from(user),
+        user: refreshed.user,
     };
 
     Ok((resp_headers, Json(body)))
@@ -253,34 +201,12 @@ pub async fn change_password(
     auth: AuthUser,
     Json(req): Json<ChangePasswordRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
-    auth_service::validate_password_strength(&req.new_password)?;
-
-    let user = sqlx::query_as!(
-        User,
-        r#"SELECT id, email, password_hash, full_name, roles, company_id,
-            employee_id, is_active, must_change_password, last_login, created_at, updated_at
-        FROM users WHERE id = $1"#,
+    auth_service::change_password(
+        &state.pool,
         auth.0.sub,
+        &req.current_password,
+        &req.new_password,
     )
-    .fetch_one(&state.pool)
-    .await?;
-
-    let valid = bcrypt::verify(&req.current_password, &user.password_hash)
-        .map_err(|_| AppError::Internal("Password verification failed".into()))?;
-
-    if !valid {
-        return Err(AppError::BadRequest("Current password is incorrect".into()));
-    }
-
-    let new_hash = bcrypt::hash(&req.new_password, 10)
-        .map_err(|_| AppError::Internal("Password hashing failed".into()))?;
-
-    sqlx::query!(
-        "UPDATE users SET password_hash = $1, must_change_password = FALSE, updated_at = NOW() WHERE id = $2",
-        new_hash,
-        auth.0.sub,
-    )
-    .execute(&state.pool)
     .await?;
 
     Ok(Json(serde_json::json!({
@@ -292,12 +218,7 @@ pub async fn skip_change_password(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> AppResult<Json<serde_json::Value>> {
-    sqlx::query!(
-        "UPDATE users SET must_change_password = FALSE, updated_at = NOW() WHERE id = $1",
-        auth.0.sub,
-    )
-    .execute(&state.pool)
-    .await?;
+    auth_service::skip_change_password(&state.pool, auth.0.sub).await?;
 
     Ok(Json(serde_json::json!({
         "message": "Password change skipped."

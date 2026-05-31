@@ -1,12 +1,56 @@
 //! Data access for the `refresh_tokens` table.
-//!
-//! Partial: seeded with what `employee_service` needs for account teardown. Other
-//! domains (auth/session) add their own functions here as they migrate.
 
+use chrono::{DateTime, Utc};
 use sqlx::{Executor, Postgres};
 use uuid::Uuid;
 
 use crate::core::error::AppResult;
+
+pub async fn insert(
+    executor: impl Executor<'_, Database = Postgres>,
+    user_id: Uuid,
+    token_hash: &str,
+    expires_at: DateTime<Utc>,
+) -> AppResult<()> {
+    sqlx::query!(
+        r#"INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
+        VALUES ($1, $2, $3)"#,
+        user_id,
+        token_hash,
+        expires_at,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
+/// Returns the owning `user_id` of a non-revoked, unexpired token, if any.
+pub async fn find_active_user_id(
+    executor: impl Executor<'_, Database = Postgres>,
+    token_hash: &str,
+) -> AppResult<Option<Uuid>> {
+    let user_id = sqlx::query_scalar!(
+        r#"SELECT user_id FROM refresh_tokens
+        WHERE token_hash = $1 AND revoked = FALSE AND expires_at > NOW()"#,
+        token_hash,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(user_id)
+}
+
+pub async fn revoke_by_hash(
+    executor: impl Executor<'_, Database = Postgres>,
+    token_hash: &str,
+) -> AppResult<()> {
+    sqlx::query!(
+        "UPDATE refresh_tokens SET revoked = TRUE WHERE token_hash = $1",
+        token_hash,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}
 
 pub async fn delete_by_user(
     executor: impl Executor<'_, Database = Postgres>,
