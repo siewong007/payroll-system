@@ -14,6 +14,14 @@ pub struct ExistingUser {
     pub roles: Vec<String>,
 }
 
+/// Projection for password-reset email dispatch.
+#[derive(Debug)]
+pub struct UserContact {
+    pub id: Uuid,
+    pub email: String,
+    pub full_name: String,
+}
+
 pub async fn find_by_email(
     executor: impl Executor<'_, Database = Postgres>,
     email: &str,
@@ -69,6 +77,20 @@ pub async fn find_active_by_email(
         r#"SELECT id, email, password_hash, full_name, roles, company_id,
             employee_id, is_active, must_change_password, last_login, created_at, updated_at
         FROM users WHERE email = $1 AND is_active = TRUE"#,
+        email,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(user)
+}
+
+pub async fn find_active_contact_by_email(
+    executor: impl Executor<'_, Database = Postgres>,
+    email: &str,
+) -> AppResult<Option<UserContact>> {
+    let user = sqlx::query_as!(
+        UserContact,
+        "SELECT id, email, full_name FROM users WHERE email = $1 AND is_active = TRUE",
         email,
     )
     .fetch_optional(executor)
@@ -258,6 +280,23 @@ pub async fn update_password(
         "UPDATE users SET password_hash = $1, must_change_password = FALSE, updated_at = NOW() WHERE id = $2",
         password_hash,
         id,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
+/// Set the password hash only (does not touch `must_change_password`); used by the
+/// password-reset flow. Cf. `update_password`, which also clears that flag.
+pub async fn set_password(
+    executor: impl Executor<'_, Database = Postgres>,
+    id: Uuid,
+    password_hash: &str,
+) -> AppResult<()> {
+    sqlx::query!(
+        "UPDATE users SET password_hash = $2, updated_at = NOW() WHERE id = $1",
+        id,
+        password_hash,
     )
     .execute(executor)
     .await?;

@@ -52,6 +52,20 @@ pub async fn revoke_by_hash(
     Ok(())
 }
 
+/// Revoke every active refresh token for a user (e.g. after a password reset).
+pub async fn revoke_all_for_user(
+    executor: impl Executor<'_, Database = Postgres>,
+    user_id: Uuid,
+) -> AppResult<()> {
+    sqlx::query!(
+        "UPDATE refresh_tokens SET revoked = TRUE WHERE user_id = $1 AND revoked = FALSE",
+        user_id,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
 pub async fn delete_by_user(
     executor: impl Executor<'_, Database = Postgres>,
     user_id: Uuid,
