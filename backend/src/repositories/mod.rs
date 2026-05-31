@@ -10,6 +10,8 @@
 //! - All SQL lives here; handlers and services never embed `sqlx::query*` directly.
 
 pub mod employees;
+pub mod oauth2_accounts;
+pub mod oauth2_states;
 pub mod password_reset_requests;
 pub mod refresh_tokens;
 pub mod salary_history;
