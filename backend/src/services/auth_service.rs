@@ -94,9 +94,7 @@ pub async fn refresh_session(
 ) -> AppResult<LoginResponseWithRefresh> {
     let user_id = session_service::verify_refresh_token(pool, raw_token).await?;
 
-    let user = users::get_active_by_id(pool, user_id)
-        .await?
-        .ok_or_else(|| AppError::Unauthorized("User not found or inactive".into()))?;
+    let user = get_active_user(pool, user_id).await?;
 
     // Check if linked employee has been deleted
     if !linked_employee_active(pool, user.employee_id).await? {
@@ -131,6 +129,14 @@ pub async fn get_user_by_id(pool: &PgPool, user_id: Uuid) -> AppResult<User> {
     users::get_by_id(pool, user_id)
         .await?
         .ok_or_else(|| AppError::Internal("User not found".into()))
+}
+
+/// Fetch an active user by id, or `Unauthorized` if missing/inactive. Shared by the
+/// refresh and passkey login flows.
+pub async fn get_active_user(pool: &PgPool, user_id: Uuid) -> AppResult<User> {
+    users::get_active_by_id(pool, user_id)
+        .await?
+        .ok_or_else(|| AppError::Unauthorized("User not found or inactive".into()))
 }
 
 pub async fn change_password(

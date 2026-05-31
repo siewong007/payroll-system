@@ -5,4 +5,5 @@
 //! See docs/refactor-repositories-layer.md §6.
 
 pub mod oauth2;
+pub mod passkey;
 pub mod user_management;
