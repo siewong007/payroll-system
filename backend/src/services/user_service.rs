@@ -1,4 +1,3 @@
-use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -6,37 +5,8 @@ use crate::core::error::{AppError, AppResult};
 use crate::models::user_company::{
     CompanySummary, CreateUserRequest, UpdateUserRequest, UserWithCompanies,
 };
-
-/// Plain row mirror of the user columns selected for `UserWithCompanies`.
-/// Needed because `UserWithCompanies` has a `#[sqlx(skip)]` `companies` field,
-/// which the compile-checked `query_as!` macro cannot populate. We map this
-/// into `UserWithCompanies` with an empty `companies` vec (filled separately).
-struct UserRow {
-    id: Uuid,
-    email: String,
-    full_name: String,
-    roles: Vec<String>,
-    company_id: Option<Uuid>,
-    employee_id: Option<Uuid>,
-    is_active: Option<bool>,
-    created_at: DateTime<Utc>,
-}
-
-impl UserRow {
-    fn into_user(self) -> UserWithCompanies {
-        UserWithCompanies {
-            id: self.id,
-            email: self.email,
-            full_name: self.full_name,
-            roles: self.roles,
-            company_id: self.company_id,
-            employee_id: self.employee_id,
-            is_active: self.is_active,
-            created_at: self.created_at,
-            companies: Vec::new(),
-        }
-    }
-}
+use crate::repositories::reads::user_management;
+use crate::repositories::{user_companies, users};
 
 const VALID_ROLES: &[&str] = &[
     "super_admin",
@@ -68,10 +38,7 @@ pub async fn create_user(pool: &PgPool, req: CreateUserRequest) -> AppResult<Use
     }
 
     // Check email uniqueness
-    let exists = sqlx::query_scalar!("SELECT id FROM users WHERE email = $1", req.email)
-        .fetch_optional(pool)
-        .await?;
-    if exists.is_some() {
+    if users::find_id_by_email(pool, &req.email).await?.is_some() {
         return Err(AppError::BadRequest(
             "A user with this email already exists".into(),
         ));
@@ -84,35 +51,25 @@ pub async fn create_user(pool: &PgPool, req: CreateUserRequest) -> AppResult<Use
 
     // Insert user with first company as active
     let active_company_id = req.company_ids[0];
-    let user = sqlx::query_as!(
-        UserRow,
-        r#"INSERT INTO users (email, password_hash, full_name, roles, company_id)
-        VALUES ($1, $2, $3, $4, $5)
-        RETURNING id, email, full_name, roles, company_id, employee_id, is_active, created_at"#,
-        req.email,
-        password_hash,
-        req.full_name,
+    let mut user = users::insert_admin(
+        pool,
+        &req.email,
+        &password_hash,
+        &req.full_name,
         &roles,
         active_company_id,
     )
-    .fetch_one(pool)
     .await?
     .into_user();
 
-    // Insert user_companies entries
+    // Insert user_companies entries (idempotent)
     for company_id in &req.company_ids {
-        sqlx::query!(
-            "INSERT INTO user_companies (user_id, company_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-            user.id,
-            company_id,
-        )
-        .execute(pool)
-        .await?;
+        user_companies::insert(pool, user.id, *company_id).await?;
     }
 
     // Fetch companies for response
-    let companies = get_user_companies(pool, user.id).await?;
-    Ok(UserWithCompanies { companies, ..user })
+    user.companies = get_user_companies(pool, user.id).await?;
+    Ok(user)
 }
 
 pub async fn list_users(
@@ -120,46 +77,27 @@ pub async fn list_users(
     caller_is_super_admin: bool,
     caller_id: Uuid,
 ) -> AppResult<Vec<UserWithCompanies>> {
-    let mut users: Vec<UserWithCompanies> = if caller_is_super_admin {
-        sqlx::query_as!(
-            UserRow,
-            r#"SELECT id, email, full_name, roles, company_id, employee_id, is_active, created_at
-            FROM users
-            ORDER BY created_at DESC"#,
-        )
-        .fetch_all(pool)
-        .await?
-        .into_iter()
-        .map(UserRow::into_user)
-        .collect()
+    let mut result: Vec<UserWithCompanies> = if caller_is_super_admin {
+        users::list_all(pool)
+            .await?
+            .into_iter()
+            .map(|row| row.into_user())
+            .collect()
     } else {
         // Admin sees users who share at least one company
-        sqlx::query_as!(
-            UserRow,
-            r#"SELECT DISTINCT u.id, u.email, u.full_name, u.roles, u.company_id,
-                u.employee_id, u.is_active, u.created_at
-            FROM users u
-            JOIN user_companies uc ON u.id = uc.user_id
-            WHERE uc.company_id IN (
-                SELECT company_id FROM user_companies WHERE user_id = $1
-            )
-            AND NOT (u.roles = ARRAY['employee']::VARCHAR(50)[])
-            ORDER BY u.created_at DESC"#,
-            caller_id,
-        )
-        .fetch_all(pool)
-        .await?
-        .into_iter()
-        .map(UserRow::into_user)
-        .collect()
+        user_management::list_for_admin(pool, caller_id)
+            .await?
+            .into_iter()
+            .map(|row| row.into_user())
+            .collect()
     };
 
     // Populate companies for each user
-    for user in &mut users {
+    for user in &mut result {
         user.companies = get_user_companies(pool, user.id).await?;
     }
 
-    Ok(users)
+    Ok(result)
 }
 
 pub async fn update_user_companies(
@@ -174,14 +112,9 @@ pub async fn update_user_companies(
     }
 
     // Get user to check role
-    let user = sqlx::query_as!(
-        UserRow,
-        "SELECT id, email, full_name, roles, company_id, employee_id, is_active, created_at FROM users WHERE id = $1",
-        user_id,
-    )
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound("User not found".into()))?;
+    let user = users::get_projection_by_id(pool, user_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("User not found".into()))?;
 
     // Exec can only have one company
     if user.roles.iter().any(|role| role == "exec") && company_ids.len() != 1 {
@@ -190,20 +123,10 @@ pub async fn update_user_companies(
         ));
     }
 
-    // Remove old assignments
-    sqlx::query!("DELETE FROM user_companies WHERE user_id = $1", user_id)
-        .execute(pool)
-        .await?;
-
-    // Insert new assignments
+    // Replace assignments
+    user_companies::delete_by_user(pool, user_id).await?;
     for company_id in &company_ids {
-        sqlx::query!(
-            "INSERT INTO user_companies (user_id, company_id) VALUES ($1, $2)",
-            user_id,
-            company_id,
-        )
-        .execute(pool)
-        .await?;
+        user_companies::add(pool, user_id, *company_id).await?;
     }
 
     // If current active company is no longer in the list, update it
@@ -211,42 +134,21 @@ pub async fn update_user_companies(
         .company_id
         .is_none_or(|cid| !company_ids.contains(&cid));
     if needs_update {
-        sqlx::query!(
-            "UPDATE users SET company_id = $2, updated_at = NOW() WHERE id = $1",
-            user_id,
-            company_ids[0],
-        )
-        .execute(pool)
-        .await?;
+        users::update_active_company(pool, user_id, company_ids[0]).await?;
     }
 
     // Fetch updated user
-    let mut updated = sqlx::query_as!(
-        UserRow,
-        "SELECT id, email, full_name, roles, company_id, employee_id, is_active, created_at FROM users WHERE id = $1",
-        user_id,
-    )
-    .fetch_one(pool)
-    .await?
-    .into_user();
+    let mut updated = users::get_projection_by_id(pool, user_id)
+        .await?
+        .ok_or_else(|| AppError::Internal("User not found".into()))?
+        .into_user();
     updated.companies = get_user_companies(pool, user_id).await?;
 
     Ok(updated)
 }
 
 pub async fn get_user_companies(pool: &PgPool, user_id: Uuid) -> AppResult<Vec<CompanySummary>> {
-    let companies = sqlx::query_as!(
-        CompanySummary,
-        r#"SELECT c.id, c.name
-        FROM user_companies uc
-        JOIN companies c ON uc.company_id = c.id
-        WHERE uc.user_id = $1
-        ORDER BY c.name ASC"#,
-        user_id,
-    )
-    .fetch_all(pool)
-    .await?;
-    Ok(companies)
+    user_management::list_companies_for_user(pool, user_id).await
 }
 
 pub async fn switch_company(
@@ -255,28 +157,14 @@ pub async fn switch_company(
     target_company_id: Uuid,
 ) -> AppResult<()> {
     // Verify user has access to this company
-    let has_access = sqlx::query_scalar!(
-        "SELECT user_id FROM user_companies WHERE user_id = $1 AND company_id = $2",
-        user_id,
-        target_company_id,
-    )
-    .fetch_optional(pool)
-    .await?;
-
-    if has_access.is_none() {
+    if !user_companies::user_has_company(pool, user_id, target_company_id).await? {
         return Err(AppError::Forbidden(
             "You do not have access to this company".into(),
         ));
     }
 
     // Update active company
-    sqlx::query!(
-        "UPDATE users SET company_id = $2, updated_at = NOW() WHERE id = $1",
-        user_id,
-        target_company_id,
-    )
-    .execute(pool)
-    .await?;
+    users::update_active_company(pool, user_id, target_company_id).await?;
 
     Ok(())
 }
@@ -287,14 +175,9 @@ pub async fn update_user(
     req: UpdateUserRequest,
 ) -> AppResult<UserWithCompanies> {
     // Check user exists
-    let existing = sqlx::query_as!(
-        UserRow,
-        "SELECT id, email, full_name, roles, company_id, employee_id, is_active, created_at FROM users WHERE id = $1",
-        user_id,
-    )
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound("User not found".into()))?;
+    let existing = users::get_projection_by_id(pool, user_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("User not found".into()))?;
 
     let roles = match req.roles.as_ref() {
         Some(requested) => normalize_requested_roles(requested)?,
@@ -302,37 +185,25 @@ pub async fn update_user(
     };
 
     // Check email uniqueness if changing
-    if let Some(ref email) = req.email {
-        let exists = sqlx::query_scalar!(
-            "SELECT id FROM users WHERE email = $1 AND id != $2",
-            email,
-            user_id,
-        )
-        .fetch_optional(pool)
-        .await?;
-        if exists.is_some() {
-            return Err(AppError::BadRequest(
-                "A user with this email already exists".into(),
-            ));
-        }
+    if let Some(ref email) = req.email
+        && users::find_id_by_email_excluding(pool, email, user_id)
+            .await?
+            .is_some()
+    {
+        return Err(AppError::BadRequest(
+            "A user with this email already exists".into(),
+        ));
     }
 
     // Update user fields
-    sqlx::query!(
-        r#"UPDATE users SET
-            full_name = COALESCE($2, full_name),
-            email = COALESCE($3, email),
-            roles = $4,
-            is_active = COALESCE($5, is_active),
-            updated_at = NOW()
-        WHERE id = $1"#,
+    users::update_profile_and_roles(
+        pool,
         user_id,
-        req.full_name,
-        req.email,
+        req.full_name.as_deref(),
+        req.email.as_deref(),
         &roles,
         req.is_active,
     )
-    .execute(pool)
     .await?;
 
     // Update companies if provided
@@ -347,40 +218,22 @@ pub async fn update_user(
             ));
         }
         if !company_ids.is_empty() {
-            sqlx::query!("DELETE FROM user_companies WHERE user_id = $1", user_id)
-                .execute(pool)
-                .await?;
+            user_companies::delete_by_user(pool, user_id).await?;
             for cid in &company_ids {
-                sqlx::query!(
-                    "INSERT INTO user_companies (user_id, company_id) VALUES ($1, $2)",
-                    user_id,
-                    cid,
-                )
-                .execute(pool)
-                .await?;
+                user_companies::add(pool, user_id, *cid).await?;
             }
             // Update active company if needed
             let current_company = existing.company_id;
             if current_company.is_none_or(|c| !company_ids.contains(&c)) {
-                sqlx::query!(
-                    "UPDATE users SET company_id = $2, updated_at = NOW() WHERE id = $1",
-                    user_id,
-                    company_ids[0],
-                )
-                .execute(pool)
-                .await?;
+                users::update_active_company(pool, user_id, company_ids[0]).await?;
             }
         }
     }
 
-    let mut updated = sqlx::query_as!(
-        UserRow,
-        "SELECT id, email, full_name, roles, company_id, employee_id, is_active, created_at FROM users WHERE id = $1",
-        user_id,
-    )
-    .fetch_one(pool)
-    .await?
-    .into_user();
+    let mut updated = users::get_projection_by_id(pool, user_id)
+        .await?
+        .ok_or_else(|| AppError::Internal("User not found".into()))?
+        .into_user();
     updated.companies = get_user_companies(pool, user_id).await?;
     Ok(updated)
 }
@@ -422,11 +275,9 @@ fn normalize_requested_roles(requested_roles: &[String]) -> AppResult<Vec<String
 }
 
 pub async fn delete_user(pool: &PgPool, user_id: Uuid) -> AppResult<()> {
-    let result = sqlx::query!("DELETE FROM users WHERE id = $1", user_id)
-        .execute(pool)
-        .await?;
+    let rows = users::delete(pool, user_id).await?;
 
-    if result.rows_affected() == 0 {
+    if rows == 0 {
         return Err(AppError::NotFound("User not found".into()));
     }
 

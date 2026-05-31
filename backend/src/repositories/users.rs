@@ -5,6 +5,7 @@ use uuid::Uuid;
 
 use crate::core::error::AppResult;
 use crate::models::user::User;
+use crate::models::user_company::UserRow;
 
 /// Minimal projection used when resolving an existing account by email.
 #[derive(Debug)]
@@ -73,6 +74,126 @@ pub async fn find_active_by_email(
     .fetch_optional(executor)
     .await?;
     Ok(user)
+}
+
+pub async fn find_id_by_email(
+    executor: impl Executor<'_, Database = Postgres>,
+    email: &str,
+) -> AppResult<Option<Uuid>> {
+    let id = sqlx::query_scalar!("SELECT id FROM users WHERE email = $1", email)
+        .fetch_optional(executor)
+        .await?;
+    Ok(id)
+}
+
+pub async fn find_id_by_email_excluding(
+    executor: impl Executor<'_, Database = Postgres>,
+    email: &str,
+    exclude_id: Uuid,
+) -> AppResult<Option<Uuid>> {
+    let id = sqlx::query_scalar!(
+        "SELECT id FROM users WHERE email = $1 AND id != $2",
+        email,
+        exclude_id,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(id)
+}
+
+/// Insert an admin-created user (first company as active), returning the projection.
+pub async fn insert_admin(
+    executor: impl Executor<'_, Database = Postgres>,
+    email: &str,
+    password_hash: &str,
+    full_name: &str,
+    roles: &[String],
+    company_id: Uuid,
+) -> AppResult<UserRow> {
+    let user = sqlx::query_as!(
+        UserRow,
+        r#"INSERT INTO users (email, password_hash, full_name, roles, company_id)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING id, email, full_name, roles, company_id, employee_id, is_active, created_at"#,
+        email,
+        password_hash,
+        full_name,
+        roles,
+        company_id,
+    )
+    .fetch_one(executor)
+    .await?;
+    Ok(user)
+}
+
+/// All users, newest first (super-admin view).
+pub async fn list_all(executor: impl Executor<'_, Database = Postgres>) -> AppResult<Vec<UserRow>> {
+    let users = sqlx::query_as!(
+        UserRow,
+        r#"SELECT id, email, full_name, roles, company_id, employee_id, is_active, created_at
+            FROM users
+            ORDER BY created_at DESC"#,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(users)
+}
+
+pub async fn get_projection_by_id(
+    executor: impl Executor<'_, Database = Postgres>,
+    id: Uuid,
+) -> AppResult<Option<UserRow>> {
+    let user = sqlx::query_as!(
+        UserRow,
+        "SELECT id, email, full_name, roles, company_id, employee_id, is_active, created_at FROM users WHERE id = $1",
+        id,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(user)
+}
+
+/// Partial profile/roles update: COALESCE keeps unspecified fields; `roles` is always set.
+pub async fn update_profile_and_roles(
+    executor: impl Executor<'_, Database = Postgres>,
+    id: Uuid,
+    full_name: Option<&str>,
+    email: Option<&str>,
+    roles: &[String],
+    is_active: Option<bool>,
+) -> AppResult<()> {
+    sqlx::query!(
+        r#"UPDATE users SET
+            full_name = COALESCE($2, full_name),
+            email = COALESCE($3, email),
+            roles = $4,
+            is_active = COALESCE($5, is_active),
+            updated_at = NOW()
+        WHERE id = $1"#,
+        id,
+        full_name,
+        email,
+        roles,
+        is_active,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
+pub async fn update_active_company(
+    executor: impl Executor<'_, Database = Postgres>,
+    id: Uuid,
+    company_id: Uuid,
+) -> AppResult<()> {
+    sqlx::query!(
+        "UPDATE users SET company_id = $2, updated_at = NOW() WHERE id = $1",
+        id,
+        company_id,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
 }
 
 /// Link an existing (non-employee) account to an employee record.
@@ -156,11 +277,13 @@ pub async fn clear_must_change_password(
     Ok(())
 }
 
-pub async fn delete(executor: impl Executor<'_, Database = Postgres>, id: Uuid) -> AppResult<()> {
-    sqlx::query!("DELETE FROM users WHERE id = $1", id)
+/// Delete a user, returning the number of rows removed (0 ⇒ not found).
+pub async fn delete(executor: impl Executor<'_, Database = Postgres>, id: Uuid) -> AppResult<u64> {
+    let rows = sqlx::query!("DELETE FROM users WHERE id = $1", id)
         .execute(executor)
-        .await?;
-    Ok(())
+        .await?
+        .rows_affected();
+    Ok(rows)
 }
 
 pub async fn delete_by_employee(
