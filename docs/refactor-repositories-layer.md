@@ -63,6 +63,7 @@ models/   shared structs: canonical table-row structs + request DTOs
       company_id: Uuid,
   ) -> AppResult<Option<Employee>> { /* fetch_optional */ }
   ```
+- **Primary keys:** the service generates `Uuid::now_v7()` and passes `id` into repo `insert`/`upsert` fns, so repos carry no clock/UUID logic (pure mappers); the created row comes back via `RETURNING` where the caller needs it.
 - **Return structs:** per-table repos return the **existing grouped `models/` structs** (e.g. `repositories/salary_history.rs` → `models::employee::SalaryHistory`). `models/` is **not** split per table.
 - **Read-model structs** are defined in the read module next to the query.
 
