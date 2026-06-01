@@ -108,3 +108,33 @@ pub async fn update(
     .await?;
     Ok(company)
 }
+
+/// The company's attendance-method override, if any (flattened from the nullable column).
+pub async fn get_attendance_method(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+) -> AppResult<Option<String>> {
+    let method = sqlx::query_scalar!(
+        "SELECT attendance_method FROM companies WHERE id = $1",
+        company_id,
+    )
+    .fetch_optional(executor)
+    .await?
+    .flatten();
+    Ok(method)
+}
+
+pub async fn set_attendance_method(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    method: Option<&str>,
+) -> AppResult<()> {
+    sqlx::query!(
+        "UPDATE companies SET attendance_method = $1 WHERE id = $2",
+        method,
+        company_id,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}

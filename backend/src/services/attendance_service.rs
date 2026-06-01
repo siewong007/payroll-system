@@ -1,17 +1,22 @@
 use std::time::Duration;
 
-use chrono::{NaiveTime, Utc};
+use chrono::Utc;
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::core::error::{AppError, AppResult};
 use crate::models::attendance::{
-    AttendanceExportQuery, AttendanceListQuery, AttendanceMethodResponse, AttendanceQrToken,
-    AttendanceRecord, AttendanceRecordWithEmployee, AttendanceSummaryItem, AttendanceSummaryQuery,
+    AttendanceExportQuery, AttendanceListQuery, AttendanceMethodResponse, AttendanceRecord,
+    AttendanceRecordWithEmployee, AttendanceSummaryItem, AttendanceSummaryQuery,
     ManualAttendanceRequest, PaginatedAttendance, QrTokenResponse, UpdateAttendanceRecordRequest,
 };
-use crate::models::attendance_kiosk::{self, KioskCredential};
+use crate::models::attendance_kiosk::KioskCredential;
+use crate::repositories::reads::attendance as attendance_reads;
+use crate::repositories::{
+    attendance_kiosk_credentials, attendance_qr_tokens, attendance_records, audit_logs, clock,
+    companies, company_work_schedules, employee_work_schedules, platform_settings,
+};
 use crate::services::audit_service::{self, AuditRequestMeta};
 use crate::services::geofence_service;
 
@@ -34,19 +39,12 @@ fn normalize_absent_check_out(
 // ─── Platform Settings ───
 
 pub async fn get_platform_attendance_method(pool: &PgPool) -> AppResult<String> {
-    let method =
-        sqlx::query_scalar!("SELECT value FROM platform_settings WHERE key = 'attendance_method'")
-            .fetch_optional(pool)
-            .await?;
+    let method = platform_settings::get_attendance_method(pool).await?;
     Ok(method.unwrap_or_else(|| "qr_code".to_string()))
 }
 
 pub async fn get_platform_allow_override(pool: &PgPool) -> AppResult<bool> {
-    let val = sqlx::query_scalar!(
-        "SELECT value FROM platform_settings WHERE key = 'allow_company_override'"
-    )
-    .fetch_optional(pool)
-    .await?;
+    let val = platform_settings::get_allow_override(pool).await?;
     Ok(val.map(|v| v == "true").unwrap_or(false))
 }
 
@@ -66,24 +64,12 @@ pub async fn set_platform_attendance_method(
     let old_method = get_platform_attendance_method(pool).await?;
     let old_allow_override = get_platform_allow_override(pool).await?;
 
-    sqlx::query!(
-        "INSERT INTO platform_settings (key, value, updated_at, updated_by)
-         VALUES ('attendance_method', $1, NOW(), $2)
-         ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW(), updated_by = $2",
-        method,
-        updated_by,
-    )
-    .execute(pool)
-    .await?;
-
-    sqlx::query!(
-        "INSERT INTO platform_settings (key, value, updated_at, updated_by)
-         VALUES ('allow_company_override', $1, NOW(), $2)
-         ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW(), updated_by = $2",
+    platform_settings::set_attendance_method(pool, method, updated_by).await?;
+    platform_settings::set_allow_override(
+        pool,
         if allow_override { "true" } else { "false" },
         updated_by,
     )
-    .execute(pool)
     .await?;
 
     let _ = audit_service::log_action_with_metadata(
@@ -118,13 +104,7 @@ pub async fn get_effective_method(
     let allow_override = get_platform_allow_override(pool).await?;
 
     // Check if company has an override
-    let company_method = sqlx::query_scalar!(
-        "SELECT attendance_method FROM companies WHERE id = $1",
-        company_id,
-    )
-    .fetch_optional(pool)
-    .await?
-    .flatten();
+    let company_method = companies::get_attendance_method(pool, company_id).await?;
 
     let (method, is_override) = if allow_override {
         if let Some(m) = company_method {
@@ -167,21 +147,9 @@ pub async fn set_company_attendance_method(
         ));
     }
 
-    let old_method = sqlx::query_scalar!(
-        "SELECT attendance_method FROM companies WHERE id = $1",
-        company_id,
-    )
-    .fetch_optional(pool)
-    .await?
-    .flatten();
+    let old_method = companies::get_attendance_method(pool, company_id).await?;
 
-    sqlx::query!(
-        "UPDATE companies SET attendance_method = $1 WHERE id = $2",
-        method,
-        company_id,
-    )
-    .execute(pool)
-    .await?;
+    companies::set_attendance_method(pool, company_id, method).await?;
 
     let _ = audit_service::log_action_with_metadata(
         pool,
@@ -208,26 +176,12 @@ pub async fn generate_qr_token(
     frontend_url: &str,
 ) -> AppResult<QrTokenResponse> {
     // Expire any existing unused tokens for this company
-    sqlx::query!(
-        "UPDATE attendance_qr_tokens SET used = TRUE
-         WHERE company_id = $1 AND used = FALSE",
-        company_id,
-    )
-    .execute(pool)
-    .await?;
+    attendance_qr_tokens::revoke_unused(pool, company_id).await?;
 
     let token = Uuid::new_v4().to_string().replace('-', "");
     let expires_at = Utc::now() + chrono::Duration::seconds(QR_TOKEN_TTL_SECONDS);
 
-    sqlx::query!(
-        "INSERT INTO attendance_qr_tokens (company_id, token, expires_at)
-         VALUES ($1, $2, $3)",
-        company_id,
-        token,
-        expires_at,
-    )
-    .execute(pool)
-    .await?;
+    attendance_qr_tokens::insert(pool, company_id, &token, expires_at).await?;
 
     let scan_url = format!("{}/attendance/scan?token={}", frontend_url, token);
 
@@ -243,14 +197,7 @@ pub async fn generate_qr_token(
 /// same active token during its TTL window. The `used` flag means admin-revoked (a new
 /// token was generated), not employee-scanned.
 pub async fn validate_qr_token(pool: &PgPool, token: &str, company_id: Uuid) -> AppResult<Uuid> {
-    let row = sqlx::query_as!(
-        AttendanceQrToken,
-        "SELECT id, company_id, token, expires_at, used, created_at
-         FROM attendance_qr_tokens WHERE token = $1",
-        token,
-    )
-    .fetch_optional(pool)
-    .await?;
+    let row = attendance_qr_tokens::find_by_token(pool, token).await?;
 
     match row {
         None => Err(AppError::BadRequest(
@@ -307,7 +254,7 @@ pub async fn create_kiosk_credential(
     let token_hash = sha256_hex(&secret);
     let token_prefix = secret[..8].to_string();
 
-    let cred = attendance_kiosk::insert_kiosk_credential(
+    let cred = attendance_kiosk_credentials::insert(
         pool,
         company_id,
         label,
@@ -343,7 +290,7 @@ pub async fn list_kiosk_credentials(
     pool: &PgPool,
     company_id: Uuid,
 ) -> AppResult<Vec<KioskCredential>> {
-    attendance_kiosk::list_kiosk_credentials(pool, company_id).await
+    attendance_kiosk_credentials::list_for_company(pool, company_id).await
 }
 
 pub async fn revoke_kiosk_credential(
@@ -353,7 +300,7 @@ pub async fn revoke_kiosk_credential(
     revoked_by: Uuid,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<()> {
-    let existing = attendance_kiosk::list_kiosk_credentials(pool, company_id)
+    let existing = attendance_kiosk_credentials::list_for_company(pool, company_id)
         .await?
         .into_iter()
         .find(|credential| credential.id == id && credential.revoked_at.is_none())
@@ -361,7 +308,7 @@ pub async fn revoke_kiosk_credential(
             AppError::NotFound("Kiosk credential not found or already revoked".into())
         })?;
 
-    let revoked = attendance_kiosk::revoke(pool, id, company_id).await?;
+    let revoked = attendance_kiosk_credentials::revoke(pool, id, company_id).await?;
     if !revoked {
         return Err(AppError::NotFound(
             "Kiosk credential not found or already revoked".into(),
@@ -404,7 +351,7 @@ pub async fn generate_qr_via_kiosk(
     client_ip: Option<&str>,
 ) -> AppResult<(QrTokenResponse, Uuid)> {
     let hash = sha256_hex(presented_secret);
-    let cred = attendance_kiosk::find_active_by_hash(pool, &hash).await?;
+    let cred = attendance_kiosk_credentials::find_active_by_hash(pool, &hash).await?;
 
     let cred = match cred {
         Some(c) => c,
@@ -417,7 +364,7 @@ pub async fn generate_qr_via_kiosk(
     let resp = generate_qr_token(pool, cred.company_id, frontend_url).await?;
 
     // Best-effort heartbeat; failure to record this should not block the kiosk.
-    if let Err(e) = attendance_kiosk::mark_used(pool, cred.id, client_ip).await {
+    if let Err(e) = attendance_kiosk_credentials::mark_used(pool, cred.id, client_ip).await {
         tracing::warn!("Failed to update kiosk last_used: {}", e);
     }
 
@@ -435,54 +382,29 @@ pub(crate) async fn determine_checkin_status(
 ) -> String {
     let tz = get_company_timezone(pool, company_id).await;
 
-    // Get current day of week (0=Sunday, 6=Saturday).
-    // NOTE: int2 (smallint), not int16 — Postgres has no int16 type, and the
-    // earlier typo errored on every call, silently defaulting dow to 0 (Sunday)
-    // via the unwrap_or(0) below, which broke weekday late detection.
-    let dow: i16 = sqlx::query_scalar!(
-        r#"SELECT EXTRACT(DOW FROM (NOW() AT TIME ZONE $1))::int2 AS "dow!""#,
-        &tz,
-    )
-    .fetch_one(pool)
-    .await
-    .unwrap_or(0);
+    // Day of week (0=Sunday, 6=Saturday) per the DB clock; default to Sunday on error.
+    let dow = clock::dow_in_tz(pool, &tz).await.unwrap_or(0);
 
-    // 1. Try employee-specific schedule
-    let emp_schedule = sqlx::query!(
-        "SELECT start_time, grace_minutes FROM employee_work_schedules
-         WHERE employee_id = $1 AND day_of_week = $2 AND is_active = TRUE",
-        employee_id,
-        dow,
-    )
-    .fetch_optional(pool)
-    .await
-    .unwrap_or(None);
-
-    let (start_time, grace_minutes) = if let Some(s) = emp_schedule {
-        (s.start_time, s.grace_minutes)
-    } else {
-        // 2. Fallback to company default
-        let company_schedule = sqlx::query!(
-            "SELECT start_time, grace_minutes FROM company_work_schedules WHERE company_id = $1 AND is_default = TRUE",
-            company_id,
-        )
-        .fetch_optional(pool)
+    // 1. Try employee-specific schedule, 2. fall back to company default.
+    let timing = employee_work_schedules::find_timing_for_day(pool, employee_id, dow)
         .await
         .unwrap_or(None);
 
-        match company_schedule {
-            Some(s) => (s.start_time, s.grace_minutes),
+    let (start_time, grace_minutes) = if let Some(t) = timing {
+        t
+    } else {
+        match company_work_schedules::find_default_timing(pool, company_id)
+            .await
+            .unwrap_or(None)
+        {
+            Some(t) => t,
             None => return "present".to_string(),
         }
     };
 
-    let now_local: NaiveTime = sqlx::query_scalar!(
-        r#"SELECT (NOW() AT TIME ZONE $1)::time AS "now_local!""#,
-        &tz,
-    )
-    .fetch_one(pool)
-    .await
-    .unwrap_or_else(|_| Utc::now().time());
+    let now_local = clock::local_time_in_tz(pool, &tz)
+        .await
+        .unwrap_or_else(|_| Utc::now().time());
 
     let cutoff = start_time + chrono::Duration::minutes(grace_minutes as i64);
 
@@ -495,15 +417,10 @@ pub(crate) async fn determine_checkin_status(
 
 /// Get the timezone for a company from its work schedule (fallback to default)
 async fn get_company_timezone(pool: &PgPool, company_id: Uuid) -> String {
-    let tz = sqlx::query_scalar!(
-        "SELECT timezone FROM company_work_schedules WHERE company_id = $1 AND is_default = TRUE",
-        company_id,
-    )
-    .fetch_optional(pool)
-    .await
-    .unwrap_or(None);
-
-    tz.unwrap_or_else(|| DEFAULT_TIMEZONE.to_string())
+    company_work_schedules::find_default_timezone(pool, company_id)
+        .await
+        .unwrap_or(None)
+        .unwrap_or_else(|| DEFAULT_TIMEZONE.to_string())
 }
 
 // ─── Check In / Check Out ───
@@ -526,44 +443,28 @@ pub async fn check_in_qr(
     let token_id = validate_qr_token(pool, token, company_id).await?;
     let status = determine_checkin_status(pool, employee_id, company_id).await;
 
-    let result = sqlx::query_as!(
-        AttendanceRecord,
-        r#"INSERT INTO attendance_records
-           (company_id, employee_id, method, status, latitude, longitude, qr_token_id, is_outside_geofence)
-           VALUES ($1, $2, 'qr_code', $3, $4, $5, $6, $7)
-           RETURNING id, company_id, employee_id, check_in_at, check_out_at, method, status,
-                     latitude, longitude, checkout_latitude, checkout_longitude, notes, qr_token_id,
-                     created_by, hours_worked, overtime_hours, is_outside_geofence, created_at, updated_at"#,
+    match attendance_records::insert_qr(
+        pool,
         company_id,
         employee_id,
-        status,
+        &status,
         latitude,
         longitude,
         token_id,
         outside_geofence,
     )
-    .fetch_one(pool)
-    .await;
-
-    match result {
+    .await
+    {
         Ok(record) => Ok(record),
-        Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("23505") => {
-            // Handle race condition: if already checked in, return the existing open record
-            let record = sqlx::query_as!(
-                AttendanceRecord,
-                "SELECT id, company_id, employee_id, check_in_at, check_out_at, method, status,
-                        latitude, longitude, checkout_latitude, checkout_longitude, notes, qr_token_id,
-                        created_by, hours_worked, overtime_hours, is_outside_geofence, created_at, updated_at
-                 FROM attendance_records WHERE employee_id = $1 AND check_out_at IS NULL LIMIT 1",
-                employee_id,
-            )
-            .fetch_optional(pool)
-            .await?;
-
-            record
+        // Race condition: if already checked in, return the existing open record
+        Err(AppError::Database(sqlx::Error::Database(db_err)))
+            if db_err.code().as_deref() == Some("23505") =>
+        {
+            attendance_records::find_open_by_employee(pool, employee_id)
+                .await?
                 .ok_or_else(|| AppError::BadRequest("You already have an active check-in.".into()))
         }
-        Err(e) => Err(e.into()),
+        Err(e) => Err(e),
     }
 }
 
@@ -583,43 +484,27 @@ pub async fn check_in_face_id(
 
     let status = determine_checkin_status(pool, employee_id, company_id).await;
 
-    let result = sqlx::query_as!(
-        AttendanceRecord,
-        r#"INSERT INTO attendance_records
-           (company_id, employee_id, method, status, latitude, longitude, is_outside_geofence)
-           VALUES ($1, $2, 'face_id', $3, $4, $5, $6)
-           RETURNING id, company_id, employee_id, check_in_at, check_out_at, method, status,
-                     latitude, longitude, checkout_latitude, checkout_longitude, notes, qr_token_id,
-                     created_by, hours_worked, overtime_hours, is_outside_geofence, created_at, updated_at"#,
+    match attendance_records::insert_face(
+        pool,
         company_id,
         employee_id,
-        status,
+        &status,
         latitude,
         longitude,
         outside_geofence,
     )
-    .fetch_one(pool)
-    .await;
-
-    match result {
+    .await
+    {
         Ok(record) => Ok(record),
-        Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("23505") => {
-            // Handle race condition: if already checked in, return the existing open record
-            let record = sqlx::query_as!(
-                AttendanceRecord,
-                "SELECT id, company_id, employee_id, check_in_at, check_out_at, method, status,
-                        latitude, longitude, checkout_latitude, checkout_longitude, notes, qr_token_id,
-                        created_by, hours_worked, overtime_hours, is_outside_geofence, created_at, updated_at
-                 FROM attendance_records WHERE employee_id = $1 AND check_out_at IS NULL LIMIT 1",
-                employee_id,
-            )
-            .fetch_optional(pool)
-            .await?;
-
-            record
+        // Race condition: if already checked in, return the existing open record
+        Err(AppError::Database(sqlx::Error::Database(db_err)))
+            if db_err.code().as_deref() == Some("23505") =>
+        {
+            attendance_records::find_open_by_employee(pool, employee_id)
+                .await?
                 .ok_or_else(|| AppError::BadRequest("You already have an active check-in.".into()))
         }
-        Err(e) => Err(e.into()),
+        Err(e) => Err(e),
     }
 }
 
@@ -630,85 +515,23 @@ pub async fn check_out(
     latitude: Option<f64>,
     longitude: Option<f64>,
 ) -> AppResult<AttendanceRecord> {
-    // Use a subquery to find the most recent open check-in within 24 hours.
-    // The 24-hour window (instead of same-calendar-day) handles overnight shifts
-    // where check-in and check-out span midnight.
-    let record = sqlx::query_as!(
-        AttendanceRecord,
-        r#"UPDATE attendance_records ar
-           SET check_out_at = NOW(),
-               checkout_latitude = $2,
-               checkout_longitude = $3,
-               hours_worked = ROUND(EXTRACT(EPOCH FROM (NOW() - ar.check_in_at)) / 3600.0, 2),
-               overtime_hours = GREATEST(0,
-                   ROUND(EXTRACT(EPOCH FROM (NOW() - ar.check_in_at)) / 3600.0, 2)
-                   - COALESCE((
-                       SELECT EXTRACT(EPOCH FROM (ws.end_time - ws.start_time)) / 3600.0
-                       FROM company_work_schedules ws
-                       WHERE ws.company_id = ar.company_id AND ws.is_default = TRUE
-                   ), 9)
-               ),
-               updated_at = NOW()
-           WHERE ar.id = (
-               SELECT id FROM attendance_records
-               WHERE employee_id = $1
-                 AND company_id = $4
-                 AND check_out_at IS NULL
-                 AND check_in_at > NOW() - INTERVAL '24 hours'
-               ORDER BY check_in_at DESC
-               LIMIT 1
-           )
-           RETURNING ar.id, ar.company_id, ar.employee_id, ar.check_in_at, ar.check_out_at,
-                     ar.method, ar.status, ar.latitude, ar.longitude, ar.checkout_latitude,
-                     ar.checkout_longitude, ar.notes, ar.qr_token_id, ar.created_by,
-                     ar.hours_worked, ar.overtime_hours, ar.is_outside_geofence,
-                     ar.created_at, ar.updated_at"#,
-        employee_id,
-        latitude,
-        longitude,
-        company_id,
-    )
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| {
-        AppError::BadRequest(
-            "No active check-in found. Please check in before checking out.".into(),
-        )
-    })?;
-
-    Ok(record)
+    attendance_records::check_out(pool, employee_id, latitude, longitude, company_id)
+        .await?
+        .ok_or_else(|| {
+            AppError::BadRequest(
+                "No active check-in found. Please check in before checking out.".into(),
+            )
+        })
 }
 
 /// Prevent double check-in on the same calendar day (using company timezone)
 async fn ensure_no_active_checkin(pool: &PgPool, employee_id: Uuid, tz: &str) -> AppResult<()> {
-    let exists = sqlx::query_scalar!(
-        r#"SELECT EXISTS(
-            SELECT 1 FROM attendance_records
-            WHERE employee_id = $1
-              AND DATE(check_in_at AT TIME ZONE $2) = DATE(NOW() AT TIME ZONE $2)
-              AND check_out_at IS NULL
-        ) AS "exists!""#,
-        employee_id,
-        tz,
-    )
-    .fetch_one(pool)
-    .await?;
-
-    if exists {
+    if attendance_records::exists_active_checkin_today(pool, employee_id, tz).await? {
         return Err(AppError::BadRequest(
             "You have already checked in today. Please check out first.".into(),
         ));
     }
     Ok(())
-}
-
-// ─── Pagination Helpers ───
-
-fn resolve_pagination(q: &AttendanceListQuery) -> (i64, i64, i64) {
-    let per_page = q.per_page.unwrap_or(50).clamp(1, 200);
-    let page = q.page.unwrap_or(1).max(1);
-    let offset = (page - 1) * per_page;
-    (page, per_page, offset)
 }
 
 // ─── List / Query ───
@@ -718,113 +541,7 @@ pub async fn list_attendance(
     company_id: Uuid,
     q: &AttendanceListQuery,
 ) -> AppResult<PaginatedAttendance<AttendanceRecordWithEmployee>> {
-    let (page, per_page, offset) = resolve_pagination(q);
-
-    // Build WHERE clause (shared between count + data queries)
-    let mut where_clause = String::from("ar.company_id = $1");
-    let mut param_idx = 2usize;
-
-    if q.employee_id.is_some() {
-        where_clause.push_str(&format!(" AND ar.employee_id = ${}", param_idx));
-        param_idx += 1;
-    }
-    if q.date_from.is_some() {
-        where_clause.push_str(&format!(" AND ar.check_in_at >= ${}::date", param_idx));
-        param_idx += 1;
-    }
-    if q.date_to.is_some() {
-        where_clause.push_str(&format!(
-            " AND ar.check_in_at < (${}::date + INTERVAL '1 day')",
-            param_idx
-        ));
-        param_idx += 1;
-    }
-    if q.status.is_some() {
-        where_clause.push_str(&format!(" AND ar.status = ${}", param_idx));
-        param_idx += 1;
-    }
-    if q.method.is_some() {
-        where_clause.push_str(&format!(" AND ar.method = ${}", param_idx));
-        param_idx += 1;
-    }
-
-    // Count query
-    let count_sql = format!(
-        "SELECT COUNT(*) FROM attendance_records ar WHERE {}",
-        where_clause
-    );
-    let mut count_query = sqlx::query_scalar::<_, i64>(&count_sql).bind(company_id);
-    if let Some(eid) = q.employee_id {
-        count_query = count_query.bind(eid);
-    }
-    if let Some(ref df) = q.date_from {
-        count_query = count_query.bind(df);
-    }
-    if let Some(ref dt) = q.date_to {
-        count_query = count_query.bind(dt);
-    }
-    if let Some(ref st) = q.status {
-        count_query = count_query.bind(st);
-    }
-    if let Some(ref m) = q.method {
-        count_query = count_query.bind(m);
-    }
-    let total = count_query.fetch_one(pool).await?;
-
-    // Data query
-    let data_sql = format!(
-        r#"SELECT
-            ar.id, ar.company_id, ar.employee_id,
-            e.employee_number, e.full_name, e.department,
-            ar.check_in_at, ar.check_out_at,
-            ar.method, ar.status,
-            ar.latitude, ar.longitude,
-            ar.checkout_latitude, ar.checkout_longitude,
-            ar.notes,
-            ar.hours_worked, ar.overtime_hours, ar.is_outside_geofence,
-            ar.created_at
-           FROM attendance_records ar
-           JOIN employees e ON ar.employee_id = e.id
-           WHERE {}
-           ORDER BY ar.check_in_at DESC
-           LIMIT ${} OFFSET ${}"#,
-        where_clause,
-        param_idx,
-        param_idx + 1
-    );
-
-    let mut data_query =
-        sqlx::query_as::<_, AttendanceRecordWithEmployee>(&data_sql).bind(company_id);
-    if let Some(eid) = q.employee_id {
-        data_query = data_query.bind(eid);
-    }
-    if let Some(ref df) = q.date_from {
-        data_query = data_query.bind(df);
-    }
-    if let Some(ref dt) = q.date_to {
-        data_query = data_query.bind(dt);
-    }
-    if let Some(ref st) = q.status {
-        data_query = data_query.bind(st);
-    }
-    if let Some(ref m) = q.method {
-        data_query = data_query.bind(m);
-    }
-    let data = data_query
-        .bind(per_page)
-        .bind(offset)
-        .fetch_all(pool)
-        .await?;
-
-    let total_pages = (total + per_page - 1) / per_page;
-
-    Ok(PaginatedAttendance {
-        data,
-        total,
-        page,
-        per_page,
-        total_pages,
-    })
+    attendance_reads::list_with_employee(pool, company_id, q).await
 }
 
 pub async fn get_my_attendance(
@@ -832,66 +549,7 @@ pub async fn get_my_attendance(
     employee_id: Uuid,
     q: &AttendanceListQuery,
 ) -> AppResult<PaginatedAttendance<AttendanceRecord>> {
-    let (page, per_page, offset) = resolve_pagination(q);
-
-    let mut where_clause = String::from("employee_id = $1");
-    let mut param_idx = 2usize;
-
-    if q.date_from.is_some() {
-        where_clause.push_str(&format!(" AND check_in_at >= ${}::date", param_idx));
-        param_idx += 1;
-    }
-    if q.date_to.is_some() {
-        where_clause.push_str(&format!(
-            " AND check_in_at < (${}::date + INTERVAL '1 day')",
-            param_idx
-        ));
-        param_idx += 1;
-    }
-
-    // Count
-    let count_sql = format!(
-        "SELECT COUNT(*) FROM attendance_records WHERE {}",
-        where_clause
-    );
-    let mut count_query = sqlx::query_scalar::<_, i64>(&count_sql).bind(employee_id);
-    if let Some(ref df) = q.date_from {
-        count_query = count_query.bind(df);
-    }
-    if let Some(ref dt) = q.date_to {
-        count_query = count_query.bind(dt);
-    }
-    let total = count_query.fetch_one(pool).await?;
-
-    // Data
-    let data_sql = format!(
-        "SELECT * FROM attendance_records WHERE {} ORDER BY check_in_at DESC LIMIT ${} OFFSET ${}",
-        where_clause,
-        param_idx,
-        param_idx + 1
-    );
-    let mut data_query = sqlx::query_as::<_, AttendanceRecord>(&data_sql).bind(employee_id);
-    if let Some(ref df) = q.date_from {
-        data_query = data_query.bind(df);
-    }
-    if let Some(ref dt) = q.date_to {
-        data_query = data_query.bind(dt);
-    }
-    let data = data_query
-        .bind(per_page)
-        .bind(offset)
-        .fetch_all(pool)
-        .await?;
-
-    let total_pages = (total + per_page - 1) / per_page;
-
-    Ok(PaginatedAttendance {
-        data,
-        total,
-        page,
-        per_page,
-        total_pages,
-    })
+    attendance_reads::list_for_employee(pool, employee_id, q).await
 }
 
 /// Get today's check-in for the current employee (if any)
@@ -901,24 +559,7 @@ pub async fn get_today_checkin(
     company_id: Uuid,
 ) -> AppResult<Option<AttendanceRecord>> {
     let tz = get_company_timezone(pool, company_id).await;
-
-    let record = sqlx::query_as!(
-        AttendanceRecord,
-        "SELECT id, company_id, employee_id, check_in_at, check_out_at, method, status,
-                latitude, longitude, checkout_latitude, checkout_longitude, notes, qr_token_id,
-                created_by, hours_worked, overtime_hours, is_outside_geofence, created_at, updated_at
-         FROM attendance_records
-         WHERE employee_id = $1
-           AND DATE(check_in_at AT TIME ZONE $2) = DATE(NOW() AT TIME ZONE $2)
-         ORDER BY check_in_at DESC
-         LIMIT 1",
-        employee_id,
-        tz,
-    )
-    .fetch_optional(pool)
-    .await?;
-
-    Ok(record)
+    attendance_records::get_today(pool, employee_id, &tz).await
 }
 
 pub async fn manual_attendance(
@@ -931,23 +572,16 @@ pub async fn manual_attendance(
     let status = req.status.as_deref().unwrap_or("present");
     let check_out_at = normalize_absent_check_out(status, req.check_in_at, req.check_out_at);
 
-    let record = sqlx::query_as!(
-        AttendanceRecord,
-        r#"INSERT INTO attendance_records
-           (company_id, employee_id, check_in_at, check_out_at, method, status, notes, created_by)
-           VALUES ($1, $2, $3, $4, 'manual', $5, $6, $7)
-           RETURNING id, company_id, employee_id, check_in_at, check_out_at, method, status,
-                     latitude, longitude, checkout_latitude, checkout_longitude, notes, qr_token_id,
-                     created_by, hours_worked, overtime_hours, is_outside_geofence, created_at, updated_at"#,
+    let record = attendance_records::insert_manual(
+        pool,
         company_id,
         req.employee_id,
         req.check_in_at,
         check_out_at,
         status,
-        req.notes,
+        req.notes.as_deref(),
         created_by,
     )
-    .fetch_one(pool)
     .await?;
 
     let _ = audit_service::log_action_with_metadata(
@@ -977,18 +611,9 @@ pub async fn update_attendance_record(
     updated_by: Uuid,
 ) -> AppResult<AttendanceRecord> {
     // Fetch existing record
-    let existing = sqlx::query_as!(
-        AttendanceRecord,
-        "SELECT id, company_id, employee_id, check_in_at, check_out_at, method, status,
-                latitude, longitude, checkout_latitude, checkout_longitude, notes, qr_token_id,
-                created_by, hours_worked, overtime_hours, is_outside_geofence, created_at, updated_at
-         FROM attendance_records WHERE id = $1 AND company_id = $2",
-        record_id,
-        company_id,
-    )
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound("Attendance record not found".into()))?;
+    let existing = attendance_records::get_by_id(pool, record_id, company_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Attendance record not found".into()))?;
 
     let check_in = req.check_in_at.unwrap_or(existing.check_in_at);
     let status = req.status.as_deref().unwrap_or(&existing.status);
@@ -1009,15 +634,8 @@ pub async fn update_attendance_record(
         (diff * 100.0).round() / 100.0
     });
 
-    let record = sqlx::query_as!(
-        AttendanceRecord,
-        r#"UPDATE attendance_records
-           SET check_in_at = $3, check_out_at = $4, status = $5, notes = $6,
-               hours_worked = $7::float8, updated_at = NOW()
-           WHERE id = $1 AND company_id = $2
-           RETURNING id, company_id, employee_id, check_in_at, check_out_at, method, status,
-                     latitude, longitude, checkout_latitude, checkout_longitude, notes, qr_token_id,
-                     created_by, hours_worked, overtime_hours, is_outside_geofence, created_at, updated_at"#,
+    let record = attendance_records::update(
+        pool,
         record_id,
         company_id,
         check_in,
@@ -1026,7 +644,6 @@ pub async fn update_attendance_record(
         notes,
         hours_worked,
     )
-    .fetch_one(pool)
     .await?;
 
     // Log to audit trail
@@ -1043,16 +660,8 @@ pub async fn update_attendance_record(
         "notes": record.notes,
     });
 
-    sqlx::query!(
-        r#"INSERT INTO audit_logs (user_id, action, entity_type, entity_id, old_values, new_values, description)
-           VALUES ($1, 'update', 'attendance_record', $2, $3, $4, 'Attendance record corrected')"#,
-        updated_by,
-        record_id,
-        old_vals,
-        new_vals,
-    )
-    .execute(pool)
-    .await?;
+    audit_logs::insert_attendance_correction(pool, updated_by, record_id, &old_vals, &new_vals)
+        .await?;
 
     Ok(record)
 }
@@ -1062,55 +671,7 @@ pub async fn update_attendance_record(
 /// Mark all active employees in all companies as absent if they have no attendance record
 /// for the given date. Respects working day config and holidays.
 pub async fn mark_absent_for_date(pool: &PgPool, tz: &str) -> AppResult<i64> {
-    // Insert absent records for employees who:
-    // 1. Are active and not deleted
-    // 2. Work on this day of week (working_day_config)
-    // 3. Don't have a holiday today
-    // 4. Don't already have an attendance record today
-    let result = sqlx::query!(
-        r#"INSERT INTO attendance_records
-           (company_id, employee_id, check_in_at, check_out_at, method, status, notes)
-           SELECT
-               e.company_id,
-               e.id,
-               DATE(NOW() AT TIME ZONE $1) + TIME '00:00',
-               DATE(NOW() AT TIME ZONE $1) + TIME '00:00',
-               'manual',
-               'absent',
-               'Auto-marked absent (no check-in recorded)'
-           FROM employees e
-           -- Only working days
-           JOIN working_day_config wdc
-               ON wdc.company_id = e.company_id
-               AND wdc.day_of_week = EXTRACT(DOW FROM (NOW() AT TIME ZONE $1))::int
-               AND wdc.is_working_day = TRUE
-           WHERE e.is_active = TRUE
-             AND e.deleted_at IS NULL
-             -- No holiday today
-             AND NOT EXISTS (
-                 SELECT 1 FROM holidays h
-                 WHERE h.company_id = e.company_id
-                   AND h.date = DATE(NOW() AT TIME ZONE $1)
-             )
-             -- Not on approved leave today
-             AND NOT EXISTS (
-                 SELECT 1 FROM leave_requests lr
-                 WHERE lr.employee_id = e.id
-                   AND lr.status = 'approved'
-                   AND DATE(NOW() AT TIME ZONE $1) BETWEEN lr.start_date AND lr.end_date
-             )
-             -- No attendance record today
-             AND NOT EXISTS (
-                 SELECT 1 FROM attendance_records ar
-                 WHERE ar.employee_id = e.id
-                   AND DATE(ar.check_in_at AT TIME ZONE $1) = DATE(NOW() AT TIME ZONE $1)
-             )"#,
-        tz,
-    )
-    .execute(pool)
-    .await?;
-
-    Ok(result.rows_affected() as i64)
+    Ok(attendance_records::mark_absent(pool, tz).await? as i64)
 }
 
 // ─── Attendance Summary ───
@@ -1121,61 +682,7 @@ pub async fn get_attendance_summary(
     company_id: Uuid,
     q: &AttendanceSummaryQuery,
 ) -> AppResult<Vec<AttendanceSummaryItem>> {
-    let mut extra_where = String::new();
-    let mut param_idx = 4usize;
-
-    if q.employee_id.is_some() {
-        extra_where.push_str(&format!(" AND e.id = ${}", param_idx));
-        param_idx += 1;
-    }
-    if q.department.is_some() {
-        extra_where.push_str(&format!(" AND e.department = ${}", param_idx));
-        param_idx += 1;
-    }
-    let _ = param_idx; // suppress unused warning
-
-    let sql = format!(
-        r#"SELECT
-               e.id              AS employee_id,
-               e.employee_number,
-               e.full_name,
-               e.department,
-               COUNT(*) FILTER (WHERE ar.status = 'present')  AS present_days,
-               COUNT(*) FILTER (WHERE ar.status = 'late')     AS late_days,
-               COUNT(*) FILTER (WHERE ar.status = 'absent')   AS absent_days,
-               COUNT(*) FILTER (WHERE ar.status = 'half_day') AS half_days,
-               COALESCE(SUM(ar.hours_worked),    0)::NUMERIC(10,2) AS total_hours,
-               COALESCE(SUM(ar.overtime_hours),  0)::NUMERIC(10,2) AS overtime_hours,
-               COUNT(*) FILTER (
-                   WHERE ar.check_out_at IS NULL AND ar.status NOT IN ('absent')
-               ) AS unchecked_out_days
-           FROM employees e
-           LEFT JOIN attendance_records ar
-               ON  ar.employee_id = e.id
-               AND ar.check_in_at >= $2::date
-               AND ar.check_in_at <  ($3::date + INTERVAL '1 day')
-           WHERE e.company_id   = $1
-             AND e.is_active    = TRUE
-             AND e.deleted_at   IS NULL
-             {}
-           GROUP BY e.id, e.employee_number, e.full_name, e.department
-           ORDER BY e.full_name"#,
-        extra_where
-    );
-
-    let mut query = sqlx::query_as::<_, AttendanceSummaryItem>(&sql)
-        .bind(company_id)
-        .bind(&q.date_from)
-        .bind(&q.date_to);
-
-    if let Some(eid) = q.employee_id {
-        query = query.bind(eid);
-    }
-    if let Some(ref d) = q.department {
-        query = query.bind(d);
-    }
-
-    Ok(query.fetch_all(pool).await?)
+    attendance_reads::summary(pool, company_id, q).await
 }
 
 // ─── CSV Export ───
@@ -1193,62 +700,7 @@ pub async fn export_attendance_csv(
     company_id: Uuid,
     q: &AttendanceExportQuery,
 ) -> AppResult<String> {
-    let mut where_clause = String::from("ar.company_id = $1");
-    let mut param_idx = 2usize;
-
-    if q.employee_id.is_some() {
-        where_clause.push_str(&format!(" AND ar.employee_id = ${}", param_idx));
-        param_idx += 1;
-    }
-    if q.date_from.is_some() {
-        where_clause.push_str(&format!(" AND ar.check_in_at >= ${}::date", param_idx));
-        param_idx += 1;
-    }
-    if q.date_to.is_some() {
-        where_clause.push_str(&format!(
-            " AND ar.check_in_at < (${}::date + INTERVAL '1 day')",
-            param_idx
-        ));
-        param_idx += 1;
-    }
-    if q.status.is_some() {
-        where_clause.push_str(&format!(" AND ar.status = ${}", param_idx));
-        param_idx += 1;
-    }
-    let _ = param_idx;
-
-    let sql = format!(
-        r#"SELECT
-               ar.id, ar.company_id, ar.employee_id,
-               e.employee_number, e.full_name, e.department,
-               ar.check_in_at, ar.check_out_at,
-               ar.method, ar.status,
-               ar.latitude, ar.longitude,
-               ar.checkout_latitude, ar.checkout_longitude,
-               ar.notes, ar.hours_worked, ar.overtime_hours, ar.is_outside_geofence,
-               ar.created_at
-           FROM attendance_records ar
-           JOIN employees e ON ar.employee_id = e.id
-           WHERE {}
-           ORDER BY ar.check_in_at DESC"#,
-        where_clause
-    );
-
-    let mut dq = sqlx::query_as::<_, AttendanceRecordWithEmployee>(&sql).bind(company_id);
-    if let Some(eid) = q.employee_id {
-        dq = dq.bind(eid);
-    }
-    if let Some(ref f) = q.date_from {
-        dq = dq.bind(f);
-    }
-    if let Some(ref t) = q.date_to {
-        dq = dq.bind(t);
-    }
-    if let Some(ref s) = q.status {
-        dq = dq.bind(s);
-    }
-
-    let records = dq.fetch_all(pool).await?;
+    let records = attendance_reads::export_rows(pool, company_id, q).await?;
 
     let mut csv = String::from(
         "Date,Employee Number,Name,Department,Check In,Check Out,\

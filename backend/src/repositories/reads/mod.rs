@@ -4,6 +4,7 @@
 //!
 //! See docs/refactor-repositories-layer.md §6.
 
+pub mod attendance;
 pub mod oauth2;
 pub mod passkey;
 pub mod teams;
