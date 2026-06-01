@@ -4,6 +4,7 @@ use rust_decimal::prelude::*;
 use sqlx::PgPool;
 
 use crate::core::error::AppResult;
+use crate::repositories::{pcb_brackets, pcb_reliefs};
 
 /// Input parameters for PCB calculation
 #[derive(Debug, Clone)]
@@ -153,17 +154,7 @@ async fn calculate_tax_from_brackets(
     chargeable_income: i64,
     tax_year: i32,
 ) -> AppResult<i64> {
-    let brackets = sqlx::query!(
-        r#"
-        SELECT chargeable_income_from, chargeable_income_to, tax_rate_percent, cumulative_tax
-        FROM pcb_brackets
-        WHERE effective_year = $1
-        ORDER BY chargeable_income_from ASC
-        "#,
-        tax_year,
-    )
-    .fetch_all(pool)
-    .await?;
+    let brackets = pcb_brackets::list_for_year(pool, tax_year).await?;
 
     if brackets.is_empty() {
         return Ok(0);
@@ -215,13 +206,7 @@ async fn calculate_bonus_pcb(
 }
 
 async fn get_relief_amount(pool: &PgPool, relief_type: &str, tax_year: i32) -> AppResult<i64> {
-    let result = sqlx::query_scalar!(
-        "SELECT amount FROM pcb_reliefs WHERE relief_type = $1 AND effective_year = $2",
-        relief_type,
-        tax_year,
-    )
-    .fetch_optional(pool)
-    .await?;
+    let result = pcb_reliefs::get_amount(pool, relief_type, tax_year).await?;
 
     Ok(result.unwrap_or(0))
 }

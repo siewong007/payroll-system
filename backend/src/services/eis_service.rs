@@ -2,6 +2,7 @@ use chrono::NaiveDate;
 use sqlx::PgPool;
 
 use crate::core::error::AppResult;
+use crate::repositories::eis_rates;
 
 /// EIS contribution result
 #[derive(Debug, Clone)]
@@ -36,21 +37,7 @@ pub async fn calculate_eis(
     // Cap wage at ceiling (RM5,000 = 500000 sen)
     let capped_wage = wage.min(500000);
 
-    let rate = sqlx::query!(
-        r#"
-        SELECT employee_contribution, employer_contribution
-        FROM eis_rates
-        WHERE wage_from <= $1 AND wage_to >= $1
-          AND effective_from <= $2
-          AND (effective_to IS NULL OR effective_to >= $2)
-        ORDER BY effective_from DESC
-        LIMIT 1
-        "#,
-        capped_wage,
-        effective_date,
-    )
-    .fetch_optional(pool)
-    .await?;
+    let rate = eis_rates::find_rate(pool, capped_wage, effective_date).await?;
 
     match rate {
         Some(r) => Ok(EisContribution {
