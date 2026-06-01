@@ -9,7 +9,7 @@ use sqlx::{Executor, Postgres};
 use uuid::Uuid;
 
 use crate::core::error::AppResult;
-use crate::models::payroll::PayrollEntryWithEmployee;
+use crate::models::payroll::{PayrollEntryWithEmployee, PayrollItemSummary};
 
 #[derive(Debug)]
 pub struct EmployeeCategoryTotal {
@@ -266,4 +266,44 @@ pub async fn entries_with_employee(
     .fetch_all(executor)
     .await?;
     Ok(entries)
+}
+
+/// Per-employee payslip summaries for a run (joined with employee name/number).
+pub async fn item_summaries_for_run(
+    executor: impl Executor<'_, Database = Postgres>,
+    run_id: Uuid,
+) -> AppResult<Vec<PayrollItemSummary>> {
+    let items = sqlx::query!(
+        r#"SELECT pi.employee_id, e.full_name, e.employee_number,
+           pi.basic_salary, pi.total_allowances, pi.total_overtime, pi.total_claims,
+           pi.gross_salary, pi.total_deductions, pi.net_salary,
+           pi.epf_employee, pi.socso_employee, pi.eis_employee, pi.pcb_amount
+        FROM payroll_items pi
+        JOIN employees e ON pi.employee_id = e.id
+        WHERE pi.payroll_run_id = $1
+        ORDER BY e.employee_number"#,
+        run_id,
+    )
+    .fetch_all(executor)
+    .await?;
+
+    Ok(items
+        .into_iter()
+        .map(|row| PayrollItemSummary {
+            employee_id: row.employee_id,
+            employee_name: row.full_name,
+            employee_number: row.employee_number,
+            basic_salary: row.basic_salary,
+            total_allowances: row.total_allowances,
+            total_overtime: row.total_overtime,
+            total_claims: row.total_claims,
+            gross_salary: row.gross_salary,
+            total_deductions: row.total_deductions,
+            net_salary: row.net_salary,
+            epf_employee: row.epf_employee,
+            socso_employee: row.socso_employee,
+            eis_employee: row.eis_employee,
+            pcb_amount: row.pcb_amount,
+        })
+        .collect())
 }

@@ -91,3 +91,18 @@ pub async fn insert(
     .await?;
     Ok(item)
 }
+
+/// All payslip rows for a run, oldest first.
+pub async fn list_for_run(
+    executor: impl Executor<'_, Database = Postgres>,
+    run_id: Uuid,
+) -> AppResult<Vec<PayrollItem>> {
+    let items = sqlx::query_as!(
+        PayrollItem,
+        "SELECT * FROM payroll_items WHERE payroll_run_id = $1 ORDER BY created_at",
+        run_id,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(items)
+}

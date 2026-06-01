@@ -269,3 +269,28 @@ pub async fn set_paid(
     .await?;
     Ok(run)
 }
+
+/// Recent runs for a company (newest period first, capped at 50).
+pub async fn list_for_company(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+) -> AppResult<Vec<PayrollRun>> {
+    let runs = sqlx::query_as!(
+        PayrollRun,
+        r#"SELECT id, company_id, payroll_group_id, period_year, period_month,
+            period_start, period_end, pay_date, status::text AS "status!",
+            total_gross, total_net, total_employer_cost,
+            total_epf_employee, total_epf_employer, total_socso_employee, total_socso_employer,
+            total_eis_employee, total_eis_employer, total_pcb, total_zakat,
+            employee_count, version, processed_by, processed_at, approved_by, approved_at,
+            locked_at, locked_by, notes, created_at, updated_at, created_by, updated_by
+        FROM payroll_runs
+        WHERE company_id = $1
+        ORDER BY period_year DESC, period_month DESC, created_at DESC
+        LIMIT 50"#,
+        company_id,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(runs)
+}

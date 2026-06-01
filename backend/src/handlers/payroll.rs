@@ -11,11 +11,11 @@ use crate::core::auth::{AuthUser, Permission};
 use crate::core::error::{AppError, AppResult};
 use crate::models::payroll::{
     CreatePayrollEntryRequest, PayrollEntry, PayrollEntryWithEmployee, PayrollGroup, PayrollItem,
-    PayrollItemSummary, PayrollRun, PayrollSummary, ProcessPayrollRequest,
-    UpdatePayrollEntryRequest, UpdatePayrollPcbRequest,
+    PayrollRun, PayrollSummary, ProcessPayrollRequest, UpdatePayrollEntryRequest,
+    UpdatePayrollPcbRequest,
 };
 use crate::services::audit_service::{AuditLogWithUser, AuditRequestMeta};
-use crate::services::{payroll_engine, payroll_entry_service};
+use crate::services::{payroll_engine, payroll_entry_service, payroll_service};
 
 #[derive(Debug, Deserialize)]
 pub struct ReturnPayrollRunRequest {
@@ -59,68 +59,6 @@ pub async fn process(
     Ok(Json(run))
 }
 
-async fn load_payroll_summary(
-    pool: &sqlx::PgPool,
-    company_id: Uuid,
-    id: Uuid,
-) -> AppResult<PayrollSummary> {
-    let run = sqlx::query_as!(
-        PayrollRun,
-        r#"SELECT id, company_id, payroll_group_id, period_year, period_month,
-            period_start, period_end, pay_date, status::text AS "status!",
-            total_gross, total_net, total_employer_cost,
-            total_epf_employee, total_epf_employer, total_socso_employee, total_socso_employer,
-            total_eis_employee, total_eis_employer, total_pcb, total_zakat,
-            employee_count, version, processed_by, processed_at, approved_by, approved_at,
-            locked_at, locked_by, notes, created_at, updated_at, created_by, updated_by
-        FROM payroll_runs WHERE id = $1 AND company_id = $2"#,
-        id,
-        company_id,
-    )
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound("Payroll run not found".into()))?;
-
-    let items = sqlx::query!(
-        r#"SELECT pi.employee_id, e.full_name, e.employee_number,
-           pi.basic_salary, pi.total_allowances, pi.total_overtime, pi.total_claims,
-           pi.gross_salary, pi.total_deductions, pi.net_salary,
-           pi.epf_employee, pi.socso_employee, pi.eis_employee, pi.pcb_amount
-        FROM payroll_items pi
-        JOIN employees e ON pi.employee_id = e.id
-        WHERE pi.payroll_run_id = $1
-        ORDER BY e.employee_number"#,
-        id,
-    )
-    .fetch_all(pool)
-    .await?;
-
-    let item_summaries: Vec<PayrollItemSummary> = items
-        .into_iter()
-        .map(|row| PayrollItemSummary {
-            employee_id: row.employee_id,
-            employee_name: row.full_name,
-            employee_number: row.employee_number,
-            basic_salary: row.basic_salary,
-            total_allowances: row.total_allowances,
-            total_overtime: row.total_overtime,
-            total_claims: row.total_claims,
-            gross_salary: row.gross_salary,
-            total_deductions: row.total_deductions,
-            net_salary: row.net_salary,
-            epf_employee: row.epf_employee,
-            socso_employee: row.socso_employee,
-            eis_employee: row.eis_employee,
-            pcb_amount: row.pcb_amount,
-        })
-        .collect();
-
-    Ok(PayrollSummary {
-        payroll_run: run,
-        items: item_summaries,
-    })
-}
-
 pub async fn list_runs(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -131,23 +69,7 @@ pub async fn list_runs(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    let runs = sqlx::query_as!(
-        PayrollRun,
-        r#"SELECT id, company_id, payroll_group_id, period_year, period_month,
-            period_start, period_end, pay_date, status::text AS "status!",
-            total_gross, total_net, total_employer_cost,
-            total_epf_employee, total_epf_employer, total_socso_employee, total_socso_employer,
-            total_eis_employee, total_eis_employer, total_pcb, total_zakat,
-            employee_count, version, processed_by, processed_at, approved_by, approved_at,
-            locked_at, locked_by, notes, created_at, updated_at, created_by, updated_by
-        FROM payroll_runs
-        WHERE company_id = $1
-        ORDER BY period_year DESC, period_month DESC, created_at DESC
-        LIMIT 50"#,
-        company_id,
-    )
-    .fetch_all(&state.pool)
-    .await?;
+    let runs = payroll_service::list_runs(&state.pool, company_id).await?;
 
     Ok(Json(runs))
 }
@@ -164,7 +86,7 @@ pub async fn get_run(
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
     Ok(Json(
-        load_payroll_summary(&state.pool, company_id, id).await?,
+        payroll_service::get_summary(&state.pool, company_id, id).await?,
     ))
 }
 
@@ -457,7 +379,7 @@ pub async fn update_item_pcb(
 
     tx.commit().await?;
 
-    let summary = load_payroll_summary(&state.pool, company_id, run_id).await?;
+    let summary = payroll_service::get_summary(&state.pool, company_id, run_id).await?;
 
     let audit_meta = AuditRequestMeta::from_headers(&headers);
     let _ = crate::services::audit_service::log_action_with_metadata(
@@ -593,13 +515,7 @@ pub async fn list_groups(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    let groups = sqlx::query_as!(
-        PayrollGroup,
-        "SELECT * FROM payroll_groups WHERE company_id = $1 AND is_active = TRUE ORDER BY name",
-        company_id,
-    )
-    .fetch_all(&state.pool)
-    .await?;
+    let groups = payroll_service::list_groups(&state.pool, company_id).await?;
 
     Ok(Json(groups))
 }
@@ -746,13 +662,7 @@ pub async fn get_items(
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<Vec<PayrollItem>>> {
     auth.require_permission(Permission::ViewPayroll)?;
-    let items = sqlx::query_as!(
-        PayrollItem,
-        "SELECT * FROM payroll_items WHERE payroll_run_id = $1 ORDER BY created_at",
-        id,
-    )
-    .fetch_all(&state.pool)
-    .await?;
+    let items = payroll_service::list_items(&state.pool, id).await?;
 
     Ok(Json(items))
 }
