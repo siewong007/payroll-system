@@ -9,6 +9,7 @@ use sqlx::{Executor, Postgres};
 use uuid::Uuid;
 
 use crate::core::error::AppResult;
+use crate::models::payroll::PayrollEntryWithEmployee;
 
 #[derive(Debug)]
 pub struct EmployeeCategoryTotal {
@@ -227,4 +228,42 @@ pub async fn payroll_ytd(
     .fetch_all(executor)
     .await?;
     Ok(rows)
+}
+
+/// Staged payroll entries (joined with employee name/number), with optional filters.
+pub async fn entries_with_employee(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    period_year: Option<i32>,
+    period_month: Option<i32>,
+    employee_id: Option<Uuid>,
+    item_type: Option<&str>,
+    include_processed: bool,
+) -> AppResult<Vec<PayrollEntryWithEmployee>> {
+    let entries = sqlx::query_as!(
+        PayrollEntryWithEmployee,
+        r#"SELECT pe.id, pe.employee_id, pe.company_id, pe.period_year, pe.period_month,
+            pe.category, pe.item_type, pe.description, pe.amount, pe.quantity, pe.rate,
+            pe.is_taxable, pe.is_processed, pe.payroll_run_id, pe.created_at, pe.updated_at,
+            pe.created_by, pe.updated_by,
+            e.full_name AS "employee_name?", e.employee_number AS "employee_number?"
+        FROM payroll_entries pe
+        JOIN employees e ON pe.employee_id = e.id
+        WHERE pe.company_id = $1
+          AND ($2::int IS NULL OR pe.period_year = $2)
+          AND ($3::int IS NULL OR pe.period_month = $3)
+          AND ($4::uuid IS NULL OR pe.employee_id = $4)
+          AND ($5::text IS NULL OR pe.item_type = $5)
+          AND ($6::bool = TRUE OR pe.is_processed = FALSE)
+        ORDER BY pe.period_year DESC, pe.period_month DESC, e.employee_number, pe.created_at DESC"#,
+        company_id,
+        period_year,
+        period_month,
+        employee_id,
+        item_type,
+        include_processed,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(entries)
 }

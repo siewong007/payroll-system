@@ -202,6 +202,25 @@ pub async fn exists_by_number(
     Ok(exists)
 }
 
+/// Whether an active (non-deleted) employee with this id exists in the company.
+pub async fn exists_in_company(
+    executor: impl Executor<'_, Database = Postgres>,
+    employee_id: Uuid,
+    company_id: Uuid,
+) -> AppResult<bool> {
+    let exists = sqlx::query_scalar!(
+        r#"SELECT EXISTS(
+            SELECT 1 FROM employees
+            WHERE id = $1 AND company_id = $2 AND deleted_at IS NULL
+        ) AS "exists!""#,
+        employee_id,
+        company_id,
+    )
+    .fetch_one(executor)
+    .await?;
+    Ok(exists)
+}
+
 pub async fn insert(
     executor: impl Executor<'_, Database = Postgres>,
     id: Uuid,
