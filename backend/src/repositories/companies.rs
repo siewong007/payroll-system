@@ -138,3 +138,32 @@ pub async fn set_attendance_method(
     .await?;
     Ok(())
 }
+
+/// The company's geofence mode (`none`/`warn`/`enforce`); `None` if the company is absent.
+pub async fn get_geofence_mode(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+) -> AppResult<Option<String>> {
+    let mode = sqlx::query_scalar!(
+        "SELECT geofence_mode FROM companies WHERE id = $1",
+        company_id
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(mode)
+}
+
+pub async fn set_geofence_mode(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    mode: &str,
+) -> AppResult<()> {
+    sqlx::query!(
+        "UPDATE companies SET geofence_mode = $1 WHERE id = $2",
+        mode,
+        company_id,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}

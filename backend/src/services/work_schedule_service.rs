@@ -6,6 +6,7 @@ use crate::core::error::{AppError, AppResult};
 use crate::models::work_schedule::{
     CreateWorkScheduleRequest, UpdateWorkScheduleRequest, WorkSchedule,
 };
+use crate::repositories::company_work_schedules;
 use crate::services::audit_service::{self, AuditRequestMeta};
 
 fn parse_time(s: &str) -> AppResult<NaiveTime> {
@@ -19,26 +20,12 @@ pub async fn get_default_schedule(
     pool: &PgPool,
     company_id: Uuid,
 ) -> AppResult<Option<WorkSchedule>> {
-    let schedule = sqlx::query_as!(
-        WorkSchedule,
-        "SELECT * FROM company_work_schedules WHERE company_id = $1 AND is_default = TRUE",
-        company_id,
-    )
-    .fetch_optional(pool)
-    .await?;
-    Ok(schedule)
+    company_work_schedules::get_default(pool, company_id).await
 }
 
 /// Get all work schedules for a company
 pub async fn list_schedules(pool: &PgPool, company_id: Uuid) -> AppResult<Vec<WorkSchedule>> {
-    let schedules = sqlx::query_as!(
-        WorkSchedule,
-        "SELECT * FROM company_work_schedules WHERE company_id = $1 ORDER BY is_default DESC, name",
-        company_id,
-    )
-    .fetch_all(pool)
-    .await?;
-    Ok(schedules)
+    company_work_schedules::list_for_company(pool, company_id).await
 }
 
 /// Create or replace the default work schedule for a company
@@ -64,30 +51,9 @@ pub async fn upsert_default_schedule(
 
     let existing = get_default_schedule(pool, company_id).await?;
 
-    let schedule = sqlx::query_as!(
-        WorkSchedule,
-        r#"INSERT INTO company_work_schedules
-           (company_id, name, start_time, end_time, grace_minutes, half_day_hours, timezone, is_default)
-           VALUES ($1, $2, $3, $4, $5, $6::float8, $7, TRUE)
-           ON CONFLICT (company_id) WHERE is_default = TRUE
-           DO UPDATE SET
-               name = EXCLUDED.name,
-               start_time = EXCLUDED.start_time,
-               end_time = EXCLUDED.end_time,
-               grace_minutes = EXCLUDED.grace_minutes,
-               half_day_hours = EXCLUDED.half_day_hours,
-               timezone = EXCLUDED.timezone,
-               updated_at = NOW()
-           RETURNING *"#,
-        company_id,
-        name,
-        start,
-        end,
-        grace,
-        half_day,
-        tz,
+    let schedule = company_work_schedules::upsert_default(
+        pool, company_id, name, start, end, grace, half_day, tz,
     )
-    .fetch_one(pool)
     .await?;
 
     let action = if existing.is_some() {
@@ -128,15 +94,9 @@ pub async fn update_schedule(
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<WorkSchedule> {
     // Verify it belongs to this company
-    let existing = sqlx::query_as!(
-        WorkSchedule,
-        "SELECT * FROM company_work_schedules WHERE id = $1 AND company_id = $2",
-        schedule_id,
-        company_id,
-    )
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound("Work schedule not found".into()))?;
+    let existing = company_work_schedules::get_by_id(pool, schedule_id, company_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Work schedule not found".into()))?;
 
     let start = match &req.start_time {
         Some(s) => parse_time(s)?,
@@ -160,14 +120,8 @@ pub async fn update_schedule(
         ));
     }
 
-    let schedule = sqlx::query_as!(
-        WorkSchedule,
-        r#"UPDATE company_work_schedules
-           SET name = $3, start_time = $4, end_time = $5,
-               grace_minutes = $6, half_day_hours = $7::float8, timezone = $8,
-               updated_at = NOW()
-           WHERE id = $1 AND company_id = $2
-           RETURNING *"#,
+    let schedule = company_work_schedules::update(
+        pool,
         schedule_id,
         company_id,
         name,
@@ -177,7 +131,6 @@ pub async fn update_schedule(
         half_day,
         tz,
     )
-    .fetch_one(pool)
     .await?;
 
     let _ = audit_service::log_action_with_metadata(
