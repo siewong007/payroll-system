@@ -133,3 +133,139 @@ pub async fn get_by_id(
     .await?;
     Ok(run)
 }
+
+pub async fn get_for_company(
+    executor: impl Executor<'_, Database = Postgres>,
+    run_id: Uuid,
+    company_id: Uuid,
+) -> AppResult<Option<PayrollRun>> {
+    let run = sqlx::query_as!(
+        PayrollRun,
+        r#"SELECT id, company_id, payroll_group_id, period_year, period_month,
+            period_start, period_end, pay_date, status::text AS "status!",
+            total_gross, total_net, total_employer_cost,
+            total_epf_employee, total_epf_employer, total_socso_employee, total_socso_employer,
+            total_eis_employee, total_eis_employer, total_pcb, total_zakat,
+            employee_count, version, processed_by, processed_at, approved_by, approved_at,
+            locked_at, locked_by, notes, created_at, updated_at, created_by, updated_by
+        FROM payroll_runs
+        WHERE id = $1 AND company_id = $2"#,
+        run_id,
+        company_id,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(run)
+}
+
+/// `processed` → `pending_approval`. Returns `None` if the run isn't in `processed`.
+pub async fn set_pending_approval(
+    executor: impl Executor<'_, Database = Postgres>,
+    run_id: Uuid,
+    company_id: Uuid,
+    updated_by: Uuid,
+) -> AppResult<Option<PayrollRun>> {
+    let run = sqlx::query_as!(
+        PayrollRun,
+        r#"UPDATE payroll_runs SET
+            status = 'pending_approval', updated_by = $3, updated_at = NOW()
+        WHERE id = $1 AND company_id = $2 AND status = 'processed'
+        RETURNING id, company_id, payroll_group_id, period_year, period_month,
+            period_start, period_end, pay_date, status::text AS "status!",
+            total_gross, total_net, total_employer_cost,
+            total_epf_employee, total_epf_employer, total_socso_employee, total_socso_employer,
+            total_eis_employee, total_eis_employer, total_pcb, total_zakat,
+            employee_count, version, processed_by, processed_at, approved_by, approved_at,
+            locked_at, locked_by, notes, created_at, updated_at, created_by, updated_by"#,
+        run_id,
+        company_id,
+        updated_by,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(run)
+}
+
+/// `pending_approval` → `approved`. Returns `None` if the run isn't in `pending_approval`.
+pub async fn set_approved(
+    executor: impl Executor<'_, Database = Postgres>,
+    run_id: Uuid,
+    company_id: Uuid,
+    approved_by: Uuid,
+) -> AppResult<Option<PayrollRun>> {
+    let run = sqlx::query_as!(
+        PayrollRun,
+        r#"UPDATE payroll_runs SET
+            status = 'approved', approved_by = $3, approved_at = NOW(), updated_at = NOW()
+        WHERE id = $1 AND company_id = $2 AND status = 'pending_approval'
+        RETURNING id, company_id, payroll_group_id, period_year, period_month,
+            period_start, period_end, pay_date, status::text AS "status!",
+            total_gross, total_net, total_employer_cost,
+            total_epf_employee, total_epf_employer, total_socso_employee, total_socso_employer,
+            total_eis_employee, total_eis_employer, total_pcb, total_zakat,
+            employee_count, version, processed_by, processed_at, approved_by, approved_at,
+            locked_at, locked_by, notes, created_at, updated_at, created_by, updated_by"#,
+        run_id,
+        company_id,
+        approved_by,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(run)
+}
+
+/// `pending_approval` → `processed` (returned for changes).
+pub async fn set_returned(
+    executor: impl Executor<'_, Database = Postgres>,
+    run_id: Uuid,
+    company_id: Uuid,
+    updated_by: Uuid,
+) -> AppResult<Option<PayrollRun>> {
+    let run = sqlx::query_as!(
+        PayrollRun,
+        r#"UPDATE payroll_runs SET
+            status = 'processed', updated_by = $3, updated_at = NOW()
+        WHERE id = $1 AND company_id = $2 AND status = 'pending_approval'
+        RETURNING id, company_id, payroll_group_id, period_year, period_month,
+            period_start, period_end, pay_date, status::text AS "status!",
+            total_gross, total_net, total_employer_cost,
+            total_epf_employee, total_epf_employer, total_socso_employee, total_socso_employer,
+            total_eis_employee, total_eis_employer, total_pcb, total_zakat,
+            employee_count, version, processed_by, processed_at, approved_by, approved_at,
+            locked_at, locked_by, notes, created_at, updated_at, created_by, updated_by"#,
+        run_id,
+        company_id,
+        updated_by,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(run)
+}
+
+/// `approved` → `paid` (locked).
+pub async fn set_paid(
+    executor: impl Executor<'_, Database = Postgres>,
+    run_id: Uuid,
+    company_id: Uuid,
+    locked_by: Uuid,
+) -> AppResult<Option<PayrollRun>> {
+    let run = sqlx::query_as!(
+        PayrollRun,
+        r#"UPDATE payroll_runs SET
+            status = 'paid', locked_by = $3, locked_at = NOW(), updated_at = NOW()
+        WHERE id = $1 AND company_id = $2 AND status = 'approved'
+        RETURNING id, company_id, payroll_group_id, period_year, period_month,
+            period_start, period_end, pay_date, status::text AS "status!",
+            total_gross, total_net, total_employer_cost,
+            total_epf_employee, total_epf_employer, total_socso_employee, total_socso_employer,
+            total_eis_employee, total_eis_employer, total_pcb, total_zakat,
+            employee_count, version, processed_by, processed_at, approved_by, approved_at,
+            locked_at, locked_by, notes, created_at, updated_at, created_by, updated_by"#,
+        run_id,
+        company_id,
+        locked_by,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(run)
+}
