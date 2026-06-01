@@ -7,5 +7,6 @@
 pub mod attendance;
 pub mod oauth2;
 pub mod passkey;
+pub mod payroll;
 pub mod teams;
 pub mod user_management;

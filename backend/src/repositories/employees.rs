@@ -6,6 +6,7 @@
 //! compile. Keep the four projections in sync. The follow-up "enum types" refactor
 //! removes the casts and the duplication; see docs/refactor-repositories-layer.md §10.
 
+use chrono::NaiveDate;
 use sqlx::{Executor, Postgres};
 use uuid::Uuid;
 
@@ -146,6 +147,44 @@ pub async fn count_distinct_departments(
     .fetch_one(executor)
     .await?;
     Ok(count)
+}
+
+/// Active employees in a payroll group who were employed during the period.
+pub async fn list_for_payroll_run(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    payroll_group_id: Uuid,
+    period_end: NaiveDate,
+    period_start: NaiveDate,
+) -> AppResult<Vec<Employee>> {
+    let employees = sqlx::query_as!(
+        Employee,
+        r#"SELECT id, company_id, employee_number, full_name, ic_number, passport_number,
+            date_of_birth, gender::text AS "gender?", nationality, race::text AS "race?",
+            residency_status::text AS "residency_status!", marital_status::text AS "marital_status?",
+            email, phone, address_line1, address_line2, city, state, postcode,
+            department, designation, cost_centre, branch, employment_type::text AS "employment_type!",
+            date_joined, probation_start, probation_end, confirmation_date,
+            date_resigned, resignation_reason, basic_salary, hourly_rate, daily_rate,
+            bank_name, bank_account_number, bank_account_type,
+            tax_identification_number, epf_number, socso_number, eis_number,
+            working_spouse, num_children, epf_category, is_muslim, zakat_eligible,
+            zakat_monthly_amount, ptptn_monthly_amount, tabung_haji_amount,
+            hrdf_contribution, payroll_group_id, salary_group, is_active,
+            deleted_at, created_at, updated_at, created_by, updated_by
+        FROM employees
+        WHERE company_id = $1 AND payroll_group_id = $2
+        AND is_active = TRUE AND deleted_at IS NULL
+        AND date_joined <= $3
+        AND (date_resigned IS NULL OR date_resigned >= $4)"#,
+        company_id,
+        payroll_group_id,
+        period_end,
+        period_start,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(employees)
 }
 
 pub async fn exists_by_number(
