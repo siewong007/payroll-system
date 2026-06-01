@@ -32,6 +32,7 @@ pub mod passkey_credentials;
 pub mod password_reset_requests;
 pub mod payroll_entries;
 pub mod payroll_groups;
+pub mod payroll_item_details;
 pub mod payroll_items;
 pub mod payroll_runs;
 pub mod pcb_brackets;

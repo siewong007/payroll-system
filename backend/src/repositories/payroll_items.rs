@@ -106,3 +106,74 @@ pub async fn list_for_run(
     .await?;
     Ok(items)
 }
+
+pub async fn delete_for_run(
+    executor: impl Executor<'_, Database = Postgres>,
+    run_id: Uuid,
+) -> AppResult<()> {
+    sqlx::query!(
+        "DELETE FROM payroll_items WHERE payroll_run_id = $1",
+        run_id
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
+/// PCB-related fields of a payslip item, taken with a row lock for the PCB-edit recalc.
+#[derive(Debug)]
+pub struct PcbFields {
+    pub pcb_amount: i64,
+    pub total_deductions: i64,
+    pub net_salary: i64,
+    pub ytd_pcb: i64,
+}
+
+pub async fn get_pcb_fields_locked(
+    executor: impl Executor<'_, Database = Postgres>,
+    run_id: Uuid,
+    employee_id: Uuid,
+) -> AppResult<Option<PcbFields>> {
+    let row = sqlx::query_as!(
+        PcbFields,
+        r#"SELECT pcb_amount, total_deductions, net_salary, ytd_pcb
+        FROM payroll_items
+        WHERE payroll_run_id = $1 AND employee_id = $2
+        FOR UPDATE"#,
+        run_id,
+        employee_id,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(row)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn update_pcb(
+    executor: impl Executor<'_, Database = Postgres>,
+    run_id: Uuid,
+    employee_id: Uuid,
+    pcb_amount: i64,
+    total_deductions: i64,
+    net_salary: i64,
+    ytd_pcb: i64,
+) -> AppResult<()> {
+    sqlx::query!(
+        r#"UPDATE payroll_items
+        SET pcb_amount = $3,
+            total_deductions = $4,
+            net_salary = $5,
+            ytd_pcb = $6,
+            updated_at = NOW()
+        WHERE payroll_run_id = $1 AND employee_id = $2"#,
+        run_id,
+        employee_id,
+        pcb_amount,
+        total_deductions,
+        net_salary,
+        ytd_pcb,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}

@@ -30,3 +30,23 @@ pub async fn mark_processed(
     .await?;
     Ok(())
 }
+
+/// Revert a period's processed claims back to approved (used when deleting a run).
+pub async fn revert_processed_for_period(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    period_start: NaiveDate,
+    period_end: NaiveDate,
+) -> AppResult<()> {
+    sqlx::query!(
+        r#"UPDATE claims SET status = 'approved', updated_at = NOW()
+        WHERE company_id = $1 AND status = 'processed'
+          AND expense_date >= $2 AND expense_date <= $3"#,
+        company_id,
+        period_start,
+        period_end,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}

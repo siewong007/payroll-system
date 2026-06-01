@@ -153,3 +153,23 @@ pub async fn mark_processed(
     .await?;
     Ok(())
 }
+
+/// Revert a run's staged entries back to unprocessed (used when deleting a run).
+pub async fn revert_for_run(
+    executor: impl Executor<'_, Database = Postgres>,
+    run_id: Uuid,
+    company_id: Uuid,
+    updated_by: Uuid,
+) -> AppResult<()> {
+    sqlx::query!(
+        r#"UPDATE payroll_entries
+        SET is_processed = FALSE, payroll_run_id = NULL, updated_at = NOW(), updated_by = $3
+        WHERE payroll_run_id = $1 AND company_id = $2"#,
+        run_id,
+        company_id,
+        updated_by,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}

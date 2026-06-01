@@ -307,3 +307,31 @@ pub async fn item_summaries_for_run(
         })
         .collect())
 }
+
+/// Whether a later committed run already exists for an employee — blocks PCB edits.
+pub async fn employee_has_later_run(
+    executor: impl Executor<'_, Database = Postgres>,
+    employee_id: Uuid,
+    company_id: Uuid,
+    period_year: i32,
+    period_month: i32,
+) -> AppResult<bool> {
+    let exists = sqlx::query_scalar!(
+        r#"SELECT EXISTS(
+            SELECT 1
+            FROM payroll_items pi
+            JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
+            WHERE pi.employee_id = $1
+              AND pr.company_id = $2
+              AND pr.status::text IN ('processed', 'pending_approval', 'approved', 'paid')
+              AND (pr.period_year > $3 OR (pr.period_year = $3 AND pr.period_month > $4))
+        ) AS "exists!""#,
+        employee_id,
+        company_id,
+        period_year,
+        period_month,
+    )
+    .fetch_one(executor)
+    .await?;
+    Ok(exists)
+}

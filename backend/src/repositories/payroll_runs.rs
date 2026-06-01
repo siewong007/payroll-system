@@ -294,3 +294,71 @@ pub async fn list_for_company(
     .await?;
     Ok(runs)
 }
+
+/// Minimal run projection taken with a row lock for the PCB-edit guard.
+#[derive(Debug)]
+pub struct RunStatusRow {
+    pub status: String,
+    pub period_year: i32,
+    pub period_month: i32,
+}
+
+/// Lock a run row and return its status + period (for the PCB-edit transaction).
+pub async fn get_status_locked(
+    executor: impl Executor<'_, Database = Postgres>,
+    run_id: Uuid,
+    company_id: Uuid,
+) -> AppResult<Option<RunStatusRow>> {
+    let row = sqlx::query_as!(
+        RunStatusRow,
+        r#"SELECT status::text AS "status!", period_year, period_month
+        FROM payroll_runs
+        WHERE id = $1 AND company_id = $2
+        FOR UPDATE"#,
+        run_id,
+        company_id,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(row)
+}
+
+pub async fn delete(
+    executor: impl Executor<'_, Database = Postgres>,
+    run_id: Uuid,
+    company_id: Uuid,
+) -> AppResult<()> {
+    sqlx::query!(
+        "DELETE FROM payroll_runs WHERE id = $1 AND company_id = $2",
+        run_id,
+        company_id,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
+/// Adjust a run's PCB/net totals by `delta` after a single item's PCB is edited.
+pub async fn bump_pcb_totals(
+    executor: impl Executor<'_, Database = Postgres>,
+    run_id: Uuid,
+    company_id: Uuid,
+    delta: i64,
+    updated_by: Uuid,
+) -> AppResult<()> {
+    sqlx::query!(
+        r#"UPDATE payroll_runs
+        SET total_pcb = total_pcb + $3,
+            total_net = total_net - $3,
+            updated_at = NOW(),
+            updated_by = $4
+        WHERE id = $1 AND company_id = $2"#,
+        run_id,
+        company_id,
+        delta,
+        updated_by,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}
