@@ -3,110 +3,20 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::core::error::{AppError, AppResult};
+use crate::repositories::reads::payslip as payslip_reads;
+use crate::repositories::reads::payslip::{CompanyInfo, PayslipData};
 use crate::services::pdf_helpers::*;
-
-#[derive(Debug, sqlx::FromRow)]
-struct PayslipData {
-    // Employee
-    employee_name: String,
-    employee_number: String,
-    ic_number: Option<String>,
-    department: Option<String>,
-    designation: Option<String>,
-    bank_name: Option<String>,
-    bank_account_number: Option<String>,
-    // Period
-    period_year: i32,
-    period_month: i32,
-    period_start: chrono::NaiveDate,
-    period_end: chrono::NaiveDate,
-    pay_date: chrono::NaiveDate,
-    // Earnings
-    basic_salary: i64,
-    gross_salary: i64,
-    total_allowances: i64,
-    total_overtime: i64,
-    total_bonus: i64,
-    total_commission: i64,
-    total_claims: i64,
-    // Deductions
-    epf_employee: i64,
-    epf_employer: i64,
-    socso_employee: i64,
-    socso_employer: i64,
-    eis_employee: i64,
-    eis_employer: i64,
-    pcb_amount: i64,
-    zakat_amount: i64,
-    ptptn_amount: i64,
-    tabung_haji_amount: i64,
-    total_loan_deductions: i64,
-    total_other_deductions: i64,
-    unpaid_leave_deduction: i64,
-    total_deductions: i64,
-    net_salary: i64,
-    employer_cost: i64,
-    // YTD
-    ytd_gross: i64,
-    ytd_epf_employee: i64,
-    ytd_pcb: i64,
-    ytd_socso_employee: i64,
-    ytd_eis_employee: i64,
-    ytd_zakat: i64,
-    ytd_net: i64,
-}
-
-#[derive(Debug, sqlx::FromRow)]
-struct CompanyInfo {
-    name: String,
-    registration_number: Option<String>,
-    address_line1: Option<String>,
-    address_line2: Option<String>,
-    city: Option<String>,
-    state: Option<String>,
-    postcode: Option<String>,
-}
 
 pub async fn generate_payslip_pdf(
     pool: &PgPool,
     payslip_id: Uuid,
     employee_id: Uuid,
 ) -> AppResult<Vec<u8>> {
-    let data = sqlx::query_as!(
-        PayslipData,
-        r#"SELECT
-            e.full_name AS employee_name, e.employee_number, e.ic_number,
-            e.department, e.designation, e.bank_name, e.bank_account_number,
-            pr.period_year, pr.period_month, pr.period_start, pr.period_end, pr.pay_date,
-            pi.basic_salary, pi.gross_salary, pi.total_allowances, pi.total_overtime,
-            pi.total_bonus, pi.total_commission, pi.total_claims,
-            pi.epf_employee, pi.epf_employer, pi.socso_employee, pi.socso_employer,
-            pi.eis_employee, pi.eis_employer, pi.pcb_amount, pi.zakat_amount,
-            pi.ptptn_amount, pi.tabung_haji_amount, pi.total_loan_deductions,
-            pi.total_other_deductions, pi.unpaid_leave_deduction,
-            pi.total_deductions, pi.net_salary, pi.employer_cost,
-            pi.ytd_gross, pi.ytd_epf_employee, pi.ytd_pcb,
-            pi.ytd_socso_employee, pi.ytd_eis_employee, pi.ytd_zakat, pi.ytd_net
-        FROM payroll_items pi
-        JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
-        JOIN employees e ON pi.employee_id = e.id
-        WHERE pi.id = $1 AND pi.employee_id = $2
-        AND pr.status::text IN ('approved', 'paid')"#,
-        payslip_id,
-        employee_id,
-    )
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound("Payslip not found".into()))?;
+    let data = payslip_reads::payslip_for_employee(pool, payslip_id, employee_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Payslip not found".into()))?;
 
-    let company = sqlx::query_as!(
-        CompanyInfo,
-        r#"SELECT name, registration_number, address_line1, address_line2, city, state, postcode
-        FROM companies WHERE id = (SELECT company_id FROM employees WHERE id = $1)"#,
-        employee_id,
-    )
-    .fetch_one(pool)
-    .await?;
+    let company = payslip_reads::company_for_employee(pool, employee_id).await?;
 
     render_payslip_page(&data, &company)
 }
@@ -526,18 +436,7 @@ pub async fn generate_bulk_payslips(
     payroll_run_id: Uuid,
     company_id: Uuid,
 ) -> AppResult<Vec<u8>> {
-    let items = sqlx::query!(
-        r#"SELECT pi.id, pi.employee_id
-        FROM payroll_items pi
-        JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
-        WHERE pr.id = $1 AND pr.company_id = $2
-        AND pr.status::text IN ('approved', 'paid')
-        ORDER BY (SELECT employee_number FROM employees WHERE id = pi.employee_id)"#,
-        payroll_run_id,
-        company_id,
-    )
-    .fetch_all(pool)
-    .await?;
+    let items = payslip_reads::run_payslip_item_refs(pool, payroll_run_id, company_id).await?;
 
     if items.is_empty() {
         return Err(AppError::NotFound("No payroll items found".into()));
@@ -547,41 +446,8 @@ pub async fn generate_bulk_payslips(
     let mut main_doc = PdfDocument::new("Payslips");
 
     for item in &items {
-        let item_id = item.id;
-        let emp_id = item.employee_id;
-        let data = sqlx::query_as!(
-            PayslipData,
-            r#"SELECT
-                e.full_name AS employee_name, e.employee_number, e.ic_number,
-                e.department, e.designation, e.bank_name, e.bank_account_number,
-                pr.period_year, pr.period_month, pr.period_start, pr.period_end, pr.pay_date,
-                pi.basic_salary, pi.gross_salary, pi.total_allowances, pi.total_overtime,
-                pi.total_bonus, pi.total_commission, pi.total_claims,
-                pi.epf_employee, pi.epf_employer, pi.socso_employee, pi.socso_employer,
-                pi.eis_employee, pi.eis_employer, pi.pcb_amount, pi.zakat_amount,
-                pi.ptptn_amount, pi.tabung_haji_amount, pi.total_loan_deductions,
-                pi.total_other_deductions, pi.unpaid_leave_deduction,
-                pi.total_deductions, pi.net_salary, pi.employer_cost,
-                pi.ytd_gross, pi.ytd_epf_employee, pi.ytd_pcb,
-                pi.ytd_socso_employee, pi.ytd_eis_employee, pi.ytd_zakat, pi.ytd_net
-            FROM payroll_items pi
-            JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
-            JOIN employees e ON pi.employee_id = e.id
-            WHERE pi.id = $1 AND pi.employee_id = $2"#,
-            item_id,
-            emp_id,
-        )
-        .fetch_optional(pool)
-        .await?;
-
-        let company = sqlx::query_as!(
-            CompanyInfo,
-            r#"SELECT name, registration_number, address_line1, address_line2, city, state, postcode
-            FROM companies WHERE id = (SELECT company_id FROM employees WHERE id = $1)"#,
-            emp_id,
-        )
-        .fetch_one(pool)
-        .await?;
+        let data = payslip_reads::payslip_for_run_item(pool, item.id, item.employee_id).await?;
+        let company = payslip_reads::company_for_employee(pool, item.employee_id).await?;
 
         if let Some(slip) = data {
             let font = PdfFontHandle::Builtin(BuiltinFont::Helvetica);
