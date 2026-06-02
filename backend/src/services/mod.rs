@@ -5,6 +5,7 @@ pub mod auth_service;
 pub mod backup_service;
 pub mod calendar_service;
 pub mod company_service;
+pub mod dashboard_service;
 pub mod document_service;
 pub mod ea_form_service;
 pub mod eis_service;

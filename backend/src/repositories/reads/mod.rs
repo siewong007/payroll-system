@@ -7,6 +7,7 @@
 pub mod approvals;
 pub mod attendance;
 pub mod audit;
+pub mod dashboard;
 pub mod ea_form;
 pub mod oauth2;
 pub mod passkey;
