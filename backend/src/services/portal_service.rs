@@ -7,7 +7,8 @@ use crate::models::employee::Employee;
 use crate::models::portal::*;
 use crate::repositories::reads::portal as portal_reads;
 use crate::repositories::{
-    claims, employees as employee_repo, leave_requests, leave_types, overtime_applications,
+    claims, employees as employee_repo, leave_balances, leave_requests, leave_types,
+    overtime_applications, payroll_entries,
 };
 use crate::services::notification_service;
 
@@ -50,30 +51,12 @@ pub async fn create_leave_request(
     req: CreateLeaveRequest,
 ) -> AppResult<LeaveRequest> {
     // Verify leave type exists
-    let _lt = sqlx::query_scalar!(
-        "SELECT id FROM leave_types WHERE id = $1 AND company_id = $2 AND is_active = TRUE",
-        req.leave_type_id,
-        company_id,
-    )
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound("Leave type not found".into()))?;
+    if !leave_types::exists_active(pool, req.leave_type_id, company_id).await? {
+        return Err(AppError::NotFound("Leave type not found".into()));
+    }
 
-    let leave = sqlx::query_as!(
-        LeaveRequest,
-        r#"WITH new_lr AS (
-            INSERT INTO leave_requests (employee_id, company_id, leave_type_id, start_date, end_date, days, reason, attachment_url, attachment_name)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-            RETURNING *
-        )
-        SELECT nlr.id AS "id!", nlr.employee_id AS "employee_id!", nlr.company_id AS "company_id!", nlr.leave_type_id AS "leave_type_id!",
-            nlr.start_date AS "start_date!", nlr.end_date AS "end_date!", nlr.days AS "days!", nlr.reason, nlr.status AS "status!",
-            nlr.reviewed_by, nlr.reviewed_at, nlr.review_notes,
-            nlr.attachment_url, nlr.attachment_name,
-            nlr.created_at AS "created_at!", nlr.updated_at AS "updated_at!",
-            lt.name AS "leave_type_name?"
-        FROM new_lr nlr
-        JOIN leave_types lt ON nlr.leave_type_id = lt.id"#,
+    let leave = leave_requests::insert_self_service(
+        pool,
         employee_id,
         company_id,
         req.leave_type_id,
@@ -84,25 +67,14 @@ pub async fn create_leave_request(
         req.attachment_url,
         req.attachment_name,
     )
-    .fetch_one(pool)
     .await?;
 
     // Update pending days in balance
     let year = req.start_date.year();
-    sqlx::query!(
-        r#"UPDATE leave_balances SET pending_days = pending_days + $3, updated_at = NOW()
-        WHERE employee_id = $1 AND leave_type_id = $2 AND year = $4"#,
-        employee_id,
-        req.leave_type_id,
-        req.days,
-        year,
-    )
-    .execute(pool)
-    .await?;
+    leave_balances::add_pending(pool, employee_id, req.leave_type_id, req.days, year).await?;
 
     // Notify admins about new leave request
-    let name = sqlx::query_scalar!("SELECT full_name FROM employees WHERE id = $1", employee_id)
-        .fetch_optional(pool)
+    let name = employee_repo::full_name(pool, employee_id)
         .await?
         .unwrap_or_default();
     let _ = notification_service::notify_admins(
@@ -131,50 +103,23 @@ pub async fn cancel_leave_request(
 ) -> AppResult<()> {
     let mut tx = pool.begin().await?;
 
-    let lr = sqlx::query_as!(
-        LeaveRequest,
-        r#"SELECT lr.id, lr.employee_id, lr.company_id, lr.leave_type_id,
-            lr.start_date, lr.end_date, lr.days, lr.reason, lr.status,
-            lr.reviewed_by, lr.reviewed_at, lr.review_notes,
-            lr.attachment_url, lr.attachment_name,
-            lr.created_at, lr.updated_at,
-            lt.name AS "leave_type_name?"
-        FROM leave_requests lr
-        JOIN leave_types lt ON lr.leave_type_id = lt.id
-        WHERE lr.id = $1
-          AND lr.employee_id = $2
-          AND lr.status IN ('pending', 'approved', 'rejected')"#,
-        request_id,
-        employee_id,
-    )
-    .fetch_optional(&mut *tx)
-    .await?
-    .ok_or_else(|| AppError::BadRequest("Leave request not found or cannot be cancelled".into()))?;
+    let lr = leave_requests::get_cancellable_for_employee(&mut *tx, request_id, employee_id)
+        .await?
+        .ok_or_else(|| {
+            AppError::BadRequest("Leave request not found or cannot be cancelled".into())
+        })?;
 
     if lr.status == "approved" {
-        let is_paid = sqlx::query_scalar!(
-            "SELECT is_paid FROM leave_types WHERE id = $1",
-            lr.leave_type_id,
-        )
-        .fetch_optional(&mut *tx)
-        .await?;
+        let is_paid = leave_types::get_is_paid(&mut *tx, lr.leave_type_id).await?;
 
         if is_paid == Some(false) {
             let description = format!("Unpaid leave: {} to {}%", lr.start_date, lr.end_date);
-            let processed = sqlx::query_scalar!(
-                r#"SELECT EXISTS(
-                    SELECT 1 FROM payroll_entries
-                    WHERE employee_id = $1
-                      AND company_id = $2
-                      AND item_type = 'unpaid_leave'
-                      AND description LIKE $3
-                      AND is_processed = TRUE
-                ) AS "exists!""#,
+            let processed = payroll_entries::exists_processed_unpaid_leave(
+                &mut *tx,
                 lr.employee_id,
                 lr.company_id,
-                description,
+                &description,
             )
-            .fetch_one(&mut *tx)
             .await?;
 
             if processed {
@@ -183,52 +128,25 @@ pub async fn cancel_leave_request(
                 ));
             }
 
-            sqlx::query!(
-                r#"DELETE FROM payroll_entries
-                WHERE employee_id = $1
-                  AND company_id = $2
-                  AND item_type = 'unpaid_leave'
-                  AND description LIKE $3
-                  AND is_processed = FALSE"#,
+            payroll_entries::delete_unprocessed_unpaid_leave(
+                &mut *tx,
                 lr.employee_id,
                 lr.company_id,
-                description,
+                &description,
             )
-            .execute(&mut *tx)
             .await?;
         }
     }
 
-    sqlx::query!(
-        "UPDATE leave_requests SET status = 'cancelled', updated_at = NOW() WHERE id = $1",
-        request_id,
-    )
-    .execute(&mut *tx)
-    .await?;
+    leave_requests::mark_cancelled(&mut *tx, request_id).await?;
 
     let year = lr.start_date.year();
     if lr.status == "pending" {
-        sqlx::query!(
-            r#"UPDATE leave_balances SET pending_days = GREATEST(pending_days - $3, 0), updated_at = NOW()
-            WHERE employee_id = $1 AND leave_type_id = $2 AND year = $4"#,
-            employee_id,
-            lr.leave_type_id,
-            lr.days,
-            year,
-        )
-        .execute(&mut *tx)
-        .await?;
+        leave_balances::subtract_pending(&mut *tx, employee_id, lr.leave_type_id, lr.days, year)
+            .await?;
     } else if lr.status == "approved" {
-        sqlx::query!(
-            r#"UPDATE leave_balances SET taken_days = GREATEST(taken_days - $3, 0), updated_at = NOW()
-            WHERE employee_id = $1 AND leave_type_id = $2 AND year = $4"#,
-            employee_id,
-            lr.leave_type_id,
-            lr.days,
-            year,
-        )
-        .execute(&mut *tx)
-        .await?;
+        leave_balances::subtract_taken(&mut *tx, employee_id, lr.leave_type_id, lr.days, year)
+            .await?;
     }
 
     tx.commit().await?;
@@ -241,14 +159,7 @@ pub async fn delete_leave_request(
     employee_id: Uuid,
     request_id: Uuid,
 ) -> AppResult<()> {
-    let rows = sqlx::query!(
-        "DELETE FROM leave_requests WHERE id = $1 AND employee_id = $2 AND status = 'cancelled'",
-        request_id,
-        employee_id,
-    )
-    .execute(pool)
-    .await?
-    .rows_affected();
+    let rows = leave_requests::delete_cancelled_for_employee(pool, request_id, employee_id).await?;
 
     if rows == 0 {
         return Err(AppError::BadRequest(

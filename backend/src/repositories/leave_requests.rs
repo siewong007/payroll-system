@@ -284,3 +284,106 @@ pub async fn list_for_employee(
     .await?;
     Ok(requests)
 }
+
+/// Self-service insert of a leave request (employee-submitted), returning it with
+/// its type name.
+#[allow(clippy::too_many_arguments)]
+pub async fn insert_self_service(
+    executor: impl Executor<'_, Database = Postgres>,
+    employee_id: Uuid,
+    company_id: Uuid,
+    leave_type_id: Uuid,
+    start_date: NaiveDate,
+    end_date: NaiveDate,
+    days: Decimal,
+    reason: Option<String>,
+    attachment_url: Option<String>,
+    attachment_name: Option<String>,
+) -> AppResult<LeaveRequest> {
+    let leave = sqlx::query_as!(
+        LeaveRequest,
+        r#"WITH new_lr AS (
+            INSERT INTO leave_requests (employee_id, company_id, leave_type_id, start_date, end_date, days, reason, attachment_url, attachment_name)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            RETURNING *
+        )
+        SELECT nlr.id AS "id!", nlr.employee_id AS "employee_id!", nlr.company_id AS "company_id!", nlr.leave_type_id AS "leave_type_id!",
+            nlr.start_date AS "start_date!", nlr.end_date AS "end_date!", nlr.days AS "days!", nlr.reason, nlr.status AS "status!",
+            nlr.reviewed_by, nlr.reviewed_at, nlr.review_notes,
+            nlr.attachment_url, nlr.attachment_name,
+            nlr.created_at AS "created_at!", nlr.updated_at AS "updated_at!",
+            lt.name AS "leave_type_name?"
+        FROM new_lr nlr
+        JOIN leave_types lt ON nlr.leave_type_id = lt.id"#,
+        employee_id,
+        company_id,
+        leave_type_id,
+        start_date,
+        end_date,
+        days,
+        reason,
+        attachment_url,
+        attachment_name,
+    )
+    .fetch_one(executor)
+    .await?;
+    Ok(leave)
+}
+
+/// A cancellable (pending/approved/rejected) request owned by an employee.
+pub async fn get_cancellable_for_employee(
+    executor: impl Executor<'_, Database = Postgres>,
+    request_id: Uuid,
+    employee_id: Uuid,
+) -> AppResult<Option<LeaveRequest>> {
+    let leave = sqlx::query_as!(
+        LeaveRequest,
+        r#"SELECT lr.id, lr.employee_id, lr.company_id, lr.leave_type_id,
+            lr.start_date, lr.end_date, lr.days, lr.reason, lr.status,
+            lr.reviewed_by, lr.reviewed_at, lr.review_notes,
+            lr.attachment_url, lr.attachment_name,
+            lr.created_at, lr.updated_at,
+            lt.name AS "leave_type_name?"
+        FROM leave_requests lr
+        JOIN leave_types lt ON lr.leave_type_id = lt.id
+        WHERE lr.id = $1
+          AND lr.employee_id = $2
+          AND lr.status IN ('pending', 'approved', 'rejected')"#,
+        request_id,
+        employee_id,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(leave)
+}
+
+/// Set a request to `cancelled` by id (the caller already authorized ownership).
+pub async fn mark_cancelled(
+    executor: impl Executor<'_, Database = Postgres>,
+    request_id: Uuid,
+) -> AppResult<()> {
+    sqlx::query!(
+        "UPDATE leave_requests SET status = 'cancelled', updated_at = NOW() WHERE id = $1",
+        request_id,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
+/// Delete an employee's own cancelled request; returns rows removed (0 = not deletable).
+pub async fn delete_cancelled_for_employee(
+    executor: impl Executor<'_, Database = Postgres>,
+    request_id: Uuid,
+    employee_id: Uuid,
+) -> AppResult<u64> {
+    let rows = sqlx::query!(
+        "DELETE FROM leave_requests WHERE id = $1 AND employee_id = $2 AND status = 'cancelled'",
+        request_id,
+        employee_id,
+    )
+    .execute(executor)
+    .await?
+    .rows_affected();
+    Ok(rows)
+}

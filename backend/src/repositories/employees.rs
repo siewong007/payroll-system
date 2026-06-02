@@ -132,6 +132,17 @@ pub async fn get_profile(
     Ok(employee)
 }
 
+/// An employee's full name by id, if present (for notification messages).
+pub async fn full_name(
+    executor: impl Executor<'_, Database = Postgres>,
+    id: Uuid,
+) -> AppResult<Option<String>> {
+    let name = sqlx::query_scalar!("SELECT full_name FROM employees WHERE id = $1", id)
+        .fetch_optional(executor)
+        .await?;
+    Ok(name)
+}
+
 /// Active flag for an employee, used by auth to reject logins for deleted staff.
 /// `None` means the row is absent (also treated as inactive by callers).
 pub async fn get_active_status(
