@@ -5,9 +5,11 @@
 //! See docs/refactor-repositories-layer.md §6.
 
 pub mod attendance;
+pub mod ea_form;
 pub mod oauth2;
 pub mod passkey;
 pub mod payroll;
 pub mod payslip;
+pub mod statutory;
 pub mod teams;
 pub mod user_management;
