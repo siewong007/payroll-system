@@ -12,6 +12,7 @@ pub mod oauth2;
 pub mod passkey;
 pub mod payroll;
 pub mod payslip;
+pub mod reports;
 pub mod statutory;
 pub mod teams;
 pub mod user_management;
