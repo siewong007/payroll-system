@@ -167,3 +167,79 @@ pub async fn set_geofence_mode(
     .await?;
     Ok(())
 }
+
+/// Hard-delete a company and all of its data, in dependency order. Runs many
+/// statements (including a runtime-query loop over the company-scoped tables), so
+/// it takes the caller's transaction connection. Returns the number of company
+/// rows removed (0 = the company did not exist).
+pub async fn delete_cascade(conn: &mut sqlx::PgConnection, company_id: Uuid) -> AppResult<u64> {
+    // Delete in dependency order (children before parents)
+
+    // 1. Team members (via teams)
+    sqlx::query!(
+        "DELETE FROM team_members WHERE team_id IN (SELECT id FROM teams WHERE company_id = $1)",
+        company_id,
+    )
+    .execute(&mut *conn)
+    .await?;
+
+    // 2. Leave balances (via employees)
+    sqlx::query!("DELETE FROM leave_balances WHERE employee_id IN (SELECT id FROM employees WHERE company_id = $1)", company_id)
+        .execute(&mut *conn).await?;
+
+    // 3. Payroll items (via payroll_runs)
+    sqlx::query!("DELETE FROM payroll_items WHERE payroll_run_id IN (SELECT id FROM payroll_runs WHERE company_id = $1)", company_id)
+        .execute(&mut *conn).await?;
+
+    // 4. Salary history & employee allowances (via employees)
+    sqlx::query!("DELETE FROM salary_history WHERE employee_id IN (SELECT id FROM employees WHERE company_id = $1)", company_id)
+        .execute(&mut *conn).await?;
+    sqlx::query!("DELETE FROM employee_allowances WHERE employee_id IN (SELECT id FROM employees WHERE company_id = $1)", company_id)
+        .execute(&mut *conn).await?;
+
+    // 5. Tables with direct company_id FK
+    let tables = [
+        "overtime_applications",
+        "claims",
+        "leave_requests",
+        "leave_types",
+        "notifications",
+        "email_logs",
+        "email_templates",
+        "bulk_import_sessions",
+        "documents",
+        "document_categories",
+        "company_settings",
+        "working_day_config",
+        "holidays",
+        "teams",
+        "payroll_entries",
+        "payroll_runs",
+        "payroll_groups",
+        "employees",
+        "user_companies",
+    ];
+
+    for table in tables {
+        let query = format!("DELETE FROM {} WHERE company_id = $1", table);
+        sqlx::query(&query)
+            .bind(company_id)
+            .execute(&mut *conn)
+            .await?;
+    }
+
+    // 6. Clear company_id on users (nullable FK)
+    sqlx::query!(
+        "UPDATE users SET company_id = NULL WHERE company_id = $1",
+        company_id,
+    )
+    .execute(&mut *conn)
+    .await?;
+
+    // 7. Delete the company itself
+    let result = sqlx::query!("DELETE FROM companies WHERE id = $1", company_id)
+        .execute(&mut *conn)
+        .await?;
+
+    Ok(result.rows_affected())
+}
