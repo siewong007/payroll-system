@@ -294,3 +294,105 @@ pub async fn list_for_employee(
     .await?;
     Ok(claims)
 }
+
+// ─── Self-service portal operations ───
+
+#[allow(clippy::too_many_arguments)]
+pub async fn insert_draft(
+    executor: impl Executor<'_, Database = Postgres>,
+    employee_id: Uuid,
+    company_id: Uuid,
+    title: String,
+    description: Option<String>,
+    amount: i64,
+    category: Option<String>,
+    receipt_url: Option<String>,
+    receipt_file_name: Option<String>,
+    expense_date: NaiveDate,
+) -> AppResult<Claim> {
+    let claim = sqlx::query_as!(
+        Claim,
+        r#"INSERT INTO claims
+            (employee_id, company_id, title, description, amount, category, receipt_url, receipt_file_name, expense_date)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        RETURNING *"#,
+        employee_id,
+        company_id,
+        title,
+        description,
+        amount,
+        category,
+        receipt_url,
+        receipt_file_name,
+        expense_date,
+    )
+    .fetch_one(executor)
+    .await?;
+    Ok(claim)
+}
+
+pub async fn mark_submitted(
+    executor: impl Executor<'_, Database = Postgres>,
+    claim_id: Uuid,
+    employee_id: Uuid,
+) -> AppResult<Option<Claim>> {
+    let claim = sqlx::query_as!(
+        Claim,
+        r#"UPDATE claims SET status = 'pending', submitted_at = NOW(), updated_at = NOW()
+        WHERE id = $1 AND employee_id = $2 AND status = 'draft'
+        RETURNING *"#,
+        claim_id,
+        employee_id,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(claim)
+}
+
+pub async fn get_cancellable_for_employee(
+    executor: impl Executor<'_, Database = Postgres>,
+    claim_id: Uuid,
+    employee_id: Uuid,
+) -> AppResult<Option<Claim>> {
+    let claim = sqlx::query_as!(
+        Claim,
+        r#"SELECT * FROM claims
+        WHERE id = $1
+          AND employee_id = $2
+          AND status IN ('pending', 'approved', 'rejected')"#,
+        claim_id,
+        employee_id,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(claim)
+}
+
+pub async fn mark_cancelled(
+    executor: impl Executor<'_, Database = Postgres>,
+    claim_id: Uuid,
+) -> AppResult<()> {
+    sqlx::query!(
+        "UPDATE claims SET status = 'cancelled', updated_at = NOW() WHERE id = $1",
+        claim_id,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
+pub async fn delete_draft_or_cancelled(
+    executor: impl Executor<'_, Database = Postgres>,
+    claim_id: Uuid,
+    employee_id: Uuid,
+) -> AppResult<u64> {
+    let rows = sqlx::query!(
+        "DELETE FROM claims WHERE id = $1 AND employee_id = $2 AND status IN ('draft', 'cancelled')",
+        claim_id,
+        employee_id,
+    )
+    .execute(executor)
+    .await?
+    .rows_affected();
+    Ok(rows)
+}

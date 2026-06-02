@@ -636,3 +636,16 @@ pub async fn soft_delete(
     .rows_affected();
     Ok(rows)
 }
+
+pub async fn list_active_ids_and_joined_dates(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+) -> AppResult<Vec<(Uuid, NaiveDate)>> {
+    let rows = sqlx::query!(
+        "SELECT id, date_joined FROM employees WHERE company_id = $1 AND is_active = TRUE AND deleted_at IS NULL",
+        company_id,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(rows.into_iter().map(|r| (r.id, r.date_joined)).collect())
+}

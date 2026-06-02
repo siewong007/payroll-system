@@ -14,6 +14,7 @@ pub mod passkey;
 pub mod payroll;
 pub mod payslip;
 pub mod portal;
+pub mod system;
 pub mod reports;
 pub mod statutory;
 pub mod teams;

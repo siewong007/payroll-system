@@ -239,3 +239,53 @@ pub async fn list_for_employee(
     .await?;
     Ok(apps)
 }
+
+// ─── Self-service portal operations ───
+
+pub async fn get_cancellable_for_employee(
+    executor: impl Executor<'_, Database = Postgres>,
+    ot_id: Uuid,
+    employee_id: Uuid,
+) -> AppResult<Option<OvertimeApplication>> {
+    let ot = sqlx::query_as!(
+        OvertimeApplication,
+        r#"SELECT * FROM overtime_applications
+        WHERE id = $1
+          AND employee_id = $2
+          AND status IN ('pending', 'approved', 'rejected')"#,
+        ot_id,
+        employee_id,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(ot)
+}
+
+pub async fn mark_cancelled_for_employee(
+    executor: impl Executor<'_, Database = Postgres>,
+    ot_id: Uuid,
+) -> AppResult<()> {
+    sqlx::query!(
+        "UPDATE overtime_applications SET status = 'cancelled', updated_at = NOW() WHERE id = $1",
+        ot_id,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
+pub async fn delete_cancelled_for_employee(
+    executor: impl Executor<'_, Database = Postgres>,
+    ot_id: Uuid,
+    employee_id: Uuid,
+) -> AppResult<u64> {
+    let rows = sqlx::query!(
+        "DELETE FROM overtime_applications WHERE id = $1 AND employee_id = $2 AND status = 'cancelled'",
+        ot_id,
+        employee_id,
+    )
+    .execute(executor)
+    .await?
+    .rows_affected();
+    Ok(rows)
+}

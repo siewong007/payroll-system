@@ -5,7 +5,7 @@ use sqlx::{Executor, Postgres};
 use uuid::Uuid;
 
 use crate::core::error::AppResult;
-use crate::models::portal::{LeaveBalanceWithType, MyPayslip};
+use crate::models::portal::{LeaveBalanceWithType, LeaveRequest, MyPayslip, TeamLeaveEntry};
 
 /// An employee's payslips for approved/paid runs, newest period first.
 pub async fn my_payslips(
@@ -57,4 +57,70 @@ pub async fn leave_balances_with_type(
     .fetch_all(executor)
     .await?;
     Ok(balances)
+}
+
+/// Approved leave requests for a year for an employee.
+pub async fn approved_leaves_for_year(
+    executor: impl Executor<'_, Database = Postgres>,
+    employee_id: Uuid,
+    year: i32,
+) -> AppResult<Vec<LeaveRequest>> {
+    let leaves = sqlx::query_as!(
+        LeaveRequest,
+        r#"SELECT lr.id, lr.employee_id, lr.company_id, lr.leave_type_id,
+            lr.start_date, lr.end_date, lr.days, lr.reason, lr.status,
+            lr.reviewed_by, lr.reviewed_at, lr.review_notes,
+            lr.attachment_url, lr.attachment_name,
+            lr.created_at, lr.updated_at,
+            lt.name AS "leave_type_name?"
+        FROM leave_requests lr
+        JOIN leave_types lt ON lr.leave_type_id = lt.id
+        WHERE lr.employee_id = $1 AND lr.status = 'approved'
+        AND EXTRACT(YEAR FROM lr.start_date)::int = $2
+        ORDER BY lr.start_date"#,
+        employee_id,
+        year,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(leaves)
+}
+
+/// Team calendar for a given month, showing approved leaves for teammates.
+pub async fn team_calendar(
+    executor: impl Executor<'_, Database = Postgres>,
+    employee_id: Uuid,
+    company_id: Uuid,
+    period_start: chrono::NaiveDate,
+    period_end: chrono::NaiveDate,
+) -> AppResult<Vec<TeamLeaveEntry>> {
+    let entries = sqlx::query_as!(
+        TeamLeaveEntry,
+        r#"SELECT DISTINCT lr.id, lr.employee_id, e.full_name AS employee_name,
+            e.department, lt.name AS leave_type_name,
+            lr.start_date, lr.end_date, lr.days, lr.status
+        FROM leave_requests lr
+        JOIN employees e ON lr.employee_id = e.id
+        JOIN leave_types lt ON lr.leave_type_id = lt.id
+        WHERE e.company_id = $1
+          AND lr.status = 'approved'
+          AND lr.start_date <= $4
+          AND lr.end_date >= $3
+          AND (lr.employee_id = $2
+               OR lr.employee_id IN (
+                  SELECT tm2.employee_id FROM team_members tm2
+                  WHERE tm2.team_id IN (
+                      SELECT tm1.team_id FROM team_members tm1
+                      WHERE tm1.employee_id = $2
+                  )
+              ))
+        ORDER BY lr.start_date, e.full_name"#,
+        company_id,
+        employee_id,
+        period_start,
+        period_end,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(entries)
 }
