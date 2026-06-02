@@ -4,6 +4,7 @@
 //!
 //! See docs/refactor-repositories-layer.md §6.
 
+pub mod approvals;
 pub mod attendance;
 pub mod ea_form;
 pub mod oauth2;

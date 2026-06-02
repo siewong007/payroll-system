@@ -173,3 +173,92 @@ pub async fn revert_for_run(
     .await?;
     Ok(())
 }
+
+// ─── Unpaid-leave deduction entries (staged on leave approval) ───
+
+/// Whether a *processed* unpaid-leave deduction matching `description` already
+/// exists for an employee (blocks cancelling already-paid leave).
+//
+// NOTE: indentation matches the byte-exact SQL in the offline `.sqlx` cache
+// (this query was originally nested several blocks deep).
+pub async fn exists_processed_unpaid_leave(
+    executor: impl Executor<'_, Database = Postgres>,
+    employee_id: Uuid,
+    company_id: Uuid,
+    description: &str,
+) -> AppResult<bool> {
+    let exists = sqlx::query_scalar!(
+        r#"SELECT EXISTS(
+                    SELECT 1 FROM payroll_entries
+                    WHERE employee_id = $1
+                      AND company_id = $2
+                      AND item_type = 'unpaid_leave'
+                      AND description LIKE $3
+                      AND is_processed = TRUE
+                ) AS "exists!""#,
+        employee_id,
+        company_id,
+        description,
+    )
+    .fetch_one(executor)
+    .await?;
+    Ok(exists)
+}
+
+/// Delete the *unprocessed* unpaid-leave deduction matching `description`.
+//
+// NOTE: indentation matches the byte-exact SQL in the offline `.sqlx` cache.
+pub async fn delete_unprocessed_unpaid_leave(
+    executor: impl Executor<'_, Database = Postgres>,
+    employee_id: Uuid,
+    company_id: Uuid,
+    description: &str,
+) -> AppResult<()> {
+    sqlx::query!(
+        r#"DELETE FROM payroll_entries
+                WHERE employee_id = $1
+                  AND company_id = $2
+                  AND item_type = 'unpaid_leave'
+                  AND description LIKE $3
+                  AND is_processed = FALSE"#,
+        employee_id,
+        company_id,
+        description,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
+/// Stage an unpaid-leave salary deduction.
+//
+// NOTE: indentation matches the byte-exact SQL in the offline `.sqlx` cache.
+#[allow(clippy::too_many_arguments)]
+pub async fn insert_unpaid_leave_deduction(
+    executor: impl Executor<'_, Database = Postgres>,
+    id: Uuid,
+    employee_id: Uuid,
+    company_id: Uuid,
+    period_year: i32,
+    period_month: i32,
+    description: &str,
+    amount: i64,
+    created_by: Uuid,
+) -> AppResult<()> {
+    sqlx::query!(
+        r#"INSERT INTO payroll_entries
+                            (id, employee_id, company_id, period_year, period_month, category, item_type, description, amount, created_by)
+                        VALUES ($1, $2, $3, $4, $5, 'deduction', 'unpaid_leave', $6, $7, $8)"#,
+        id,
+        employee_id,
+        company_id,
+        period_year,
+        period_month,
+        description,
+        amount,
+        created_by,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}

@@ -334,3 +334,18 @@ pub async fn delete_by_employee(
         .await?;
     Ok(())
 }
+
+/// The id of the active user account linked to an employee, if any (used to
+/// target in-app notifications).
+pub async fn active_id_for_employee(
+    executor: impl Executor<'_, Database = Postgres>,
+    employee_id: Uuid,
+) -> AppResult<Option<Uuid>> {
+    let user_id = sqlx::query_scalar!(
+        "SELECT id FROM users WHERE employee_id = $1 AND is_active = TRUE",
+        employee_id,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(user_id)
+}

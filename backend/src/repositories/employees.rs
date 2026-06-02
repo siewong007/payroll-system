@@ -221,6 +221,21 @@ pub async fn exists_in_company(
     Ok(exists)
 }
 
+/// An employee's basic salary (sen) and owning company, by id. Used by leave
+/// approval to compute the unpaid-leave daily-rate deduction.
+pub async fn basic_salary_and_company(
+    executor: impl Executor<'_, Database = Postgres>,
+    id: Uuid,
+) -> AppResult<Option<(i64, Uuid)>> {
+    let row = sqlx::query!(
+        "SELECT basic_salary, company_id FROM employees WHERE id = $1",
+        id,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(row.map(|r| (r.basic_salary, r.company_id)))
+}
+
 pub async fn insert(
     executor: impl Executor<'_, Database = Postgres>,
     id: Uuid,
