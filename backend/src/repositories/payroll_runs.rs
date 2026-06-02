@@ -113,6 +113,24 @@ pub async fn update_totals(
     Ok(())
 }
 
+/// Whether a run with this id exists in the company.
+pub async fn exists(
+    executor: impl Executor<'_, Database = Postgres>,
+    run_id: Uuid,
+    company_id: Uuid,
+) -> AppResult<bool> {
+    let exists = sqlx::query_scalar!(
+        r#"SELECT EXISTS(
+            SELECT 1 FROM payroll_runs WHERE id = $1 AND company_id = $2
+        ) AS "exists!""#,
+        run_id,
+        company_id,
+    )
+    .fetch_one(executor)
+    .await?;
+    Ok(exists)
+}
+
 pub async fn get_by_id(
     executor: impl Executor<'_, Database = Postgres>,
     run_id: Uuid,

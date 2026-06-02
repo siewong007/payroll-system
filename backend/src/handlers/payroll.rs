@@ -101,46 +101,7 @@ pub async fn list_run_audit_logs(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    let run_exists = sqlx::query_scalar!(
-        r#"SELECT EXISTS(
-            SELECT 1 FROM payroll_runs WHERE id = $1 AND company_id = $2
-        ) AS "exists!""#,
-        id,
-        company_id,
-    )
-    .fetch_one(&state.pool)
-    .await?;
-
-    if !run_exists {
-        return Err(AppError::NotFound("Payroll run not found".into()));
-    }
-
-    let logs = sqlx::query_as!(
-        AuditLogWithUser,
-        r#"SELECT al.id, al.user_id, al.action, al.entity_type, al.entity_id,
-            al.old_values, al.new_values, al.ip_address, al.user_agent,
-            al.description, al.created_at,
-            u.email AS "user_email?", u.full_name AS "user_full_name?"
-        FROM audit_logs al
-        LEFT JOIN users u ON al.user_id = u.id
-        WHERE al.company_id = $1
-          AND (
-            (al.entity_type = 'payroll_run' AND al.entity_id = $2)
-            OR (
-                al.entity_type = 'payroll_item'
-                AND (
-                    al.old_values->>'payroll_run_id' = $2::text
-                    OR al.new_values->>'payroll_run_id' = $2::text
-                )
-            )
-          )
-        ORDER BY al.created_at DESC
-        LIMIT 100"#,
-        company_id,
-        id,
-    )
-    .fetch_all(&state.pool)
-    .await?;
+    let logs = payroll_service::list_run_audit_logs(&state.pool, company_id, id).await?;
 
     Ok(Json(logs))
 }

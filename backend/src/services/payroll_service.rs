@@ -7,6 +7,7 @@ use uuid::Uuid;
 
 use crate::core::error::{AppError, AppResult};
 use crate::models::payroll::{PayrollGroup, PayrollItem, PayrollRun, PayrollSummary};
+use crate::repositories::reads::audit as audit_reads;
 use crate::repositories::reads::payroll as payroll_reads;
 use crate::repositories::{
     claims, payroll_entries, payroll_groups, payroll_item_details, payroll_items, payroll_runs,
@@ -35,6 +36,19 @@ pub async fn list_groups(pool: &PgPool, company_id: Uuid) -> AppResult<Vec<Payro
 
 pub async fn list_items(pool: &PgPool, run_id: Uuid) -> AppResult<Vec<PayrollItem>> {
     payroll_items::list_for_run(pool, run_id).await
+}
+
+/// Audit-trail rows attributable to a payroll run (the run itself plus item
+/// edits that reference it). `NotFound` if the run is not in the company.
+pub async fn list_run_audit_logs(
+    pool: &PgPool,
+    company_id: Uuid,
+    run_id: Uuid,
+) -> AppResult<Vec<audit_reads::AuditLogWithUser>> {
+    if !payroll_runs::exists(pool, run_id, company_id).await? {
+        return Err(AppError::NotFound("Payroll run not found".into()));
+    }
+    audit_reads::list_for_run(pool, company_id, run_id).await
 }
 
 /// Hard-delete a non-locked run and revert its staged entries/claims, in one transaction.
