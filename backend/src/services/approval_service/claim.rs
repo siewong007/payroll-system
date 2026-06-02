@@ -15,7 +15,7 @@ use crate::services::notification_service;
 
 use super::common::{ensure_employee_in_company, ensure_positive_amount};
 
-pub use crate::repositories::reads::approvals::ClaimWithEmployee;
+pub use crate::models::approval::ClaimWithEmployee;
 
 pub async fn create_claim_admin(
     pool: &PgPool,

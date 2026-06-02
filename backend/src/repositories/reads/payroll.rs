@@ -9,45 +9,10 @@ use sqlx::{Executor, Postgres};
 use uuid::Uuid;
 
 use crate::core::error::AppResult;
-use crate::models::payroll::{PayrollEntryWithEmployee, PayrollItemSummary};
-
-#[derive(Debug)]
-pub struct EmployeeCategoryTotal {
-    pub employee_id: Uuid,
-    pub category: String,
-    pub total: i64,
-}
-
-#[derive(Debug)]
-pub struct EmployeeTotal {
-    pub employee_id: Uuid,
-    pub total: i64,
-}
-
-#[derive(Debug)]
-pub struct EmployeeHours {
-    pub employee_id: Uuid,
-    pub hours: f64,
-}
-
-#[derive(Debug)]
-pub struct EmployeeOtTypeHours {
-    pub employee_id: Uuid,
-    pub ot_type: String,
-    pub hours: f64,
-}
-
-#[derive(Debug)]
-pub struct PayrollYtd {
-    pub employee_id: Uuid,
-    pub gross: i64,
-    pub pcb: i64,
-    pub epf: i64,
-    pub socso: i64,
-    pub eis: i64,
-    pub zakat: i64,
-    pub net: i64,
-}
+use crate::models::payroll::{
+    EmployeeCategoryTotal, EmployeeHours, EmployeeOtTypeHours, EmployeeTotal,
+    PayrollEntryWithEmployee, PayrollItemSummary, PayrollYtd,
+};
 
 /// Recurring allowances/deductions per employee, summed by category.
 pub async fn recurring_allowance_totals(

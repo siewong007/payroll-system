@@ -5,14 +5,7 @@ use sqlx::{Executor, Postgres};
 use uuid::Uuid;
 
 use crate::core::error::AppResult;
-
-#[derive(Debug, sqlx::FromRow)]
-pub struct LastPayrollRow {
-    pub period: String,
-    pub total_net: i64,
-    pub total_gross: i64,
-    pub employee_count: i32,
-}
+use crate::models::dashboard::{DepartmentCountRow, LastPayrollRow, YtdEmployerTotals};
 
 /// The most recent non-cancelled/non-draft run for the company, if any.
 pub async fn last_payroll(
@@ -33,14 +26,6 @@ pub async fn last_payroll(
     .fetch_optional(executor)
     .await?;
     Ok(row)
-}
-
-#[derive(Debug, sqlx::FromRow)]
-pub struct YtdEmployerTotals {
-    pub total_gross: i64,
-    pub total_epf_employer: i64,
-    pub total_socso_employer: i64,
-    pub total_eis_employer: i64,
 }
 
 /// Year-to-date employer-cost totals across non-cancelled/non-draft runs.
@@ -65,12 +50,6 @@ pub async fn ytd_employer_totals(
     .fetch_one(executor)
     .await?;
     Ok(totals)
-}
-
-#[derive(Debug, sqlx::FromRow)]
-pub struct DepartmentCountRow {
-    pub department: Option<String>,
-    pub count: i64,
 }
 
 /// Active (non-deleted) head-count per department, busiest first.

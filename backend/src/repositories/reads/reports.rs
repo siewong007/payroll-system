@@ -3,28 +3,14 @@
 //! cross-table aggregation that belongs to no single table.
 
 use chrono::NaiveDate;
-use serde::Serialize;
 use sqlx::{Executor, Postgres};
 use uuid::Uuid;
 
 use crate::core::error::AppResult;
-
-#[derive(Debug, Serialize, sqlx::FromRow)]
-pub struct PayrollSummaryRow {
-    pub period: String,
-    pub employee_count: i32,
-    pub total_gross: i64,
-    pub total_net: i64,
-    pub total_epf_employee: i64,
-    pub total_epf_employer: i64,
-    pub total_socso_employee: i64,
-    pub total_socso_employer: i64,
-    pub total_eis_employee: i64,
-    pub total_eis_employer: i64,
-    pub total_pcb: i64,
-    pub total_zakat: i64,
-    pub total_employer_cost: i64,
-}
+use crate::models::report::{
+    ClaimsReportRow, DepartmentPayrollRow, LeaveReportRow, PayrollPeriodRow, PayrollSummaryRow,
+    StatutoryReportRow,
+};
 
 /// Per-period payroll totals for a year (approved/paid runs only).
 pub async fn payroll_summary(
@@ -51,15 +37,6 @@ pub async fn payroll_summary(
     .fetch_all(executor)
     .await?;
     Ok(rows)
-}
-
-#[derive(Debug, Serialize, sqlx::FromRow)]
-pub struct DepartmentPayrollRow {
-    pub department: Option<String>,
-    pub employee_count: i64,
-    pub total_gross: i64,
-    pub total_net: i64,
-    pub total_employer_cost: i64,
 }
 
 /// Payroll totals grouped by department for one period (approved/paid runs).
@@ -93,21 +70,6 @@ pub async fn payroll_by_department(
     Ok(rows)
 }
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
-pub struct LeaveReportRow {
-    pub employee_name: String,
-    pub employee_number: String,
-    pub department: Option<String>,
-    pub gender: Option<String>,
-    pub marital_status: Option<String>,
-    pub num_children: Option<i32>,
-    pub leave_type_name: String,
-    pub entitled_days: rust_decimal::Decimal,
-    pub taken_days: rust_decimal::Decimal,
-    pub pending_days: rust_decimal::Decimal,
-    pub balance: rust_decimal::Decimal,
-}
-
 /// Per-employee, per-type leave balances for a year (active employees).
 pub async fn leave_report(
     executor: impl Executor<'_, Database = Postgres>,
@@ -139,20 +101,6 @@ pub async fn leave_report(
     .fetch_all(executor)
     .await?;
     Ok(rows)
-}
-
-#[derive(Debug, Serialize, sqlx::FromRow)]
-pub struct ClaimsReportRow {
-    pub employee_name: String,
-    pub employee_number: String,
-    pub department: Option<String>,
-    pub total_claims: i64,
-    pub total_amount: i64,
-    pub approved_count: i64,
-    pub approved_amount: i64,
-    pub pending_count: i64,
-    pub pending_amount: i64,
-    pub rejected_count: i64,
 }
 
 /// Per-employee claim counts/amounts within a date range, by status.
@@ -189,25 +137,6 @@ pub async fn claims_report(
     Ok(rows)
 }
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
-pub struct StatutoryReportRow {
-    pub employee_name: String,
-    pub employee_number: String,
-    pub ic_number: Option<String>,
-    pub epf_number: Option<String>,
-    pub socso_number: Option<String>,
-    pub basic_salary: i64,
-    pub gross_salary: i64,
-    pub epf_employee: i64,
-    pub epf_employer: i64,
-    pub socso_employee: i64,
-    pub socso_employer: i64,
-    pub eis_employee: i64,
-    pub eis_employer: i64,
-    pub pcb_amount: i64,
-    pub zakat_amount: i64,
-}
-
 /// Per-employee statutory contributions for one period (approved/paid runs).
 pub async fn statutory_report(
     executor: impl Executor<'_, Database = Postgres>,
@@ -242,12 +171,6 @@ pub async fn statutory_report(
     .fetch_all(executor)
     .await?;
     Ok(rows)
-}
-
-#[derive(Debug, sqlx::FromRow)]
-pub struct PayrollPeriodRow {
-    pub period_year: i32,
-    pub period_month: i32,
 }
 
 /// Distinct (year, month) pairs that have an approved/paid run, ascending.

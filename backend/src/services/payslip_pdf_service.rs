@@ -3,8 +3,8 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::core::error::{AppError, AppResult};
+use crate::models::payslip::{CompanyInfo, PayslipData};
 use crate::repositories::reads::payslip as payslip_reads;
-use crate::repositories::reads::payslip::{CompanyInfo, PayslipData};
 use crate::services::pdf_helpers::*;
 
 pub async fn generate_payslip_pdf(

@@ -3,34 +3,13 @@
 //! caller's privilege (the `exec` role must not see them).
 
 use chrono::Datelike;
-use serde::Serialize;
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::core::error::AppResult;
+use crate::models::dashboard::{DashboardSummary, DepartmentCount};
 use crate::repositories::employees as employee_repo;
 use crate::repositories::reads::dashboard as dashboard_reads;
-
-#[derive(Debug, Serialize)]
-pub struct DashboardSummary {
-    pub total_employees: i64,
-    pub active_employees: i64,
-    pub last_payroll_period: Option<String>,
-    pub last_payroll_total_net: Option<i64>,
-    pub last_payroll_total_gross: Option<i64>,
-    pub last_payroll_employee_count: Option<i32>,
-    pub ytd_total_gross: i64,
-    pub ytd_total_epf_employer: i64,
-    pub ytd_total_socso_employer: i64,
-    pub ytd_total_eis_employer: i64,
-    pub departments: Vec<DepartmentCount>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct DepartmentCount {
-    pub department: String,
-    pub count: i64,
-}
 
 /// Assemble the dashboard summary. When `can_access_payroll` is false, payroll
 /// figures are blanked (None / 0) so the `exec` role never sees them.

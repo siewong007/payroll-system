@@ -3,7 +3,8 @@ use axum::{Json, extract::State};
 use crate::core::app_state::AppState;
 use crate::core::auth::AuthUser;
 use crate::core::error::{AppError, AppResult};
-use crate::services::dashboard_service::{self, DashboardSummary};
+use crate::models::dashboard::DashboardSummary;
+use crate::services::dashboard_service;
 
 pub async fn summary(
     State(state): State<AppState>,

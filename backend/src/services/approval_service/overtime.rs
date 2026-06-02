@@ -17,7 +17,7 @@ use crate::services::settings_service;
 
 use super::common::{ensure_employee_in_company, parse_overtime_times, validate_overtime_type};
 
-pub use crate::repositories::reads::approvals::OvertimeWithEmployee;
+pub use crate::models::approval::OvertimeWithEmployee;
 
 pub async fn create_overtime_admin(
     pool: &PgPool,

@@ -2,14 +2,8 @@ use chrono::NaiveDate;
 use sqlx::PgPool;
 
 use crate::core::error::AppResult;
+use crate::models::statutory::EisContribution;
 use crate::repositories::eis_rates;
-
-/// EIS contribution result
-#[derive(Debug, Clone)]
-pub struct EisContribution {
-    pub employee: i64, // in sen
-    pub employer: i64, // in sen
-}
 
 /// Calculate EIS contribution.
 ///

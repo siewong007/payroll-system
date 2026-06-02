@@ -6,7 +6,8 @@ use uuid::Uuid;
 
 use crate::core::error::{AppError, AppResult};
 use crate::models::employee::Employee;
-use crate::models::payroll::{PayrollItem, PayrollRun};
+use crate::models::payroll::{BulkPayrollData, PayrollItem, PayrollRun};
+use crate::models::statutory::PcbInput;
 use crate::repositories::reads::payroll as payroll_reads;
 use crate::repositories::{
     claims, employees as employee_repo, payroll_entries, payroll_items, payroll_runs, tp3_records,
@@ -14,7 +15,7 @@ use crate::repositories::{
 use crate::services::audit_service::AuditRequestMeta;
 use crate::services::eis_service;
 use crate::services::epf_service;
-use crate::services::pcb_calculator::{self, PcbInput};
+use crate::services::pcb_calculator;
 use crate::services::socso_service;
 
 /// Process payroll for a group in a given period.
@@ -530,17 +531,4 @@ fn calculate_age(dob: Option<NaiveDate>, as_of: NaiveDate) -> i32 {
         }
         None => 30, // default assumption if DOB not provided
     }
-}
-#[allow(clippy::type_complexity)]
-struct BulkPayrollData {
-    recurring_allowances: HashMap<Uuid, i64>,
-    recurring_deductions: HashMap<Uuid, i64>,
-    variable_earnings: HashMap<Uuid, i64>,
-    variable_deductions: HashMap<Uuid, i64>,
-    attendance_ot_hours: HashMap<Uuid, f64>,
-    approved_ot: HashMap<Uuid, Vec<(String, f64)>>,
-    approved_claims: HashMap<Uuid, i64>,
-    tp3: HashMap<Uuid, (i64, i64, i64, i64)>,
-    ytd: HashMap<Uuid, (i64, i64, i64, i64, i64, i64, i64)>,
-    monthly_allowances: HashMap<Uuid, i64>,
 }

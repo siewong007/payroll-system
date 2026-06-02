@@ -22,3 +22,9 @@ pub struct NotificationCount {
     pub unread: i64,
     pub total: i64,
 }
+
+#[derive(Debug, Deserialize)]
+pub struct NotificationQuery {
+    pub unread_only: Option<bool>,
+    pub limit: Option<i64>,
+}

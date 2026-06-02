@@ -4,12 +4,7 @@ use chrono::NaiveDate;
 use sqlx::{Executor, Postgres};
 
 use crate::core::error::AppResult;
-
-#[derive(Debug)]
-pub struct EpfRate {
-    pub employee_contribution: i64,
-    pub employer_contribution: i64,
-}
+use crate::models::statutory::EpfContributionRate;
 
 /// Third-Schedule EPF contribution for a category/wage/date, if a matching band exists.
 pub async fn find_contribution(
@@ -17,9 +12,9 @@ pub async fn find_contribution(
     category: &str,
     wage: i64,
     effective_date: NaiveDate,
-) -> AppResult<Option<EpfRate>> {
+) -> AppResult<Option<EpfContributionRate>> {
     let rate = sqlx::query_as!(
-        EpfRate,
+        EpfContributionRate,
         r#"
         SELECT employee_contribution, employer_contribution
         FROM epf_rates

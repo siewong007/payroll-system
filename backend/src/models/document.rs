@@ -72,3 +72,18 @@ pub struct CreateDocumentCategoryRequest {
     pub name: String,
     pub description: Option<String>,
 }
+
+#[derive(Debug, Deserialize)]
+pub struct DocumentListQuery {
+    pub employee_id: Option<Uuid>,
+    pub category_id: Option<Uuid>,
+    pub status: Option<String>,
+    pub search: Option<String>,
+    pub page: Option<i64>,
+    pub per_page: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ExpiringQuery {
+    pub days: Option<i32>,
+}

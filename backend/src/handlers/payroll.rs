@@ -3,24 +3,18 @@ use axum::{
     extract::{Path, Query, State},
     http::HeaderMap,
 };
-use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::core::app_state::AppState;
 use crate::core::auth::{AuthUser, Permission};
 use crate::core::error::{AppError, AppResult};
 use crate::models::payroll::{
-    CreatePayrollEntryRequest, PayrollEntry, PayrollEntryWithEmployee, PayrollGroup, PayrollItem,
-    PayrollRun, PayrollSummary, ProcessPayrollRequest, UpdatePayrollEntryRequest,
-    UpdatePayrollPcbRequest,
+    CreatePayrollEntryRequest, PayrollEntry, PayrollEntryQuery, PayrollEntryWithEmployee,
+    PayrollGroup, PayrollItem, PayrollRun, PayrollSummary, ProcessPayrollRequest,
+    ReturnPayrollRunRequest, UpdatePayrollEntryRequest, UpdatePayrollPcbRequest,
 };
 use crate::services::audit_service::{AuditLogWithUser, AuditRequestMeta};
 use crate::services::{payroll_engine, payroll_entry_service, payroll_service};
-
-#[derive(Debug, Deserialize)]
-pub struct ReturnPayrollRunRequest {
-    pub reason: Option<String>,
-}
 
 pub async fn process(
     State(state): State<AppState>,
@@ -264,15 +258,6 @@ pub async fn list_groups(
     let groups = payroll_service::list_groups(&state.pool, company_id).await?;
 
     Ok(Json(groups))
-}
-
-#[derive(Debug, Deserialize)]
-pub struct PayrollEntryQuery {
-    pub period_year: Option<i32>,
-    pub period_month: Option<i32>,
-    pub employee_id: Option<Uuid>,
-    pub item_type: Option<String>,
-    pub include_processed: Option<bool>,
 }
 
 pub async fn list_entries(

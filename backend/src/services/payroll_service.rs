@@ -6,6 +6,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::core::error::{AppError, AppResult};
+use crate::models::audit::AuditLogWithUser;
 use crate::models::payroll::{PayrollGroup, PayrollItem, PayrollRun, PayrollSummary};
 use crate::repositories::reads::audit as audit_reads;
 use crate::repositories::reads::payroll as payroll_reads;
@@ -44,7 +45,7 @@ pub async fn list_run_audit_logs(
     pool: &PgPool,
     company_id: Uuid,
     run_id: Uuid,
-) -> AppResult<Vec<audit_reads::AuditLogWithUser>> {
+) -> AppResult<Vec<AuditLogWithUser>> {
     if !payroll_runs::exists(pool, run_id, company_id).await? {
         return Err(AppError::NotFound("Payroll run not found".into()));
     }

@@ -4,7 +4,7 @@ use sqlx::{Executor, Postgres};
 use uuid::Uuid;
 
 use crate::core::error::AppResult;
-use crate::models::payroll::PayrollItem;
+use crate::models::payroll::{PayrollItem, PcbFields};
 
 /// Insert a computed payslip row. Arguments are in the exact column order of the
 /// INSERT; the engine computes every value and passes it positionally.
@@ -118,15 +118,6 @@ pub async fn delete_for_run(
     .execute(executor)
     .await?;
     Ok(())
-}
-
-/// PCB-related fields of a payslip item, taken with a row lock for the PCB-edit recalc.
-#[derive(Debug)]
-pub struct PcbFields {
-    pub pcb_amount: i64,
-    pub total_deductions: i64,
-    pub net_salary: i64,
-    pub ytd_pcb: i64,
 }
 
 pub async fn get_pcb_fields_locked(

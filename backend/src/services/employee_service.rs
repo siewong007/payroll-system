@@ -4,8 +4,8 @@ use uuid::Uuid;
 
 use crate::core::error::{AppError, AppResult};
 use crate::models::employee::{
-    CreateEmployeeRequest, CreateTp3Request, Employee, SalaryHistory, Tp3Record,
-    UpdateEmployeeRequest,
+    CreateEmployeeRequest, CreateTp3Request, Employee, EmployeeAccountInfo, SalaryHistory,
+    Tp3Record, UpdateEmployeeRequest,
 };
 use crate::repositories::{
     employees, refresh_tokens, salary_history, tp3_records, user_companies, users,
@@ -86,15 +86,6 @@ pub async fn create_employee(
     .await;
 
     Ok((emp, account_info))
-}
-
-#[derive(Debug, serde::Serialize)]
-pub struct EmployeeAccountInfo {
-    pub created: bool,
-    pub email: String,
-    pub role: String,
-    pub default_password: Option<String>,
-    pub message: String,
 }
 
 pub async fn create_user_for_employee(

@@ -4,14 +4,13 @@ use axum::{
     http::HeaderMap,
     response::{IntoResponse, Redirect},
 };
-use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::core::app_state::AppState;
 use crate::core::auth::{AuthUser, create_token};
 use crate::core::cookie;
 use crate::core::error::{AppError, AppResult};
-use crate::models::oauth2::{LinkedAccount, OAuth2ProviderInfo};
+use crate::models::oauth2::{LinkedAccount, OAuth2CallbackQuery, OAuth2ProviderInfo};
 use crate::models::user::UserResponse;
 use crate::services::{oauth2_service, session_service};
 
@@ -26,12 +25,6 @@ pub async fn list_providers(
     }];
 
     Ok(Json(providers))
-}
-
-#[derive(Deserialize)]
-pub struct OAuth2CallbackQuery {
-    pub code: String,
-    pub state: Option<String>,
 }
 
 /// Google OAuth2 callback — validates state/PKCE, exchanges code, finds/links user, redirects.
@@ -67,7 +60,10 @@ pub async fn google_callback(
         client_id,
         client_secret,
         &redirect_uri,
-        &query.code,
+        query
+            .code
+            .as_deref()
+            .ok_or_else(|| AppError::BadRequest("Missing OAuth2 code parameter".into()))?,
         &code_verifier,
     )
     .await?;

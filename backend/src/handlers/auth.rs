@@ -6,7 +6,7 @@ use crate::core::cookie;
 use crate::core::error::{AppError, AppResult};
 use crate::core::extract::ValidatedJson;
 use crate::models::session::{ForgotPasswordRequest, ResetPasswordRequest};
-use crate::models::user::{LoginRequest, LoginResponse, UserResponse};
+use crate::models::user::{ChangePasswordRequest, LoginRequest, LoginResponse, UserResponse};
 use crate::models::user_company::{CompanySummary, SwitchCompanyRequest};
 use crate::services::{
     auth_service, email_service, password_reset_service, session_service, user_service,
@@ -188,12 +188,6 @@ pub async fn validate_reset_token(
         .ok_or_else(|| AppError::BadRequest("Token is required".into()))?;
     password_reset_service::validate_reset_token(&state.pool, token).await?;
     Ok(Json(serde_json::json!({ "valid": true })))
-}
-
-#[derive(Debug, serde::Deserialize)]
-pub struct ChangePasswordRequest {
-    pub current_password: String,
-    pub new_password: String,
 }
 
 pub async fn change_password(

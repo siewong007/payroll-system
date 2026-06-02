@@ -2,22 +2,8 @@ use chrono::NaiveDate;
 use sqlx::PgPool;
 
 use crate::core::error::AppResult;
+use crate::models::statutory::{SocsoCategory, SocsoContribution};
 use crate::repositories::socso_rates;
-
-/// SOCSO contribution result
-#[derive(Debug, Clone)]
-pub struct SocsoContribution {
-    pub employee: i64, // in sen (0 for Second Category)
-    pub employer: i64, // in sen
-    pub category: SocsoCategory,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum SocsoCategory {
-    FirstCategory,  // Employment Injury + Invalidity (< 60)
-    SecondCategory, // Employment Injury only (>= 60)
-    Exempt,         // Not applicable (foreigner, etc.)
-}
 
 /// Calculate SOCSO contribution.
 ///

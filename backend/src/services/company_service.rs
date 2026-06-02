@@ -2,7 +2,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::core::error::{AppError, AppResult};
-use crate::models::company::{Company, CreateCompanyRequest, UpdateCompanyRequest};
+use crate::models::company::{Company, CompanyStats, CreateCompanyRequest, UpdateCompanyRequest};
 use crate::repositories::{companies, documents, employees, payroll_groups};
 
 pub async fn get_company(pool: &PgPool, company_id: Uuid) -> AppResult<Company> {
@@ -128,12 +128,4 @@ pub async fn delete_company(pool: &PgPool, company_id: Uuid) -> AppResult<()> {
 
     tx.commit().await?;
     Ok(())
-}
-
-#[derive(Debug, serde::Serialize)]
-pub struct CompanyStats {
-    pub total_employees: i64,
-    pub total_departments: i64,
-    pub total_payroll_groups: i64,
-    pub total_documents: i64,
 }

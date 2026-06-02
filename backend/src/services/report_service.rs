@@ -4,14 +4,15 @@
 use std::collections::BTreeMap;
 
 use chrono::{Datelike, NaiveDate, Utc};
-use serde::Serialize;
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::core::error::AppResult;
+use crate::models::report::YearMonthsOption;
 use crate::repositories::reads::reports as report_reads;
 
-pub use crate::repositories::reads::reports::{
+pub use crate::models::report::ReportPeriodsResponse;
+pub use crate::models::report::{
     ClaimsReportRow, DepartmentPayrollRow, LeaveReportRow, PayrollSummaryRow, StatutoryReportRow,
 };
 
@@ -59,23 +60,6 @@ pub async fn statutory_report(
 }
 
 // ─── Report Period Options ───
-
-#[derive(Debug, Serialize)]
-pub struct YearMonthsOption {
-    pub year: i32,
-    pub months: Vec<i32>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ReportPeriodsResponse {
-    pub default_year: i32,
-    pub default_month: i32,
-    pub payroll_years: Vec<i32>,
-    pub payroll_months: Vec<YearMonthsOption>,
-    pub leave_years: Vec<i32>,
-    pub claims_years: Vec<i32>,
-    pub ea_form_years: Vec<i32>,
-}
 
 pub fn current_report_year_month() -> (i32, i32) {
     let now = Utc::now().date_naive();

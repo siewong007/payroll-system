@@ -5,7 +5,7 @@ use sqlx::{Executor, Postgres};
 use uuid::Uuid;
 
 use crate::core::error::AppResult;
-use crate::models::payroll::PayrollRun;
+use crate::models::payroll::{PayrollRun, RunStatusRow};
 
 /// Count non-cancelled runs for a (company, group, period) — used to block duplicates.
 pub async fn count_active_for_period(
@@ -311,14 +311,6 @@ pub async fn list_for_company(
     .fetch_all(executor)
     .await?;
     Ok(runs)
-}
-
-/// Minimal run projection taken with a row lock for the PCB-edit guard.
-#[derive(Debug)]
-pub struct RunStatusRow {
-    pub status: String,
-    pub period_year: i32,
-    pub period_month: i32,
 }
 
 /// Lock a run row and return its status + period (for the PCB-edit transaction).

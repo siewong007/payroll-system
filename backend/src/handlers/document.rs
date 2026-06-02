@@ -2,33 +2,17 @@ use axum::{
     Json,
     extract::{Path, Query, State},
 };
-use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::core::app_state::AppState;
 use crate::core::auth::AuthUser;
 use crate::core::error::{AppError, AppResult};
-use crate::handlers::employee::PaginatedResponse;
 use crate::models::document::{
     CreateDocumentCategoryRequest, CreateDocumentRequest, Document, DocumentCategory,
-    UpdateDocumentRequest,
+    DocumentListQuery, ExpiringQuery, UpdateDocumentRequest,
 };
+use crate::models::pagination::PaginatedResponse;
 use crate::services::document_service;
-
-#[derive(Debug, Deserialize)]
-pub struct DocumentListQuery {
-    pub employee_id: Option<Uuid>,
-    pub category_id: Option<Uuid>,
-    pub status: Option<String>,
-    pub search: Option<String>,
-    pub page: Option<i64>,
-    pub per_page: Option<i64>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ExpiringQuery {
-    pub days: Option<i32>,
-}
 
 pub async fn list(
     State(state): State<AppState>,

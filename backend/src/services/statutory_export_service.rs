@@ -2,8 +2,8 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::core::error::{AppError, AppResult};
+use crate::models::statutory::{CompanyStatutoryInfo, StatutoryRow};
 use crate::repositories::reads::statutory as statutory_reads;
-use crate::repositories::reads::statutory::{CompanyStatutoryInfo, StatutoryRow};
 use crate::services::pdf_helpers::sen_to_rm;
 
 async fn get_statutory_data(

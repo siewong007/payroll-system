@@ -19,7 +19,7 @@ use crate::services::notification_service;
 
 use super::common::{ensure_employee_in_company, ensure_leave_type_in_company};
 
-pub use crate::repositories::reads::approvals::LeaveRequestWithEmployee;
+pub use crate::models::approval::LeaveRequestWithEmployee;
 
 // ─── Admin CRUD ───
 

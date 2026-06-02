@@ -3,28 +3,11 @@
 //! and the per-payroll-run history.
 
 use chrono::NaiveDate;
-use serde::Serialize;
 use sqlx::{Executor, Postgres};
 use uuid::Uuid;
 
 use crate::core::error::AppResult;
-
-#[derive(Debug, Serialize, sqlx::FromRow)]
-pub struct AuditLogWithUser {
-    pub id: Uuid,
-    pub user_id: Option<Uuid>,
-    pub action: String,
-    pub entity_type: String,
-    pub entity_id: Option<Uuid>,
-    pub old_values: Option<serde_json::Value>,
-    pub new_values: Option<serde_json::Value>,
-    pub ip_address: Option<String>,
-    pub user_agent: Option<String>,
-    pub description: Option<String>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub user_email: Option<String>,
-    pub user_full_name: Option<String>,
-}
+use crate::models::audit::AuditLogWithUser;
 
 /// One page of audit rows for a company, with the same optional filters as
 /// [`crate::repositories::audit_logs::count_filtered`].

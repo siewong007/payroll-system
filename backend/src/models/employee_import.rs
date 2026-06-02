@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -99,4 +101,9 @@ pub struct ImportConfirmResponse {
 #[derive(Debug, Deserialize)]
 pub struct TemplateQuery {
     pub format: Option<String>,
+}
+
+pub(crate) struct ExistingEmployees {
+    pub(crate) employee_numbers: HashSet<String>,
+    pub(crate) ic_numbers: HashSet<String>,
 }

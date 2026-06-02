@@ -4,22 +4,16 @@ use chrono::NaiveDate;
 use sqlx::{Executor, Postgres};
 
 use crate::core::error::AppResult;
-
-#[derive(Debug)]
-pub struct SocsoRate {
-    pub first_cat_employee: i64,
-    pub first_cat_employer: i64,
-    pub second_cat_employer: i64,
-}
+use crate::models::statutory::SocsoContributionRate;
 
 /// SOCSO rate band for a (capped) wage/date, if a matching band exists.
 pub async fn find_rate(
     executor: impl Executor<'_, Database = Postgres>,
     wage: i64,
     effective_date: NaiveDate,
-) -> AppResult<Option<SocsoRate>> {
+) -> AppResult<Option<SocsoContributionRate>> {
     let rate = sqlx::query_as!(
-        SocsoRate,
+        SocsoContributionRate,
         r#"
         SELECT first_cat_employee, first_cat_employer, second_cat_employer
         FROM socso_rates

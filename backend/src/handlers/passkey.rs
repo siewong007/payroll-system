@@ -4,7 +4,6 @@ use axum::{
     http::HeaderMap,
     response::IntoResponse,
 };
-use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use webauthn_rs::prelude::*;
 
@@ -12,17 +11,15 @@ use crate::core::app_state::AppState;
 use crate::core::auth::AuthUser;
 use crate::core::cookie;
 use crate::core::error::{AppError, AppResult};
-use crate::models::passkey::{PasskeyInfo, RenamePasskeyRequest};
+use crate::models::passkey::{
+    AuthBeginRequest, AuthBeginResponse, AuthCompleteRequest, CheckPasskeyRequest,
+    DiscoverableAuthBeginResponse, PasskeyInfo, RegistrationBeginResponse,
+    RegistrationCompleteRequest, RenamePasskeyRequest,
+};
 use crate::models::user::LoginResponse;
 use crate::services::passkey_service;
 
 // ── Registration (authenticated user adds a passkey) ───────────────────
-
-#[derive(Serialize)]
-pub struct RegistrationBeginResponse {
-    pub challenge_id: Uuid,
-    pub options: CreationChallengeResponse,
-}
 
 pub async fn registration_begin(
     State(state): State<AppState>,
@@ -58,13 +55,6 @@ pub async fn registration_begin(
     }))
 }
 
-#[derive(Deserialize)]
-pub struct RegistrationCompleteRequest {
-    pub challenge_id: Uuid,
-    pub credential: RegisterPublicKeyCredential,
-    pub name: Option<String>,
-}
-
 pub async fn registration_complete(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -91,17 +81,6 @@ pub async fn registration_complete(
 }
 
 // ── Authentication (unauthenticated user logs in with passkey) ─────────
-
-#[derive(Deserialize)]
-pub struct AuthBeginRequest {
-    pub email: String,
-}
-
-#[derive(Serialize)]
-pub struct AuthBeginResponse {
-    pub challenge_id: Uuid,
-    pub options: RequestChallengeResponse,
-}
 
 pub async fn authentication_begin(
     State(state): State<AppState>,
@@ -140,12 +119,6 @@ pub async fn authentication_begin(
         challenge_id,
         options: rcr,
     }))
-}
-
-#[derive(Deserialize)]
-pub struct AuthCompleteRequest {
-    pub challenge_id: Uuid,
-    pub credential: PublicKeyCredential,
 }
 
 pub async fn authentication_complete(
@@ -198,12 +171,6 @@ pub async fn authentication_complete(
 }
 
 // ── Discoverable Authentication (no email required) ─────────────────────
-
-#[derive(Serialize)]
-pub struct DiscoverableAuthBeginResponse {
-    pub challenge_id: Uuid,
-    pub options: RequestChallengeResponse,
-}
 
 pub async fn discoverable_auth_begin(
     State(state): State<AppState>,
@@ -324,11 +291,6 @@ pub async fn delete_passkey(
 }
 
 /// Check if a given email has passkeys (used by frontend to show passkey button)
-#[derive(Deserialize)]
-pub struct CheckPasskeyRequest {
-    pub email: String,
-}
-
 pub async fn check_passkey(
     State(state): State<AppState>,
     Json(req): Json<CheckPasskeyRequest>,

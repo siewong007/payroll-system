@@ -5,33 +5,7 @@ use sqlx::{Executor, Postgres};
 use uuid::Uuid;
 
 use crate::core::error::AppResult;
-
-#[derive(Debug, sqlx::FromRow)]
-pub struct StatutoryRow {
-    pub employee_name: String,
-    pub ic_number: Option<String>,
-    pub tax_identification_number: Option<String>,
-    pub epf_number: Option<String>,
-    pub socso_number: Option<String>,
-    pub eis_number: Option<String>,
-    pub gross_salary: i64,
-    pub epf_employee: i64,
-    pub epf_employer: i64,
-    pub socso_employee: i64,
-    pub socso_employer: i64,
-    pub eis_employee: i64,
-    pub eis_employer: i64,
-    pub pcb_amount: i64,
-}
-
-#[derive(Debug, sqlx::FromRow)]
-pub struct CompanyStatutoryInfo {
-    pub name: String,
-    pub epf_number: Option<String>,
-    pub socso_code: Option<String>,
-    pub eis_code: Option<String>,
-    pub tax_number: Option<String>,
-}
+use crate::models::statutory::{CompanyStatutoryInfo, StatutoryRow};
 
 pub async fn company_statutory_info(
     executor: impl Executor<'_, Database = Postgres>,

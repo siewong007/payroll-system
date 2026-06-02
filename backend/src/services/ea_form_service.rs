@@ -1,48 +1,13 @@
 use printpdf::*;
-use serde::Serialize;
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::core::error::{AppError, AppResult};
+use crate::models::ea_form::EaFormData;
 use crate::repositories::reads::ea_form as ea_reads;
 use crate::services::pdf_helpers::*;
 
-pub use crate::repositories::reads::ea_form::EaEmployeeSummary;
-
-#[derive(Debug, Serialize)]
-pub struct EaFormData {
-    // Company
-    pub company_name: String,
-    pub company_reg_no: String,
-    pub company_tax_no: String,
-    pub company_epf_no: String,
-    pub company_address: String,
-    // Employee
-    pub employee_name: String,
-    pub employee_number: String,
-    pub ic_number: String,
-    pub tax_id: String,
-    pub epf_number: String,
-    pub socso_number: String,
-    pub employee_address: String,
-    pub date_joined: String,
-    // Income
-    pub ytd_basic: i64,
-    pub ytd_allowances: i64,
-    pub ytd_bonus: i64,
-    pub ytd_commission: i64,
-    pub ytd_overtime: i64,
-    pub ytd_gross: i64,
-    // Deductions
-    pub ytd_epf_employee: i64,
-    pub ytd_socso_employee: i64,
-    pub ytd_eis_employee: i64,
-    pub ytd_pcb: i64,
-    pub ytd_zakat: i64,
-    // Meta
-    pub tax_year: i32,
-    pub months_worked: i32,
-}
+pub use crate::models::ea_form::EaEmployeeSummary;
 
 pub async fn list_employees_for_ea(
     pool: &PgPool,

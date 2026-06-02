@@ -60,3 +60,11 @@ pub struct UpdateCompanyRequest {
     pub hrdf_enabled: Option<bool>,
     pub unpaid_leave_divisor: Option<i32>,
 }
+
+#[derive(Debug, Serialize)]
+pub struct CompanyStats {
+    pub total_employees: i64,
+    pub total_departments: i64,
+    pub total_payroll_groups: i64,
+    pub total_documents: i64,
+}

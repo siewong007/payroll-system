@@ -4,23 +4,8 @@ use sqlx::{Executor, Postgres};
 use uuid::Uuid;
 
 use crate::core::error::AppResult;
-use crate::models::user::User;
+use crate::models::user::{ExistingUser, User, UserContact};
 use crate::models::user_company::UserRow;
-
-/// Minimal projection used when resolving an existing account by email.
-#[derive(Debug)]
-pub struct ExistingUser {
-    pub id: Uuid,
-    pub roles: Vec<String>,
-}
-
-/// Projection for password-reset email dispatch.
-#[derive(Debug)]
-pub struct UserContact {
-    pub id: Uuid,
-    pub email: String,
-    pub full_name: String,
-}
 
 pub async fn find_by_email(
     executor: impl Executor<'_, Database = Postgres>,

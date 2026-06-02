@@ -4,12 +4,7 @@ use sqlx::{Executor, Postgres};
 use uuid::Uuid;
 
 use crate::core::error::AppResult;
-
-/// A consumed authentication challenge: the WebAuthn state plus the (nullable) user it targets.
-pub struct ConsumedChallenge {
-    pub user_id: Option<Uuid>,
-    pub state_json: serde_json::Value,
-}
+use crate::models::passkey::ConsumedChallenge;
 
 pub async fn delete_expired(executor: impl Executor<'_, Database = Postgres>) -> AppResult<()> {
     sqlx::query!("DELETE FROM passkey_challenges WHERE expires_at < NOW()")

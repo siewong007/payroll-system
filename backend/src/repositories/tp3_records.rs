@@ -4,7 +4,7 @@ use sqlx::{Executor, Postgres};
 use uuid::Uuid;
 
 use crate::core::error::AppResult;
-use crate::models::employee::{CreateTp3Request, Tp3Record};
+use crate::models::employee::{CreateTp3Request, Tp3Record, Tp3Ytd};
 
 pub async fn upsert(
     executor: impl Executor<'_, Database = Postgres>,
@@ -43,16 +43,6 @@ pub async fn upsert(
     .fetch_one(executor)
     .await?;
     Ok(record)
-}
-
-/// Prior-employer YTD figures for a set of employees in a tax year (for PCB).
-#[derive(Debug)]
-pub struct Tp3Ytd {
-    pub employee_id: Uuid,
-    pub previous_income_ytd: i64,
-    pub previous_epf_ytd: i64,
-    pub previous_pcb_ytd: i64,
-    pub previous_zakat_ytd: i64,
 }
 
 pub async fn list_ytd_for_employees(

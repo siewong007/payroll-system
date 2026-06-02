@@ -14,3 +14,15 @@ pub struct KioskCredential {
     pub last_used_ip: Option<String>,
     pub revoked_at: Option<DateTime<Utc>>,
 }
+
+#[derive(Debug, Deserialize)]
+pub struct CreateKioskCredentialRequest {
+    pub label: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CreateKioskCredentialResponse {
+    pub credential: KioskCredential,
+    pub secret: String,
+    pub public_url: String,
+}

@@ -2,14 +2,8 @@ use chrono::NaiveDate;
 use sqlx::PgPool;
 
 use crate::core::error::{AppError, AppResult};
+use crate::models::statutory::EpfContribution;
 use crate::repositories::epf_rates;
-
-/// EPF contribution result
-#[derive(Debug, Clone)]
-pub struct EpfContribution {
-    pub employee: i64, // in sen
-    pub employer: i64, // in sen
-}
 
 /// Look up EPF contribution from the Third Schedule table.
 ///

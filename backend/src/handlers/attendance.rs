@@ -4,7 +4,6 @@ use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, Response, StatusCode, header},
 };
-use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::core::app_state::AppState;
@@ -17,7 +16,9 @@ use crate::models::attendance::{
     PaginatedAttendance, QrTokenResponse, SetAttendanceMethodRequest,
     SetCompanyAttendanceMethodRequest, UpdateAttendanceRecordRequest,
 };
-use crate::models::attendance_kiosk::KioskCredential;
+use crate::models::attendance_kiosk::{
+    CreateKioskCredentialRequest, CreateKioskCredentialResponse, KioskCredential,
+};
 use crate::services::{attendance_service, audit_service::AuditRequestMeta};
 
 // ─── Effective Method ───
@@ -358,20 +359,6 @@ pub async fn update_attendance(
 }
 
 // ─── Kiosk Credentials (admin) ───
-
-#[derive(Debug, Deserialize)]
-pub struct CreateKioskCredentialRequest {
-    pub label: String,
-}
-
-#[derive(Debug, serde::Serialize)]
-pub struct CreateKioskCredentialResponse {
-    pub credential: KioskCredential,
-    /// Plaintext secret. Only returned at creation time — never persisted in plaintext
-    /// and never returned by `list_kiosk_credentials`. Admin must copy it now.
-    pub secret: String,
-    pub public_url: String,
-}
 
 pub async fn create_kiosk_credential(
     State(state): State<AppState>,
