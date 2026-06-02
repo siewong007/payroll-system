@@ -30,6 +30,7 @@ pub mod leave_requests;
 pub mod leave_types;
 pub mod oauth2_accounts;
 pub mod oauth2_states;
+pub mod overtime_applications;
 pub mod passkey_challenges;
 pub mod passkey_credentials;
 pub mod password_reset_requests;

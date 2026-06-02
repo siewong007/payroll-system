@@ -86,3 +86,72 @@ pub async fn employee_email_info(
     .await?;
     Ok(info)
 }
+
+#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
+pub struct OvertimeWithEmployee {
+    pub id: Uuid,
+    pub employee_id: Uuid,
+    pub company_id: Uuid,
+    pub ot_date: chrono::NaiveDate,
+    pub start_time: chrono::NaiveTime,
+    pub end_time: chrono::NaiveTime,
+    pub hours: rust_decimal::Decimal,
+    pub ot_type: String,
+    pub reason: Option<String>,
+    pub status: String,
+    pub reviewed_by: Option<Uuid>,
+    pub reviewed_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub review_notes: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub employee_name: Option<String>,
+    pub employee_number: Option<String>,
+}
+
+/// A single overtime application joined to employee identity, or `None`.
+pub async fn overtime_with_employee_by_id(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    overtime_id: Uuid,
+) -> AppResult<Option<OvertimeWithEmployee>> {
+    let ot = sqlx::query_as!(
+        OvertimeWithEmployee,
+        r#"SELECT oa.*,
+            e.full_name AS "employee_name?",
+            e.employee_number AS "employee_number?"
+        FROM overtime_applications oa
+        JOIN employees e ON oa.employee_id = e.id
+        WHERE oa.id = $1 AND oa.company_id = $2"#,
+        overtime_id,
+        company_id,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(ot)
+}
+
+/// Up to 100 most-recent overtime applications for the admin inbox, optionally
+/// filtered by status.
+pub async fn list_pending_overtime(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    status: Option<&str>,
+) -> AppResult<Vec<OvertimeWithEmployee>> {
+    let apps = sqlx::query_as!(
+        OvertimeWithEmployee,
+        r#"SELECT oa.*,
+            e.full_name AS "employee_name?",
+            e.employee_number AS "employee_number?"
+        FROM overtime_applications oa
+        JOIN employees e ON oa.employee_id = e.id
+        WHERE oa.company_id = $1
+        AND ($2::text IS NULL OR oa.status = $2)
+        ORDER BY oa.created_at DESC
+        LIMIT 100"#,
+        company_id,
+        status,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(apps)
+}

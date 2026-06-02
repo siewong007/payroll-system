@@ -236,6 +236,21 @@ pub async fn basic_salary_and_company(
     Ok(row.map(|r| (r.basic_salary, r.company_id)))
 }
 
+/// An employee's optional hourly rate and basic salary (sen), by id. Used by OT
+/// approval to derive the overtime hourly rate.
+pub async fn overtime_rate_basis(
+    executor: impl Executor<'_, Database = Postgres>,
+    id: Uuid,
+) -> AppResult<Option<(Option<i64>, i64)>> {
+    let row = sqlx::query!(
+        "SELECT hourly_rate, basic_salary FROM employees WHERE id = $1",
+        id,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(row.map(|r| (r.hourly_rate, r.basic_salary)))
+}
+
 pub async fn insert(
     executor: impl Executor<'_, Database = Postgres>,
     id: Uuid,

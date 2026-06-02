@@ -262,3 +262,108 @@ pub async fn insert_unpaid_leave_deduction(
     .await?;
     Ok(())
 }
+
+// ─── Overtime earning entries (staged on OT approval) ───
+
+/// Whether a *processed* overtime entry matching `description` already exists for
+/// an employee in a period (blocks cancelling already-paid OT).
+//
+// NOTE: indentation matches the byte-exact SQL in the offline `.sqlx` cache.
+pub async fn exists_processed_overtime(
+    executor: impl Executor<'_, Database = Postgres>,
+    employee_id: Uuid,
+    company_id: Uuid,
+    period_year: i32,
+    period_month: i32,
+    description: &str,
+) -> AppResult<bool> {
+    let exists = sqlx::query_scalar!(
+        r#"SELECT EXISTS(
+                SELECT 1 FROM payroll_entries
+                WHERE employee_id = $1
+                  AND company_id = $2
+                  AND period_year = $3
+                  AND period_month = $4
+                  AND item_type = 'overtime'
+                  AND description LIKE $5
+                  AND is_processed = TRUE
+            ) AS "exists!""#,
+        employee_id,
+        company_id,
+        period_year,
+        period_month,
+        description,
+    )
+    .fetch_one(executor)
+    .await?;
+    Ok(exists)
+}
+
+/// Delete the *unprocessed* overtime entry matching `description` in a period.
+//
+// NOTE: indentation matches the byte-exact SQL in the offline `.sqlx` cache.
+pub async fn delete_unprocessed_overtime(
+    executor: impl Executor<'_, Database = Postgres>,
+    employee_id: Uuid,
+    company_id: Uuid,
+    period_year: i32,
+    period_month: i32,
+    description: &str,
+) -> AppResult<()> {
+    sqlx::query!(
+        r#"DELETE FROM payroll_entries
+            WHERE employee_id = $1
+              AND company_id = $2
+              AND period_year = $3
+              AND period_month = $4
+              AND item_type = 'overtime'
+              AND description LIKE $5
+              AND is_processed = FALSE"#,
+        employee_id,
+        company_id,
+        period_year,
+        period_month,
+        description,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
+/// Stage an overtime earning (with hours as quantity and the computed OT rate).
+//
+// NOTE: indentation matches the byte-exact SQL in the offline `.sqlx` cache.
+#[allow(clippy::too_many_arguments)]
+pub async fn insert_overtime(
+    executor: impl Executor<'_, Database = Postgres>,
+    id: Uuid,
+    employee_id: Uuid,
+    company_id: Uuid,
+    period_year: i32,
+    period_month: i32,
+    description: &str,
+    amount: i64,
+    quantity: Decimal,
+    rate: i64,
+    created_by: Uuid,
+) -> AppResult<()> {
+    sqlx::query!(
+        r#"INSERT INTO payroll_entries
+                (id, employee_id, company_id, period_year, period_month, category, item_type,
+                 description, amount, quantity, rate, is_taxable, created_by)
+            VALUES ($1, $2, $3, $4, $5, 'earning', 'overtime', $6, $7, $8, $9, TRUE, $10)"#,
+        id,
+        employee_id,
+        company_id,
+        period_year,
+        period_month,
+        description,
+        amount,
+        quantity,
+        rate,
+        created_by,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}
