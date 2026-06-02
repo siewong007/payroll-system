@@ -29,6 +29,7 @@ pub mod holidays;
 pub mod leave_balances;
 pub mod leave_requests;
 pub mod leave_types;
+pub mod notifications;
 pub mod oauth2_accounts;
 pub mod oauth2_states;
 pub mod overtime_applications;

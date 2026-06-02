@@ -83,6 +83,17 @@ pub async fn find_active_contact_by_email(
     Ok(user)
 }
 
+/// `(email, full_name)` for a user by id; errors if the user does not exist.
+pub async fn name_and_email(
+    executor: impl Executor<'_, Database = Postgres>,
+    id: Uuid,
+) -> AppResult<(String, String)> {
+    let row = sqlx::query!("SELECT email, full_name FROM users WHERE id = $1", id)
+        .fetch_one(executor)
+        .await?;
+    Ok((row.email, row.full_name))
+}
+
 pub async fn find_id_by_email(
     executor: impl Executor<'_, Database = Postgres>,
     email: &str,
