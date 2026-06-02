@@ -874,19 +874,6 @@ pub async fn process_year_end_carry_forward(
 
 // ─── Team Calendar ───
 
-#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
-pub struct TeamLeaveEntry {
-    pub id: Uuid,
-    pub employee_id: Uuid,
-    pub employee_name: String,
-    pub department: Option<String>,
-    pub leave_type_name: String,
-    pub start_date: chrono::NaiveDate,
-    pub end_date: chrono::NaiveDate,
-    pub days: rust_decimal::Decimal,
-    pub status: String,
-}
-
 pub async fn get_team_calendar(
     pool: &PgPool,
     employee_id: Uuid,

@@ -5,13 +5,12 @@ use axum::{
     response::IntoResponse,
 };
 use chrono::Utc;
-use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::core::app_state::AppState;
 use crate::core::auth::AuthUser;
 use crate::core::error::{AppError, AppResult};
-use crate::models::backup::{CompanyBackup, ImportResult};
+use crate::models::backup::{CompanyBackup, ExportQuery, ImportResult};
 use crate::services::backup_service;
 
 fn require_admin(auth: &AuthUser) -> AppResult<(Option<Uuid>, Uuid)> {
@@ -22,11 +21,6 @@ fn require_admin(auth: &AuthUser) -> AppResult<(Option<Uuid>, Uuid)> {
         return Ok((Some(auth.company_id()?), auth.0.sub));
     }
     Err(AppError::Forbidden("Admin access required".into()))
-}
-
-#[derive(Deserialize)]
-pub struct ExportQuery {
-    pub company_id: Option<Uuid>,
 }
 
 pub async fn export_company(

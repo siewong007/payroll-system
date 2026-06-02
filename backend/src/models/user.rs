@@ -36,6 +36,12 @@ pub struct LoginResponse {
     pub user: UserResponse,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ChangePasswordRequest {
+    pub current_password: String,
+    pub new_password: String,
+}
+
 #[derive(Debug, Serialize)]
 pub struct UserResponse {
     pub id: Uuid,
@@ -45,6 +51,19 @@ pub struct UserResponse {
     pub company_id: Option<Uuid>,
     pub employee_id: Option<Uuid>,
     pub must_change_password: bool,
+}
+
+#[derive(Debug)]
+pub struct ExistingUser {
+    pub id: Uuid,
+    pub roles: Vec<String>,
+}
+
+#[derive(Debug)]
+pub struct UserContact {
+    pub id: Uuid,
+    pub email: String,
+    pub full_name: String,
 }
 
 impl From<User> for UserResponse {

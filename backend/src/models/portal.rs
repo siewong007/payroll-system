@@ -91,6 +91,11 @@ pub struct UpdateLeaveRequest {
     pub attachment_name: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct LeaveBalanceQuery {
+    pub year: Option<i32>,
+}
+
 // Claims
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct Claim {
@@ -134,6 +139,11 @@ pub struct UpdateClaimRequest {
     pub receipt_url: Option<String>,
     pub receipt_file_name: Option<String>,
     pub expense_date: Option<NaiveDate>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ClaimQuery {
+    pub status: Option<String>,
 }
 
 // Overtime Applications
@@ -222,4 +232,23 @@ pub struct MyPayslip {
     pub ytd_eis_employee: i64,
     pub ytd_zakat: i64,
     pub ytd_net: i64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TeamCalendarQuery {
+    pub year: Option<i32>,
+    pub month: Option<u32>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TeamLeaveEntry {
+    pub id: Uuid,
+    pub employee_id: Uuid,
+    pub employee_name: String,
+    pub department: Option<String>,
+    pub leave_type_name: String,
+    pub start_date: NaiveDate,
+    pub end_date: NaiveDate,
+    pub days: rust_decimal::Decimal,
+    pub status: String,
 }

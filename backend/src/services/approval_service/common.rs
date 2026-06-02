@@ -4,6 +4,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::core::error::{AppError, AppResult};
+use crate::repositories::{employees as employee_repo, leave_types as leave_type_repo};
 
 pub(super) fn ensure_positive_amount(amount: i64) -> AppResult<()> {
     if amount <= 0 {
@@ -19,23 +20,11 @@ pub(super) async fn ensure_employee_in_company(
     company_id: Uuid,
     employee_id: Uuid,
 ) -> AppResult<()> {
-    let exists = sqlx::query_scalar!(
-        r#"SELECT EXISTS(
-            SELECT 1 FROM employees
-            WHERE id = $1 AND company_id = $2 AND deleted_at IS NULL
-        ) AS "exists!""#,
-        employee_id,
-        company_id,
-    )
-    .fetch_one(pool)
-    .await?;
-
-    if !exists {
+    if !employee_repo::exists_in_company(pool, employee_id, company_id).await? {
         return Err(AppError::NotFound(
             "Employee not found in the active company".into(),
         ));
     }
-
     Ok(())
 }
 
@@ -44,21 +33,9 @@ pub(super) async fn ensure_leave_type_in_company(
     company_id: Uuid,
     leave_type_id: Uuid,
 ) -> AppResult<()> {
-    let exists = sqlx::query_scalar!(
-        r#"SELECT EXISTS(
-            SELECT 1 FROM leave_types
-            WHERE id = $1 AND company_id = $2 AND is_active = TRUE
-        ) AS "exists!""#,
-        leave_type_id,
-        company_id,
-    )
-    .fetch_one(pool)
-    .await?;
-
-    if !exists {
+    if !leave_type_repo::exists_active(pool, leave_type_id, company_id).await? {
         return Err(AppError::NotFound("Leave type not found".into()));
     }
-
     Ok(())
 }
 

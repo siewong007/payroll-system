@@ -3,12 +3,14 @@ use axum::{
     extract::{Path, Query, State},
     http::HeaderMap,
 };
-use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::core::app_state::AppState;
 use crate::core::auth::AuthUser;
 use crate::core::error::{AppError, AppResult};
+use crate::models::approval::{
+    AdminClaimRequest, AdminLeaveRequest, AdminOvertimeRequest, ReviewRequest, StatusQuery,
+};
 use crate::models::portal::{
     Claim, CreateClaimRequest, CreateLeaveRequest, CreateOvertimeRequest, LeaveRequest,
     OvertimeApplication, UpdateClaimRequest, UpdateLeaveRequest, UpdateOvertimeRequest,
@@ -32,46 +34,6 @@ fn require_admin(auth: &AuthUser) -> AppResult<Uuid> {
 }
 
 // ─── Leave ───
-
-#[derive(Debug, Deserialize)]
-pub struct StatusQuery {
-    pub status: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct AdminLeaveRequest {
-    pub employee_id: Uuid,
-    pub leave_type_id: Uuid,
-    pub start_date: chrono::NaiveDate,
-    pub end_date: chrono::NaiveDate,
-    pub days: rust_decimal::Decimal,
-    pub reason: Option<String>,
-    pub attachment_url: Option<String>,
-    pub attachment_name: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct AdminClaimRequest {
-    pub employee_id: Uuid,
-    pub title: String,
-    pub description: Option<String>,
-    pub amount: i64,
-    pub category: Option<String>,
-    pub receipt_url: Option<String>,
-    pub receipt_file_name: Option<String>,
-    pub expense_date: chrono::NaiveDate,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct AdminOvertimeRequest {
-    pub employee_id: Uuid,
-    pub ot_date: chrono::NaiveDate,
-    pub start_time: String,
-    pub end_time: String,
-    pub hours: rust_decimal::Decimal,
-    pub ot_type: Option<String>,
-    pub reason: Option<String>,
-}
 
 pub async fn list_leave_requests(
     State(state): State<AppState>,
@@ -170,11 +132,6 @@ pub async fn cancel_leave_request(
     )
     .await?;
     Ok(Json(leave))
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ReviewRequest {
-    pub notes: Option<String>,
 }
 
 pub async fn approve_leave(

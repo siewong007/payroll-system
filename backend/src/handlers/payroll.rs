@@ -3,24 +3,18 @@ use axum::{
     extract::{Path, Query, State},
     http::HeaderMap,
 };
-use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::core::app_state::AppState;
 use crate::core::auth::{AuthUser, Permission};
 use crate::core::error::{AppError, AppResult};
 use crate::models::payroll::{
-    CreatePayrollEntryRequest, PayrollEntry, PayrollEntryWithEmployee, PayrollGroup, PayrollItem,
-    PayrollItemSummary, PayrollRun, PayrollSummary, ProcessPayrollRequest,
-    UpdatePayrollEntryRequest, UpdatePayrollPcbRequest,
+    CreatePayrollEntryRequest, PayrollEntry, PayrollEntryQuery, PayrollEntryWithEmployee,
+    PayrollGroup, PayrollItem, PayrollRun, PayrollSummary, ProcessPayrollRequest,
+    ReturnPayrollRunRequest, UpdatePayrollEntryRequest, UpdatePayrollPcbRequest,
 };
 use crate::services::audit_service::{AuditLogWithUser, AuditRequestMeta};
-use crate::services::payroll_engine;
-
-#[derive(Debug, Deserialize)]
-pub struct ReturnPayrollRunRequest {
-    pub reason: Option<String>,
-}
+use crate::services::{payroll_engine, payroll_entry_service, payroll_service};
 
 pub async fn process(
     State(state): State<AppState>,
@@ -59,68 +53,6 @@ pub async fn process(
     Ok(Json(run))
 }
 
-async fn load_payroll_summary(
-    pool: &sqlx::PgPool,
-    company_id: Uuid,
-    id: Uuid,
-) -> AppResult<PayrollSummary> {
-    let run = sqlx::query_as!(
-        PayrollRun,
-        r#"SELECT id, company_id, payroll_group_id, period_year, period_month,
-            period_start, period_end, pay_date, status::text AS "status!",
-            total_gross, total_net, total_employer_cost,
-            total_epf_employee, total_epf_employer, total_socso_employee, total_socso_employer,
-            total_eis_employee, total_eis_employer, total_pcb, total_zakat,
-            employee_count, version, processed_by, processed_at, approved_by, approved_at,
-            locked_at, locked_by, notes, created_at, updated_at, created_by, updated_by
-        FROM payroll_runs WHERE id = $1 AND company_id = $2"#,
-        id,
-        company_id,
-    )
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound("Payroll run not found".into()))?;
-
-    let items = sqlx::query!(
-        r#"SELECT pi.employee_id, e.full_name, e.employee_number,
-           pi.basic_salary, pi.total_allowances, pi.total_overtime, pi.total_claims,
-           pi.gross_salary, pi.total_deductions, pi.net_salary,
-           pi.epf_employee, pi.socso_employee, pi.eis_employee, pi.pcb_amount
-        FROM payroll_items pi
-        JOIN employees e ON pi.employee_id = e.id
-        WHERE pi.payroll_run_id = $1
-        ORDER BY e.employee_number"#,
-        id,
-    )
-    .fetch_all(pool)
-    .await?;
-
-    let item_summaries: Vec<PayrollItemSummary> = items
-        .into_iter()
-        .map(|row| PayrollItemSummary {
-            employee_id: row.employee_id,
-            employee_name: row.full_name,
-            employee_number: row.employee_number,
-            basic_salary: row.basic_salary,
-            total_allowances: row.total_allowances,
-            total_overtime: row.total_overtime,
-            total_claims: row.total_claims,
-            gross_salary: row.gross_salary,
-            total_deductions: row.total_deductions,
-            net_salary: row.net_salary,
-            epf_employee: row.epf_employee,
-            socso_employee: row.socso_employee,
-            eis_employee: row.eis_employee,
-            pcb_amount: row.pcb_amount,
-        })
-        .collect();
-
-    Ok(PayrollSummary {
-        payroll_run: run,
-        items: item_summaries,
-    })
-}
-
 pub async fn list_runs(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -131,23 +63,7 @@ pub async fn list_runs(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    let runs = sqlx::query_as!(
-        PayrollRun,
-        r#"SELECT id, company_id, payroll_group_id, period_year, period_month,
-            period_start, period_end, pay_date, status::text AS "status!",
-            total_gross, total_net, total_employer_cost,
-            total_epf_employee, total_epf_employer, total_socso_employee, total_socso_employer,
-            total_eis_employee, total_eis_employer, total_pcb, total_zakat,
-            employee_count, version, processed_by, processed_at, approved_by, approved_at,
-            locked_at, locked_by, notes, created_at, updated_at, created_by, updated_by
-        FROM payroll_runs
-        WHERE company_id = $1
-        ORDER BY period_year DESC, period_month DESC, created_at DESC
-        LIMIT 50"#,
-        company_id,
-    )
-    .fetch_all(&state.pool)
-    .await?;
+    let runs = payroll_service::list_runs(&state.pool, company_id).await?;
 
     Ok(Json(runs))
 }
@@ -164,7 +80,7 @@ pub async fn get_run(
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
     Ok(Json(
-        load_payroll_summary(&state.pool, company_id, id).await?,
+        payroll_service::get_summary(&state.pool, company_id, id).await?,
     ))
 }
 
@@ -179,46 +95,7 @@ pub async fn list_run_audit_logs(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    let run_exists = sqlx::query_scalar!(
-        r#"SELECT EXISTS(
-            SELECT 1 FROM payroll_runs WHERE id = $1 AND company_id = $2
-        ) AS "exists!""#,
-        id,
-        company_id,
-    )
-    .fetch_one(&state.pool)
-    .await?;
-
-    if !run_exists {
-        return Err(AppError::NotFound("Payroll run not found".into()));
-    }
-
-    let logs = sqlx::query_as!(
-        AuditLogWithUser,
-        r#"SELECT al.id, al.user_id, al.action, al.entity_type, al.entity_id,
-            al.old_values, al.new_values, al.ip_address, al.user_agent,
-            al.description, al.created_at,
-            u.email AS "user_email?", u.full_name AS "user_full_name?"
-        FROM audit_logs al
-        LEFT JOIN users u ON al.user_id = u.id
-        WHERE al.company_id = $1
-          AND (
-            (al.entity_type = 'payroll_run' AND al.entity_id = $2)
-            OR (
-                al.entity_type = 'payroll_item'
-                AND (
-                    al.old_values->>'payroll_run_id' = $2::text
-                    OR al.new_values->>'payroll_run_id' = $2::text
-                )
-            )
-          )
-        ORDER BY al.created_at DESC
-        LIMIT 100"#,
-        company_id,
-        id,
-    )
-    .fetch_all(&state.pool)
-    .await?;
+    let logs = payroll_service::list_run_audit_logs(&state.pool, company_id, id).await?;
 
     Ok(Json(logs))
 }
@@ -235,106 +112,9 @@ pub async fn delete_run(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    let run = sqlx::query_as!(
-        PayrollRun,
-        r#"SELECT id, company_id, payroll_group_id, period_year, period_month,
-            period_start, period_end, pay_date, status::text AS "status!",
-            total_gross, total_net, total_employer_cost,
-            total_epf_employee, total_epf_employer, total_socso_employee, total_socso_employer,
-            total_eis_employee, total_eis_employer, total_pcb, total_zakat,
-            employee_count, version, processed_by, processed_at, approved_by, approved_at,
-            locked_at, locked_by, notes, created_at, updated_at, created_by, updated_by
-        FROM payroll_runs
-        WHERE id = $1 AND company_id = $2"#,
-        id,
-        company_id,
-    )
-    .fetch_optional(&state.pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound("Payroll run not found".into()))?;
-
-    if run.status == "processing" {
-        return Err(AppError::BadRequest(
-            "Payroll run is currently processing and cannot be deleted".into(),
-        ));
-    }
-
-    if matches!(
-        run.status.as_str(),
-        "pending_approval" | "approved" | "paid"
-    ) || run.locked_at.is_some()
-    {
-        return Err(AppError::BadRequest(
-            "Submitted, approved, or paid payroll runs are locked and cannot be deleted".into(),
-        ));
-    }
-
-    let mut tx = state.pool.begin().await?;
-
-    sqlx::query!(
-        r#"UPDATE payroll_entries
-        SET is_processed = FALSE, payroll_run_id = NULL, updated_at = NOW(), updated_by = $3
-        WHERE payroll_run_id = $1 AND company_id = $2"#,
-        id,
-        company_id,
-        auth.0.sub,
-    )
-    .execute(&mut *tx)
-    .await?;
-
-    // Revert processed claims for this period back to approved
-    sqlx::query!(
-        r#"UPDATE claims SET status = 'approved', updated_at = NOW()
-        WHERE company_id = $1 AND status = 'processed'
-          AND expense_date >= $2 AND expense_date <= $3"#,
-        company_id,
-        run.period_start,
-        run.period_end,
-    )
-    .execute(&mut *tx)
-    .await?;
-
-    sqlx::query!(
-        r#"DELETE FROM payroll_item_details pid
-        USING payroll_items pi
-        WHERE pid.payroll_item_id = pi.id
-          AND pi.payroll_run_id = $1"#,
-        id,
-    )
-    .execute(&mut *tx)
-    .await?;
-
-    sqlx::query!("DELETE FROM payroll_items WHERE payroll_run_id = $1", id)
-        .execute(&mut *tx)
-        .await?;
-
-    sqlx::query!(
-        "DELETE FROM payroll_runs WHERE id = $1 AND company_id = $2",
-        id,
-        company_id,
-    )
-    .execute(&mut *tx)
-    .await?;
-
-    tx.commit().await?;
-
     let audit_meta = AuditRequestMeta::from_headers(&headers);
-    let _ = crate::services::audit_service::log_action_with_metadata(
-        &state.pool,
-        Some(company_id),
-        Some(auth.0.sub),
-        "delete",
-        "payroll_run",
-        Some(id),
-        Some(serde_json::to_value(&run).unwrap_or_default()),
-        None,
-        Some(&format!(
-            "Deleted payroll run {} for {:02}/{}",
-            id, run.period_month, run.period_year
-        )),
-        Some(&audit_meta),
-    )
-    .await;
+
+    payroll_service::delete_run(&state.pool, company_id, id, auth.0.sub, Some(&audit_meta)).await?;
 
     Ok(Json(serde_json::json!({ "success": true })))
 }
@@ -352,135 +132,17 @@ pub async fn update_item_pcb(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    if req.pcb_amount < 0 {
-        return Err(AppError::BadRequest("PCB amount cannot be negative".into()));
-    }
-
-    let mut tx = state.pool.begin().await?;
-
-    let run_row = sqlx::query!(
-        r#"SELECT status::text AS "status!", period_year, period_month
-        FROM payroll_runs
-        WHERE id = $1 AND company_id = $2
-        FOR UPDATE"#,
-        run_id,
+    let audit_meta = AuditRequestMeta::from_headers(&headers);
+    let summary = payroll_service::update_item_pcb(
+        &state.pool,
         company_id,
-    )
-    .fetch_optional(&mut *tx)
-    .await?
-    .ok_or_else(|| AppError::NotFound("Payroll run not found".into()))?;
-
-    let (run_status, period_year, period_month) =
-        (run_row.status, run_row.period_year, run_row.period_month);
-
-    if run_status != "processed" {
-        return Err(AppError::BadRequest(
-            "PCB can only be edited while the payroll run is processed and not yet approved".into(),
-        ));
-    }
-
-    let has_later_run = sqlx::query_scalar!(
-        r#"SELECT EXISTS(
-            SELECT 1
-            FROM payroll_items pi
-            JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
-            WHERE pi.employee_id = $1
-              AND pr.company_id = $2
-              AND pr.status::text IN ('processed', 'pending_approval', 'approved', 'paid')
-              AND (pr.period_year > $3 OR (pr.period_year = $3 AND pr.period_month > $4))
-        ) AS "exists!""#,
-        employee_id,
-        company_id,
-        period_year,
-        period_month,
-    )
-    .fetch_one(&mut *tx)
-    .await?;
-
-    if has_later_run {
-        return Err(AppError::BadRequest(
-            "PCB cannot be edited because a later payroll run already exists for this employee"
-                .into(),
-        ));
-    }
-
-    let current = sqlx::query!(
-        r#"SELECT pcb_amount, total_deductions, net_salary, ytd_pcb
-        FROM payroll_items
-        WHERE payroll_run_id = $1 AND employee_id = $2
-        FOR UPDATE"#,
-        run_id,
-        employee_id,
-    )
-    .fetch_optional(&mut *tx)
-    .await?
-    .ok_or_else(|| AppError::NotFound("Payroll item not found".into()))?;
-
-    let old_pcb = current.pcb_amount;
-    let delta = req.pcb_amount - old_pcb;
-    let new_total_deductions = current.total_deductions + delta;
-    let new_net_salary = current.net_salary - delta;
-    let new_ytd_pcb = current.ytd_pcb + delta;
-
-    sqlx::query!(
-        r#"UPDATE payroll_items
-        SET pcb_amount = $3,
-            total_deductions = $4,
-            net_salary = $5,
-            ytd_pcb = $6,
-            updated_at = NOW()
-        WHERE payroll_run_id = $1 AND employee_id = $2"#,
         run_id,
         employee_id,
         req.pcb_amount,
-        new_total_deductions,
-        new_net_salary,
-        new_ytd_pcb,
-    )
-    .execute(&mut *tx)
-    .await?;
-
-    sqlx::query!(
-        r#"UPDATE payroll_runs
-        SET total_pcb = total_pcb + $3,
-            total_net = total_net - $3,
-            updated_at = NOW(),
-            updated_by = $4
-        WHERE id = $1 AND company_id = $2"#,
-        run_id,
-        company_id,
-        delta,
         auth.0.sub,
-    )
-    .execute(&mut *tx)
-    .await?;
-
-    tx.commit().await?;
-
-    let summary = load_payroll_summary(&state.pool, company_id, run_id).await?;
-
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
-    let _ = crate::services::audit_service::log_action_with_metadata(
-        &state.pool,
-        Some(company_id),
-        Some(auth.0.sub),
-        "update",
-        "payroll_item",
-        None,
-        Some(serde_json::json!({
-            "payroll_run_id": run_id,
-            "employee_id": employee_id,
-            "pcb_amount": old_pcb
-        })),
-        Some(serde_json::json!({
-            "payroll_run_id": run_id,
-            "employee_id": employee_id,
-            "pcb_amount": req.pcb_amount
-        })),
-        Some("Updated payroll item PCB amount"),
         Some(&audit_meta),
     )
-    .await;
+    .await?;
 
     Ok(Json(summary))
 }
@@ -593,88 +255,9 @@ pub async fn list_groups(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    let groups = sqlx::query_as!(
-        PayrollGroup,
-        "SELECT * FROM payroll_groups WHERE company_id = $1 AND is_active = TRUE ORDER BY name",
-        company_id,
-    )
-    .fetch_all(&state.pool)
-    .await?;
+    let groups = payroll_service::list_groups(&state.pool, company_id).await?;
 
     Ok(Json(groups))
-}
-
-#[derive(Debug, Deserialize)]
-pub struct PayrollEntryQuery {
-    pub period_year: Option<i32>,
-    pub period_month: Option<i32>,
-    pub employee_id: Option<Uuid>,
-    pub item_type: Option<String>,
-    pub include_processed: Option<bool>,
-}
-
-fn validate_payroll_entry(
-    period_year: i32,
-    period_month: i32,
-    category: &str,
-    item_type: &str,
-    description: &str,
-    amount: i64,
-) -> AppResult<()> {
-    if !(1..=12).contains(&period_month) {
-        return Err(AppError::BadRequest("Payroll month must be 1-12".into()));
-    }
-
-    if !(1900..=3000).contains(&period_year) {
-        return Err(AppError::BadRequest("Payroll year is invalid".into()));
-    }
-
-    if !["earning", "deduction"].contains(&category) {
-        return Err(AppError::BadRequest(
-            "Category must be earning or deduction".into(),
-        ));
-    }
-
-    if item_type.trim().is_empty() {
-        return Err(AppError::BadRequest("Item type is required".into()));
-    }
-
-    if description.trim().is_empty() {
-        return Err(AppError::BadRequest("Description is required".into()));
-    }
-
-    if amount <= 0 {
-        return Err(AppError::BadRequest(
-            "Amount must be greater than zero".into(),
-        ));
-    }
-
-    Ok(())
-}
-
-async fn ensure_employee_in_company(
-    pool: &sqlx::PgPool,
-    company_id: Uuid,
-    employee_id: Uuid,
-) -> AppResult<()> {
-    let exists = sqlx::query_scalar!(
-        r#"SELECT EXISTS(
-            SELECT 1 FROM employees
-            WHERE id = $1 AND company_id = $2 AND deleted_at IS NULL
-        ) AS "exists!""#,
-        employee_id,
-        company_id,
-    )
-    .fetch_one(pool)
-    .await?;
-
-    if !exists {
-        return Err(AppError::NotFound(
-            "Employee not found in the active company".into(),
-        ));
-    }
-
-    Ok(())
 }
 
 pub async fn list_entries(
@@ -687,32 +270,15 @@ pub async fn list_entries(
         .0
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
-    let include_processed = q.include_processed.unwrap_or(false);
-
-    let entries = sqlx::query_as!(
-        PayrollEntryWithEmployee,
-        r#"SELECT pe.id, pe.employee_id, pe.company_id, pe.period_year, pe.period_month,
-            pe.category, pe.item_type, pe.description, pe.amount, pe.quantity, pe.rate,
-            pe.is_taxable, pe.is_processed, pe.payroll_run_id, pe.created_at, pe.updated_at,
-            pe.created_by, pe.updated_by,
-            e.full_name AS "employee_name?", e.employee_number AS "employee_number?"
-        FROM payroll_entries pe
-        JOIN employees e ON pe.employee_id = e.id
-        WHERE pe.company_id = $1
-          AND ($2::int IS NULL OR pe.period_year = $2)
-          AND ($3::int IS NULL OR pe.period_month = $3)
-          AND ($4::uuid IS NULL OR pe.employee_id = $4)
-          AND ($5::text IS NULL OR pe.item_type = $5)
-          AND ($6::bool = TRUE OR pe.is_processed = FALSE)
-        ORDER BY pe.period_year DESC, pe.period_month DESC, e.employee_number, pe.created_at DESC"#,
+    let entries = payroll_entry_service::list_entries(
+        &state.pool,
         company_id,
         q.period_year,
         q.period_month,
         q.employee_id,
         q.item_type.as_deref(),
-        include_processed,
+        q.include_processed.unwrap_or(false),
     )
-    .fetch_all(&state.pool)
     .await?;
 
     Ok(Json(entries))
@@ -730,53 +296,15 @@ pub async fn create_entry(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    validate_payroll_entry(
-        req.period_year,
-        req.period_month,
-        &req.category,
-        &req.item_type,
-        &req.description,
-        req.amount,
-    )?;
-    ensure_employee_in_company(&state.pool, company_id, req.employee_id).await?;
-
-    let entry = sqlx::query_as!(
-        PayrollEntry,
-        r#"INSERT INTO payroll_entries
-            (employee_id, company_id, period_year, period_month, category, item_type,
-             description, amount, quantity, rate, is_taxable, created_by)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, COALESCE($11, TRUE), $12)
-        RETURNING *"#,
-        req.employee_id,
-        company_id,
-        req.period_year,
-        req.period_month,
-        req.category.trim(),
-        req.item_type.trim(),
-        req.description.trim(),
-        req.amount,
-        req.quantity,
-        req.rate,
-        req.is_taxable,
-        auth.0.sub,
-    )
-    .fetch_one(&state.pool)
-    .await?;
-
     let audit_meta = AuditRequestMeta::from_headers(&headers);
-    let _ = crate::services::audit_service::log_action_with_metadata(
+    let entry = payroll_entry_service::create_entry(
         &state.pool,
-        Some(company_id),
-        Some(auth.0.sub),
-        "create",
-        "payroll_entry",
-        Some(entry.id),
-        None,
-        Some(serde_json::to_value(&entry).unwrap_or_default()),
-        Some("Created payroll adjustment entry"),
+        company_id,
+        req,
+        auth.0.sub,
         Some(&audit_meta),
     )
-    .await;
+    .await?;
 
     Ok(Json(entry))
 }
@@ -794,84 +322,16 @@ pub async fn update_entry(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    let current = sqlx::query_as!(
-        PayrollEntry,
-        "SELECT * FROM payroll_entries WHERE id = $1 AND company_id = $2 AND is_processed = FALSE",
-        id,
-        company_id,
-    )
-    .fetch_optional(&state.pool)
-    .await?
-    .ok_or_else(|| AppError::BadRequest("Payroll entry not found or already processed".into()))?;
-
-    let employee_id = req.employee_id.unwrap_or(current.employee_id);
-    let period_year = req.period_year.unwrap_or(current.period_year);
-    let period_month = req.period_month.unwrap_or(current.period_month);
-    let category = req.category.unwrap_or_else(|| current.category.clone());
-    let item_type = req.item_type.unwrap_or_else(|| current.item_type.clone());
-    let description = req
-        .description
-        .unwrap_or_else(|| current.description.clone());
-    let amount = req.amount.unwrap_or(current.amount);
-
-    validate_payroll_entry(
-        period_year,
-        period_month,
-        &category,
-        &item_type,
-        &description,
-        amount,
-    )?;
-    ensure_employee_in_company(&state.pool, company_id, employee_id).await?;
-
-    let updated = sqlx::query_as!(
-        PayrollEntry,
-        r#"UPDATE payroll_entries
-        SET employee_id = $3,
-            period_year = $4,
-            period_month = $5,
-            category = $6,
-            item_type = $7,
-            description = $8,
-            amount = $9,
-            quantity = $10,
-            rate = $11,
-            is_taxable = COALESCE($12, is_taxable),
-            updated_by = $13,
-            updated_at = NOW()
-        WHERE id = $1 AND company_id = $2 AND is_processed = FALSE
-        RETURNING *"#,
-        id,
-        company_id,
-        employee_id,
-        period_year,
-        period_month,
-        category.trim(),
-        item_type.trim(),
-        description.trim(),
-        amount,
-        req.quantity.or(current.quantity),
-        req.rate.or(current.rate),
-        req.is_taxable,
-        auth.0.sub,
-    )
-    .fetch_one(&state.pool)
-    .await?;
-
     let audit_meta = AuditRequestMeta::from_headers(&headers);
-    let _ = crate::services::audit_service::log_action_with_metadata(
+    let updated = payroll_entry_service::update_entry(
         &state.pool,
-        Some(company_id),
-        Some(auth.0.sub),
-        "update",
-        "payroll_entry",
-        Some(id),
-        Some(serde_json::to_value(&current).unwrap_or_default()),
-        Some(serde_json::to_value(&updated).unwrap_or_default()),
-        Some("Updated payroll adjustment entry"),
+        company_id,
+        id,
+        req,
+        auth.0.sub,
         Some(&audit_meta),
     )
-    .await;
+    .await?;
 
     Ok(Json(updated))
 }
@@ -888,38 +348,9 @@ pub async fn delete_entry(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    let current = sqlx::query_as!(
-        PayrollEntry,
-        "SELECT * FROM payroll_entries WHERE id = $1 AND company_id = $2 AND is_processed = FALSE",
-        id,
-        company_id,
-    )
-    .fetch_optional(&state.pool)
-    .await?
-    .ok_or_else(|| AppError::BadRequest("Payroll entry not found or already processed".into()))?;
-
-    sqlx::query!(
-        "DELETE FROM payroll_entries WHERE id = $1 AND company_id = $2 AND is_processed = FALSE",
-        id,
-        company_id,
-    )
-    .execute(&state.pool)
-    .await?;
-
     let audit_meta = AuditRequestMeta::from_headers(&headers);
-    let _ = crate::services::audit_service::log_action_with_metadata(
-        &state.pool,
-        Some(company_id),
-        Some(auth.0.sub),
-        "delete",
-        "payroll_entry",
-        Some(id),
-        Some(serde_json::to_value(&current).unwrap_or_default()),
-        None,
-        Some("Deleted payroll adjustment entry"),
-        Some(&audit_meta),
-    )
-    .await;
+    payroll_entry_service::delete_entry(&state.pool, company_id, id, auth.0.sub, Some(&audit_meta))
+        .await?;
 
     Ok(Json(serde_json::json!({ "success": true })))
 }
@@ -962,13 +393,7 @@ pub async fn get_items(
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<Vec<PayrollItem>>> {
     auth.require_permission(Permission::ViewPayroll)?;
-    let items = sqlx::query_as!(
-        PayrollItem,
-        "SELECT * FROM payroll_items WHERE payroll_run_id = $1 ORDER BY created_at",
-        id,
-    )
-    .fetch_all(&state.pool)
-    .await?;
+    let items = payroll_service::list_items(&state.pool, id).await?;
 
     Ok(Json(items))
 }

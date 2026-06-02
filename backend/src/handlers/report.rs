@@ -3,11 +3,11 @@ use axum::{
     extract::{Query, State},
 };
 use chrono::{Datelike, NaiveDate, Utc};
-use serde::Deserialize;
 
 use crate::core::app_state::AppState;
 use crate::core::auth::AuthUser;
 use crate::core::error::{AppError, AppResult};
+use crate::models::report::{DateRangeQuery, EaFormQuery, YearMonthQuery, YearQuery};
 use crate::services::report_service::{self, *};
 
 fn require_admin(auth: &AuthUser) -> AppResult<uuid::Uuid> {
@@ -26,23 +26,6 @@ fn require_admin(auth: &AuthUser) -> AppResult<uuid::Uuid> {
 fn require_payroll_access(auth: &AuthUser) -> AppResult<uuid::Uuid> {
     auth.require_payroll_privileged()?;
     auth.company_id()
-}
-
-#[derive(Debug, Deserialize)]
-pub struct YearQuery {
-    pub year: Option<i32>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct YearMonthQuery {
-    pub year: Option<i32>,
-    pub month: Option<i32>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct DateRangeQuery {
-    pub start_date: Option<NaiveDate>,
-    pub end_date: Option<NaiveDate>,
 }
 
 fn current_year_month() -> (i32, i32) {
@@ -253,12 +236,6 @@ pub async fn export_pcb(
 }
 
 // ─── EA Form ───
-
-#[derive(Debug, Deserialize)]
-pub struct EaFormQuery {
-    pub year: Option<i32>,
-    pub employee_id: Option<uuid::Uuid>,
-}
 
 pub async fn list_ea_employees(
     State(state): State<AppState>,

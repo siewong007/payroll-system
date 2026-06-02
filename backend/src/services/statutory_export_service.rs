@@ -2,34 +2,9 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::core::error::{AppError, AppResult};
+use crate::models::statutory::{CompanyStatutoryInfo, StatutoryRow};
+use crate::repositories::reads::statutory as statutory_reads;
 use crate::services::pdf_helpers::sen_to_rm;
-
-#[derive(Debug, sqlx::FromRow)]
-struct StatutoryRow {
-    employee_name: String,
-    ic_number: Option<String>,
-    tax_identification_number: Option<String>,
-    epf_number: Option<String>,
-    socso_number: Option<String>,
-    eis_number: Option<String>,
-    gross_salary: i64,
-    epf_employee: i64,
-    epf_employer: i64,
-    socso_employee: i64,
-    socso_employer: i64,
-    eis_employee: i64,
-    eis_employer: i64,
-    pcb_amount: i64,
-}
-
-#[derive(Debug, sqlx::FromRow)]
-struct CompanyStatutoryInfo {
-    name: String,
-    epf_number: Option<String>,
-    socso_code: Option<String>,
-    eis_code: Option<String>,
-    tax_number: Option<String>,
-}
 
 async fn get_statutory_data(
     pool: &PgPool,
@@ -37,36 +12,9 @@ async fn get_statutory_data(
     year: i32,
     month: i32,
 ) -> AppResult<(CompanyStatutoryInfo, Vec<StatutoryRow>)> {
-    let company = sqlx::query_as!(
-        CompanyStatutoryInfo,
-        "SELECT name, epf_number, socso_code, eis_code, tax_number FROM companies WHERE id = $1",
-        company_id,
-    )
-    .fetch_one(pool)
-    .await?;
+    let company = statutory_reads::company_statutory_info(pool, company_id).await?;
 
-    let rows = sqlx::query_as!(
-        StatutoryRow,
-        r#"SELECT
-            e.full_name AS employee_name, e.ic_number,
-            e.tax_identification_number, e.epf_number, e.socso_number, e.eis_number,
-            pi.gross_salary,
-            pi.epf_employee, pi.epf_employer,
-            pi.socso_employee, pi.socso_employer,
-            pi.eis_employee, pi.eis_employer,
-            pi.pcb_amount
-        FROM payroll_items pi
-        JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
-        JOIN employees e ON pi.employee_id = e.id
-        WHERE pr.company_id = $1 AND pr.period_year = $2 AND pr.period_month = $3
-        AND pr.status::text IN ('approved', 'paid')
-        ORDER BY e.employee_number"#,
-        company_id,
-        year,
-        month,
-    )
-    .fetch_all(pool)
-    .await?;
+    let rows = statutory_reads::statutory_rows(pool, company_id, year, month).await?;
 
     if rows.is_empty() {
         return Err(AppError::NotFound(

@@ -3,6 +3,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
 
+#[derive(Debug, Deserialize)]
+pub struct ExportQuery {
+    pub company_id: Option<Uuid>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BackupMetadata {
     pub format_version: String,

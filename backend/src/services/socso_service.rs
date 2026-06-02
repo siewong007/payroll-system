@@ -2,21 +2,8 @@ use chrono::NaiveDate;
 use sqlx::PgPool;
 
 use crate::core::error::AppResult;
-
-/// SOCSO contribution result
-#[derive(Debug, Clone)]
-pub struct SocsoContribution {
-    pub employee: i64, // in sen (0 for Second Category)
-    pub employer: i64, // in sen
-    pub category: SocsoCategory,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum SocsoCategory {
-    FirstCategory,  // Employment Injury + Invalidity (< 60)
-    SecondCategory, // Employment Injury only (>= 60)
-    Exempt,         // Not applicable (foreigner, etc.)
-}
+use crate::models::statutory::{SocsoCategory, SocsoContribution};
+use crate::repositories::socso_rates;
 
 /// Calculate SOCSO contribution.
 ///
@@ -49,21 +36,7 @@ pub async fn calculate_socso(
         SocsoCategory::FirstCategory
     };
 
-    let rate = sqlx::query!(
-        r#"
-        SELECT first_cat_employee, first_cat_employer, second_cat_employer
-        FROM socso_rates
-        WHERE wage_from <= $1 AND wage_to >= $1
-          AND effective_from <= $2
-          AND (effective_to IS NULL OR effective_to >= $2)
-        ORDER BY effective_from DESC
-        LIMIT 1
-        "#,
-        capped_wage,
-        effective_date,
-    )
-    .fetch_optional(pool)
-    .await?;
+    let rate = socso_rates::find_rate(pool, capped_wage, effective_date).await?;
 
     match rate {
         Some(r) => match category {

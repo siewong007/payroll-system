@@ -2,15 +2,14 @@ use axum::{
     Json,
     extract::{Multipart, Path, Query, State},
 };
-use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::core::app_state::AppState;
 use crate::core::auth::AuthUser;
 use crate::core::error::{AppError, AppResult};
 use crate::models::calendar::{
-    CreateHolidayRequest, Holiday, MonthCalendar, UpdateHolidayRequest, UpdateWorkingDaysRequest,
-    WorkingDayConfig,
+    CreateHolidayRequest, Holiday, ImportIcsRequest, MonthCalendar, MonthQuery,
+    UpdateHolidayRequest, UpdateWorkingDaysRequest, WorkingDayConfig, YearQuery,
 };
 use crate::services::calendar_service;
 
@@ -28,11 +27,6 @@ fn require_admin(auth: &AuthUser) -> AppResult<Uuid> {
 }
 
 // ─── Holidays ───
-
-#[derive(Debug, Deserialize)]
-pub struct YearQuery {
-    pub year: Option<i32>,
-}
 
 pub async fn list_holidays(
     State(state): State<AppState>,
@@ -137,12 +131,6 @@ pub async fn update_working_days(
 
 // ─── Month Calendar ───
 
-#[derive(Debug, Deserialize)]
-pub struct MonthQuery {
-    pub year: i32,
-    pub month: u32,
-}
-
 pub async fn get_month_calendar(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -157,11 +145,6 @@ pub async fn get_month_calendar(
 use chrono::Datelike;
 
 // ─── ICS Import ───
-
-#[derive(Debug, Deserialize)]
-pub struct ImportIcsRequest {
-    pub url: String,
-}
 
 pub async fn import_ics(
     State(state): State<AppState>,

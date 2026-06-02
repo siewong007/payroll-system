@@ -1,84 +1,20 @@
 use printpdf::*;
-use serde::Serialize;
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::core::error::{AppError, AppResult};
+use crate::models::ea_form::EaFormData;
+use crate::repositories::reads::ea_form as ea_reads;
 use crate::services::pdf_helpers::*;
 
-#[derive(Debug, Serialize)]
-pub struct EaFormData {
-    // Company
-    pub company_name: String,
-    pub company_reg_no: String,
-    pub company_tax_no: String,
-    pub company_epf_no: String,
-    pub company_address: String,
-    // Employee
-    pub employee_name: String,
-    pub employee_number: String,
-    pub ic_number: String,
-    pub tax_id: String,
-    pub epf_number: String,
-    pub socso_number: String,
-    pub employee_address: String,
-    pub date_joined: String,
-    // Income
-    pub ytd_basic: i64,
-    pub ytd_allowances: i64,
-    pub ytd_bonus: i64,
-    pub ytd_commission: i64,
-    pub ytd_overtime: i64,
-    pub ytd_gross: i64,
-    // Deductions
-    pub ytd_epf_employee: i64,
-    pub ytd_socso_employee: i64,
-    pub ytd_eis_employee: i64,
-    pub ytd_pcb: i64,
-    pub ytd_zakat: i64,
-    // Meta
-    pub tax_year: i32,
-    pub months_worked: i32,
-}
-
-#[derive(Debug, Serialize, sqlx::FromRow)]
-pub struct EaEmployeeSummary {
-    pub employee_id: Uuid,
-    pub employee_name: String,
-    pub employee_number: String,
-    pub ic_number: Option<String>,
-    pub ytd_gross: i64,
-    pub months_worked: i64,
-}
+pub use crate::models::ea_form::EaEmployeeSummary;
 
 pub async fn list_employees_for_ea(
     pool: &PgPool,
     company_id: Uuid,
     year: i32,
 ) -> AppResult<Vec<EaEmployeeSummary>> {
-    let rows = sqlx::query_as!(
-        EaEmployeeSummary,
-        r#"SELECT
-            pi.employee_id,
-            e.full_name AS employee_name,
-            e.employee_number,
-            e.ic_number,
-            SUM(pi.gross_salary)::bigint AS "ytd_gross!",
-            COUNT(DISTINCT pr.period_month) AS "months_worked!"
-        FROM payroll_items pi
-        JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
-        JOIN employees e ON pi.employee_id = e.id
-        WHERE pr.company_id = $1 AND pr.period_year = $2
-        AND pr.status::text IN ('approved', 'paid')
-        AND e.deleted_at IS NULL
-        GROUP BY pi.employee_id, e.full_name, e.employee_number, e.ic_number
-        ORDER BY e.employee_number"#,
-        company_id,
-        year,
-    )
-    .fetch_all(pool)
-    .await?;
-    Ok(rows)
+    ea_reads::list_employee_summaries(pool, company_id, year).await
 }
 
 pub async fn get_ea_form_data(
@@ -87,96 +23,13 @@ pub async fn get_ea_form_data(
     employee_id: Uuid,
     year: i32,
 ) -> AppResult<EaFormData> {
-    #[derive(sqlx::FromRow)]
-    struct CompanyRow {
-        name: String,
-        registration_number: Option<String>,
-        tax_number: Option<String>,
-        epf_number: Option<String>,
-        address_line1: Option<String>,
-        address_line2: Option<String>,
-        city: Option<String>,
-        state: Option<String>,
-        postcode: Option<String>,
-    }
+    let company = ea_reads::company_for_ea(pool, company_id).await?;
 
-    let company = sqlx::query_as!(
-        CompanyRow,
-        "SELECT name, registration_number, tax_number, epf_number, address_line1, address_line2, city, state, postcode FROM companies WHERE id = $1",
-        company_id,
-    )
-    .fetch_one(pool)
-    .await?;
+    let emp = ea_reads::employee_for_ea(pool, employee_id, company_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Employee not found".into()))?;
 
-    #[derive(sqlx::FromRow)]
-    struct EmployeeRow {
-        full_name: String,
-        employee_number: String,
-        ic_number: Option<String>,
-        tax_identification_number: Option<String>,
-        epf_number: Option<String>,
-        socso_number: Option<String>,
-        address_line1: Option<String>,
-        address_line2: Option<String>,
-        city: Option<String>,
-        state: Option<String>,
-        postcode: Option<String>,
-        date_joined: chrono::NaiveDate,
-    }
-
-    let emp = sqlx::query_as!(
-        EmployeeRow,
-        r#"SELECT full_name, employee_number, ic_number, tax_identification_number,
-            epf_number, socso_number, address_line1, address_line2, city, state, postcode, date_joined
-        FROM employees WHERE id = $1 AND company_id = $2"#,
-        employee_id,
-        company_id,
-    )
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound("Employee not found".into()))?;
-
-    #[derive(sqlx::FromRow)]
-    struct AggRow {
-        ytd_basic: i64,
-        ytd_allowances: i64,
-        ytd_bonus: i64,
-        ytd_commission: i64,
-        ytd_overtime: i64,
-        ytd_gross: i64,
-        ytd_epf_employee: i64,
-        ytd_socso_employee: i64,
-        ytd_eis_employee: i64,
-        ytd_pcb: i64,
-        ytd_zakat: i64,
-        months_worked: i64,
-    }
-
-    let agg = sqlx::query_as!(
-        AggRow,
-        r#"SELECT
-            COALESCE(SUM(pi.basic_salary), 0)::bigint AS "ytd_basic!",
-            COALESCE(SUM(pi.total_allowances), 0)::bigint AS "ytd_allowances!",
-            COALESCE(SUM(pi.total_bonus), 0)::bigint AS "ytd_bonus!",
-            COALESCE(SUM(pi.total_commission), 0)::bigint AS "ytd_commission!",
-            COALESCE(SUM(pi.total_overtime), 0)::bigint AS "ytd_overtime!",
-            COALESCE(SUM(pi.gross_salary), 0)::bigint AS "ytd_gross!",
-            COALESCE(SUM(pi.epf_employee), 0)::bigint AS "ytd_epf_employee!",
-            COALESCE(SUM(pi.socso_employee), 0)::bigint AS "ytd_socso_employee!",
-            COALESCE(SUM(pi.eis_employee), 0)::bigint AS "ytd_eis_employee!",
-            COALESCE(SUM(pi.pcb_amount), 0)::bigint AS "ytd_pcb!",
-            COALESCE(SUM(pi.zakat_amount), 0)::bigint AS "ytd_zakat!",
-            COUNT(DISTINCT pr.period_month) AS "months_worked!"
-        FROM payroll_items pi
-        JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
-        WHERE pi.employee_id = $1 AND pr.company_id = $2 AND pr.period_year = $3
-        AND pr.status::text IN ('approved', 'paid')"#,
-        employee_id,
-        company_id,
-        year,
-    )
-    .fetch_one(pool)
-    .await?;
+    let agg = ea_reads::ytd_totals(pool, employee_id, company_id, year).await?;
 
     let mut company_addr = vec![];
     if let Some(ref a) = company.address_line1 {

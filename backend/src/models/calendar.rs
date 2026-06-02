@@ -19,6 +19,22 @@ pub struct Holiday {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct YearQuery {
+    pub year: Option<i32>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MonthQuery {
+    pub year: i32,
+    pub month: u32,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ImportIcsRequest {
+    pub url: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct CreateHolidayRequest {
     pub name: String,
     pub date: NaiveDate,

@@ -45,6 +45,13 @@ pub struct OAuth2CallbackRequest {
     pub state: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct OAuth2CallbackQuery {
+    pub code: Option<String>,
+    pub state: Option<String>,
+    pub error: Option<String>,
+}
+
 /// Response for OAuth2 providers listing
 #[derive(Debug, Serialize)]
 pub struct OAuth2ProviderInfo {

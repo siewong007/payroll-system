@@ -2,7 +2,6 @@ use axum::{
     Json,
     extract::{Multipart, Path, Query, State},
 };
-use serde::Deserialize;
 use uuid::Uuid;
 
 use chrono::Datelike;
@@ -59,11 +58,6 @@ pub async fn leave_types(
     Ok(Json(types))
 }
 
-#[derive(Debug, Deserialize)]
-pub struct LeaveBalanceQuery {
-    pub year: Option<i32>,
-}
-
 pub async fn leave_balances(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -117,11 +111,6 @@ pub async fn delete_leave(
 }
 
 // ─── Claims ───
-
-#[derive(Debug, Deserialize)]
-pub struct ClaimQuery {
-    pub status: Option<String>,
-}
 
 pub async fn list_claims(
     State(state): State<AppState>,
@@ -302,17 +291,11 @@ pub async fn upload_file(
 
 // ─── Team Calendar & Holidays ───
 
-#[derive(Debug, Deserialize)]
-pub struct TeamCalendarQuery {
-    pub year: Option<i32>,
-    pub month: Option<u32>,
-}
-
 pub async fn team_calendar(
     State(state): State<AppState>,
     auth: AuthUser,
     Query(q): Query<TeamCalendarQuery>,
-) -> AppResult<Json<Vec<portal_service::TeamLeaveEntry>>> {
+) -> AppResult<Json<Vec<TeamLeaveEntry>>> {
     let employee_id = get_employee_id(&auth)?;
     let company_id = get_company_id(&auth)?;
     let now = chrono::Utc::now();

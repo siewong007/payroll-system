@@ -4,25 +4,22 @@ use axum::{
     http::HeaderMap,
     response::IntoResponse,
 };
-use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use webauthn_rs::prelude::*;
 
 use crate::core::app_state::AppState;
-use crate::core::auth::{AuthUser, create_token};
+use crate::core::auth::AuthUser;
 use crate::core::cookie;
 use crate::core::error::{AppError, AppResult};
-use crate::models::passkey::{PasskeyInfo, RenamePasskeyRequest};
-use crate::models::user::{LoginResponse, User, UserResponse};
-use crate::services::{passkey_service, session_service};
+use crate::models::passkey::{
+    AuthBeginRequest, AuthBeginResponse, AuthCompleteRequest, CheckPasskeyRequest,
+    DiscoverableAuthBeginResponse, PasskeyInfo, RegistrationBeginResponse,
+    RegistrationCompleteRequest, RenamePasskeyRequest,
+};
+use crate::models::user::LoginResponse;
+use crate::services::passkey_service;
 
 // ── Registration (authenticated user adds a passkey) ───────────────────
-
-#[derive(Serialize)]
-pub struct RegistrationBeginResponse {
-    pub challenge_id: Uuid,
-    pub options: CreationChallengeResponse,
-}
 
 pub async fn registration_begin(
     State(state): State<AppState>,
@@ -58,13 +55,6 @@ pub async fn registration_begin(
     }))
 }
 
-#[derive(Deserialize)]
-pub struct RegistrationCompleteRequest {
-    pub challenge_id: Uuid,
-    pub credential: RegisterPublicKeyCredential,
-    pub name: Option<String>,
-}
-
 pub async fn registration_complete(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -91,17 +81,6 @@ pub async fn registration_complete(
 }
 
 // ── Authentication (unauthenticated user logs in with passkey) ─────────
-
-#[derive(Deserialize)]
-pub struct AuthBeginRequest {
-    pub email: String,
-}
-
-#[derive(Serialize)]
-pub struct AuthBeginResponse {
-    pub challenge_id: Uuid,
-    pub options: RequestChallengeResponse,
-}
 
 pub async fn authentication_begin(
     State(state): State<AppState>,
@@ -142,31 +121,13 @@ pub async fn authentication_begin(
     }))
 }
 
-#[derive(Deserialize)]
-pub struct AuthCompleteRequest {
-    pub challenge_id: Uuid,
-    pub credential: PublicKeyCredential,
-}
-
 pub async fn authentication_complete(
     State(state): State<AppState>,
     Json(req): Json<AuthCompleteRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    // Get the challenge (which includes user_id)
-    let challenge_row = sqlx::query!(
-        r#"DELETE FROM passkey_challenges
-        WHERE id = $1 AND challenge_type = 'authentication' AND expires_at > NOW()
-        RETURNING user_id, state_json"#,
-        req.challenge_id,
-    )
-    .fetch_optional(&state.pool)
-    .await?
-    .ok_or_else(|| AppError::BadRequest("Challenge expired or not found".into()))?;
-
-    let state_json = challenge_row.state_json;
-    let user_id = challenge_row
-        .user_id
-        .ok_or_else(|| AppError::Internal("Missing user_id in challenge".into()))?;
+    // Consume the challenge (which carries the target user_id)
+    let (user_id, state_json) =
+        passkey_service::take_authentication_challenge(&state.pool, req.challenge_id).await?;
 
     let auth_state: PasskeyAuthentication = serde_json::from_value(state_json)
         .map_err(|e| AppError::BadRequest(format!("Invalid auth state: {}", e)))?;
@@ -186,55 +147,30 @@ pub async fn authentication_complete(
         }
     }
 
-    // Fetch user and issue tokens (same as password login)
-    let user = sqlx::query_as!(
-        User,
-        r#"SELECT id, email, password_hash, full_name, roles, company_id,
-            employee_id, is_active, must_change_password, last_login, created_at, updated_at
-        FROM users WHERE id = $1 AND is_active = TRUE"#,
+    // Issue tokens (same as password login)
+    let session = passkey_service::complete_login(
+        &state.pool,
         user_id,
-    )
-    .fetch_optional(&state.pool)
-    .await?
-    .ok_or_else(|| AppError::Unauthorized("User not found or inactive".into()))?;
-
-    // Update last login
-    sqlx::query!("UPDATE users SET last_login = NOW() WHERE id = $1", user.id)
-        .execute(&state.pool)
-        .await?;
-
-    let token = create_token(
-        user.id,
-        &user.email,
-        &user.roles,
-        user.company_id,
-        user.employee_id,
         &state.config.jwt_secret,
         state.config.jwt_expiry_hours,
-    )?;
-
-    let refresh_token = session_service::create_refresh_token(&state.pool, user.id).await?;
+    )
+    .await?;
 
     let mut headers = HeaderMap::new();
-    let (name, value) = cookie::set_refresh_cookie(&refresh_token, &state.config.frontend_url);
+    let (name, value) =
+        cookie::set_refresh_cookie(&session.refresh_token, &state.config.frontend_url);
     headers.insert(name, value.parse().unwrap());
 
     let body = LoginResponse {
-        token,
+        token: session.token,
         refresh_token: None,
-        user: UserResponse::from(user),
+        user: session.user,
     };
 
     Ok((headers, Json(body)))
 }
 
 // ── Discoverable Authentication (no email required) ─────────────────────
-
-#[derive(Serialize)]
-pub struct DiscoverableAuthBeginResponse {
-    pub challenge_id: Uuid,
-    pub options: RequestChallengeResponse,
-}
 
 pub async fn discoverable_auth_begin(
     State(state): State<AppState>,
@@ -267,18 +203,9 @@ pub async fn discoverable_auth_complete(
     State(state): State<AppState>,
     Json(req): Json<AuthCompleteRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    // Get the challenge
-    let challenge_row = sqlx::query!(
-        r#"DELETE FROM passkey_challenges
-        WHERE id = $1 AND challenge_type = 'discoverable' AND expires_at > NOW()
-        RETURNING state_json"#,
-        req.challenge_id,
-    )
-    .fetch_optional(&state.pool)
-    .await?
-    .ok_or_else(|| AppError::BadRequest("Challenge expired or not found".into()))?;
-
-    let state_json = challenge_row.state_json;
+    // Consume the challenge
+    let state_json =
+        passkey_service::take_discoverable_challenge(&state.pool, req.challenge_id).await?;
 
     let auth_state: DiscoverableAuthentication = serde_json::from_value(state_json)
         .map_err(|e| AppError::BadRequest(format!("Invalid auth state: {}", e)))?;
@@ -311,42 +238,24 @@ pub async fn discoverable_auth_complete(
         }
     }
 
-    // Fetch user and issue tokens
-    let user = sqlx::query_as!(
-        User,
-        r#"SELECT id, email, password_hash, full_name, roles, company_id,
-            employee_id, is_active, must_change_password, last_login, created_at, updated_at
-        FROM users WHERE id = $1 AND is_active = TRUE"#,
+    // Issue tokens
+    let session = passkey_service::complete_login(
+        &state.pool,
         user_id,
-    )
-    .fetch_optional(&state.pool)
-    .await?
-    .ok_or_else(|| AppError::Unauthorized("User not found or inactive".into()))?;
-
-    sqlx::query!("UPDATE users SET last_login = NOW() WHERE id = $1", user.id)
-        .execute(&state.pool)
-        .await?;
-
-    let token = create_token(
-        user.id,
-        &user.email,
-        &user.roles,
-        user.company_id,
-        user.employee_id,
         &state.config.jwt_secret,
         state.config.jwt_expiry_hours,
-    )?;
-
-    let refresh_token = session_service::create_refresh_token(&state.pool, user.id).await?;
+    )
+    .await?;
 
     let mut headers = HeaderMap::new();
-    let (name, value) = cookie::set_refresh_cookie(&refresh_token, &state.config.frontend_url);
+    let (name, value) =
+        cookie::set_refresh_cookie(&session.refresh_token, &state.config.frontend_url);
     headers.insert(name, value.parse().unwrap());
 
     let body = LoginResponse {
-        token,
+        token: session.token,
         refresh_token: None,
-        user: UserResponse::from(user),
+        user: session.user,
     };
 
     Ok((headers, Json(body)))
@@ -382,11 +291,6 @@ pub async fn delete_passkey(
 }
 
 /// Check if a given email has passkeys (used by frontend to show passkey button)
-#[derive(Deserialize)]
-pub struct CheckPasskeyRequest {
-    pub email: String,
-}
-
 pub async fn check_passkey(
     State(state): State<AppState>,
     Json(req): Json<CheckPasskeyRequest>,

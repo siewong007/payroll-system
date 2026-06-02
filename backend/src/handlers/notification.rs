@@ -2,20 +2,13 @@ use axum::{
     Json,
     extract::{Path, Query, State},
 };
-use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::core::app_state::AppState;
 use crate::core::auth::AuthUser;
 use crate::core::error::AppResult;
-use crate::models::notification::{Notification, NotificationCount};
+use crate::models::notification::{Notification, NotificationCount, NotificationQuery};
 use crate::services::notification_service;
-
-#[derive(Debug, Deserialize)]
-pub struct NotificationQuery {
-    pub unread_only: Option<bool>,
-    pub limit: Option<i64>,
-}
 
 pub async fn list(
     State(state): State<AppState>,

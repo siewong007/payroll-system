@@ -21,6 +21,11 @@ pub struct UpdateSettingRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct SettingsQuery {
+    pub category: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct BulkUpdateSettingsRequest {
     pub settings: Vec<SettingUpdate>,
 }
