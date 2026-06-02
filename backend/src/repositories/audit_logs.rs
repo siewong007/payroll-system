@@ -97,3 +97,24 @@ pub async fn insert(
     .await?;
     Ok(())
 }
+
+/// Record a bulk employee-import action in the audit trail.
+pub async fn insert_bulk_import(
+    executor: impl Executor<'_, Database = Postgres>,
+    id: Uuid,
+    user_id: Uuid,
+    description: &str,
+    new_values: serde_json::Value,
+) -> AppResult<()> {
+    sqlx::query!(
+        r#"INSERT INTO audit_logs (id, user_id, action, entity_type, description, new_values)
+        VALUES ($1, $2, 'bulk_import', 'employee', $3, $4)"#,
+        id,
+        user_id,
+        description,
+        new_values,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}

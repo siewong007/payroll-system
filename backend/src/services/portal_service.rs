@@ -5,74 +5,31 @@ use uuid::Uuid;
 use crate::core::error::{AppError, AppResult};
 use crate::models::employee::Employee;
 use crate::models::portal::*;
+use crate::repositories::reads::portal as portal_reads;
+use crate::repositories::{
+    claims, employees as employee_repo, leave_balances, leave_requests, leave_types,
+    overtime_applications, payroll_entries,
+};
 use crate::services::notification_service;
 
 // ─── Profile ───
 
 pub async fn get_my_profile(pool: &PgPool, employee_id: Uuid) -> AppResult<Employee> {
-    sqlx::query_as!(
-        Employee,
-        r#"SELECT id, company_id, employee_number, full_name, ic_number, passport_number,
-            date_of_birth, gender::text AS "gender?", nationality, race::text AS "race?", residency_status::text AS "residency_status!",
-            marital_status::text AS "marital_status?", email, phone, address_line1, address_line2, city, state, postcode,
-            department, designation, cost_centre, branch, employment_type::text AS "employment_type!",
-            date_joined, probation_start, probation_end, confirmation_date, date_resigned,
-            resignation_reason, basic_salary, hourly_rate, daily_rate, bank_name,
-            bank_account_number, bank_account_type, tax_identification_number, epf_number,
-            socso_number, eis_number, working_spouse, num_children, epf_category, is_muslim,
-            zakat_eligible, zakat_monthly_amount, ptptn_monthly_amount, tabung_haji_amount,
-            hrdf_contribution, payroll_group_id, salary_group, is_active, deleted_at,
-            created_at, updated_at, created_by, updated_by
-        FROM employees WHERE id = $1 AND deleted_at IS NULL"#,
-        employee_id,
-    )
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound("Employee profile not found".into()))
+    employee_repo::get_profile(pool, employee_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Employee profile not found".into()))
 }
 
 // ─── Payslips ───
 
 pub async fn get_my_payslips(pool: &PgPool, employee_id: Uuid) -> AppResult<Vec<MyPayslip>> {
-    let payslips = sqlx::query_as!(
-        MyPayslip,
-        r#"SELECT pi.id, pi.payroll_run_id,
-            pr.period_year, pr.period_month, pr.period_start, pr.period_end, pr.pay_date,
-            pi.basic_salary, pi.gross_salary, pi.total_allowances, pi.total_overtime,
-            pi.total_bonus, pi.total_commission, pi.total_claims,
-            pi.epf_employee, pi.epf_employer, pi.socso_employee, pi.socso_employer,
-            pi.eis_employee, pi.eis_employer, pi.pcb_amount, pi.zakat_amount,
-            pi.ptptn_amount, pi.tabung_haji_amount, pi.total_loan_deductions,
-            pi.total_other_deductions, pi.unpaid_leave_deduction,
-            pi.total_deductions, pi.net_salary, pi.employer_cost,
-            pi.ytd_gross, pi.ytd_epf_employee, pi.ytd_pcb,
-            pi.ytd_socso_employee, pi.ytd_eis_employee, pi.ytd_zakat, pi.ytd_net
-        FROM payroll_items pi
-        JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
-        WHERE pi.employee_id = $1
-        AND pr.status::text IN ('approved', 'paid')
-        ORDER BY pr.period_year DESC, pr.period_month DESC"#,
-        employee_id,
-    )
-    .fetch_all(pool)
-    .await?;
-
-    Ok(payslips)
+    portal_reads::my_payslips(pool, employee_id).await
 }
 
 // ─── Leave ───
 
 pub async fn get_leave_types(pool: &PgPool, company_id: Uuid) -> AppResult<Vec<LeaveType>> {
-    let types = sqlx::query_as!(
-        LeaveType,
-        r#"SELECT id, company_id, name, description, default_days, is_paid, is_active,
-            max_carry_forward, carry_forward_expiry_months, is_system, created_at, updated_at
-        FROM leave_types WHERE company_id = $1 AND is_active = TRUE ORDER BY name"#,
-        company_id,
-    )
-    .fetch_all(pool)
-    .await?;
-    Ok(types)
+    leave_types::list_active(pool, company_id).await
 }
 
 pub async fn get_leave_balances(
@@ -80,41 +37,11 @@ pub async fn get_leave_balances(
     employee_id: Uuid,
     year: i32,
 ) -> AppResult<Vec<LeaveBalanceWithType>> {
-    let balances = sqlx::query_as!(
-        LeaveBalanceWithType,
-        r#"SELECT lb.id, lb.leave_type_id, lt.name AS leave_type_name, lt.is_paid,
-            lb.year, lb.entitled_days, lb.taken_days, lb.pending_days, lb.carried_forward
-        FROM leave_balances lb
-        JOIN leave_types lt ON lb.leave_type_id = lt.id
-        WHERE lb.employee_id = $1 AND lb.year = $2 AND lt.is_active = TRUE
-        ORDER BY lt.name"#,
-        employee_id,
-        year,
-    )
-    .fetch_all(pool)
-    .await?;
-    Ok(balances)
+    portal_reads::leave_balances_with_type(pool, employee_id, year).await
 }
 
 pub async fn get_leave_requests(pool: &PgPool, employee_id: Uuid) -> AppResult<Vec<LeaveRequest>> {
-    let requests = sqlx::query_as!(
-        LeaveRequest,
-        r#"SELECT lr.id, lr.employee_id, lr.company_id, lr.leave_type_id,
-            lr.start_date, lr.end_date, lr.days, lr.reason, lr.status,
-            lr.reviewed_by, lr.reviewed_at, lr.review_notes,
-            lr.attachment_url, lr.attachment_name,
-            lr.created_at, lr.updated_at,
-            lt.name AS "leave_type_name?"
-        FROM leave_requests lr
-        JOIN leave_types lt ON lr.leave_type_id = lt.id
-        WHERE lr.employee_id = $1
-        ORDER BY lr.created_at DESC
-        LIMIT 50"#,
-        employee_id,
-    )
-    .fetch_all(pool)
-    .await?;
-    Ok(requests)
+    leave_requests::list_for_employee(pool, employee_id).await
 }
 
 pub async fn create_leave_request(
@@ -124,30 +51,12 @@ pub async fn create_leave_request(
     req: CreateLeaveRequest,
 ) -> AppResult<LeaveRequest> {
     // Verify leave type exists
-    let _lt = sqlx::query_scalar!(
-        "SELECT id FROM leave_types WHERE id = $1 AND company_id = $2 AND is_active = TRUE",
-        req.leave_type_id,
-        company_id,
-    )
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound("Leave type not found".into()))?;
+    if !leave_types::exists_active(pool, req.leave_type_id, company_id).await? {
+        return Err(AppError::NotFound("Leave type not found".into()));
+    }
 
-    let leave = sqlx::query_as!(
-        LeaveRequest,
-        r#"WITH new_lr AS (
-            INSERT INTO leave_requests (employee_id, company_id, leave_type_id, start_date, end_date, days, reason, attachment_url, attachment_name)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-            RETURNING *
-        )
-        SELECT nlr.id AS "id!", nlr.employee_id AS "employee_id!", nlr.company_id AS "company_id!", nlr.leave_type_id AS "leave_type_id!",
-            nlr.start_date AS "start_date!", nlr.end_date AS "end_date!", nlr.days AS "days!", nlr.reason, nlr.status AS "status!",
-            nlr.reviewed_by, nlr.reviewed_at, nlr.review_notes,
-            nlr.attachment_url, nlr.attachment_name,
-            nlr.created_at AS "created_at!", nlr.updated_at AS "updated_at!",
-            lt.name AS "leave_type_name?"
-        FROM new_lr nlr
-        JOIN leave_types lt ON nlr.leave_type_id = lt.id"#,
+    let leave = leave_requests::insert_self_service(
+        pool,
         employee_id,
         company_id,
         req.leave_type_id,
@@ -158,25 +67,14 @@ pub async fn create_leave_request(
         req.attachment_url,
         req.attachment_name,
     )
-    .fetch_one(pool)
     .await?;
 
     // Update pending days in balance
     let year = req.start_date.year();
-    sqlx::query!(
-        r#"UPDATE leave_balances SET pending_days = pending_days + $3, updated_at = NOW()
-        WHERE employee_id = $1 AND leave_type_id = $2 AND year = $4"#,
-        employee_id,
-        req.leave_type_id,
-        req.days,
-        year,
-    )
-    .execute(pool)
-    .await?;
+    leave_balances::add_pending(pool, employee_id, req.leave_type_id, req.days, year).await?;
 
     // Notify admins about new leave request
-    let name = sqlx::query_scalar!("SELECT full_name FROM employees WHERE id = $1", employee_id)
-        .fetch_optional(pool)
+    let name = employee_repo::full_name(pool, employee_id)
         .await?
         .unwrap_or_default();
     let _ = notification_service::notify_admins(
@@ -205,50 +103,23 @@ pub async fn cancel_leave_request(
 ) -> AppResult<()> {
     let mut tx = pool.begin().await?;
 
-    let lr = sqlx::query_as!(
-        LeaveRequest,
-        r#"SELECT lr.id, lr.employee_id, lr.company_id, lr.leave_type_id,
-            lr.start_date, lr.end_date, lr.days, lr.reason, lr.status,
-            lr.reviewed_by, lr.reviewed_at, lr.review_notes,
-            lr.attachment_url, lr.attachment_name,
-            lr.created_at, lr.updated_at,
-            lt.name AS "leave_type_name?"
-        FROM leave_requests lr
-        JOIN leave_types lt ON lr.leave_type_id = lt.id
-        WHERE lr.id = $1
-          AND lr.employee_id = $2
-          AND lr.status IN ('pending', 'approved', 'rejected')"#,
-        request_id,
-        employee_id,
-    )
-    .fetch_optional(&mut *tx)
-    .await?
-    .ok_or_else(|| AppError::BadRequest("Leave request not found or cannot be cancelled".into()))?;
+    let lr = leave_requests::get_cancellable_for_employee(&mut *tx, request_id, employee_id)
+        .await?
+        .ok_or_else(|| {
+            AppError::BadRequest("Leave request not found or cannot be cancelled".into())
+        })?;
 
     if lr.status == "approved" {
-        let is_paid = sqlx::query_scalar!(
-            "SELECT is_paid FROM leave_types WHERE id = $1",
-            lr.leave_type_id,
-        )
-        .fetch_optional(&mut *tx)
-        .await?;
+        let is_paid = leave_types::get_is_paid(&mut *tx, lr.leave_type_id).await?;
 
         if is_paid == Some(false) {
             let description = format!("Unpaid leave: {} to {}%", lr.start_date, lr.end_date);
-            let processed = sqlx::query_scalar!(
-                r#"SELECT EXISTS(
-                    SELECT 1 FROM payroll_entries
-                    WHERE employee_id = $1
-                      AND company_id = $2
-                      AND item_type = 'unpaid_leave'
-                      AND description LIKE $3
-                      AND is_processed = TRUE
-                ) AS "exists!""#,
+            let processed = payroll_entries::exists_processed_unpaid_leave(
+                &mut *tx,
                 lr.employee_id,
                 lr.company_id,
-                description,
+                &description,
             )
-            .fetch_one(&mut *tx)
             .await?;
 
             if processed {
@@ -257,52 +128,25 @@ pub async fn cancel_leave_request(
                 ));
             }
 
-            sqlx::query!(
-                r#"DELETE FROM payroll_entries
-                WHERE employee_id = $1
-                  AND company_id = $2
-                  AND item_type = 'unpaid_leave'
-                  AND description LIKE $3
-                  AND is_processed = FALSE"#,
+            payroll_entries::delete_unprocessed_unpaid_leave(
+                &mut *tx,
                 lr.employee_id,
                 lr.company_id,
-                description,
+                &description,
             )
-            .execute(&mut *tx)
             .await?;
         }
     }
 
-    sqlx::query!(
-        "UPDATE leave_requests SET status = 'cancelled', updated_at = NOW() WHERE id = $1",
-        request_id,
-    )
-    .execute(&mut *tx)
-    .await?;
+    leave_requests::mark_cancelled(&mut *tx, request_id).await?;
 
     let year = lr.start_date.year();
     if lr.status == "pending" {
-        sqlx::query!(
-            r#"UPDATE leave_balances SET pending_days = GREATEST(pending_days - $3, 0), updated_at = NOW()
-            WHERE employee_id = $1 AND leave_type_id = $2 AND year = $4"#,
-            employee_id,
-            lr.leave_type_id,
-            lr.days,
-            year,
-        )
-        .execute(&mut *tx)
-        .await?;
+        leave_balances::subtract_pending(&mut *tx, employee_id, lr.leave_type_id, lr.days, year)
+            .await?;
     } else if lr.status == "approved" {
-        sqlx::query!(
-            r#"UPDATE leave_balances SET taken_days = GREATEST(taken_days - $3, 0), updated_at = NOW()
-            WHERE employee_id = $1 AND leave_type_id = $2 AND year = $4"#,
-            employee_id,
-            lr.leave_type_id,
-            lr.days,
-            year,
-        )
-        .execute(&mut *tx)
-        .await?;
+        leave_balances::subtract_taken(&mut *tx, employee_id, lr.leave_type_id, lr.days, year)
+            .await?;
     }
 
     tx.commit().await?;
@@ -315,14 +159,7 @@ pub async fn delete_leave_request(
     employee_id: Uuid,
     request_id: Uuid,
 ) -> AppResult<()> {
-    let rows = sqlx::query!(
-        "DELETE FROM leave_requests WHERE id = $1 AND employee_id = $2 AND status = 'cancelled'",
-        request_id,
-        employee_id,
-    )
-    .execute(pool)
-    .await?
-    .rows_affected();
+    let rows = leave_requests::delete_cancelled_for_employee(pool, request_id, employee_id).await?;
 
     if rows == 0 {
         return Err(AppError::BadRequest(
@@ -340,19 +177,7 @@ pub async fn get_claims(
     employee_id: Uuid,
     status: Option<&str>,
 ) -> AppResult<Vec<Claim>> {
-    let claims = sqlx::query_as!(
-        Claim,
-        r#"SELECT * FROM claims
-        WHERE employee_id = $1
-        AND ($2::text IS NULL OR status = $2)
-        ORDER BY created_at DESC
-        LIMIT 100"#,
-        employee_id,
-        status,
-    )
-    .fetch_all(pool)
-    .await?;
-    Ok(claims)
+    claims::list_for_employee(pool, employee_id, status).await
 }
 
 pub async fn create_claim(
@@ -525,17 +350,7 @@ pub async fn get_overtime_applications(
     pool: &PgPool,
     employee_id: Uuid,
 ) -> AppResult<Vec<OvertimeApplication>> {
-    let apps = sqlx::query_as!(
-        OvertimeApplication,
-        r#"SELECT * FROM overtime_applications
-        WHERE employee_id = $1
-        ORDER BY created_at DESC
-        LIMIT 50"#,
-        employee_id,
-    )
-    .fetch_all(pool)
-    .await?;
-    Ok(apps)
+    overtime_applications::list_for_employee(pool, employee_id).await
 }
 
 pub async fn create_overtime_application(

@@ -1,5 +1,6 @@
 use crate::core::error::AppResult;
 use crate::models::notification::{Notification, NotificationCount};
+use crate::repositories::{notifications, users as user_repo};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -28,9 +29,7 @@ impl NotificationChannel for EmailNotificationChannel {
         message: &str,
     ) -> AppResult<()> {
         // Get user email
-        let user = sqlx::query!("SELECT email, full_name FROM users WHERE id = $1", user_id)
-            .fetch_one(pool)
-            .await?;
+        let (email, full_name) = user_repo::name_and_email(pool, user_id).await?;
 
         crate::services::email_service::send_email(
             &self.config,
@@ -39,8 +38,8 @@ impl NotificationChannel for EmailNotificationChannel {
             None,
             None,
             "notification",
-            &user.email,
-            &user.full_name,
+            &email,
+            &full_name,
             title,
             message,     // This should ideally be wrapped in HTML
             Uuid::nil(), // System sent
@@ -57,58 +56,21 @@ pub async fn get_notifications(
     unread_only: bool,
     limit: i64,
 ) -> AppResult<Vec<Notification>> {
-    let notifications = sqlx::query_as!(
-        Notification,
-        r#"SELECT * FROM notifications
-        WHERE user_id = $1 AND ($2 = FALSE OR is_read = FALSE)
-        ORDER BY created_at DESC
-        LIMIT $3"#,
-        user_id,
-        unread_only,
-        limit,
-    )
-    .fetch_all(pool)
-    .await?;
-    Ok(notifications)
+    notifications::list(pool, user_id, unread_only, limit).await
 }
 
 pub async fn get_notification_count(pool: &PgPool, user_id: Uuid) -> AppResult<NotificationCount> {
-    let unread = sqlx::query_scalar!(
-        r#"SELECT COUNT(*) AS "count!" FROM notifications WHERE user_id = $1 AND is_read = FALSE"#,
-        user_id,
-    )
-    .fetch_one(pool)
-    .await?;
-
-    let total = sqlx::query_scalar!(
-        r#"SELECT COUNT(*) AS "count!" FROM notifications WHERE user_id = $1"#,
-        user_id,
-    )
-    .fetch_one(pool)
-    .await?;
-
+    let unread = notifications::count_unread(pool, user_id).await?;
+    let total = notifications::count_total(pool, user_id).await?;
     Ok(NotificationCount { unread, total })
 }
 
 pub async fn mark_as_read(pool: &PgPool, user_id: Uuid, notification_id: Uuid) -> AppResult<()> {
-    sqlx::query!(
-        "UPDATE notifications SET is_read = TRUE, read_at = NOW() WHERE id = $1 AND user_id = $2",
-        notification_id,
-        user_id,
-    )
-    .execute(pool)
-    .await?;
-    Ok(())
+    notifications::mark_read(pool, notification_id, user_id).await
 }
 
 pub async fn mark_all_read(pool: &PgPool, user_id: Uuid) -> AppResult<()> {
-    sqlx::query!(
-        "UPDATE notifications SET is_read = TRUE, read_at = NOW() WHERE user_id = $1 AND is_read = FALSE",
-        user_id,
-    )
-    .execute(pool)
-    .await?;
-    Ok(())
+    notifications::mark_all_read(pool, user_id).await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -122,11 +84,8 @@ pub async fn create_notification(
     entity_type: Option<&str>,
     entity_id: Option<Uuid>,
 ) -> AppResult<Notification> {
-    let notification = sqlx::query_as!(
-        Notification,
-        r#"INSERT INTO notifications (user_id, company_id, notification_type, title, message, entity_type, entity_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
-        RETURNING *"#,
+    notifications::insert(
+        pool,
         user_id,
         company_id,
         notification_type,
@@ -135,9 +94,7 @@ pub async fn create_notification(
         entity_type,
         entity_id,
     )
-    .fetch_one(pool)
-    .await?;
-    Ok(notification)
+    .await
 }
 
 /// Notify all admin/hr users in the company
@@ -150,13 +107,8 @@ pub async fn notify_admins(
     entity_type: Option<&str>,
     entity_id: Option<Uuid>,
 ) -> AppResult<()> {
-    sqlx::query!(
-        r#"INSERT INTO notifications (user_id, company_id, notification_type, title, message, entity_type, entity_id)
-        SELECT id, company_id, $2, $3, $4, $5, $6
-        FROM users
-        WHERE company_id = $1
-            AND roles && ARRAY['super_admin', 'payroll_admin', 'hr_manager']::VARCHAR(50)[]
-            AND is_active = TRUE"#,
+    notifications::insert_for_admins(
+        pool,
         company_id,
         notification_type,
         title,
@@ -164,7 +116,5 @@ pub async fn notify_admins(
         entity_type,
         entity_id,
     )
-    .execute(pool)
-    .await?;
-    Ok(())
+    .await
 }

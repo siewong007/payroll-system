@@ -4,6 +4,24 @@ use sqlx::{Executor, Postgres};
 use uuid::Uuid;
 
 use crate::core::error::AppResult;
+use crate::models::portal::LeaveType;
+
+/// Active leave types for a company, alphabetical (employee-facing picker).
+pub async fn list_active(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+) -> AppResult<Vec<LeaveType>> {
+    let types = sqlx::query_as!(
+        LeaveType,
+        r#"SELECT id, company_id, name, description, default_days, is_paid, is_active,
+            max_carry_forward, carry_forward_expiry_months, is_system, created_at, updated_at
+        FROM leave_types WHERE company_id = $1 AND is_active = TRUE ORDER BY name"#,
+        company_id,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(types)
+}
 
 /// Whether an active leave type with this id exists in the company.
 pub async fn exists_active(

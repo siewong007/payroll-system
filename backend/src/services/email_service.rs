@@ -9,6 +9,7 @@ use crate::core::error::{AppError, AppResult};
 use crate::models::email::{
     CreateEmailTemplateRequest, EmailLog, EmailTemplate, UpdateEmailTemplateRequest,
 };
+use crate::repositories::{email_logs, email_templates};
 
 // ── Template CRUD ──────────────────────────────────────────────────────
 
@@ -17,33 +18,13 @@ pub async fn list_templates(
     company_id: Uuid,
     letter_type: Option<&str>,
 ) -> AppResult<Vec<EmailTemplate>> {
-    let templates = sqlx::query_as!(
-        EmailTemplate,
-        r#"SELECT id, company_id, name, letter_type, subject, body_html,
-            is_active AS "is_active?", created_at, updated_at, created_by, updated_by
-        FROM email_templates
-        WHERE company_id = $1 AND ($2::text IS NULL OR letter_type = $2)
-        ORDER BY letter_type, name"#,
-        company_id,
-        letter_type,
-    )
-    .fetch_all(pool)
-    .await?;
-    Ok(templates)
+    email_templates::list(pool, company_id, letter_type).await
 }
 
 pub async fn get_template(pool: &PgPool, id: Uuid, company_id: Uuid) -> AppResult<EmailTemplate> {
-    sqlx::query_as!(
-        EmailTemplate,
-        r#"SELECT id, company_id, name, letter_type, subject, body_html,
-            is_active AS "is_active?", created_at, updated_at, created_by, updated_by
-        FROM email_templates WHERE id = $1 AND company_id = $2"#,
-        id,
-        company_id,
-    )
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound("Template not found".into()))
+    email_templates::get(pool, id, company_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Template not found".into()))
 }
 
 pub async fn create_template(
@@ -52,22 +33,7 @@ pub async fn create_template(
     req: CreateEmailTemplateRequest,
     created_by: Uuid,
 ) -> AppResult<EmailTemplate> {
-    let template = sqlx::query_as!(
-        EmailTemplate,
-        r#"INSERT INTO email_templates (company_id, name, letter_type, subject, body_html, created_by, updated_by)
-        VALUES ($1, $2, $3, $4, $5, $6, $6)
-        RETURNING id, company_id, name, letter_type, subject, body_html,
-            is_active AS "is_active?", created_at, updated_at, created_by, updated_by"#,
-        company_id,
-        req.name,
-        req.letter_type,
-        req.subject,
-        req.body_html,
-        created_by,
-    )
-    .fetch_one(pool)
-    .await?;
-    Ok(template)
+    email_templates::insert(pool, company_id, &req, created_by).await
 }
 
 pub async fn update_template(
@@ -77,42 +43,13 @@ pub async fn update_template(
     req: UpdateEmailTemplateRequest,
     updated_by: Uuid,
 ) -> AppResult<EmailTemplate> {
-    let template = sqlx::query_as!(
-        EmailTemplate,
-        r#"UPDATE email_templates SET
-            name = COALESCE($3, name),
-            subject = COALESCE($4, subject),
-            body_html = COALESCE($5, body_html),
-            is_active = COALESCE($6, is_active),
-            updated_by = $7,
-            updated_at = NOW()
-        WHERE id = $1 AND company_id = $2
-        RETURNING id, company_id, name, letter_type, subject, body_html,
-            is_active AS "is_active?", created_at, updated_at, created_by, updated_by"#,
-        id,
-        company_id,
-        req.name,
-        req.subject,
-        req.body_html,
-        req.is_active,
-        updated_by,
-    )
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound("Template not found".into()))?;
-    Ok(template)
+    email_templates::update(pool, id, company_id, &req, updated_by)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Template not found".into()))
 }
 
 pub async fn delete_template(pool: &PgPool, id: Uuid, company_id: Uuid) -> AppResult<()> {
-    let result = sqlx::query!(
-        "DELETE FROM email_templates WHERE id = $1 AND company_id = $2",
-        id,
-        company_id,
-    )
-    .execute(pool)
-    .await?;
-
-    if result.rows_affected() == 0 {
+    if email_templates::delete(pool, id, company_id).await? == 0 {
         return Err(AppError::NotFound("Template not found".into()));
     }
     Ok(())
@@ -127,29 +64,8 @@ pub async fn list_email_logs(
     limit: i64,
     offset: i64,
 ) -> AppResult<(Vec<EmailLog>, i64)> {
-    let total = sqlx::query_scalar!(
-        r#"SELECT COUNT(*) AS "count!" FROM email_logs
-        WHERE company_id = $1 AND ($2::uuid IS NULL OR employee_id = $2)"#,
-        company_id,
-        employee_id,
-    )
-    .fetch_one(pool)
-    .await?;
-
-    let logs = sqlx::query_as!(
-        EmailLog,
-        r#"SELECT * FROM email_logs
-        WHERE company_id = $1 AND ($2::uuid IS NULL OR employee_id = $2)
-        ORDER BY created_at DESC
-        LIMIT $3 OFFSET $4"#,
-        company_id,
-        employee_id,
-        limit,
-        offset,
-    )
-    .fetch_all(pool)
-    .await?;
-
+    let total = email_logs::count(pool, company_id, employee_id).await?;
+    let logs = email_logs::list(pool, company_id, employee_id, limit, offset).await?;
     Ok((logs, total))
 }
 
@@ -194,12 +110,8 @@ pub async fn send_email(
     created_by: Uuid,
 ) -> AppResult<EmailLog> {
     // Create log entry first as pending
-    let log = sqlx::query_as!(
-        EmailLog,
-        r#"INSERT INTO email_logs
-        (company_id, employee_id, template_id, letter_type, recipient_email, recipient_name, subject, body_html, status, created_by)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', $9)
-        RETURNING *"#,
+    let log = email_logs::insert_pending(
+        pool,
         company_id,
         employee_id,
         template_id,
@@ -210,19 +122,11 @@ pub async fn send_email(
         body_html,
         created_by,
     )
-    .fetch_one(pool)
     .await?;
 
     if !config.smtp_enabled() {
         // Mark as failed if SMTP not configured
-        let log = sqlx::query_as!(
-            EmailLog,
-            r#"UPDATE email_logs SET status = 'failed', error_message = 'SMTP not configured'
-            WHERE id = $1 RETURNING *"#,
-            log.id,
-        )
-        .fetch_one(pool)
-        .await?;
+        let log = email_logs::mark_failed_not_configured(pool, log.id).await?;
         tracing::warn!("SMTP not configured, email logged but not sent: {}", log.id);
         return Ok(log);
     }
@@ -269,28 +173,13 @@ pub async fn send_email(
     // Send
     match transport.send(email).await {
         Ok(_) => {
-            let log = sqlx::query_as!(
-                EmailLog,
-                r#"UPDATE email_logs SET status = 'sent', sent_at = NOW()
-                WHERE id = $1 RETURNING *"#,
-                log.id,
-            )
-            .fetch_one(pool)
-            .await?;
+            let log = email_logs::mark_sent(pool, log.id).await?;
             tracing::info!("Email sent successfully: {} to {}", log.id, recipient_email);
             Ok(log)
         }
         Err(e) => {
             let error_msg = format!("{}", e);
-            let log = sqlx::query_as!(
-                EmailLog,
-                r#"UPDATE email_logs SET status = 'failed', error_message = $2
-                WHERE id = $1 RETURNING *"#,
-                log.id,
-                error_msg,
-            )
-            .fetch_one(pool)
-            .await?;
+            let log = email_logs::mark_failed(pool, log.id, &error_msg).await?;
             tracing::error!("Failed to send email {}: {}", log.id, error_msg);
             Ok(log)
         }
