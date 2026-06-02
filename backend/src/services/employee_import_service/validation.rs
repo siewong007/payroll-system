@@ -7,6 +7,7 @@ use super::parsing::{parse_csv, parse_xlsx, rows_to_import_rows};
 use super::values::{parse_bool, parse_date, parse_money_to_sen};
 use crate::core::error::{AppError, AppResult};
 use crate::models::employee_import::*;
+use crate::repositories::{bulk_import_sessions, employees as employee_repo};
 
 fn validate_row(row: &ImportRowRaw) -> Vec<FieldError> {
     let mut errors = Vec::new();
@@ -175,18 +176,13 @@ fn validate_row(row: &ImportRowRaw) -> Vec<FieldError> {
 }
 
 async fn load_existing(pool: &PgPool, company_id: Uuid) -> AppResult<ExistingEmployees> {
-    let rows = sqlx::query!(
-        "SELECT employee_number, ic_number FROM employees WHERE company_id = $1 AND deleted_at IS NULL",
-        company_id,
-    )
-    .fetch_all(pool)
-    .await?;
+    let rows = employee_repo::existing_numbers_and_ics(pool, company_id).await?;
 
     let mut employee_numbers = HashSet::new();
     let mut ic_numbers = HashSet::new();
-    for r in rows {
-        employee_numbers.insert(r.employee_number.to_lowercase());
-        if let Some(ic) = r.ic_number
+    for (employee_number, ic_number) in rows {
+        employee_numbers.insert(employee_number.to_lowercase());
+        if let Some(ic) = ic_number
             && !ic.is_empty()
         {
             ic_numbers.insert(ic.to_lowercase());
@@ -331,9 +327,8 @@ pub async fn validate_file(
     let validated_json = serde_json::to_value(&validated_rows)
         .map_err(|e| AppError::Internal(format!("Failed to serialize validation data: {}", e)))?;
 
-    sqlx::query!(
-        r#"INSERT INTO bulk_import_sessions (id, company_id, user_id, file_name, row_count, valid_count, validated_data, status)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')"#,
+    bulk_import_sessions::insert_pending(
+        pool,
         session_id,
         company_id,
         user_id,
@@ -342,7 +337,6 @@ pub async fn validate_file(
         valid_rows as i32,
         validated_json,
     )
-    .execute(pool)
     .await?;
 
     Ok(ImportValidationResponse {

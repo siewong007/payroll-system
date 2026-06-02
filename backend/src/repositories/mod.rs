@@ -14,6 +14,7 @@ pub mod attendance_qr_tokens;
 pub mod attendance_records;
 pub mod audit_logs;
 pub mod backup;
+pub mod bulk_import_sessions;
 pub mod claims;
 pub mod clock;
 pub mod companies;

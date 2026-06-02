@@ -1,5 +1,6 @@
 //! Data access for the `salary_history` table.
 
+use chrono::NaiveDate;
 use sqlx::{Executor, Postgres};
 use uuid::Uuid;
 
@@ -23,6 +24,32 @@ pub async fn insert(
         employee_id,
         old_salary,
         new_salary,
+        created_by,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
+/// Record the initial salary for a bulk-imported employee (old_salary 0,
+/// effective on their join date).
+//
+// NOTE: the `VALUES` line keeps its original indentation for byte-exact cache match.
+pub async fn insert_bulk_import_initial(
+    executor: impl Executor<'_, Database = Postgres>,
+    id: Uuid,
+    employee_id: Uuid,
+    new_salary: i64,
+    effective_date: NaiveDate,
+    created_by: Uuid,
+) -> AppResult<()> {
+    sqlx::query!(
+        r#"INSERT INTO salary_history (id, employee_id, old_salary, new_salary, effective_date, reason, created_by)
+                    VALUES ($1, $2, 0, $3, $4, 'Initial salary (bulk import)', $5)"#,
+        id,
+        employee_id,
+        new_salary,
+        effective_date,
         created_by,
     )
     .execute(executor)

@@ -5,6 +5,9 @@ use super::values::{parse_bool, parse_date, parse_money_to_sen};
 use crate::core::error::{AppError, AppResult};
 use crate::models::employee::CreateEmployeeRequest;
 use crate::models::employee_import::*;
+use crate::repositories::{
+    audit_logs, bulk_import_sessions, employees as employee_repo, salary_history,
+};
 
 fn row_to_create_request(row: &ImportRowRaw) -> CreateEmployeeRequest {
     CreateEmployeeRequest {
@@ -91,14 +94,9 @@ pub async fn confirm_import(
     user_id: Uuid,
     req: ImportConfirmRequest,
 ) -> AppResult<ImportConfirmResponse> {
-    let session = sqlx::query!(
-        r#"SELECT company_id, user_id, file_name, validated_data, status, expires_at
-            FROM bulk_import_sessions WHERE id = $1"#,
-        req.session_id,
-    )
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound("Import session not found".into()))?;
+    let session = bulk_import_sessions::get(pool, req.session_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Import session not found".into()))?;
 
     let sess_company_id = session.company_id;
     let sess_user_id = session.user_id;
@@ -146,93 +144,19 @@ pub async fn confirm_import(
         let create_req = row_to_create_request(&row_validation.data);
         let id = Uuid::now_v7();
 
-        let result = sqlx::query!(
-            r#"INSERT INTO employees (
-                id, company_id, employee_number, full_name, ic_number, passport_number,
-                date_of_birth, gender, nationality, race, residency_status, marital_status,
-                email, phone, address_line1, address_line2, city, state, postcode,
-                department, designation, cost_centre, branch,
-                employment_type, date_joined, probation_start, probation_end,
-                basic_salary, hourly_rate, daily_rate,
-                bank_name, bank_account_number, bank_account_type,
-                tax_identification_number, epf_number, socso_number, eis_number,
-                working_spouse, num_children, epf_category,
-                is_muslim, zakat_eligible, zakat_monthly_amount,
-                ptptn_monthly_amount, tabung_haji_amount,
-                payroll_group_id, salary_group,
-                created_by
-            ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8::text::gender_type, $9, $10::text::race_type,
-                $11::text::residency_status, $12::text::marital_status,
-                $13, $14, $15, $16, $17, $18, $19,
-                $20, $21, $22, $23, $24::text::employment_type, $25, $26, $27,
-                $28, $29, $30, $31, $32, $33, $34, $35, $36, $37,
-                $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48
-            )"#,
-            id,
-            company_id,
-            create_req.employee_number,
-            create_req.full_name,
-            create_req.ic_number,
-            create_req.passport_number,
-            create_req.date_of_birth,
-            create_req.gender,
-            create_req.nationality,
-            create_req.race,
-            create_req.residency_status.as_deref().unwrap_or("citizen"),
-            create_req.marital_status,
-            create_req.email,
-            create_req.phone,
-            create_req.address_line1,
-            create_req.address_line2,
-            create_req.city,
-            create_req.state,
-            create_req.postcode,
-            create_req.department,
-            create_req.designation,
-            create_req.cost_centre,
-            create_req.branch,
-            create_req.employment_type.as_deref().unwrap_or("permanent"),
-            create_req.date_joined,
-            create_req.probation_start,
-            create_req.probation_end,
-            create_req.basic_salary,
-            create_req.hourly_rate,
-            create_req.daily_rate,
-            create_req.bank_name,
-            create_req.bank_account_number,
-            create_req.bank_account_type,
-            create_req.tax_identification_number,
-            create_req.epf_number,
-            create_req.socso_number,
-            create_req.eis_number,
-            create_req.working_spouse,
-            create_req.num_children,
-            create_req.epf_category,
-            create_req.is_muslim,
-            create_req.zakat_eligible,
-            create_req.zakat_monthly_amount,
-            create_req.ptptn_monthly_amount,
-            create_req.tabung_haji_amount,
-            create_req.payroll_group_id,
-            create_req.salary_group,
-            user_id,
-        )
-        .execute(&mut *tx)
-        .await;
+        let result =
+            employee_repo::insert_bulk_import(&mut *tx, id, company_id, &create_req, user_id).await;
 
         match result {
             Ok(_) => {
-                let _ = sqlx::query!(
-                    r#"INSERT INTO salary_history (id, employee_id, old_salary, new_salary, effective_date, reason, created_by)
-                    VALUES ($1, $2, 0, $3, $4, 'Initial salary (bulk import)', $5)"#,
+                let _ = salary_history::insert_bulk_import_initial(
+                    &mut *tx,
                     Uuid::now_v7(),
                     id,
                     create_req.basic_salary,
                     create_req.date_joined,
                     user_id,
                 )
-                .execute(&mut *tx)
                 .await;
 
                 imported_count += 1;
@@ -260,12 +184,7 @@ pub async fn confirm_import(
 
     tx.commit().await?;
 
-    sqlx::query!(
-        "UPDATE bulk_import_sessions SET status = 'confirmed', confirmed_at = NOW() WHERE id = $1",
-        req.session_id,
-    )
-    .execute(pool)
-    .await?;
+    bulk_import_sessions::mark_confirmed(pool, req.session_id).await?;
 
     let audit_data = serde_json::json!({
         "session_id": req.session_id,
@@ -273,15 +192,13 @@ pub async fn confirm_import(
         "skipped": failed_rows.len() + invalid_rows.len(),
     });
 
-    sqlx::query!(
-        r#"INSERT INTO audit_logs (id, user_id, action, entity_type, description, new_values)
-        VALUES ($1, $2, 'bulk_import', 'employee', $3, $4)"#,
+    audit_logs::insert_bulk_import(
+        pool,
         Uuid::now_v7(),
         user_id,
-        format!("Bulk imported {} employees", imported_count),
+        &format!("Bulk imported {} employees", imported_count),
         audit_data,
     )
-    .execute(pool)
     .await?;
 
     let skipped_count = failed_rows.len() + invalid_rows.len();

@@ -251,6 +251,114 @@ pub async fn overtime_rate_basis(
     Ok(row.map(|r| (r.hourly_rate, r.basic_salary)))
 }
 
+/// Existing `(employee_number, ic_number)` pairs for a company's non-deleted
+/// employees, used to detect duplicates during bulk import.
+pub async fn existing_numbers_and_ics(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+) -> AppResult<Vec<(String, Option<String>)>> {
+    let rows = sqlx::query!(
+        "SELECT employee_number, ic_number FROM employees WHERE company_id = $1 AND deleted_at IS NULL",
+        company_id,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| (r.employee_number, r.ic_number))
+        .collect())
+}
+
+/// Insert one employee from a bulk-import row (no RETURNING; the caller handles
+/// per-row success/failure). Enum columns are cast from text; missing
+/// residency/employment default to citizen/permanent.
+//
+// NOTE: indentation matches the byte-exact SQL in the offline `.sqlx` cache
+// (this INSERT was nested inside the per-row import loop).
+pub async fn insert_bulk_import(
+    executor: impl Executor<'_, Database = Postgres>,
+    id: Uuid,
+    company_id: Uuid,
+    req: &CreateEmployeeRequest,
+    created_by: Uuid,
+) -> AppResult<()> {
+    sqlx::query!(
+        r#"INSERT INTO employees (
+                id, company_id, employee_number, full_name, ic_number, passport_number,
+                date_of_birth, gender, nationality, race, residency_status, marital_status,
+                email, phone, address_line1, address_line2, city, state, postcode,
+                department, designation, cost_centre, branch,
+                employment_type, date_joined, probation_start, probation_end,
+                basic_salary, hourly_rate, daily_rate,
+                bank_name, bank_account_number, bank_account_type,
+                tax_identification_number, epf_number, socso_number, eis_number,
+                working_spouse, num_children, epf_category,
+                is_muslim, zakat_eligible, zakat_monthly_amount,
+                ptptn_monthly_amount, tabung_haji_amount,
+                payroll_group_id, salary_group,
+                created_by
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8::text::gender_type, $9, $10::text::race_type,
+                $11::text::residency_status, $12::text::marital_status,
+                $13, $14, $15, $16, $17, $18, $19,
+                $20, $21, $22, $23, $24::text::employment_type, $25, $26, $27,
+                $28, $29, $30, $31, $32, $33, $34, $35, $36, $37,
+                $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48
+            )"#,
+        id,
+        company_id,
+        req.employee_number,
+        req.full_name,
+        req.ic_number,
+        req.passport_number,
+        req.date_of_birth,
+        req.gender,
+        req.nationality,
+        req.race,
+        req.residency_status.as_deref().unwrap_or("citizen"),
+        req.marital_status,
+        req.email,
+        req.phone,
+        req.address_line1,
+        req.address_line2,
+        req.city,
+        req.state,
+        req.postcode,
+        req.department,
+        req.designation,
+        req.cost_centre,
+        req.branch,
+        req.employment_type.as_deref().unwrap_or("permanent"),
+        req.date_joined,
+        req.probation_start,
+        req.probation_end,
+        req.basic_salary,
+        req.hourly_rate,
+        req.daily_rate,
+        req.bank_name,
+        req.bank_account_number,
+        req.bank_account_type,
+        req.tax_identification_number,
+        req.epf_number,
+        req.socso_number,
+        req.eis_number,
+        req.working_spouse,
+        req.num_children,
+        req.epf_category,
+        req.is_muslim,
+        req.zakat_eligible,
+        req.zakat_monthly_amount,
+        req.ptptn_monthly_amount,
+        req.tabung_haji_amount,
+        req.payroll_group_id,
+        req.salary_group,
+        created_by,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
 pub async fn insert(
     executor: impl Executor<'_, Database = Postgres>,
     id: Uuid,
