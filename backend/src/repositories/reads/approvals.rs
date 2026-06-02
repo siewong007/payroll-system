@@ -155,3 +155,73 @@ pub async fn list_pending_overtime(
     .await?;
     Ok(apps)
 }
+
+#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
+pub struct ClaimWithEmployee {
+    pub id: Uuid,
+    pub employee_id: Uuid,
+    pub company_id: Uuid,
+    pub title: String,
+    pub description: Option<String>,
+    pub amount: i64,
+    pub category: Option<String>,
+    pub receipt_url: Option<String>,
+    pub receipt_file_name: Option<String>,
+    pub expense_date: chrono::NaiveDate,
+    pub status: String,
+    pub submitted_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub reviewed_by: Option<Uuid>,
+    pub reviewed_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub review_notes: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub employee_name: Option<String>,
+    pub employee_number: Option<String>,
+}
+
+/// A single claim joined to employee identity, or `None`.
+pub async fn claim_with_employee_by_id(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    claim_id: Uuid,
+) -> AppResult<Option<ClaimWithEmployee>> {
+    let claim = sqlx::query_as!(
+        ClaimWithEmployee,
+        r#"SELECT c.*,
+            e.full_name AS "employee_name?",
+            e.employee_number AS "employee_number?"
+        FROM claims c
+        JOIN employees e ON c.employee_id = e.id
+        WHERE c.id = $1 AND c.company_id = $2"#,
+        claim_id,
+        company_id,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(claim)
+}
+
+/// Up to 100 most-recent claims for the admin inbox, optionally filtered by status.
+pub async fn list_pending_claims(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    status: Option<&str>,
+) -> AppResult<Vec<ClaimWithEmployee>> {
+    let claims = sqlx::query_as!(
+        ClaimWithEmployee,
+        r#"SELECT c.*,
+            e.full_name AS "employee_name?",
+            e.employee_number AS "employee_number?"
+        FROM claims c
+        JOIN employees e ON c.employee_id = e.id
+        WHERE c.company_id = $1
+        AND ($2::text IS NULL OR c.status = $2)
+        ORDER BY c.created_at DESC
+        LIMIT 100"#,
+        company_id,
+        status,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(claims)
+}

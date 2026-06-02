@@ -367,3 +367,109 @@ pub async fn insert_overtime(
     .await?;
     Ok(())
 }
+
+// ─── Claim-reimbursement earning entries (staged on claim approval) ───
+
+/// Whether a *processed* claim reimbursement matching `description` and `amount`
+/// already exists for an employee in a period.
+//
+// NOTE: indentation matches the byte-exact SQL in the offline `.sqlx` cache.
+#[allow(clippy::too_many_arguments)]
+pub async fn exists_processed_claim(
+    executor: impl Executor<'_, Database = Postgres>,
+    employee_id: Uuid,
+    company_id: Uuid,
+    period_year: i32,
+    period_month: i32,
+    description: &str,
+    amount: i64,
+) -> AppResult<bool> {
+    let exists = sqlx::query_scalar!(
+        r#"SELECT EXISTS(
+                SELECT 1 FROM payroll_entries
+                WHERE employee_id = $1
+                  AND company_id = $2
+                  AND period_year = $3
+                  AND period_month = $4
+                  AND item_type = 'claim_reimbursement'
+                  AND description = $5
+                  AND amount = $6
+                  AND is_processed = TRUE
+            ) AS "exists!""#,
+        employee_id,
+        company_id,
+        period_year,
+        period_month,
+        description,
+        amount,
+    )
+    .fetch_one(executor)
+    .await?;
+    Ok(exists)
+}
+
+/// Delete the *unprocessed* claim reimbursement matching `description`/`amount`.
+//
+// NOTE: indentation matches the byte-exact SQL in the offline `.sqlx` cache.
+#[allow(clippy::too_many_arguments)]
+pub async fn delete_unprocessed_claim(
+    executor: impl Executor<'_, Database = Postgres>,
+    employee_id: Uuid,
+    company_id: Uuid,
+    period_year: i32,
+    period_month: i32,
+    description: &str,
+    amount: i64,
+) -> AppResult<()> {
+    sqlx::query!(
+        r#"DELETE FROM payroll_entries
+            WHERE employee_id = $1
+              AND company_id = $2
+              AND period_year = $3
+              AND period_month = $4
+              AND item_type = 'claim_reimbursement'
+              AND description = $5
+              AND amount = $6
+              AND is_processed = FALSE"#,
+        employee_id,
+        company_id,
+        period_year,
+        period_month,
+        description,
+        amount,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
+/// Stage a claim reimbursement as an earning.
+#[allow(clippy::too_many_arguments)]
+pub async fn insert_claim_reimbursement(
+    executor: impl Executor<'_, Database = Postgres>,
+    id: Uuid,
+    employee_id: Uuid,
+    company_id: Uuid,
+    period_year: i32,
+    period_month: i32,
+    description: &str,
+    amount: i64,
+    created_by: Uuid,
+) -> AppResult<()> {
+    sqlx::query!(
+        r#"INSERT INTO payroll_entries
+            (id, employee_id, company_id, period_year, period_month, category, item_type, description, amount, created_by)
+        VALUES ($1, $2, $3, $4, $5, 'earning', 'claim_reimbursement', $6, $7, $8)"#,
+        id,
+        employee_id,
+        company_id,
+        period_year,
+        period_month,
+        description,
+        amount,
+        created_by,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}
