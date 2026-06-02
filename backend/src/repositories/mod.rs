@@ -22,6 +22,8 @@ pub mod company_settings;
 pub mod company_work_schedules;
 pub mod documents;
 pub mod eis_rates;
+pub mod email_logs;
+pub mod email_templates;
 pub mod employee_work_schedules;
 pub mod employees;
 pub mod epf_rates;
