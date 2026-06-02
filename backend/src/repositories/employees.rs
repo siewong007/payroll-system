@@ -106,6 +106,32 @@ pub async fn get(
     Ok(employee)
 }
 
+/// An employee's own profile by id (no company filter), for the self-service portal.
+pub async fn get_profile(
+    executor: impl Executor<'_, Database = Postgres>,
+    id: Uuid,
+) -> AppResult<Option<Employee>> {
+    let employee = sqlx::query_as!(
+        Employee,
+        r#"SELECT id, company_id, employee_number, full_name, ic_number, passport_number,
+            date_of_birth, gender::text AS "gender?", nationality, race::text AS "race?", residency_status::text AS "residency_status!",
+            marital_status::text AS "marital_status?", email, phone, address_line1, address_line2, city, state, postcode,
+            department, designation, cost_centre, branch, employment_type::text AS "employment_type!",
+            date_joined, probation_start, probation_end, confirmation_date, date_resigned,
+            resignation_reason, basic_salary, hourly_rate, daily_rate, bank_name,
+            bank_account_number, bank_account_type, tax_identification_number, epf_number,
+            socso_number, eis_number, working_spouse, num_children, epf_category, is_muslim,
+            zakat_eligible, zakat_monthly_amount, ptptn_monthly_amount, tabung_haji_amount,
+            hrdf_contribution, payroll_group_id, salary_group, is_active, deleted_at,
+            created_at, updated_at, created_by, updated_by
+        FROM employees WHERE id = $1 AND deleted_at IS NULL"#,
+        id,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(employee)
+}
+
 /// Active flag for an employee, used by auth to reject logins for deleted staff.
 /// `None` means the row is absent (also treated as inactive by callers).
 pub async fn get_active_status(

@@ -259,3 +259,28 @@ pub async fn set_rejected(
     .await?;
     Ok(lr)
 }
+
+/// An employee's own leave requests (with type name), newest first (max 50).
+pub async fn list_for_employee(
+    executor: impl Executor<'_, Database = Postgres>,
+    employee_id: Uuid,
+) -> AppResult<Vec<LeaveRequest>> {
+    let requests = sqlx::query_as!(
+        LeaveRequest,
+        r#"SELECT lr.id, lr.employee_id, lr.company_id, lr.leave_type_id,
+            lr.start_date, lr.end_date, lr.days, lr.reason, lr.status,
+            lr.reviewed_by, lr.reviewed_at, lr.review_notes,
+            lr.attachment_url, lr.attachment_name,
+            lr.created_at, lr.updated_at,
+            lt.name AS "leave_type_name?"
+        FROM leave_requests lr
+        JOIN leave_types lt ON lr.leave_type_id = lt.id
+        WHERE lr.employee_id = $1
+        ORDER BY lr.created_at DESC
+        LIMIT 50"#,
+        employee_id,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(requests)
+}

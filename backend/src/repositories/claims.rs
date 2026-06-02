@@ -273,3 +273,24 @@ pub async fn set_rejected(
     .await?;
     Ok(claim)
 }
+
+/// An employee's own claims, optionally filtered by status, newest first (max 100).
+pub async fn list_for_employee(
+    executor: impl Executor<'_, Database = Postgres>,
+    employee_id: Uuid,
+    status: Option<&str>,
+) -> AppResult<Vec<Claim>> {
+    let claims = sqlx::query_as!(
+        Claim,
+        r#"SELECT * FROM claims
+        WHERE employee_id = $1
+        AND ($2::text IS NULL OR status = $2)
+        ORDER BY created_at DESC
+        LIMIT 100"#,
+        employee_id,
+        status,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(claims)
+}

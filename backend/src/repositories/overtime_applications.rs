@@ -221,3 +221,21 @@ pub async fn set_rejected(
     .await?;
     Ok(ot)
 }
+
+/// An employee's own overtime applications, newest first (max 50).
+pub async fn list_for_employee(
+    executor: impl Executor<'_, Database = Postgres>,
+    employee_id: Uuid,
+) -> AppResult<Vec<OvertimeApplication>> {
+    let apps = sqlx::query_as!(
+        OvertimeApplication,
+        r#"SELECT * FROM overtime_applications
+        WHERE employee_id = $1
+        ORDER BY created_at DESC
+        LIMIT 50"#,
+        employee_id,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(apps)
+}
