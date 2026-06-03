@@ -253,8 +253,8 @@ pub async fn summary(
 
     let mut query = sqlx::query_as::<_, AttendanceSummaryItem>(&sql)
         .bind(company_id)
-        .bind(&q.date_from)
-        .bind(&q.date_to);
+        .bind(q.date_from)
+        .bind(q.date_to);
 
     if let Some(eid) = q.employee_id {
         query = query.bind(eid);

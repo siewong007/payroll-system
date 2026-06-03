@@ -472,14 +472,8 @@ pub async fn initialize_leave_balances(
     let mut balances = vec![];
     for lt in &leave_types {
         let entitled = calculate_prorated_days(lt.default_days, date_joined, year);
-        let balance = leave_balances::upsert_entitled(
-            pool,
-            employee_id,
-            lt.id,
-            year,
-            entitled,
-        )
-        .await?;
+        let balance =
+            leave_balances::upsert_entitled(pool, employee_id, lt.id, year, entitled).await?;
 
         if let Some(b) = balance {
             balances.push(b);
@@ -505,7 +499,8 @@ pub async fn process_year_end_carry_forward(
     for (emp_id, date_joined) in employees {
         for lt in &leave_types {
             // Get current year balance
-            let balance = leave_balances::get_balance_for_year(pool, emp_id, lt.id, from_year).await?;
+            let balance =
+                leave_balances::get_balance_for_year(pool, emp_id, lt.id, from_year).await?;
 
             let carry = if let Some((entitled, taken, pending, carried_forward)) = balance {
                 let remaining = entitled + carried_forward - taken - pending;
@@ -523,7 +518,8 @@ pub async fn process_year_end_carry_forward(
             let entitled = calculate_prorated_days(lt.default_days, date_joined, to_year);
 
             // UPSERT next year balance
-            leave_balances::upsert_carried_forward(pool, emp_id, lt.id, to_year, entitled, carry).await?;
+            leave_balances::upsert_carried_forward(pool, emp_id, lt.id, to_year, entitled, carry)
+                .await?;
 
             count += 1;
         }
@@ -551,7 +547,9 @@ pub async fn get_team_calendar(
     .and_then(|d| d.pred_opt())
     .ok_or_else(|| AppError::BadRequest("Invalid month".into()))?;
 
-    let entries = portal_reads::team_calendar(pool, employee_id, company_id, period_start, period_end).await?;
+    let entries =
+        portal_reads::team_calendar(pool, employee_id, company_id, period_start, period_end)
+            .await?;
 
     Ok(entries)
 }

@@ -312,8 +312,7 @@ pub async fn insert_draft(
 ) -> AppResult<Claim> {
     let claim = sqlx::query_as!(
         Claim,
-        r#"INSERT INTO claims
-            (employee_id, company_id, title, description, amount, category, receipt_url, receipt_file_name, expense_date)
+        r#"INSERT INTO claims (employee_id, company_id, title, description, amount, category, receipt_url, receipt_file_name, expense_date)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         RETURNING *"#,
         employee_id,

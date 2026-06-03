@@ -6,8 +6,9 @@ use crate::core::error::AppResult;
 pub async fn get_migration_status(
     executor: impl Executor<'_, Database = Postgres>,
 ) -> AppResult<(Option<i64>, i64)> {
-    let row = sqlx::query_as("SELECT MAX(version), COUNT(*) FROM _sqlx_migrations WHERE success = TRUE")
-        .fetch_one(executor)
-        .await?;
+    let row =
+        sqlx::query_as("SELECT MAX(version), COUNT(*) FROM _sqlx_migrations WHERE success = TRUE")
+            .fetch_one(executor)
+            .await?;
     Ok(row)
 }
