@@ -1,20 +1,11 @@
 //! Data access for the `bulk_import_sessions` table (staged employee imports).
 
-use chrono::{DateTime, Utc};
 use sqlx::{Executor, Postgres};
 use uuid::Uuid;
 
 use crate::core::error::AppResult;
 
-/// The fields of a staged import session needed to confirm it.
-pub struct ImportSession {
-    pub company_id: Uuid,
-    pub user_id: Uuid,
-    pub file_name: String,
-    pub validated_data: serde_json::Value,
-    pub status: String,
-    pub expires_at: DateTime<Utc>,
-}
+use crate::models::employee_import::ImportSession;
 
 pub async fn get(
     executor: impl Executor<'_, Database = Postgres>,

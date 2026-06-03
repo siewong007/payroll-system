@@ -16,5 +16,6 @@ pub mod payslip;
 pub mod portal;
 pub mod reports;
 pub mod statutory;
+pub mod system;
 pub mod teams;
 pub mod user_management;

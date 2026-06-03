@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -111,8 +111,8 @@ pub struct ManualAttendanceRequest {
 #[derive(Debug, Deserialize)]
 pub struct AttendanceListQuery {
     pub employee_id: Option<Uuid>,
-    pub date_from: Option<String>,
-    pub date_to: Option<String>,
+    pub date_from: Option<NaiveDate>,
+    pub date_to: Option<NaiveDate>,
     pub status: Option<String>,
     pub method: Option<String>,
     /// Page number (1-based, default 1)
@@ -167,8 +167,8 @@ pub struct QrTokenResponse {
 
 #[derive(Debug, Deserialize)]
 pub struct AttendanceSummaryQuery {
-    pub date_from: String,
-    pub date_to: String,
+    pub date_from: NaiveDate,
+    pub date_to: NaiveDate,
     pub employee_id: Option<Uuid>,
     pub department: Option<String>,
 }
@@ -192,8 +192,8 @@ pub struct AttendanceSummaryItem {
 
 #[derive(Debug, Deserialize)]
 pub struct AttendanceExportQuery {
-    pub date_from: Option<String>,
-    pub date_to: Option<String>,
+    pub date_from: Option<NaiveDate>,
+    pub date_to: Option<NaiveDate>,
     pub employee_id: Option<Uuid>,
     pub status: Option<String>,
 }

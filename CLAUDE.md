@@ -24,7 +24,7 @@ cargo test <name>           # run a single test by substring
 ```
 Migrations live in `backend/migrations/` and are embedded via `sqlx::migrate!` — they run on every `cargo run`. Add schema changes as new numbered files (`NNN_description.sql`); do not edit existing migrations.
 
-Some queries use the compile-time-checked `sqlx::query!`/`query_as!` macros (the payroll engine is fully migrated; other modules still use runtime `query`/`query_as` and are being migrated incrementally). These macros are verified against the committed `backend/.sqlx/` offline cache, so CI lint and the Docker build need no database (`SQLX_OFFLINE=true`). **After adding or changing a macro query, regenerate the cache** against a migrated DB and commit it:
+Data access uses the compile-time-checked `sqlx::query!`/`query_as!`/`query_scalar!` macros throughout and lives in `backend/src/repositories/` (see Backend layering below). These macros are verified against the committed `backend/.sqlx/` offline cache, so CI lint and the Docker build need no database (`SQLX_OFFLINE=true`). **After adding or changing a macro query, regenerate the cache** against a migrated DB and commit it:
 ```bash
 DATABASE_URL=postgres://… cargo sqlx prepare   # writes backend/.sqlx/
 ```
@@ -50,10 +50,10 @@ Browser → Vite dev proxy (or CloudFront in prod) → Axum at `/api/*` → hand
 
 ### Backend layering (strict, enforced by convention)
 - `handlers/` — thin HTTP glue. Extract `AuthUser`, parse JSON, call a service, map to JSON response. Do not put business logic here.
-- `services/` — business logic and orchestration (e.g. `payroll_engine`, `pcb_calculator`, `epf_service`, `eis_service`, `socso_service`, `attendance_service`). Services take `&PgPool` and return `AppResult<T>`.
-- `models/` — data structs and sqlx queries. Naming is by domain (`employee.rs`, `payroll.rs`, `attendance.rs`, `user_company.rs`, etc.).
+- `services/` — business logic and orchestration (e.g. `payroll_engine`, `pcb_calculator`, `epf_service`, `eis_service`, `socso_service`, `attendance_service`). Services compose repository calls, own transaction boundaries, and map absence to `NotFound`/`Conflict`. They take `&PgPool` and return `AppResult<T>`. No raw SQL in services.
+- `models/` — data structs and bespoke read/DTO projections (no SQL). Naming is by domain (`employee.rs`, `payroll.rs`, `attendance.rs`, `user_company.rs`, etc.).
+- `repositories/` — the data-access layer: one module per table (`employees.rs`, `payroll_runs.rs`, …) holding thin query functions, plus `reads/` for cross-table joins/aggregations grouped by use-case (`reads/payroll.rs`, `reads/reports.rs`, …). **All `sqlx::query*` lives here**; handlers and services never embed SQL. Functions are generic over `impl sqlx::Executor<'_, Database = Postgres>`, so a service passes `&pool` or composes several calls in one `&mut tx`. See `docs/refactor-repositories-layer.md`.
 - `core/` — cross-cutting: `app_state` (shared `AppState { pool, config, webauthn }`), `auth` (JWT + `AuthUser` extractor), `config` (env loading), `db` (pool + migrate), `cookie`, `error` (`AppError` → HTTP via `IntoResponse`).
-- `repositories/` exists but is currently empty — model files hold queries today.
 
 Errors: every fallible path returns `AppResult<T>` (`Result<T, AppError>`). `AppError::Database` wraps `sqlx::Error` via `#[from]`, so use `?` freely. `AppError::Internal` is logged and returned as a generic 500; all other variants surface their message to the client.
 
@@ -91,5 +91,5 @@ Key design decisions to be aware of:
 - Money uses `rust_decimal::Decimal` end-to-end; never `f64`. Serde serializes decimals as strings (`serde-with-str`) — mirror that in TS types.
 - Dates for attendance/scheduling are interpreted in `Asia/Kuala_Lumpur`; UTC is only used for storage and for the background-task scheduler.
 - New schema changes: add a new file in `backend/migrations/` with the next sequence number. Update `frontend/src/types/` to match any API contract change (per CONTRIBUTING.md).
-- Keep handlers thin; if you find yourself writing SQL or composing services in a handler, move it into a `service` module.
+- Keep handlers thin; if you find yourself composing services or business logic in a handler, move it into a `service` module. SQL belongs in a `repositories/` module (per-table) or `repositories/reads/` (joins/aggregations) — never in a handler or service.
 - Do not introduce a second HTTP client on the frontend — extend `api/client.ts` or add a new `api/<module>.ts` that uses it.
