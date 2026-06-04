@@ -1,28 +1,56 @@
 # Rust
 target/
+**/target/
 *.rs.bk
 
-# Node
+# Node / frontend
 node_modules/
+**/node_modules/
 dist/
+**/dist/
 .vite/
+**/.vite/
+coverage/
+**/coverage/
 
-# Environment
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment files
 .env
+.env.*
 !.env.example
+!**/.env.example
 
-# IDE
+# IDE and editor files
 .idea/
 .vscode/
 *.swp
 *.swo
 
-# OS
+# OS files
 .DS_Store
 Thumbs.db
 
-# Database
+# Database and local generated data
 *.sql.bak
-
-# User uploads
 backend/uploads/
+uploads/
+
+# Terraform local state
+.terraform/
+**/.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+
+# Generated reports and exports
+*.pdf
+*.xlsx
+*.csv
+!backend/migrations/**/*.csv

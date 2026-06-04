@@ -1,226 +1,367 @@
 <div align="center">
 
-# PayrollMY
+![Payroll System logo](frontend/public/branding/payrollmy-lockup-light.svg)
 
----
+# Payroll System
 
-**A full-stack payroll management system built for Malaysian businesses with Rust, React, and Tailwind.**
-**Handles statutory compliance (EPF, SOCSO, EIS, PCB), employee self-service, and multi-company support.**
+**A full-stack payroll and HR workflow system for small and medium-sized enterprises.**
 
-[![Quick Start](https://img.shields.io/badge/Quick_Start-5_MIN-blue?style=for-the-badge)](#quick-start)
-[![Features](https://img.shields.io/badge/Features-14+-gray?style=for-the-badge)](#features)
-[![API](https://img.shields.io/badge/API-15_MODULES-green?style=for-the-badge)](#api-modules)
-[![License](https://img.shields.io/badge/License-MIT-gold?style=for-the-badge)](LICENSE)
-
-[![Rust](https://img.shields.io/badge/Rust-2024-orange?style=flat-square&logo=rust&logoColor=white)](https://www.rust-lang.org/)
-[![Axum](https://img.shields.io/badge/Axum-0.8-gray?style=flat-square)](https://github.com/tokio-rs/axum)
-[![React](https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=white)](https://react.dev/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![Vite](https://img.shields.io/badge/Vite-8-646CFF?style=flat-square&logo=vite&logoColor=white)](https://vitejs.dev/)
-[![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-4-06B6D4?style=flat-square&logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-18+-4169E1?style=flat-square&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![CI](https://img.shields.io/github/actions/workflow/status/siewong007/payroll-system/ci.yml?branch=main&label=CI&style=flat-square)](https://github.com/siewong007/payroll-system/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg?style=flat-square)](LICENSE)
+[![Rust](https://img.shields.io/badge/Rust-2024-orange?style=flat-square&logo=rust)](backend/Cargo.toml)
+[![React](https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=white)](frontend/package.json)
+[![Version](https://img.shields.io/badge/version-0.1.0-blue?style=flat-square)](backend/Cargo.toml)
+[![Last Commit](https://img.shields.io/github/last-commit/siewong007/payroll-system?style=flat-square)](https://github.com/siewong007/payroll-system/commits/main)
 
 </div>
 
----
+## Project Overview 📌
 
-## Features
+Payroll System is an academic full-stack project that models common payroll and HR administration workflows for Malaysian SMEs. It provides employee management, monthly payroll processing, statutory contribution calculations, approval workflows, attendance tracking, employee self-service, reporting, and basic infrastructure automation.
 
-<table>
-<tr>
-<td width="50%">
+The system is built as a React single-page application backed by a Rust Axum API and PostgreSQL database. It is suitable for a final-year project, portfolio demonstration, or software engineering case study. It should be evaluated as a learning and prototype system unless it has been independently reviewed for a real organization.
 
-### Payroll & Compliance
-- Automated monthly payroll processing
-- EPF, SOCSO, EIS, and PCB auto-computation
-- Zakat, PTPTN, and Tabung Haji deductions
-- Salary history and mid-year TP3 imports
-- Payroll approval and lock workflows
-- Configurable payroll groups, cutoff dates, and overtime multipliers
+## Problem Statement
 
-</td>
-<td width="50%">
+Many SMEs manage payroll, attendance, leave, claims, and statutory records across spreadsheets, messaging apps, and manual documents. This creates duplicated data entry, limited auditability, inconsistent approval records, and a higher risk of payroll errors. A centralized system can make these workflows more traceable and easier to review, while also demonstrating how modern web technologies can be applied to business process automation.
 
-### Employee Management
-- Full employee lifecycle — onboarding to offboarding
-- Department, designation, and team assignment
-- Banking details and statutory registration numbers
-- Probation tracking and confirmation management
-- Bulk employee import with CSV upload
-- Employee directory with search and filters
+## Project Objectives
 
-</td>
-</tr>
-<tr>
-<td width="50%">
+- Design a centralized payroll and HR workflow platform for SME daily operations.
+- Implement role-based access for administrators, payroll staff, finance users, executives, and employees.
+- Automate selected payroll calculations using seeded statutory tables for EPF, SOCSO, EIS, and PCB.
+- Provide employee self-service features for payslips, leave, claims, overtime, attendance, and notifications.
+- Record operational events through audit logs and approval states.
+- Demonstrate a maintainable full-stack architecture using Rust, React, PostgreSQL, Docker, and Terraform.
 
-### Employee Self-Service Portal
-- View and download payslips
-- Submit leave requests with attachments
-- File expense claims with receipt uploads
-- Apply for overtime with auto-calculation
-- Team calendar and public holidays
-- Personal profile and statutory details
+## Key Features ✨
 
-</td>
-<td width="50%">
+| Area | Implemented capabilities |
+| --- | --- |
+| Authentication | JWT access tokens, httpOnly refresh cookies, password reset, Google OAuth2 hooks, WebAuthn passkeys, multi-company switching |
+| User and role management | Super admin company management, user management, role-aware frontend routing, company-scoped data access |
+| Employee management | Employee CRUD, salary history, TP3 records, bulk import validation/confirmation, employee portal account creation |
+| Payroll | Payroll groups, payroll run processing, draft submission, approval, return-for-changes, paid locking, manual payroll entries |
+| Statutory payroll | EPF, SOCSO, EIS, PCB calculation services, statutory reports, export endpoints, EA form endpoints |
+| Attendance | QR attendance, kiosk credentials, Face ID mode setting, check-out, manual attendance, summaries, CSV export, geofence configuration |
+| Employee portal | Profile, payslips, leave requests, claims, overtime requests, team calendar, notifications, attendance history |
+| Approvals | Leave, claims, overtime, and payroll lifecycle approval actions |
+| Documents and letters | Document records, categories, expiry tracking, email/letter templates, preview, sending logs |
+| Reporting and audit | Dashboard summaries, payroll reports, leave/claims/statutory reports, audit trail |
+| Operations | Database migrations, seed data, Docker Compose services, CI workflows, Terraform infrastructure modules |
 
-### Approval Workflows
-- Leave request approvals with manager review
-- Expense claim review and processing
-- Overtime application approvals
-- Admin notification system for pending items
+## Tech Stack 🧰
 
-</td>
-</tr>
-<tr>
-<td width="50%">
+| Layer | Technology |
+| --- | --- |
+| Frontend | React 19, TypeScript 5.9, Vite 8, Tailwind CSS 4, React Router, TanStack Query, Axios |
+| Backend | Rust 2024, Axum 0.8, Tokio, SQLx, Tower HTTP, tower-governor |
+| Database and cache | PostgreSQL 18, Redis 7 |
+| Auth and security | JWT, bcrypt, httpOnly cookies, WebAuthn, OAuth2, route-level rate limiting |
+| Documents and exports | printpdf, rust_xlsxwriter, calamine, csv, lettre |
+| DevOps | Docker Compose, GitHub Actions, Terraform, AWS-oriented infrastructure modules |
 
-### HR Letters & Email
-- Compose HR letters: Offer, Appointment, Warning, Termination, Promotion
-- Template system with variable substitution
-- Preview emails before sending
-- Auto-send welcome email on employee creation
-- Email delivery log with status tracking
+## Architecture
 
-</td>
-<td width="50%">
+```mermaid
+flowchart LR
+    Browser["Browser / Employee kiosk"] --> Frontend["React SPA\nVite dev server or CloudFront"]
+    Frontend --> Api["Axum API\n/api/*"]
+    Api --> Handlers["Handlers\nHTTP extraction and response mapping"]
+    Handlers --> Services["Services\nBusiness workflows"]
+    Services --> Repositories["Repositories and SQLx\nData access"]
+    Repositories --> Postgres[("PostgreSQL 18")]
+    Services --> Exports["PDF, CSV, XLSX,\nstatutory exports"]
+    Services --> Email["SMTP email service"]
+    Api --> Cookies["httpOnly refresh cookie\nBearer access token"]
+    Background["Background tasks\nsession cleanup and attendance marking"] --> Repositories
+    Redis[("Redis 7\nlocal service")] -. "available via compose" .-> Api
+```
 
-### Documents & Calendar
-- Company document management with categories and expiry tracking
-- Holiday calendar with ICS import
-- Configurable working days per company
-- State-specific holiday support
+### Request Flow
 
-</td>
-</tr>
-<tr>
-<td width="50%">
+```text
+Browser -> Vite proxy or CloudFront -> Axum /api -> handler -> service -> repository -> PostgreSQL
+```
 
-### Authentication & Security
-- Passwordless login with **Passkeys (WebAuthn)**
-- Google OAuth2 single sign-on
-- JWT with secure httpOnly refresh cookies
-- Role-based access control (6 roles)
-- Password reset with admin approval
-- Per-endpoint rate limiting
+Handlers are intended to stay thin. Business rules live in services, while database access is organized in repositories and SQLx-backed read modules.
 
-</td>
-<td width="50%">
+## Project Structure
 
-### Multi-Company & Reporting
-- Manage multiple companies from one dashboard
-- Users assigned to multiple companies with switching
-- Company-scoped data isolation
-- Payroll summary and department reports
-- Leave utilization, claims, and statutory reports
+```text
+payroll-system/
+├── backend/
+│   ├── migrations/
+│   │   ├── schema/              # SQLx migrations
+│   │   └── seed/                # statutory and demo seed data
+│   ├── src/
+│   │   ├── core/                # config, auth, db, errors, app state
+│   │   ├── handlers/            # Axum HTTP handlers
+│   │   ├── models/              # DTOs and domain structs
+│   │   ├── repositories/        # SQLx data access modules
+│   │   ├── routes/              # all /api route definitions
+│   │   ├── services/            # business logic and orchestration
+│   │   └── tests/               # backend integration tests
+│   ├── Cargo.toml
+│   └── Dockerfile
+├── frontend/
+│   ├── public/branding/         # project logo assets
+│   └── src/
+│       ├── api/                 # Axios API modules
+│       ├── components/          # reusable UI components
+│       ├── context/             # auth context/provider
+│       ├── pages/               # route-level feature screens
+│       ├── tests/               # frontend tests
+│       └── types/               # TypeScript domain types
+├── infra/                       # Terraform and deployment assets
+├── docs/                        # project documentation
+├── docker-compose.yml           # local PostgreSQL, Redis, pgAdmin
+├── README.md
+├── CONTRIBUTING.md
+└── LICENSE
+```
 
-</td>
-</tr>
-</table>
-
-## API Modules
-
-| Module | Description |
-|--------|-------------|
-| `auth` | Login, passkeys, OAuth2, JWT refresh |
-| `employees` | CRUD, bulk import, onboarding/offboarding |
-| `payroll` | Processing, calculations, approvals |
-| `leaves` | Requests, balances, approvals |
-| `claims` | Expense claims, receipt uploads |
-| `overtime` | Applications, auto-calculation |
-| `companies` | Multi-company management |
-| `departments` | Department and team structure |
-| `designations` | Role and title management |
-| `documents` | Upload, categorize, expiry tracking |
-| `calendar` | Holidays, ICS import, working days |
-| `letters` | HR letter templates and sending |
-| `reports` | Payroll, leave, claims, statutory |
-| `settings` | System and company configuration |
-| `backup` | Database backup and restore |
-
-## Quick Start
+## Installation Guide 🚀
 
 ### Prerequisites
 
-- **Docker & Docker Compose** — for PostgreSQL and Redis
-- **Rust** (latest stable) — backend
-- **Node.js 18+** — frontend
+- Docker and Docker Compose
+- Rust stable toolchain
+- Node.js 22 or newer
+- npm
 
-### Setup
+### 1. Clone the Repository
 
 ```bash
-# Clone the repository
-git clone https://github.com/your-username/payroll-system.git
+git clone https://github.com/siewong007/payroll-system.git
 cd payroll-system
+```
 
-# Configure local environment
+### 2. Configure Environment Files
+
+```bash
 cp .env.example .env
+cp .env.example backend/.env
+```
 
-# Start PostgreSQL and Redis
+The root `.env` is used by Docker Compose. The `backend/.env` file is used when running `cargo run` from the `backend/` directory.
+
+### 3. Start Local Services
+
+```bash
 docker compose up -d
+```
 
-# Backend
+This starts PostgreSQL 18, Redis 7, and pgAdmin. The backend automatically applies schema migrations and seed data on startup.
+
+### 4. Run the Backend
+
+```bash
 cd backend
 cargo run
+```
 
-# Frontend (in a new terminal)
+The API starts at `http://localhost:8080`.
+
+### 5. Run the Frontend
+
+Open a second terminal:
+
+```bash
 cd frontend
 npm install
 npm run dev
 ```
 
-The app will be available at `http://localhost:5173`.
+The frontend starts at `http://localhost:5173` and proxies `/api` requests to the backend.
 
-### Environment Variables
+### 6. Verify the Setup
 
-| Variable | Description |
-|----------|-------------|
-| `DATABASE_URL` | PostgreSQL connection string |
-| `JWT_SECRET` | Secret key for JWT signing |
-| `FRONTEND_URL` | Frontend URL for CORS and email links |
-| `SMTP_HOST` | SMTP server for sending emails |
-| `SMTP_FROM_EMAIL` | Sender email address |
-| `WEBAUTHN_RP_ID` | WebAuthn relying party ID (your domain) |
-| `WEBAUTHN_RP_ORIGIN` | WebAuthn origin URL |
-| `GOOGLE_CLIENT_ID` | Google OAuth2 client ID *(optional)* |
-| `GOOGLE_CLIENT_SECRET` | Google OAuth2 secret *(optional)* |
+```bash
+curl http://localhost:8080/api/health
+```
 
-### Demo Accounts
+Expected response:
+
+```text
+ok
+```
+
+## Environment Variables
+
+The main example file is [.env.example](.env.example).
+
+| Variable | Required | Description |
+| --- | --- | --- |
+| `POSTGRES_DB` | Local compose | PostgreSQL database name |
+| `POSTGRES_USER` | Local compose | PostgreSQL username |
+| `POSTGRES_PASSWORD` | Local compose | PostgreSQL password |
+| `PGADMIN_EMAIL` | Local compose | pgAdmin login email |
+| `PGADMIN_PASSWORD` | Local compose | pgAdmin login password |
+| `DATABASE_URL` | Backend | PostgreSQL connection string |
+| `JWT_SECRET` | Backend | Secret used to sign JWTs |
+| `JWT_EXPIRY_HOURS` | Backend | Access token lifetime in hours |
+| `RUST_LOG` | Backend | Rust tracing/logging configuration |
+| `SERVER_HOST` | Backend | Backend bind host |
+| `SERVER_PORT` | Backend | Backend bind port |
+| `FRONTEND_URL` | Backend | Allowed frontend origin and email link base URL |
+| `WEBAUTHN_RP_ID` | Backend | WebAuthn relying party ID |
+| `WEBAUTHN_RP_ORIGIN` | Backend | WebAuthn origin URL |
+| `GOOGLE_CLIENT_ID` | Optional | Google OAuth2 client ID |
+| `GOOGLE_CLIENT_SECRET` | Optional | Google OAuth2 client secret |
+| `SMTP_HOST` | Optional | SMTP server hostname |
+| `SMTP_PORT` | Optional | SMTP server port |
+| `SMTP_USERNAME` | Optional | SMTP username |
+| `SMTP_PASSWORD` | Optional | SMTP password |
+| `SMTP_FROM_EMAIL` | Optional | Sender email address |
+| `SMTP_FROM_NAME` | Optional | Sender display name |
+| `VITE_API_URL` | Optional frontend | External API base URL when not using the Vite proxy |
+
+## Demo Accounts
+
+The seed data includes demo users for local evaluation after the backend has run migrations and seeding.
 
 | Role | Email | Password |
-|------|-------|----------|
-| Super Admin | admin@demo.com | admin123 |
-| Executive | exec@demo.com | admin123 |
-| Employee | sarah@demo.com | admin123 |
+| --- | --- | --- |
+| Super admin | `superadmin@demo.com` | `admin123` |
+| Company admin | `admin@demo.com` | `admin123` |
+| Executive | `exec@demo.com` | `admin123` |
+| Employee | `sarah@demo.com` | `admin123` |
+| Employee | `ahmad@demo.com` | `admin123` |
 
-## Project Structure
+## Usage Examples
 
+### Log in
+
+```bash
+curl -s -X POST http://localhost:8080/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@demo.com","password":"admin123"}'
 ```
-payroll-system/
-├── backend/                 # Rust API server (Axum)
-│   ├── src/
-│   │   ├── handlers/        # Route handlers
-│   │   ├── services/        # Business logic
-│   │   ├── models/          # Data models & queries
-│   │   ├── core/            # Auth, config, error handling
-│   │   └── routes/          # Route definitions
-│   └── migrations/          # PostgreSQL migrations (30+)
-├── frontend/                # React SPA
-│   └── src/
-│       ├── pages/           # Page components (15 modules)
-│       ├── components/      # Reusable UI components
-│       ├── api/             # API client modules
-│       ├── context/         # Auth context & providers
-│       └── types/           # TypeScript interfaces
-├── infra/                   # Terraform (AWS deployment)
-└── docker-compose.yml       # Local development services
+
+Copy the returned token into authenticated requests:
+
+```bash
+curl -s http://localhost:8080/api/employees \
+  -H "Authorization: Bearer <access-token>"
 ```
+
+### Process a Payroll Run
+
+```bash
+curl -s -X POST http://localhost:8080/api/payroll/run \
+  -H "Authorization: Bearer <access-token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "payroll_group_id": "00000000-0000-0000-0000-000000000003",
+    "period_year": 2026,
+    "period_month": 1,
+    "notes": "January payroll test run"
+  }'
+```
+
+### View Attendance Summary
+
+```bash
+curl -s "http://localhost:8080/api/attendance/summary?date_from=2026-01-01&date_to=2026-01-31" \
+  -H "Authorization: Bearer <access-token>"
+```
+
+## API Endpoint Documentation 🔌
+
+All backend endpoints are nested under `/api`. Most endpoints require `Authorization: Bearer <access-token>` unless marked as public.
+
+| Module | Representative endpoints |
+| --- | --- |
+| Health | `GET /api/health`, `GET /api/health/ready` |
+| Auth | `POST /api/auth/login`, `POST /api/auth/refresh`, `POST /api/auth/logout`, `PUT /api/auth/change-password`, `PUT /api/auth/switch-company` |
+| Passkeys and OAuth2 | `POST /api/auth/passkey/register/begin`, `POST /api/auth/passkey/authenticate/begin`, `GET /api/auth/oauth2/providers`, `GET /api/auth/oauth2/google/callback` |
+| Admin | `GET/POST /api/admin/companies`, `GET/POST /api/admin/users`, `PUT /api/admin/users/{id}/companies` |
+| Employees | `GET/POST /api/employees`, `GET/PUT/DELETE /api/employees/{id}`, `GET /api/employees/{id}/salary-history`, `POST /api/employees/import/validate` |
+| Payroll | `POST /api/payroll/run`, `GET /api/payroll/runs`, `GET /api/payroll/runs/{id}`, `PUT /api/payroll/runs/{id}/approve`, `PUT /api/payroll/runs/{id}/lock` |
+| Payroll entries | `GET/POST /api/payroll/entries`, `PUT/DELETE /api/payroll/entries/{id}` |
+| Portal | `GET /api/portal/profile`, `GET /api/portal/payslips`, `GET/POST /api/portal/leave/requests`, `GET/POST /api/portal/claims`, `GET/POST /api/portal/overtime` |
+| Approvals | `GET /api/approvals/leave`, `PUT /api/approvals/leave/{id}/approve`, `GET /api/approvals/claims`, `GET /api/approvals/overtime` |
+| Attendance | `POST /api/attendance/qr/generate`, `POST /api/attendance/check-in/qr`, `POST /api/attendance/check-out`, `GET /api/attendance/summary`, `GET /api/attendance/export` |
+| Kiosk | `POST /api/attendance/kiosk/qr`, `GET/POST /api/attendance/kiosks`, `DELETE /api/attendance/kiosks/{id}` |
+| Calendar and teams | `GET/POST /api/calendar/holidays`, `POST /api/calendar/import-ics`, `GET/POST /api/teams`, `GET/POST /api/teams/{id}/members` |
+| Documents and email | `GET/POST /api/documents`, `GET/POST /api/email/templates`, `POST /api/email/preview`, `POST /api/email/send` |
+| Reports | `GET /api/reports/payroll-summary`, `GET /api/reports/leave`, `GET /api/reports/statutory`, `GET /api/reports/ea-form` |
+| Audit and backup | `GET /api/audit-logs`, `GET /api/admin/backup/export`, `POST /api/admin/backup/import` |
+| Work schedules and geofence | `GET /api/work-schedules`, `GET/PUT /api/work-schedules/default`, `GET/POST /api/geofence/locations`, `GET/PUT /api/geofence/mode` |
+
+## Screenshots and Demo Placeholders
+
+Add screenshots to `docs/screenshots/` and reference them here when available.
+
+| Screen | Suggested file | Purpose |
+| --- | --- | --- |
+| Login and passkey flow | `docs/screenshots/login.png` | Show authentication entry point |
+| Admin dashboard | `docs/screenshots/dashboard.png` | Show high-level company overview |
+| Employee list and import | `docs/screenshots/employees.png` | Show HR administration workflow |
+| Payroll processing | `docs/screenshots/payroll-run.png` | Show payroll run lifecycle |
+| Attendance kiosk | `docs/screenshots/attendance-kiosk.png` | Show QR/kiosk attendance workflow |
+| Employee portal | `docs/screenshots/employee-portal.png` | Show payslips, leave, claims, and attendance |
+| Reports | `docs/screenshots/reports.png` | Show reporting and export views |
+
+Suggested short demo videos:
+
+- Create an employee and review their portal account.
+- Process a monthly payroll run and submit it for approval.
+- Scan a QR attendance code and export attendance summary data.
+- Submit a leave request from the portal and approve it as an administrator.
+
+## Repository Presentation
+
+Maintainer-facing GitHub profile suggestions are documented in [docs/repository-appearance.md](docs/repository-appearance.md), including the recommended repository description, topics, logo/banner direction, screenshot checklist, and demo GIF ideas.
+
+## Roadmap and Future Improvements 🗺️
+
+- Publish a formal OpenAPI specification for backend endpoints.
+- Add end-to-end browser tests for core payroll, attendance, and portal workflows.
+- Add a statutory data versioning workflow for easier review of EPF, SOCSO, EIS, and PCB updates.
+- Strengthen Face ID attendance with stricter server-side WebAuthn assertion verification.
+- Improve accessibility testing and keyboard navigation coverage.
+- Add Malay/English localization support.
+- Add more detailed deployment documentation for non-AWS environments.
+- Add dashboard analytics for payroll cost trends and attendance exceptions.
+
+## Limitations
+
+- This project is not presented as production-ready payroll software.
+- Statutory calculations and seeded rate tables should be reviewed against current official requirements before real-world use.
+- Email, OAuth2, WebAuthn, and cloud deployment require environment-specific configuration.
+- Face ID attendance currently relies on authenticated session context and credential information; it is not a full biometric verification service.
+- File uploads are stored locally unless deployment storage is configured separately.
+- Security, compliance, backup, and disaster-recovery controls require further review before organizational adoption.
 
 ## Contributing
 
-Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+Contributions are welcome for learning, review, and project improvement. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening an issue or pull request.
+
+Recommended checks before a pull request:
+
+```bash
+cd backend
+cargo fmt --check
+cargo clippy -- -D warnings
+cargo test
+```
+
+```bash
+cd frontend
+npm run lint
+npm test
+npm run build
+```
 
 ## License
 
-This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
+This project is licensed under the [MIT License](LICENSE).
+
+## Acknowledgements
+
+- Rust, Axum, SQLx, and Tokio for the backend foundation.
+- React, Vite, Tailwind CSS, and TanStack Query for the frontend stack.
+- PostgreSQL and Redis for local service infrastructure.
+- The Malaysian payroll statutory concepts used as the basis for the academic prototype.

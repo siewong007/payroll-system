@@ -1,127 +1,142 @@
-# Contributing to PayrollMY
+# Contributing to Payroll System
 
-Thank you for your interest in contributing! This guide will help you get started.
+Thank you for your interest in improving this project. This repository is maintained as an academic and portfolio-oriented payroll/HR workflow system, so contributions should be clear, reviewable, and aligned with the existing architecture.
 
-## Getting Started
+## Ways to Contribute
 
-1. **Fork** the repository
-2. **Clone** your fork:
-   ```bash
-   git clone https://github.com/your-username/payroll-system.git
-   cd payroll-system
-   ```
-3. **Create a branch** for your changes:
-   ```bash
-   git checkout -b feature/your-feature-name
-   ```
+- Report reproducible bugs.
+- Suggest focused feature improvements.
+- Improve documentation, tests, and accessibility.
+- Review payroll, attendance, approval, or security-related behavior.
+- Refactor code only when it reduces complexity or follows an existing project direction.
 
 ## Development Setup
 
 ### Prerequisites
 
-- Docker & Docker Compose
-- Rust (latest stable)
-- Node.js 18+
+- Docker and Docker Compose
+- Rust stable toolchain
+- Node.js 22 or newer
+- npm
 
-### Running Locally
+### Local Setup
 
 ```bash
-# Configure local environment
+git clone https://github.com/siewong007/payroll-system.git
+cd payroll-system
 cp .env.example .env
-
-# Start services
+cp .env.example backend/.env
 docker compose up -d
+```
 
-# Backend
+Backend:
+
+```bash
 cd backend
 cargo run
+```
 
-# Frontend (new terminal)
+Frontend:
+
+```bash
 cd frontend
 npm install
 npm run dev
 ```
 
-## Making Changes
+## Project Architecture Rules
 
-### Code Style
+### Backend
 
-**Backend (Rust)**
-- Follow standard Rust conventions (`cargo fmt` and `cargo clippy`)
-- Use meaningful variable and function names
-- Keep handler functions thin — business logic belongs in `services/`
+- Keep handlers thin. Handlers should extract request data, call a service, and return a response.
+- Place business logic in `backend/src/services/`.
+- Place SQL/data access in `backend/src/repositories/` or `backend/src/repositories/reads/`.
+- Use `AppResult<T>` and existing `AppError` variants for fallible paths.
+- Use `rust_decimal::Decimal` for money. Do not introduce floating-point payroll calculations.
+- Add new schema changes as new migration files in `backend/migrations/schema/`.
+- Do not edit existing migrations unless the repository owner explicitly asks for a history rewrite.
 
-**Frontend (React/TypeScript)**
-- Use functional components with hooks
-- Follow existing patterns for API calls (`src/api/`)
-- Use TypeScript types — avoid `any`
-- Use Tailwind CSS for styling
+### Frontend
 
-### Commit Messages
+- Use the existing Axios instance from `frontend/src/api/client.ts`.
+- Do not create a second HTTP client.
+- Keep API types aligned with backend contract changes.
+- Use existing layout, role guard, and React Query patterns.
+- Keep UI changes accessible and responsive.
 
-Write clear, concise commit messages:
+## SQLx Offline Cache
 
+Some backend queries use SQLx compile-time macros. If you add or change a macro query, regenerate the SQLx cache against a migrated PostgreSQL database:
+
+```bash
+cd backend
+DATABASE_URL=postgres://payroll:payroll_secret_change_me@localhost:5432/payroll_db cargo sqlx prepare
 ```
-Add employee bulk import via CSV upload
-Fix PCB calculation for mid-year joiners
-Update leave balance calculation to handle carry-forward
+
+Commit the updated `backend/.sqlx/` files when present.
+
+## Required Checks
+
+Run the relevant checks before opening a pull request.
+
+Backend:
+
+```bash
+cd backend
+cargo fmt --check
+cargo clippy -- -D warnings
+cargo test
 ```
 
-- Use present tense ("Add feature" not "Added feature")
-- Keep the first line under 72 characters
-- Reference issue numbers when applicable (e.g., `Fix #42`)
+Frontend:
 
-## Submitting Changes
+```bash
+cd frontend
+npm run lint
+npm test
+npm run build
+```
 
-1. **Push** your branch to your fork:
-   ```bash
-   git push origin feature/your-feature-name
-   ```
+## Commit Guidelines
 
-2. **Open a Pull Request** against the `main` branch
+Use short, descriptive commit messages in present tense.
 
-3. In your PR description, include:
-   - What the change does
-   - Why the change is needed
-   - How to test it
-   - Screenshots for UI changes
+Examples:
+
+```text
+Add attendance CSV export filters
+Fix payroll approval status transition
+Document backend environment variables
+```
+
+Keep the first line under 72 characters when possible.
 
 ## Pull Request Guidelines
 
-- Keep PRs focused — one feature or fix per PR
-- Ensure the backend compiles without errors (`cargo build`)
-- Ensure the frontend builds without errors (`npm run build`)
-- Update types in `frontend/src/types/` if API contracts change
-- Add or update migrations in `backend/migrations/` for schema changes
+- Keep each pull request focused on one feature, fix, or documentation change.
+- Explain what changed, why it changed, and how it was tested.
+- Include screenshots for UI changes.
+- Include migration notes for database changes.
+- Update README or related docs when behavior changes.
+- Avoid unrelated formatting or refactoring in the same pull request.
 
 ## Reporting Issues
 
-When reporting a bug, please include:
+When reporting a bug, include:
 
-- Steps to reproduce the issue
-- Expected vs actual behavior
-- Browser and OS information (for frontend issues)
-- Relevant error messages or logs
+- Steps to reproduce.
+- Expected behavior.
+- Actual behavior.
+- Relevant logs, screenshots, or API responses.
+- Browser/OS details for frontend issues.
+- Database or migration context for backend issues.
 
-## Areas for Contribution
+Use the issue templates in `.github/ISSUE_TEMPLATE/` where possible.
 
-Here are some areas where contributions are especially welcome:
+## Security Issues
 
-- **Testing** — unit and integration tests for backend services
-- **Documentation** — API documentation, inline code comments
-- **Accessibility** — improving frontend accessibility (ARIA labels, keyboard navigation)
-- **Localization** — adding Malay language support
-- **Performance** — query optimization, frontend bundle size reduction
+Please do not report security vulnerabilities in public issues. Follow [SECURITY.md](SECURITY.md).
 
 ## Code of Conduct
 
-- Be respectful and constructive in all interactions
-- Welcome newcomers and help them get started
-- Focus on the technical merits of contributions
-- Disagree respectfully — critique code, not people
-
-## Questions?
-
-If you have questions about contributing, feel free to open an issue with the **question** label.
-
-Thank you for helping improve PayrollMY!
+All contributors are expected to follow [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
