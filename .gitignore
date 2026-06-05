@@ -54,3 +54,6 @@ crash.*.log
 *.xlsx
 *.csv
 !backend/migrations/**/*.csv
+
+# Cross-built backend binary (deploy artifact, not source)
+payroll-system.amd64

@@ -1,0 +1,8 @@
+# Build-context hygiene. infra/Dockerfile only needs backend/{Cargo.*,src,migrations,.sqlx}.
+.git
+frontend
+docs
+backend/target
+**/node_modules
+**/.DS_Store
+payroll-system.amd64

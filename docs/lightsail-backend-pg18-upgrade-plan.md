@@ -1,9 +1,12 @@
 # Lightsail backend deploy — PostgreSQL 16 → 18 upgrade & migration re-baseline plan
 
-> Status: **PLAN ONLY — do not execute until reviewed.** The frontend has already been
-> deployed (S3 `payroll-dev-frontend` + CloudFront `ED4843A8VKOA2`). The backend has **not**
-> been touched. Deploying the latest backend binary as-is would crash production — this
-> document is the safe path to ship it.
+> Status: **EXECUTED 2026-06-05 — cutover successful.** Prod is now on PostgreSQL 18.4 running the
+> latest backend binary (sha256-verified). Data preserved (59 employees, 2 companies), ~96s downtime
+> (10:44:41→10:46:17 UTC), all health + smoke checks green, migrations re-baselined to v1/v2 with no
+> checksum error. Frontend was deployed earlier (S3 `payroll-dev-frontend` + CloudFront `ED4843A8VKOA2`).
+> Retained as the procedure record + rollback reference: old `16/main` cluster parked **stopped on :5416**,
+> backups in `/var/backups/payroll/` (`payroll_db_pre18.dump`, `payroll_db_final.dump`, `payroll-system.pre18`).
+> Follow-ups: drop `16/main` once confident (`sudo pg_dropcluster --stop 16 main`); rotate the leaked SMTP/Gmail secrets.
 
 ## 1. Current production reality (hand-built, not the `infra/` Terraform)
 
@@ -130,6 +133,30 @@ Expected/acceptable differences only:
 renamed) means the squash is NOT a faithful representation of prod → **STOP** and reconcile by
 hand (add a forward migration, or fall back to the data-reload approach in the Appendix) before
 proceeding.
+
+#### GATE RESULT — verified 2026-06-04: **PASS** ✅
+
+Ran structurally (via `information_schema` + `pg_constraint`/`pg_indexes`, name-independent) against a
+local PG18 with `schema/001+002` applied vs a read-only dump of prod `payroll_db`:
+
+| Check | Prod | Canonical | Verdict |
+|---|---|---|---|
+| Tables | 48 app (+`_sqlx_migrations`) | 48 app | identical sets |
+| Columns (name/type/nullable) | 601 | 600 | only `users.role` differs |
+| Indexes | 141 | 141 | identical |
+| Real constraints (PK/FK/UNIQUE/CHECK) | 159 | 158 | only `users_role_check` differs |
+
+The sole structural delta is `users.role` + its `users_role_check` — precisely what `002` drops. Benign
+deltas: id defaults (`uuid_generate_v4`/`gen_random_uuid` vs `uuidv7`) and the `uuid-ossp` extension. The
+NOT NULL constraint-count gap is a PG18 cataloguing artifact (nullability itself matched in `information_schema`).
+
+Captured sqlx checksums (sha384 of the migration files) for the §7 re-baseline — **verify against sqlx's own
+values** by reading `_sqlx_migrations` from the scratch DB in §6 before trusting these:
+- `001_schema.sql` → `eb658264c6221cae9e96675758ed45dca868e59db8b229f6b60404e5c3a7db57e365b88ca1bd75a18dc1ffcaca8fba2d`
+- `002_drop_users_role.sql` → `0a4a362f0c85703befccd030b21e71d51546a656b45ba8d960b933ba753ded3630f330763310eed4c21f71f664e71478`
+
+Conclusion: the re-baseline approach is safe. The only genuine change to apply at cutover is
+`ALTER TABLE users DROP COLUMN role`; everything else is identical.
 
 ## 7. Step 3 — Cutover (maintenance window)
 
