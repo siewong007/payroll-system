@@ -7,11 +7,15 @@ use uuid::Uuid;
 use crate::core::config::AppConfig;
 use crate::core::error::{AppError, AppResult};
 use crate::models::portal::{Claim, CreateClaimRequest, UpdateClaimRequest};
+use crate::repositories::reads::approvals as approval_reads;
+use crate::repositories::{claims, payroll_entries, users as user_repo};
 use crate::services::audit_service::AuditRequestMeta;
 use crate::services::email_service;
 use crate::services::notification_service;
 
 use super::common::{ensure_employee_in_company, ensure_positive_amount};
+
+pub use crate::models::approval::ClaimWithEmployee;
 
 pub async fn create_claim_admin(
     pool: &PgPool,
@@ -24,12 +28,8 @@ pub async fn create_claim_admin(
     ensure_employee_in_company(pool, company_id, employee_id).await?;
     ensure_positive_amount(req.amount)?;
 
-    let claim = sqlx::query_as!(
-        Claim,
-        r#"INSERT INTO claims
-            (employee_id, company_id, title, description, amount, category, receipt_url, receipt_file_name, expense_date, status, submitted_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', NOW())
-        RETURNING *"#,
+    let claim = claims::insert(
+        pool,
         employee_id,
         company_id,
         req.title,
@@ -40,7 +40,6 @@ pub async fn create_claim_admin(
         req.receipt_file_name,
         req.expense_date,
     )
-    .fetch_one(pool)
     .await?;
 
     let _ = crate::services::audit_service::log_action_with_metadata(
@@ -68,17 +67,9 @@ pub async fn update_claim_admin(
     actor_id: Uuid,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<Claim> {
-    let current = sqlx::query_as!(
-        Claim,
-        r#"SELECT * FROM claims
-        WHERE id = $1 AND company_id = $2
-        AND status IN ('draft', 'pending', 'rejected')"#,
-        claim_id,
-        company_id,
-    )
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::BadRequest("Claim not found or cannot be edited".into()))?;
+    let current = claims::get_editable(pool, claim_id, company_id)
+        .await?
+        .ok_or_else(|| AppError::BadRequest("Claim not found or cannot be edited".into()))?;
 
     if let Some(employee_id) = req.employee_id {
         ensure_employee_in_company(pool, company_id, employee_id).await?;
@@ -88,20 +79,8 @@ pub async fn update_claim_admin(
         ensure_positive_amount(amount)?;
     }
 
-    let updated = sqlx::query_as!(
-        Claim,
-        r#"UPDATE claims
-        SET employee_id = COALESCE($3, employee_id),
-            title = COALESCE($4, title),
-            description = CASE WHEN $5::text IS NULL THEN description ELSE NULLIF($5, '') END,
-            amount = COALESCE($6, amount),
-            category = CASE WHEN $7::text IS NULL THEN category ELSE NULLIF($7, '') END,
-            receipt_url = CASE WHEN $8::text IS NULL THEN receipt_url ELSE NULLIF($8, '') END,
-            receipt_file_name = CASE WHEN $9::text IS NULL THEN receipt_file_name ELSE NULLIF($9, '') END,
-            expense_date = COALESCE($10, expense_date),
-            updated_at = NOW()
-        WHERE id = $1 AND company_id = $2
-        RETURNING *"#,
+    let updated = claims::update_full(
+        pool,
         claim_id,
         company_id,
         req.employee_id,
@@ -113,7 +92,6 @@ pub async fn update_claim_admin(
         req.receipt_file_name,
         req.expense_date,
     )
-    .fetch_one(pool)
     .await?;
 
     let _ = crate::services::audit_service::log_action_with_metadata(
@@ -143,25 +121,11 @@ pub async fn delete_claim_admin(
     actor_id: Uuid,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<()> {
-    let current = sqlx::query_as!(
-        Claim,
-        r#"SELECT * FROM claims
-        WHERE id = $1 AND company_id = $2
-        AND status IN ('draft', 'cancelled')"#,
-        claim_id,
-        company_id,
-    )
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::BadRequest("Claim not found or cannot be deleted".into()))?;
+    let current = claims::get_deletable(pool, claim_id, company_id)
+        .await?
+        .ok_or_else(|| AppError::BadRequest("Claim not found or cannot be deleted".into()))?;
 
-    sqlx::query!(
-        "DELETE FROM claims WHERE id = $1 AND company_id = $2",
-        claim_id,
-        company_id,
-    )
-    .execute(pool)
-    .await?;
+    claims::delete(pool, claim_id, company_id).await?;
 
     let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
@@ -192,34 +156,15 @@ pub async fn cancel_claim_admin(
 ) -> AppResult<Claim> {
     let mut tx = pool.begin().await?;
 
-    let current = sqlx::query_as!(
-        Claim,
-        r#"SELECT * FROM claims
-        WHERE id = $1
-          AND company_id = $2
-          AND status IN ('pending', 'approved', 'rejected')"#,
-        claim_id,
-        company_id,
-    )
-    .fetch_optional(&mut *tx)
-    .await?
-    .ok_or_else(|| AppError::BadRequest("Claim not found or cannot be cancelled".into()))?;
+    let current = claims::get_cancellable(&mut *tx, claim_id, company_id)
+        .await?
+        .ok_or_else(|| AppError::BadRequest("Claim not found or cannot be cancelled".into()))?;
 
     if current.status == "approved" {
         let staged_at = current.reviewed_at.unwrap_or_else(chrono::Utc::now);
         let description = format!("Claim: {}", current.title);
-        let processed = sqlx::query_scalar!(
-            r#"SELECT EXISTS(
-                SELECT 1 FROM payroll_entries
-                WHERE employee_id = $1
-                  AND company_id = $2
-                  AND period_year = $3
-                  AND period_month = $4
-                  AND item_type = 'claim_reimbursement'
-                  AND description = $5
-                  AND amount = $6
-                  AND is_processed = TRUE
-            ) AS "exists!""#,
+        let processed = payroll_entries::exists_processed_claim(
+            &mut *tx,
             current.employee_id,
             company_id,
             staged_at.year(),
@@ -227,7 +172,6 @@ pub async fn cancel_claim_admin(
             &description,
             current.amount,
         )
-        .fetch_one(&mut *tx)
         .await?;
 
         if processed {
@@ -237,16 +181,8 @@ pub async fn cancel_claim_admin(
             ));
         }
 
-        sqlx::query!(
-            r#"DELETE FROM payroll_entries
-            WHERE employee_id = $1
-              AND company_id = $2
-              AND period_year = $3
-              AND period_month = $4
-              AND item_type = 'claim_reimbursement'
-              AND description = $5
-              AND amount = $6
-              AND is_processed = FALSE"#,
+        payroll_entries::delete_unprocessed_claim(
+            &mut *tx,
             current.employee_id,
             company_id,
             staged_at.year(),
@@ -254,21 +190,10 @@ pub async fn cancel_claim_admin(
             &description,
             current.amount,
         )
-        .execute(&mut *tx)
         .await?;
     }
 
-    let cancelled = sqlx::query_as!(
-        Claim,
-        r#"UPDATE claims
-        SET status = 'cancelled', updated_at = NOW()
-        WHERE id = $1 AND company_id = $2
-        RETURNING *"#,
-        claim_id,
-        company_id,
-    )
-    .fetch_one(&mut *tx)
-    .await?;
+    let cancelled = claims::set_cancelled(&mut *tx, claim_id, company_id).await?;
 
     tx.commit().await?;
 
@@ -294,48 +219,14 @@ pub async fn cancel_claim_admin(
 
 // ─── Claims Approval ───
 
-#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
-pub struct ClaimWithEmployee {
-    pub id: Uuid,
-    pub employee_id: Uuid,
-    pub company_id: Uuid,
-    pub title: String,
-    pub description: Option<String>,
-    pub amount: i64,
-    pub category: Option<String>,
-    pub receipt_url: Option<String>,
-    pub receipt_file_name: Option<String>,
-    pub expense_date: chrono::NaiveDate,
-    pub status: String,
-    pub submitted_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub reviewed_by: Option<Uuid>,
-    pub reviewed_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub review_notes: Option<String>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
-    pub employee_name: Option<String>,
-    pub employee_number: Option<String>,
-}
-
 pub async fn get_claim_with_employee_by_id(
     pool: &PgPool,
     company_id: Uuid,
     claim_id: Uuid,
 ) -> AppResult<ClaimWithEmployee> {
-    sqlx::query_as!(
-        ClaimWithEmployee,
-        r#"SELECT c.*,
-            e.full_name AS "employee_name?",
-            e.employee_number AS "employee_number?"
-        FROM claims c
-        JOIN employees e ON c.employee_id = e.id
-        WHERE c.id = $1 AND c.company_id = $2"#,
-        claim_id,
-        company_id,
-    )
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound("Claim not found".into()))
+    approval_reads::claim_with_employee_by_id(pool, company_id, claim_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Claim not found".into()))
 }
 
 pub async fn get_pending_claims(
@@ -343,23 +234,7 @@ pub async fn get_pending_claims(
     company_id: Uuid,
     status: Option<&str>,
 ) -> AppResult<Vec<ClaimWithEmployee>> {
-    let claims = sqlx::query_as!(
-        ClaimWithEmployee,
-        r#"SELECT c.*,
-            e.full_name AS "employee_name?",
-            e.employee_number AS "employee_number?"
-        FROM claims c
-        JOIN employees e ON c.employee_id = e.id
-        WHERE c.company_id = $1
-        AND ($2::text IS NULL OR c.status = $2)
-        ORDER BY c.created_at DESC
-        LIMIT 100"#,
-        company_id,
-        status,
-    )
-    .fetch_all(pool)
-    .await?;
-    Ok(claims)
+    approval_reads::list_pending_claims(pool, company_id, status).await
 }
 
 pub async fn approve_claim(
@@ -371,21 +246,9 @@ pub async fn approve_claim(
     notes: Option<&str>,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<Claim> {
-    let claim = sqlx::query_as!(
-        Claim,
-        r#"UPDATE claims SET
-            status = 'approved', reviewed_by = $3, reviewed_at = NOW(),
-            review_notes = $4, updated_at = NOW()
-        WHERE id = $1 AND company_id = $2 AND status = 'pending'
-        RETURNING *"#,
-        claim_id,
-        company_id,
-        reviewer_id,
-        notes,
-    )
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::BadRequest("Claim not found or not pending".into()))?;
+    let claim = claims::set_approved(pool, claim_id, company_id, reviewer_id, notes)
+        .await?
+        .ok_or_else(|| AppError::BadRequest("Claim not found or not pending".into()))?;
 
     // Auto-create payroll entry for the approved claim amount
     // Stage it for the current payroll period (current month)
@@ -393,29 +256,21 @@ pub async fn approve_claim(
     let period_year = now.year();
     let period_month = now.month() as i32;
 
-    let _ = sqlx::query!(
-        r#"INSERT INTO payroll_entries
-            (id, employee_id, company_id, period_year, period_month, category, item_type, description, amount, created_by)
-        VALUES ($1, $2, $3, $4, $5, 'earning', 'claim_reimbursement', $6, $7, $8)"#,
+    let _ = payroll_entries::insert_claim_reimbursement(
+        pool,
         Uuid::now_v7(),
         claim.employee_id,
         company_id,
         period_year,
         period_month,
-        format!("Claim: {}", claim.title),
+        &format!("Claim: {}", claim.title),
         claim.amount,
         reviewer_id,
     )
-    .execute(pool)
     .await;
 
     // Notify employee
-    let employee_user = sqlx::query_scalar!(
-        "SELECT id FROM users WHERE employee_id = $1 AND is_active = TRUE",
-        claim.employee_id,
-    )
-    .fetch_optional(pool)
-    .await?;
+    let employee_user = user_repo::active_id_for_employee(pool, claim.employee_id).await?;
 
     if let Some(user_id) = employee_user {
         let _ = notification_service::create_notification(
@@ -435,15 +290,7 @@ pub async fn approve_claim(
     }
 
     // Send approval email
-    let emp_info = sqlx::query!(
-        r#"SELECT e.full_name, e.email AS "email!", COALESCE(c.name, '') AS "company_name!"
-        FROM employees e
-        JOIN companies c ON e.company_id = c.id
-        WHERE e.id = $1"#,
-        claim.employee_id,
-    )
-    .fetch_optional(pool)
-    .await?;
+    let emp_info = approval_reads::employee_email_info(pool, claim.employee_id).await?;
 
     if let Some(emp) = emp_info {
         let amount_rm = claim.amount as f64 / 100.0;
@@ -505,28 +352,11 @@ pub async fn reject_claim(
     notes: Option<&str>,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<Claim> {
-    let claim = sqlx::query_as!(
-        Claim,
-        r#"UPDATE claims SET
-            status = 'rejected', reviewed_by = $3, reviewed_at = NOW(),
-            review_notes = $4, updated_at = NOW()
-        WHERE id = $1 AND company_id = $2 AND status = 'pending'
-        RETURNING *"#,
-        claim_id,
-        company_id,
-        reviewer_id,
-        notes,
-    )
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::BadRequest("Claim not found or not pending".into()))?;
+    let claim = claims::set_rejected(pool, claim_id, company_id, reviewer_id, notes)
+        .await?
+        .ok_or_else(|| AppError::BadRequest("Claim not found or not pending".into()))?;
 
-    let employee_user = sqlx::query_scalar!(
-        "SELECT id FROM users WHERE employee_id = $1 AND is_active = TRUE",
-        claim.employee_id,
-    )
-    .fetch_optional(pool)
-    .await?;
+    let employee_user = user_repo::active_id_for_employee(pool, claim.employee_id).await?;
 
     if let Some(user_id) = employee_user {
         let _ = notification_service::create_notification(

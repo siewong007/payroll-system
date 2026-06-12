@@ -2,13 +2,8 @@ use chrono::NaiveDate;
 use sqlx::PgPool;
 
 use crate::core::error::{AppError, AppResult};
-
-/// EPF contribution result
-#[derive(Debug, Clone)]
-pub struct EpfContribution {
-    pub employee: i64, // in sen
-    pub employer: i64, // in sen
-}
+use crate::models::statutory::EpfContribution;
+use crate::repositories::epf_rates;
 
 /// Look up EPF contribution from the Third Schedule table.
 ///
@@ -22,23 +17,7 @@ pub async fn calculate_epf(
     effective_date: NaiveDate,
 ) -> AppResult<EpfContribution> {
     // Try table lookup first
-    let rate = sqlx::query!(
-        r#"
-        SELECT employee_contribution, employer_contribution
-        FROM epf_rates
-        WHERE category = $1
-          AND wage_from <= $2 AND wage_to >= $2
-          AND effective_from <= $3
-          AND (effective_to IS NULL OR effective_to >= $3)
-        ORDER BY effective_from DESC
-        LIMIT 1
-        "#,
-        category,
-        wage,
-        effective_date,
-    )
-    .fetch_optional(pool)
-    .await?;
+    let rate = epf_rates::find_contribution(pool, category, wage, effective_date).await?;
 
     if let Some(r) = rate {
         return Ok(EpfContribution {

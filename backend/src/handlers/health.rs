@@ -12,10 +12,7 @@ use crate::core::app_state::AppState;
 /// lightweight `/health` endpoint is intentionally left alone so quick liveness
 /// probes stay cheap.
 pub async fn ready(State(state): State<AppState>) -> (StatusCode, Json<Value>) {
-    let row: Result<(Option<i64>, i64), _> =
-        sqlx::query_as("SELECT MAX(version), COUNT(*) FROM _sqlx_migrations WHERE success = TRUE")
-            .fetch_one(&state.pool)
-            .await;
+    let row = crate::repositories::reads::system::get_migration_status(&state.pool).await;
 
     match row {
         Ok((Some(latest), count)) => (

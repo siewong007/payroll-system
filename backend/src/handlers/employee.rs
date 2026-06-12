@@ -3,16 +3,16 @@ use axum::{
     extract::{Path, Query, State},
     http::HeaderMap,
 };
-use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::core::app_state::AppState;
 use crate::core::auth::{AuthUser, Permission};
 use crate::core::error::{AppError, AppResult};
 use crate::models::employee::{
-    CreateEmployeeRequest, CreateTp3Request, Employee, SalaryHistory, Tp3Record,
-    UpdateEmployeeRequest,
+    CarryForwardRequest, CreateEmployeeRequest, CreateTp3Request, Employee, InitBalancesQuery,
+    ListQuery, SalaryHistory, Tp3Record, UpdateEmployeeRequest,
 };
+use crate::models::pagination::PaginatedResponse;
 use crate::services::audit_service::AuditRequestMeta;
 use crate::services::{company_service, email_service, employee_service, portal_service};
 
@@ -73,23 +73,6 @@ fn update_request_touches_payroll_fields(req: &UpdateEmployeeRequest) -> bool {
         || req.hrdf_contribution.is_some()
         || req.payroll_group_id.is_some()
         || req.salary_group.is_some()
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ListQuery {
-    pub search: Option<String>,
-    pub department: Option<String>,
-    pub is_active: Option<bool>,
-    pub page: Option<i64>,
-    pub per_page: Option<i64>,
-}
-
-#[derive(Debug, serde::Serialize)]
-pub struct PaginatedResponse<T: serde::Serialize> {
-    pub data: Vec<T>,
-    pub total: i64,
-    pub page: i64,
-    pub per_page: i64,
 }
 
 pub async fn list(
@@ -304,11 +287,6 @@ pub async fn create_tp3(
     Ok(Json(record))
 }
 
-#[derive(Debug, Deserialize)]
-pub struct InitBalancesQuery {
-    pub year: Option<i32>,
-}
-
 pub async fn initialize_balances(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -335,12 +313,6 @@ pub async fn initialize_balances(
         "message": format!("Initialized {} leave balances", balances.len()),
         "count": balances.len(),
     })))
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CarryForwardRequest {
-    pub from_year: i32,
-    pub to_year: i32,
 }
 
 pub async fn process_carry_forward(

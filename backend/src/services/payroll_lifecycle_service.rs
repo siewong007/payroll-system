@@ -3,26 +3,13 @@ use uuid::Uuid;
 
 use crate::core::error::{AppError, AppResult};
 use crate::models::payroll::PayrollRun;
+use crate::repositories::payroll_runs;
 use crate::services::audit_service::AuditRequestMeta;
 
 async fn load_run(pool: &PgPool, company_id: Uuid, id: Uuid) -> AppResult<PayrollRun> {
-    sqlx::query_as!(
-        PayrollRun,
-        r#"SELECT id, company_id, payroll_group_id, period_year, period_month,
-            period_start, period_end, pay_date, status::text AS "status!",
-            total_gross, total_net, total_employer_cost,
-            total_epf_employee, total_epf_employer, total_socso_employee, total_socso_employer,
-            total_eis_employee, total_eis_employer, total_pcb, total_zakat,
-            employee_count, version, processed_by, processed_at, approved_by, approved_at,
-            locked_at, locked_by, notes, created_at, updated_at, created_by, updated_by
-        FROM payroll_runs
-        WHERE id = $1 AND company_id = $2"#,
-        id,
-        company_id,
-    )
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound("Payroll run not found".into()))
+    payroll_runs::get_for_company(pool, id, company_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Payroll run not found".into()))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -66,25 +53,9 @@ pub async fn submit_for_approval(
         ));
     }
 
-    let run = sqlx::query_as!(
-        PayrollRun,
-        r#"UPDATE payroll_runs SET
-            status = 'pending_approval', updated_by = $3, updated_at = NOW()
-        WHERE id = $1 AND company_id = $2 AND status = 'processed'
-        RETURNING id, company_id, payroll_group_id, period_year, period_month,
-            period_start, period_end, pay_date, status::text AS "status!",
-            total_gross, total_net, total_employer_cost,
-            total_epf_employee, total_epf_employer, total_socso_employee, total_socso_employer,
-            total_eis_employee, total_eis_employer, total_pcb, total_zakat,
-            employee_count, version, processed_by, processed_at, approved_by, approved_at,
-            locked_at, locked_by, notes, created_at, updated_at, created_by, updated_by"#,
-        run_id,
-        company_id,
-        actor_user_id,
-    )
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::BadRequest("Payroll run could not be submitted".into()))?;
+    let run = payroll_runs::set_pending_approval(pool, run_id, company_id, actor_user_id)
+        .await?
+        .ok_or_else(|| AppError::BadRequest("Payroll run could not be submitted".into()))?;
 
     audit_transition(
         pool,
@@ -119,25 +90,9 @@ pub async fn approve(
         ));
     }
 
-    let run = sqlx::query_as!(
-        PayrollRun,
-        r#"UPDATE payroll_runs SET
-            status = 'approved', approved_by = $3, approved_at = NOW(), updated_at = NOW()
-        WHERE id = $1 AND company_id = $2 AND status = 'pending_approval'
-        RETURNING id, company_id, payroll_group_id, period_year, period_month,
-            period_start, period_end, pay_date, status::text AS "status!",
-            total_gross, total_net, total_employer_cost,
-            total_epf_employee, total_epf_employer, total_socso_employee, total_socso_employer,
-            total_eis_employee, total_eis_employer, total_pcb, total_zakat,
-            employee_count, version, processed_by, processed_at, approved_by, approved_at,
-            locked_at, locked_by, notes, created_at, updated_at, created_by, updated_by"#,
-        run_id,
-        company_id,
-        actor_user_id,
-    )
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::BadRequest("Payroll run could not be approved".into()))?;
+    let run = payroll_runs::set_approved(pool, run_id, company_id, actor_user_id)
+        .await?
+        .ok_or_else(|| AppError::BadRequest("Payroll run could not be approved".into()))?;
 
     audit_transition(
         pool,
@@ -179,25 +134,9 @@ pub async fn return_for_changes(
         .filter(|value| !value.is_empty())
         .map(|value| value.chars().take(500).collect::<String>());
 
-    let run = sqlx::query_as!(
-        PayrollRun,
-        r#"UPDATE payroll_runs SET
-            status = 'processed', updated_by = $3, updated_at = NOW()
-        WHERE id = $1 AND company_id = $2 AND status = 'pending_approval'
-        RETURNING id, company_id, payroll_group_id, period_year, period_month,
-            period_start, period_end, pay_date, status::text AS "status!",
-            total_gross, total_net, total_employer_cost,
-            total_epf_employee, total_epf_employer, total_socso_employee, total_socso_employer,
-            total_eis_employee, total_eis_employer, total_pcb, total_zakat,
-            employee_count, version, processed_by, processed_at, approved_by, approved_at,
-            locked_at, locked_by, notes, created_at, updated_at, created_by, updated_by"#,
-        run_id,
-        company_id,
-        actor_user_id,
-    )
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::BadRequest("Payroll run could not be returned".into()))?;
+    let run = payroll_runs::set_returned(pool, run_id, company_id, actor_user_id)
+        .await?
+        .ok_or_else(|| AppError::BadRequest("Payroll run could not be returned".into()))?;
 
     audit_transition(
         pool,
@@ -235,25 +174,9 @@ pub async fn lock_as_paid(
         ));
     }
 
-    let run = sqlx::query_as!(
-        PayrollRun,
-        r#"UPDATE payroll_runs SET
-            status = 'paid', locked_by = $3, locked_at = NOW(), updated_at = NOW()
-        WHERE id = $1 AND company_id = $2 AND status = 'approved'
-        RETURNING id, company_id, payroll_group_id, period_year, period_month,
-            period_start, period_end, pay_date, status::text AS "status!",
-            total_gross, total_net, total_employer_cost,
-            total_epf_employee, total_epf_employer, total_socso_employee, total_socso_employer,
-            total_eis_employee, total_eis_employer, total_pcb, total_zakat,
-            employee_count, version, processed_by, processed_at, approved_by, approved_at,
-            locked_at, locked_by, notes, created_at, updated_at, created_by, updated_by"#,
-        run_id,
-        company_id,
-        actor_user_id,
-    )
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::BadRequest("Payroll run could not be locked".into()))?;
+    let run = payroll_runs::set_paid(pool, run_id, company_id, actor_user_id)
+        .await?
+        .ok_or_else(|| AppError::BadRequest("Payroll run could not be locked".into()))?;
 
     audit_transition(
         pool,

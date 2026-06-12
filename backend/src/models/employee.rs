@@ -131,6 +131,35 @@ pub struct CreateEmployeeRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct ListQuery {
+    pub search: Option<String>,
+    pub department: Option<String>,
+    pub is_active: Option<bool>,
+    pub page: Option<i64>,
+    pub per_page: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct InitBalancesQuery {
+    pub year: Option<i32>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CarryForwardRequest {
+    pub from_year: i32,
+    pub to_year: i32,
+}
+
+#[derive(Debug, Serialize)]
+pub struct EmployeeAccountInfo {
+    pub created: bool,
+    pub email: String,
+    pub role: String,
+    pub default_password: Option<String>,
+    pub message: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct UpdateEmployeeRequest {
     pub full_name: Option<String>,
     pub ic_number: Option<String>,
@@ -218,6 +247,15 @@ pub struct CreateTp3Request {
     pub previous_pcb_ytd: i64,
     pub previous_socso_ytd: i64,
     pub previous_zakat_ytd: Option<i64>,
+}
+
+#[derive(Debug)]
+pub struct Tp3Ytd {
+    pub employee_id: Uuid,
+    pub previous_income_ytd: i64,
+    pub previous_epf_ytd: i64,
+    pub previous_pcb_ytd: i64,
+    pub previous_zakat_ytd: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]

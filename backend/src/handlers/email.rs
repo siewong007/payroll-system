@@ -2,26 +2,20 @@ use axum::{
     Json,
     extract::{Path, Query, State},
 };
-use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::core::app_state::AppState;
 use crate::core::auth::AuthUser;
 use crate::core::error::{AppError, AppResult};
 use crate::models::email::{
-    CreateEmailTemplateRequest, EmailLog, EmailTemplate, PreviewLetterRequest,
-    PreviewLetterResponse, SendLetterRequest, UpdateEmailTemplateRequest, is_valid_letter_type,
+    CreateEmailTemplateRequest, EmailLog, EmailLogQuery, EmailTemplate, PreviewLetterRequest,
+    PreviewLetterResponse, SendLetterRequest, TemplateQuery, UpdateEmailTemplateRequest,
+    is_valid_letter_type,
 };
+use crate::models::pagination::PaginatedResponse;
 use crate::services::{company_service, email_service, employee_service};
 
-use super::employee::PaginatedResponse;
-
 // ── Templates ──────────────────────────────────────────────────────────
-
-#[derive(Debug, Deserialize)]
-pub struct TemplateQuery {
-    pub letter_type: Option<String>,
-}
 
 pub async fn list_templates(
     State(state): State<AppState>,
@@ -314,13 +308,6 @@ pub async fn send_letter(
 }
 
 // ── Email Logs ─────────────────────────────────────────────────────────
-
-#[derive(Debug, Deserialize)]
-pub struct EmailLogQuery {
-    pub employee_id: Option<Uuid>,
-    pub page: Option<i64>,
-    pub per_page: Option<i64>,
-}
 
 pub async fn list_email_logs(
     State(state): State<AppState>,

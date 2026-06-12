@@ -3,7 +3,7 @@ use axum::{Json, extract::State};
 use crate::core::app_state::AppState;
 use crate::core::auth::AuthUser;
 use crate::core::error::{AppError, AppResult};
-use crate::models::company::{Company, UpdateCompanyRequest};
+use crate::models::company::{Company, CompanyStats, UpdateCompanyRequest};
 use crate::services::company_service;
 
 fn request_touches_payroll_fields(req: &UpdateCompanyRequest) -> bool {
@@ -62,10 +62,7 @@ pub async fn update(
     Ok(Json(company))
 }
 
-pub async fn stats(
-    State(state): State<AppState>,
-    auth: AuthUser,
-) -> AppResult<Json<company_service::CompanyStats>> {
+pub async fn stats(State(state): State<AppState>, auth: AuthUser) -> AppResult<Json<CompanyStats>> {
     let company_id = auth
         .0
         .company_id

@@ -2,18 +2,14 @@ use axum::{
     Json,
     extract::{Path, Query, State},
 };
-use serde::Deserialize;
 
 use crate::core::app_state::AppState;
 use crate::core::auth::AuthUser;
 use crate::core::error::{AppError, AppResult};
-use crate::models::setting::{BulkUpdateSettingsRequest, CompanySetting, UpdateSettingRequest};
+use crate::models::setting::{
+    BulkUpdateSettingsRequest, CompanySetting, SettingsQuery, UpdateSettingRequest,
+};
 use crate::services::settings_service;
-
-#[derive(Debug, Deserialize)]
-pub struct SettingsQuery {
-    pub category: Option<String>,
-}
 
 fn is_payroll_category(category: &str) -> bool {
     category == "payroll" || category == "statutory"

@@ -1,5 +1,18 @@
+use std::collections::HashSet;
+
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportSession {
+    pub company_id: Uuid,
+    pub user_id: Uuid,
+    pub file_name: String,
+    pub validated_data: serde_json::Value,
+    pub status: String,
+    pub expires_at: DateTime<Utc>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImportRowRaw {
@@ -99,4 +112,9 @@ pub struct ImportConfirmResponse {
 #[derive(Debug, Deserialize)]
 pub struct TemplateQuery {
     pub format: Option<String>,
+}
+
+pub(crate) struct ExistingEmployees {
+    pub(crate) employee_numbers: HashSet<String>,
+    pub(crate) ic_numbers: HashSet<String>,
 }

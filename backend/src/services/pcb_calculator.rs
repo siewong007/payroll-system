@@ -4,28 +4,8 @@ use rust_decimal::prelude::*;
 use sqlx::PgPool;
 
 use crate::core::error::AppResult;
-
-/// Input parameters for PCB calculation
-#[derive(Debug, Clone)]
-pub struct PcbInput {
-    pub monthly_gross: i64,          // in sen
-    pub epf_employee_monthly: i64,   // in sen (for relief)
-    pub socso_employee_monthly: i64, // in sen
-    pub eis_employee_monthly: i64,   // in sen
-    pub zakat_monthly: i64,          // in sen (offsets PCB)
-    pub marital_status: String,      // single, married
-    pub working_spouse: bool,
-    pub num_children: i32,
-    pub months_worked: i32, // current month number in tax year (1-12)
-    pub ytd_gross: i64,     // YTD gross excluding current month (sen)
-    pub ytd_pcb: i64,       // YTD PCB already deducted (sen)
-    pub ytd_epf: i64,       // YTD EPF employee already deducted (sen)
-    pub ytd_socso: i64,     // YTD SOCSO employee (sen)
-    pub ytd_eis: i64,       // YTD EIS employee (sen)
-    pub ytd_zakat: i64,     // YTD zakat already deducted (sen)
-    pub is_bonus_month: bool,
-    pub bonus_amount: i64, // in sen (Schedule 2 for bonus)
-}
+use crate::models::statutory::PcbInput;
+use crate::repositories::{pcb_brackets, pcb_reliefs};
 
 /// Calculate PCB/MTD using LHDN Kaedah Pengiraan Berkomputer (Computerised Calculation Method).
 ///
@@ -153,17 +133,7 @@ async fn calculate_tax_from_brackets(
     chargeable_income: i64,
     tax_year: i32,
 ) -> AppResult<i64> {
-    let brackets = sqlx::query!(
-        r#"
-        SELECT chargeable_income_from, chargeable_income_to, tax_rate_percent, cumulative_tax
-        FROM pcb_brackets
-        WHERE effective_year = $1
-        ORDER BY chargeable_income_from ASC
-        "#,
-        tax_year,
-    )
-    .fetch_all(pool)
-    .await?;
+    let brackets = pcb_brackets::list_for_year(pool, tax_year).await?;
 
     if brackets.is_empty() {
         return Ok(0);
@@ -215,13 +185,7 @@ async fn calculate_bonus_pcb(
 }
 
 async fn get_relief_amount(pool: &PgPool, relief_type: &str, tax_year: i32) -> AppResult<i64> {
-    let result = sqlx::query_scalar!(
-        "SELECT amount FROM pcb_reliefs WHERE relief_type = $1 AND effective_year = $2",
-        relief_type,
-        tax_year,
-    )
-    .fetch_optional(pool)
-    .await?;
+    let result = pcb_reliefs::get_amount(pool, relief_type, tax_year).await?;
 
     Ok(result.unwrap_or(0))
 }

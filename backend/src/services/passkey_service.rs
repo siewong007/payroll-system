@@ -2,19 +2,19 @@ use sqlx::PgPool;
 use uuid::Uuid;
 use webauthn_rs::prelude::*;
 
+use crate::core::auth::create_token;
 use crate::core::error::{AppError, AppResult};
-use crate::models::passkey::{PasskeyCredential, PasskeyInfo};
+use crate::models::passkey::PasskeyInfo;
+use crate::models::session::LoginResponseWithRefresh;
+use crate::models::user::UserResponse;
+use crate::repositories::reads::passkey as passkey_reads;
+use crate::repositories::{passkey_challenges, passkey_credentials, users};
+use crate::services::{auth_service, session_service};
 
 // ── Credential CRUD ────────────────────────────────────────────────────
 
 pub async fn list_passkeys(pool: &PgPool, user_id: Uuid) -> AppResult<Vec<PasskeyInfo>> {
-    let rows = sqlx::query_as!(
-        PasskeyCredential,
-        "SELECT * FROM passkey_credentials WHERE user_id = $1 ORDER BY created_at",
-        user_id,
-    )
-    .fetch_all(pool)
-    .await?;
+    let rows = passkey_credentials::list_for_user(pool, user_id).await?;
 
     Ok(rows
         .into_iter()
@@ -28,13 +28,7 @@ pub async fn list_passkeys(pool: &PgPool, user_id: Uuid) -> AppResult<Vec<Passke
 }
 
 pub async fn get_passkeys_for_user(pool: &PgPool, user_id: Uuid) -> AppResult<Vec<Passkey>> {
-    let rows = sqlx::query_as!(
-        PasskeyCredential,
-        "SELECT * FROM passkey_credentials WHERE user_id = $1",
-        user_id,
-    )
-    .fetch_all(pool)
-    .await?;
+    let rows = passkey_credentials::all_for_user(pool, user_id).await?;
 
     rows.into_iter()
         .map(|r| {
@@ -53,17 +47,7 @@ pub async fn save_passkey(
     let json = serde_json::to_value(passkey)
         .map_err(|e| AppError::Internal(format!("Failed to serialize passkey: {}", e)))?;
 
-    sqlx::query!(
-        r#"INSERT INTO passkey_credentials (user_id, credential_name, credential_json)
-        VALUES ($1, $2, $3)"#,
-        user_id,
-        name,
-        json,
-    )
-    .execute(pool)
-    .await?;
-
-    Ok(())
+    passkey_credentials::insert(pool, user_id, name, &json).await
 }
 
 pub async fn update_passkey_after_auth(
@@ -79,19 +63,7 @@ pub async fn update_passkey_after_auth(
     let cred_id = serde_json::to_value(updated_passkey.cred_id())
         .map_err(|e| AppError::Internal(format!("Failed to serialize cred_id: {}", e)))?;
 
-    sqlx::query!(
-        r#"UPDATE passkey_credentials
-        SET credential_json = $3, last_used_at = NOW()
-        WHERE user_id = $1 AND credential_json->'cred' ->> 'cred_id' = $2::jsonb ->> 0
-        "#,
-        user_id,
-        cred_id,
-        json,
-    )
-    .execute(pool)
-    .await?;
-
-    Ok(())
+    passkey_credentials::update_credential_json(pool, user_id, &cred_id, &json).await
 }
 
 pub async fn rename_passkey(
@@ -100,31 +72,18 @@ pub async fn rename_passkey(
     passkey_id: Uuid,
     name: &str,
 ) -> AppResult<()> {
-    let result = sqlx::query!(
-        "UPDATE passkey_credentials SET credential_name = $3 WHERE id = $1 AND user_id = $2",
-        passkey_id,
-        user_id,
-        name,
-    )
-    .execute(pool)
-    .await?;
+    let rows = passkey_credentials::rename(pool, passkey_id, user_id, name).await?;
 
-    if result.rows_affected() == 0 {
+    if rows == 0 {
         return Err(AppError::NotFound("Passkey not found".into()));
     }
     Ok(())
 }
 
 pub async fn delete_passkey(pool: &PgPool, user_id: Uuid, passkey_id: Uuid) -> AppResult<()> {
-    let result = sqlx::query!(
-        "DELETE FROM passkey_credentials WHERE id = $1 AND user_id = $2",
-        passkey_id,
-        user_id,
-    )
-    .execute(pool)
-    .await?;
+    let rows = passkey_credentials::delete(pool, passkey_id, user_id).await?;
 
-    if result.rows_affected() == 0 {
+    if rows == 0 {
         return Err(AppError::NotFound("Passkey not found".into()));
     }
     Ok(())
@@ -140,22 +99,8 @@ pub async fn store_challenge(
     state: &serde_json::Value,
 ) -> AppResult<Uuid> {
     // Clean up expired challenges first
-    sqlx::query!("DELETE FROM passkey_challenges WHERE expires_at < NOW()")
-        .execute(pool)
-        .await?;
-
-    let id = sqlx::query_scalar!(
-        r#"INSERT INTO passkey_challenges (user_id, email, challenge_type, state_json)
-        VALUES ($1, $2, $3, $4) RETURNING id"#,
-        user_id,
-        email,
-        challenge_type,
-        state,
-    )
-    .fetch_one(pool)
-    .await?;
-
-    Ok(id)
+    passkey_challenges::delete_expired(pool).await?;
+    passkey_challenges::insert(pool, user_id, email, challenge_type, state).await
 }
 
 pub async fn get_and_delete_challenge(
@@ -163,17 +108,35 @@ pub async fn get_and_delete_challenge(
     challenge_id: Uuid,
     challenge_type: &str,
 ) -> AppResult<serde_json::Value> {
-    let state_json = sqlx::query_scalar!(
-        r#"DELETE FROM passkey_challenges
-        WHERE id = $1 AND challenge_type = $2 AND expires_at > NOW()
-        RETURNING state_json"#,
-        challenge_id,
-        challenge_type,
-    )
-    .fetch_optional(pool)
-    .await?;
+    passkey_challenges::consume(pool, challenge_id, challenge_type)
+        .await?
+        .ok_or_else(|| AppError::BadRequest("Challenge expired or not found".into()))
+}
 
-    state_json.ok_or_else(|| AppError::BadRequest("Challenge expired or not found".into()))
+/// Consume an authentication challenge, returning the targeted user id and WebAuthn state.
+pub async fn take_authentication_challenge(
+    pool: &PgPool,
+    challenge_id: Uuid,
+) -> AppResult<(Uuid, serde_json::Value)> {
+    let consumed = passkey_challenges::consume_authentication(pool, challenge_id)
+        .await?
+        .ok_or_else(|| AppError::BadRequest("Challenge expired or not found".into()))?;
+
+    let user_id = consumed
+        .user_id
+        .ok_or_else(|| AppError::Internal("Missing user_id in challenge".into()))?;
+
+    Ok((user_id, consumed.state_json))
+}
+
+/// Consume a discoverable-auth challenge, returning its WebAuthn state.
+pub async fn take_discoverable_challenge(
+    pool: &PgPool,
+    challenge_id: Uuid,
+) -> AppResult<serde_json::Value> {
+    passkey_challenges::consume_discoverable(pool, challenge_id)
+        .await?
+        .ok_or_else(|| AppError::BadRequest("Challenge expired or not found".into()))
 }
 
 // ── Find users with passkeys by email ──────────────────────────────────
@@ -182,15 +145,38 @@ pub async fn get_user_id_by_email_with_passkeys(
     pool: &PgPool,
     email: &str,
 ) -> AppResult<Option<Uuid>> {
-    let user_id = sqlx::query_scalar!(
-        r#"SELECT u.id FROM users u
-        INNER JOIN passkey_credentials pc ON pc.user_id = u.id
-        WHERE u.email = $1 AND u.is_active = TRUE
-        LIMIT 1"#,
-        email,
-    )
-    .fetch_optional(pool)
-    .await?;
+    passkey_reads::user_id_by_email_with_passkeys(pool, email).await
+}
 
-    Ok(user_id)
+// ── Login issuance (shared by both passkey auth-complete flows) ─────────
+
+/// Mint a JWT + refresh token for a passkey-authenticated user (mirrors password login):
+/// loads the active user, records the login, and issues tokens.
+pub async fn complete_login(
+    pool: &PgPool,
+    user_id: Uuid,
+    jwt_secret: &str,
+    jwt_expiry: i64,
+) -> AppResult<LoginResponseWithRefresh> {
+    let user = auth_service::get_active_user(pool, user_id).await?;
+
+    users::update_last_login(pool, user.id).await?;
+
+    let token = create_token(
+        user.id,
+        &user.email,
+        &user.roles,
+        user.company_id,
+        user.employee_id,
+        jwt_secret,
+        jwt_expiry,
+    )?;
+
+    let refresh_token = session_service::create_refresh_token(pool, user.id).await?;
+
+    Ok(LoginResponseWithRefresh {
+        token,
+        refresh_token,
+        user: UserResponse::from(user),
+    })
 }

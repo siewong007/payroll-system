@@ -2,7 +2,6 @@ use axum::{
     Json,
     extract::{Multipart, Path, Query, State},
 };
-use serde::Deserialize;
 use uuid::Uuid;
 
 use chrono::Datelike;
@@ -59,11 +58,6 @@ pub async fn leave_types(
     Ok(Json(types))
 }
 
-#[derive(Debug, Deserialize)]
-pub struct LeaveBalanceQuery {
-    pub year: Option<i32>,
-}
-
 pub async fn leave_balances(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -117,11 +111,6 @@ pub async fn delete_leave(
 }
 
 // ─── Claims ───
-
-#[derive(Debug, Deserialize)]
-pub struct ClaimQuery {
-    pub status: Option<String>,
-}
 
 pub async fn list_claims(
     State(state): State<AppState>,
@@ -302,17 +291,11 @@ pub async fn upload_file(
 
 // ─── Team Calendar & Holidays ───
 
-#[derive(Debug, Deserialize)]
-pub struct TeamCalendarQuery {
-    pub year: Option<i32>,
-    pub month: Option<u32>,
-}
-
 pub async fn team_calendar(
     State(state): State<AppState>,
     auth: AuthUser,
     Query(q): Query<TeamCalendarQuery>,
-) -> AppResult<Json<Vec<portal_service::TeamLeaveEntry>>> {
+) -> AppResult<Json<Vec<TeamLeaveEntry>>> {
     let employee_id = get_employee_id(&auth)?;
     let company_id = get_company_id(&auth)?;
     let now = chrono::Utc::now();
@@ -358,23 +341,11 @@ pub async fn export_leave_ics(
     let employee_id = get_employee_id(&auth)?;
     let year = q.year.unwrap_or(chrono::Utc::now().year());
 
-    let leaves = sqlx::query_as!(
-        LeaveRequest,
-        r#"SELECT lr.id, lr.employee_id, lr.company_id, lr.leave_type_id,
-            lr.start_date, lr.end_date, lr.days, lr.reason, lr.status,
-            lr.reviewed_by, lr.reviewed_at, lr.review_notes,
-            lr.attachment_url, lr.attachment_name,
-            lr.created_at, lr.updated_at,
-            lt.name AS "leave_type_name?"
-        FROM leave_requests lr
-        JOIN leave_types lt ON lr.leave_type_id = lt.id
-        WHERE lr.employee_id = $1 AND lr.status = 'approved'
-        AND EXTRACT(YEAR FROM lr.start_date)::int = $2
-        ORDER BY lr.start_date"#,
+    let leaves = crate::repositories::reads::portal::approved_leaves_for_year(
+        &state.pool,
         employee_id,
         year,
     )
-    .fetch_all(&state.pool)
     .await?;
 
     let mut ics = String::from(

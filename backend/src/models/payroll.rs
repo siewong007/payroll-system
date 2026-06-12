@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -210,6 +212,20 @@ pub struct ProcessPayrollRequest {
     pub notes: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ReturnPayrollRunRequest {
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PayrollEntryQuery {
+    pub period_year: Option<i32>,
+    pub period_month: Option<i32>,
+    pub employee_id: Option<Uuid>,
+    pub item_type: Option<String>,
+    pub include_processed: Option<bool>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct PayrollSummary {
     pub payroll_run: PayrollRun,
@@ -232,4 +248,71 @@ pub struct PayrollItemSummary {
     pub socso_employee: i64,
     pub eis_employee: i64,
     pub pcb_amount: i64,
+}
+
+#[allow(clippy::type_complexity)]
+pub(crate) struct BulkPayrollData {
+    pub(crate) recurring_allowances: HashMap<Uuid, i64>,
+    pub(crate) recurring_deductions: HashMap<Uuid, i64>,
+    pub(crate) variable_earnings: HashMap<Uuid, i64>,
+    pub(crate) variable_deductions: HashMap<Uuid, i64>,
+    pub(crate) attendance_ot_hours: HashMap<Uuid, f64>,
+    pub(crate) approved_ot: HashMap<Uuid, Vec<(String, f64)>>,
+    pub(crate) approved_claims: HashMap<Uuid, i64>,
+    pub(crate) tp3: HashMap<Uuid, (i64, i64, i64, i64)>,
+    pub(crate) ytd: HashMap<Uuid, (i64, i64, i64, i64, i64, i64, i64)>,
+    pub(crate) monthly_allowances: HashMap<Uuid, i64>,
+}
+
+#[derive(Debug)]
+pub struct EmployeeCategoryTotal {
+    pub employee_id: Uuid,
+    pub category: String,
+    pub total: i64,
+}
+
+#[derive(Debug)]
+pub struct EmployeeTotal {
+    pub employee_id: Uuid,
+    pub total: i64,
+}
+
+#[derive(Debug)]
+pub struct EmployeeHours {
+    pub employee_id: Uuid,
+    pub hours: f64,
+}
+
+#[derive(Debug)]
+pub struct EmployeeOtTypeHours {
+    pub employee_id: Uuid,
+    pub ot_type: String,
+    pub hours: f64,
+}
+
+#[derive(Debug)]
+pub struct PayrollYtd {
+    pub employee_id: Uuid,
+    pub gross: i64,
+    pub pcb: i64,
+    pub epf: i64,
+    pub socso: i64,
+    pub eis: i64,
+    pub zakat: i64,
+    pub net: i64,
+}
+
+#[derive(Debug)]
+pub struct RunStatusRow {
+    pub status: String,
+    pub period_year: i32,
+    pub period_month: i32,
+}
+
+#[derive(Debug)]
+pub struct PcbFields {
+    pub pcb_amount: i64,
+    pub total_deductions: i64,
+    pub net_salary: i64,
+    pub ytd_pcb: i64,
 }

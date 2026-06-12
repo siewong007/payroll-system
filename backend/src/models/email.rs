@@ -26,6 +26,18 @@ pub struct CreateEmailTemplateRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct TemplateQuery {
+    pub letter_type: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EmailLogQuery {
+    pub employee_id: Option<Uuid>,
+    pub page: Option<i64>,
+    pub per_page: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct UpdateEmailTemplateRequest {
     pub name: Option<String>,
     pub subject: Option<String>,

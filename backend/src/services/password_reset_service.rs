@@ -4,7 +4,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::core::error::{AppError, AppResult};
-use crate::models::session::PasswordResetRequest;
+use crate::repositories::{password_reset_requests, refresh_tokens, users};
 
 fn hash_token(token: &str) -> String {
     let mut hasher = Sha256::new();
@@ -22,59 +22,30 @@ pub async fn request_reset(
     email: &str,
 ) -> AppResult<Option<(String, String, String)>> {
     // Find user by email
-    let user = sqlx::query!(
-        "SELECT id, email, full_name FROM users WHERE email = $1 AND is_active = TRUE",
-        email,
-    )
-    .fetch_optional(pool)
-    .await?;
-
-    let (user_id, user_email, user_name) = match user {
-        Some(u) => (u.id, u.email, u.full_name),
-        None => return Ok(None),
+    let Some(contact) = users::find_active_contact_by_email(pool, email).await? else {
+        return Ok(None);
     };
 
     // Expire any existing pending/approved requests for this user
-    sqlx::query!(
-        "UPDATE password_reset_requests SET status = 'expired' WHERE user_id = $1 AND status IN ('pending', 'approved')",
-        user_id,
-    )
-    .execute(pool)
-    .await?;
+    password_reset_requests::expire_pending_for_user(pool, contact.id).await?;
 
     // Generate reset token
     let raw_token = format!("rst_{}_{}", Uuid::new_v4(), Uuid::new_v4());
     let token_hash = hash_token(&raw_token);
     let expires_at = Utc::now() + Duration::hours(RESET_TOKEN_HOURS);
 
-    sqlx::query!(
-        r#"INSERT INTO password_reset_requests (user_id, status, reset_token_hash, reset_token_expires_at)
-        VALUES ($1, 'approved', $2, $3)"#,
-        user_id,
-        token_hash,
-        expires_at,
-    )
-    .execute(pool)
-    .await?;
+    password_reset_requests::insert_approved(pool, contact.id, &token_hash, expires_at).await?;
 
-    Ok(Some((user_email, user_name, raw_token)))
+    Ok(Some((contact.email, contact.full_name, raw_token)))
 }
 
 /// Validates a reset token and returns the user_id.
 pub async fn validate_reset_token(pool: &PgPool, raw_token: &str) -> AppResult<Uuid> {
     let token_hash = hash_token(raw_token);
 
-    let user_id = sqlx::query_scalar!(
-        r#"SELECT user_id FROM password_reset_requests
-        WHERE reset_token_hash = $1
-            AND status = 'approved'
-            AND reset_token_expires_at > NOW()"#,
-        token_hash,
-    )
-    .fetch_optional(pool)
-    .await?;
-
-    user_id.ok_or_else(|| AppError::BadRequest("Invalid or expired reset link".into()))
+    password_reset_requests::find_user_id_by_valid_token(pool, &token_hash)
+        .await?
+        .ok_or_else(|| AppError::BadRequest("Invalid or expired reset link".into()))
 }
 
 /// Resets the user's password using a valid reset token.
@@ -84,46 +55,18 @@ pub async fn reset_password(pool: &PgPool, raw_token: &str, new_password: &str) 
     let token_hash = hash_token(raw_token);
 
     // Validate token
-    let request = sqlx::query_as!(
-        PasswordResetRequest,
-        r#"SELECT * FROM password_reset_requests
-        WHERE reset_token_hash = $1
-            AND status = 'approved'
-            AND reset_token_expires_at > NOW()"#,
-        token_hash,
-    )
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::BadRequest("Invalid or expired reset link".into()))?;
+    let request = password_reset_requests::find_by_valid_token(pool, &token_hash)
+        .await?
+        .ok_or_else(|| AppError::BadRequest("Invalid or expired reset link".into()))?;
 
     // Hash new password
     let password_hash = bcrypt::hash(new_password, 12)
         .map_err(|e| AppError::Internal(format!("Failed to hash password: {}", e)))?;
 
-    // Update password
-    sqlx::query!(
-        "UPDATE users SET password_hash = $2, updated_at = NOW() WHERE id = $1",
-        request.user_id,
-        password_hash,
-    )
-    .execute(pool)
-    .await?;
-
-    // Mark request as completed
-    sqlx::query!(
-        "UPDATE password_reset_requests SET status = 'completed', completed_at = NOW() WHERE id = $1",
-        request.id,
-    )
-    .execute(pool)
-    .await?;
-
-    // Revoke all refresh tokens for this user
-    sqlx::query!(
-        "UPDATE refresh_tokens SET revoked = TRUE WHERE user_id = $1 AND revoked = FALSE",
-        request.user_id,
-    )
-    .execute(pool)
-    .await?;
+    // Update password, complete the request, and revoke active sessions
+    users::set_password(pool, request.user_id, &password_hash).await?;
+    password_reset_requests::mark_completed(pool, request.id).await?;
+    refresh_tokens::revoke_all_for_user(pool, request.user_id).await?;
 
     Ok(())
 }
