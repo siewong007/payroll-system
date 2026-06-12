@@ -543,9 +543,18 @@ export function LettersPage() {
               </div>
               <div>
                 <p className="text-xs text-gray-400 uppercase font-medium mb-2">Body</p>
-                <div
-                  className="border border-gray-200 rounded-lg p-4 prose prose-sm max-w-none"
-                  dangerouslySetInnerHTML={{ __html: preview.body_html }}
+                {/*
+                  Render the server-rendered letter HTML inside a sandboxed
+                  iframe. The sandbox attribute (no `allow-scripts`) neutralizes
+                  any script/event-handler that may have been injected via
+                  employee-controlled merge fields, so the preview cannot run
+                  code in the admin's session. Replaces dangerouslySetInnerHTML.
+                */}
+                <iframe
+                  title="Letter preview"
+                  sandbox=""
+                  className="w-full min-h-[16rem] border border-gray-200 rounded-lg bg-white"
+                  srcDoc={preview.body_html}
                 />
               </div>
 
