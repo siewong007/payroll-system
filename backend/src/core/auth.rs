@@ -9,6 +9,12 @@ use uuid::Uuid;
 
 use super::error::{AppError, AppResult};
 
+/// Registered `iss`/`aud` claim values. Validating these on decode rejects
+/// tokens minted for a different service or audience even if they were signed
+/// with the same secret.
+pub const JWT_ISSUER: &str = "payroll-system";
+pub const JWT_AUDIENCE: &str = "payroll-system-api";
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {
     pub sub: Uuid, // user ID
@@ -18,6 +24,10 @@ pub struct Claims {
     pub employee_id: Option<Uuid>,
     pub exp: i64,
     pub iat: i64,
+    #[serde(default)]
+    pub iss: String,
+    #[serde(default)]
+    pub aud: String,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -39,6 +49,8 @@ pub fn create_token(
         employee_id,
         exp: (now + Duration::hours(expiry_hours)).timestamp(),
         iat: now.timestamp(),
+        iss: JWT_ISSUER.to_string(),
+        aud: JWT_AUDIENCE.to_string(),
     };
 
     encode(
@@ -60,10 +72,14 @@ fn normalized_roles(roles: &[String]) -> Vec<String> {
 }
 
 pub fn verify_token(token: &str, secret: &str) -> AppResult<Claims> {
+    let mut validation = Validation::default(); // HS256 + exp validation
+    validation.set_issuer(&[JWT_ISSUER]);
+    validation.set_audience(&[JWT_AUDIENCE]);
+
     decode::<Claims>(
         token,
         &DecodingKey::from_secret(secret.as_bytes()),
-        &Validation::default(),
+        &validation,
     )
     .map(|data| data.claims)
     .map_err(|e| AppError::Unauthorized(format!("Invalid token: {}", e)))

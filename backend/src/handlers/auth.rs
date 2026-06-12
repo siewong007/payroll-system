@@ -207,7 +207,7 @@ pub async fn forgot_password(
         {
             tracing::error!(
                 "Failed to send password reset email to {}: {}",
-                user_email,
+                crate::core::redact::email(&user_email),
                 e
             );
         }
@@ -272,7 +272,7 @@ pub async fn change_password(
         return Err(AppError::BadRequest("Current password is incorrect".into()));
     }
 
-    let new_hash = bcrypt::hash(&req.new_password, 10)
+    let new_hash = bcrypt::hash(&req.new_password, 12)
         .map_err(|_| AppError::Internal("Password hashing failed".into()))?;
 
     sqlx::query!(

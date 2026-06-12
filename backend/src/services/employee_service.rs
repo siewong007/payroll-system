@@ -293,7 +293,7 @@ pub async fn create_user_for_employee(
 
     // Default password: IC number or "Welcome@123" if no IC
     let default_password = emp.ic_number.as_deref().unwrap_or("Welcome@123");
-    let password_hash = bcrypt::hash(default_password, 10)
+    let password_hash = bcrypt::hash(default_password, 12)
         .map_err(|e| AppError::Internal(format!("Failed to hash password: {}", e)))?;
 
     let user_id = Uuid::now_v7();

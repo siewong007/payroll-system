@@ -17,6 +17,8 @@ fn auth_with_role(role: &str) -> AuthUser {
         employee_id: None,
         exp: 2_000_000_000,
         iat: 1_700_000_000,
+        iss: crate::core::auth::JWT_ISSUER.to_string(),
+        aud: crate::core::auth::JWT_AUDIENCE.to_string(),
     })
 }
 
@@ -108,6 +110,8 @@ fn payroll_permissions_are_combined_across_multiple_roles() {
         employee_id: None,
         exp: 2_000_000_000,
         iat: 1_700_000_000,
+        iss: crate::core::auth::JWT_ISSUER.to_string(),
+        aud: crate::core::auth::JWT_AUDIENCE.to_string(),
     });
 
     assert!(auth.can(Permission::ManagePayrollDraft));
