@@ -65,6 +65,7 @@ pub async fn update(
     Path((category, key)): Path<(String, String)>,
     Json(req): Json<UpdateSettingRequest>,
 ) -> AppResult<Json<CompanySetting>> {
+    auth.require_company_admin()?;
     if is_payroll_category(&category) && !auth.is_payroll_privileged() {
         return Err(AppError::Forbidden(
             "Payroll settings not available for this role".into(),
@@ -92,6 +93,7 @@ pub async fn bulk_update(
     auth: AuthUser,
     Json(req): Json<BulkUpdateSettingsRequest>,
 ) -> AppResult<Json<Vec<CompanySetting>>> {
+    auth.require_company_admin()?;
     if !auth.is_payroll_privileged()
         && req
             .settings

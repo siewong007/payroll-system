@@ -203,6 +203,108 @@ async fn audited_route_writes_request_metadata() {
 }
 
 #[tokio::test]
+async fn self_service_employee_cannot_list_documents() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let token = token_for(&pool, company_id, "employee").await;
+
+    let response = app_for(pool)
+        .await
+        .oneshot(request("GET", "/api/documents", &token, ""))
+        .await
+        .expect("route response");
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn self_service_employee_cannot_list_letter_templates() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let token = token_for(&pool, company_id, "employee").await;
+
+    let response = app_for(pool)
+        .await
+        .oneshot(request("GET", "/api/email/templates", &token, ""))
+        .await
+        .expect("route response");
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn self_service_employee_cannot_send_letter() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let token = token_for(&pool, company_id, "employee").await;
+
+    let response = app_for(pool)
+        .await
+        .oneshot(request(
+            "POST",
+            "/api/email/send",
+            &token,
+            r#"{"letter_type":"general","subject":"x","body_html":"<b>x</b>","recipient_email":"attacker@example.invalid"}"#,
+        ))
+        .await
+        .expect("route response");
+
+    // Guard rejects before any email is dispatched.
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn non_company_admin_cannot_update_company() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    // `finance` is a back-office role but not a company admin.
+    let token = token_for(&pool, company_id, "finance").await;
+
+    let response = app_for(pool)
+        .await
+        .oneshot(request(
+            "PUT",
+            "/api/company",
+            &token,
+            r#"{"name":"Evil Co"}"#,
+        ))
+        .await
+        .expect("route response");
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn non_company_admin_cannot_bulk_update_settings() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let token = token_for(&pool, company_id, "finance").await;
+
+    let response = app_for(pool)
+        .await
+        .oneshot(request(
+            "PUT",
+            "/api/settings",
+            &token,
+            r#"{"settings":[]}"#,
+        ))
+        .await
+        .expect("route response");
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
 async fn finance_can_approve_but_not_prepare_payroll_routes() {
     let Some(pool) = skip_if_no_db().await else {
         return;

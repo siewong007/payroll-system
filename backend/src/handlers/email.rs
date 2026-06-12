@@ -28,6 +28,7 @@ pub async fn list_templates(
     auth: AuthUser,
     Query(query): Query<TemplateQuery>,
 ) -> AppResult<Json<Vec<EmailTemplate>>> {
+    auth.require_non_employee()?;
     let company_id = auth
         .0
         .company_id
@@ -44,6 +45,7 @@ pub async fn get_template(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<EmailTemplate>> {
+    auth.require_non_employee()?;
     let company_id = auth
         .0
         .company_id
@@ -58,6 +60,7 @@ pub async fn create_template(
     auth: AuthUser,
     Json(req): Json<CreateEmailTemplateRequest>,
 ) -> AppResult<Json<EmailTemplate>> {
+    auth.require_non_employee()?;
     let company_id = auth
         .0
         .company_id
@@ -80,6 +83,7 @@ pub async fn update_template(
     Path(id): Path<Uuid>,
     Json(req): Json<UpdateEmailTemplateRequest>,
 ) -> AppResult<Json<EmailTemplate>> {
+    auth.require_non_employee()?;
     let company_id = auth
         .0
         .company_id
@@ -95,6 +99,7 @@ pub async fn delete_template(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<serde_json::Value>> {
+    auth.require_non_employee()?;
     let company_id = auth
         .0
         .company_id
@@ -111,6 +116,7 @@ pub async fn preview_letter(
     auth: AuthUser,
     Json(req): Json<PreviewLetterRequest>,
 ) -> AppResult<Json<PreviewLetterResponse>> {
+    auth.require_non_employee()?;
     let company_id = auth
         .0
         .company_id
@@ -195,6 +201,7 @@ pub async fn send_letter(
     auth: AuthUser,
     Json(req): Json<SendLetterRequest>,
 ) -> AppResult<Json<EmailLog>> {
+    auth.require_non_employee()?;
     let company_id = auth
         .0
         .company_id
@@ -320,6 +327,7 @@ pub async fn list_email_logs(
     auth: AuthUser,
     Query(query): Query<EmailLogQuery>,
 ) -> AppResult<Json<PaginatedResponse<EmailLog>>> {
+    auth.require_non_employee()?;
     let company_id = auth
         .0
         .company_id

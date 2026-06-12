@@ -42,6 +42,7 @@ pub async fn update(
     auth: AuthUser,
     Json(req): Json<UpdateCompanyRequest>,
 ) -> AppResult<Json<Company>> {
+    auth.require_company_admin()?;
     if request_touches_payroll_fields(&req) && !auth.is_payroll_privileged() {
         return Err(AppError::Forbidden(
             "Payroll settings not available for this role".into(),
