@@ -56,6 +56,54 @@ resource "aws_s3_bucket_policy" "frontend" {
 
 # --- CloudFront Distribution ---
 
+# Security response headers for the SPA. HSTS / nosniff / frame-options /
+# referrer-policy are enforced (they do not affect app behavior). The Content
+# Security Policy is delivered Report-Only first so a too-strict policy cannot
+# break the app before it has been validated against real traffic; flip it to
+# the enforced `content_security_policy` block once reports are clean.
+resource "aws_cloudfront_response_headers_policy" "frontend" {
+  name = "${local.name_prefix}-frontend-security-headers"
+
+  security_headers_config {
+    content_type_options {
+      override = true
+    }
+    frame_options {
+      frame_option = "DENY"
+      override     = true
+    }
+    referrer_policy {
+      referrer_policy = "strict-origin-when-cross-origin"
+      override        = true
+    }
+    strict_transport_security {
+      access_control_max_age_sec = 31536000
+      include_subdomains         = true
+      preload                    = true
+      override                   = true
+    }
+  }
+
+  custom_headers_config {
+    items {
+      header   = "Content-Security-Policy-Report-Only"
+      override = true
+      value = join("; ", [
+        "default-src 'self'",
+        "script-src 'self'",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data: blob:",
+        "font-src 'self' data:",
+        "connect-src 'self'${local.has_domain ? " https://${var.api_subdomain}.${var.domain_name}" : ""}",
+        "frame-src 'self'",
+        "frame-ancestors 'none'",
+        "object-src 'none'",
+        "base-uri 'self'",
+      ])
+    }
+  }
+}
+
 resource "aws_cloudfront_distribution" "frontend" {
   enabled             = true
   is_ipv6_enabled     = true
@@ -71,9 +119,10 @@ resource "aws_cloudfront_distribution" "frontend" {
   }
 
   default_cache_behavior {
-    allowed_methods  = ["GET", "HEAD", "OPTIONS"]
-    cached_methods   = ["GET", "HEAD"]
-    target_origin_id = "s3-frontend"
+    allowed_methods            = ["GET", "HEAD", "OPTIONS"]
+    cached_methods             = ["GET", "HEAD"]
+    target_origin_id           = "s3-frontend"
+    response_headers_policy_id = aws_cloudfront_response_headers_policy.frontend.id
 
     forwarded_values {
       query_string = false
@@ -91,10 +140,11 @@ resource "aws_cloudfront_distribution" "frontend" {
 
   # Long cache for hashed assets
   ordered_cache_behavior {
-    path_pattern     = "/assets/*"
-    allowed_methods  = ["GET", "HEAD"]
-    cached_methods   = ["GET", "HEAD"]
-    target_origin_id = "s3-frontend"
+    path_pattern               = "/assets/*"
+    allowed_methods            = ["GET", "HEAD"]
+    cached_methods             = ["GET", "HEAD"]
+    target_origin_id           = "s3-frontend"
+    response_headers_policy_id = aws_cloudfront_response_headers_policy.frontend.id
 
     forwarded_values {
       query_string = false
