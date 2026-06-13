@@ -156,7 +156,7 @@ pub async fn change_password(
         return Err(AppError::BadRequest("Current password is incorrect".into()));
     }
 
-    let new_hash = bcrypt::hash(new_password, 10)
+    let new_hash = bcrypt::hash(new_password, 12)
         .map_err(|_| AppError::Internal("Password hashing failed".into()))?;
 
     users::update_password(pool, user_id, &new_hash).await
