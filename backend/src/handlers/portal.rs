@@ -478,10 +478,25 @@ pub async fn serve_upload(
         _ => "application/octet-stream",
     };
 
+    // Defense-in-depth for a capability-URL file store:
+    //   - `nosniff` stops the browser MIME-sniffing an upload into an
+    //     executable type (e.g. treating a disguised file as HTML/JS).
+    //   - A locked-down CSP neutralizes any active content if a markup file
+    //     were ever served from this same-origin path.
+    //   - `private` caching keeps user documents out of shared/CDN caches.
+    // NOTE: this endpoint is still reachable without per-user authentication.
+    // Closing that requires either an upload-scoped session cookie or S3
+    // pre-signed URLs (see SECURITY follow-up) — tracked separately because it
+    // touches every file-preview/download site in the frontend.
     Ok(Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, content_type)
-        .header(header::CACHE_CONTROL, "public, max-age=86400")
+        .header(header::CACHE_CONTROL, "private, max-age=300")
+        .header("X-Content-Type-Options", "nosniff")
+        .header(
+            "Content-Security-Policy",
+            "default-src 'none'; img-src 'self'; sandbox",
+        )
         .body(Body::from(data))
         .unwrap())
 }

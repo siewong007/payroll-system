@@ -21,6 +21,12 @@ variable "project_name" {
   default     = "payroll"
 }
 
+variable "github_repository" {
+  description = "GitHub repository (owner/name) allowed to assume the CI/CD deploy role via OIDC"
+  type        = string
+  default     = "siewong007/payroll-system"
+}
+
 variable "domain_name" {
   description = "Root domain name (e.g., payroll.example.com). Leave empty to skip DNS/ACM."
   type        = string

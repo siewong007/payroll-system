@@ -269,8 +269,12 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route("/portal/overtime/{id}/cancel", put(portal::cancel_overtime))
         .route("/portal/overtime/{id}", delete(portal::delete_overtime))
-        // File uploads
-        .route("/uploads", post(portal::upload_file))
+        // File uploads. Raise the body limit above Axum's 2 MB default so the
+        // 10 MB upload cap enforced inside the handler is actually reachable.
+        .route(
+            "/uploads",
+            post(portal::upload_file).layer(axum::extract::DefaultBodyLimit::max(11 * 1024 * 1024)),
+        )
         .route("/uploads/{filename}", get(portal::serve_upload))
         // Dashboard
         .route("/dashboard/summary", get(dashboard::summary))

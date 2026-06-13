@@ -39,6 +39,13 @@ WORKDIR /app
 COPY --from=builder /app/target/release/payroll-system ./payroll-system
 COPY --from=builder /app/migrations ./migrations
 
+# Run as a non-root user. The app writes uploads under /app/uploads at runtime,
+# so that directory must be owned by the runtime user.
+RUN useradd --system --uid 10001 --home-dir /app appuser \
+    && mkdir -p /app/uploads \
+    && chown -R 10001:10001 /app
+USER 10001
+
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \

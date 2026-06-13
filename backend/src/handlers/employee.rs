@@ -263,6 +263,11 @@ pub async fn salary_history(
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<Vec<SalaryHistory>>> {
     auth.require_permission(Permission::ViewPayroll)?;
+    let company_id = auth.company_id()?;
+    // Tenant isolation: confirm the employee belongs to the caller's company
+    // before exposing salary history. `get_employee` is company-scoped and
+    // returns NotFound for cross-tenant ids.
+    employee_service::get_employee(&state.pool, id, company_id).await?;
     let history = employee_service::get_salary_history(&state.pool, id).await?;
     Ok(Json(history))
 }
@@ -274,6 +279,10 @@ pub async fn create_tp3(
     Json(req): Json<CreateTp3Request>,
 ) -> AppResult<Json<Tp3Record>> {
     auth.require_permission(Permission::ManagePayrollDraft)?;
+    let company_id = auth.company_id()?;
+    // Tenant isolation: confirm the employee belongs to the caller's company
+    // before writing a TP3 record. `get_employee` is company-scoped.
+    employee_service::get_employee(&state.pool, id, company_id).await?;
     let record = employee_service::create_tp3(&state.pool, id, req, auth.0.sub).await?;
     Ok(Json(record))
 }

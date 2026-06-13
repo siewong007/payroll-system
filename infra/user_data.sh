@@ -29,11 +29,15 @@ DB_URL_ARN="${db_url_arn}"
 FRONTEND_URL="${frontend_url}"
 S3_BUCKET="${s3_bucket}"
 
+# Image tag to deploy (commit SHA passed by CI). ECR is immutable; there is no
+# `latest` tag, so a deploy must always name a specific tag.
+IMAGE_TAG="$${1:-latest}"
+
 # Login to ECR
 aws ecr get-login-password --region "$REGION" | docker login --username AWS --password-stdin "$${ECR_REPO%%/*}"
 
-# Pull latest image
-docker pull "$ECR_REPO:latest"
+# Pull the requested image
+docker pull "$ECR_REPO:$${IMAGE_TAG}"
 
 # Get secrets
 JWT_SECRET=$(aws secretsmanager get-secret-value --secret-id "$JWT_SECRET_ARN" --region "$REGION" --query SecretString --output text)
@@ -50,12 +54,12 @@ docker run -d \
   -p 8080:8080 \
   -e SERVER_HOST=0.0.0.0 \
   -e SERVER_PORT=8080 \
-  -e RUST_LOG=info,payroll_system=debug \
+  -e RUST_LOG=info \
   -e JWT_SECRET="$JWT_SECRET" \
   -e DATABASE_URL="$DATABASE_URL" \
   -e FRONTEND_URL="$FRONTEND_URL" \
   -e S3_BUCKET="$S3_BUCKET" \
-  "$ECR_REPO:latest"
+  "$ECR_REPO:$${IMAGE_TAG}"
 
 # Prune old images
 docker image prune -f

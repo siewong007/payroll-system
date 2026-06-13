@@ -52,17 +52,19 @@ jobs:
           ECR_REPOSITORY: ${{ steps.infra.outputs.ECR_REPOSITORY }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          docker build -f infra/Dockerfile -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
+          # ECR is IMMUTABLE: deploy by the unique commit-SHA tag, never `latest`.
+          docker build -f infra/Dockerfile -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
 
       - name: Update Backend Deployment
+        env:
+          IMAGE_TAG: ${{ github.sha }}
         run: |
-          # This project uses SSM to trigger a redeploy on the EC2 instance
+          # Trigger a redeploy on the EC2 instance, pinning the exact image tag.
           aws ssm send-command \
             --document-name "AWS-RunShellScript" \
             --targets "Key=tag:Name,Values=payroll-dev-backend" \
-            --parameters 'commands=["/opt/deploy.sh"]' \
+            --parameters "commands=[\"/opt/deploy.sh $IMAGE_TAG\"]" \
             --comment "Redeploying backend via CI/CD"
 
   deploy-frontend:

@@ -19,6 +19,7 @@ pub async fn list(
     auth: AuthUser,
     Query(query): Query<DocumentListQuery>,
 ) -> AppResult<Json<PaginatedResponse<Document>>> {
+    auth.require_non_employee()?;
     let company_id = auth
         .0
         .company_id
@@ -53,6 +54,7 @@ pub async fn get(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<Document>> {
+    auth.require_non_employee()?;
     let company_id = auth
         .0
         .company_id
@@ -67,6 +69,7 @@ pub async fn create(
     auth: AuthUser,
     Json(req): Json<CreateDocumentRequest>,
 ) -> AppResult<Json<Document>> {
+    auth.require_non_employee()?;
     let company_id = auth
         .0
         .company_id
@@ -82,6 +85,7 @@ pub async fn update(
     Path(id): Path<Uuid>,
     Json(req): Json<UpdateDocumentRequest>,
 ) -> AppResult<Json<Document>> {
+    auth.require_non_employee()?;
     let company_id = auth
         .0
         .company_id
@@ -97,6 +101,7 @@ pub async fn delete(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<serde_json::Value>> {
+    auth.require_non_employee()?;
     let company_id = auth
         .0
         .company_id
@@ -110,6 +115,7 @@ pub async fn list_categories(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> AppResult<Json<Vec<DocumentCategory>>> {
+    auth.require_non_employee()?;
     let company_id = auth
         .0
         .company_id
@@ -124,6 +130,7 @@ pub async fn create_category(
     auth: AuthUser,
     Json(req): Json<CreateDocumentCategoryRequest>,
 ) -> AppResult<Json<DocumentCategory>> {
+    auth.require_non_employee()?;
     let company_id = auth
         .0
         .company_id
@@ -138,6 +145,7 @@ pub async fn expiring(
     auth: AuthUser,
     Query(query): Query<ExpiringQuery>,
 ) -> AppResult<Json<Vec<Document>>> {
+    auth.require_non_employee()?;
     let company_id = auth
         .0
         .company_id

@@ -69,7 +69,10 @@ async fn main() {
     let app = routes::create_router(state)
         .layer(cors)
         .layer(TraceLayer::new_for_http())
-        .layer(axum::Extension(JwtSecret(config.jwt_secret.clone())));
+        .layer(axum::Extension(JwtSecret(config.jwt_secret.clone())))
+        // Gzip-compress eligible responses (large JSON lists, CSV/report exports).
+        // Outermost so it wraps the final response body.
+        .layer(tower_http::compression::CompressionLayer::new());
 
     // Start server
     let addr: SocketAddr = format!("{}:{}", config.server_host, config.server_port)
