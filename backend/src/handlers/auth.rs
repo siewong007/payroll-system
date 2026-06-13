@@ -195,31 +195,6 @@ pub async fn change_password(
     auth: AuthUser,
     Json(req): Json<ChangePasswordRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
-    auth_service::validate_password_strength(&req.new_password)?;
-
-    let user = sqlx::query_as!(
-        User,
-        r#"SELECT id, email, password_hash, full_name, roles, company_id,
-            employee_id, is_active, must_change_password, last_login, created_at, updated_at
-        FROM users WHERE id = $1"#,
-        auth.0.sub,
-    )
-    .fetch_one(&state.pool)
-    .await?;
-
-    let valid = bcrypt::verify(&req.current_password, &user.password_hash)
-        .map_err(|_| AppError::Internal("Password verification failed".into()))?;
-
-    if !valid {
-        return Err(AppError::BadRequest("Current password is incorrect".into()));
-    }
-
-    let new_hash = bcrypt::hash(&req.new_password, 12)
-        .map_err(|_| AppError::Internal("Password hashing failed".into()))?;
-
-    sqlx::query!(
-        "UPDATE users SET password_hash = $1, must_change_password = FALSE, updated_at = NOW() WHERE id = $2",
-        new_hash,
     auth_service::change_password(
         &state.pool,
         auth.0.sub,
