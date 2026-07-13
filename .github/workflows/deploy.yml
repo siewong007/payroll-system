@@ -11,6 +11,10 @@ permissions:
 
 env:
   AWS_REGION: ap-southeast-1
+  ECR_REPOSITORY: payroll-dev-backend
+  FRONTEND_BUCKET: payroll-dev-frontend
+  CLOUDFRONT_DISTRIBUTION_ID: ED4843A8VKOA2
+  VITE_API_URL: https://api.payrollmy.com/api
 
 jobs:
   deploy-backend:
@@ -29,27 +33,13 @@ jobs:
           audience: sts.amazonaws.com
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_wrapper: false
-
-      - name: Fetch Infrastructure Details
-        id: infra
-        working-directory: infra
-        run: |
-          terraform init
-          echo "ECR_REPOSITORY=$(terraform output -raw ecr_repository_url | cut -d'/' -f2)" >> $GITHUB_OUTPUT
-          echo "ECR_REGISTRY=$(terraform output -raw ecr_repository_url | cut -d'/' -f1)" >> $GITHUB_OUTPUT
-
       - name: Login to Amazon ECR
         id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build and push Docker image
         env:
-          ECR_REGISTRY: ${{ steps.infra.outputs.ECR_REGISTRY }}
-          ECR_REPOSITORY: ${{ steps.infra.outputs.ECR_REPOSITORY }}
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
           # ECR is IMMUTABLE: deploy by the unique commit-SHA tag, never `latest`.
@@ -89,42 +79,26 @@ jobs:
           audience: sts.amazonaws.com
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_wrapper: false
-
-      - name: Fetch Infrastructure Details
-        id: infra
-        working-directory: infra
-        run: |
-          terraform init
-          echo "FRONTEND_BUCKET=$(terraform output -raw frontend_bucket)" >> $GITHUB_OUTPUT
-          echo "DISTRIBUTION_ID=$(terraform output -raw cloudfront_distribution_id)" >> $GITHUB_OUTPUT
-          echo "API_URL=$(terraform output -raw api_url)" >> $GITHUB_OUTPUT
-
       - name: Build frontend
         working-directory: frontend
-        env:
-          VITE_API_URL: ${{ steps.infra.outputs.API_URL }}
         run: |
           npm ci
           npm run build
 
       - name: Sync to S3
         run: |
-          aws s3 sync frontend/dist/ s3://${{ steps.infra.outputs.FRONTEND_BUCKET }} \
+          aws s3 sync frontend/dist/ s3://$FRONTEND_BUCKET \
             --delete \
             --cache-control "public, max-age=31536000, immutable" \
             --exclude "index.html" \
             --exclude "favicon.svg"
-          aws s3 cp frontend/dist/index.html s3://${{ steps.infra.outputs.FRONTEND_BUCKET }}/index.html \
+          aws s3 cp frontend/dist/index.html s3://$FRONTEND_BUCKET/index.html \
             --cache-control "no-cache, no-store, must-revalidate"
-          aws s3 cp frontend/dist/favicon.svg s3://${{ steps.infra.outputs.FRONTEND_BUCKET }}/favicon.svg \
+          aws s3 cp frontend/dist/favicon.svg s3://$FRONTEND_BUCKET/favicon.svg \
             --cache-control "public, max-age=86400"
 
       - name: Invalidate CloudFront
         run: |
           aws cloudfront create-invalidation \
-            --distribution-id ${{ steps.infra.outputs.DISTRIBUTION_ID }} \
+            --distribution-id $CLOUDFRONT_DISTRIBUTION_ID \
             --paths "/index.html"
