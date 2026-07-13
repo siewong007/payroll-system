@@ -81,7 +81,10 @@ jobs:
           working-directory: backend
           # sqlx-macros-core locks optional MySQL support, which pulls rsa,
           # but this backend resolves Postgres-only SQLx features.
-          ignore: RUSTSEC-2023-0071
+          # printpdf 0.10 pins lopdf 0.39. RUSTSEC-2026-0187 only affects
+          # parsing untrusted PDFs; this application uses printpdf for
+          # document generation and never calls lopdf's load entry points.
+          ignore: RUSTSEC-2023-0071,RUSTSEC-2026-0187
 
   frontend-lint:
     name: Frontend Lint & Type Check
