@@ -65,7 +65,7 @@ export async function createPasskeyCredential(
   publicKeyOptions: PublicKeyCredentialCreationOptionsJSON
 ): Promise<RegistrationResponseJSON> {
   // Convert base64url fields to ArrayBuffer for the browser API
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // eslint-disable-next-line no-restricted-syntax
   const publicKey: any = { ...publicKeyOptions };
   publicKey.challenge = base64urlToBuffer(publicKey.challenge);
   publicKey.user = {
@@ -73,7 +73,7 @@ export async function createPasskeyCredential(
     id: base64urlToBuffer(publicKey.user.id),
   };
   if (publicKey.excludeCredentials) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // eslint-disable-next-line no-restricted-syntax
     publicKey.excludeCredentials = publicKey.excludeCredentials.map((c: any) => ({
       ...c,
       id: base64urlToBuffer(c.id),
@@ -102,11 +102,11 @@ export async function createPasskeyCredential(
 export async function getPasskeyCredential(
   publicKeyOptions: PublicKeyCredentialRequestOptionsJSON
 ): Promise<AuthenticationResponseJSON> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // eslint-disable-next-line no-restricted-syntax
   const publicKey: any = { ...publicKeyOptions };
   publicKey.challenge = base64urlToBuffer(publicKey.challenge);
   if (publicKey.allowCredentials) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // eslint-disable-next-line no-restricted-syntax
     publicKey.allowCredentials = publicKey.allowCredentials.map((c: any) => ({
       ...c,
       id: base64urlToBuffer(c.id),

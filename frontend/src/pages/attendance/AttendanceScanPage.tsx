@@ -79,7 +79,7 @@ export function AttendanceScanPage() {
       },
       { timeout: 8000, maximumAge: 0 }
     );
-  }, [token, authLoading, isAuthenticated, navigate, user]);
+  }, [token, authLoading, isAuthenticated, navigate, user]); // eslint-disable-line react-hooks/exhaustive-deps -- Babel cannot identify setError as a stable React setter.
 
   const formatTime = (iso: string) =>
     new Date(iso).toLocaleTimeString('en-MY', { hour: '2-digit', minute: '2-digit', second: '2-digit' });

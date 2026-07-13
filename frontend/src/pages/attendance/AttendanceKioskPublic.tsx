@@ -76,7 +76,7 @@ export function AttendanceKioskPublic() {
         void fetchTokenRef.current();
       }, wait);
     }
-  }, [kioskKey]);
+  }, [kioskKey]); // eslint-disable-line react-hooks/exhaustive-deps -- Babel cannot identify setStatus as a stable React setter.
 
   useEffect(() => {
     fetchTokenRef.current = fetchToken;

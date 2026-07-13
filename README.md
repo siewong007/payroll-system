@@ -54,7 +54,7 @@ Many SMEs manage payroll, attendance, leave, claims, and statutory records acros
 
 | Layer | Technology |
 | --- | --- |
-| Frontend | React 19, TypeScript 5.9, Vite 8, Tailwind CSS 4, React Router, TanStack Query, Axios |
+| Frontend | React 19, TypeScript 7, Vite 8, Tailwind CSS 4, React Router, TanStack Query, Axios |
 | Backend | Rust 2024, Axum 0.8, Tokio, SQLx, Tower HTTP, tower-governor |
 | Database and cache | PostgreSQL 18, Redis 7 |
 | Auth and security | JWT, bcrypt, httpOnly cookies, WebAuthn, OAuth2, route-level rate limiting |

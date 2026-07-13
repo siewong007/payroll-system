@@ -32,7 +32,7 @@ Forgetting this makes the build fail with "no cached data for this query" — th
 
 The project targets **PostgreSQL 18+** (migration `027` uses the built-in `uuidv7()` for primary-key defaults, so older servers can't run migrations). Use the `postgres:18.4-alpine` image locally; a data volume created by an earlier major version won't start under 18 — drop the `pgdata` volume (`docker compose down -v`) when upgrading.
 
-### Frontend (React 19 + Vite 8 + TS 5.9)
+### Frontend (React 19 + Vite 8 + TS 7)
 ```bash
 cd frontend
 npm install
