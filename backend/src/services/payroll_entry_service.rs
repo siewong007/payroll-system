@@ -234,3 +234,49 @@ pub async fn delete_entry(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::validate_payroll_entry;
+    use crate::core::error::AppError;
+
+    #[test]
+    fn accepts_valid_entries_at_period_boundaries() {
+        for (year, month, category) in [(1900, 1, "earning"), (3000, 12, "deduction")] {
+            assert!(
+                validate_payroll_entry(year, month, category, "bonus", "Annual bonus", 1).is_ok()
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_period_and_category() {
+        for (year, month, category) in [
+            (1899, 1, "earning"),
+            (3001, 1, "earning"),
+            (2026, 0, "earning"),
+            (2026, 13, "earning"),
+            (2026, 7, "reimbursement"),
+        ] {
+            assert!(matches!(
+                validate_payroll_entry(year, month, category, "bonus", "Annual bonus", 100),
+                Err(AppError::BadRequest(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn rejects_blank_labels_and_non_positive_amounts() {
+        for (item_type, description, amount) in [
+            (" ", "Annual bonus", 100),
+            ("bonus", "\t", 100),
+            ("bonus", "Annual bonus", 0),
+            ("bonus", "Annual bonus", -1),
+        ] {
+            assert!(matches!(
+                validate_payroll_entry(2026, 7, "earning", item_type, description, amount),
+                Err(AppError::BadRequest(_))
+            ));
+        }
+    }
+}

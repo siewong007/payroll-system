@@ -64,11 +64,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - uses: oven-sh/setup-bun@v2
         with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          bun-version-file: frontend/package.json
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -82,20 +80,17 @@ jobs:
       - name: Build frontend
         working-directory: frontend
         run: |
-          npm ci
-          npm run build
+          bun ci
+          bun run build
 
       - name: Sync to S3
         run: |
           aws s3 sync frontend/dist/ s3://$FRONTEND_BUCKET \
             --delete \
             --cache-control "public, max-age=31536000, immutable" \
-            --exclude "index.html" \
-            --exclude "favicon.svg"
+            --exclude "index.html"
           aws s3 cp frontend/dist/index.html s3://$FRONTEND_BUCKET/index.html \
             --cache-control "no-cache, no-store, must-revalidate"
-          aws s3 cp frontend/dist/favicon.svg s3://$FRONTEND_BUCKET/favicon.svg \
-            --cache-control "public, max-age=86400"
 
       - name: Invalidate CloudFront
         run: |

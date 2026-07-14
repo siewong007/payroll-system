@@ -688,10 +688,27 @@ pub async fn get_attendance_summary(
 // ─── CSV Export ───
 
 fn csv_field(s: &str) -> String {
-    if s.contains(',') || s.contains('"') || s.contains('\n') {
-        format!("\"{}\"", s.replace('"', "\"\""))
+    // Spreadsheet applications may execute cells beginning with these bytes as
+    // formulas. Prefixing with an apostrophe forces the value to remain text.
+    let formula_like = s
+        .as_bytes()
+        .first()
+        .is_some_and(|first| matches!(*first, b'=' | b'+' | b'-' | b'@' | b'\t' | b'\r'));
+    let value = if formula_like {
+        format!("'{s}")
     } else {
         s.to_string()
+    };
+
+    if formula_like
+        || value.contains(',')
+        || value.contains('"')
+        || value.contains('\n')
+        || value.contains('\r')
+    {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value
     }
 }
 
@@ -723,23 +740,55 @@ pub async fn export_attendance_csv(
         let notes = csv_field(r.notes.as_deref().unwrap_or(""));
         let dept = csv_field(r.department.as_deref().unwrap_or(""));
         let name = csv_field(&r.full_name);
+        let employee_number = csv_field(&r.employee_number);
+        let method = csv_field(&r.method);
+        let status = csv_field(&r.status);
 
         csv.push_str(&format!(
             "{},{},{},{},{},{},{},{},{},{},{},{}\n",
             date,
-            r.employee_number,
+            employee_number,
             name,
             dept,
             check_in,
             check_out,
             hours,
             ot,
-            r.method,
-            r.status,
+            method,
+            status,
             outside,
             notes
         ));
     }
 
     Ok(csv)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::csv_field;
+
+    #[test]
+    fn csv_field_quotes_delimiters_and_doubles_quotes() {
+        assert_eq!(csv_field("plain text"), "plain text");
+        assert_eq!(csv_field("Doe, Jane"), "\"Doe, Jane\"");
+        assert_eq!(csv_field("said \"hello\""), "\"said \"\"hello\"\"\"");
+        assert_eq!(csv_field("line one\nline two"), "\"line one\nline two\"");
+    }
+
+    #[test]
+    fn csv_field_neutralizes_spreadsheet_formula_prefixes() {
+        for value in [
+            "=1+1",
+            "+cmd|' /C calc'!A0",
+            "-2+3",
+            "@SUM(1,2)",
+            "\t=1+1",
+            "\r=1+1",
+        ] {
+            let escaped = csv_field(value);
+            assert!(escaped.starts_with("\"'"), "not neutralized: {escaped}");
+            assert!(escaped.ends_with('"'), "not quoted: {escaped}");
+        }
+    }
 }

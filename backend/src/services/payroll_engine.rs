@@ -524,11 +524,59 @@ fn calculate_age(dob: Option<NaiveDate>, as_of: NaiveDate) -> i32 {
     match dob {
         Some(dob) => {
             let mut age = as_of.year() - dob.year();
-            if as_of.ordinal() < dob.ordinal() {
+            if (as_of.month(), as_of.day()) < (dob.month(), dob.day()) {
                 age -= 1;
             }
             age
         }
         None => 30, // default assumption if DOB not provided
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::calculate_age;
+    use chrono::NaiveDate;
+
+    #[test]
+    fn calculates_age_on_and_before_birthday() {
+        let dob = NaiveDate::from_ymd_opt(1990, 7, 1);
+        assert_eq!(
+            calculate_age(dob, NaiveDate::from_ymd_opt(2023, 6, 30).unwrap()),
+            32
+        );
+        assert_eq!(
+            calculate_age(dob, NaiveDate::from_ymd_opt(2023, 7, 1).unwrap()),
+            33
+        );
+    }
+
+    #[test]
+    fn leap_year_day_offset_does_not_advance_age_early() {
+        let dob = NaiveDate::from_ymd_opt(1990, 7, 1);
+        let leap_year_day_before_birthday = NaiveDate::from_ymd_opt(2024, 6, 30).unwrap();
+
+        assert_eq!(calculate_age(dob, leap_year_day_before_birthday), 33);
+    }
+
+    #[test]
+    fn february_29_birthday_advances_on_march_1_in_non_leap_year() {
+        let dob = NaiveDate::from_ymd_opt(2000, 2, 29);
+        assert_eq!(
+            calculate_age(dob, NaiveDate::from_ymd_opt(2026, 2, 28).unwrap()),
+            25
+        );
+        assert_eq!(
+            calculate_age(dob, NaiveDate::from_ymd_opt(2026, 3, 1).unwrap()),
+            26
+        );
+    }
+
+    #[test]
+    fn missing_birth_date_keeps_documented_default_age() {
+        assert_eq!(
+            calculate_age(None, NaiveDate::from_ymd_opt(2026, 7, 14).unwrap()),
+            30
+        );
     }
 }

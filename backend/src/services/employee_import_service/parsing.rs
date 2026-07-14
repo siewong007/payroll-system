@@ -383,3 +383,64 @@ pub(crate) fn rows_to_import_rows(
 
     Ok(result)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_csv, resolve_headers, rows_to_import_rows};
+
+    #[test]
+    fn resolves_common_headers_case_insensitively() {
+        let headers = vec![
+            " Employee No ".to_string(),
+            "NAME".to_string(),
+            "Basic Salary (RM)".to_string(),
+            "unknown field".to_string(),
+        ];
+
+        assert_eq!(
+            resolve_headers(&headers),
+            vec![
+                Some("employee_number"),
+                Some("full_name"),
+                Some("basic_salary"),
+                None,
+            ]
+        );
+    }
+
+    #[test]
+    fn csv_parser_trims_cells_and_skips_blank_rows() {
+        let csv = b"Employee Number,Name,Basic Salary\n E001 , Jane Doe ,\"3,500.00\"\n , , \n";
+        let (headers, rows) = parse_csv(csv).expect("CSV should parse");
+
+        assert_eq!(headers, ["Employee Number", "Name", "Basic Salary"]);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0], ["E001", "Jane Doe", "3,500.00"]);
+    }
+
+    #[test]
+    fn mapped_import_rows_ignore_unknown_columns_and_number_data_rows() {
+        let headers = vec![
+            "emp no".to_string(),
+            "employee name".to_string(),
+            "monthly salary".to_string(),
+            "ignored".to_string(),
+        ];
+        let rows = vec![
+            vec!["E001", "Jane Doe", "3500.00", "x"],
+            vec!["E002", "John Doe", "4200.00", "y"],
+        ]
+        .into_iter()
+        .map(|row| row.into_iter().map(str::to_string).collect())
+        .collect();
+
+        let mapped = rows_to_import_rows(&headers, rows).expect("rows should map");
+        assert_eq!(mapped.len(), 2);
+        assert_eq!(mapped[0].row_number, 1);
+        assert_eq!(mapped[0].employee_number.as_deref(), Some("E001"));
+        assert_eq!(mapped[0].full_name.as_deref(), Some("Jane Doe"));
+        assert_eq!(mapped[0].basic_salary.as_deref(), Some("3500.00"));
+        assert_eq!(mapped[1].row_number, 2);
+        assert_eq!(mapped[1].employee_number.as_deref(), Some("E002"));
+    }
+}

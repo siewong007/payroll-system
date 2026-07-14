@@ -4,6 +4,7 @@ mod audit_tests;
 mod extractor_tests;
 mod payroll_lifecycle_tests;
 mod payroll_tests;
+mod pure_unit_tests;
 mod route_auth_tests;
 mod statutory_tests;
 mod support;

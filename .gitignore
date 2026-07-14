@@ -3,7 +3,7 @@ target/
 **/target/
 *.rs.bk
 
-# Node / frontend
+# Bun / frontend
 node_modules/
 **/node_modules/
 dist/
@@ -15,10 +15,6 @@ coverage/
 
 # Logs
 *.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
 
 # Environment files
 .env
@@ -29,6 +25,7 @@ pnpm-debug.log*
 # IDE and editor files
 .idea/
 .vscode/
+.claude/settings.local.json
 *.swp
 *.swo
 
@@ -54,6 +51,9 @@ crash.*.log
 *.xlsx
 *.csv
 !backend/migrations/**/*.csv
+
+# Generated Graphify knowledge graph and extraction cache
+graphify-out/
 
 # Cross-built backend binary (deploy artifact, not source)
 payroll-system.amd64

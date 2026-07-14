@@ -127,8 +127,7 @@ payroll-system/
 
 - Docker and Docker Compose
 - Rust stable toolchain
-- Node.js 22 or newer
-- npm
+- Bun 1.3.14
 
 ### 1. Clone the Repository
 
@@ -169,8 +168,8 @@ Open a second terminal:
 
 ```bash
 cd frontend
-npm install
-npm run dev
+bun install
+bun run dev
 ```
 
 The frontend starts at `http://localhost:5173` and proxies `/api` requests to the backend.
@@ -350,9 +349,9 @@ cargo test
 
 ```bash
 cd frontend
-npm run lint
-npm test
-npm run build
+bun run lint
+bun run test
+bun run build
 ```
 
 ## License

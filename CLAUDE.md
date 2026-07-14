@@ -35,11 +35,12 @@ The project targets **PostgreSQL 18+** (migration `027` uses the built-in `uuidv
 ### Frontend (React 19 + Vite 8 + TS 7)
 ```bash
 cd frontend
-npm install
-npm run dev                 # Vite on :5173, proxies /api → :8080
-npm run build               # tsc -b && vite build (CI runs both)
-npm run lint                # eslint (CI enforces)
-npx tsc --noEmit            # type check (CI enforces)
+bun install
+bun run dev                 # Vite on :5173, proxies /api → :8080
+bun run build               # tsc -b && vite build (CI runs both)
+bun run lint                # eslint (CI enforces)
+bun run test                # Vitest suite (CI enforces)
+bun run typecheck           # type check (CI enforces)
 ```
 Tailwind CSS v4 is wired via `@tailwindcss/vite`. Path alias `@/*` → `src/*`.
 
@@ -84,7 +85,7 @@ Key design decisions to be aware of:
 - React Query defaults: `retry: 1`, `staleTime: 30s`, no refetch-on-focus.
 
 ### Infra
-`infra/` holds Terraform for AWS (RDS + EC2 + ECR + CloudFront + ACM + Route53 + S3 uploads). Prod backend is containerized via `backend/Dockerfile`; frontend build is served from S3/CloudFront.
+`infra/` holds Terraform for AWS (RDS + EC2 + ECR + CloudFront + ACM + Route53 + S3 uploads). Production builds the backend from the repository root with `infra/Dockerfile`; the frontend build is served from S3/CloudFront.
 
 ## Conventions specific to this repo
 

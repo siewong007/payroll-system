@@ -39,7 +39,7 @@ Describe what actually happened.
 
 - OS:
 - Browser, if applicable:
-- Node.js version:
+- Bun version:
 - Rust version:
 - Docker/PostgreSQL version:
 

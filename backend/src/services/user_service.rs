@@ -283,3 +283,45 @@ pub async fn delete_user(pool: &PgPool, user_id: Uuid) -> AppResult<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_requested_roles;
+    use crate::core::error::AppError;
+
+    fn roles(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_string()).collect()
+    }
+
+    #[test]
+    fn role_normalization_trims_deduplicates_and_preserves_order() {
+        let normalized =
+            normalize_requested_roles(&roles(&[" finance ", "payroll_admin", "finance", " "]))
+                .expect("valid roles should normalize");
+
+        assert_eq!(normalized, ["finance", "payroll_admin"]);
+    }
+
+    #[test]
+    fn role_normalization_rejects_unknown_and_empty_role_sets() {
+        assert!(matches!(
+            normalize_requested_roles(&roles(&["admin", "root"])),
+            Err(AppError::BadRequest(_))
+        ));
+        assert!(matches!(
+            normalize_requested_roles(&roles(&["", "  "])),
+            Err(AppError::BadRequest(_))
+        ));
+    }
+
+    #[test]
+    fn employee_and_exec_roles_cannot_be_combined() {
+        for exclusive_role in ["employee", "exec"] {
+            assert!(matches!(
+                normalize_requested_roles(&roles(&[exclusive_role, "admin"])),
+                Err(AppError::BadRequest(_))
+            ));
+            assert!(normalize_requested_roles(&roles(&[exclusive_role])).is_ok());
+        }
+    }
+}

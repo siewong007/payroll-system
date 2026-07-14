@@ -94,15 +94,13 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: oven-sh/setup-bun@v2
         with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-      - run: npm ci
-      - run: npm run lint
-      - run: npm test
-      - run: npx tsc --noEmit
+          bun-version-file: frontend/package.json
+      - run: bun ci
+      - run: bun run lint
+      - run: bun run test
+      - run: bun run typecheck
 
   frontend-build:
     name: Frontend Build
@@ -112,13 +110,11 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: oven-sh/setup-bun@v2
         with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-      - run: npm ci
-      - run: npm run build
+          bun-version-file: frontend/package.json
+      - run: bun ci
+      - run: bun run build
 
   frontend-audit:
     name: Frontend Security Audit
@@ -128,10 +124,8 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: oven-sh/setup-bun@v2
         with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-      - run: npm ci
-      - run: npm audit --audit-level=high
+          bun-version-file: frontend/package.json
+      - run: bun ci
+      - run: bun audit --audit-level=high

@@ -37,7 +37,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 COPY --from=builder /app/target/release/payroll-system ./payroll-system
-COPY --from=builder /app/migrations ./migrations
 
 # Run as a non-root user. The app writes uploads under /app/uploads at runtime,
 # so that directory must be owned by the runtime user.

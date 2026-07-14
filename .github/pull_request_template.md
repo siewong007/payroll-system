@@ -26,9 +26,9 @@ List the checks you ran:
 - [ ] `cargo fmt --check`
 - [ ] `cargo clippy -- -D warnings`
 - [ ] `cargo test`
-- [ ] `npm run lint`
-- [ ] `npm test`
-- [ ] `npm run build`
+- [ ] `bun run lint`
+- [ ] `bun run test`
+- [ ] `bun run build`
 
 ## Screenshots
 

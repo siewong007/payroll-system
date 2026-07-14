@@ -21,8 +21,8 @@ function getMinuteOptions(step: number) {
 }
 
 function getValueParts(value: string) {
-  const [hour = '09', minute = '00'] = value.split(':');
-  return { hour, minute };
+  const [hour, minute] = value.split(':');
+  return { hour: hour || '09', minute: minute || '00' };
 }
 
 export function TimeSelector({

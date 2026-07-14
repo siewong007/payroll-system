@@ -16,8 +16,7 @@ Thank you for your interest in improving this project. This repository is mainta
 
 - Docker and Docker Compose
 - Rust stable toolchain
-- Node.js 22 or newer
-- npm
+- Bun 1.3.14
 
 ### Local Setup
 
@@ -40,8 +39,8 @@ Frontend:
 
 ```bash
 cd frontend
-npm install
-npm run dev
+bun install
+bun run dev
 ```
 
 ## Project Architecture Rules
@@ -92,9 +91,9 @@ Frontend:
 
 ```bash
 cd frontend
-npm run lint
-npm test
-npm run build
+bun run lint
+bun run test
+bun run build
 ```
 
 ## Commit Guidelines
