@@ -1,4 +1,4 @@
-name: Deploy
+name: Deploy Frontend
 
 on:
   push:
@@ -11,52 +11,11 @@ permissions:
 
 env:
   AWS_REGION: ap-southeast-1
-  ECR_REPOSITORY: payroll-dev-backend
   FRONTEND_BUCKET: payroll-dev-frontend
   CLOUDFRONT_DISTRIBUTION_ID: ED4843A8VKOA2
   VITE_API_URL: https://api.payrollmy.com/api
 
 jobs:
-  deploy-backend:
-    name: Deploy Backend
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::371726673750:role/payroll-dev-cicd
-          role-session-name: github-actions-backend-deploy
-          mask-aws-account-id: true
-          audience: sts.amazonaws.com
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Login to Amazon ECR
-        id: ecr-login
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Build and push Docker image
-        env:
-          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}
-        run: |
-          # ECR is IMMUTABLE: deploy by the unique commit-SHA tag, never `latest`.
-          docker build -f infra/Dockerfile -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-
-      - name: Update Backend Deployment
-        env:
-          IMAGE_TAG: ${{ github.sha }}
-        run: |
-          # Trigger a redeploy on the EC2 instance, pinning the exact image tag.
-          aws ssm send-command \
-            --document-name "AWS-RunShellScript" \
-            --targets "Key=tag:Name,Values=payroll-dev-backend" \
-            --parameters "commands=[\"/opt/deploy.sh $IMAGE_TAG\"]" \
-            --comment "Redeploying backend via CI/CD"
-
   deploy-frontend:
     name: Deploy Frontend
     runs-on: ubuntu-latest
