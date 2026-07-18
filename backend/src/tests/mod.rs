@@ -6,6 +6,7 @@ mod payroll_lifecycle_tests;
 mod payroll_tests;
 mod pure_unit_tests;
 mod route_auth_tests;
+mod schema_invariant_tests;
 mod statutory_tests;
 pub(crate) mod support;
 mod user_management_tests;

@@ -2,7 +2,7 @@
 //! table, grouped by use-case (reports, dashboard, payslip, ea_form, …). Each module
 //! co-locates its bespoke denormalized result structs with the query that builds them.
 //!
-//! See docs/refactor-repositories-layer.md §6.
+//! See `docs/architecture.md` for the data-access boundaries.
 
 pub mod approvals;
 pub mod attendance;

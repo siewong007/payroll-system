@@ -16,7 +16,11 @@ pub async fn create_company(
     req: CreateCompanyRequest,
     created_by: Uuid,
 ) -> AppResult<Company> {
-    companies::insert(pool, &req, created_by).await
+    let mut tx = pool.begin().await?;
+    let company = companies::insert(&mut *tx, &req, created_by).await?;
+    companies::provision_defaults(&mut *tx, company.id, Some(created_by)).await?;
+    tx.commit().await?;
+    Ok(company)
 }
 
 pub async fn list_companies(pool: &PgPool) -> AppResult<Vec<Company>> {
@@ -29,6 +33,11 @@ pub async fn update_company(
     req: UpdateCompanyRequest,
     updated_by: Uuid,
 ) -> AppResult<Company> {
+    if req.unpaid_leave_divisor.is_some_and(|divisor| divisor <= 0) {
+        return Err(AppError::BadRequest(
+            "Unpaid leave divisor must be greater than zero".into(),
+        ));
+    }
     companies::update(pool, company_id, &req, updated_by)
         .await?
         .ok_or_else(|| AppError::NotFound("Company not found".into()))

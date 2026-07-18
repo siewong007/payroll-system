@@ -12,7 +12,7 @@ pub async fn find_by_email(
     email: &str,
 ) -> AppResult<Option<ExistingUser>> {
     let row = sqlx::query_as::<_, ExistingUser>(
-        "SELECT id, roles, company_id, deleted_at IS NOT NULL AS is_deleted FROM users WHERE email = $1",
+        "SELECT id, roles, company_id, deleted_at IS NOT NULL AS is_deleted FROM users WHERE lower(btrim(email)) = lower(btrim($1))",
     )
     .bind(email)
     .fetch_optional(executor)
@@ -60,7 +60,7 @@ pub async fn find_active_by_email(
         User,
         r#"SELECT id, email, password_hash, full_name, roles, company_id,
             employee_id, is_active, must_change_password, last_login, created_at, updated_at
-        FROM users WHERE email = $1 AND is_active = TRUE AND deleted_at IS NULL"#,
+        FROM users WHERE lower(btrim(email)) = lower(btrim($1)) AND is_active = TRUE AND deleted_at IS NULL"#,
         email,
     )
     .fetch_optional(executor)
@@ -74,7 +74,7 @@ pub async fn find_active_contact_by_email(
 ) -> AppResult<Option<UserContact>> {
     let user = sqlx::query_as!(
         UserContact,
-        "SELECT id, email, full_name FROM users WHERE email = $1 AND is_active = TRUE AND deleted_at IS NULL",
+        "SELECT id, email, full_name FROM users WHERE lower(btrim(email)) = lower(btrim($1)) AND is_active = TRUE AND deleted_at IS NULL",
         email,
     )
     .fetch_optional(executor)
@@ -97,9 +97,12 @@ pub async fn find_id_by_email(
     executor: impl Executor<'_, Database = Postgres>,
     email: &str,
 ) -> AppResult<Option<Uuid>> {
-    let id = sqlx::query_scalar!("SELECT id FROM users WHERE email = $1", email)
-        .fetch_optional(executor)
-        .await?;
+    let id = sqlx::query_scalar!(
+        "SELECT id FROM users WHERE lower(btrim(email)) = lower(btrim($1))",
+        email,
+    )
+    .fetch_optional(executor)
+    .await?;
     Ok(id)
 }
 
@@ -109,7 +112,7 @@ pub async fn find_id_by_email_excluding(
     exclude_id: Uuid,
 ) -> AppResult<Option<Uuid>> {
     let id = sqlx::query_scalar!(
-        "SELECT id FROM users WHERE email = $1 AND id != $2",
+        "SELECT id FROM users WHERE lower(btrim(email)) = lower(btrim($1)) AND id != $2",
         email,
         exclude_id,
     )
@@ -362,7 +365,7 @@ pub async fn active_id_for_employee(
     employee_id: Uuid,
 ) -> AppResult<Option<Uuid>> {
     let user_id = sqlx::query_scalar!(
-        "SELECT id FROM users WHERE employee_id = $1 AND is_active = TRUE",
+        "SELECT id FROM users WHERE employee_id = $1 AND is_active = TRUE AND deleted_at IS NULL",
         employee_id,
     )
     .fetch_optional(executor)

@@ -15,7 +15,7 @@ pub async fn user_id_by_email_with_passkeys(
     let user_id = sqlx::query_scalar!(
         r#"SELECT u.id FROM users u
         INNER JOIN passkey_credentials pc ON pc.user_id = u.id
-        WHERE u.email = $1 AND u.is_active = TRUE
+        WHERE lower(btrim(u.email)) = lower(btrim($1)) AND u.is_active = TRUE
         LIMIT 1"#,
         email,
     )

@@ -29,7 +29,7 @@ Many SMEs manage payroll, attendance, leave, claims, and statutory records acros
 
 - Design a centralized payroll and HR workflow platform for SME daily operations.
 - Implement role-based access for administrators, payroll staff, finance users, executives, and employees.
-- Automate selected payroll calculations using seeded statutory tables for EPF, SOCSO, EIS, and PCB.
+- Model payroll calculations with effective-dated EPF, SOCSO, EIS, and PCB data, guarded so unverified statutory rules cannot silently reach a production payroll run.
 - Provide employee self-service features for payslips, leave, claims, overtime, attendance, and notifications.
 - Record operational events through audit logs and approval states.
 - Demonstrate a maintainable full-stack architecture using Rust, React, PostgreSQL, Docker, and Terraform.
@@ -42,13 +42,16 @@ Many SMEs manage payroll, attendance, leave, claims, and statutory records acros
 | User and role management | Super admin company management, user management, role-aware frontend routing, company-scoped data access |
 | Employee management | Employee CRUD, salary history, TP3 records, bulk import validation/confirmation, employee portal account creation |
 | Payroll | Payroll groups, payroll run processing, draft submission, approval, return-for-changes, paid locking, manual payroll entries |
-| Statutory payroll | EPF, SOCSO, EIS, PCB calculation services, statutory reports, export endpoints, EA form endpoints |
+| Statutory payroll | Source-linked rule tables, fail-closed calculation services, statutory reports/exports, and EA forms; production PCB is disabled pending LHDN conformance |
 | Attendance | QR attendance, kiosk credentials, Face ID mode setting, check-out, manual attendance, summaries, CSV export, geofence configuration |
 | Employee portal | Profile, payslips, leave requests, claims, overtime requests, team calendar, notifications, attendance history |
 | Approvals | Leave, claims, overtime, and payroll lifecycle approval actions |
 | Documents and letters | Document records, categories, expiry tracking, email/letter templates, preview, sending logs |
 | Reporting and audit | Dashboard summaries, payroll reports, leave/claims/statutory reports, audit trail |
-| Operations | Database migrations, seed data, Docker Compose services, CI workflows, Terraform infrastructure modules |
+| Operations | PostgreSQL 19 baseline/reference migrations, secure administrator bootstrap, Docker Compose, CI, and Terraform modules |
+
+See the [implemented feature catalogue](docs/features.md) for end-to-end status,
+configuration requirements, and known UI/security limitations.
 
 ## Tech Stack 🧰
 
@@ -56,7 +59,7 @@ Many SMEs manage payroll, attendance, leave, claims, and statutory records acros
 | --- | --- |
 | Frontend | React 19, TypeScript 7, Vite 8, Tailwind CSS 4, React Router, TanStack Query, Axios |
 | Backend | Rust 2024, Axum 0.8, Tokio, SQLx, Tower HTTP, tower-governor |
-| Database | PostgreSQL 18 |
+| Database | PostgreSQL 19 Beta 2 |
 | Auth and security | JWT, bcrypt, httpOnly cookies, WebAuthn, OAuth2, route-level rate limiting |
 | Documents and exports | printpdf, rust_xlsxwriter, calamine, csv, lettre |
 | DevOps | Docker Compose, GitHub Actions, Terraform, AWS-oriented infrastructure modules |
@@ -70,7 +73,7 @@ flowchart LR
     Api --> Handlers["Handlers\nHTTP extraction and response mapping"]
     Handlers --> Services["Services\nBusiness workflows"]
     Services --> Repositories["Repositories and SQLx\nData access"]
-    Repositories --> Postgres[("PostgreSQL 18")]
+    Repositories --> Postgres[("PostgreSQL 19 Beta 2")]
     Services --> Exports["PDF, CSV, XLSX,\nstatutory exports"]
     Services --> Email["SMTP email service"]
     Api --> Cookies["httpOnly refresh cookie\nBearer access token"]
@@ -85,14 +88,17 @@ Browser -> Vite proxy or CloudFront -> Axum /api -> handler -> service -> reposi
 
 Handlers are intended to stay thin. Business rules live in services, while database access is organized in repositories and SQLx-backed read modules.
 
+The detailed living design is in [docs/architecture.md](docs/architecture.md),
+and the schema/version contract is in [docs/database.md](docs/database.md).
+
 ## Project Structure
 
 ```text
 payroll-system/
 ├── backend/
 │   ├── migrations/
-│   │   ├── schema/              # SQLx migrations
-│   │   └── seed/                # statutory and demo seed data
+│   │   ├── 1000_schema.sql      # canonical schema + legacy reconciliation
+│   │   └── 1001_data.sql        # safe defaults + prototype fixtures; no credentials
 │   ├── src/
 │   │   ├── core/                # config, auth, db, errors, app state
 │   │   ├── handlers/            # Axum HTTP handlers
@@ -102,7 +108,7 @@ payroll-system/
 │   │   ├── services/            # business logic and orchestration
 │   │   └── tests/               # backend integration tests
 │   ├── Cargo.toml
-│   └── Dockerfile
+│   └── .sqlx/                    # committed offline query metadata
 ├── frontend/
 │   ├── public/branding/         # project logo assets
 │   └── src/
@@ -151,9 +157,12 @@ when `cargo run` is started from the `backend/` directory, so a duplicate
 docker compose up -d
 ```
 
-This starts PostgreSQL 18 on `127.0.0.1:5434`. The non-default host port avoids
+This starts PostgreSQL 19 Beta 2 on `127.0.0.1:5434`. The non-default host port avoids
 collisions with other local PostgreSQL projects. The backend automatically
-applies schema migrations and seed data on startup.
+applies the schema and reference-data migrations on startup.
+
+PostgreSQL 19 Beta 2 is a pre-release testing build. Keep valuable data backed up and use a
+major-version upgrade or dump/restore when moving an existing PostgreSQL volume to it.
 
 ### 4. Run the Backend
 
@@ -217,17 +226,25 @@ The main example file is [.env.example](.env.example).
 | `SMTP_FROM_NAME` | Optional | Sender display name |
 | `VITE_API_URL` | Optional frontend | External API base URL when not using the Vite proxy |
 
-## Demo Accounts
+## Create the Initial Administrator
 
-The seed data includes demo users for local evaluation after the backend has run migrations and seeding.
+The database deliberately contains no demo users or known password. After the
+backend migrations have run, create the first company and super administrator
+once with the bootstrap command:
 
-| Role | Email | Password |
-| --- | --- | --- |
-| Super admin | `superadmin@demo.com` | `admin123` |
-| Company admin | `admin@demo.com` | `admin123` |
-| Executive | `exec@demo.com` | `admin123` |
-| Employee | `sarah@demo.com` | `admin123` |
-| Employee | `ahmad@demo.com` | `admin123` |
+```bash
+cd backend
+export BOOTSTRAP_COMPANY_NAME="Example Company Sdn Bhd"
+export BOOTSTRAP_ADMIN_NAME="System Administrator"
+export BOOTSTRAP_ADMIN_EMAIL="admin@example.com"
+read -s BOOTSTRAP_ADMIN_PASSWORD && export BOOTSTRAP_ADMIN_PASSWORD
+cargo run --bin bootstrap_admin
+unset BOOTSTRAP_ADMIN_PASSWORD
+```
+
+The command enforces the application password policy, serializes concurrent
+attempts, and refuses to run after an active super administrator exists. Do not
+put bootstrap credentials in migration files or commit them to `.env`.
 
 ## Usage Examples
 
@@ -236,7 +253,7 @@ The seed data includes demo users for local evaluation after the backend has run
 ```bash
 curl -s -X POST http://localhost:8080/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"admin@demo.com","password":"admin123"}'
+  -d '{"email":"admin@example.com","password":"<your-password>"}'
 ```
 
 Copy the returned token into authenticated requests:
@@ -253,7 +270,7 @@ curl -s -X POST http://localhost:8080/api/payroll/run \
   -H "Authorization: Bearer <access-token>" \
   -H "Content-Type: application/json" \
   -d '{
-    "payroll_group_id": "00000000-0000-0000-0000-000000000003",
+    "payroll_group_id": "<payroll-group-uuid>",
     "period_year": 2026,
     "period_month": 1,
     "notes": "January payroll test run"
@@ -290,36 +307,11 @@ All backend endpoints are nested under `/api`. Most endpoints require `Authoriza
 | Audit and backup | `GET /api/audit-logs`, `GET /api/admin/backup/export`, `POST /api/admin/backup/import` |
 | Work schedules and geofence | `GET /api/work-schedules`, `GET/PUT /api/work-schedules/default`, `GET/POST /api/geofence/locations`, `GET/PUT /api/geofence/mode` |
 
-## Screenshots and Demo Placeholders
-
-Add screenshots to `docs/screenshots/` and reference them here when available.
-
-| Screen | Suggested file | Purpose |
-| --- | --- | --- |
-| Login and passkey flow | `docs/screenshots/login.png` | Show authentication entry point |
-| Admin dashboard | `docs/screenshots/dashboard.png` | Show high-level company overview |
-| Employee list and import | `docs/screenshots/employees.png` | Show HR administration workflow |
-| Payroll processing | `docs/screenshots/payroll-run.png` | Show payroll run lifecycle |
-| Attendance kiosk | `docs/screenshots/attendance-kiosk.png` | Show QR/kiosk attendance workflow |
-| Employee portal | `docs/screenshots/employee-portal.png` | Show payslips, leave, claims, and attendance |
-| Reports | `docs/screenshots/reports.png` | Show reporting and export views |
-
-Suggested short demo videos:
-
-- Create an employee and review their portal account.
-- Process a monthly payroll run and submit it for approval.
-- Scan a QR attendance code and export attendance summary data.
-- Submit a leave request from the portal and approve it as an administrator.
-
-## Repository Presentation
-
-Maintainer-facing GitHub profile suggestions are documented in [docs/repository-appearance.md](docs/repository-appearance.md), including the recommended repository description, topics, logo/banner direction, screenshot checklist, and demo GIF ideas.
-
 ## Roadmap and Future Improvements 🗺️
 
 - Publish a formal OpenAPI specification for backend endpoints.
 - Add end-to-end browser tests for core payroll, attendance, and portal workflows.
-- Add a statutory data versioning workflow for easier review of EPF, SOCSO, EIS, and PCB updates.
+- Import independently verified official EPF/SOCSO/EIS schedules and add LHDN PCB conformance tooling.
 - Strengthen Face ID attendance with stricter server-side WebAuthn assertion verification.
 - Improve accessibility testing and keyboard navigation coverage.
 - Add Malay/English localization support.

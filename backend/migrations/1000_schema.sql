@@ -1,41 +1,39 @@
+-- PostgreSQL 19 canonical schema and live-schema reconciliation.
+-- Generated from PostgreSQL 19 Beta 2; requires PostgreSQL 18+ for uuidv7().
+-- Fresh databases execute the canonical bootstrap; existing v1-v4 databases
+-- skip object creation and run the idempotent reconciliation section.
+
 --
 -- PostgreSQL database dump
 --
 
+-- Dumped from database version 19beta2
+-- Dumped by pg_dump version 19beta2
 
--- Dumped from database version 18.4 (Homebrew)
--- Dumped by pg_dump version 18.4 (Homebrew)
+DO $minimum_version$
+BEGIN
+    IF current_setting('server_version_num')::integer < 180000 THEN
+        RAISE EXCEPTION 'PostgreSQL 18 or newer is required; PostgreSQL 19 is the canonical target';
+    END IF;
+END
+$minimum_version$;
 
-SET statement_timeout = 0;
-SET lock_timeout = 0;
-SET idle_in_transaction_session_timeout = 0;
-SET transaction_timeout = 0;
-SET client_encoding = 'UTF8';
-SET standard_conforming_strings = on;
-SET check_function_bodies = false;
-SET xmloption = content;
-SET client_min_messages = warning;
-SET row_security = off;
-
---
--- Name: public; Type: SCHEMA; Schema: -; Owner: -
---
-
--- *not* creating schema, since initdb creates it
-
+DO $pg19_bootstrap$
+BEGIN
+    IF to_regclass('public.companies') IS NULL THEN
 
 --
--- Name: uuid-ossp; Type: EXTENSION; Schema: -; Owner: -
+-- Name: pg_trgm; Type: EXTENSION; Schema: -; Owner: -
 --
 
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA public;
+CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public;
 
 
 --
--- Name: EXTENSION "uuid-ossp"; Type: COMMENT; Schema: -; Owner: -
+-- Name: EXTENSION pg_trgm; Type: COMMENT; Schema: -; Owner: -
 --
 
-COMMENT ON EXTENSION "uuid-ossp" IS 'generate universally unique identifiers (UUIDs)';
+COMMENT ON EXTENSION pg_trgm IS 'text similarity measurement and index searching based on trigrams';
 
 
 --
@@ -123,10 +121,6 @@ CREATE TYPE public.residency_status AS ENUM (
 );
 
 
-SET default_tablespace = '';
-
-SET default_table_access_method = heap;
-
 --
 -- Name: attendance_kiosk_credentials; Type: TABLE; Schema: public; Owner: -
 --
@@ -183,6 +177,10 @@ CREATE TABLE public.attendance_records (
     hours_worked numeric(5,2),
     overtime_hours numeric(5,2) DEFAULT 0,
     is_outside_geofence boolean DEFAULT false,
+    CONSTRAINT attendance_records_checkout_order_check CHECK (((check_out_at IS NULL) OR (check_out_at >= check_in_at))),
+    CONSTRAINT attendance_records_checkin_coordinates_check CHECK ((((latitude IS NULL) = (longitude IS NULL)) AND ((latitude IS NULL) OR ((latitude >= ('-90'::integer)::double precision) AND (latitude <= (90)::double precision) AND (longitude >= ('-180'::integer)::double precision) AND (longitude <= (180)::double precision))))),
+    CONSTRAINT attendance_records_checkout_coordinates_check CHECK ((((checkout_latitude IS NULL) = (checkout_longitude IS NULL)) AND ((checkout_latitude IS NULL) OR ((checkout_latitude >= ('-90'::integer)::double precision) AND (checkout_latitude <= (90)::double precision) AND (checkout_longitude >= ('-180'::integer)::double precision) AND (checkout_longitude <= (180)::double precision))))),
+    CONSTRAINT attendance_records_hours_check CHECK ((((hours_worked IS NULL) OR (hours_worked >= (0)::numeric)) AND ((overtime_hours IS NULL) OR (overtime_hours >= (0)::numeric)))),
     CONSTRAINT attendance_records_method_check CHECK (((method)::text = ANY (ARRAY[('qr_code'::character varying)::text, ('face_id'::character varying)::text, ('manual'::character varying)::text]))),
     CONSTRAINT attendance_records_status_check CHECK (((status)::text = ANY (ARRAY[('present'::character varying)::text, ('late'::character varying)::text, ('absent'::character varying)::text, ('half_day'::character varying)::text])))
 );
@@ -213,7 +211,7 @@ CREATE TABLE public.audit_logs (
 --
 
 CREATE TABLE public.bulk_import_sessions (
-    id uuid NOT NULL,
+    id uuid DEFAULT uuidv7() NOT NULL,
     company_id uuid NOT NULL,
     user_id uuid NOT NULL,
     file_name text NOT NULL,
@@ -223,7 +221,10 @@ CREATE TABLE public.bulk_import_sessions (
     status text DEFAULT 'pending'::text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     confirmed_at timestamp with time zone,
-    expires_at timestamp with time zone DEFAULT (now() + '01:00:00'::interval) NOT NULL
+    expires_at timestamp with time zone DEFAULT (now() + '01:00:00'::interval) NOT NULL,
+    CONSTRAINT bulk_import_sessions_counts_check CHECK (((row_count >= 0) AND (valid_count >= 0) AND (valid_count <= row_count))),
+    CONSTRAINT bulk_import_sessions_expiry_check CHECK ((expires_at > created_at)),
+    CONSTRAINT bulk_import_sessions_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'confirmed'::text, 'expired'::text, 'failed'::text])))
 );
 
 
@@ -286,7 +287,8 @@ CREATE TABLE public.companies (
     timezone character varying(50) DEFAULT 'Asia/Kuala_Lumpur'::character varying NOT NULL,
     geofence_mode character varying(10) DEFAULT 'none'::character varying NOT NULL,
     CONSTRAINT companies_attendance_method_check CHECK (((attendance_method)::text = ANY (ARRAY[('qr_code'::character varying)::text, ('face_id'::character varying)::text]))),
-    CONSTRAINT companies_geofence_mode_check CHECK (((geofence_mode)::text = ANY (ARRAY[('none'::character varying)::text, ('warn'::character varying)::text, ('enforce'::character varying)::text])))
+    CONSTRAINT companies_geofence_mode_check CHECK (((geofence_mode)::text = ANY (ARRAY[('none'::character varying)::text, ('warn'::character varying)::text, ('enforce'::character varying)::text]))),
+    CONSTRAINT companies_unpaid_leave_divisor_check CHECK ((unpaid_leave_divisor > 0))
 );
 
 
@@ -303,7 +305,9 @@ CREATE TABLE public.company_locations (
     radius_meters integer DEFAULT 200 NOT NULL,
     is_active boolean DEFAULT true NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT company_locations_coordinates_check CHECK ((((latitude >= ('-90'::integer)::double precision) AND (latitude <= (90)::double precision)) AND ((longitude >= ('-180'::integer)::double precision) AND (longitude <= (180)::double precision)))),
+    CONSTRAINT company_locations_radius_check CHECK ((radius_meters > 0))
 );
 
 
@@ -397,7 +401,10 @@ CREATE TABLE public.eis_rates (
     employer_contribution bigint NOT NULL,
     effective_from date NOT NULL,
     effective_to date,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT eis_rates_contributions_check CHECK (((employee_contribution >= 0) AND (employer_contribution >= 0))),
+    CONSTRAINT eis_rates_effective_dates_check CHECK (((effective_to IS NULL) OR (effective_to >= effective_from))),
+    CONSTRAINT eis_rates_range_check CHECK (((wage_from >= 0) AND (wage_to >= wage_from)))
 );
 
 
@@ -406,7 +413,7 @@ CREATE TABLE public.eis_rates (
 --
 
 CREATE TABLE public.email_logs (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    id uuid DEFAULT uuidv7() NOT NULL,
     company_id uuid NOT NULL,
     employee_id uuid,
     template_id uuid,
@@ -428,7 +435,7 @@ CREATE TABLE public.email_logs (
 --
 
 CREATE TABLE public.email_templates (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    id uuid DEFAULT uuidv7() NOT NULL,
     company_id uuid NOT NULL,
     name character varying(100) NOT NULL,
     letter_type character varying(50) NOT NULL,
@@ -563,7 +570,10 @@ CREATE TABLE public.epf_rates (
     category character(1) DEFAULT 'A'::bpchar NOT NULL,
     effective_from date NOT NULL,
     effective_to date,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT epf_rates_contributions_check CHECK (((employee_contribution >= 0) AND (employer_contribution >= 0))),
+    CONSTRAINT epf_rates_effective_dates_check CHECK (((effective_to IS NULL) OR (effective_to >= effective_from))),
+    CONSTRAINT epf_rates_range_check CHECK (((wage_from >= 0) AND (wage_to >= wage_from)))
 );
 
 
@@ -572,7 +582,7 @@ CREATE TABLE public.epf_rates (
 --
 
 CREATE TABLE public.holidays (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    id uuid DEFAULT uuidv7() NOT NULL,
     company_id uuid NOT NULL,
     name character varying(255) NOT NULL,
     date date NOT NULL,
@@ -627,6 +637,8 @@ CREATE TABLE public.leave_requests (
     attachment_name character varying(255),
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT leave_requests_dates_check CHECK ((start_date <= end_date)),
+    CONSTRAINT leave_requests_days_check CHECK ((days > (0)::numeric)),
     CONSTRAINT leave_requests_status_check CHECK (((status)::text = ANY (ARRAY[('pending'::character varying)::text, ('approved'::character varying)::text, ('rejected'::character varying)::text, ('cancelled'::character varying)::text])))
 );
 
@@ -732,7 +744,7 @@ CREATE TABLE public.overtime_applications (
 --
 
 CREATE TABLE public.passkey_challenges (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    id uuid DEFAULT uuidv7() NOT NULL,
     user_id uuid,
     challenge_type character varying(20) NOT NULL,
     state_json jsonb NOT NULL,
@@ -747,7 +759,7 @@ CREATE TABLE public.passkey_challenges (
 --
 
 CREATE TABLE public.passkey_credentials (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    id uuid DEFAULT uuidv7() NOT NULL,
     user_id uuid NOT NULL,
     credential_name character varying(255) DEFAULT 'My Passkey'::character varying NOT NULL,
     credential_json jsonb NOT NULL,
@@ -816,7 +828,8 @@ CREATE TABLE public.payroll_groups (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     created_by uuid,
-    updated_by uuid
+    updated_by uuid,
+    CONSTRAINT payroll_groups_days_check CHECK ((((cutoff_day >= 1) AND (cutoff_day <= 31)) AND ((payment_day >= 1) AND (payment_day <= 31))))
 );
 
 
@@ -922,7 +935,9 @@ CREATE TABLE public.payroll_runs (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     created_by uuid,
-    updated_by uuid
+    updated_by uuid,
+    CONSTRAINT payroll_runs_period_check CHECK ((((period_month >= 1) AND (period_month <= 12)) AND (period_start <= period_end))),
+    CONSTRAINT payroll_runs_version_count_check CHECK (((version > 0) AND (employee_count >= 0)))
 );
 
 
@@ -937,7 +952,10 @@ CREATE TABLE public.pcb_brackets (
     tax_rate_percent numeric(5,2) NOT NULL,
     cumulative_tax bigint NOT NULL,
     effective_year integer NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT pcb_brackets_range_check CHECK (((chargeable_income_from >= 0) AND (chargeable_income_to >= chargeable_income_from))),
+    CONSTRAINT pcb_brackets_rate_check CHECK ((((tax_rate_percent >= (0)::numeric) AND (tax_rate_percent <= (100)::numeric)) AND (cumulative_tax >= 0))),
+    CONSTRAINT pcb_brackets_year_check CHECK (((effective_year >= 2000) AND (effective_year <= 2200)))
 );
 
 
@@ -951,7 +969,8 @@ CREATE TABLE public.pcb_reliefs (
     amount bigint NOT NULL,
     effective_year integer NOT NULL,
     description character varying(255),
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT pcb_reliefs_amount_year_check CHECK (((amount >= 0) AND ((effective_year >= 2000) AND (effective_year <= 2200))))
 );
 
 
@@ -1010,23 +1029,10 @@ CREATE TABLE public.socso_rates (
     second_cat_employer bigint NOT NULL,
     effective_from date NOT NULL,
     effective_to date,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-
---
--- Name: system_settings; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.system_settings (
-    id uuid DEFAULT uuidv7() NOT NULL,
-    setting_key character varying(100) NOT NULL,
-    setting_value character varying(500) NOT NULL,
-    description character varying(255),
-    effective_from date NOT NULL,
-    effective_to date,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    CONSTRAINT socso_rates_contributions_check CHECK (((first_cat_employee >= 0) AND (first_cat_employer >= 0) AND (second_cat_employer >= 0))),
+    CONSTRAINT socso_rates_effective_dates_check CHECK (((effective_to IS NULL) OR (effective_to >= effective_from))),
+    CONSTRAINT socso_rates_range_check CHECK (((wage_from >= 0) AND (wage_to >= wage_from)))
 );
 
 
@@ -1035,7 +1041,7 @@ CREATE TABLE public.system_settings (
 --
 
 CREATE TABLE public.team_members (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    id uuid DEFAULT uuidv7() NOT NULL,
     team_id uuid NOT NULL,
     employee_id uuid NOT NULL,
     role character varying(20) DEFAULT 'member'::character varying NOT NULL,
@@ -1049,7 +1055,7 @@ CREATE TABLE public.team_members (
 --
 
 CREATE TABLE public.teams (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    id uuid DEFAULT uuidv7() NOT NULL,
     company_id uuid NOT NULL,
     name character varying(100) NOT NULL,
     description text,
@@ -1101,7 +1107,6 @@ CREATE TABLE public.users (
     email character varying(255) NOT NULL,
     password_hash character varying(255) NOT NULL,
     full_name character varying(255) NOT NULL,
-    role character varying(50) DEFAULT 'employee'::character varying NOT NULL,
     company_id uuid,
     employee_id uuid,
     is_active boolean DEFAULT true,
@@ -1110,7 +1115,8 @@ CREATE TABLE public.users (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     must_change_password boolean DEFAULT false NOT NULL,
     roles character varying(50)[] DEFAULT ARRAY['employee'::character varying(50)] NOT NULL,
-    CONSTRAINT users_role_check CHECK (((role)::text = ANY (ARRAY[('super_admin'::character varying)::text, ('admin'::character varying)::text, ('payroll_admin'::character varying)::text, ('hr_manager'::character varying)::text, ('finance'::character varying)::text, ('exec'::character varying)::text, ('employee'::character varying)::text]))),
+    deleted_at timestamp with time zone,
+    deleted_by uuid,
     CONSTRAINT users_roles_valid CHECK (((cardinality(roles) >= 1) AND (roles <@ ARRAY['super_admin'::character varying(50), 'admin'::character varying(50), 'payroll_admin'::character varying(50), 'hr_manager'::character varying(50), 'finance'::character varying(50), 'exec'::character varying(50), 'employee'::character varying(50)])))
 );
 
@@ -1120,7 +1126,7 @@ CREATE TABLE public.users (
 --
 
 CREATE TABLE public.working_day_config (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    id uuid DEFAULT uuidv7() NOT NULL,
     company_id uuid NOT NULL,
     day_of_week smallint NOT NULL,
     is_working_day boolean DEFAULT true NOT NULL,
@@ -1539,22 +1545,6 @@ ALTER TABLE ONLY public.socso_rates
 
 
 --
--- Name: system_settings system_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.system_settings
-    ADD CONSTRAINT system_settings_pkey PRIMARY KEY (id);
-
-
---
--- Name: system_settings system_settings_setting_key_key; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.system_settings
-    ADD CONSTRAINT system_settings_setting_key_key UNIQUE (setting_key);
-
-
---
 -- Name: team_members team_members_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1611,14 +1601,6 @@ ALTER TABLE ONLY public.user_companies
 
 
 --
--- Name: users users_email_key; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.users
-    ADD CONSTRAINT users_email_key UNIQUE (email);
-
-
---
 -- Name: users users_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1650,10 +1632,24 @@ CREATE UNIQUE INDEX attendance_one_open_per_employee ON public.attendance_record
 
 
 --
+-- Name: eis_rates_natural_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX eis_rates_natural_key ON public.eis_rates USING btree (effective_from, wage_from, wage_to);
+
+
+--
 -- Name: employees_company_employee_number_active; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE UNIQUE INDEX employees_company_employee_number_active ON public.employees USING btree (company_id, employee_number) WHERE (deleted_at IS NULL);
+
+
+--
+-- Name: epf_rates_natural_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX epf_rates_natural_key ON public.epf_rates USING btree (category, effective_from, wage_from, wage_to);
 
 
 --
@@ -1664,10 +1660,10 @@ CREATE INDEX idx_attendance_company_date ON public.attendance_records USING btre
 
 
 --
--- Name: idx_attendance_employee; Type: INDEX; Schema: public; Owner: -
+-- Name: idx_attendance_employee_recent; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_attendance_employee ON public.attendance_records USING btree (employee_id);
+CREATE INDEX idx_attendance_employee_recent ON public.attendance_records USING btree (employee_id, check_in_at DESC);
 
 
 --
@@ -1689,13 +1685,6 @@ CREATE INDEX idx_audit_logs_action ON public.audit_logs USING btree (action);
 --
 
 CREATE INDEX idx_audit_logs_company_created ON public.audit_logs USING btree (company_id, created_at DESC);
-
-
---
--- Name: idx_audit_logs_created; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_audit_logs_created ON public.audit_logs USING btree (created_at);
 
 
 --
@@ -1734,6 +1723,13 @@ CREATE INDEX idx_bulk_import_sessions_status ON public.bulk_import_sessions USIN
 
 
 --
+-- Name: idx_claims_approved_payroll; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_claims_approved_payroll ON public.claims USING btree (company_id, employee_id, expense_date) WHERE ((status)::text = 'approved'::text);
+
+
+--
 -- Name: idx_claims_employee; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1759,27 +1755,6 @@ CREATE UNIQUE INDEX idx_companies_name_unique ON public.companies USING btree (l
 --
 
 CREATE INDEX idx_company_locations_company ON public.company_locations USING btree (company_id);
-
-
---
--- Name: idx_company_settings_category; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_company_settings_category ON public.company_settings USING btree (company_id, category);
-
-
---
--- Name: idx_company_settings_company; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_company_settings_company ON public.company_settings USING btree (company_id);
-
-
---
--- Name: idx_document_categories_company; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_document_categories_company ON public.document_categories USING btree (company_id);
 
 
 --
@@ -1811,20 +1786,6 @@ CREATE INDEX idx_documents_expiry ON public.documents USING btree (expiry_date) 
 
 
 --
--- Name: idx_eis_rates_lookup; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_eis_rates_lookup ON public.eis_rates USING btree (effective_from, wage_from, wage_to);
-
-
---
--- Name: idx_email_logs_company; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_email_logs_company ON public.email_logs USING btree (company_id);
-
-
---
 -- Name: idx_email_logs_employee; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1836,13 +1797,6 @@ CREATE INDEX idx_email_logs_employee ON public.email_logs USING btree (company_i
 --
 
 CREATE INDEX idx_email_logs_status ON public.email_logs USING btree (status);
-
-
---
--- Name: idx_email_templates_company; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_email_templates_company ON public.email_templates USING btree (company_id);
 
 
 --
@@ -1860,24 +1814,17 @@ CREATE INDEX idx_employee_allowances ON public.employee_allowances USING btree (
 
 
 --
--- Name: idx_employee_work_schedules_employee; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_employee_work_schedules_employee ON public.employee_work_schedules USING btree (employee_id);
-
-
---
--- Name: idx_employees_active; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_employees_active ON public.employees USING btree (is_active) WHERE (is_active = true);
-
-
---
 -- Name: idx_employees_company; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_employees_company ON public.employees USING btree (company_id);
+
+
+--
+-- Name: idx_employees_payroll_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_employees_payroll_active ON public.employees USING btree (company_id, payroll_group_id, date_joined) WHERE ((is_active = true) AND (deleted_at IS NULL));
 
 
 --
@@ -1888,10 +1835,10 @@ CREATE INDEX idx_employees_payroll_group ON public.employees USING btree (payrol
 
 
 --
--- Name: idx_epf_rates_lookup; Type: INDEX; Schema: public; Owner: -
+-- Name: idx_employees_search_trgm; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_epf_rates_lookup ON public.epf_rates USING btree (category, effective_from, wage_from, wage_to);
+CREATE INDEX idx_employees_search_trgm ON public.employees USING gin (lower((((full_name)::text || ' '::text) || (employee_number)::text)) public.gin_trgm_ops) WHERE (deleted_at IS NULL);
 
 
 --
@@ -1923,6 +1870,13 @@ CREATE UNIQUE INDEX idx_kiosk_credentials_token_hash ON public.attendance_kiosk_
 
 
 --
+-- Name: idx_leave_requests_approved_dates; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_leave_requests_approved_dates ON public.leave_requests USING btree (employee_id, start_date, end_date) WHERE ((status)::text = 'approved'::text);
+
+
+--
 -- Name: idx_leave_requests_employee; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1951,17 +1905,17 @@ CREATE INDEX idx_notifications_created ON public.notifications USING btree (crea
 
 
 --
+-- Name: idx_notifications_unread_recent; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_notifications_unread_recent ON public.notifications USING btree (user_id, created_at DESC) WHERE (is_read = false);
+
+
+--
 -- Name: idx_notifications_user; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_notifications_user ON public.notifications USING btree (user_id, is_read);
-
-
---
--- Name: idx_oauth2_accounts_provider; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_oauth2_accounts_provider ON public.oauth2_accounts USING btree (provider, provider_user_id);
 
 
 --
@@ -1990,6 +1944,13 @@ CREATE INDEX idx_overtime_applications_company ON public.overtime_applications U
 --
 
 CREATE INDEX idx_overtime_applications_employee ON public.overtime_applications USING btree (employee_id, status);
+
+
+--
+-- Name: idx_overtime_approved_payroll; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_overtime_approved_payroll ON public.overtime_applications USING btree (employee_id, ot_date) INCLUDE (ot_type, hours) WHERE ((status)::text = 'approved'::text);
 
 
 --
@@ -2042,6 +2003,13 @@ CREATE INDEX idx_payroll_entries ON public.payroll_entries USING btree (employee
 
 
 --
+-- Name: idx_payroll_entries_run_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_payroll_entries_run_pending ON public.payroll_entries USING btree (payroll_run_id) WHERE (payroll_run_id IS NOT NULL);
+
+
+--
 -- Name: idx_payroll_item_details; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -2056,17 +2024,10 @@ CREATE INDEX idx_payroll_items_employee ON public.payroll_items USING btree (emp
 
 
 --
--- Name: idx_payroll_items_run; Type: INDEX; Schema: public; Owner: -
+-- Name: idx_payroll_runs_company_period; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_payroll_items_run ON public.payroll_items USING btree (payroll_run_id);
-
-
---
--- Name: idx_payroll_runs_company; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_payroll_runs_company ON public.payroll_runs USING btree (company_id);
+CREATE INDEX idx_payroll_runs_company_period ON public.payroll_runs USING btree (company_id, period_year DESC, period_month DESC, created_at DESC);
 
 
 --
@@ -2077,31 +2038,10 @@ CREATE INDEX idx_payroll_runs_period ON public.payroll_runs USING btree (period_
 
 
 --
--- Name: idx_pcb_brackets_lookup; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_pcb_brackets_lookup ON public.pcb_brackets USING btree (effective_year, chargeable_income_from);
-
-
---
 -- Name: idx_qr_tokens_company_expires; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_qr_tokens_company_expires ON public.attendance_qr_tokens USING btree (company_id, expires_at);
-
-
---
--- Name: idx_qr_tokens_token; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_qr_tokens_token ON public.attendance_qr_tokens USING btree (token);
-
-
---
--- Name: idx_refresh_tokens_hash; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_refresh_tokens_hash ON public.refresh_tokens USING btree (token_hash);
 
 
 --
@@ -2119,31 +2059,10 @@ CREATE INDEX idx_salary_history_employee ON public.salary_history USING btree (e
 
 
 --
--- Name: idx_socso_rates_lookup; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_socso_rates_lookup ON public.socso_rates USING btree (effective_from, wage_from, wage_to);
-
-
---
 -- Name: idx_team_members_employee; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_team_members_employee ON public.team_members USING btree (employee_id);
-
-
---
--- Name: idx_team_members_team; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_team_members_team ON public.team_members USING btree (team_id);
-
-
---
--- Name: idx_teams_company; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_teams_company ON public.teams USING btree (company_id);
 
 
 --
@@ -2154,10 +2073,10 @@ CREATE INDEX idx_user_companies_company ON public.user_companies USING btree (co
 
 
 --
--- Name: idx_user_companies_user; Type: INDEX; Schema: public; Owner: -
+-- Name: idx_users_company_active; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_user_companies_user ON public.user_companies USING btree (user_id);
+CREATE INDEX idx_users_company_active ON public.users USING btree (company_id, created_at DESC) WHERE ((is_active = true) AND (deleted_at IS NULL));
 
 
 --
@@ -2179,6 +2098,76 @@ CREATE INDEX idx_work_schedules_company ON public.company_work_schedules USING b
 --
 
 CREATE UNIQUE INDEX idx_work_schedules_default ON public.company_work_schedules USING btree (company_id) WHERE (is_default = true);
+
+
+--
+-- Name: payroll_runs_one_active_period; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX payroll_runs_one_active_period ON public.payroll_runs USING btree (company_id, payroll_group_id, period_year, period_month) WHERE (status <> 'cancelled'::public.payroll_status);
+
+
+--
+-- Name: payroll_groups_company_name_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX payroll_groups_company_name_key ON public.payroll_groups USING btree (company_id, lower(btrim((name)::text)));
+
+
+--
+-- Name: pcb_brackets_natural_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX pcb_brackets_natural_key ON public.pcb_brackets USING btree (effective_year, chargeable_income_from, chargeable_income_to);
+
+
+--
+-- Name: pcb_reliefs_natural_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX pcb_reliefs_natural_key ON public.pcb_reliefs USING btree (effective_year, relief_type);
+
+
+--
+-- Name: socso_rates_natural_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX socso_rates_natural_key ON public.socso_rates USING btree (effective_from, wage_from, wage_to);
+
+
+--
+-- Name: users_one_active_account_per_employee; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX users_one_active_account_per_employee ON public.users USING btree (employee_id) WHERE ((employee_id IS NOT NULL) AND (deleted_at IS NULL));
+
+
+--
+-- Name: users_email_normalized_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX users_email_normalized_key ON public.users USING btree (lower(btrim((email)::text)));
+
+
+--
+-- Name: attendance_tenant_state_stats; Type: STATISTICS; Schema: public; Owner: -
+--
+
+CREATE STATISTICS public.attendance_tenant_state_stats (dependencies, mcv) ON company_id, check_in_at, status FROM public.attendance_records;
+
+
+--
+-- Name: employees_tenant_state_stats; Type: STATISTICS; Schema: public; Owner: -
+--
+
+CREATE STATISTICS public.employees_tenant_state_stats (dependencies, mcv) ON company_id, payroll_group_id, is_active, deleted_at FROM public.employees;
+
+
+--
+-- Name: payroll_runs_tenant_period_stats; Type: STATISTICS; Schema: public; Owner: -
+--
+
+CREATE STATISTICS public.payroll_runs_tenant_period_stats (dependencies, mcv) ON company_id, payroll_group_id, period_year, period_month, status FROM public.payroll_runs;
 
 
 --
@@ -2259,6 +2248,14 @@ ALTER TABLE ONLY public.audit_logs
 
 ALTER TABLE ONLY public.bulk_import_sessions
     ADD CONSTRAINT bulk_import_sessions_company_id_fkey FOREIGN KEY (company_id) REFERENCES public.companies(id);
+
+
+--
+-- Name: bulk_import_sessions bulk_import_sessions_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.bulk_import_sessions
+    ADD CONSTRAINT bulk_import_sessions_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
 
 --
@@ -2790,6 +2787,22 @@ ALTER TABLE ONLY public.users
 
 
 --
+-- Name: users users_deleted_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_deleted_by_fkey FOREIGN KEY (deleted_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: users users_employee_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_employee_id_fkey FOREIGN KEY (employee_id) REFERENCES public.employees(id) ON DELETE SET NULL;
+
+
+--
 -- Name: working_day_config working_day_config_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2798,7 +2811,750 @@ ALTER TABLE ONLY public.working_day_config
 
 
 --
--- PostgreSQL database dump complete
+    END IF;
+END
+$pg19_bootstrap$;
 --
 
 
+-- === LIVE SCHEMA RECONCILIATION ============================================
+-- Fresh databases already contain these objects from the canonical bootstrap
+-- above. Existing databases with the historical v1-v4 SQLx chain execute this
+-- idempotent section to reach the same PostgreSQL 19 shape.
+
+CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public;
+CREATE EXTENSION IF NOT EXISTS btree_gist WITH SCHEMA public;
+
+-- Retired, unused configuration store. It had effective-date columns but a
+-- single-key uniqueness rule, and no application consumer. Company-scoped
+-- settings remain in company_settings; platform flags remain in
+-- platform_settings. RESTRICT is intentional if an external dependency exists.
+DROP TABLE IF EXISTS public.system_settings;
+
+-- A statutory calculation is only eligible for automatic payroll after the
+-- corresponding source artifact and imported rules have been independently
+-- verified. Date-range exclusion prevents two competing rule sets from being
+-- marked for the same statutory domain and period.
+CREATE TABLE IF NOT EXISTS public.statutory_rule_sets (
+    id uuid DEFAULT uuidv7() PRIMARY KEY,
+    dataset_key text NOT NULL,
+    rule_code text NOT NULL,
+    effective_from date NOT NULL,
+    effective_to date,
+    status text DEFAULT 'prototype'::text NOT NULL,
+    source_url text,
+    source_version text,
+    source_sha256 character varying(64),
+    verification_notes text,
+    verified_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT statutory_rule_sets_dataset_key_key UNIQUE (dataset_key),
+    CONSTRAINT statutory_rule_sets_dataset_key_check
+        CHECK (dataset_key ~ '^[a-z0-9][a-z0-9._-]*$'),
+    CONSTRAINT statutory_rule_sets_code_check
+        CHECK (rule_code IN ('epf', 'socso', 'eis', 'pcb')),
+    CONSTRAINT statutory_rule_sets_dates_check
+        CHECK (effective_to IS NULL OR effective_to >= effective_from),
+    CONSTRAINT statutory_rule_sets_status_check
+        CHECK (status IN ('prototype', 'verified', 'retired')),
+    CONSTRAINT statutory_rule_sets_legacy_never_verified_check
+        CHECK (status <> 'verified' OR dataset_key !~ '^legacy-prototype-'),
+    CONSTRAINT statutory_rule_sets_verified_metadata_check
+        CHECK (
+            status <> 'verified'
+            OR (
+                source_url IS NOT NULL
+                AND btrim(source_url) <> ''
+                AND source_version IS NOT NULL
+                AND btrim(source_version) <> ''
+                AND source_sha256 ~ '^[0-9a-f]{64}$'
+                AND verified_at IS NOT NULL
+            )
+        ),
+    CONSTRAINT statutory_rule_sets_no_overlap
+        EXCLUDE USING gist (
+            rule_code WITH =,
+            daterange(
+                effective_from,
+                COALESCE(effective_to, 'infinity'::date),
+                '[]'
+            ) WITH &&
+        )
+        WHERE (status = 'verified')
+);
+
+CREATE INDEX IF NOT EXISTS idx_statutory_rule_sets_verified_lookup
+    ON public.statutory_rule_sets (rule_code, effective_from DESC, effective_to)
+    WHERE status = 'verified';
+
+ALTER TABLE public.epf_rates ADD COLUMN IF NOT EXISTS rule_set_id uuid;
+ALTER TABLE public.socso_rates ADD COLUMN IF NOT EXISTS rule_set_id uuid;
+ALTER TABLE public.eis_rates ADD COLUMN IF NOT EXISTS rule_set_id uuid;
+ALTER TABLE public.pcb_brackets ADD COLUMN IF NOT EXISTS rule_set_id uuid;
+ALTER TABLE public.pcb_reliefs ADD COLUMN IF NOT EXISTS rule_set_id uuid;
+
+DO $statutory_rule_set_foreign_keys$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'epf_rates_rule_set_id_fkey' AND conrelid = 'public.epf_rates'::regclass) THEN
+        ALTER TABLE public.epf_rates ADD CONSTRAINT epf_rates_rule_set_id_fkey FOREIGN KEY (rule_set_id) REFERENCES public.statutory_rule_sets(id) ON DELETE RESTRICT;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'socso_rates_rule_set_id_fkey' AND conrelid = 'public.socso_rates'::regclass) THEN
+        ALTER TABLE public.socso_rates ADD CONSTRAINT socso_rates_rule_set_id_fkey FOREIGN KEY (rule_set_id) REFERENCES public.statutory_rule_sets(id) ON DELETE RESTRICT;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'eis_rates_rule_set_id_fkey' AND conrelid = 'public.eis_rates'::regclass) THEN
+        ALTER TABLE public.eis_rates ADD CONSTRAINT eis_rates_rule_set_id_fkey FOREIGN KEY (rule_set_id) REFERENCES public.statutory_rule_sets(id) ON DELETE RESTRICT;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'pcb_brackets_rule_set_id_fkey' AND conrelid = 'public.pcb_brackets'::regclass) THEN
+        ALTER TABLE public.pcb_brackets ADD CONSTRAINT pcb_brackets_rule_set_id_fkey FOREIGN KEY (rule_set_id) REFERENCES public.statutory_rule_sets(id) ON DELETE RESTRICT;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'pcb_reliefs_rule_set_id_fkey' AND conrelid = 'public.pcb_reliefs'::regclass) THEN
+        ALTER TABLE public.pcb_reliefs ADD CONSTRAINT pcb_reliefs_rule_set_id_fkey FOREIGN KEY (rule_set_id) REFERENCES public.statutory_rule_sets(id) ON DELETE RESTRICT;
+    END IF;
+END
+$statutory_rule_set_foreign_keys$;
+
+DO $statutory_band_exclusions$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'epf_rates_no_overlapping_bands' AND conrelid = 'public.epf_rates'::regclass) THEN
+        ALTER TABLE public.epf_rates ADD CONSTRAINT epf_rates_no_overlapping_bands
+            EXCLUDE USING gist (
+                rule_set_id WITH =,
+                category WITH =,
+                int8range(wage_from, wage_to, '[]') WITH &&,
+                daterange(effective_from, COALESCE(effective_to, 'infinity'::date), '[]') WITH &&
+            ) WHERE (rule_set_id IS NOT NULL);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'socso_rates_no_overlapping_bands' AND conrelid = 'public.socso_rates'::regclass) THEN
+        ALTER TABLE public.socso_rates ADD CONSTRAINT socso_rates_no_overlapping_bands
+            EXCLUDE USING gist (
+                rule_set_id WITH =,
+                int8range(wage_from, wage_to, '[]') WITH &&,
+                daterange(effective_from, COALESCE(effective_to, 'infinity'::date), '[]') WITH &&
+            ) WHERE (rule_set_id IS NOT NULL);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'eis_rates_no_overlapping_bands' AND conrelid = 'public.eis_rates'::regclass) THEN
+        ALTER TABLE public.eis_rates ADD CONSTRAINT eis_rates_no_overlapping_bands
+            EXCLUDE USING gist (
+                rule_set_id WITH =,
+                int8range(wage_from, wage_to, '[]') WITH &&,
+                daterange(effective_from, COALESCE(effective_to, 'infinity'::date), '[]') WITH &&
+            ) WHERE (rule_set_id IS NOT NULL);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'pcb_brackets_no_overlapping_bands' AND conrelid = 'public.pcb_brackets'::regclass) THEN
+        ALTER TABLE public.pcb_brackets ADD CONSTRAINT pcb_brackets_no_overlapping_bands
+            EXCLUDE USING gist (
+                rule_set_id WITH =,
+                effective_year WITH =,
+                int8range(chargeable_income_from, chargeable_income_to, '[]') WITH &&
+            ) WHERE (rule_set_id IS NOT NULL);
+    END IF;
+END
+$statutory_band_exclusions$;
+
+ALTER TABLE public.users DROP COLUMN IF EXISTS role;
+ALTER TABLE public.users
+    ADD COLUMN IF NOT EXISTS deleted_at timestamp with time zone,
+    ADD COLUMN IF NOT EXISTS deleted_by uuid;
+
+-- Normalize every UUID row-identity default to PostgreSQL's native UUIDv7.
+DO $uuid_defaults$
+DECLARE
+    target record;
+BEGIN
+    FOR target IN
+        SELECT n.nspname AS schema_name, c.relname AS table_name
+        FROM pg_catalog.pg_attribute a
+        JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public'
+          AND c.relkind = 'r'
+          AND a.attname = 'id'
+          AND a.atttypid = 'uuid'::regtype
+          AND NOT a.attisdropped
+    LOOP
+        EXECUTE format(
+            'ALTER TABLE %I.%I ALTER COLUMN id SET DEFAULT uuidv7()',
+            target.schema_name,
+            target.table_name
+        );
+    END LOOP;
+END
+$uuid_defaults$;
+
+-- Do not cascade: an unexpected external dependency should stop deployment
+-- for review instead of being silently removed.
+DROP EXTENSION IF EXISTS "uuid-ossp";
+
+DROP INDEX IF EXISTS public.idx_qr_tokens_token;
+DROP INDEX IF EXISTS public.idx_refresh_tokens_hash;
+DROP INDEX IF EXISTS public.idx_oauth2_accounts_provider;
+DROP INDEX IF EXISTS public.idx_employee_work_schedules_employee;
+DROP INDEX IF EXISTS public.idx_payroll_items_run;
+DROP INDEX IF EXISTS public.idx_team_members_team;
+DROP INDEX IF EXISTS public.idx_user_companies_user;
+DROP INDEX IF EXISTS public.idx_document_categories_company;
+DROP INDEX IF EXISTS public.idx_company_settings_category;
+DROP INDEX IF EXISTS public.idx_company_settings_company;
+DROP INDEX IF EXISTS public.idx_payroll_runs_company;
+DROP INDEX IF EXISTS public.idx_teams_company;
+DROP INDEX IF EXISTS public.idx_employees_active;
+DROP INDEX IF EXISTS public.idx_attendance_employee;
+DROP INDEX IF EXISTS public.idx_users_active_not_deleted;
+DROP INDEX IF EXISTS public.idx_epf_rates_lookup;
+DROP INDEX IF EXISTS public.idx_socso_rates_lookup;
+DROP INDEX IF EXISTS public.idx_eis_rates_lookup;
+DROP INDEX IF EXISTS public.idx_pcb_brackets_lookup;
+DROP INDEX IF EXISTS public.idx_audit_logs_created;
+DROP INDEX IF EXISTS public.idx_email_logs_company;
+DROP INDEX IF EXISTS public.idx_email_templates_company;
+
+DO $normalized_user_emails$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM public.users
+        GROUP BY lower(btrim(email::text))
+        HAVING count(*) > 1
+    ) THEN
+        RAISE EXCEPTION 'Cannot enforce case-insensitive user emails: normalized duplicates exist';
+    END IF;
+END
+$normalized_user_emails$;
+
+DO $normalized_payroll_group_names$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM public.payroll_groups
+        GROUP BY company_id, lower(btrim(name::text))
+        HAVING count(*) > 1
+    ) THEN
+        RAISE EXCEPTION 'Cannot enforce unique payroll-group names: normalized duplicates exist';
+    END IF;
+END
+$normalized_payroll_group_names$;
+
+ALTER TABLE public.users DROP CONSTRAINT IF EXISTS users_email_key;
+CREATE UNIQUE INDEX IF NOT EXISTS users_email_normalized_key
+    ON public.users (lower(btrim(email::text)));
+
+-- Composite parent keys let tenant-owned relationships prove company scope in
+-- the database instead of trusting every application insert to pair IDs from
+-- the same company.
+CREATE UNIQUE INDEX IF NOT EXISTS employees_id_company_key
+    ON public.employees (id, company_id);
+CREATE UNIQUE INDEX IF NOT EXISTS payroll_groups_id_company_key
+    ON public.payroll_groups (id, company_id);
+CREATE UNIQUE INDEX IF NOT EXISTS payroll_runs_id_company_key
+    ON public.payroll_runs (id, company_id);
+CREATE UNIQUE INDEX IF NOT EXISTS attendance_qr_tokens_id_company_key
+    ON public.attendance_qr_tokens (id, company_id);
+CREATE UNIQUE INDEX IF NOT EXISTS leave_types_id_company_key
+    ON public.leave_types (id, company_id);
+CREATE UNIQUE INDEX IF NOT EXISTS document_categories_id_company_key
+    ON public.document_categories (id, company_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS payroll_runs_one_active_period
+    ON public.payroll_runs (company_id, payroll_group_id, period_year, period_month)
+    WHERE status <> 'cancelled'::public.payroll_status;
+CREATE UNIQUE INDEX IF NOT EXISTS payroll_groups_company_name_key
+    ON public.payroll_groups (company_id, lower(btrim(name::text)));
+DROP INDEX IF EXISTS public.users_one_account_per_employee;
+CREATE UNIQUE INDEX IF NOT EXISTS users_one_active_account_per_employee
+    ON public.users (employee_id)
+    WHERE employee_id IS NOT NULL AND deleted_at IS NULL;
+DROP INDEX IF EXISTS public.epf_rates_natural_key;
+DROP INDEX IF EXISTS public.socso_rates_natural_key;
+DROP INDEX IF EXISTS public.eis_rates_natural_key;
+DROP INDEX IF EXISTS public.pcb_brackets_natural_key;
+DROP INDEX IF EXISTS public.pcb_reliefs_natural_key;
+CREATE UNIQUE INDEX epf_rates_natural_key
+    ON public.epf_rates (rule_set_id, category, effective_from, wage_from, wage_to)
+    NULLS NOT DISTINCT;
+CREATE UNIQUE INDEX socso_rates_natural_key
+    ON public.socso_rates (rule_set_id, effective_from, wage_from, wage_to)
+    NULLS NOT DISTINCT;
+CREATE UNIQUE INDEX eis_rates_natural_key
+    ON public.eis_rates (rule_set_id, effective_from, wage_from, wage_to)
+    NULLS NOT DISTINCT;
+CREATE UNIQUE INDEX pcb_brackets_natural_key
+    ON public.pcb_brackets (rule_set_id, effective_year, chargeable_income_from, chargeable_income_to)
+    NULLS NOT DISTINCT;
+CREATE UNIQUE INDEX pcb_reliefs_natural_key
+    ON public.pcb_reliefs (rule_set_id, effective_year, relief_type)
+    NULLS NOT DISTINCT;
+
+CREATE INDEX IF NOT EXISTS idx_employees_search_trgm
+    ON public.employees USING gin (
+        lower((((full_name)::text || ' '::text) || (employee_number)::text)) public.gin_trgm_ops
+    )
+    WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_employees_payroll_active
+    ON public.employees (company_id, payroll_group_id, date_joined)
+    WHERE is_active = true AND deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_attendance_employee_recent
+    ON public.attendance_records (employee_id, check_in_at DESC);
+CREATE INDEX IF NOT EXISTS idx_payroll_runs_company_period
+    ON public.payroll_runs (company_id, period_year DESC, period_month DESC, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_payroll_entries_run_pending
+    ON public.payroll_entries (payroll_run_id)
+    WHERE payroll_run_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_claims_approved_payroll
+    ON public.claims (company_id, employee_id, expense_date)
+    WHERE status = 'approved';
+CREATE INDEX IF NOT EXISTS idx_overtime_approved_payroll
+    ON public.overtime_applications (employee_id, ot_date)
+    INCLUDE (ot_type, hours)
+    WHERE status = 'approved';
+CREATE INDEX IF NOT EXISTS idx_leave_requests_approved_dates
+    ON public.leave_requests (employee_id, start_date, end_date)
+    WHERE status = 'approved';
+CREATE INDEX IF NOT EXISTS idx_notifications_unread_recent
+    ON public.notifications (user_id, created_at DESC)
+    WHERE is_read = false;
+CREATE INDEX IF NOT EXISTS idx_users_company_active
+    ON public.users (company_id, created_at DESC)
+    WHERE is_active = true AND deleted_at IS NULL;
+
+-- Provision the minimum tenant configuration required by otherwise read-only
+-- setup APIs. This function is idempotent and is called for existing companies
+-- by 1001_data.sql and transactionally whenever a new company is created.
+CREATE OR REPLACE FUNCTION public.provision_company_defaults(
+    p_company_id uuid,
+    p_actor_id uuid DEFAULT NULL
+) RETURNS void
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $company_defaults$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM payroll_groups WHERE company_id = p_company_id
+    ) THEN
+        INSERT INTO payroll_groups (
+            company_id, name, description, cutoff_day, payment_day, created_by, updated_by
+        ) VALUES (
+            p_company_id, 'Default', 'Default monthly payroll group', 25, 28,
+            p_actor_id, p_actor_id
+        )
+        ON CONFLICT DO NOTHING;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM leave_types WHERE company_id = p_company_id
+    ) THEN
+        INSERT INTO leave_types (
+            company_id, name, description, default_days, is_paid, is_system
+        ) VALUES
+            (p_company_id, 'Annual Leave', 'Paid annual leave entitlement', 14, true, true),
+            (p_company_id, 'Sick Leave', 'Paid sick leave (outpatient)', 14, true, true),
+            (p_company_id, 'Hospitalisation Leave', 'Paid hospitalisation leave', 60, true, true),
+            (p_company_id, 'Compassionate Leave', 'Bereavement / compassionate leave', 3, true, true),
+            (p_company_id, 'Maternity Leave', 'Paid maternity leave', 98, true, true),
+            (p_company_id, 'Paternity Leave', 'Paid paternity leave', 7, true, true),
+            (p_company_id, 'Marriage Leave', 'Leave for own marriage', 3, true, true),
+            (p_company_id, 'Unpaid Leave', 'Unpaid leave', 365, false, true)
+        ON CONFLICT (company_id, name) DO NOTHING;
+    END IF;
+
+    INSERT INTO working_day_config (company_id, day_of_week, is_working_day)
+    VALUES
+        (p_company_id, 0, false),
+        (p_company_id, 1, true),
+        (p_company_id, 2, true),
+        (p_company_id, 3, true),
+        (p_company_id, 4, true),
+        (p_company_id, 5, true),
+        (p_company_id, 6, false)
+    ON CONFLICT (company_id, day_of_week) DO NOTHING;
+
+    INSERT INTO company_work_schedules (
+        company_id, name, start_time, end_time, grace_minutes,
+        half_day_hours, timezone, is_default
+    ) VALUES (
+        p_company_id, 'Default', '09:00', '18:00', 15,
+        4.0, 'Asia/Kuala_Lumpur', true
+    )
+    ON CONFLICT (company_id) WHERE is_default = true DO NOTHING;
+
+    INSERT INTO company_settings (
+        company_id, category, key, value, label, description
+    )
+    SELECT p_company_id, defaults.category, defaults.key,
+           defaults.value::jsonb, defaults.label, defaults.description
+    FROM (VALUES
+        ('payroll', 'default_pay_day', '"28"', 'Default Pay Day', 'Day of month for salary payment'),
+        ('payroll', 'default_cutoff_day', '"25"', 'Default Cutoff Day', 'Day of month for payroll cutoff'),
+        ('payroll', 'overtime_multiplier_normal', '"1.5"', 'OT Multiplier (Normal)', 'Overtime rate multiplier for normal working days'),
+        ('payroll', 'overtime_multiplier_rest', '"2.0"', 'OT Multiplier (Rest Day)', 'Overtime rate multiplier for rest days'),
+        ('payroll', 'overtime_multiplier_public', '"3.0"', 'OT Multiplier (Public Holiday)', 'Overtime rate multiplier for public holidays'),
+        ('payroll', 'unpaid_leave_divisor', '"26"', 'Unpaid Leave Divisor', 'Number of working days used for unpaid leave deduction'),
+        ('payroll', 'rounding_method', '"nearest"', 'Rounding Method', 'Salary calculation rounding method'),
+        ('payroll', 'working_hours_per_day', '"9"', 'Working Hours Per Day', 'Office hours per day including rest time'),
+        ('payroll', 'rest_time_minutes', '"60"', 'Rest Time (minutes)', 'Daily rest time'),
+        ('payroll', 'effective_hours_per_day', '"8"', 'Effective Hours Per Day', 'Working hours after rest time'),
+        ('statutory', 'epf_employer_rate_below_60', '"13"', 'EPF Employer Rate (< 60)', 'Reference employer rate percentage'),
+        ('statutory', 'epf_employer_rate_above_60', '"6.5"', 'EPF Employer Rate (>= 60)', 'Reference employer rate percentage'),
+        ('statutory', 'socso_enabled', 'true', 'SOCSO Enabled', 'Whether SOCSO calculations are enabled'),
+        ('statutory', 'eis_enabled', 'true', 'EIS Enabled', 'Whether EIS calculations are enabled'),
+        ('statutory', 'hrdf_enabled', 'false', 'HRDF Enabled', 'Whether HRDF calculations are enabled'),
+        ('statutory', 'hrdf_rate', '"1"', 'HRDF Rate (%)', 'HRDF levy percentage'),
+        ('system', 'currency', '"MYR"', 'Currency', 'System currency code'),
+        ('system', 'date_format', '"DD/MM/YYYY"', 'Date Format', 'Display date format'),
+        ('system', 'financial_year_start_month', '"1"', 'Financial Year Start', 'Financial year start month'),
+        ('system', 'payslip_template', '"default"', 'Payslip Template', 'Payslip template key'),
+        ('notifications', 'email_payslip', 'true', 'Email Payslips', 'Email payslips after payroll approval'),
+        ('notifications', 'expiry_alert_days', '"30"', 'Document Expiry Alert (days)', 'Document expiry warning window'),
+        ('notifications', 'probation_alert_days', '"14"', 'Probation End Alert (days)', 'Probation warning window'),
+        ('email', 'auto_welcome_email', 'true', 'Auto Welcome Email', 'Email an employee after account creation')
+    ) AS defaults(category, key, value, label, description)
+    ON CONFLICT (company_id, category, key) DO NOTHING;
+END
+$company_defaults$;
+
+-- Junction tables without a stored company_id still enforce same-company
+-- parentage at write time. Existing legacy rows are audited before cutover;
+-- these triggers prevent any new cross-tenant association immediately.
+CREATE OR REPLACE FUNCTION public.enforce_payroll_item_company()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $payroll_item_company$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM payroll_runs run
+        JOIN employees employee ON employee.id = NEW.employee_id
+        WHERE run.id = NEW.payroll_run_id
+          AND run.company_id = employee.company_id
+    ) THEN
+        RAISE EXCEPTION 'Payroll item run and employee must belong to the same company'
+            USING ERRCODE = '23514', CONSTRAINT = 'payroll_items_same_company_check';
+    END IF;
+    RETURN NEW;
+END
+$payroll_item_company$;
+
+DROP TRIGGER IF EXISTS payroll_items_same_company_trigger ON public.payroll_items;
+CREATE TRIGGER payroll_items_same_company_trigger
+    BEFORE INSERT OR UPDATE ON public.payroll_items
+    FOR EACH ROW EXECUTE FUNCTION public.enforce_payroll_item_company();
+
+CREATE OR REPLACE FUNCTION public.enforce_leave_balance_company()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $leave_balance_company$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM employees employee
+        JOIN leave_types leave_type ON leave_type.id = NEW.leave_type_id
+        WHERE employee.id = NEW.employee_id
+          AND employee.company_id = leave_type.company_id
+    ) THEN
+        RAISE EXCEPTION 'Leave balance employee and leave type must belong to the same company'
+            USING ERRCODE = '23514', CONSTRAINT = 'leave_balances_same_company_check';
+    END IF;
+    RETURN NEW;
+END
+$leave_balance_company$;
+
+DROP TRIGGER IF EXISTS leave_balances_same_company_trigger ON public.leave_balances;
+CREATE TRIGGER leave_balances_same_company_trigger
+    BEFORE INSERT OR UPDATE ON public.leave_balances
+    FOR EACH ROW EXECUTE FUNCTION public.enforce_leave_balance_company();
+
+CREATE OR REPLACE FUNCTION public.enforce_team_member_company()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $team_member_company$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM teams team
+        JOIN employees employee ON employee.id = NEW.employee_id
+        WHERE team.id = NEW.team_id
+          AND team.company_id = employee.company_id
+    ) THEN
+        RAISE EXCEPTION 'Team and employee must belong to the same company'
+            USING ERRCODE = '23514', CONSTRAINT = 'team_members_same_company_check';
+    END IF;
+    RETURN NEW;
+END
+$team_member_company$;
+
+DROP TRIGGER IF EXISTS team_members_same_company_trigger ON public.team_members;
+CREATE TRIGGER team_members_same_company_trigger
+    BEFORE INSERT OR UPDATE ON public.team_members
+    FOR EACH ROW EXECUTE FUNCTION public.enforce_team_member_company();
+
+CREATE OR REPLACE FUNCTION public.enforce_immutable_company_id()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $immutable_company_id$
+BEGIN
+    IF OLD.company_id IS DISTINCT FROM NEW.company_id THEN
+        RAISE EXCEPTION 'Tenant ownership cannot be changed after creation'
+            USING ERRCODE = '23514', CONSTRAINT = 'tenant_company_id_immutable_check';
+    END IF;
+    RETURN NEW;
+END
+$immutable_company_id$;
+
+DROP TRIGGER IF EXISTS employees_company_immutable_trigger ON public.employees;
+CREATE TRIGGER employees_company_immutable_trigger
+    BEFORE UPDATE OF company_id ON public.employees
+    FOR EACH ROW EXECUTE FUNCTION public.enforce_immutable_company_id();
+DROP TRIGGER IF EXISTS payroll_groups_company_immutable_trigger ON public.payroll_groups;
+CREATE TRIGGER payroll_groups_company_immutable_trigger
+    BEFORE UPDATE OF company_id ON public.payroll_groups
+    FOR EACH ROW EXECUTE FUNCTION public.enforce_immutable_company_id();
+DROP TRIGGER IF EXISTS payroll_runs_company_immutable_trigger ON public.payroll_runs;
+CREATE TRIGGER payroll_runs_company_immutable_trigger
+    BEFORE UPDATE OF company_id ON public.payroll_runs
+    FOR EACH ROW EXECUTE FUNCTION public.enforce_immutable_company_id();
+DROP TRIGGER IF EXISTS attendance_qr_tokens_company_immutable_trigger ON public.attendance_qr_tokens;
+CREATE TRIGGER attendance_qr_tokens_company_immutable_trigger
+    BEFORE UPDATE OF company_id ON public.attendance_qr_tokens
+    FOR EACH ROW EXECUTE FUNCTION public.enforce_immutable_company_id();
+DROP TRIGGER IF EXISTS leave_types_company_immutable_trigger ON public.leave_types;
+CREATE TRIGGER leave_types_company_immutable_trigger
+    BEFORE UPDATE OF company_id ON public.leave_types
+    FOR EACH ROW EXECUTE FUNCTION public.enforce_immutable_company_id();
+DROP TRIGGER IF EXISTS document_categories_company_immutable_trigger ON public.document_categories;
+CREATE TRIGGER document_categories_company_immutable_trigger
+    BEFORE UPDATE OF company_id ON public.document_categories
+    FOR EACH ROW EXECUTE FUNCTION public.enforce_immutable_company_id();
+DROP TRIGGER IF EXISTS teams_company_immutable_trigger ON public.teams;
+CREATE TRIGGER teams_company_immutable_trigger
+    BEFORE UPDATE OF company_id ON public.teams
+    FOR EACH ROW EXECUTE FUNCTION public.enforce_immutable_company_id();
+
+-- Existing rows are audited separately. NOT VALID makes each check/FK apply to
+-- new writes immediately without turning application startup into a risky full
+-- table validation. Fresh databases have validated versions from the baseline.
+DO $constraints$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'attendance_records_checkout_order_check' AND conrelid = 'public.attendance_records'::regclass) THEN
+        ALTER TABLE public.attendance_records ADD CONSTRAINT attendance_records_checkout_order_check CHECK (check_out_at IS NULL OR check_out_at >= check_in_at) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'attendance_records_checkin_coordinates_check' AND conrelid = 'public.attendance_records'::regclass) THEN
+        ALTER TABLE public.attendance_records ADD CONSTRAINT attendance_records_checkin_coordinates_check CHECK (((latitude IS NULL) = (longitude IS NULL)) AND (latitude IS NULL OR (latitude BETWEEN -90 AND 90 AND longitude BETWEEN -180 AND 180))) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'attendance_records_checkout_coordinates_check' AND conrelid = 'public.attendance_records'::regclass) THEN
+        ALTER TABLE public.attendance_records ADD CONSTRAINT attendance_records_checkout_coordinates_check CHECK (((checkout_latitude IS NULL) = (checkout_longitude IS NULL)) AND (checkout_latitude IS NULL OR (checkout_latitude BETWEEN -90 AND 90 AND checkout_longitude BETWEEN -180 AND 180))) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'attendance_records_hours_check' AND conrelid = 'public.attendance_records'::regclass) THEN
+        ALTER TABLE public.attendance_records ADD CONSTRAINT attendance_records_hours_check CHECK ((hours_worked IS NULL OR hours_worked >= 0) AND (overtime_hours IS NULL OR overtime_hours >= 0)) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'bulk_import_sessions_counts_check' AND conrelid = 'public.bulk_import_sessions'::regclass) THEN
+        ALTER TABLE public.bulk_import_sessions ADD CONSTRAINT bulk_import_sessions_counts_check CHECK (row_count >= 0 AND valid_count >= 0 AND valid_count <= row_count) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'bulk_import_sessions_expiry_check' AND conrelid = 'public.bulk_import_sessions'::regclass) THEN
+        ALTER TABLE public.bulk_import_sessions ADD CONSTRAINT bulk_import_sessions_expiry_check CHECK (expires_at > created_at) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'bulk_import_sessions_status_check' AND conrelid = 'public.bulk_import_sessions'::regclass) THEN
+        ALTER TABLE public.bulk_import_sessions ADD CONSTRAINT bulk_import_sessions_status_check CHECK (status IN ('pending', 'confirmed', 'expired', 'failed')) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'companies_unpaid_leave_divisor_check' AND conrelid = 'public.companies'::regclass) THEN
+        ALTER TABLE public.companies ADD CONSTRAINT companies_unpaid_leave_divisor_check CHECK (unpaid_leave_divisor > 0) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'company_locations_coordinates_check' AND conrelid = 'public.company_locations'::regclass) THEN
+        ALTER TABLE public.company_locations ADD CONSTRAINT company_locations_coordinates_check CHECK (latitude BETWEEN -90 AND 90 AND longitude BETWEEN -180 AND 180) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'company_locations_radius_check' AND conrelid = 'public.company_locations'::regclass) THEN
+        ALTER TABLE public.company_locations ADD CONSTRAINT company_locations_radius_check CHECK (radius_meters > 0) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'eis_rates_range_check' AND conrelid = 'public.eis_rates'::regclass) THEN
+        ALTER TABLE public.eis_rates ADD CONSTRAINT eis_rates_range_check CHECK (wage_from >= 0 AND wage_to >= wage_from) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'eis_rates_contributions_check' AND conrelid = 'public.eis_rates'::regclass) THEN
+        ALTER TABLE public.eis_rates ADD CONSTRAINT eis_rates_contributions_check CHECK (employee_contribution >= 0 AND employer_contribution >= 0) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'eis_rates_effective_dates_check' AND conrelid = 'public.eis_rates'::regclass) THEN
+        ALTER TABLE public.eis_rates ADD CONSTRAINT eis_rates_effective_dates_check CHECK (effective_to IS NULL OR effective_to >= effective_from) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'epf_rates_range_check' AND conrelid = 'public.epf_rates'::regclass) THEN
+        ALTER TABLE public.epf_rates ADD CONSTRAINT epf_rates_range_check CHECK (wage_from >= 0 AND wage_to >= wage_from) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'epf_rates_contributions_check' AND conrelid = 'public.epf_rates'::regclass) THEN
+        ALTER TABLE public.epf_rates ADD CONSTRAINT epf_rates_contributions_check CHECK (employee_contribution >= 0 AND employer_contribution >= 0) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'epf_rates_effective_dates_check' AND conrelid = 'public.epf_rates'::regclass) THEN
+        ALTER TABLE public.epf_rates ADD CONSTRAINT epf_rates_effective_dates_check CHECK (effective_to IS NULL OR effective_to >= effective_from) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'socso_rates_range_check' AND conrelid = 'public.socso_rates'::regclass) THEN
+        ALTER TABLE public.socso_rates ADD CONSTRAINT socso_rates_range_check CHECK (wage_from >= 0 AND wage_to >= wage_from) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'socso_rates_contributions_check' AND conrelid = 'public.socso_rates'::regclass) THEN
+        ALTER TABLE public.socso_rates ADD CONSTRAINT socso_rates_contributions_check CHECK (first_cat_employee >= 0 AND first_cat_employer >= 0 AND second_cat_employer >= 0) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'socso_rates_effective_dates_check' AND conrelid = 'public.socso_rates'::regclass) THEN
+        ALTER TABLE public.socso_rates ADD CONSTRAINT socso_rates_effective_dates_check CHECK (effective_to IS NULL OR effective_to >= effective_from) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'pcb_brackets_range_check' AND conrelid = 'public.pcb_brackets'::regclass) THEN
+        ALTER TABLE public.pcb_brackets ADD CONSTRAINT pcb_brackets_range_check CHECK (chargeable_income_from >= 0 AND chargeable_income_to >= chargeable_income_from) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'pcb_brackets_rate_check' AND conrelid = 'public.pcb_brackets'::regclass) THEN
+        ALTER TABLE public.pcb_brackets ADD CONSTRAINT pcb_brackets_rate_check CHECK (tax_rate_percent BETWEEN 0 AND 100 AND cumulative_tax >= 0) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'pcb_brackets_year_check' AND conrelid = 'public.pcb_brackets'::regclass) THEN
+        ALTER TABLE public.pcb_brackets ADD CONSTRAINT pcb_brackets_year_check CHECK (effective_year BETWEEN 2000 AND 2200) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'pcb_reliefs_amount_year_check' AND conrelid = 'public.pcb_reliefs'::regclass) THEN
+        ALTER TABLE public.pcb_reliefs ADD CONSTRAINT pcb_reliefs_amount_year_check CHECK (amount >= 0 AND effective_year BETWEEN 2000 AND 2200) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'leave_requests_dates_check' AND conrelid = 'public.leave_requests'::regclass) THEN
+        ALTER TABLE public.leave_requests ADD CONSTRAINT leave_requests_dates_check CHECK (start_date <= end_date) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'leave_requests_days_check' AND conrelid = 'public.leave_requests'::regclass) THEN
+        ALTER TABLE public.leave_requests ADD CONSTRAINT leave_requests_days_check CHECK (days > 0) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'payroll_groups_days_check' AND conrelid = 'public.payroll_groups'::regclass) THEN
+        ALTER TABLE public.payroll_groups ADD CONSTRAINT payroll_groups_days_check CHECK (cutoff_day BETWEEN 1 AND 31 AND payment_day BETWEEN 1 AND 31) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'payroll_runs_period_check' AND conrelid = 'public.payroll_runs'::regclass) THEN
+        ALTER TABLE public.payroll_runs ADD CONSTRAINT payroll_runs_period_check CHECK (period_month BETWEEN 1 AND 12 AND period_start <= period_end) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'payroll_runs_version_count_check' AND conrelid = 'public.payroll_runs'::regclass) THEN
+        ALTER TABLE public.payroll_runs ADD CONSTRAINT payroll_runs_version_count_check CHECK (version > 0 AND employee_count >= 0) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'users_deleted_by_fkey' AND conrelid = 'public.users'::regclass) THEN
+        ALTER TABLE public.users ADD CONSTRAINT users_deleted_by_fkey FOREIGN KEY (deleted_by) REFERENCES public.users(id) ON DELETE SET NULL NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'bulk_import_sessions_user_id_fkey' AND conrelid = 'public.bulk_import_sessions'::regclass) THEN
+        ALTER TABLE public.bulk_import_sessions ADD CONSTRAINT bulk_import_sessions_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE NOT VALID;
+    END IF;
+END
+$constraints$;
+
+-- Critical tenant-owned relationships use composite foreign keys. Existing
+-- populated installations receive them NOT VALID (new writes are still
+-- enforced); an empty/fresh database validates them immediately.
+DO $tenant_constraints$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'users_employee_company_required_check' AND conrelid = 'public.users'::regclass) THEN
+        ALTER TABLE public.users ADD CONSTRAINT users_employee_company_required_check
+            CHECK (employee_id IS NULL OR company_id IS NOT NULL) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'employees_payroll_group_tenant_fkey' AND conrelid = 'public.employees'::regclass) THEN
+        ALTER TABLE public.employees ADD CONSTRAINT employees_payroll_group_tenant_fkey
+            FOREIGN KEY (payroll_group_id, company_id)
+            REFERENCES public.payroll_groups(id, company_id) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'attendance_records_employee_tenant_fkey' AND conrelid = 'public.attendance_records'::regclass) THEN
+        ALTER TABLE public.attendance_records ADD CONSTRAINT attendance_records_employee_tenant_fkey
+            FOREIGN KEY (employee_id, company_id)
+            REFERENCES public.employees(id, company_id) ON DELETE CASCADE NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'attendance_records_qr_token_tenant_fkey' AND conrelid = 'public.attendance_records'::regclass) THEN
+        ALTER TABLE public.attendance_records ADD CONSTRAINT attendance_records_qr_token_tenant_fkey
+            FOREIGN KEY (qr_token_id, company_id)
+            REFERENCES public.attendance_qr_tokens(id, company_id) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'payroll_runs_group_tenant_fkey' AND conrelid = 'public.payroll_runs'::regclass) THEN
+        ALTER TABLE public.payroll_runs ADD CONSTRAINT payroll_runs_group_tenant_fkey
+            FOREIGN KEY (payroll_group_id, company_id)
+            REFERENCES public.payroll_groups(id, company_id) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'payroll_entries_employee_tenant_fkey' AND conrelid = 'public.payroll_entries'::regclass) THEN
+        ALTER TABLE public.payroll_entries ADD CONSTRAINT payroll_entries_employee_tenant_fkey
+            FOREIGN KEY (employee_id, company_id)
+            REFERENCES public.employees(id, company_id) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'payroll_entries_run_tenant_fkey' AND conrelid = 'public.payroll_entries'::regclass) THEN
+        ALTER TABLE public.payroll_entries ADD CONSTRAINT payroll_entries_run_tenant_fkey
+            FOREIGN KEY (payroll_run_id, company_id)
+            REFERENCES public.payroll_runs(id, company_id) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'users_employee_tenant_fkey' AND conrelid = 'public.users'::regclass) THEN
+        ALTER TABLE public.users ADD CONSTRAINT users_employee_tenant_fkey
+            FOREIGN KEY (employee_id, company_id)
+            REFERENCES public.employees(id, company_id)
+            ON DELETE SET NULL (employee_id) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'claims_employee_tenant_fkey' AND conrelid = 'public.claims'::regclass) THEN
+        ALTER TABLE public.claims ADD CONSTRAINT claims_employee_tenant_fkey
+            FOREIGN KEY (employee_id, company_id)
+            REFERENCES public.employees(id, company_id) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'leave_requests_employee_tenant_fkey' AND conrelid = 'public.leave_requests'::regclass) THEN
+        ALTER TABLE public.leave_requests ADD CONSTRAINT leave_requests_employee_tenant_fkey
+            FOREIGN KEY (employee_id, company_id)
+            REFERENCES public.employees(id, company_id) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'leave_requests_type_tenant_fkey' AND conrelid = 'public.leave_requests'::regclass) THEN
+        ALTER TABLE public.leave_requests ADD CONSTRAINT leave_requests_type_tenant_fkey
+            FOREIGN KEY (leave_type_id, company_id)
+            REFERENCES public.leave_types(id, company_id) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'overtime_employee_tenant_fkey' AND conrelid = 'public.overtime_applications'::regclass) THEN
+        ALTER TABLE public.overtime_applications ADD CONSTRAINT overtime_employee_tenant_fkey
+            FOREIGN KEY (employee_id, company_id)
+            REFERENCES public.employees(id, company_id) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'documents_employee_tenant_fkey' AND conrelid = 'public.documents'::regclass) THEN
+        ALTER TABLE public.documents ADD CONSTRAINT documents_employee_tenant_fkey
+            FOREIGN KEY (employee_id, company_id)
+            REFERENCES public.employees(id, company_id) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'documents_category_tenant_fkey' AND conrelid = 'public.documents'::regclass) THEN
+        ALTER TABLE public.documents ADD CONSTRAINT documents_category_tenant_fkey
+            FOREIGN KEY (category_id, company_id)
+            REFERENCES public.document_categories(id, company_id) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'employee_work_schedules_employee_tenant_fkey' AND conrelid = 'public.employee_work_schedules'::regclass) THEN
+        ALTER TABLE public.employee_work_schedules ADD CONSTRAINT employee_work_schedules_employee_tenant_fkey
+            FOREIGN KEY (employee_id, company_id)
+            REFERENCES public.employees(id, company_id) ON DELETE CASCADE NOT VALID;
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM public.companies) THEN
+        ALTER TABLE public.users VALIDATE CONSTRAINT users_employee_company_required_check;
+        ALTER TABLE public.employees VALIDATE CONSTRAINT employees_payroll_group_tenant_fkey;
+        ALTER TABLE public.attendance_records VALIDATE CONSTRAINT attendance_records_employee_tenant_fkey;
+        ALTER TABLE public.attendance_records VALIDATE CONSTRAINT attendance_records_qr_token_tenant_fkey;
+        ALTER TABLE public.payroll_runs VALIDATE CONSTRAINT payroll_runs_group_tenant_fkey;
+        ALTER TABLE public.payroll_entries VALIDATE CONSTRAINT payroll_entries_employee_tenant_fkey;
+        ALTER TABLE public.payroll_entries VALIDATE CONSTRAINT payroll_entries_run_tenant_fkey;
+        ALTER TABLE public.users VALIDATE CONSTRAINT users_employee_tenant_fkey;
+        ALTER TABLE public.claims VALIDATE CONSTRAINT claims_employee_tenant_fkey;
+        ALTER TABLE public.leave_requests VALIDATE CONSTRAINT leave_requests_employee_tenant_fkey;
+        ALTER TABLE public.leave_requests VALIDATE CONSTRAINT leave_requests_type_tenant_fkey;
+        ALTER TABLE public.overtime_applications VALIDATE CONSTRAINT overtime_employee_tenant_fkey;
+        ALTER TABLE public.documents VALIDATE CONSTRAINT documents_employee_tenant_fkey;
+        ALTER TABLE public.documents VALIDATE CONSTRAINT documents_category_tenant_fkey;
+        ALTER TABLE public.employee_work_schedules VALIDATE CONSTRAINT employee_work_schedules_employee_tenant_fkey;
+    END IF;
+END
+$tenant_constraints$;
+
+-- The company-qualified relationships above subsume these scalar foreign keys
+-- (including their delete actions) and avoid duplicate checks on every write.
+ALTER TABLE public.attendance_records DROP CONSTRAINT IF EXISTS attendance_records_employee_id_fkey;
+ALTER TABLE public.attendance_records DROP CONSTRAINT IF EXISTS attendance_records_qr_token_id_fkey;
+ALTER TABLE public.payroll_entries DROP CONSTRAINT IF EXISTS payroll_entries_employee_id_fkey;
+ALTER TABLE public.payroll_entries DROP CONSTRAINT IF EXISTS payroll_entries_payroll_run_id_fkey;
+ALTER TABLE public.payroll_runs DROP CONSTRAINT IF EXISTS payroll_runs_payroll_group_id_fkey;
+ALTER TABLE public.users DROP CONSTRAINT IF EXISTS users_employee_id_fkey;
+ALTER TABLE public.claims DROP CONSTRAINT IF EXISTS claims_employee_id_fkey;
+ALTER TABLE public.leave_requests DROP CONSTRAINT IF EXISTS leave_requests_employee_id_fkey;
+ALTER TABLE public.leave_requests DROP CONSTRAINT IF EXISTS leave_requests_leave_type_id_fkey;
+ALTER TABLE public.overtime_applications DROP CONSTRAINT IF EXISTS overtime_applications_employee_id_fkey;
+ALTER TABLE public.documents DROP CONSTRAINT IF EXISTS documents_employee_id_fkey;
+ALTER TABLE public.documents DROP CONSTRAINT IF EXISTS documents_category_id_fkey;
+ALTER TABLE public.employee_work_schedules DROP CONSTRAINT IF EXISTS employee_work_schedules_employee_id_fkey;
+ALTER TABLE public.employees DROP CONSTRAINT IF EXISTS fk_employees_payroll_group;
+
+CREATE STATISTICS IF NOT EXISTS public.employees_tenant_state_stats (dependencies, mcv)
+    ON company_id, is_active, deleted_at, payroll_group_id
+    FROM public.employees;
+CREATE STATISTICS IF NOT EXISTS public.attendance_tenant_state_stats (dependencies, mcv)
+    ON company_id, status, check_in_at
+    FROM public.attendance_records;
+CREATE STATISTICS IF NOT EXISTS public.payroll_runs_tenant_period_stats (dependencies, mcv)
+    ON company_id, payroll_group_id, period_year, period_month, status
+    FROM public.payroll_runs;

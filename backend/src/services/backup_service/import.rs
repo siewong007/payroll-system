@@ -7,7 +7,7 @@ use uuid::Uuid;
 use super::files;
 use crate::core::error::{AppError, AppResult};
 use crate::models::backup::{CompanyBackup, ImportResult};
-use crate::repositories::{backup as backup_repo, user_companies, users};
+use crate::repositories::{backup as backup_repo, companies, user_companies, users};
 
 const MAX_EMPLOYEE_NUMBER_CHARS: usize = 50;
 
@@ -106,7 +106,7 @@ pub async fn import_company(
     pool: &PgPool,
     mut backup: CompanyBackup,
     target_company_id: Option<Uuid>,
-    _importing_user_id: Uuid,
+    importing_user_id: Uuid,
 ) -> AppResult<ImportResult> {
     if backup.metadata.format_version != "1.0" {
         return Err(AppError::BadRequest(format!(
@@ -137,7 +137,7 @@ pub async fn import_company(
                     backup.company.name
                 )));
             }
-            (Uuid::new_v4(), backup.company.name.clone(), false)
+            (Uuid::now_v7(), backup.company.name.clone(), false)
         }
     };
 
@@ -409,6 +409,10 @@ pub async fn import_company(
     for cs in &backup.company_settings {
         backup_repo::insert_company_setting(&mut *tx, r(cs.id), new_company_id, cs, now).await?;
     }
+
+    // Older backup formats may omit one or more setup domains. Fill only
+    // missing defaults before exposing the restored company.
+    companies::provision_defaults(&mut *tx, new_company_id, Some(importing_user_id)).await?;
 
     tx.commit().await?;
 

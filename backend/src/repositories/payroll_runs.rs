@@ -48,8 +48,15 @@ pub async fn insert_processing(
     sqlx::query!(
         r#"INSERT INTO payroll_runs
         (id, company_id, payroll_group_id, period_year, period_month,
-         period_start, period_end, pay_date, status, processed_by, processed_at, notes, created_by)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'processing', $9, NOW(), $10, $9)"#,
+         period_start, period_end, pay_date, version, status, processed_by, processed_at, notes, created_by)
+        VALUES (
+            $1, $2, $3, $4, $5, $6, $7, $8,
+            (SELECT COALESCE(MAX(version), 0) + 1
+             FROM payroll_runs
+             WHERE company_id = $2 AND payroll_group_id = $3
+               AND period_year = $4 AND period_month = $5),
+            'processing', $9, NOW(), $10, $9
+        )"#,
         run_id,
         company_id,
         payroll_group_id,

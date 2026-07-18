@@ -50,6 +50,8 @@ pub async fn create_leave_request(
     company_id: Uuid,
     req: CreateLeaveRequest,
 ) -> AppResult<LeaveRequest> {
+    crate::services::leave_rules::validate_period(req.start_date, req.end_date, req.days)?;
+
     // Verify leave type exists
     if !leave_types::exists_active(pool, req.leave_type_id, company_id).await? {
         return Err(AppError::NotFound("Leave type not found".into()));

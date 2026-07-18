@@ -40,7 +40,7 @@ jobs:
         working-directory: backend
     services:
       postgres:
-        image: postgres:18.4-alpine
+        image: postgres:19beta2-alpine
         env:
           POSTGRES_DB: payroll_db_test
           POSTGRES_USER: payroll

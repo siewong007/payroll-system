@@ -48,7 +48,7 @@ async fn main() -> anyhow::Result<()> {
     let pool = db::create_pool(&config.database_url).await;
     db::run_migrations(&pool).await;
 
-    tracing::info!("Database connected and migrations applied");
+    tracing::info!("Database connected; schema and reference data applied");
 
     // CORS — restrict to configured frontend origin
     let frontend_origin: HeaderValue = config

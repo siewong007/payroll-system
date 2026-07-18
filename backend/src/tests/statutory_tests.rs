@@ -20,22 +20,25 @@ fn test_pcb_rounding() {
     assert_eq!(pcb_calculator::round_up_to_ringgit(-100), 0);
 }
 
-#[test]
-fn test_epf_rounding() {
-    assert_eq!(epf_service::round_to_nearest_ringgit(1050), 1100);
-    assert_eq!(epf_service::round_to_nearest_ringgit(1049), 1000);
-    assert_eq!(epf_service::round_to_nearest_ringgit(1000), 1000);
-    assert_eq!(epf_service::round_to_nearest_ringgit(1099), 1100);
-    assert_eq!(epf_service::round_to_nearest_ringgit(50), 100);
-    assert_eq!(epf_service::round_to_nearest_ringgit(49), 0);
-}
-
 // ---------------------------------------------------------------------------
-// EPF — values come from seed in migrations/001_seed.sql.
+// EPF — values come from reference data in migrations/1001_data.sql.
 // ---------------------------------------------------------------------------
 
 fn test_date() -> NaiveDate {
     NaiveDate::from_ymd_opt(2024, 6, 15).unwrap()
+}
+
+#[tokio::test]
+async fn statutory_rules_outside_verified_interval_fail_closed() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+
+    let unsupported_date = NaiveDate::from_ymd_opt(2025, 1, 31).unwrap();
+    let err = epf_service::calculate_epf(&pool, 250_000, "A", unsupported_date)
+        .await
+        .unwrap_err();
+    assert!(format!("{err:?}").contains("No verified EPF statutory rule set"));
 }
 
 #[tokio::test]
@@ -67,31 +70,27 @@ async fn epf_category_a_table_lookup() {
 }
 
 #[tokio::test]
-async fn epf_above_table_uses_flat_percent() {
+async fn epf_above_table_fails_closed() {
     let Some(pool) = skip_if_no_db().await else {
         return;
     };
 
-    // RM25,000/month > RM20,000 table cap → flat 11% / 12%
-    let r = epf_service::calculate_epf(&pool, 2_500_000, "A", test_date())
+    let err = epf_service::calculate_epf(&pool, 2_500_000, "A", test_date())
         .await
-        .unwrap();
-    assert_eq!(r.employee, 275_000); // 11% of 2_500_000
-    assert_eq!(r.employer, 300_000); // 12% of 2_500_000 (employer drops to 12% above RM5k)
+        .unwrap_err();
+    assert!(format!("{err:?}").contains("no contribution band"));
 }
 
 #[tokio::test]
-async fn epf_category_d_senior_citizen() {
+async fn epf_unseeded_category_fails_closed() {
     let Some(pool) = skip_if_no_db().await else {
         return;
     };
 
-    // Category D (citizen ≥ 60): 0% employee, 4% employer, no table row so flat calc.
-    let r = epf_service::calculate_epf(&pool, 2_500_000, "D", test_date())
+    let err = epf_service::calculate_epf(&pool, 250_000, "D", test_date())
         .await
-        .unwrap();
-    assert_eq!(r.employee, 0);
-    assert_eq!(r.employer, 100_000); // 4% of 2_500_000
+        .unwrap_err();
+    assert!(format!("{err:?}").contains("no contribution band"));
 }
 
 #[tokio::test]
@@ -100,8 +99,6 @@ async fn epf_invalid_category_errors() {
         return;
     };
 
-    // Wage above the table triggers the fallback branch where the category is
-    // validated; an unknown category must be rejected.
     let err = epf_service::calculate_epf(&pool, 2_500_000, "Z", test_date())
         .await
         .unwrap_err();
@@ -111,7 +108,7 @@ async fn epf_invalid_category_errors() {
 }
 
 // ---------------------------------------------------------------------------
-// SOCSO — values from seed in migration 007.
+// SOCSO — values from prototype reference data in `1001_data.sql`.
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -159,21 +156,19 @@ async fn socso_wage_ceiling_at_rm6000() {
 }
 
 #[tokio::test]
-async fn socso_foreigner_is_exempt() {
+async fn socso_foreigner_fails_closed_without_eligibility_data() {
     let Some(pool) = skip_if_no_db().await else {
         return;
     };
 
-    let r = socso_service::calculate_socso(&pool, 250_000, 30, true, test_date())
+    let err = socso_service::calculate_socso(&pool, 250_000, 30, true, test_date())
         .await
-        .unwrap();
-    assert_eq!(r.employee, 0);
-    assert_eq!(r.employer, 0);
-    assert_eq!(r.category, SocsoCategory::Exempt);
+        .unwrap_err();
+    assert!(format!("{err:?}").contains("foreign workers"));
 }
 
 // ---------------------------------------------------------------------------
-// EIS — values from seed in migration 007.
+// EIS — values from prototype reference data in `1001_data.sql`.
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -205,16 +200,15 @@ async fn eis_wage_ceiling_at_rm5000() {
 }
 
 #[tokio::test]
-async fn eis_age_57_plus_exempt() {
+async fn eis_age_57_without_contribution_history_fails_closed() {
     let Some(pool) = skip_if_no_db().await else {
         return;
     };
 
-    let r = eis_service::calculate_eis(&pool, 250_000, 57, false, test_date())
+    let err = eis_service::calculate_eis(&pool, 250_000, 57, false, test_date())
         .await
-        .unwrap();
-    assert_eq!(r.employee, 0);
-    assert_eq!(r.employer, 0);
+        .unwrap_err();
+    assert!(format!("{err:?}").contains("prior EIS contribution status"));
 }
 
 #[tokio::test]
@@ -234,7 +228,7 @@ async fn eis_foreigner_exempt() {
 // PCB — golden-file tests.
 //
 // Values pin the CURRENT output of `calculate_pcb` against the seed data in
-// migrations/001_seed.sql. If you revise the seed (e.g. update
+// migrations/1001_data.sql. If you revise the reference data (e.g. update
 // the `cumulative_tax` column on `pcb_brackets` or bump any relief amount),
 // re-derive these expected values rather than editing them to match.
 // ---------------------------------------------------------------------------

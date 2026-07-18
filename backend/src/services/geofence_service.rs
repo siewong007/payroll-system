@@ -19,6 +19,33 @@ fn haversine_meters(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
     R * c
 }
 
+fn validate_coordinates(latitude: f64, longitude: f64) -> AppResult<()> {
+    if !latitude.is_finite() || !(-90.0..=90.0).contains(&latitude) {
+        return Err(AppError::BadRequest(
+            "Latitude must be a finite value between -90 and 90".into(),
+        ));
+    }
+    if !longitude.is_finite() || !(-180.0..=180.0).contains(&longitude) {
+        return Err(AppError::BadRequest(
+            "Longitude must be a finite value between -180 and 180".into(),
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_optional_coordinates(
+    latitude: Option<f64>,
+    longitude: Option<f64>,
+) -> AppResult<()> {
+    match (latitude, longitude) {
+        (None, None) => Ok(()),
+        (Some(latitude), Some(longitude)) => validate_coordinates(latitude, longitude),
+        _ => Err(AppError::BadRequest(
+            "Latitude and longitude must be provided together".into(),
+        )),
+    }
+}
+
 // ─── CRUD ───
 
 pub async fn list_locations(pool: &PgPool, company_id: Uuid) -> AppResult<Vec<CompanyLocation>> {
@@ -32,6 +59,7 @@ pub async fn create_location(
     actor_id: Uuid,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<CompanyLocation> {
+    validate_coordinates(req.latitude, req.longitude)?;
     let radius = req.radius_meters.unwrap_or(200);
     if !(10..=10_000).contains(&radius) {
         return Err(AppError::BadRequest(
@@ -84,6 +112,7 @@ pub async fn update_location(
     let radius = req.radius_meters.unwrap_or(existing.radius_meters);
     let active = req.is_active.unwrap_or(existing.is_active);
 
+    validate_coordinates(lat, lng)?;
     if !(10..=10_000).contains(&radius) {
         return Err(AppError::BadRequest(
             "Radius must be between 10 and 10,000 meters".into(),
@@ -245,6 +274,7 @@ pub async fn validate_geofence(
     latitude: Option<f64>,
     longitude: Option<f64>,
 ) -> AppResult<bool> {
+    validate_optional_coordinates(latitude, longitude)?;
     let mode = get_geofence_mode(pool, company_id).await?;
     if mode == "none" {
         return Ok(false); // not flagged

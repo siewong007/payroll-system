@@ -23,20 +23,70 @@ pub async fn test_pool() -> Option<PgPool> {
 
     let lock = MIGRATE_LOCK.get_or_init(|| Mutex::new(()));
     let _guard = lock.lock().await;
-    sqlx::migrate!("./migrations/schema")
-        .run(&pool)
-        .await
-        .ok()?;
+    crate::core::db::run_migrations(&pool).await;
 
-    // Apply the seed once (statutory tables, system data). `epf_rates` is the
-    // first thing the seed populates, so its presence means we can skip.
-    let already_seeded: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM epf_rates)")
-        .fetch_one(&pool)
-        .await
-        .ok()?;
-    if !already_seeded {
-        let seed_sql = include_str!("../../migrations/seed/001_seed.sql");
-        sqlx::raw_sql(seed_sql).execute(&pool).await.ok()?;
+    // The repository deliberately ships only immutable, unverified academic
+    // statutory fixtures. Test builds attach those rows to distinct test-only
+    // verified datasets; production cannot promote a `legacy-prototype-*` key.
+    sqlx::query(
+        r#"
+        UPDATE statutory_rule_sets
+        SET status = 'prototype', verified_at = NULL, updated_at = NOW()
+        WHERE dataset_key LIKE 'legacy-prototype-%'
+        "#,
+    )
+    .execute(&pool)
+    .await
+    .expect("keep legacy statutory fixtures unverified");
+
+    sqlx::query(
+        r#"
+        INSERT INTO statutory_rule_sets (
+            dataset_key, rule_code, effective_from, effective_to, status,
+            source_url, source_version, source_sha256,
+            verification_notes, verified_at
+        ) VALUES
+            ('test-fixture-epf-2024', 'epf', '2024-01-01', '2024-12-31', 'verified',
+             'https://example.invalid/test-statutory-fixture', 'test-only', repeat('0', 64),
+             'Enabled only by the Rust test harness', NOW()),
+            ('test-fixture-socso-2024', 'socso', '2024-01-01', '2024-12-31', 'verified',
+             'https://example.invalid/test-statutory-fixture', 'test-only', repeat('0', 64),
+             'Enabled only by the Rust test harness', NOW()),
+            ('test-fixture-eis-2024', 'eis', '2024-01-01', '2024-12-31', 'verified',
+             'https://example.invalid/test-statutory-fixture', 'test-only', repeat('0', 64),
+             'Enabled only by the Rust test harness', NOW()),
+            ('test-fixture-pcb-2024', 'pcb', '2024-01-01', '2024-12-31', 'verified',
+             'https://example.invalid/test-statutory-fixture', 'test-only', repeat('0', 64),
+             'Enabled only by the Rust test harness', NOW())
+        ON CONFLICT (dataset_key) DO UPDATE SET
+            status = EXCLUDED.status,
+            source_url = EXCLUDED.source_url,
+            source_version = EXCLUDED.source_version,
+            source_sha256 = EXCLUDED.source_sha256,
+            verification_notes = EXCLUDED.verification_notes,
+            verified_at = EXCLUDED.verified_at,
+            updated_at = NOW()
+        "#,
+    )
+    .execute(&pool)
+    .await
+    .expect("create test-only statutory rule sets");
+
+    for (table, dataset_key) in [
+        ("epf_rates", "test-fixture-epf-2024"),
+        ("socso_rates", "test-fixture-socso-2024"),
+        ("eis_rates", "test-fixture-eis-2024"),
+        ("pcb_brackets", "test-fixture-pcb-2024"),
+        ("pcb_reliefs", "test-fixture-pcb-2024"),
+    ] {
+        let statement = format!(
+            "UPDATE {table} SET rule_set_id = (SELECT id FROM statutory_rule_sets WHERE dataset_key = $1)"
+        );
+        sqlx::query(&statement)
+            .bind(dataset_key)
+            .execute(&pool)
+            .await
+            .expect("attach statutory rows to a test-only rule set");
     }
 
     Some(pool)
@@ -52,7 +102,7 @@ pub async fn skip_if_no_db() -> Option<PgPool> {
     match test_pool().await {
         Some(p) => Some(p),
         None => {
-            eprintln!("SKIP: DATABASE_URL not set or database unreachable");
+            eprintln!("SKIP: DATABASE_URL not set or PostgreSQL is unreachable");
             None
         }
     }

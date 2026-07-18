@@ -3,8 +3,8 @@
 //! NOTE: the 60-column `Employee` projection (with `gender::text AS "gender?"`-style
 //! enum casts) is repeated across `list`/`get`/`insert`/`update` because sqlx 0.8
 //! requires a string literal in `query_as!` — a shared `const`/`concat!` will not
-//! compile. Keep the four projections in sync. The follow-up "enum types" refactor
-//! removes the casts and the duplication; see docs/refactor-repositories-layer.md §10.
+//! compile. Keep the four projections in sync until the enum-backed model cleanup
+//! described in `docs/architecture.md` removes these casts.
 
 use chrono::NaiveDate;
 use sqlx::{Executor, Postgres};
@@ -24,7 +24,7 @@ pub async fn count(
         r#"SELECT COUNT(*) AS "count!" FROM employees
         WHERE company_id = $1 AND deleted_at IS NULL
         AND ($2::bool IS NULL OR is_active = $2)
-        AND ($3::text IS NULL OR full_name ILIKE '%' || $3 || '%' OR employee_number ILIKE '%' || $3 || '%')
+        AND ($3::text IS NULL OR lower(full_name::text || ' ' || employee_number::text) LIKE '%' || lower($3) || '%')
         AND ($4::text IS NULL OR department = $4)"#,
         company_id,
         is_active,
@@ -62,7 +62,7 @@ pub async fn list(
         FROM employees
         WHERE company_id = $1 AND deleted_at IS NULL
         AND ($2::bool IS NULL OR is_active = $2)
-        AND ($3::text IS NULL OR full_name ILIKE '%' || $3 || '%' OR employee_number ILIKE '%' || $3 || '%')
+        AND ($3::text IS NULL OR lower(full_name::text || ' ' || employee_number::text) LIKE '%' || lower($3) || '%')
         AND ($4::text IS NULL OR department = $4)
         ORDER BY employee_number ASC
         LIMIT $5 OFFSET $6"#,

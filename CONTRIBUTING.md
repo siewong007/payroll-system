@@ -51,8 +51,8 @@ bun run dev
 - Place SQL/data access in `backend/src/repositories/` or `backend/src/repositories/reads/`.
 - Use `AppResult<T>` and existing `AppError` variants for fallible paths.
 - Use `rust_decimal::Decimal` for money. Do not introduce floating-point payroll calculations.
-- Add new schema changes as new migration files in `backend/migrations/schema/`.
-- Do not edit existing migrations unless the repository owner explicitly asks for a history rewrite.
+- The current consolidated baseline is `backend/migrations/1000_schema.sql` plus `1001_data.sql`.
+- Treat a migration as immutable after deployment. Later changes use the next numbered file; squashing back to two files requires an explicit rebaseline and fresh/upgrade verification.
 
 ### Frontend
 

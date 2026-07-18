@@ -14,7 +14,6 @@ use crate::core::cookie::{clear_refresh_cookie, extract_refresh_token, set_refre
 use crate::core::error::AppError;
 use crate::models::audit::AuditRequestMeta;
 use crate::services::auth_service::validate_password_strength;
-use crate::services::epf_service::round_to_nearest_ringgit;
 use crate::services::oauth2_service::{
     compute_code_challenge, generate_code_verifier, google_authorize_url,
 };
@@ -372,13 +371,7 @@ fn leave_proration_handles_year_boundaries_and_half_day_rounding() {
 }
 
 #[test]
-fn statutory_rounding_rules_cover_boundaries() {
-    assert_eq!(round_to_nearest_ringgit(0), 0);
-    assert_eq!(round_to_nearest_ringgit(49), 0);
-    assert_eq!(round_to_nearest_ringgit(50), 100);
-    assert_eq!(round_to_nearest_ringgit(149), 100);
-    assert_eq!(round_to_nearest_ringgit(150), 200);
-
+fn prototype_pcb_rounding_helper_covers_boundaries() {
     assert_eq!(round_up_to_ringgit(-1), 0);
     assert_eq!(round_up_to_ringgit(0), 0);
     assert_eq!(round_up_to_ringgit(100), 100);

@@ -9,7 +9,7 @@ All commands run from the repo root unless noted.
 ### Local services
 ```bash
 cp .env.example .env        # first time only, from the repo root
-docker compose up -d        # Postgres 18 on 127.0.0.1:5434
+docker compose up -d        # Postgres 19 Beta 2 on 127.0.0.1:5434
 ```
 Requires `POSTGRES_PASSWORD` in the root `.env` (no default).
 
@@ -22,7 +22,7 @@ cargo clippy -- -D warnings # CI enforces -D warnings
 cargo test                  # integration tests require DATABASE_URL + JWT_SECRET
 cargo test <name>           # run a single test by substring    
 ```
-Migrations live in `backend/migrations/` and are embedded via `sqlx::migrate!` — they run on every `cargo run`. Add schema changes as new numbered files (`NNN_description.sql`); do not edit existing migrations.
+Migrations live in `backend/migrations/` and are embedded via `sqlx::migrate!` — they run on every `cargo run`. Versions `1000_schema.sql` and `1001_data.sql` are the current two-file rebaseline and become immutable once deployed. Future production changes use a new numbered migration; returning to two files requires another explicit, tested rebaseline.
 
 Some queries use the compile-time-checked `sqlx::query!`/`query_as!` macros (the payroll engine is fully migrated; other modules still use runtime `query`/`query_as` and are being migrated incrementally). These macros are verified against the committed `backend/.sqlx/` offline cache, so CI lint and the Docker build need no database (`SQLX_OFFLINE=true`). **After adding or changing a macro query, regenerate the cache** against a migrated DB and commit it:
 ```bash
@@ -30,7 +30,7 @@ DATABASE_URL=postgres://… cargo sqlx prepare   # writes backend/.sqlx/
 ```
 Forgetting this makes the build fail with "no cached data for this query" — that's the guardrail, not a flake.
 
-The project targets **PostgreSQL 18+** (migration `027` uses the built-in `uuidv7()` for primary-key defaults, so older servers can't run migrations). Use the `postgres:18.4-alpine` image locally; a data volume created by an earlier major version won't start under 18 — drop the `pgdata` volume (`docker compose down -v`) when upgrading.
+The canonical target is **PostgreSQL 19 Beta 2**. `1000_schema.sql` uses native `uuidv7()` and permits PostgreSQL 18 only for the documented AWS RDS 18.4 compatibility exception. Use the pinned `postgres:19beta2-alpine` image locally. A data volume created by an earlier major version cannot be opened directly by 19; use `pg_upgrade` or dump/restore for valuable data, or recreate a disposable local volume. See `docs/database.md`.
 
 ### Frontend (React 19 + Vite 8 + TS 7)
 ```bash
@@ -51,10 +51,10 @@ Browser → Vite dev proxy (or CloudFront in prod) → Axum at `/api/*` → hand
 
 ### Backend layering (strict, enforced by convention)
 - `handlers/` — thin HTTP glue. Extract `AuthUser`, parse JSON, call a service, map to JSON response. Do not put business logic here.
-- `services/` — business logic and orchestration (e.g. `payroll_engine`, `pcb_calculator`, `epf_service`, `eis_service`, `socso_service`, `attendance_service`). Services take `&PgPool` and return `AppResult<T>`.
-- `models/` — data structs and sqlx queries. Naming is by domain (`employee.rs`, `payroll.rs`, `attendance.rs`, `user_company.rs`, etc.).
+- `services/` — business logic and orchestration (e.g. `payroll_engine`, `pcb_calculator`, `epf_service`, `eis_service`, `socso_service`, `attendance_service`). Services compose repository calls, own transactions, and return `AppResult<T>`.
+- `models/` — data structs and SQLx result/DTO projections. Naming is by domain (`employee.rs`, `payroll.rs`, `attendance.rs`, `user_company.rs`, etc.).
+- `repositories/` — per-table SQL operations plus `reads/` for cross-table projections. Request-time SQL belongs here; see `docs/architecture.md`.
 - `core/` — cross-cutting: `app_state` (shared `AppState { pool, config, webauthn }`), `auth` (JWT + `AuthUser` extractor), `config` (env loading), `db` (pool + migrate), `cookie`, `error` (`AppError` → HTTP via `IntoResponse`).
-- `repositories/` exists but is currently empty — model files hold queries today.
 
 Errors: every fallible path returns `AppResult<T>` (`Result<T, AppError>`). `AppError::Database` wraps `sqlx::Error` via `#[from]`, so use `?` freely. `AppError::Internal` is logged and returned as a generic 500; all other variants surface their message to the client.
 
@@ -75,7 +75,7 @@ Key design decisions to be aware of:
 - **CSV export** `GET /api/attendance/export` streams a downloadable CSV with the active filter set.
 
 ### Payroll engine
-`services/payroll_engine.rs` is the entry point. It enforces one active run per `(company, payroll_group, year, month)`, then loops employees and composes `epf_service` + `socso_service` + `eis_service` + `pcb_calculator` to produce `PayrollItem`s inside a transaction. PCB (monthly tax deduction) uses progressive rules driven by seed data in migration `001_seed.sql`. PDFs are produced by `payslip_pdf_service` / `pdf_helpers` (printpdf), and statutory exports (EPF/SOCSO/EIS/PCB files + EA form) by `statutory_export_service` / `ea_form_service`.
+`services/payroll_engine.rs` is the entry point. It enforces one active run per `(company, payroll_group, year, month)`, preflights source-linked verified statutory rule sets, then composes `epf_service` + `socso_service` + `eis_service` + `pcb_calculator` inside a transaction. The rows shipped in `1001_data.sql` are unverified academic fixtures; production payroll fails closed, and automatic PCB remains disabled until the calculator passes LHDN computerised-MTD conformance. PDFs are produced by `payslip_pdf_service` / `pdf_helpers` (printpdf), and statutory exports (EPF/SOCSO/EIS/PCB files + EA form) by `statutory_export_service` / `ea_form_service`.
 
 ### Frontend layout
 - `App.tsx` is the router. Two shells: `AppLayout` for admin/HR, `PortalLayout` for employee self-service. `RoleGuard` wraps routes that a role must not see (e.g. `exec` is blocked from `/payroll/*` and `/reports`). `/attendance/kiosk` and `/attendance/scan` are unauthenticated public routes used by the check-in kiosk.
@@ -91,7 +91,7 @@ Key design decisions to be aware of:
 
 - Money uses `rust_decimal::Decimal` end-to-end; never `f64`. Serde serializes decimals as strings (`serde-with-str`) — mirror that in TS types.
 - Dates for attendance/scheduling are interpreted in `Asia/Kuala_Lumpur`; UTC is only used for storage and for the background-task scheduler.
-- New schema changes: add a new file in `backend/migrations/` with the next sequence number. Update `frontend/src/types/` to match any API contract change (per CONTRIBUTING.md).
+- Treat deployed migrations as immutable. Add a new numbered file for later schema/data changes; only an explicit rebaseline may squash history. Update `frontend/src/types/` to match any API contract change (per CONTRIBUTING.md).
 - Keep handlers thin; if you find yourself writing SQL or composing services in a handler, move it into a `service` module.
 - Do not introduce a second HTTP client on the frontend — extend `api/client.ts` or add a new `api/<module>.ts` that uses it.
 

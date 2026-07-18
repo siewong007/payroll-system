@@ -6,6 +6,21 @@ use uuid::Uuid;
 use crate::core::error::AppResult;
 use crate::models::company::{Company, CreateCompanyRequest, UpdateCompanyRequest};
 
+/// Create the idempotent payroll, leave, schedule, and settings baseline that
+/// makes a new tenant usable without demo seed data.
+pub async fn provision_defaults(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    actor_id: Option<Uuid>,
+) -> AppResult<()> {
+    sqlx::query("SELECT public.provision_company_defaults($1, $2)")
+        .bind(company_id)
+        .bind(actor_id)
+        .execute(executor)
+        .await?;
+    Ok(())
+}
+
 pub async fn get(
     executor: impl Executor<'_, Database = Postgres>,
     company_id: Uuid,

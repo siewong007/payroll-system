@@ -1,6 +1,5 @@
 //! Read-side payroll-run management (summary, listing, items, groups). Run mutations
-//! live in payroll_lifecycle_service (transitions) and the handler (delete / PCB edit,
-//! pending migration).
+//! live in payroll_lifecycle_service (transitions) and this service (delete / PCB edit).
 
 use sqlx::PgPool;
 use uuid::Uuid;

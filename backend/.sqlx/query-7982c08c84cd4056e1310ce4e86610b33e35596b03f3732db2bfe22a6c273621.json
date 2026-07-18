@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        WITH applicable_schedule AS (\n            SELECT rates.effective_from, MAX(rates.wage_to) AS wage_ceiling\n            FROM eis_rates rates\n            JOIN statutory_rule_sets rules ON rules.id = rates.rule_set_id\n            WHERE rules.rule_code = 'eis'\n              AND rules.status = 'verified'\n              AND rules.effective_from <= $2\n              AND (rules.effective_to IS NULL OR rules.effective_to >= $2)\n              AND rates.effective_from <= $2\n              AND (rates.effective_to IS NULL OR rates.effective_to >= $2)\n            GROUP BY rates.effective_from\n            ORDER BY rates.effective_from DESC\n            LIMIT 1\n        )\n        SELECT r.employee_contribution, r.employer_contribution\n        FROM eis_rates r\n        JOIN applicable_schedule schedule\n          ON schedule.effective_from = r.effective_from\n        JOIN statutory_rule_sets rules ON rules.id = r.rule_set_id\n        WHERE r.wage_from <= LEAST($1, schedule.wage_ceiling)\n          AND r.wage_to >= LEAST($1, schedule.wage_ceiling)\n          AND (r.effective_to IS NULL OR r.effective_to >= $2)\n          AND rules.rule_code = 'eis'\n          AND rules.status = 'verified'\n          AND rules.effective_from <= $2\n          AND (rules.effective_to IS NULL OR rules.effective_to >= $2)\n        LIMIT 1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "employee_contribution",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "employer_contribution",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Date"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "7982c08c84cd4056e1310ce4e86610b33e35596b03f3732db2bfe22a6c273621"
+}

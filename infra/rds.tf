@@ -10,6 +10,10 @@ resource "aws_db_subnet_group" "postgres" {
   tags = { Name = "${local.name_prefix}-db-subnet" }
 }
 
+# Intentional exception: local, CI, and Lightsail target PostgreSQL 19 Beta 2,
+# but standard Amazon RDS does not yet offer a production PostgreSQL 19 engine.
+# Keep this at 18.4/postgres18 until AWS publishes a standard (non-Preview)
+# PostgreSQL 19 release, then upgrade engine and parameter-group family together.
 resource "aws_db_parameter_group" "postgres18" {
   name   = "${local.name_prefix}-pg18"
   family = "postgres18"
@@ -39,6 +43,7 @@ resource "aws_db_parameter_group" "postgres18" {
 resource "aws_db_instance" "postgres" {
   identifier = "${local.name_prefix}-db"
 
+  # See the provider-availability exception above and docs/database.md.
   engine         = "postgres"
   engine_version = "18.4"
   instance_class = var.db_instance_class

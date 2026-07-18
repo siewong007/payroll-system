@@ -515,6 +515,7 @@ pub async fn check_out(
     latitude: Option<f64>,
     longitude: Option<f64>,
 ) -> AppResult<AttendanceRecord> {
+    geofence_service::validate_optional_coordinates(latitude, longitude)?;
     attendance_records::check_out(pool, employee_id, latitude, longitude, company_id)
         .await?
         .ok_or_else(|| {
@@ -570,7 +571,17 @@ pub async fn manual_attendance(
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<AttendanceRecord> {
     let status = req.status.as_deref().unwrap_or("present");
+    if !matches!(status, "present" | "late" | "absent" | "half_day") {
+        return Err(AppError::BadRequest(
+            "Status must be 'present', 'late', 'absent', or 'half_day'".into(),
+        ));
+    }
     let check_out_at = normalize_absent_check_out(status, req.check_in_at, req.check_out_at);
+    if check_out_at.is_some_and(|check_out| check_out < req.check_in_at) {
+        return Err(AppError::BadRequest(
+            "Check-out time must not be before check-in time".into(),
+        ));
+    }
 
     let record = attendance_records::insert_manual(
         pool,
@@ -625,6 +636,12 @@ pub async fn update_attendance_record(
     if !matches!(status, "present" | "late" | "absent" | "half_day") {
         return Err(AppError::BadRequest(
             "Status must be 'present', 'late', 'absent', or 'half_day'".into(),
+        ));
+    }
+
+    if check_out.is_some_and(|value| value < check_in) {
+        return Err(AppError::BadRequest(
+            "Check-out time must not be before check-in time".into(),
         ));
     }
 

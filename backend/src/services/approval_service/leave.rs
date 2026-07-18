@@ -31,6 +31,7 @@ pub async fn create_leave_request_admin(
     actor_id: Uuid,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<LeaveRequest> {
+    crate::services::leave_rules::validate_period(req.start_date, req.end_date, req.days)?;
     ensure_employee_in_company(pool, company_id, employee_id).await?;
     ensure_leave_type_in_company(pool, company_id, req.leave_type_id).await?;
 
@@ -106,6 +107,7 @@ pub async fn update_leave_request_admin(
     let start_date = req.start_date.unwrap_or(current.start_date);
     let end_date = req.end_date.unwrap_or(current.end_date);
     let days = req.days.unwrap_or(current.days);
+    crate::services::leave_rules::validate_period(start_date, end_date, days)?;
 
     let old_year = current.start_date.year();
     let new_year = start_date.year();

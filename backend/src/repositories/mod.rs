@@ -1,7 +1,7 @@
 //! Data-access layer: one module per table holding thin, single-statement query
 //! functions, plus `reads/` for cross-table joins/aggregations.
 //!
-//! Conventions (see docs/refactor-repositories-layer.md):
+//! Conventions (see `docs/architecture.md`):
 //! - One logical DB operation per function; no business logic, no cross-service calls.
 //! - Functions are generic over `impl sqlx::Executor<'_, Database = Postgres>` so a
 //!   service can pass `&pool` or compose several calls in one `&mut tx`.
@@ -50,6 +50,7 @@ pub mod platform_settings;
 pub mod refresh_tokens;
 pub mod salary_history;
 pub mod socso_rates;
+pub mod statutory_rule_sets;
 pub mod team_members;
 pub mod teams;
 pub mod tp3_records;

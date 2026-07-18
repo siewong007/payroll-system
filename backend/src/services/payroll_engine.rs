@@ -17,6 +17,7 @@ use crate::services::eis_service;
 use crate::services::epf_service;
 use crate::services::pcb_calculator;
 use crate::services::socso_service;
+use crate::services::statutory_rules;
 
 /// Process payroll for a group in a given period.
 ///
@@ -54,7 +55,8 @@ pub async fn process_payroll(
 
     if existing > 0 {
         return Err(AppError::Conflict(
-            "Payroll already exists for this period. Cancel the existing run first.".into(),
+            "Payroll already exists for this period. Delete the eligible existing run first."
+                .into(),
         ));
     }
 
@@ -87,6 +89,11 @@ pub async fn process_payroll(
         ));
     }
 
+    // Validate the four statutory domains once per run. Individual lookups
+    // remain linked to verified rule-set IDs, so this avoids four extra
+    // metadata queries for every employee without weakening fail-closed use.
+    statutory_rules::require_all_verified(pool, effective_date).await?;
+
     tracing::Span::current().record("employee_count", employees.len());
     info!(employees = employees.len(), "starting payroll run");
 
@@ -96,7 +103,7 @@ pub async fn process_payroll(
     // Create payroll run
     let run_id = Uuid::now_v7();
     tracing::Span::current().record("run_id", tracing::field::display(run_id));
-    payroll_runs::insert_processing(
+    let insert_result = payroll_runs::insert_processing(
         &mut *tx,
         run_id,
         company_id,
@@ -109,7 +116,26 @@ pub async fn process_payroll(
         processed_by,
         notes,
     )
-    .await?;
+    .await;
+
+    if let Err(err) = insert_result {
+        let duplicate_period = matches!(
+            &err,
+            AppError::Database(sqlx::Error::Database(db_err))
+                if matches!(
+                    db_err.constraint(),
+                    Some("payroll_runs_one_active_period")
+                        | Some("payroll_runs_company_id_payroll_group_id_period_year_period_key")
+                )
+        );
+        if duplicate_period {
+            return Err(AppError::Conflict(
+                "Payroll already exists for this period. Delete the eligible existing run first."
+                    .into(),
+            ));
+        }
+        return Err(err);
+    }
 
     let employee_ids: Vec<Uuid> = employees.iter().map(|e| e.id).collect();
 
@@ -390,14 +416,24 @@ async fn process_employee(
     let total_allowances = allowances_total + monthly_allowances;
 
     // EPF
-    let epf = epf_service::calculate_epf(pool, gross, &epf_category, effective_date).await?;
+    let epf =
+        epf_service::calculate_epf_after_preflight(pool, gross, &epf_category, effective_date)
+            .await?;
 
     // SOCSO
-    let socso =
-        socso_service::calculate_socso(pool, gross, age, is_foreigner, effective_date).await?;
+    let socso = socso_service::calculate_socso_after_preflight(
+        pool,
+        gross,
+        age,
+        is_foreigner,
+        effective_date,
+    )
+    .await?;
 
     // EIS
-    let eis = eis_service::calculate_eis(pool, gross, age, is_foreigner, effective_date).await?;
+    let eis =
+        eis_service::calculate_eis_after_preflight(pool, gross, age, is_foreigner, effective_date)
+            .await?;
 
     // Get YTD figures (from previous months this year)
     let (ytd_gross, ytd_pcb, ytd_epf, ytd_socso, ytd_eis, ytd_zakat, ytd_net) =
@@ -437,7 +473,8 @@ async fn process_employee(
         bonus_amount: 0,
     };
 
-    let pcb = pcb_calculator::calculate_pcb(pool, &pcb_input, effective_date).await?;
+    let pcb =
+        pcb_calculator::calculate_pcb_after_preflight(pool, &pcb_input, effective_date).await?;
 
     // PTPTN and Tabung Haji
     let ptptn = emp.ptptn_monthly_amount.unwrap_or(0);

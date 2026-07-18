@@ -7,7 +7,7 @@ use crate::tests::support::{
 
 /// End-to-end test: seed one employee on RM5,000 basic, process payroll for
 /// January 2024, verify the resulting `PayrollRun` + `PayrollItem` match the
-/// values derived from the statutory seed tables in migration 007.
+/// values derived from the prototype statutory tables in `1001_data.sql`.
 #[tokio::test]
 async fn process_payroll_single_employee_rm5000() {
     let Some(pool) = skip_if_no_db().await else {
@@ -71,7 +71,7 @@ async fn process_payroll_single_employee_rm5000() {
     assert_eq!(basic, 500_000);
     assert_eq!(gross, 500_000);
 
-    // Statutory values from seed 007: wage 500_000 hits the top of each bracket.
+    // Prototype reference values: wage 500_000 hits the top of each bracket.
     assert_eq!(
         epf_ee, 53_000,
         "EPF employee from seed bracket (480001, 500000)"
@@ -107,7 +107,7 @@ async fn process_payroll_single_employee_rm5000() {
 }
 
 /// The engine rejects a second run for the same (company, group, period)
-/// unless the prior run is cancelled. Protects against accidentally running
+/// unless the prior run was removed or is a retained cancelled legacy row. Protects against accidentally running
 /// payroll twice.
 #[tokio::test]
 async fn process_payroll_rejects_duplicate_period() {
