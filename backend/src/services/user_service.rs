@@ -6,7 +6,7 @@ use crate::models::user_company::{
     CompanySummary, CreateUserRequest, UpdateUserRequest, UserWithCompanies,
 };
 use crate::repositories::reads::user_management;
-use crate::repositories::{user_companies, users};
+use crate::repositories::{refresh_tokens, user_companies, users};
 
 const VALID_ROLES: &[&str] = &[
     "super_admin",
@@ -76,9 +76,10 @@ pub async fn list_users(
     pool: &PgPool,
     caller_is_super_admin: bool,
     caller_id: Uuid,
+    company_id: Option<Uuid>,
 ) -> AppResult<Vec<UserWithCompanies>> {
     let mut result: Vec<UserWithCompanies> = if caller_is_super_admin {
-        users::list_all(pool)
+        users::list_all(pool, company_id)
             .await?
             .into_iter()
             .map(|row| row.into_user())
@@ -274,12 +275,23 @@ fn normalize_requested_roles(requested_roles: &[String]) -> AppResult<Vec<String
     Ok(normalized)
 }
 
-pub async fn delete_user(pool: &PgPool, user_id: Uuid) -> AppResult<()> {
-    let rows = users::delete(pool, user_id).await?;
+pub async fn delete_user(pool: &PgPool, user_id: Uuid, deleted_by: Uuid) -> AppResult<()> {
+    if user_id == deleted_by {
+        return Err(AppError::BadRequest(
+            "You cannot delete your own account".into(),
+        ));
+    }
+
+    let mut tx = pool.begin().await?;
+    let rows = users::soft_delete(&mut *tx, user_id, deleted_by).await?;
 
     if rows == 0 {
         return Err(AppError::NotFound("User not found".into()));
     }
+
+    refresh_tokens::revoke_all_for_user(&mut *tx, user_id).await?;
+    user_companies::delete_by_user(&mut *tx, user_id).await?;
+    tx.commit().await?;
 
     Ok(())
 }

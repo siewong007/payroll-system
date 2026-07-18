@@ -1,6 +1,6 @@
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
 };
 use uuid::Uuid;
 
@@ -12,6 +12,11 @@ use crate::models::user_company::{
     CreateUserRequest, UpdateUserCompaniesRequest, UpdateUserRequest, UserWithCompanies,
 };
 use crate::services::{company_service, user_service};
+
+#[derive(Debug, serde::Deserialize)]
+pub struct UserListQuery {
+    pub company_id: Option<Uuid>,
+}
 
 fn require_super_admin(auth: &AuthUser) -> AppResult<()> {
     auth.require_super_admin()
@@ -64,10 +69,25 @@ pub async fn delete_company(
 pub async fn list_users(
     State(state): State<AppState>,
     auth: AuthUser,
+    Query(query): Query<UserListQuery>,
 ) -> AppResult<Json<Vec<UserWithCompanies>>> {
-    let users =
-        user_service::list_users(&state.pool, auth.has_any_role(&["super_admin"]), auth.0.sub)
-            .await?;
+    if !auth.has_any_role(&["super_admin", "admin"]) {
+        return Err(crate::core::error::AppError::Forbidden(
+            "Admin access required".into(),
+        ));
+    }
+    let is_super_admin = auth.has_any_role(&["super_admin"]);
+    let users = user_service::list_users(
+        &state.pool,
+        is_super_admin,
+        auth.0.sub,
+        if is_super_admin {
+            query.company_id
+        } else {
+            None
+        },
+    )
+    .await?;
     Ok(Json(users))
 }
 
@@ -98,7 +118,7 @@ pub async fn delete_user(
     Path(user_id): Path<Uuid>,
 ) -> AppResult<Json<serde_json::Value>> {
     require_super_admin(&auth)?;
-    user_service::delete_user(&state.pool, user_id).await?;
+    user_service::delete_user(&state.pool, user_id, auth.0.sub).await?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 

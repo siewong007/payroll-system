@@ -24,7 +24,6 @@ Thank you for your interest in improving this project. This repository is mainta
 git clone https://github.com/siewong007/payroll-system.git
 cd payroll-system
 cp .env.example .env
-cp .env.example backend/.env
 docker compose up -d
 ```
 
@@ -69,7 +68,7 @@ Some backend queries use SQLx compile-time macros. If you add or change a macro 
 
 ```bash
 cd backend
-DATABASE_URL=postgres://payroll:payroll_secret_change_me@localhost:5432/payroll_db cargo sqlx prepare
+DATABASE_URL=postgres://payroll:payroll_secret_change_me@localhost:5434/payroll_db cargo sqlx prepare
 ```
 
 Commit the updated `backend/.sqlx/` files when present.

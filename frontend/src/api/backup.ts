@@ -15,9 +15,15 @@ export async function exportCompanyBackup(companyId?: string): Promise<void> {
   window.URL.revokeObjectURL(url);
 }
 
-export async function importCompanyBackup(file: File): Promise<ImportResult> {
+export async function importCompanyBackup(
+  file: File,
+  companyId?: string,
+  createNew = false,
+): Promise<ImportResult> {
   const formData = new FormData();
   formData.append('file', file);
+  if (companyId) formData.append('company_id', companyId);
+  if (createNew) formData.append('create_new', 'true');
   const { data } = await api.post('/admin/backup/import', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
     timeout: 300000, // 5 min for large imports

@@ -70,16 +70,33 @@ pub async fn import_company(
     auth: AuthUser,
     mut multipart: Multipart,
 ) -> AppResult<Json<ImportResult>> {
-    let (_, user_id) = require_admin(&auth)?;
+    let (admin_company_id, user_id) = require_admin(&auth)?;
 
     let mut file_data: Option<Vec<u8>> = None;
+    let mut requested_company_id: Option<Uuid> = None;
+    let mut create_new = false;
 
     while let Some(field) = multipart
         .next_field()
         .await
         .map_err(|e| AppError::BadRequest(format!("Failed to read upload: {}", e)))?
     {
-        if field.name() == Some("file") {
+        if field.name() == Some("create_new") {
+            let value = field
+                .text()
+                .await
+                .map_err(|e| AppError::BadRequest(format!("Failed to read create_new: {e}")))?;
+            create_new = value.trim().eq_ignore_ascii_case("true");
+        } else if field.name() == Some("company_id") {
+            let value = field
+                .text()
+                .await
+                .map_err(|e| AppError::BadRequest(format!("Failed to read company_id: {e}")))?;
+            requested_company_id = Some(
+                Uuid::parse_str(value.trim())
+                    .map_err(|_| AppError::BadRequest("company_id must be a valid UUID".into()))?,
+            );
+        } else if field.name() == Some("file") {
             let file_name = field.file_name().unwrap_or("upload").to_string();
             if !file_name.ends_with(".json") {
                 return Err(AppError::BadRequest(
@@ -99,7 +116,6 @@ pub async fn import_company(
             }
 
             file_data = Some(data.to_vec());
-            break;
         }
     }
 
@@ -109,7 +125,34 @@ pub async fn import_company(
     let backup: CompanyBackup = serde_json::from_slice(&data)
         .map_err(|e| AppError::BadRequest(format!("Invalid backup file: {}", e)))?;
 
-    let result = backup_service::import_company(&state.pool, backup, user_id).await?;
+    let target_company_id = if auth.has_any_role(&["super_admin"]) {
+        if create_new {
+            if requested_company_id.is_some() {
+                return Err(AppError::BadRequest(
+                    "Choose either an existing target company or create a new company, not both."
+                        .into(),
+                ));
+            }
+            None
+        } else {
+            Some(requested_company_id.ok_or_else(|| {
+                AppError::BadRequest(
+                    "Select an existing target company or explicitly choose to create a new one."
+                        .into(),
+                )
+            })?)
+        }
+    } else {
+        if create_new {
+            return Err(AppError::Forbidden(
+                "Only super admins can create a company from a backup.".into(),
+            ));
+        }
+        Some(admin_company_id.expect("company admin authorization always has a company"))
+    };
+
+    let result =
+        backup_service::import_company(&state.pool, backup, target_company_id, user_id).await?;
 
     Ok(Json(result))
 }

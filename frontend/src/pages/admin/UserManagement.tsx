@@ -61,8 +61,8 @@ export function UserManagement() {
   const [deleteTarget, setDeleteTarget] = useState<UserWithCompanies | null>(null);
 
   const { data: users, isLoading } = useQuery({
-    queryKey: ['admin-users'],
-    queryFn: listUsers,
+    queryKey: ['admin-users', companyFilter],
+    queryFn: () => listUsers(companyFilter === 'all' ? undefined : companyFilter),
   });
 
   const { data: companies } = useQuery({
@@ -84,9 +84,6 @@ export function UserManagement() {
       if (!u.full_name.toLowerCase().includes(q) && !u.email.toLowerCase().includes(q)) return false;
     }
     if (roleFilter !== 'all' && !userRoles(u).includes(roleFilter as AppRole)) return false;
-    if (companyFilter !== 'all') {
-      if (!u.companies.some((c) => c.id === companyFilter)) return false;
-    }
     return true;
   });
 
@@ -235,7 +232,7 @@ export function UserManagement() {
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm mx-4 p-6">
             <h2 className="text-lg font-semibold text-gray-900 mb-2">Delete User</h2>
             <p className="text-sm text-gray-500 mb-5">
-              Are you sure you want to delete <span className="font-medium text-gray-900">{deleteTarget.full_name}</span>? This action cannot be undone.
+              Delete <span className="font-medium text-gray-900">{deleteTarget.full_name}</span>? Their access is revoked immediately and this account will not be restored by an employee backup.
             </p>
             <div className="flex justify-end gap-3">
               <button onClick={() => setDeleteTarget(null)} className="btn-secondary">Cancel</button>

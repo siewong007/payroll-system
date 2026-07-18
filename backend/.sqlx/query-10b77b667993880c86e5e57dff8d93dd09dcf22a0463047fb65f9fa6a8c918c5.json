@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, company_id, name, description, default_days, is_paid, is_active,\n            max_carry_forward, carry_forward_expiry_months, is_system, created_at, updated_at\n        FROM leave_types WHERE company_id = $1 AND is_active = TRUE",
+  "query": "SELECT id, email, password_hash, full_name, roles, company_id,\n            employee_id, is_active, must_change_password, last_login, created_at, updated_at\n        FROM users WHERE email = $1 AND is_active = TRUE AND deleted_at IS NULL",
   "describe": {
     "columns": [
       {
@@ -10,48 +10,48 @@
       },
       {
         "ordinal": 1,
-        "name": "company_id",
-        "type_info": "Uuid"
+        "name": "email",
+        "type_info": "Varchar"
       },
       {
         "ordinal": 2,
-        "name": "name",
+        "name": "password_hash",
         "type_info": "Varchar"
       },
       {
         "ordinal": 3,
-        "name": "description",
-        "type_info": "Text"
+        "name": "full_name",
+        "type_info": "Varchar"
       },
       {
         "ordinal": 4,
-        "name": "default_days",
-        "type_info": "Numeric"
+        "name": "roles",
+        "type_info": "VarcharArray"
       },
       {
         "ordinal": 5,
-        "name": "is_paid",
-        "type_info": "Bool"
+        "name": "company_id",
+        "type_info": "Uuid"
       },
       {
         "ordinal": 6,
+        "name": "employee_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 7,
         "name": "is_active",
         "type_info": "Bool"
       },
       {
-        "ordinal": 7,
-        "name": "max_carry_forward",
-        "type_info": "Numeric"
-      },
-      {
         "ordinal": 8,
-        "name": "carry_forward_expiry_months",
-        "type_info": "Int4"
+        "name": "must_change_password",
+        "type_info": "Bool"
       },
       {
         "ordinal": 9,
-        "name": "is_system",
-        "type_info": "Bool"
+        "name": "last_login",
+        "type_info": "Timestamptz"
       },
       {
         "ordinal": 10,
@@ -66,23 +66,23 @@
     ],
     "parameters": {
       "Left": [
-        "Uuid"
+        "Text"
       ]
     },
     "nullable": [
       false,
       false,
       false,
+      false,
+      false,
+      true,
+      true,
       true,
       false,
-      false,
-      false,
-      false,
-      false,
-      false,
+      true,
       false,
       false
     ]
   },
-  "hash": "1973d4de9eb46f2439f4377196f0280c37a9ec515defc9259fe7ffc4da6cc540"
+  "hash": "10b77b667993880c86e5e57dff8d93dd09dcf22a0463047fb65f9fa6a8c918c5"
 }

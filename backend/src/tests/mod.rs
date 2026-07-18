@@ -7,4 +7,5 @@ mod payroll_tests;
 mod pure_unit_tests;
 mod route_auth_tests;
 mod statutory_tests;
-mod support;
+pub(crate) mod support;
+mod user_management_tests;

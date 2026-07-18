@@ -11,11 +11,10 @@ pub async fn find_by_email(
     executor: impl Executor<'_, Database = Postgres>,
     email: &str,
 ) -> AppResult<Option<ExistingUser>> {
-    let row = sqlx::query_as!(
-        ExistingUser,
-        "SELECT id, roles FROM users WHERE email = $1",
-        email,
+    let row = sqlx::query_as::<_, ExistingUser>(
+        "SELECT id, roles, company_id, deleted_at IS NOT NULL AS is_deleted FROM users WHERE email = $1",
     )
+    .bind(email)
     .fetch_optional(executor)
     .await?;
     Ok(row)
@@ -45,7 +44,7 @@ pub async fn get_active_by_id(
         User,
         r#"SELECT id, email, password_hash, full_name, roles, company_id,
             employee_id, is_active, must_change_password, last_login, created_at, updated_at
-        FROM users WHERE id = $1 AND is_active = TRUE"#,
+        FROM users WHERE id = $1 AND is_active = TRUE AND deleted_at IS NULL"#,
         id,
     )
     .fetch_optional(executor)
@@ -61,7 +60,7 @@ pub async fn find_active_by_email(
         User,
         r#"SELECT id, email, password_hash, full_name, roles, company_id,
             employee_id, is_active, must_change_password, last_login, created_at, updated_at
-        FROM users WHERE email = $1 AND is_active = TRUE"#,
+        FROM users WHERE email = $1 AND is_active = TRUE AND deleted_at IS NULL"#,
         email,
     )
     .fetch_optional(executor)
@@ -75,7 +74,7 @@ pub async fn find_active_contact_by_email(
 ) -> AppResult<Option<UserContact>> {
     let user = sqlx::query_as!(
         UserContact,
-        "SELECT id, email, full_name FROM users WHERE email = $1 AND is_active = TRUE",
+        "SELECT id, email, full_name FROM users WHERE email = $1 AND is_active = TRUE AND deleted_at IS NULL",
         email,
     )
     .fetch_optional(executor)
@@ -145,13 +144,19 @@ pub async fn insert_admin(
 }
 
 /// All users, newest first (super-admin view).
-pub async fn list_all(executor: impl Executor<'_, Database = Postgres>) -> AppResult<Vec<UserRow>> {
-    let users = sqlx::query_as!(
-        UserRow,
-        r#"SELECT id, email, full_name, roles, company_id, employee_id, is_active, created_at
-            FROM users
-            ORDER BY created_at DESC"#,
+pub async fn list_all(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Option<Uuid>,
+) -> AppResult<Vec<UserRow>> {
+    let users = sqlx::query_as::<_, UserRow>(
+        r#"SELECT DISTINCT u.id, u.email, u.full_name, u.roles, u.company_id, u.employee_id, u.is_active, u.created_at
+            FROM users u
+            LEFT JOIN user_companies uc ON uc.user_id = u.id
+            WHERE u.deleted_at IS NULL
+              AND ($1::uuid IS NULL OR uc.company_id = $1)
+            ORDER BY u.created_at DESC"#,
     )
+    .bind(company_id)
     .fetch_all(executor)
     .await?;
     Ok(users)
@@ -163,7 +168,7 @@ pub async fn get_projection_by_id(
 ) -> AppResult<Option<UserRow>> {
     let user = sqlx::query_as!(
         UserRow,
-        "SELECT id, email, full_name, roles, company_id, employee_id, is_active, created_at FROM users WHERE id = $1",
+        "SELECT id, email, full_name, roles, company_id, employee_id, is_active, created_at FROM users WHERE id = $1 AND deleted_at IS NULL",
         id,
     )
     .fetch_optional(executor)
@@ -312,7 +317,26 @@ pub async fn clear_must_change_password(
     Ok(())
 }
 
-/// Delete a user, returning the number of rows removed (0 ⇒ not found).
+/// Tombstone a user so imports cannot recreate their account, and revoke their
+/// active access in the same transaction at the service layer.
+pub async fn soft_delete(
+    executor: impl Executor<'_, Database = Postgres>,
+    id: Uuid,
+    deleted_by: Uuid,
+) -> AppResult<u64> {
+    let rows = sqlx::query!(
+        "UPDATE users SET is_active = FALSE, deleted_at = NOW(), deleted_by = $2, updated_at = NOW() WHERE id = $1 AND deleted_at IS NULL",
+        id,
+        deleted_by,
+    )
+        .execute(executor)
+        .await?
+        .rows_affected();
+    Ok(rows)
+}
+
+/// Permanently remove a user only as part of employee lifecycle cleanup.
+/// Super-admin user deletion uses `soft_delete` instead.
 pub async fn delete(executor: impl Executor<'_, Database = Postgres>, id: Uuid) -> AppResult<u64> {
     let rows = sqlx::query!("DELETE FROM users WHERE id = $1", id)
         .execute(executor)

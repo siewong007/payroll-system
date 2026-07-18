@@ -21,6 +21,7 @@ export function BackupPage() {
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const [importError, setImportError] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [createNewCompany, setCreateNewCompany] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: companies } = useQuery({
@@ -60,7 +61,11 @@ export function BackupPage() {
     setImportResult(null);
     setImportError('');
     try {
-      const result = await importCompanyBackup(selectedFile);
+      const result = await importCompanyBackup(
+        selectedFile,
+        isSuperAdmin && !createNewCompany ? selectedCompanyId : undefined,
+        isSuperAdmin && createNewCompany,
+      );
       setImportResult(result);
       setSelectedFile(null);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -155,12 +160,51 @@ export function BackupPage() {
           <div className="flex-1">
             <h2 className="text-lg font-semibold text-gray-900">Import / Restore Data</h2>
             <p className="text-sm text-gray-500 mt-1">
-              Upload a previously exported backup file. If a company with the same name already exists,
-              all its data will be overwritten. Otherwise a new company will be created.
+              Company admins can restore only into their managed company. Super admins can explicitly
+              overwrite a selected company or create a new company from the backup.
             </p>
             <p className="text-xs text-amber-600 mt-2">
-              User accounts are not included in backups and must be assigned separately.
+              Active employees with an email can receive a login account. Accounts deleted by a super admin
+              are never restored from a backup.
             </p>
+
+            {isSuperAdmin && (
+              <div className="mt-4 max-w-md space-y-3">
+                <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                  <input
+                    type="radio"
+                    checked={!createNewCompany}
+                    onChange={() => { setCreateNewCompany(false); setImportResult(null); setImportError(''); }}
+                  />
+                  Overwrite an existing company
+                </label>
+                {!createNewCompany && (
+                  <select
+                    value={selectedCompanyId}
+                    onChange={(e) => { setSelectedCompanyId(e.target.value); setImportResult(null); setImportError(''); }}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-1 focus:ring-black outline-none"
+                  >
+                    <option value="">Choose a target company...</option>
+                    {companies?.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                )}
+                <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                  <input
+                    type="radio"
+                    checked={createNewCompany}
+                    onChange={() => { setCreateNewCompany(true); setImportResult(null); setImportError(''); }}
+                  />
+                  Create a new company from this backup
+                </label>
+                {createNewCompany && (
+                  <p className="text-xs text-gray-500">
+                    The backup company name will be used. If it already exists, select that company to overwrite it.
+                  </p>
+                )}
+              </div>
+            )}
 
             <div className="mt-4 space-y-3">
               <div className="flex items-center gap-3">
@@ -186,7 +230,7 @@ export function BackupPage() {
 
               <button
                 onClick={handleImport}
-                disabled={!selectedFile || importing}
+                disabled={!selectedFile || importing || (isSuperAdmin && !createNewCompany && !selectedCompanyId)}
                 className="inline-flex items-center gap-2 px-4 py-2.5 bg-amber-600 text-white text-sm font-medium rounded-xl hover:bg-amber-700 disabled:opacity-50 transition-all"
               >
                 {importing ? (

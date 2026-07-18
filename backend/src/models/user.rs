@@ -53,10 +53,12 @@ pub struct UserResponse {
     pub must_change_password: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, sqlx::FromRow)]
 pub struct ExistingUser {
     pub id: Uuid,
     pub roles: Vec<String>,
+    pub company_id: Option<Uuid>,
+    pub is_deleted: bool,
 }
 
 #[derive(Debug)]

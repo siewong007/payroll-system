@@ -1,7 +1,10 @@
+use std::io::ErrorKind;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use anyhow::Context;
 use chrono::Timelike;
+use tokio::net::TcpListener;
 
 use axum::http::{HeaderValue, Method};
 use tower_http::cors::CorsLayer;
@@ -17,7 +20,7 @@ use payroll_system::core::db;
 use payroll_system::routes;
 
 #[tokio::main]
-async fn main() {
+async fn main() -> anyhow::Result<()> {
     // Load .env
     dotenvy::dotenv().ok();
 
@@ -28,6 +31,18 @@ async fn main() {
 
     // Load config
     let config = AppConfig::from_env();
+
+    // Claim the configured address before running migrations or spawning background work.
+    // This makes startup fail fast with an actionable error when another process owns the port.
+    let addr: SocketAddr = format!("{}:{}", config.server_host, config.server_port)
+        .parse()
+        .with_context(|| {
+            format!(
+                "invalid API server address {}:{}; check SERVER_HOST and SERVER_PORT",
+                config.server_host, config.server_port
+            )
+        })?;
+    let listener = bind_api_listener(addr).await?;
 
     // Create DB pool + run migrations
     let pool = db::create_pool(&config.database_url).await;
@@ -73,13 +88,6 @@ async fn main() {
         // Gzip-compress eligible responses (large JSON lists, CSV/report exports).
         // Outermost so it wraps the final response body.
         .layer(tower_http::compression::CompressionLayer::new());
-
-    // Start server
-    let addr: SocketAddr = format!("{}:{}", config.server_host, config.server_port)
-        .parse()
-        .expect("Invalid server address");
-
-    tracing::info!("Starting server on {}", addr);
 
     // Background task: clean up stale refresh tokens every 24 hours
     let cleanup_pool = pool.clone();
@@ -138,18 +146,36 @@ async fn main() {
         }
     });
 
-    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+    tracing::info!("Starting server on {}", addr);
+
     axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
     .with_graceful_shutdown(shutdown_signal())
     .await
-    .unwrap();
+    .context("API server stopped unexpectedly")?;
 
     tracing::info!("Shutting down — closing database pool...");
     pool.close().await;
     tracing::info!("Shutdown complete");
+
+    Ok(())
+}
+
+async fn bind_api_listener(addr: SocketAddr) -> anyhow::Result<TcpListener> {
+    match TcpListener::bind(addr).await {
+        Ok(listener) => Ok(listener),
+        Err(error) if error.kind() == ErrorKind::AddrInUse => {
+            Err(anyhow::Error::new(error).context(format!(
+                "cannot start API server on {addr}: port {} is already in use; stop the existing process or set SERVER_PORT to a free port",
+                addr.port()
+            )))
+        }
+        Err(error) => {
+            Err(anyhow::Error::new(error).context(format!("failed to bind API server to {addr}")))
+        }
+    }
 }
 
 async fn shutdown_signal() {
@@ -173,5 +199,23 @@ async fn shutdown_signal() {
     tokio::select! {
         _ = ctrl_c => tracing::info!("Received SIGINT"),
         _ = terminate => tracing::info!("Received SIGTERM"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn bind_api_listener_explains_address_conflicts() {
+        let occupied_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let occupied_addr = occupied_listener.local_addr().unwrap();
+
+        let error = bind_api_listener(occupied_addr).await.unwrap_err();
+        let message = format!("{error:#}");
+
+        assert!(message.contains(&occupied_addr.to_string()));
+        assert!(message.contains("already in use"));
+        assert!(message.contains("SERVER_PORT"));
     }
 }

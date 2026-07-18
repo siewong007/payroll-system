@@ -8,14 +8,14 @@ All commands run from the repo root unless noted.
 
 ### Local services
 ```bash
-docker compose up -d        # Postgres 18 (:5432), Redis 7 (:6379), pgAdmin (:5050)
+cp .env.example .env        # first time only, from the repo root
+docker compose up -d        # Postgres 18 on 127.0.0.1:5434
 ```
-Requires `POSTGRES_PASSWORD` and `PGADMIN_PASSWORD` in the environment (no defaults).
+Requires `POSTGRES_PASSWORD` in the root `.env` (no default).
 
 ### Backend (Rust / Axum, edition 2024)
 ```bash
 cd backend
-cp .env.example .env        # first time only
 cargo run                   # starts API on :8080, auto-runs sqlx migrations
 cargo fmt --check           # CI enforces this
 cargo clippy -- -D warnings # CI enforces -D warnings

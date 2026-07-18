@@ -435,18 +435,32 @@ pub async fn company_settings(
 // their text is byte-identical to the offline `.sqlx` cache. The service owns ID
 // remapping, the `now` timestamp, file restore, and the import transaction.
 
-/// Find an existing company id by case-insensitive name (import overwrite check).
-pub async fn find_company_id_by_name(
+/// Return the explicit import target's name. Restore callers must choose this
+/// target rather than deriving one from untrusted backup metadata.
+pub async fn company_name(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+) -> AppResult<Option<String>> {
+    let name = sqlx::query_scalar::<_, String>("SELECT name FROM companies WHERE id = $1")
+        .bind(company_id)
+        .fetch_optional(executor)
+        .await?;
+    Ok(name)
+}
+
+/// Whether a company name is already in use, case-insensitively. A new-company
+/// restore must not silently turn into an overwrite just because names match.
+pub async fn company_name_exists(
     executor: impl Executor<'_, Database = Postgres>,
     name: &str,
-) -> AppResult<Option<Uuid>> {
-    let id = sqlx::query_scalar!(
-        "SELECT id FROM companies WHERE LOWER(name) = LOWER($1)",
-        name,
+) -> AppResult<bool> {
+    let exists = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM companies WHERE LOWER(name) = LOWER($1))",
     )
-    .fetch_optional(executor)
+    .bind(name)
+    .fetch_one(executor)
     .await?;
-    Ok(id)
+    Ok(exists)
 }
 
 /// Wipe all data for a company in FK-safe order (import overwrite). Runs many

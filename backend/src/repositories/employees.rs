@@ -627,7 +627,7 @@ pub async fn soft_delete(
     company_id: Uuid,
 ) -> AppResult<u64> {
     let rows = sqlx::query!(
-        "UPDATE employees SET deleted_at = NOW(), is_active = FALSE, employee_number = employee_number || '_DEL_' || id::text WHERE id = $1 AND company_id = $2",
+        "UPDATE employees SET deleted_at = NOW(), is_active = FALSE WHERE id = $1 AND company_id = $2",
         id,
         company_id,
     )

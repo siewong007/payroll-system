@@ -1,17 +1,111 @@
 use std::collections::HashMap;
 
 use chrono::Utc;
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
 
 use super::files;
 use crate::core::error::{AppError, AppResult};
 use crate::models::backup::{CompanyBackup, ImportResult};
-use crate::repositories::backup as backup_repo;
+use crate::repositories::{backup as backup_repo, user_companies, users};
+
+const MAX_EMPLOYEE_NUMBER_CHARS: usize = 50;
+
+#[derive(Debug, PartialEq, Eq)]
+enum AccountImportOutcome {
+    Created,
+    LinkedExisting,
+    SkippedDeleted,
+    SkippedConflicting,
+}
+
+fn importable_employee_email(
+    email: Option<&str>,
+    is_active: Option<bool>,
+    is_deleted: bool,
+) -> Option<&str> {
+    if is_deleted || is_active == Some(false) {
+        return None;
+    }
+
+    email.map(str::trim).filter(|email| !email.is_empty())
+}
+
+async fn provision_imported_employee_account(
+    conn: &mut PgConnection,
+    employee_id: Uuid,
+    company_id: Uuid,
+    full_name: &str,
+    email: &str,
+) -> AppResult<AccountImportOutcome> {
+    if let Some(existing) = users::find_by_email(&mut *conn, email).await? {
+        // A super-admin deletion is a tombstone, not an invitation for a backup
+        // restore to recreate access.
+        if existing.is_deleted {
+            return Ok(AccountImportOutcome::SkippedDeleted);
+        }
+
+        // Only reconnect the employee-only account already owned by this exact
+        // company. Never repurpose another company's account (or a privileged
+        // account) because a backup happens to contain the same email address.
+        if existing.roles.as_slice() != ["employee"] || existing.company_id != Some(company_id) {
+            return Ok(AccountImportOutcome::SkippedConflicting);
+        }
+
+        users::link_to_employee(&mut *conn, employee_id, company_id, existing.id).await?;
+        user_companies::insert(&mut *conn, existing.id, company_id).await?;
+        return Ok(AccountImportOutcome::LinkedExisting);
+    }
+
+    // Backups intentionally exclude credentials. Give the account an unknowable,
+    // random temporary secret and require the employee to use Forgot Password.
+    let temporary_secret = format!("{}{}", Uuid::new_v4(), Uuid::new_v4());
+    let password_hash = bcrypt::hash(temporary_secret, 12)
+        .map_err(|e| AppError::Internal(format!("Failed to hash password: {e}")))?;
+    let user_id = Uuid::now_v7();
+
+    users::insert_employee_user(
+        &mut *conn,
+        user_id,
+        email,
+        &password_hash,
+        full_name,
+        company_id,
+        employee_id,
+    )
+    .await?;
+    user_companies::insert(&mut *conn, user_id, company_id).await?;
+
+    Ok(AccountImportOutcome::Created)
+}
+
+fn normalize_employee_number_for_import(
+    employee_number: &str,
+    is_deleted: bool,
+    employee_index: usize,
+) -> AppResult<String> {
+    let normalized = if is_deleted {
+        employee_number
+            .rsplit_once("_DEL_")
+            .filter(|(_, suffix)| Uuid::parse_str(suffix).is_ok())
+            .map_or(employee_number, |(original, _)| original)
+    } else {
+        employee_number
+    };
+
+    if normalized.chars().count() > MAX_EMPLOYEE_NUMBER_CHARS {
+        return Err(AppError::BadRequest(format!(
+            "Invalid backup: employees[{employee_index}].employee_number exceeds the {MAX_EMPLOYEE_NUMBER_CHARS}-character limit"
+        )));
+    }
+
+    Ok(normalized.to_owned())
+}
 
 pub async fn import_company(
     pool: &PgPool,
-    backup: CompanyBackup,
+    mut backup: CompanyBackup,
+    target_company_id: Option<Uuid>,
     _importing_user_id: Uuid,
 ) -> AppResult<ImportResult> {
     if backup.metadata.format_version != "1.0" {
@@ -21,11 +115,33 @@ pub async fn import_company(
         )));
     }
 
-    let existing_company = backup_repo::find_company_id_by_name(pool, &backup.company.name).await?;
-    let is_overwrite = existing_company.is_some();
+    for (index, employee) in backup.employees.iter_mut().enumerate() {
+        employee.employee_number = normalize_employee_number_for_import(
+            &employee.employee_number,
+            employee.deleted_at.is_some(),
+            index,
+        )?;
+    }
+
+    let (new_company_id, new_company_name, is_overwrite) = match target_company_id {
+        Some(target_company_id) => {
+            let target_company_name = backup_repo::company_name(pool, target_company_id)
+                .await?
+                .ok_or_else(|| AppError::NotFound("Import target company not found".into()))?;
+            (target_company_id, target_company_name, true)
+        }
+        None => {
+            if backup_repo::company_name_exists(pool, &backup.company.name).await? {
+                return Err(AppError::Conflict(format!(
+                    "A company named \"{}\" already exists. Select it as the restore target to overwrite it.",
+                    backup.company.name
+                )));
+            }
+            (Uuid::new_v4(), backup.company.name.clone(), false)
+        }
+    };
 
     let mut remap = HashMap::new();
-    let new_company_id = existing_company.unwrap_or_else(Uuid::new_v4);
     remap.insert(backup.company.id, new_company_id);
 
     for pg in &backup.payroll_groups {
@@ -100,14 +216,17 @@ pub async fn import_company(
 
     let mut tx = pool.begin().await?;
     let mut warnings = Vec::new();
+    let mut accounts_created = 0usize;
+    let mut accounts_linked = 0usize;
+    let mut deleted_accounts_skipped = 0usize;
+    let mut conflicting_accounts_skipped = 0usize;
     let now = Utc::now();
 
     if is_overwrite {
         warnings.push(format!(
-            "Existing company \"{}\" data was overwritten.",
-            backup.company.name
+            "Target company \"{new_company_name}\" data was overwritten from backup \"{}\".",
+            backup.company.name,
         ));
-
         backup_repo::delete_company_cascade(&mut tx, new_company_id).await?;
         backup_repo::update_company(&mut *tx, new_company_id, &backup.company, now).await?;
     } else {
@@ -118,15 +237,35 @@ pub async fn import_company(
         backup_repo::insert_payroll_group(&mut *tx, r(pg.id), new_company_id, pg, now).await?;
     }
     for e in &backup.employees {
+        let employee_id = r(e.id);
         backup_repo::insert_employee(
             &mut *tx,
-            r(e.id),
+            employee_id,
             new_company_id,
             ro(e.payroll_group_id),
             e,
             now,
         )
         .await?;
+
+        if let Some(email) =
+            importable_employee_email(e.email.as_deref(), e.is_active, e.deleted_at.is_some())
+        {
+            match provision_imported_employee_account(
+                &mut tx,
+                employee_id,
+                new_company_id,
+                &e.full_name,
+                email,
+            )
+            .await?
+            {
+                AccountImportOutcome::Created => accounts_created += 1,
+                AccountImportOutcome::LinkedExisting => accounts_linked += 1,
+                AccountImportOutcome::SkippedDeleted => deleted_accounts_skipped += 1,
+                AccountImportOutcome::SkippedConflicting => conflicting_accounts_skipped += 1,
+            }
+        }
     }
     for a in &backup.employee_allowances {
         backup_repo::insert_employee_allowance(&mut *tx, r(a.id), r(a.employee_id), a, now).await?;
@@ -276,11 +415,28 @@ pub async fn import_company(
     if let Some(warning) = files::restore_backup_files(&backup.files).await {
         warnings.push(warning);
     }
+    if accounts_created > 0 {
+        warnings.push(format!(
+            "Created {accounts_created} employee login account(s). Employees must use Forgot Password before signing in."
+        ));
+    }
+    if deleted_accounts_skipped > 0 {
+        warnings.push(format!(
+            "Skipped {deleted_accounts_skipped} employee account(s) that were deleted by a super admin."
+        ));
+    }
+    if conflicting_accounts_skipped > 0 {
+        warnings.push(format!(
+            "Skipped {conflicting_accounts_skipped} employee account(s) because their email belongs to an account outside this company or with a privileged role."
+        ));
+    }
 
     let mut records_imported = HashMap::new();
     records_imported.insert("company".into(), 1usize);
     records_imported.insert("payroll_groups".into(), backup.payroll_groups.len());
     records_imported.insert("employees".into(), backup.employees.len());
+    records_imported.insert("employee_accounts_created".into(), accounts_created);
+    records_imported.insert("employee_accounts_linked".into(), accounts_linked);
     records_imported.insert(
         "employee_allowances".into(),
         backup.employee_allowances.len(),
@@ -316,9 +472,139 @@ pub async fn import_company(
 
     Ok(ImportResult {
         new_company_id,
-        new_company_name: backup.company.name.clone(),
+        new_company_name,
         is_overwrite,
         records_imported,
         warnings,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TEST_UUID: &str = "6c2e7095-7995-44c1-9580-6a751e18ebef";
+
+    #[test]
+    fn legacy_deleted_suffix_is_removed_before_length_validation() {
+        let legacy_number = format!("EMPTEST001_DEL_{TEST_UUID}");
+        assert!(legacy_number.chars().count() > MAX_EMPLOYEE_NUMBER_CHARS);
+
+        let normalized = normalize_employee_number_for_import(&legacy_number, true, 0).unwrap();
+
+        assert_eq!(normalized, "EMPTEST001");
+    }
+
+    #[test]
+    fn active_employee_number_is_not_rewritten() {
+        let number = format!("EMPTEST001_DEL_{TEST_UUID}");
+        let error = normalize_employee_number_for_import(&number, false, 3).unwrap_err();
+
+        assert!(matches!(
+            error,
+            AppError::BadRequest(message)
+                if message.contains("employees[3].employee_number")
+                    && message.contains("50-character limit")
+        ));
+    }
+
+    #[test]
+    fn invalid_legacy_suffix_is_rejected_with_field_context() {
+        let number = format!("{}_DEL_not-a-uuid", "E".repeat(MAX_EMPLOYEE_NUMBER_CHARS));
+        let error = normalize_employee_number_for_import(&number, true, 7).unwrap_err();
+
+        assert!(matches!(
+            error,
+            AppError::BadRequest(message)
+                if message.contains("employees[7].employee_number")
+                    && message.contains("50-character limit")
+        ));
+    }
+
+    #[test]
+    fn employee_number_limit_counts_characters_not_bytes() {
+        let number = "员".repeat(MAX_EMPLOYEE_NUMBER_CHARS);
+
+        assert_eq!(
+            normalize_employee_number_for_import(&number, false, 0).unwrap(),
+            number
+        );
+    }
+
+    #[test]
+    fn only_active_non_deleted_employees_with_email_get_accounts() {
+        assert_eq!(
+            importable_employee_email(Some(" employee@example.com "), Some(true), false),
+            Some("employee@example.com")
+        );
+        assert_eq!(
+            importable_employee_email(Some("employee@example.com"), Some(false), false),
+            None
+        );
+        assert_eq!(
+            importable_employee_email(Some("employee@example.com"), Some(true), true),
+            None
+        );
+        assert_eq!(importable_employee_email(Some("  "), None, false), None);
+        assert_eq!(importable_employee_email(None, None, false), None);
+    }
+
+    #[tokio::test]
+    async fn provisioning_creates_and_then_relinks_an_employee_account() {
+        let Some(pool) = crate::tests::support::skip_if_no_db().await else {
+            return;
+        };
+        let company_id = crate::tests::support::seed_company(&pool).await;
+        let employee_id =
+            crate::tests::support::seed_employee(&pool, company_id, None, 500_000).await;
+        let email = format!("import-{}@example.invalid", Uuid::new_v4());
+        let mut conn = pool.acquire().await.expect("acquire connection");
+
+        let created = provision_imported_employee_account(
+            &mut conn,
+            employee_id,
+            company_id,
+            "Imported Employee",
+            &email,
+        )
+        .await
+        .expect("create imported account");
+        assert_eq!(created, AccountImportOutcome::Created);
+
+        let account_id = users::find_by_email(&mut *conn, &email)
+            .await
+            .expect("find account")
+            .expect("account exists")
+            .id;
+        let account = users::get_by_id(&mut *conn, account_id)
+            .await
+            .expect("load account")
+            .expect("account exists");
+        assert_eq!(account.employee_id, Some(employee_id));
+        assert!(account.must_change_password);
+        assert!(
+            user_companies::user_has_company(&mut *conn, account_id, company_id)
+                .await
+                .expect("company membership")
+        );
+
+        let replacement_employee_id =
+            crate::tests::support::seed_employee(&pool, company_id, None, 500_000).await;
+        let linked = provision_imported_employee_account(
+            &mut conn,
+            replacement_employee_id,
+            company_id,
+            "Imported Employee",
+            &email,
+        )
+        .await
+        .expect("relink imported account");
+        assert_eq!(linked, AccountImportOutcome::LinkedExisting);
+
+        let account = users::get_by_id(&mut *conn, account_id)
+            .await
+            .expect("reload account")
+            .expect("account still exists");
+        assert_eq!(account.employee_id, Some(replacement_employee_id));
+    }
 }

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, email, full_name, roles, company_id, employee_id, is_active, created_at FROM users WHERE id = $1",
+  "query": "SELECT id, email, password_hash, full_name, roles, company_id,\n            employee_id, is_active, must_change_password, last_login, created_at, updated_at\n        FROM users WHERE id = $1 AND is_active = TRUE AND deleted_at IS NULL",
   "describe": {
     "columns": [
       {
@@ -15,32 +15,52 @@
       },
       {
         "ordinal": 2,
-        "name": "full_name",
+        "name": "password_hash",
         "type_info": "Varchar"
       },
       {
         "ordinal": 3,
+        "name": "full_name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
         "name": "roles",
         "type_info": "VarcharArray"
       },
       {
-        "ordinal": 4,
+        "ordinal": 5,
         "name": "company_id",
         "type_info": "Uuid"
       },
       {
-        "ordinal": 5,
+        "ordinal": 6,
         "name": "employee_id",
         "type_info": "Uuid"
       },
       {
-        "ordinal": 6,
+        "ordinal": 7,
         "name": "is_active",
         "type_info": "Bool"
       },
       {
-        "ordinal": 7,
+        "ordinal": 8,
+        "name": "must_change_password",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 9,
+        "name": "last_login",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 10,
         "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 11,
+        "name": "updated_at",
         "type_info": "Timestamptz"
       }
     ],
@@ -54,11 +74,15 @@
       false,
       false,
       false,
+      false,
       true,
       true,
       true,
+      false,
+      true,
+      false,
       false
     ]
   },
-  "hash": "f6f2f0d111626cdf43251c9b3993cbc5a7da4dc7889ad1b2d69a58eec37905b6"
+  "hash": "af90102083ac60c5166453da858ed0d427af03280c56b4c538848a62c0003889"
 }

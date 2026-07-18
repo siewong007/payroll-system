@@ -56,7 +56,7 @@ Many SMEs manage payroll, attendance, leave, claims, and statutory records acros
 | --- | --- |
 | Frontend | React 19, TypeScript 7, Vite 8, Tailwind CSS 4, React Router, TanStack Query, Axios |
 | Backend | Rust 2024, Axum 0.8, Tokio, SQLx, Tower HTTP, tower-governor |
-| Database and cache | PostgreSQL 18, Redis 7 |
+| Database | PostgreSQL 18 |
 | Auth and security | JWT, bcrypt, httpOnly cookies, WebAuthn, OAuth2, route-level rate limiting |
 | Documents and exports | printpdf, rust_xlsxwriter, calamine, csv, lettre |
 | DevOps | Docker Compose, GitHub Actions, Terraform, AWS-oriented infrastructure modules |
@@ -75,7 +75,6 @@ flowchart LR
     Services --> Email["SMTP email service"]
     Api --> Cookies["httpOnly refresh cookie\nBearer access token"]
     Background["Background tasks\nsession cleanup and attendance marking"] --> Repositories
-    Redis[("Redis 7\nlocal service")] -. "available via compose" .-> Api
 ```
 
 ### Request Flow
@@ -115,7 +114,7 @@ payroll-system/
 │       └── types/               # TypeScript domain types
 ├── infra/                       # Terraform and deployment assets
 ├── docs/                        # project documentation
-├── docker-compose.yml           # local PostgreSQL, Redis, pgAdmin
+├── docker-compose.yml           # local PostgreSQL
 ├── README.md
 ├── CONTRIBUTING.md
 └── LICENSE
@@ -140,10 +139,11 @@ cd payroll-system
 
 ```bash
 cp .env.example .env
-cp .env.example backend/.env
 ```
 
-The root `.env` is used by Docker Compose. The `backend/.env` file is used when running `cargo run` from the `backend/` directory.
+The root `.env` is shared by Docker Compose and the backend. `dotenvy` finds it
+when `cargo run` is started from the `backend/` directory, so a duplicate
+`backend/.env` is neither needed nor recommended.
 
 ### 3. Start Local Services
 
@@ -151,7 +151,9 @@ The root `.env` is used by Docker Compose. The `backend/.env` file is used when 
 docker compose up -d
 ```
 
-This starts PostgreSQL 18, Redis 7, and pgAdmin. The backend automatically applies schema migrations and seed data on startup.
+This starts PostgreSQL 18 on `127.0.0.1:5434`. The non-default host port avoids
+collisions with other local PostgreSQL projects. The backend automatically
+applies schema migrations and seed data on startup.
 
 ### 4. Run the Backend
 
@@ -194,9 +196,8 @@ The main example file is [.env.example](.env.example).
 | --- | --- | --- |
 | `POSTGRES_DB` | Local compose | PostgreSQL database name |
 | `POSTGRES_USER` | Local compose | PostgreSQL username |
+| `POSTGRES_PORT` | Local compose | PostgreSQL host port (defaults to `5434`) |
 | `POSTGRES_PASSWORD` | Local compose | PostgreSQL password |
-| `PGADMIN_EMAIL` | Local compose | pgAdmin login email |
-| `PGADMIN_PASSWORD` | Local compose | pgAdmin login password |
 | `DATABASE_URL` | Backend | PostgreSQL connection string |
 | `JWT_SECRET` | Backend | Secret used to sign JWTs |
 | `JWT_EXPIRY_HOURS` | Backend | Access token lifetime in hours |
@@ -362,5 +363,5 @@ This project is licensed under the [MIT License](LICENSE).
 
 - Rust, Axum, SQLx, and Tokio for the backend foundation.
 - React, Vite, Tailwind CSS, and TanStack Query for the frontend stack.
-- PostgreSQL and Redis for local service infrastructure.
+- PostgreSQL for local service infrastructure.
 - The Malaysian payroll statutory concepts used as the basis for the academic prototype.

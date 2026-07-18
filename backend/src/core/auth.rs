@@ -7,7 +7,11 @@ use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode}
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::error::{AppError, AppResult};
+use super::{
+    app_state::AppState,
+    error::{AppError, AppResult},
+};
+use crate::repositories::users;
 
 /// Registered `iss`/`aud` claim values. Validating these on decode rejects
 /// tokens minted for a different service or audience even if they were signed
@@ -98,13 +102,13 @@ pub enum Permission {
     MarkPayrollPaid,
 }
 
-impl<S> FromRequestParts<S> for AuthUser
-where
-    S: Send + Sync,
-{
+impl FromRequestParts<AppState> for AuthUser {
     type Rejection = AppError;
 
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
         let auth_header = parts
             .headers
             .get(header::AUTHORIZATION)
@@ -121,6 +125,14 @@ where
             .ok_or_else(|| AppError::Internal("JWT secret not configured".to_string()))?;
 
         let claims = verify_token(token, &secret.0)?;
+        if users::get_active_by_id(&state.pool, claims.sub)
+            .await?
+            .is_none()
+        {
+            return Err(AppError::Unauthorized(
+                "User account is no longer active".into(),
+            ));
+        }
         Ok(AuthUser(claims))
     }
 }

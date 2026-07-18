@@ -25,8 +25,10 @@ export const deleteCompany = (id: string) =>
   api.delete(`/admin/companies/${id}`).then((r) => r.data);
 
 // User management
-export const listUsers = () =>
-  api.get<UserWithCompanies[]>('/admin/users').then((r) => r.data);
+export const listUsers = (companyId?: string) =>
+  api.get<UserWithCompanies[]>('/admin/users', {
+    params: companyId ? { company_id: companyId } : undefined,
+  }).then((r) => r.data);
 
 export const createUser = (req: CreateUserRequest) =>
   api.post<UserWithCompanies>('/admin/users', req).then((r) => r.data);

@@ -27,7 +27,7 @@ pub struct UserWithCompanies {
 /// because `UserWithCompanies` has a `#[sqlx(skip)]` `companies` field that the
 /// compile-checked `query_as!` macro cannot populate: repos return this projection
 /// and the service assembles it (filling `companies` separately).
-#[derive(Debug)]
+#[derive(Debug, sqlx::FromRow)]
 pub struct UserRow {
     pub id: Uuid,
     pub email: String,
