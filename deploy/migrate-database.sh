@@ -261,12 +261,21 @@ stage_cutover() {
     || die "verify has not passed — refusing to cut over. Run 'verify' first."
   [[ -f "$DISCOVERY_FILE" ]] || die "run 'discover' first"
 
-  local tag
-  tag=$(basename "$SCRIPT_DIR")
+  # Locate the newest CI-produced release dir ourselves. This stage runs as
+  # root, so it can read the 0750 /opt/payroll/releases tree (an unprivileged
+  # ls cannot). The release bundle carries deploy.sh + images/backend.tar.gz.
+  local release tag
+  release=$(ls -1dt /opt/payroll/releases/*/ 2>/dev/null | head -n1 || true)
+  release=${release%/}
+  [[ -n "$release" && -d "$release" ]] \
+    || die "no /opt/payroll/releases/<sha>/ found — let the Deploy Backend pipeline upload an image first"
+  tag=$(basename "$release")
   [[ "$tag" =~ ^[0-9a-f]{40}$ ]] \
-    || die "this script must be run from a CI release directory (/opt/payroll/releases/<sha>/), not a standalone copy — found directory name '$tag'"
-  [[ -f "$SCRIPT_DIR/images/backend.tar.gz" ]] \
-    || die "$SCRIPT_DIR/images/backend.tar.gz is missing — run this from a full CI release bundle, not a partial copy"
+    || die "newest release dir name is not a 40-char SHA: $tag"
+  [[ -f "$release/images/backend.tar.gz" ]] \
+    || die "$release/images/backend.tar.gz is missing — incomplete release bundle"
+  [[ -f "$release/deploy.sh" ]] \
+    || die "$release/deploy.sh is missing — incomplete release bundle"
 
   local unit
   unit=$(grep -oP '(?<=^unit=).*' "$DISCOVERY_FILE")
@@ -278,11 +287,47 @@ stage_cutover() {
     warn "No native backend unit was recorded — stop it manually before proceeding if one is still running on :8080"
   fi
 
-  log "Starting the full dockerized stack (backend + postgres) with image tag $tag..."
-  bash "$SCRIPT_DIR/deploy.sh" "$tag" "$SCRIPT_DIR" \
-    || die "deploy.sh failed — the native backend service was already stopped; consider 'systemctl start $unit' to restore service while you investigate"
+  log "Starting the full dockerized stack (backend + postgres) with image tag $tag from $release ..."
+  bash "$release/deploy.sh" "$tag" "$release" \
+    || die "deploy.sh failed — the native backend service was already stopped; run 'sudo $0 rollback' to restore the native stack while you investigate"
 
   log "Cutover complete. Verify https://api.payrollmy.com/api/health and a real login before considering this done."
+}
+
+# ---------------------------------------------------------------------------
+# inspect: read-only. Dumps enough VPS state to plan the cutover safely
+# (release dirs, docker state, native services/ports, existing Caddy config
+# for the api domain). Changes nothing.
+# ---------------------------------------------------------------------------
+stage_inspect() {
+  echo "=== /opt/payroll/releases (newest first) ==="
+  ls -1dt /opt/payroll/releases/*/ 2>/dev/null || echo "(none)"
+  local r
+  r=$(ls -1dt /opt/payroll/releases/*/ 2>/dev/null | head -n1 || true)
+  if [[ -n "$r" ]]; then
+    echo "=== newest release contents ($r) ==="
+    ls -la "${r%/}" 2>/dev/null || true
+    ls -la "${r%/}/images" 2>/dev/null || true
+  fi
+  echo "=== docker containers ==="
+  docker ps -a --format '{{.Names}}\t{{.Status}}\t{{.Ports}}' 2>/dev/null || echo "(docker unavailable)"
+  echo "=== docker images (payroll-backend) ==="
+  docker images payroll-backend --format '{{.Repository}}:{{.Tag}}' 2>/dev/null || true
+  echo "=== native backend service ==="
+  systemctl is-active payroll-backend.service 2>/dev/null || true
+  systemctl is-enabled payroll-backend.service 2>/dev/null || true
+  echo "=== listeners on :8080 and :5432 ==="
+  ss -tlnp 2>/dev/null | grep -E ':8080|:5432' || echo "(nothing listening on 8080/5432)"
+  echo "=== /etc/caddy references to payroll/api domain ==="
+  grep -rniE 'payrollmy|payroll|api\.' /etc/caddy/ 2>/dev/null || echo "(no matches)"
+  echo "=== main Caddyfile import lines ==="
+  grep -n '^import\|import ' /etc/caddy/Caddyfile 2>/dev/null || echo "(no imports)"
+  echo "=== secrets.env present? (values not shown) ==="
+  if [[ -f "$SECRETS_FILE" ]]; then
+    grep -oE '^[A-Z_]+=' "$SECRETS_FILE" 2>/dev/null | sed 's/=$//' | sed 's/^/  key: /'
+  else
+    echo "  (missing)"
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -313,7 +358,8 @@ case "${1:-}" in
   backup)   stage_backup ;;
   restore)  stage_restore ;;
   verify)   stage_verify ;;
+  inspect)  stage_inspect ;;
   cutover)  stage_cutover ;;
   rollback) stage_rollback ;;
-  *) die "usage: $0 {discover|backup|restore|verify|cutover|rollback}" ;;
+  *) die "usage: $0 {discover|backup|restore|verify|inspect|cutover|rollback}" ;;
 esac

@@ -21,6 +21,7 @@ on:
           - backup
           - restore
           - verify
+          - inspect
           - cutover
           - rollback
 
@@ -101,18 +102,11 @@ jobs:
             -o StrictHostKeyChecking=yes
             -o "UserKnownHostsFile=$RUNNER_TEMP/lightsail-known-hosts"
           )
-          if [ "$STAGE" = "cutover" ]; then
-            # Cutover needs the loaded backend image, which only lives in a
-            # CI-produced release dir. Run migrate-database.sh from the newest one.
-            ssh "${ssh_opts[@]}" "$VPS_USER@$VPS_HOST" \
-              "set -euo pipefail
-               release=\$(ls -1dt /opt/payroll/releases/*/ 2>/dev/null | head -n1 || true)
-               test -n \"\$release\" || { echo 'No /opt/payroll/releases/<sha>/ found — let the Deploy Backend pipeline upload an image first.' >&2; exit 1; }
-               sudo /bin/bash \"\${release%/}/migrate-database.sh\" cutover"
-          else
-            ssh "${ssh_opts[@]}" "$VPS_USER@$VPS_HOST" \
-              "sudo /bin/bash /opt/payroll/migration/migrate-database.sh $STAGE"
-          fi
+          # All stages run as root from the staged migration script. cutover
+          # self-locates the newest CI release dir (it runs as root and can
+          # read the 0750 releases tree), so no special-casing is needed here.
+          ssh "${ssh_opts[@]}" "$VPS_USER@$VPS_HOST" \
+            "sudo /bin/bash /opt/payroll/migration/migrate-database.sh $STAGE"
 
       - name: Remove ephemeral SSH key
         if: always()
