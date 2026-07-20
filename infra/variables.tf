@@ -39,40 +39,8 @@ variable "api_subdomain" {
   default     = "api"
 }
 
-variable "db_instance_class" {
-  description = "RDS instance class"
+variable "backend_vps_ip" {
+  description = "Public IPv4 of the Lightsail VPS that serves the payroll backend (and ekowayhardware.com, saliminn.my)"
   type        = string
-  default     = "db.t4g.micro"
-}
-
-variable "db_allocated_storage" {
-  description = "RDS allocated storage in GB"
-  type        = number
-  default     = 20
-}
-
-variable "enable_multi_az" {
-  description = "Enable Multi-AZ for RDS"
-  type        = bool
-  default     = false
-}
-
-variable "ec2_instance_type" {
-  description = "EC2 instance type for backend server"
-  type        = string
-  default     = "t4g.micro"
-}
-
-variable "google_client_id" {
-  description = "Google OAuth2 client ID (optional)"
-  type        = string
-  default     = ""
-  sensitive   = true
-}
-
-variable "google_client_secret" {
-  description = "Google OAuth2 client secret (optional)"
-  type        = string
-  default     = ""
-  sensitive   = true
+  default     = "13.251.162.88"
 }

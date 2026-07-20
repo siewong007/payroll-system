@@ -1,0 +1,120 @@
+name: Migrate Database (manual)
+
+# One-time, MANUALLY TRIGGERED migration of the payroll database from the
+# native Postgres cluster on the Lightsail VPS into the dockerized stack.
+# There is NO push/schedule trigger — every run is a deliberate click (or
+# `gh workflow run`), one stage at a time, so a human decides between stages.
+#
+# Runs deploy/migrate-database.sh on the VPS over the same pinned-host-key SSH
+# path as the deploy workflow, using secrets.LIGHTSAIL_SSH_PRIVATE_KEY from the
+# "production" environment. The database dump never leaves the VPS.
+
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: "Migration stage to run (run in order; stop to review between each)"
+        required: true
+        type: choice
+        options:
+          - discover
+          - backup
+          - restore
+          - verify
+          - cutover
+          - rollback
+
+permissions:
+  contents: read
+
+concurrency:
+  group: payroll-migration
+  cancel-in-progress: false
+
+env:
+  VPS_HOST: 13.251.162.88
+  VPS_USER: ubuntu
+  VPS_HOST_KEY: "13.251.162.88 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGxQLowecYMuChjSX+ePbEKdDq0m8NfT8kfKaSw0Z3sF"
+
+jobs:
+  migrate:
+    name: "Run migration stage: ${{ inputs.stage }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Configure pinned SSH access
+        shell: bash
+        env:
+          LIGHTSAIL_SSH_PRIVATE_KEY: ${{ secrets.LIGHTSAIL_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$LIGHTSAIL_SSH_PRIVATE_KEY"
+          install -m 0600 /dev/null "$RUNNER_TEMP/lightsail-key"
+          printf '%s\n' "$LIGHTSAIL_SSH_PRIVATE_KEY" > "$RUNNER_TEMP/lightsail-key"
+          install -m 0600 /dev/null "$RUNNER_TEMP/lightsail-known-hosts"
+          printf '%s\n' "$VPS_HOST_KEY" > "$RUNNER_TEMP/lightsail-known-hosts"
+          ssh-keygen -lf "$RUNNER_TEMP/lightsail-known-hosts" \
+            | grep -Fq 'SHA256:EvysNdkRZEdS5wOyNFI+lZs2dH589gW9ycQGAiVImsE'
+
+      - name: Stage migration scripts onto the VPS
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh_opts=(
+            -i "$RUNNER_TEMP/lightsail-key"
+            -o BatchMode=yes
+            -o ConnectTimeout=15
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o "UserKnownHostsFile=$RUNNER_TEMP/lightsail-known-hosts"
+          )
+          scp "${ssh_opts[@]}" \
+            deploy/deploy.sh deploy/migrate-database.sh deploy/docker-compose.prod.yml \
+            "$VPS_USER@$VPS_HOST:/tmp/"
+          ssh "${ssh_opts[@]}" "$VPS_USER@$VPS_HOST" \
+            "set -eu
+             sudo install -d -m 0750 /opt/payroll /opt/payroll/migration
+             sudo install -m 0755 /tmp/deploy.sh /tmp/migrate-database.sh /opt/payroll/migration/
+             sudo install -m 0644 /tmp/docker-compose.prod.yml /opt/payroll/migration/
+             rm -f /tmp/deploy.sh /tmp/migrate-database.sh /tmp/docker-compose.prod.yml"
+
+      - name: Run stage on the VPS
+        shell: bash
+        env:
+          STAGE: ${{ inputs.stage }}
+        run: |
+          set -euo pipefail
+          ssh_opts=(
+            -i "$RUNNER_TEMP/lightsail-key"
+            -o BatchMode=yes
+            -o ConnectTimeout=15
+            -o IdentitiesOnly=yes
+            -o ServerAliveInterval=15
+            -o ServerAliveCountMax=8
+            -o StrictHostKeyChecking=yes
+            -o "UserKnownHostsFile=$RUNNER_TEMP/lightsail-known-hosts"
+          )
+          if [ "$STAGE" = "cutover" ]; then
+            # Cutover needs the loaded backend image, which only lives in a
+            # CI-produced release dir. Run migrate-database.sh from the newest one.
+            ssh "${ssh_opts[@]}" "$VPS_USER@$VPS_HOST" \
+              "set -euo pipefail
+               release=\$(ls -1dt /opt/payroll/releases/*/ 2>/dev/null | head -n1 || true)
+               test -n \"\$release\" || { echo 'No /opt/payroll/releases/<sha>/ found — let the Deploy Backend pipeline upload an image first.' >&2; exit 1; }
+               sudo /bin/bash \"\${release%/}/migrate-database.sh\" cutover"
+          else
+            ssh "${ssh_opts[@]}" "$VPS_USER@$VPS_HOST" \
+              "sudo /bin/bash /opt/payroll/migration/migrate-database.sh $STAGE"
+          fi
+
+      - name: Remove ephemeral SSH key
+        if: always()
+        shell: bash
+        run: rm -f "$RUNNER_TEMP/lightsail-key" "$RUNNER_TEMP/lightsail-known-hosts"

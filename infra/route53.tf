@@ -45,5 +45,5 @@ resource "aws_route53_record" "api" {
   name    = "${var.api_subdomain}.${var.domain_name}"
   type    = "A"
   ttl     = 300
-  records = [aws_eip.backend.public_ip]
+  records = [var.backend_vps_ip]
 }

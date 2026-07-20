@@ -1,0 +1,256 @@
+name: Deploy Backend
+
+# Zero-incremental-cost deployment path:
+#   public standard GitHub runner -> SSH/SCP -> existing Lightsail VPS.
+# No ECR, RDS, Secrets Manager, SSM, or paid cache. Mirrors the pattern
+# already used by the hotel-app and online-shopping-platform repos, which
+# share this same VPS.
+#
+# Required environment secret (GitHub environment "production"):
+#   LIGHTSAIL_SSH_PRIVATE_KEY - private key accepted for ubuntu@13.251.162.88
+#
+# The public ED25519 host key below is pinned so a DNS/network attacker cannot
+# impersonate the VPS. Verify its fingerprint from the Lightsail console before
+# first use: SHA256:EvysNdkRZEdS5wOyNFI+lZs2dH589gW9ycQGAiVImsE.
+
+on:
+  # Intentionally no workflow_dispatch: production revisions must enter through
+  # a successful push-triggered CI run, never through an untested manual path.
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: payroll-backend-production
+  cancel-in-progress: false
+
+env:
+  VPS_HOST: 13.251.162.88
+  VPS_USER: ubuntu
+  VPS_HOST_KEY: "13.251.162.88 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGxQLowecYMuChjSX+ePbEKdDq0m8NfT8kfKaSw0Z3sF"
+
+jobs:
+  gate:
+    name: Select latest approved main commit
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    outputs:
+      deploy: ${{ steps.select.outputs.deploy }}
+      sha: ${{ steps.select.outputs.sha }}
+
+    steps:
+      - name: Reject superseded CI runs
+        id: select
+        shell: bash
+        env:
+          CANDIDATE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          latest_sha=$(git ls-remote --exit-code \
+            "https://github.com/$GITHUB_REPOSITORY.git" refs/heads/main | awk '{print $1}')
+          printf 'sha=%s\n' "$CANDIDATE_SHA" >> "$GITHUB_OUTPUT"
+          if [[ "$CANDIDATE_SHA" == "$latest_sha" ]]; then
+            printf 'deploy=true\n' >> "$GITHUB_OUTPUT"
+          else
+            printf 'deploy=false\n' >> "$GITHUB_OUTPUT"
+            echo "Skipping superseded commit $CANDIDATE_SHA; main is $latest_sha."
+          fi
+
+  deploy:
+    name: Build and deploy to Lightsail
+    needs: gate
+    if: needs.gate.outputs.deploy == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: production
+    env:
+      DEPLOY_SHA: ${{ needs.gate.outputs.sha }}
+
+    steps:
+      - name: Check out the tested commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
+          persist-credentials: false
+
+      - name: Verify deployment revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$DEPLOY_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$DEPLOY_SHA"
+
+      - name: Build linux/amd64 backend image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build \
+            --platform linux/amd64 \
+            --pull \
+            --label "org.opencontainers.image.revision=$DEPLOY_SHA" \
+            --tag "payroll-backend:$DEPLOY_SHA" \
+            --file infra/Dockerfile \
+            .
+
+          test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' \
+            "payroll-backend:$DEPLOY_SHA")" = "linux/amd64"
+
+      - name: Create checksummed release bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle_dir="$RUNNER_TEMP/payroll-release"
+          bundle_path="$RUNNER_TEMP/payroll-$DEPLOY_SHA.tar.gz"
+          mkdir -p "$bundle_dir/images"
+
+          docker save "payroll-backend:$DEPLOY_SHA" | gzip -1 > "$bundle_dir/images/backend.tar.gz"
+
+          cp deploy/deploy.sh "$bundle_dir/deploy.sh"
+          cp deploy/docker-compose.prod.yml "$bundle_dir/docker-compose.prod.yml"
+          cp deploy/migrate-database.sh "$bundle_dir/migrate-database.sh"
+
+          (
+            cd "$bundle_dir"
+            find . -type f ! -name SHA256SUMS -print0 \
+              | sort -z \
+              | xargs -0 sha256sum > SHA256SUMS
+          )
+          tar -C "$bundle_dir" -czf "$bundle_path" .
+          ls -lh "$bundle_path"
+
+      - name: Configure pinned SSH access
+        shell: bash
+        env:
+          LIGHTSAIL_SSH_PRIVATE_KEY: ${{ secrets.LIGHTSAIL_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$LIGHTSAIL_SSH_PRIVATE_KEY"
+          install -m 0600 /dev/null "$RUNNER_TEMP/lightsail-key"
+          printf '%s\n' "$LIGHTSAIL_SSH_PRIVATE_KEY" > "$RUNNER_TEMP/lightsail-key"
+          install -m 0600 /dev/null "$RUNNER_TEMP/lightsail-known-hosts"
+          printf '%s\n' "$VPS_HOST_KEY" > "$RUNNER_TEMP/lightsail-known-hosts"
+          ssh-keygen -lf "$RUNNER_TEMP/lightsail-known-hosts" \
+            | grep -Fq 'SHA256:EvysNdkRZEdS5wOyNFI+lZs2dH589gW9ycQGAiVImsE'
+
+      - name: Verify protected VPS disk capacity
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/payroll-$DEPLOY_SHA.tar.gz"
+          archive_bytes=$(wc -c < "$archive" | tr -d ' ')
+          [[ "$archive_bytes" =~ ^[0-9]+$ ]]
+
+          # Allow for the upload plus its extracted copy while preserving the
+          # deploy script's disk reserve for images and rollback.
+          required_bytes=$((4294967296 + (archive_bytes * 2)))
+          ssh \
+            -i "$RUNNER_TEMP/lightsail-key" \
+            -o BatchMode=yes \
+            -o ConnectTimeout=15 \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o "UserKnownHostsFile=$RUNNER_TEMP/lightsail-known-hosts" \
+            "$VPS_USER@$VPS_HOST" \
+            "set -eu
+             for target in /tmp /opt; do
+               available=\$(df --output=avail -B1 \"\$target\" | tail -n 1 | tr -d ' ')
+               if [ \"\$available\" -lt $required_bytes ]; then
+                 echo \"Insufficient free space on \$target for a protected deployment\" >&2
+                 exit 1
+               fi
+             done"
+
+      - name: Upload release directly to the VPS
+        shell: bash
+        run: |
+          set -euo pipefail
+          scp \
+            -i "$RUNNER_TEMP/lightsail-key" \
+            -o BatchMode=yes \
+            -o ConnectTimeout=15 \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o "UserKnownHostsFile=$RUNNER_TEMP/lightsail-known-hosts" \
+            "$RUNNER_TEMP/payroll-$DEPLOY_SHA.tar.gz" \
+            "$VPS_USER@$VPS_HOST:/tmp/payroll-$DEPLOY_SHA.tar.gz.part"
+
+      - name: Deploy and wait for health checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The image can take a while to build. Recheck after upload and
+          # immediately before touching production so a CI run that became
+          # stale after the gate cannot deploy an older main revision.
+          latest_sha=$(git ls-remote --exit-code \
+            "https://github.com/$GITHUB_REPOSITORY.git" refs/heads/main | awk '{print $1}')
+          [[ "$latest_sha" =~ ^[0-9a-f]{40}$ ]]
+          if [[ "$DEPLOY_SHA" != "$latest_sha" ]]; then
+            echo "Refusing stale deployment $DEPLOY_SHA; main is now $latest_sha." >&2
+            exit 1
+          fi
+
+          ssh \
+            -i "$RUNNER_TEMP/lightsail-key" \
+            -o BatchMode=yes \
+            -o ConnectTimeout=15 \
+            -o IdentitiesOnly=yes \
+            -o ServerAliveInterval=15 \
+            -o ServerAliveCountMax=4 \
+            -o StrictHostKeyChecking=yes \
+            -o "UserKnownHostsFile=$RUNNER_TEMP/lightsail-known-hosts" \
+            "$VPS_USER@$VPS_HOST" \
+            "set -euo pipefail
+             trap 'rm -f /tmp/payroll-$DEPLOY_SHA.tar.gz.part /tmp/payroll-$DEPLOY_SHA.tar.gz' EXIT
+             mv /tmp/payroll-$DEPLOY_SHA.tar.gz.part /tmp/payroll-$DEPLOY_SHA.tar.gz
+             sudo rm -rf -- /opt/payroll/releases/$DEPLOY_SHA.incoming
+             sudo install -d -m 0750 /opt/payroll/releases/$DEPLOY_SHA.incoming
+             sudo tar -xzf /tmp/payroll-$DEPLOY_SHA.tar.gz -C /opt/payroll/releases/$DEPLOY_SHA.incoming
+             sudo rm -rf -- /opt/payroll/releases/$DEPLOY_SHA
+             sudo mv /opt/payroll/releases/$DEPLOY_SHA.incoming /opt/payroll/releases/$DEPLOY_SHA
+             sudo /bin/bash /opt/payroll/releases/$DEPLOY_SHA/deploy.sh \
+               $DEPLOY_SHA /opt/payroll/releases/$DEPLOY_SHA"
+
+      - name: Verify public HTTPS when DNS points to Lightsail
+        shell: bash
+        run: |
+          set -euo pipefail
+          if getent ahostsv4 api.payrollmy.com | awk '{print $1}' | grep -Fxq "$VPS_HOST"; then
+            curl --fail --silent --show-error \
+              --retry 20 --retry-delay 5 --retry-all-errors \
+              --max-time 20 \
+              https://api.payrollmy.com/api/health >/dev/null
+          else
+            echo "DNS is not on $VPS_HOST yet; localhost health checks passed and public HTTPS was skipped."
+          fi
+
+      - name: Remove remote transfer files
+        if: always()
+        shell: bash
+        run: |
+          if [[ -s "$RUNNER_TEMP/lightsail-key" && -s "$RUNNER_TEMP/lightsail-known-hosts" ]]; then
+            ssh \
+              -i "$RUNNER_TEMP/lightsail-key" \
+              -o BatchMode=yes \
+              -o ConnectTimeout=15 \
+              -o IdentitiesOnly=yes \
+              -o StrictHostKeyChecking=yes \
+              -o "UserKnownHostsFile=$RUNNER_TEMP/lightsail-known-hosts" \
+              "$VPS_USER@$VPS_HOST" \
+              "rm -f -- /tmp/payroll-$DEPLOY_SHA.tar.gz.part /tmp/payroll-$DEPLOY_SHA.tar.gz" \
+              || true
+          fi
+
+      - name: Remove ephemeral SSH key
+        if: always()
+        shell: bash
+        run: |
+          rm -f "$RUNNER_TEMP/lightsail-key" "$RUNNER_TEMP/lightsail-known-hosts"

@@ -1,92 +1,3 @@
-# --- EC2 Instance Role (run backend, pull ECR, read secrets, S3 uploads) ---
-
-resource "aws_iam_role" "ec2" {
-  name = "${local.name_prefix}-ec2"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Action = "sts:AssumeRole"
-        Effect = "Allow"
-        Principal = {
-          Service = "ec2.amazonaws.com"
-        }
-      }
-    ]
-  })
-
-  tags = { Name = "${local.name_prefix}-ec2" }
-}
-
-resource "aws_iam_instance_profile" "ec2" {
-  name = "${local.name_prefix}-ec2"
-  role = aws_iam_role.ec2.name
-}
-
-# SSM Session Manager access (replaces SSH)
-resource "aws_iam_role_policy_attachment" "ec2_ssm" {
-  role       = aws_iam_role.ec2.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
-}
-
-# ECR pull + Secrets Manager read + S3 uploads + CloudWatch logs
-resource "aws_iam_role_policy" "ec2_app" {
-  name = "${local.name_prefix}-ec2-app"
-  role = aws_iam_role.ec2.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Sid    = "ECR"
-        Effect = "Allow"
-        Action = [
-          "ecr:GetAuthorizationToken",
-          "ecr:BatchCheckLayerAvailability",
-          "ecr:GetDownloadUrlForLayer",
-          "ecr:BatchGetImage",
-        ]
-        Resource = "*"
-      },
-      {
-        Sid    = "Secrets"
-        Effect = "Allow"
-        Action = [
-          "secretsmanager:GetSecretValue",
-        ]
-        Resource = [
-          aws_secretsmanager_secret.jwt_secret.arn,
-          aws_secretsmanager_secret.database_url.arn,
-        ]
-      },
-      {
-        Sid    = "S3Uploads"
-        Effect = "Allow"
-        Action = [
-          "s3:GetObject",
-          "s3:PutObject",
-          "s3:DeleteObject",
-          "s3:ListBucket",
-        ]
-        Resource = [
-          aws_s3_bucket.uploads.arn,
-          "${aws_s3_bucket.uploads.arn}/*",
-        ]
-      },
-      {
-        Sid    = "CloudWatchLogs"
-        Effect = "Allow"
-        Action = [
-          "logs:CreateLogStream",
-          "logs:PutLogEvents",
-        ]
-        Resource = "${aws_cloudwatch_log_group.backend.arn}:*"
-      }
-    ]
-  })
-}
-
 # --- CI/CD Deployment Role ---
 
 resource "aws_iam_openid_connect_provider" "github" {
@@ -114,8 +25,7 @@ resource "aws_iam_role" "cicd" {
           }
           # Pin to THIS repository's main branch. Previously `repo:*` allowed any
           # GitHub repository on github.com to assume this deploy role and thereby
-          # read Terraform state (DB connection string + JWT secret), push ECR
-          # images, and run SSM commands.
+          # write to the frontend S3 bucket and invalidate CloudFront.
           StringLike = {
             "token.actions.githubusercontent.com:sub" = "repo:${var.github_repository}:ref:refs/heads/main"
           }
@@ -127,8 +37,6 @@ resource "aws_iam_role" "cicd" {
   tags = { Name = "${local.name_prefix}-cicd" }
 }
 
-data "aws_caller_identity" "current" {}
-
 resource "aws_iam_role_policy" "cicd_deploy" {
   name = "${local.name_prefix}-deploy"
   role = aws_iam_role.cicd.id
@@ -136,41 +44,6 @@ resource "aws_iam_role_policy" "cicd_deploy" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
-      {
-        # GetAuthorizationToken is account-scoped and only valid on "*".
-        Sid      = "ECRAuth"
-        Effect   = "Allow"
-        Action   = ["ecr:GetAuthorizationToken"]
-        Resource = "*"
-      },
-      {
-        # Image push/pull restricted to this project's repository.
-        Sid    = "ECRPushPull"
-        Effect = "Allow"
-        Action = [
-          "ecr:BatchCheckLayerAvailability",
-          "ecr:GetDownloadUrlForLayer",
-          "ecr:BatchGetImage",
-          "ecr:PutImage",
-          "ecr:InitiateLayerUpload",
-          "ecr:UploadLayerPart",
-          "ecr:CompleteLayerUpload",
-        ]
-        Resource = aws_ecr_repository.backend.arn
-      },
-      {
-        # Restrict RunCommand to the backend instance and the shell-script doc.
-        Sid    = "SSMDeploy"
-        Effect = "Allow"
-        Action = [
-          "ssm:SendCommand",
-          "ssm:GetCommandInvocation",
-        ]
-        Resource = [
-          "arn:aws:ssm:${var.aws_region}::document/AWS-RunShellScript",
-          "arn:aws:ec2:${var.aws_region}:${data.aws_caller_identity.current.account_id}:instance/${aws_instance.backend.id}",
-        ]
-      },
       {
         Sid    = "S3Frontend"
         Effect = "Allow"

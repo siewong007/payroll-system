@@ -1,0 +1,121 @@
+# Production stack for the payroll backend on the shared Lightsail VPS.
+#
+# The host-level Caddy process owns ports 80/443. saliminn uses :3030/:8081
+# and the online-shopping-platform apps use their own reserved ports; this
+# stack keeps payroll on 127.0.0.1:8080, the port already reserved for it in
+# the sibling repos' own compose-file comments. PostgreSQL is not published
+# on any host port; maintenance uses `docker exec payroll-db`.
+#
+# deploy/deploy.sh supplies IMAGE_TAG, POSTGRES_PASSWORD, and JWT_SECRET from
+# /opt/payroll/secrets.env. The application image is loaded directly from the
+# GitHub Actions release bundle; no registry or additional AWS service is
+# involved. The postgres volume is seeded once, out-of-band, from a verified
+# dump of the pre-existing native cluster (see the migration runbook) — it is
+# NOT initialized from backend/migrations fixtures.
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  postgres:
+    image: postgres:19beta2
+    container_name: payroll-db
+    restart: unless-stopped
+    command:
+      - postgres
+      - -c
+      - max_connections=20
+      - -c
+      - shared_buffers=32MB
+      - -c
+      - work_mem=1MB
+      - -c
+      - maintenance_work_mem=16MB
+      - -c
+      - max_parallel_workers=1
+    environment:
+      POSTGRES_USER: payroll
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
+      POSTGRES_DB: payroll_db
+    volumes:
+      # PostgreSQL 18+ stores versioned data below /var/lib/postgresql.
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U payroll -d payroll_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    shm_size: 64mb
+    mem_limit: 256m
+    cpus: 0.30
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 60s
+    logging: *default-logging
+    networks:
+      - database
+
+  backend:
+    image: "payroll-backend:${IMAGE_TAG:?IMAGE_TAG is required}"
+    container_name: payroll-backend
+    restart: unless-stopped
+    init: true
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      DATABASE_URL: "postgres://payroll:${POSTGRES_PASSWORD}@postgres:5432/payroll_db"
+      JWT_SECRET: "${JWT_SECRET:?JWT_SECRET is required}"
+      JWT_EXPIRY_HOURS: "${JWT_EXPIRY_HOURS:-1}"
+      SERVER_HOST: "0.0.0.0"
+      SERVER_PORT: "8080"
+      FRONTEND_URL: "${FRONTEND_URL:-https://payrollmy.com}"
+      WEBAUTHN_RP_ID: "${WEBAUTHN_RP_ID:-payrollmy.com}"
+      WEBAUTHN_RP_ORIGIN: "${WEBAUTHN_RP_ORIGIN:-https://payrollmy.com}"
+      GOOGLE_CLIENT_ID: "${GOOGLE_CLIENT_ID:-}"
+      GOOGLE_CLIENT_SECRET: "${GOOGLE_CLIENT_SECRET:-}"
+      SMTP_HOST: "${SMTP_HOST:-}"
+      SMTP_PORT: "${SMTP_PORT:-}"
+      SMTP_USERNAME: "${SMTP_USERNAME:-}"
+      SMTP_PASSWORD: "${SMTP_PASSWORD:-}"
+      SMTP_FROM_EMAIL: "${SMTP_FROM_EMAIL:-}"
+      SMTP_FROM_NAME: "${SMTP_FROM_NAME:-}"
+      RUST_LOG: "${RUST_LOG:-info}"
+    volumes:
+      # Bind mount survives image/container replacement.
+      - /opt/payroll/data/uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/api/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    mem_limit: 256m
+    cpus: 0.45
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+    logging: *default-logging
+    networks:
+      - app
+      - database
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  app:
+    driver: bridge
+  database:
+    # Only the backend is dual-homed. PostgreSQL has no Internet-facing Docker
+    # network and no published host port.
+    internal: true
