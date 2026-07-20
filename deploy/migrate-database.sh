@@ -318,8 +318,8 @@ stage_inspect() {
   systemctl is-enabled payroll-backend.service 2>/dev/null || true
   echo "=== listeners on :8080 and :5432 ==="
   ss -tlnp 2>/dev/null | grep -E ':8080|:5432' || echo "(nothing listening on 8080/5432)"
-  echo "=== /etc/caddy references to payroll/api domain ==="
-  grep -rniE 'payrollmy|payroll|api\.' /etc/caddy/ 2>/dev/null || echo "(no matches)"
+  echo "=== main Caddyfile: api.payrollmy.com block (first 14 lines of file) ==="
+  sed -n '1,14p' /etc/caddy/Caddyfile 2>/dev/null || echo "(cannot read Caddyfile)"
   echo "=== main Caddyfile import lines ==="
   grep -n '^import\|import ' /etc/caddy/Caddyfile 2>/dev/null || echo "(no imports)"
   echo "=== secrets.env present? (values not shown) ==="

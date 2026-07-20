@@ -256,6 +256,18 @@ backup_existing_database() {
 }
 
 configure_caddy() {
+  # If the host Caddyfile already serves the API domain (the pre-existing
+  # native deployment configured it inline), leave that config untouched: it
+  # already reverse-proxies to 127.0.0.1:8080, which is now the container.
+  # Adding our own block would duplicate the site and fail `caddy validate`.
+  local domain_re="^[[:space:]]*${API_DOMAIN//./\\.}[[:space:]]*\{"
+  if grep -qE "$domain_re" "$CADDY_FILE" 2>/dev/null; then
+    log "Host Caddyfile already serves ${API_DOMAIN}; leaving it as-is (it now proxies to the container on 127.0.0.1:8080)."
+    caddy validate --config "$CADDY_FILE" \
+      || die "existing host Caddyfile failed validation; not reloading"
+    return 0
+  fi
+
   local site_tmp main_backup site_backup=""
   site_tmp=$(mktemp "$APP_DIR/.payroll.Caddyfile.XXXXXX")
   main_backup=$(mktemp "$APP_DIR/.Caddyfile.XXXXXX")
