@@ -105,10 +105,19 @@ stage_discover() {
   local new_pg_password
   new_pg_password=$(openssl rand -hex 32)
 
+  # Emit a value as a shell single-quoted literal so `source secrets.env`
+  # reads it verbatim. The reused native JWT_SECRET can contain shell
+  # metacharacters ({ } $ ? etc.) that would otherwise be expanded.
+  sq() {
+    local s=$1
+    s=${s//\'/\'\\\'\'}
+    printf "'%s'" "$s"
+  }
+
   install -d -m 0750 "$APP_DIR"
   {
-    printf 'POSTGRES_PASSWORD=%s\n' "$new_pg_password"
-    printf 'JWT_SECRET=%s\n' "$found_jwt_secret"
+    printf 'POSTGRES_PASSWORD=%s\n' "$(sq "$new_pg_password")"
+    printf 'JWT_SECRET=%s\n' "$(sq "$found_jwt_secret")"
   } > "$SECRETS_FILE"
   chmod 0600 "$SECRETS_FILE"
 
