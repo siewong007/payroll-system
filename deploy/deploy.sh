@@ -214,9 +214,17 @@ deploy_tag() {
   local target_tag=$1
   export IMAGE_TAG=$target_tag
   compose config >/dev/null || return 1
+  # Force a fresh backend container. An earlier failed start (e.g. a port
+  # conflict during a pre-cutover auto-deploy) can leave a "Created" container
+  # that `compose up` reuses WITHOUT applying the host port publish, so the
+  # process is healthy inside the container but unreachable on 127.0.0.1:8080.
+  # Removing it first guarantees compose creates a new one that binds the port.
+  docker rm -f payroll-backend >/dev/null 2>&1 || true
   compose up --detach --remove-orphans || return 1
   wait_for_healthy payroll-db || return 1
   wait_for_healthy payroll-backend || return 1
+  # Verify from the HOST (not just the container healthcheck) so a missing port
+  # publish is caught before Caddy is pointed at an unreachable upstream.
   curl -fsS http://127.0.0.1:8080/api/health >/dev/null || return 1
 }
 
