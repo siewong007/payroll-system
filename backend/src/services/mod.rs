@@ -34,5 +34,6 @@ pub mod socso_service;
 pub mod statutory_export_service;
 pub mod statutory_rules;
 pub mod team_service;
+pub mod totp_service;
 pub mod user_service;
 pub mod work_schedule_service;

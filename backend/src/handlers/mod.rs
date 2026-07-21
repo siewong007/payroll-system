@@ -21,4 +21,5 @@ pub mod portal;
 pub mod report;
 pub mod settings;
 pub mod team;
+pub mod totp;
 pub mod work_schedule;

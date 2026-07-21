@@ -1,22 +1,58 @@
-use axum::{Json, extract::State, http::HeaderMap, response::IntoResponse};
+use axum::{
+    Json,
+    extract::State,
+    http::HeaderMap,
+    response::{IntoResponse, Response},
+};
 
 use crate::core::app_state::AppState;
 use crate::core::auth::{AuthUser, create_token};
 use crate::core::cookie;
 use crate::core::error::{AppError, AppResult};
 use crate::core::extract::ValidatedJson;
-use crate::models::session::{ForgotPasswordRequest, ResetPasswordRequest};
+use crate::models::session::{ForgotPasswordRequest, LoginOutcome, ResetPasswordRequest};
 use crate::models::user::{ChangePasswordRequest, LoginRequest, LoginResponse, UserResponse};
 use crate::models::user_company::{CompanySummary, SwitchCompanyRequest};
 use crate::services::{
     auth_service, email_service, password_reset_service, session_service, user_service,
 };
 
+/// Turns a `LoginOutcome` into its HTTP response: a full session (JWT body +
+/// httpOnly refresh cookie) when 2FA isn't required, or a small JSON marker
+/// carrying the MFA-pending token when it is. Shared by every primary-auth
+/// handler (password, passkey) so the response shape stays identical.
+pub fn login_outcome_response(outcome: LoginOutcome, frontend_url: &str) -> Response {
+    match outcome {
+        LoginOutcome::Session(session) => {
+            let mut headers = HeaderMap::new();
+            let (name, value) = cookie::set_refresh_cookie(&session.refresh_token, frontend_url);
+            headers.insert(name, value.parse().unwrap());
+
+            // Don't include refresh_token in JSON body — it's in the cookie
+            let body = LoginResponse {
+                token: session.token,
+                refresh_token: None,
+                user: session.user,
+            };
+            (
+                headers,
+                Json(serde_json::to_value(body).unwrap_or_default()),
+            )
+                .into_response()
+        }
+        LoginOutcome::MfaRequired { mfa_token } => (
+            HeaderMap::new(),
+            Json(serde_json::json!({ "requires_2fa": true, "mfa_token": mfa_token })),
+        )
+            .into_response(),
+    }
+}
+
 pub async fn login(
     State(state): State<AppState>,
     ValidatedJson(req): ValidatedJson<LoginRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    let response = auth_service::login(
+    let outcome = auth_service::login(
         &state.pool,
         req,
         &state.config.jwt_secret,
@@ -24,20 +60,7 @@ pub async fn login(
     )
     .await?;
 
-    let mut headers = HeaderMap::new();
-    if let Some(ref refresh_token) = response.refresh_token {
-        let (name, value) = cookie::set_refresh_cookie(refresh_token, &state.config.frontend_url);
-        headers.insert(name, value.parse().unwrap());
-    }
-
-    // Don't include refresh_token in JSON body — it's in the cookie
-    let body = LoginResponse {
-        token: response.token,
-        refresh_token: None,
-        user: response.user,
-    };
-
-    Ok((headers, Json(body)))
+    Ok(login_outcome_response(outcome, &state.config.frontend_url))
 }
 
 pub async fn me(State(state): State<AppState>, auth: AuthUser) -> AppResult<Json<UserResponse>> {

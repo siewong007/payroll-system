@@ -1,10 +1,11 @@
 import api from './client';
-import type { 
-  RegistrationResponseJSON, 
+import type {
+  RegistrationResponseJSON,
   AuthenticationResponseJSON,
   PublicKeyCredentialCreationOptionsJSON,
   PublicKeyCredentialRequestOptionsJSON
 } from '@/lib/webauthn';
+import type { LoginResponse, MfaRequiredResponse } from '@/types';
 
 export interface PasskeyInfo {
   id: string;
@@ -25,7 +26,10 @@ export async function passkeyAuthBegin(email: string) {
   return data as { challenge_id: string; options: PublicKeyCredentialRequestOptionsJSON };
 }
 
-export async function passkeyAuthComplete(challengeId: string, credential: AuthenticationResponseJSON) {
+export async function passkeyAuthComplete(
+  challengeId: string,
+  credential: AuthenticationResponseJSON,
+): Promise<LoginResponse | MfaRequiredResponse> {
   const { data } = await api.post('/auth/passkey/authenticate/complete', {
     challenge_id: challengeId,
     credential,
@@ -39,7 +43,10 @@ export async function passkeyDiscoverableBegin() {
   return data as { challenge_id: string; options: PublicKeyCredentialRequestOptionsJSON };
 }
 
-export async function passkeyDiscoverableComplete(challengeId: string, credential: AuthenticationResponseJSON) {
+export async function passkeyDiscoverableComplete(
+  challengeId: string,
+  credential: AuthenticationResponseJSON,
+): Promise<LoginResponse | MfaRequiredResponse> {
   const { data } = await api.post('/auth/passkey/discoverable/complete', {
     challenge_id: challengeId,
     credential,

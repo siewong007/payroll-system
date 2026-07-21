@@ -38,6 +38,16 @@ pub struct LoginResponseWithRefresh {
     pub user: super::user::UserResponse,
 }
 
+/// Result of a primary authentication step (password, passkey, or Google
+/// OAuth). When the account has TOTP 2FA enabled, no JWT is issued yet —
+/// callers must complete the second factor via `/auth/2fa/verify` before a
+/// real session is minted.
+#[derive(Debug)]
+pub enum LoginOutcome {
+    Session(LoginResponseWithRefresh),
+    MfaRequired { mfa_token: String },
+}
+
 #[derive(Debug, Deserialize, validator::Validate)]
 pub struct ForgotPasswordRequest {
     #[validate(email(message = "must be a valid email address"))]

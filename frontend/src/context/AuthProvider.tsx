@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import type { User, LoginResponse } from '@/types';
+import type { User, LoginResponse, MfaRequiredResponse } from '@/types';
 import api, { setAccessToken } from '@/api/client';
-import { AuthContext } from './AuthContext';
+import { verifyTwoFactorLogin } from '@/api/totp';
+import { AuthContext, type LoginResult } from './AuthContext';
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -46,8 +47,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('user', JSON.stringify(newUser));
   }, []);
 
-  const login = async (email: string, password: string): Promise<User> => {
-    const { data } = await api.post<LoginResponse>('/auth/login', { email, password });
+  const login = async (email: string, password: string): Promise<LoginResult> => {
+    const { data } = await api.post<LoginResponse | MfaRequiredResponse>('/auth/login', {
+      email,
+      password,
+    });
+
+    if ('requires_2fa' in data && data.requires_2fa) {
+      return { status: 'mfa_required', mfaToken: data.mfa_token };
+    }
+
+    // Refresh token is set as httpOnly cookie by the server
+    setSession(data.token, data.user);
+    return { status: 'success', user: data.user };
+  };
+
+  const completeTwoFactorLogin = async (mfaToken: string, code: string): Promise<User> => {
+    const data = await verifyTwoFactorLogin(mfaToken, code);
     // Refresh token is set as httpOnly cookie by the server
     setSession(data.token, data.user);
     return data.user;
@@ -83,6 +99,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         user,
         token,
         login,
+        completeTwoFactorLogin,
         logout,
         switchCompany,
         setSession,

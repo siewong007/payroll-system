@@ -2,11 +2,15 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { hasOnlyEmployeeRole } from '@/lib/roles';
+import { TwoFactorPrompt } from '@/components/TwoFactorPrompt';
+import { BrandLogo } from '@/components/ui/BrandLogo';
+import type { User } from '@/types';
 
 export function OAuth2Callback() {
   const navigate = useNavigate();
   const { setSession } = useAuth();
   const [error, setError] = useState('');
+  const [mfaToken, setMfaToken] = useState<string | null>(null);
 
   useEffect(() => {
     const hash = window.location.hash.substring(1);
@@ -14,6 +18,16 @@ export function OAuth2Callback() {
 
     const token = params.get('token');
     const userStr = params.get('user');
+    const pendingMfaToken = params.get('mfa_token');
+
+    // Clear the hash fragment from browser history either way — it's
+    // single-use and shouldn't linger in the URL.
+    window.history.replaceState(null, '', window.location.pathname);
+
+    if (pendingMfaToken) {
+      setMfaToken(pendingMfaToken);
+      return;
+    }
 
     if (!token || !userStr) {
       setError('OAuth2 login failed. Missing authentication data.');
@@ -24,16 +38,15 @@ export function OAuth2Callback() {
       const user = JSON.parse(decodeURIComponent(userStr));
       // Refresh token was set as httpOnly cookie by the server redirect
       setSession(token, user);
-
-      // Clear the hash fragment from browser history
-      window.history.replaceState(null, '', window.location.pathname);
-
-      // Redirect based on role
       navigate(hasOnlyEmployeeRole(user) ? '/portal' : '/', { replace: true });
     } catch {
       setError('Failed to process OAuth2 response.');
     }
   }, [navigate, setSession]);
+
+  const goPostLogin = (user: User) => {
+    navigate(hasOnlyEmployeeRole(user) ? '/portal' : '/', { replace: true });
+  };
 
   if (error) {
     return (
@@ -48,6 +61,21 @@ export function OAuth2Callback() {
           <a href="/login" className="inline-block text-sm text-black font-medium hover:underline">
             Back to login
           </a>
+        </div>
+      </div>
+    );
+  }
+
+  if (mfaToken) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-100">
+        <div className="w-full max-w-md px-4">
+          <div className="bg-white rounded-2xl shadow p-6 sm:p-8">
+            <div className="text-center mb-8">
+              <BrandLogo variant="lockup-dark" className="h-12 w-auto mx-auto mb-4" />
+            </div>
+            <TwoFactorPrompt mfaToken={mfaToken} onSuccess={goPostLogin} />
+          </div>
         </div>
       </div>
     );

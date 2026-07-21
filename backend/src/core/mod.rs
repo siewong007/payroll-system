@@ -2,6 +2,7 @@ pub mod app_state;
 pub mod auth;
 pub mod config;
 pub mod cookie;
+pub mod crypto;
 pub mod db;
 pub mod error;
 pub mod extract;

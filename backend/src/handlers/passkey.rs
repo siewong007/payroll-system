@@ -1,7 +1,6 @@
 use axum::{
     Json,
     extract::{Path, State},
-    http::HeaderMap,
     response::IntoResponse,
 };
 use uuid::Uuid;
@@ -9,15 +8,14 @@ use webauthn_rs::prelude::*;
 
 use crate::core::app_state::AppState;
 use crate::core::auth::AuthUser;
-use crate::core::cookie;
 use crate::core::error::{AppError, AppResult};
+use crate::handlers::auth::login_outcome_response;
 use crate::models::passkey::{
     AuthBeginRequest, AuthBeginResponse, AuthCompleteRequest, CheckPasskeyRequest,
     DiscoverableAuthBeginResponse, PasskeyInfo, RegistrationBeginResponse,
     RegistrationCompleteRequest, RenamePasskeyRequest,
 };
-use crate::models::user::LoginResponse;
-use crate::services::passkey_service;
+use crate::services::{auth_service, passkey_service};
 
 // ── Registration (authenticated user adds a passkey) ───────────────────
 
@@ -147,8 +145,8 @@ pub async fn authentication_complete(
         }
     }
 
-    // Issue tokens (same as password login)
-    let session = passkey_service::complete_login(
+    // Issue tokens (same as password login, gated on 2FA if enabled)
+    let outcome = auth_service::complete_login(
         &state.pool,
         user_id,
         &state.config.jwt_secret,
@@ -156,18 +154,7 @@ pub async fn authentication_complete(
     )
     .await?;
 
-    let mut headers = HeaderMap::new();
-    let (name, value) =
-        cookie::set_refresh_cookie(&session.refresh_token, &state.config.frontend_url);
-    headers.insert(name, value.parse().unwrap());
-
-    let body = LoginResponse {
-        token: session.token,
-        refresh_token: None,
-        user: session.user,
-    };
-
-    Ok((headers, Json(body)))
+    Ok(login_outcome_response(outcome, &state.config.frontend_url))
 }
 
 // ── Discoverable Authentication (no email required) ─────────────────────
@@ -238,8 +225,8 @@ pub async fn discoverable_auth_complete(
         }
     }
 
-    // Issue tokens
-    let session = passkey_service::complete_login(
+    // Issue tokens (gated on 2FA if enabled)
+    let outcome = auth_service::complete_login(
         &state.pool,
         user_id,
         &state.config.jwt_secret,
@@ -247,18 +234,7 @@ pub async fn discoverable_auth_complete(
     )
     .await?;
 
-    let mut headers = HeaderMap::new();
-    let (name, value) =
-        cookie::set_refresh_cookie(&session.refresh_token, &state.config.frontend_url);
-    headers.insert(name, value.parse().unwrap());
-
-    let body = LoginResponse {
-        token: session.token,
-        refresh_token: None,
-        user: session.user,
-    };
-
-    Ok((headers, Json(body)))
+    Ok(login_outcome_response(outcome, &state.config.frontend_url))
 }
 
 // ── Passkey Management (authenticated) ─────────────────────────────────

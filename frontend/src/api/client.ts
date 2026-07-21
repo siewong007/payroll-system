@@ -64,12 +64,14 @@ api.interceptors.response.use(
     // verbatim, never refresh or redirect.
     const isKioskEndpoint = originalRequest.url === '/attendance/kiosk/qr';
 
-    // Don't retry refresh or login requests
+    // Don't retry refresh, login, or 2FA verification requests — a 401 there
+    // means "wrong credentials/code", not "session expired".
     if (
       error.response?.status !== 401 ||
       originalRequest._retry ||
       originalRequest.url === '/auth/login' ||
       originalRequest.url === '/auth/refresh' ||
+      originalRequest.url === '/auth/2fa/verify' ||
       isKioskEndpoint
     ) {
       // Only redirect for 401 on regular API calls, not auth endpoints
@@ -78,6 +80,7 @@ api.interceptors.response.use(
         originalRequest.url !== '/auth/login' &&
         originalRequest.url !== '/auth/refresh' &&
         originalRequest.url !== '/auth/oauth2/providers' &&
+        originalRequest.url !== '/auth/2fa/verify' &&
         !isKioskEndpoint
       ) {
         accessToken = null;

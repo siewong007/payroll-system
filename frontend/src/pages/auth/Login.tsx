@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, Navigate, Link } from 'react-router-dom';
+import type { User } from '@/types';
 import { motion } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
 import { Fingerprint } from 'lucide-react';
@@ -10,6 +11,7 @@ import { hasOnlyEmployeeRole } from '@/lib/roles';
 import { checkPasskey, passkeyAuthBegin, passkeyAuthComplete, passkeyDiscoverableBegin, passkeyDiscoverableComplete } from '@/api/passkey';
 import { getPasskeyCredential, isWebAuthnSupported } from '@/lib/webauthn';
 import { BrandLogo } from '@/components/ui/BrandLogo';
+import { TwoFactorPrompt } from '@/components/TwoFactorPrompt';
 
 function GoogleIcon() {
   return (
@@ -47,6 +49,7 @@ export function Login() {
   const [passkeyLoading, setPasskeyLoading] = useState(false);
   const [hasPasskey, setHasPasskey] = useState(false);
   const [webauthnSupported] = useState(isWebAuthnSupported());
+  const [mfaToken, setMfaToken] = useState<string | null>(null);
   const { login, setSession, user, isAuthenticated } = useAuth();
   const navigate = useNavigate();
 
@@ -80,16 +83,24 @@ export function Login() {
     return <Navigate to={hasOnlyEmployeeRole(user) ? '/portal' : '/'} replace />;
   }
 
+  const goPostLogin = (loggedInUser: User) => {
+    if (loggedInUser.must_change_password) {
+      navigate('/change-password');
+    } else {
+      navigate(hasOnlyEmployeeRole(loggedInUser) ? '/portal' : '/');
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setLoading(true);
     try {
-      const loggedInUser = await login(email, password);
-      if (loggedInUser.must_change_password) {
-        navigate('/change-password');
+      const result = await login(email, password);
+      if (result.status === 'mfa_required') {
+        setMfaToken(result.mfaToken);
       } else {
-        navigate(hasOnlyEmployeeRole(loggedInUser) ? '/portal' : '/');
+        goPostLogin(result.user);
       }
     } catch (err: unknown) {
       setError(getErrorMessage(err, 'Invalid email or password'));
@@ -116,8 +127,12 @@ export function Login() {
         response = await passkeyDiscoverableComplete(challenge_id, credential);
       }
 
-      setSession(response.token, response.user);
-      navigate(hasOnlyEmployeeRole(response.user) ? '/portal' : '/');
+      if ('requires_2fa' in response && response.requires_2fa) {
+        setMfaToken(response.mfa_token);
+      } else {
+        setSession(response.token, response.user);
+        navigate(hasOnlyEmployeeRole(response.user) ? '/portal' : '/');
+      }
     } catch (err: unknown) {
       setError(getErrorMessage(err, 'Passkey authentication failed'));
     } finally {
@@ -149,90 +164,99 @@ export function Login() {
             <p className="text-sm text-gray-400 mt-1">Malaysian Payroll System</p>
           </div>
 
-          {/* Social / Passkey Sign-In */}
-          {(googleProvider || webauthnSupported) && (
+          {mfaToken ? (
+            <TwoFactorPrompt
+              mfaToken={mfaToken}
+              onSuccess={goPostLogin}
+              onBack={() => setMfaToken(null)}
+            />
+          ) : (
             <>
-              <div className="space-y-2.5">
-                {googleProvider && (
-                  <button
-                    type="button"
-                    onClick={handleGoogleLogin}
-                    className="w-full flex items-center justify-center gap-3 py-2.5 px-4 border border-gray-300 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all"
-                  >
-                    <GoogleIcon />
-                    Continue with Google
-                  </button>
-                )}
-                {webauthnSupported && (
-                  <button
-                    type="button"
-                    onClick={handlePasskeyLogin}
-                    disabled={passkeyLoading}
-                    className="w-full flex items-center justify-center gap-3 py-2.5 px-4 border border-gray-300 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 transition-all"
-                  >
-                    <Fingerprint className="w-5 h-5" />
-                    {passkeyLoading ? 'Verifying...' : 'Sign in with Passkey'}
-                  </button>
-                )}
-              </div>
+              {/* Social / Passkey Sign-In */}
+              {(googleProvider || webauthnSupported) && (
+                <>
+                  <div className="space-y-2.5">
+                    {googleProvider && (
+                      <button
+                        type="button"
+                        onClick={handleGoogleLogin}
+                        className="w-full flex items-center justify-center gap-3 py-2.5 px-4 border border-gray-300 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all"
+                      >
+                        <GoogleIcon />
+                        Continue with Google
+                      </button>
+                    )}
+                    {webauthnSupported && (
+                      <button
+                        type="button"
+                        onClick={handlePasskeyLogin}
+                        disabled={passkeyLoading}
+                        className="w-full flex items-center justify-center gap-3 py-2.5 px-4 border border-gray-300 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 transition-all"
+                      >
+                        <Fingerprint className="w-5 h-5" />
+                        {passkeyLoading ? 'Verifying...' : 'Sign in with Passkey'}
+                      </button>
+                    )}
+                  </div>
 
-              <div className="relative my-6">
-                <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-gray-200" />
+                  <div className="relative my-6">
+                    <div className="absolute inset-0 flex items-center">
+                      <div className="w-full border-t border-gray-200" />
+                    </div>
+                    <div className="relative flex justify-center text-xs">
+                      <span className="bg-white px-3 text-gray-400">or sign in with email</span>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              <form onSubmit={handleSubmit} className="space-y-5">
+                {error && (
+                  <div className="bg-red-50 text-red-600 text-sm px-4 py-3 rounded-xl">
+                    {error}
+                  </div>
+                )}
+
+                <div>
+                  <label className="form-label">Email</label>
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="border p-2.5 rounded-lg w-full text-sm outline-none focus:border-black transition-colors"
+                    placeholder="Enter your email"
+                    required
+                  />
                 </div>
-                <div className="relative flex justify-center text-xs">
-                  <span className="bg-white px-3 text-gray-400">or sign in with email</span>
+
+                <div>
+                  <label className="form-label">Password</label>
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="border p-2.5 rounded-lg w-full text-sm outline-none focus:border-black transition-colors"
+                    placeholder="Enter your password"
+                    required
+                  />
                 </div>
-              </div>
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full bg-black text-white py-2.5 rounded-xl font-semibold hover:bg-gray-800 disabled:opacity-50 transition-all"
+                >
+                  {loading ? 'Signing in...' : 'Sign In'}
+                </button>
+
+                <div className="text-center">
+                  <Link to="/forgot-password" className="text-sm text-gray-500 hover:text-gray-700">
+                    Forgot password?
+                  </Link>
+                </div>
+              </form>
             </>
           )}
-
-          <form onSubmit={handleSubmit} className="space-y-5">
-            {error && (
-              <div className="bg-red-50 text-red-600 text-sm px-4 py-3 rounded-xl">
-                {error}
-              </div>
-            )}
-
-            <div>
-              <label className="form-label">Email</label>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="border p-2.5 rounded-lg w-full text-sm outline-none focus:border-black transition-colors"
-                placeholder="Enter your email"
-                required
-              />
-            </div>
-
-            <div>
-              <label className="form-label">Password</label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="border p-2.5 rounded-lg w-full text-sm outline-none focus:border-black transition-colors"
-                placeholder="Enter your password"
-                required
-              />
-            </div>
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full bg-black text-white py-2.5 rounded-xl font-semibold hover:bg-gray-800 disabled:opacity-50 transition-all"
-            >
-              {loading ? 'Signing in...' : 'Sign In'}
-            </button>
-
-            <div className="text-center">
-              <Link to="/forgot-password" className="text-sm text-gray-500 hover:text-gray-700">
-                Forgot password?
-              </Link>
-            </div>
-          </form>
-
         </div>
       </motion.div>
     </div>

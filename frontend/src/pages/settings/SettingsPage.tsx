@@ -5,6 +5,7 @@ import { getSettings, bulkUpdateSettings } from '@/api/settings';
 import type { CompanySetting, SettingUpdate } from '@/types';
 import { useAuth } from '@/context/AuthContext';
 import { PasskeyManagement } from '@/components/PasskeyManagement';
+import { TwoFactorSetup } from '@/components/TwoFactorSetup';
 import { canAccessPayrollData } from '@/lib/roles';
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -148,6 +149,11 @@ export function SettingsPage() {
             {mutation.isPending ? 'Saving...' : 'Save Changes'}
           </button>
         </div>
+      </div>
+
+      {/* Two-Factor Authentication */}
+      <div className="mt-6">
+        <TwoFactorSetup />
       </div>
 
       {/* Passkey Management */}

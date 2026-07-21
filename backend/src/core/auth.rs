@@ -89,6 +89,57 @@ pub fn verify_token(token: &str, secret: &str) -> AppResult<Claims> {
     .map_err(|e| AppError::Unauthorized(format!("Invalid token: {}", e)))
 }
 
+/// Registered `iss`/`aud` for the short-lived token issued between primary
+/// auth (password/passkey/Google) and completing a TOTP 2FA challenge. The
+/// distinct issuer/audience — checked by `verify_mfa_pending_token`, never by
+/// `verify_token`/`AuthUser` — means this token structurally cannot be used
+/// as a bearer token anywhere else in the API.
+pub const MFA_PENDING_ISSUER: &str = "payroll-system-mfa-pending";
+pub const MFA_PENDING_AUDIENCE: &str = "payroll-system-mfa";
+const MFA_PENDING_EXPIRY_MINUTES: i64 = 5;
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct MfaPendingClaims {
+    sub: Uuid,
+    exp: i64,
+    iat: i64,
+    iss: String,
+    aud: String,
+}
+
+pub fn create_mfa_pending_token(user_id: Uuid, secret: &str) -> AppResult<String> {
+    let now = Utc::now();
+    let claims = MfaPendingClaims {
+        sub: user_id,
+        exp: (now + Duration::minutes(MFA_PENDING_EXPIRY_MINUTES)).timestamp(),
+        iat: now.timestamp(),
+        iss: MFA_PENDING_ISSUER.to_string(),
+        aud: MFA_PENDING_AUDIENCE.to_string(),
+    };
+
+    encode(
+        &Header::default(),
+        &claims,
+        &EncodingKey::from_secret(secret.as_bytes()),
+    )
+    .map_err(|e| AppError::Internal(format!("Failed to create MFA token: {}", e)))
+}
+
+/// Verifies an MFA-pending token and returns the user id it was issued for.
+pub fn verify_mfa_pending_token(token: &str, secret: &str) -> AppResult<Uuid> {
+    let mut validation = Validation::default();
+    validation.set_issuer(&[MFA_PENDING_ISSUER]);
+    validation.set_audience(&[MFA_PENDING_AUDIENCE]);
+
+    decode::<MfaPendingClaims>(
+        token,
+        &DecodingKey::from_secret(secret.as_bytes()),
+        &validation,
+    )
+    .map(|data| data.claims.sub)
+    .map_err(|e| AppError::Unauthorized(format!("Invalid or expired MFA token: {}", e)))
+}
+
 /// Extractor for authenticated user claims from JWT
 #[derive(Debug, Clone)]
 pub struct AuthUser(pub Claims);

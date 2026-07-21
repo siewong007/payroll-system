@@ -7,12 +7,12 @@ use axum::{
 use uuid::Uuid;
 
 use crate::core::app_state::AppState;
-use crate::core::auth::{AuthUser, create_token};
+use crate::core::auth::AuthUser;
 use crate::core::cookie;
 use crate::core::error::{AppError, AppResult};
 use crate::models::oauth2::{LinkedAccount, OAuth2CallbackQuery, OAuth2ProviderInfo};
-use crate::models::user::UserResponse;
-use crate::services::{oauth2_service, session_service};
+use crate::models::session::LoginOutcome;
+use crate::services::{auth_service, oauth2_service};
 
 /// List available OAuth2 providers and their status.
 pub async fn list_providers(
@@ -131,33 +131,36 @@ pub async fn google_callback(
     )
     .await?;
 
-    // Update last login
-    oauth2_service::touch_last_login(&state.pool, user.id).await?;
-
-    // Issue JWT + refresh token
-    let jwt = create_token(
+    // Issue tokens (gated on 2FA if enabled) — this also records last_login,
+    // deferred until 2FA is actually completed if it's required.
+    let outcome = auth_service::complete_login(
+        &state.pool,
         user.id,
-        &user.email,
-        &user.roles,
-        user.company_id,
-        user.employee_id,
         &state.config.jwt_secret,
         state.config.jwt_expiry_hours,
-    )?;
+    )
+    .await?;
 
-    let refresh_token = session_service::create_refresh_token(&state.pool, user.id).await?;
-
-    // Set refresh token as httpOnly cookie, pass only JWT + user in URL fragment
     let mut headers = HeaderMap::new();
-    let (name, value) = cookie::set_refresh_cookie(&refresh_token, &state.config.frontend_url);
-    headers.insert(name, value.parse().unwrap());
+    let redirect_url = match outcome {
+        LoginOutcome::Session(session) => {
+            let (name, value) =
+                cookie::set_refresh_cookie(&session.refresh_token, &state.config.frontend_url);
+            headers.insert(name, value.parse().unwrap());
 
-    let redirect_url = format!(
-        "{}/oauth2/callback#token={}&user={}",
-        state.config.frontend_url,
-        urlencoding::encode(&jwt),
-        urlencoding::encode(&serde_json::to_string(&UserResponse::from(user)).unwrap_or_default()),
-    );
+            format!(
+                "{}/oauth2/callback#token={}&user={}",
+                state.config.frontend_url,
+                urlencoding::encode(&session.token),
+                urlencoding::encode(&serde_json::to_string(&session.user).unwrap_or_default()),
+            )
+        }
+        LoginOutcome::MfaRequired { mfa_token } => format!(
+            "{}/oauth2/callback#mfa_token={}",
+            state.config.frontend_url,
+            urlencoding::encode(&mfa_token),
+        ),
+    };
 
     Ok((headers, Redirect::temporary(&redirect_url)))
 }

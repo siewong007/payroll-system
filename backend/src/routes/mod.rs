@@ -10,7 +10,7 @@ use crate::core::app_state::AppState;
 use crate::handlers::{
     admin, approval, attendance, audit, auth, backup, calendar, company, dashboard, document,
     email, employee, employee_import, geofence, health, notification, oauth2, passkey, payroll,
-    portal, report, settings, team, work_schedule,
+    portal, report, settings, team, totp, work_schedule,
 };
 
 pub fn create_router(state: AppState) -> Router {
@@ -48,6 +48,7 @@ pub fn create_router(state: AppState) -> Router {
     let rate_limited_auth = Router::new()
         .route("/auth/login", post(auth::login))
         .route("/auth/reset-password", post(auth::reset_password))
+        .route("/auth/2fa/verify", post(totp::verify_login))
         .layer(GovernorLayer::new(auth_rate_limit));
 
     let rate_limited_forgot = Router::new()
@@ -121,6 +122,15 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/auth/passkeys/{id}",
             put(passkey::rename_passkey).delete(passkey::delete_passkey),
+        )
+        // TOTP 2FA (authenticated management; /auth/2fa/verify is rate-limited above)
+        .route("/auth/2fa/setup/begin", post(totp::setup_begin))
+        .route("/auth/2fa/setup/confirm", post(totp::setup_confirm))
+        .route("/auth/2fa/status", get(totp::status))
+        .route("/auth/2fa/disable", post(totp::disable))
+        .route(
+            "/auth/2fa/backup-codes/regenerate",
+            post(totp::regenerate_backup_codes),
         )
         // OAuth2 (non-rate-limited routes)
         .route("/auth/oauth2/providers", get(oauth2::list_providers))

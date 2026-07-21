@@ -23,6 +23,7 @@ function lazyNamed<T extends ComponentType<Record<string, never>>>(
 }
 
 const Login = lazyNamed(() => import('@/pages/auth/Login'), 'Login');
+const OAuth2Callback = lazyNamed(() => import('@/pages/auth/OAuth2Callback'), 'OAuth2Callback');
 const ForgotPassword = lazyNamed(() => import('@/pages/auth/ForgotPassword'), 'ForgotPassword');
 const ResetPassword = lazyNamed(() => import('@/pages/auth/ResetPassword'), 'ResetPassword');
 const ChangePassword = lazyNamed(() => import('@/pages/auth/ChangePassword'), 'ChangePassword');
@@ -105,6 +106,7 @@ export default function App() {
           <Suspense fallback={<RouteFallback />}>
             <Routes>
               <Route path="/login" element={<Login />} />
+              <Route path="/oauth2/callback" element={<OAuth2Callback />} />
               <Route path="/forgot-password" element={<ForgotPassword />} />
               <Route path="/reset-password" element={<ResetPassword />} />
               <Route path="/change-password" element={<ChangePassword />} />

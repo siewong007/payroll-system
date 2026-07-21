@@ -102,16 +102,16 @@ describe('AuthProvider', () => {
     apiMocks.post.mockReset();
     apiMocks.post.mockResolvedValueOnce({ data: { token: 'login-token', user } });
 
-    let loggedInUser: User | undefined;
+    let loginResult: Awaited<ReturnType<typeof result.current.login>> | undefined;
     await act(async () => {
-      loggedInUser = await result.current.login('admin@example.com', 'secret-password');
+      loginResult = await result.current.login('admin@example.com', 'secret-password');
     });
 
     expect(apiMocks.post).toHaveBeenCalledWith('/auth/login', {
       email: 'admin@example.com',
       password: 'secret-password',
     });
-    expect(loggedInUser).toEqual(user);
+    expect(loginResult).toEqual({ status: 'success', user });
     expect(apiMocks.setAccessToken).toHaveBeenLastCalledWith('login-token');
     expect(result.current.isAuthenticated).toBe(true);
     expect(localStorage.getItem('access_token')).toBeNull();

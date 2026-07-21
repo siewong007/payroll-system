@@ -1,12 +1,12 @@
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::core::auth::create_token;
+use crate::core::auth::{create_mfa_pending_token, create_token};
 use crate::core::error::{AppError, AppResult};
-use crate::models::session::LoginResponseWithRefresh;
-use crate::models::user::{LoginRequest, LoginResponse, User, UserResponse};
+use crate::models::session::{LoginOutcome, LoginResponseWithRefresh};
+use crate::models::user::{LoginRequest, User, UserResponse};
 use crate::repositories::{employees, users};
-use crate::services::session_service;
+use crate::services::{session_service, totp_service};
 
 const EMPLOYEE_DELETED_MSG: &str =
     "Your employee account has been deleted. Please contact your administrator.";
@@ -45,7 +45,7 @@ pub async fn login(
     req: LoginRequest,
     jwt_secret: &str,
     jwt_expiry: i64,
-) -> AppResult<LoginResponse> {
+) -> AppResult<LoginOutcome> {
     let user = users::find_active_by_email(pool, &req.email)
         .await?
         .ok_or_else(|| AppError::Unauthorized("Invalid email or password".into()))?;
@@ -62,7 +62,19 @@ pub async fn login(
         return Err(AppError::Unauthorized(EMPLOYEE_DELETED_MSG.into()));
     }
 
-    // Update last login
+    complete_login(pool, user.id, jwt_secret, jwt_expiry).await
+}
+
+/// Mints a JWT + refresh token for an already-authenticated user: records
+/// the login and issues tokens. Callers must have already verified the
+/// user's identity (password, passkey, Google OAuth) AND, if applicable,
+/// their second factor — this function does not gate on 2FA itself.
+pub async fn issue_session(
+    pool: &PgPool,
+    user: User,
+    jwt_secret: &str,
+    jwt_expiry: i64,
+) -> AppResult<LoginResponseWithRefresh> {
     users::update_last_login(pool, user.id).await?;
 
     let token = create_token(
@@ -77,11 +89,33 @@ pub async fn login(
 
     let refresh_token = session_service::create_refresh_token(pool, user.id).await?;
 
-    Ok(LoginResponse {
+    Ok(LoginResponseWithRefresh {
         token,
-        refresh_token: Some(refresh_token),
+        refresh_token,
         user: UserResponse::from(user),
     })
+}
+
+/// Single chokepoint for finishing any primary-auth flow (password, passkey,
+/// Google OAuth). If the account has TOTP 2FA enabled, no JWT is issued yet
+/// — a short-lived MFA-pending token is returned instead, and the caller
+/// must complete `/auth/2fa/verify` to get a real session. Every login path
+/// MUST route through this function; bypassing it defeats 2FA entirely.
+pub async fn complete_login(
+    pool: &PgPool,
+    user_id: Uuid,
+    jwt_secret: &str,
+    jwt_expiry: i64,
+) -> AppResult<LoginOutcome> {
+    let user = get_active_user(pool, user_id).await?;
+
+    if totp_service::is_enabled(pool, user.id).await? {
+        let mfa_token = create_mfa_pending_token(user.id, jwt_secret)?;
+        return Ok(LoginOutcome::MfaRequired { mfa_token });
+    }
+
+    let session = issue_session(pool, user, jwt_secret, jwt_expiry).await?;
+    Ok(LoginOutcome::Session(session))
 }
 
 /// Verify a refresh token, rotate it, and mint a fresh JWT. Returns the new JWT, the

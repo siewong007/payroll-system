@@ -2,14 +2,10 @@ use sqlx::PgPool;
 use uuid::Uuid;
 use webauthn_rs::prelude::*;
 
-use crate::core::auth::create_token;
 use crate::core::error::{AppError, AppResult};
 use crate::models::passkey::PasskeyInfo;
-use crate::models::session::LoginResponseWithRefresh;
-use crate::models::user::UserResponse;
 use crate::repositories::reads::passkey as passkey_reads;
-use crate::repositories::{passkey_challenges, passkey_credentials, users};
-use crate::services::{auth_service, session_service};
+use crate::repositories::{passkey_challenges, passkey_credentials};
 
 // ── Credential CRUD ────────────────────────────────────────────────────
 
@@ -146,37 +142,4 @@ pub async fn get_user_id_by_email_with_passkeys(
     email: &str,
 ) -> AppResult<Option<Uuid>> {
     passkey_reads::user_id_by_email_with_passkeys(pool, email).await
-}
-
-// ── Login issuance (shared by both passkey auth-complete flows) ─────────
-
-/// Mint a JWT + refresh token for a passkey-authenticated user (mirrors password login):
-/// loads the active user, records the login, and issues tokens.
-pub async fn complete_login(
-    pool: &PgPool,
-    user_id: Uuid,
-    jwt_secret: &str,
-    jwt_expiry: i64,
-) -> AppResult<LoginResponseWithRefresh> {
-    let user = auth_service::get_active_user(pool, user_id).await?;
-
-    users::update_last_login(pool, user.id).await?;
-
-    let token = create_token(
-        user.id,
-        &user.email,
-        &user.roles,
-        user.company_id,
-        user.employee_id,
-        jwt_secret,
-        jwt_expiry,
-    )?;
-
-    let refresh_token = session_service::create_refresh_token(pool, user.id).await?;
-
-    Ok(LoginResponseWithRefresh {
-        token,
-        refresh_token,
-        user: UserResponse::from(user),
-    })
 }

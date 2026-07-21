@@ -24,6 +24,7 @@ pub mod session;
 pub mod setting;
 pub mod statutory;
 pub mod team;
+pub mod totp;
 pub mod user;
 pub mod user_company;
 pub mod work_schedule;

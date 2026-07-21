@@ -17,7 +17,7 @@ use crate::tests::support::{
     seed_company, seed_employee, seed_payroll_group, seed_user, skip_if_no_db,
 };
 
-const JWT_SECRET: &str = "route-auth-test-secret";
+pub(crate) const JWT_SECRET: &str = "route-auth-test-secret";
 
 fn test_config(database_url: String) -> AppConfig {
     AppConfig {
@@ -63,7 +63,7 @@ fn request(method: &str, uri: &str, token: &str, body: &str) -> Request<Body> {
         .expect("build request")
 }
 
-async fn app_for(pool: sqlx::PgPool) -> axum::Router {
+pub(crate) async fn app_for(pool: sqlx::PgPool) -> axum::Router {
     let database_url =
         std::env::var("DATABASE_URL").unwrap_or_else(|_| "postgres://test".to_string());
     let config = test_config(database_url);

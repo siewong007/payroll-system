@@ -268,8 +268,3 @@ pub async fn find_user_by_oauth2(
 ) -> AppResult<Option<User>> {
     oauth2_reads::find_user_by_oauth2(pool, provider, provider_user_id).await
 }
-
-/// Record a successful OAuth2 login on the user record.
-pub async fn touch_last_login(pool: &PgPool, user_id: Uuid) -> AppResult<()> {
-    users::update_last_login(pool, user_id).await
-}

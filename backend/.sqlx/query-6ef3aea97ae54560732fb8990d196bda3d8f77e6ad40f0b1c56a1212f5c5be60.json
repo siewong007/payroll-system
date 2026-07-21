@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE user_totp SET enabled = true, confirmed_at = NOW(), updated_at = NOW() WHERE user_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6ef3aea97ae54560732fb8990d196bda3d8f77e6ad40f0b1c56a1212f5c5be60"
+}

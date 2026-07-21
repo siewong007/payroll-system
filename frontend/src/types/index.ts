@@ -16,6 +16,14 @@ export interface LoginResponse {
   user: User;
 }
 
+// /auth/login and /auth/passkey/*/complete return this shape instead of
+// LoginResponse when the account has TOTP 2FA enabled — the frontend must
+// collect a code and call /auth/2fa/verify to get a real LoginResponse.
+export interface MfaRequiredResponse {
+  requires_2fa: true;
+  mfa_token: string;
+}
+
 // Password Reset
 // OAuth2
 export interface LinkedOAuth2Account {
