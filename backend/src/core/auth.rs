@@ -11,6 +11,7 @@ use super::{
     app_state::AppState,
     error::{AppError, AppResult},
 };
+use crate::repositories::user_sessions;
 use crate::repositories::users;
 
 /// Registered `iss`/`aud` claim values. Validating these on decode rejects
@@ -26,6 +27,7 @@ pub struct Claims {
     pub roles: Vec<String>,
     pub company_id: Option<Uuid>,
     pub employee_id: Option<Uuid>,
+    pub sid: Uuid,
     pub exp: i64,
     pub iat: i64,
     #[serde(default)]
@@ -41,6 +43,7 @@ pub fn create_token(
     roles: &[String],
     company_id: Option<Uuid>,
     employee_id: Option<Uuid>,
+    session_id: Uuid,
     secret: &str,
     expiry_hours: i64,
 ) -> AppResult<String> {
@@ -51,6 +54,7 @@ pub fn create_token(
         roles: normalized_roles(roles),
         company_id,
         employee_id,
+        sid: session_id,
         exp: (now + Duration::hours(expiry_hours)).timestamp(),
         iat: now.timestamp(),
         iss: JWT_ISSUER.to_string(),
@@ -182,6 +186,11 @@ impl FromRequestParts<AppState> for AuthUser {
         {
             return Err(AppError::Unauthorized(
                 "User account is no longer active".into(),
+            ));
+        }
+        if !user_sessions::is_active(&state.pool, claims.sub, claims.sid).await? {
+            return Err(AppError::Unauthorized(
+                "Session has expired or was revoked".into(),
             ));
         }
         Ok(AuthUser(claims))

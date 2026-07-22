@@ -14,6 +14,7 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 use crate::core::auth::create_token;
+use crate::services::session_service;
 use crate::tests::route_auth_tests::{JWT_SECRET, app_for};
 use crate::tests::support::{seed_company, skip_if_no_db};
 
@@ -93,6 +94,9 @@ async fn totp_setup_gates_login_until_code_is_verified() {
     let email = format!("totp-{}@example.invalid", Uuid::new_v4());
     let password = "Sup3rSecretPassw0rd";
     let user_id = seed_user_with_password(&pool, company_id, &email, password).await;
+    let (session_id, _) = session_service::create_session(&pool, user_id, None)
+        .await
+        .expect("create test session");
 
     let auth_token = create_token(
         user_id,
@@ -100,6 +104,7 @@ async fn totp_setup_gates_login_until_code_is_verified() {
         &["admin".to_string()],
         Some(company_id),
         None,
+        session_id,
         JWT_SECRET,
         1,
     )

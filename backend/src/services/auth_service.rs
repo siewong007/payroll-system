@@ -43,6 +43,7 @@ async fn linked_employee_active(pool: &PgPool, employee_id: Option<Uuid>) -> App
 pub async fn login(
     pool: &PgPool,
     req: LoginRequest,
+    user_agent: Option<&str>,
     jwt_secret: &str,
     jwt_expiry: i64,
 ) -> AppResult<LoginOutcome> {
@@ -62,7 +63,7 @@ pub async fn login(
         return Err(AppError::Unauthorized(EMPLOYEE_DELETED_MSG.into()));
     }
 
-    complete_login(pool, user.id, jwt_secret, jwt_expiry).await
+    complete_login(pool, user.id, jwt_secret, jwt_expiry, user_agent).await
 }
 
 /// Mints a JWT + refresh token for an already-authenticated user: records
@@ -74,20 +75,22 @@ pub async fn issue_session(
     user: User,
     jwt_secret: &str,
     jwt_expiry: i64,
+    user_agent: Option<&str>,
 ) -> AppResult<LoginResponseWithRefresh> {
     users::update_last_login(pool, user.id).await?;
 
+    let (session_id, refresh_token) =
+        session_service::create_session(pool, user.id, user_agent).await?;
     let token = create_token(
         user.id,
         &user.email,
         &user.roles,
         user.company_id,
         user.employee_id,
+        session_id,
         jwt_secret,
         jwt_expiry,
     )?;
-
-    let refresh_token = session_service::create_refresh_token(pool, user.id).await?;
 
     Ok(LoginResponseWithRefresh {
         token,
@@ -106,6 +109,7 @@ pub async fn complete_login(
     user_id: Uuid,
     jwt_secret: &str,
     jwt_expiry: i64,
+    user_agent: Option<&str>,
 ) -> AppResult<LoginOutcome> {
     let user = get_active_user(pool, user_id).await?;
 
@@ -114,7 +118,7 @@ pub async fn complete_login(
         return Ok(LoginOutcome::MfaRequired { mfa_token });
     }
 
-    let session = issue_session(pool, user, jwt_secret, jwt_expiry).await?;
+    let session = issue_session(pool, user, jwt_secret, jwt_expiry, user_agent).await?;
     Ok(LoginOutcome::Session(session))
 }
 
@@ -126,7 +130,7 @@ pub async fn refresh_session(
     jwt_secret: &str,
     jwt_expiry: i64,
 ) -> AppResult<LoginResponseWithRefresh> {
-    let user_id = session_service::verify_refresh_token(pool, raw_token).await?;
+    let (user_id, session_id) = session_service::verify_refresh_token(pool, raw_token).await?;
 
     let user = get_active_user(pool, user_id).await?;
 
@@ -137,8 +141,8 @@ pub async fn refresh_session(
     }
 
     // Revoke old refresh token and issue new one (rotation)
-    session_service::revoke_refresh_token(pool, raw_token).await?;
-    let new_refresh = session_service::create_refresh_token(pool, user.id).await?;
+    let new_refresh =
+        session_service::rotate_refresh_token(pool, user.id, session_id, raw_token).await?;
 
     let token = create_token(
         user.id,
@@ -146,6 +150,7 @@ pub async fn refresh_session(
         &user.roles,
         user.company_id,
         user.employee_id,
+        session_id,
         jwt_secret,
         jwt_expiry,
     )?;

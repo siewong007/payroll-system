@@ -11,6 +11,7 @@ export interface User {
 }
 
 export interface LoginResponse {
+  requires_2fa?: false;
   token: string;
   refresh_token?: string;
   user: User;

@@ -1,10 +1,11 @@
 import { Suspense, lazy, type ComponentType, type ReactNode } from 'react';
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from '@/context/AuthProvider';
 import { useAuth } from '@/context/AuthContext';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { PortalLayout } from '@/components/layout/PortalLayout';
+import { ForbiddenPage, NotFoundPage } from '@/pages/errors/ErrorPage';
 import {
   ADMIN_DATA_ROLES,
   PAYROLL_DATA_ROLES,
@@ -74,8 +75,9 @@ function RouteFallback() {
 
 function RoleGuard({ allowedRoles, children }: { allowedRoles: AppRole[]; children: ReactNode }) {
   const { user } = useAuth();
+  const location = useLocation();
   if (user && !hasAnyRole(user, allowedRoles)) {
-    return <Navigate to={hasAnyRole(user, SUPER_ADMIN_ROLES) ? '/companies' : '/company'} replace />;
+    return <Navigate to="/403" replace state={{ from: location.pathname }} />;
   }
   return <>{children}</>;
 }
@@ -113,6 +115,7 @@ export default function App() {
               <Route path="/attendance/kiosk" element={<AttendanceKiosk />} />
               <Route path="/attendance/scan" element={<AttendanceScanPage />} />
               <Route path="/kiosk/:kioskKey" element={<AttendanceKioskPublic />} />
+              <Route path="/403" element={<ForbiddenPage />} />
 
               <Route element={<AppLayout />}>
                 <Route path="/" element={<HomeRedirect />} />
@@ -228,6 +231,8 @@ export default function App() {
                 <Route path="/portal/notifications" element={<Notifications />} />
                 <Route path="/portal/attendance" element={<MyAttendance />} />
               </Route>
+
+              <Route path="*" element={<NotFoundPage />} />
             </Routes>
           </Suspense>
         </AuthProvider>

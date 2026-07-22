@@ -1,4 +1,4 @@
-use axum::{Json, extract::State, response::Response};
+use axum::{Json, extract::State, http::HeaderMap, response::Response};
 
 use crate::core::app_state::AppState;
 use crate::core::auth::{AuthUser, verify_mfa_pending_token};
@@ -66,6 +66,7 @@ pub async fn regenerate_backup_codes(
 /// shape as `/auth/login`).
 pub async fn verify_login(
     State(state): State<AppState>,
+    headers: HeaderMap,
     ValidatedJson(req): ValidatedJson<TotpVerifyLoginRequest>,
 ) -> AppResult<Response> {
     let user_id = verify_mfa_pending_token(&req.mfa_token, &state.config.jwt_secret)?;
@@ -78,6 +79,9 @@ pub async fn verify_login(
         user,
         &state.config.jwt_secret,
         state.config.jwt_expiry_hours,
+        headers
+            .get("user-agent")
+            .and_then(|value| value.to_str().ok()),
     )
     .await?;
 

@@ -30,6 +30,7 @@ pub async fn list_providers(
 /// Google OAuth2 callback — validates state/PKCE, exchanges code, finds/links user, redirects.
 pub async fn google_callback(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(query): Query<OAuth2CallbackQuery>,
 ) -> Result<impl IntoResponse, AppError> {
     // Validate state parameter (CSRF protection)
@@ -138,6 +139,9 @@ pub async fn google_callback(
         user.id,
         &state.config.jwt_secret,
         state.config.jwt_expiry_hours,
+        headers
+            .get("user-agent")
+            .and_then(|value| value.to_str().ok()),
     )
     .await?;
 

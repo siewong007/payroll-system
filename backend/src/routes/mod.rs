@@ -80,6 +80,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/auth/me", get(auth::me))
         .route("/auth/refresh", post(auth::refresh_token))
         .route("/auth/logout", post(auth::logout))
+        .route("/auth/sessions", get(auth::list_sessions))
+        .route("/auth/sessions/others", delete(auth::revoke_other_sessions))
+        .route("/auth/sessions/{session_id}", delete(auth::revoke_session))
         .route(
             "/auth/validate-reset-token",
             post(auth::validate_reset_token),

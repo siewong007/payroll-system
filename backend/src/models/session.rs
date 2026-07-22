@@ -14,6 +14,39 @@ pub struct RefreshToken {
     pub created_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct UserSession {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub user_agent: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub last_seen_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UserSessionResponse {
+    pub id: Uuid,
+    pub user_agent: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub last_seen_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+    pub current: bool,
+}
+
+impl UserSessionResponse {
+    pub fn from_session(session: UserSession, current_session_id: Uuid) -> Self {
+        Self {
+            id: session.id,
+            user_agent: session.user_agent,
+            created_at: session.created_at,
+            last_seen_at: session.last_seen_at,
+            expires_at: session.expires_at,
+            current: session.id == current_session_id,
+        }
+    }
+}
+
 // ─── Password Reset ───
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]

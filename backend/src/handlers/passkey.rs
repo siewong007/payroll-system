@@ -1,6 +1,7 @@
 use axum::{
     Json,
     extract::{Path, State},
+    http::HeaderMap,
     response::IntoResponse,
 };
 use uuid::Uuid;
@@ -121,6 +122,7 @@ pub async fn authentication_begin(
 
 pub async fn authentication_complete(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(req): Json<AuthCompleteRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     // Consume the challenge (which carries the target user_id)
@@ -151,6 +153,9 @@ pub async fn authentication_complete(
         user_id,
         &state.config.jwt_secret,
         state.config.jwt_expiry_hours,
+        headers
+            .get("user-agent")
+            .and_then(|value| value.to_str().ok()),
     )
     .await?;
 
@@ -188,6 +193,7 @@ pub async fn discoverable_auth_begin(
 
 pub async fn discoverable_auth_complete(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(req): Json<AuthCompleteRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     // Consume the challenge
@@ -231,6 +237,9 @@ pub async fn discoverable_auth_complete(
         user_id,
         &state.config.jwt_secret,
         state.config.jwt_expiry_hours,
+        headers
+            .get("user-agent")
+            .and_then(|value| value.to_str().ok()),
     )
     .await?;
 

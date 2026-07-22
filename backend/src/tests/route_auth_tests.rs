@@ -13,6 +13,7 @@ use crate::core::auth::{JwtSecret, create_token};
 use crate::core::config::AppConfig;
 use crate::routes;
 use crate::services::payroll_engine;
+use crate::services::session_service;
 use crate::tests::support::{
     seed_company, seed_employee, seed_payroll_group, seed_user, skip_if_no_db,
 };
@@ -86,12 +87,16 @@ async fn token_and_user_for(
     role: &str,
 ) -> (String, uuid::Uuid) {
     let user_id = seed_user(pool, company_id, role).await;
+    let (session_id, _) = session_service::create_session(pool, user_id, None)
+        .await
+        .expect("create test session");
     let token = create_token(
         user_id,
         "route-test@example.invalid",
         &[role.to_string()],
         Some(company_id),
         None,
+        session_id,
         JWT_SECRET,
         1,
     )

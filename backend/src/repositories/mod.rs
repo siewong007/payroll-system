@@ -55,6 +55,7 @@ pub mod team_members;
 pub mod teams;
 pub mod tp3_records;
 pub mod user_companies;
+pub mod user_sessions;
 pub mod user_totp;
 pub mod user_totp_backup_codes;
 pub mod users;

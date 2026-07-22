@@ -30,6 +30,7 @@ fn claims_with_roles(roles: &[&str]) -> Claims {
         roles: roles.iter().map(|role| (*role).to_string()).collect(),
         company_id: Some(Uuid::new_v4()),
         employee_id: Some(Uuid::new_v4()),
+        sid: Uuid::new_v4(),
         exp: (Utc::now() + Duration::hours(1)).timestamp(),
         iat: Utc::now().timestamp(),
         iss: JWT_ISSUER.to_string(),
@@ -63,6 +64,7 @@ fn jwt_round_trip_preserves_context_and_deduplicates_roles() {
         &roles,
         Some(company_id),
         Some(employee_id),
+        Uuid::new_v4(),
         TEST_SECRET,
         1,
     )

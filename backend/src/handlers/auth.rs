@@ -1,6 +1,6 @@
 use axum::{
     Json,
-    extract::State,
+    extract::{Path, State},
     http::HeaderMap,
     response::{IntoResponse, Response},
 };
@@ -10,7 +10,9 @@ use crate::core::auth::{AuthUser, create_token};
 use crate::core::cookie;
 use crate::core::error::{AppError, AppResult};
 use crate::core::extract::ValidatedJson;
-use crate::models::session::{ForgotPasswordRequest, LoginOutcome, ResetPasswordRequest};
+use crate::models::session::{
+    ForgotPasswordRequest, LoginOutcome, ResetPasswordRequest, UserSessionResponse,
+};
 use crate::models::user::{ChangePasswordRequest, LoginRequest, LoginResponse, UserResponse};
 use crate::models::user_company::{CompanySummary, SwitchCompanyRequest};
 use crate::services::{
@@ -50,11 +52,15 @@ pub fn login_outcome_response(outcome: LoginOutcome, frontend_url: &str) -> Resp
 
 pub async fn login(
     State(state): State<AppState>,
+    headers: HeaderMap,
     ValidatedJson(req): ValidatedJson<LoginRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     let outcome = auth_service::login(
         &state.pool,
         req,
+        headers
+            .get("user-agent")
+            .and_then(|value| value.to_str().ok()),
         &state.config.jwt_secret,
         state.config.jwt_expiry_hours,
     )
@@ -94,6 +100,7 @@ pub async fn switch_company(
         &user.roles,
         user.company_id,
         user.employee_id,
+        auth.0.sid,
         &state.config.jwt_secret,
         state.config.jwt_expiry_hours,
     )?;
@@ -141,7 +148,13 @@ pub async fn logout(
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, AppError> {
     if let Some(refresh) = cookie::extract_refresh_token(&headers) {
-        let _ = session_service::revoke_refresh_token(&state.pool, &refresh).await;
+        if let Ok((user_id, session_id)) =
+            session_service::verify_refresh_token(&state.pool, &refresh).await
+        {
+            let _ = session_service::revoke_session(&state.pool, user_id, session_id).await;
+        } else {
+            let _ = session_service::revoke_refresh_token(&state.pool, &refresh).await;
+        }
     }
 
     let mut resp_headers = HeaderMap::new();
@@ -149,6 +162,44 @@ pub async fn logout(
     resp_headers.insert(name, value.parse().unwrap());
 
     Ok((resp_headers, Json(serde_json::json!({ "ok": true }))))
+}
+
+pub async fn list_sessions(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> AppResult<Json<Vec<UserSessionResponse>>> {
+    let sessions = session_service::list_sessions(&state.pool, auth.0.sub).await?;
+    Ok(Json(
+        sessions
+            .into_iter()
+            .map(|session| UserSessionResponse::from_session(session, auth.0.sid))
+            .collect(),
+    ))
+}
+
+pub async fn revoke_session(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(session_id): Path<uuid::Uuid>,
+) -> AppResult<Json<serde_json::Value>> {
+    if session_id == auth.0.sid {
+        return Err(AppError::BadRequest(
+            "Use logout to sign out this device".into(),
+        ));
+    }
+    if !session_service::revoke_session(&state.pool, auth.0.sub, session_id).await? {
+        return Err(AppError::NotFound("Session not found".into()));
+    }
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+pub async fn revoke_other_sessions(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> AppResult<Json<serde_json::Value>> {
+    let revoked =
+        session_service::revoke_other_sessions(&state.pool, auth.0.sub, auth.0.sid).await?;
+    Ok(Json(serde_json::json!({ "ok": true, "revoked": revoked })))
 }
 
 /// User requests a password reset. Sends reset link via email automatically.

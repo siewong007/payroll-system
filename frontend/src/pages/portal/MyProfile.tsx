@@ -3,6 +3,7 @@ import { User, MapPin, Briefcase, Shield, CreditCard } from 'lucide-react';
 import { getMyProfile } from '@/api/portal';
 import { formatMYR, formatDate } from '@/lib/utils';
 import { PasskeyManagement } from '@/components/PasskeyManagement';
+import { SessionManagement } from '@/components/SessionManagement';
 
 const Field = ({ label, value }: { label: string; value: string | null | undefined }) => (
   <div className="py-3 flex items-start justify-between gap-4">
@@ -124,6 +125,7 @@ export function MyProfile() {
           </div>
 
           <PasskeyManagement />
+          <SessionManagement />
         </div>
       </div>
     </div>
