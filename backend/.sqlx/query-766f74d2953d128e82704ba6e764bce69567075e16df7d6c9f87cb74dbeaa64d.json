@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM leave_requests WHERE id = $1 AND employee_id = $2 AND status = 'cancelled'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "766f74d2953d128e82704ba6e764bce69567075e16df7d6c9f87cb74dbeaa64d"
+}

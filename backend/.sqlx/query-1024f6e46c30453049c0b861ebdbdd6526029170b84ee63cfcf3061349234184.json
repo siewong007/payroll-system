@@ -1,0 +1,95 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n            TO_CHAR(period_start, 'YYYY-MM') AS \"period!\",\n            employee_count, total_gross, total_net,\n            total_epf_employee, total_epf_employer,\n            total_socso_employee, total_socso_employer,\n            total_eis_employee, total_eis_employer,\n            total_pcb, total_zakat, total_employer_cost\n        FROM payroll_runs\n        WHERE company_id = $1 AND period_year = $2\n        AND status::text IN ('approved', 'paid')\n        ORDER BY period_month ASC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "period!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "employee_count",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 2,
+        "name": "total_gross",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "total_net",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "total_epf_employee",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "total_epf_employer",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 6,
+        "name": "total_socso_employee",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 7,
+        "name": "total_socso_employer",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 8,
+        "name": "total_eis_employee",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 9,
+        "name": "total_eis_employer",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 10,
+        "name": "total_pcb",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 11,
+        "name": "total_zakat",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 12,
+        "name": "total_employer_cost",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      null,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "1024f6e46c30453049c0b861ebdbdd6526029170b84ee63cfcf3061349234184"
+}

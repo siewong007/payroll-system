@@ -1,0 +1,107 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE overtime_applications\n        SET status = 'cancelled', updated_at = NOW()\n        WHERE id = $1 AND company_id = $2\n        RETURNING *",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "employee_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "company_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "ot_date",
+        "type_info": "Date"
+      },
+      {
+        "ordinal": 4,
+        "name": "start_time",
+        "type_info": "Time"
+      },
+      {
+        "ordinal": 5,
+        "name": "end_time",
+        "type_info": "Time"
+      },
+      {
+        "ordinal": 6,
+        "name": "hours",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 7,
+        "name": "ot_type",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 8,
+        "name": "reason",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 9,
+        "name": "status",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 10,
+        "name": "reviewed_by",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 11,
+        "name": "reviewed_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 12,
+        "name": "review_notes",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 13,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 14,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "bb85317784781d9682c7f409bbd7a9827008621999830d78af86f0886d668ef1"
+}

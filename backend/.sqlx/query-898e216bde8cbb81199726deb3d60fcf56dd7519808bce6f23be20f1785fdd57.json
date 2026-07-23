@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO user_totp_backup_codes (user_id, code_hash)\n        SELECT $1, hash FROM UNNEST($2::text[]) AS hash",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "898e216bde8cbb81199726deb3d60fcf56dd7519808bce6f23be20f1785fdd57"
+}

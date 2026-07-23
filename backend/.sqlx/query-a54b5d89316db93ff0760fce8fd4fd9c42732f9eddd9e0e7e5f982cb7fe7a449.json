@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT hourly_rate, basic_salary FROM employees WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "hourly_rate",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "basic_salary",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      true,
+      false
+    ]
+  },
+  "hash": "a54b5d89316db93ff0760fce8fd4fd9c42732f9eddd9e0e7e5f982cb7fe7a449"
+}

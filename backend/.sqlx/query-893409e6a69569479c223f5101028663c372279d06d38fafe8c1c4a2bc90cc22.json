@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO leave_types (company_id, name, description, default_days, is_paid, is_system)\n            VALUES ($1, 'Replacement Leave', 'Auto-granted when working on public holidays', 0, TRUE, TRUE)\n            ON CONFLICT (company_id, name) DO UPDATE SET updated_at = NOW()\n            RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "893409e6a69569479c223f5101028663c372279d06d38fafe8c1c4a2bc90cc22"
+}

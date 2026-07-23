@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO platform_settings (key, value, updated_at, updated_by)\n         VALUES ('attendance_method', $1, NOW(), $2)\n         ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW(), updated_by = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "29b36fff917943760c2c880a7303078f70289dddfcdb9cf5bb1e58591527d91c"
+}

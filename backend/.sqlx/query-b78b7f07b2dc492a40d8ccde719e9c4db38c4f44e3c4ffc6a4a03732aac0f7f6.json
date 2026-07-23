@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO working_day_config (company_id, day_of_week, is_working_day)\n            VALUES ($1, $2, $3)\n            ON CONFLICT (company_id, day_of_week) DO UPDATE SET\n                is_working_day = $3, updated_at = NOW()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int2",
+        "Bool"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b78b7f07b2dc492a40d8ccde719e9c4db38c4f44e3c4ffc6a4a03732aac0f7f6"
+}

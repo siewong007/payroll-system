@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO payroll_item_details (id, payroll_item_id, category, item_type,\n               description, amount, is_taxable, is_statutory, created_at)\n               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Int8",
+        "Bool",
+        "Bool",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b5da455350df6f8e53adc5cb3839fd3f2ddc208e8f942bc764aeef1afb359f44"
+}

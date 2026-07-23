@@ -1,0 +1,250 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT pi.id, pi.payroll_run_id, pi.employee_id,\n                  pi.basic_salary, pi.gross_salary, pi.total_allowances, pi.total_overtime,\n                  pi.total_bonus, pi.total_commission, pi.total_claims,\n                  pi.epf_employee, pi.epf_employer, pi.socso_employee, pi.socso_employer,\n                  pi.eis_employee, pi.eis_employer, pi.pcb_amount, pi.zakat_amount,\n                  pi.ptptn_amount, pi.tabung_haji_amount,\n                  pi.total_loan_deductions, pi.total_other_deductions,\n                  pi.unpaid_leave_deduction, pi.unpaid_leave_days,\n                  pi.total_deductions, pi.net_salary, pi.employer_cost,\n                  pi.ytd_gross, pi.ytd_epf_employee, pi.ytd_pcb,\n                  pi.ytd_socso_employee, pi.ytd_eis_employee, pi.ytd_zakat, pi.ytd_net,\n                  pi.working_days, pi.days_worked, pi.is_prorated,\n                  pi.created_at, pi.updated_at\n           FROM payroll_items pi\n           JOIN payroll_runs pr ON pi.payroll_run_id = pr.id\n           WHERE pr.company_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "payroll_run_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "employee_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "basic_salary",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "gross_salary",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "total_allowances",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 6,
+        "name": "total_overtime",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 7,
+        "name": "total_bonus",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 8,
+        "name": "total_commission",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 9,
+        "name": "total_claims",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 10,
+        "name": "epf_employee",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 11,
+        "name": "epf_employer",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 12,
+        "name": "socso_employee",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 13,
+        "name": "socso_employer",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 14,
+        "name": "eis_employee",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 15,
+        "name": "eis_employer",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 16,
+        "name": "pcb_amount",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 17,
+        "name": "zakat_amount",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 18,
+        "name": "ptptn_amount",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 19,
+        "name": "tabung_haji_amount",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 20,
+        "name": "total_loan_deductions",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 21,
+        "name": "total_other_deductions",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 22,
+        "name": "unpaid_leave_deduction",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 23,
+        "name": "unpaid_leave_days",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 24,
+        "name": "total_deductions",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 25,
+        "name": "net_salary",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 26,
+        "name": "employer_cost",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 27,
+        "name": "ytd_gross",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 28,
+        "name": "ytd_epf_employee",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 29,
+        "name": "ytd_pcb",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 30,
+        "name": "ytd_socso_employee",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 31,
+        "name": "ytd_eis_employee",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 32,
+        "name": "ytd_zakat",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 33,
+        "name": "ytd_net",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 34,
+        "name": "working_days",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 35,
+        "name": "days_worked",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 36,
+        "name": "is_prorated",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 37,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 38,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "84a78decde6a21ec9ae4793bd0efc4ce581e74d0c05d48cfc88d3b358edc508b"
+}

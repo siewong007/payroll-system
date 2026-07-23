@@ -1,0 +1,36 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT employee_id, ot_type, SUM(hours)::FLOAT AS \"hours!\"\n           FROM overtime_applications\n           WHERE employee_id = ANY($1)\n             AND ot_date >= $2 AND ot_date <= $3\n             AND status = 'approved'\n           GROUP BY employee_id, ot_type",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "employee_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "ot_type",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "hours!",
+        "type_info": "Float8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "UuidArray",
+        "Date",
+        "Date"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "bb07f8fb5e42b2b87a84b660055735a7b0d4409f6e0705b0d9ff5beb4eb91007"
+}

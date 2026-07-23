@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE claims SET status = 'approved', updated_at = NOW()\n        WHERE company_id = $1 AND status = 'processed'\n          AND expense_date >= $2 AND expense_date <= $3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Date",
+        "Date"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3fb35c34d59807ce6185a01ddcbf3d1aa13b3cf56ba7855cd4f4b1ea193f338f"
+}
