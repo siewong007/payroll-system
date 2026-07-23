@@ -18,7 +18,7 @@
         "react": "^19.2.7",
         "react-dom": "^19.2.7",
         "react-hook-form": "^7.72.1",
-        "react-router-dom": "^7.17.0",
+        "react-router-dom": "^7.18.1",
         "zod": "^4.3.6",
       },
       "devDependencies": {
@@ -696,9 +696,9 @@
 
     "react-is": ["react-is@17.0.2", "", {}, "sha512-w2GsyukL62IJnlaff/nRegPQR94C/XXamvMWmSHRJ4y7Ts/4ocGRmTHvOs8PSE6pB3dWOrD/nueuU5sduBsQ4w=="],
 
-    "react-router": ["react-router@7.17.0", "", { "dependencies": { "cookie": "^1.0.1", "set-cookie-parser": "^2.6.0" }, "peerDependencies": { "react": ">=18", "react-dom": ">=18" } }, "sha512-FDELK7rTMlCHO5+reyXsPlmfr7N1F91lPHsWYfMEGQm/KQ+F4JFM8jGoeQDmDvdTs93Fw9aSilH+uKRb4/jXvQ=="],
+    "react-router": ["react-router@7.18.1", "", { "dependencies": { "cookie": "^1.0.1", "set-cookie-parser": "^2.6.0" }, "peerDependencies": { "react": ">=18", "react-dom": ">=18" }, "optionalPeers": ["react-dom"] }, "sha512-GDLgg3i3uM0aeJO3Fm+TCS+sDQ7gu12T6x0qdTEzcwqEfleci7JwugVNIF3U//0FWKnJT7ptG+20B2jfDqnZAg=="],
 
-    "react-router-dom": ["react-router-dom@7.17.0", "", { "dependencies": { "react-router": "7.17.0" }, "peerDependencies": { "react": ">=18", "react-dom": ">=18" } }, "sha512-fyU2yjGups/hE6Xz0I5ZYbVL8Gx29eCjgpHaRaTaVU+OOAdfRX05KsvyRm0GO8YQwOkhpU3MurW1jyMUJn+zSw=="],
+    "react-router-dom": ["react-router-dom@7.18.1", "", { "dependencies": { "react-router": "7.18.1" }, "peerDependencies": { "react": ">=18", "react-dom": ">=18" } }, "sha512-KaZh+X/6UtEp28x51AUYZDMg9NGoz2ja3dNHa+ta/tk40vCzKhQ/RypCWBMLbmDr6//E24Vv5uPsrqXFozdkAg=="],
 
     "redent": ["redent@3.0.0", "", { "dependencies": { "indent-string": "^4.0.0", "strip-indent": "^3.0.0" } }, "sha512-6tDA8g98We0zd0GvVeMT9arEOnTw9qM03L9cJXaCjrip1OO764RDBLBfrB4cwzNGDj5OA5ioymC9GkizgWJDUg=="],
 
