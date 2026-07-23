@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "graphify hook-check"
+            "command": "./scripts/codegraph hook-check"
           }
         ]
       }

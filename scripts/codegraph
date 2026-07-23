@@ -1,0 +1,10 @@
+#!/bin/sh
+
+set -eu
+
+if ! command -v graphify >/dev/null 2>&1; then
+  echo "CodeGraph requires the backing runtime ('graphify') on PATH." >&2
+  exit 127
+fi
+
+exec graphify "$@"

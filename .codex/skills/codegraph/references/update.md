@@ -1,4 +1,4 @@
-# graphify reference: incremental update and cluster-only
+# CodeGraph reference: incremental update and cluster-only
 
 Load this only when the user passed `--update` or `--cluster-only`. A first-time full build never reads this file.
 
@@ -61,7 +61,7 @@ print('code_only:', code_only)
 "
 ```
 
-If `code_only` is True: print `[graphify update] Code-only changes detected - skipping semantic extraction (no LLM needed)`, run only Step 3A (AST) on the changed files, skip Step 3B entirely (no subagents), then go straight to merge and Steps 4–8.
+If `code_only` is True: print `[CodeGraph update] Code-only changes detected - skipping semantic extraction (no LLM needed)`, run only Step 3A (AST) on the changed files, skip Step 3B entirely (no subagents), then go straight to merge and Steps 4–8.
 
 If `code_only` is False (any changed file is a doc/paper/image/video): **first, if any changed file is in `new_files['video']`, run `references/transcribe.md` (Step 2.5) on those files, then rewrite `.graphify_detect.json` to move the resulting transcript paths into `files['document']` and drop `files['video']`** — otherwise raw `.mp4/.mp3` paths are fed to semantic subagents as unreadable media (#1392). Then run the full Steps 3A–3C pipeline as normal.
 
@@ -70,7 +70,7 @@ If no new files exist (only deletions), create an empty extraction so the merge 
 
 ```bash
 if [ ! -f graphify-out/.graphify_extract.json ]; then
-    echo '[graphify update] Only deletions -- creating empty extraction for merge.'
+    echo '[CodeGraph update] Only deletions -- creating empty extraction for merge.'
     $(cat graphify-out/.graphify_python) -c "
 import json
 from pathlib import Path
@@ -116,7 +116,7 @@ G = build_merge(
     root='INPUT_PATH',
     directed=IS_DIRECTED,
 )
-print(f'[graphify update] Merged: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges')
+print(f'[CodeGraph update] Merged: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges')
 
 # Write merged result back to .graphify_extract.json so Step 4 sees the full graph
 merged_out = {
@@ -135,7 +135,7 @@ merged_out = {
     'output_tokens': new_extraction.get('output_tokens', 0),
 }
 Path('graphify-out/.graphify_extract.json').write_text(json.dumps(merged_out, ensure_ascii=False), encoding=\"utf-8\")
-print(f'[graphify update] Merged extraction written ({len(merged_out[\"nodes\"])} nodes, {len(merged_out[\"edges\"])} edges)')
+print(f'[CodeGraph update] Merged extraction written ({len(merged_out[\"nodes\"])} nodes, {len(merged_out[\"edges\"])} edges)')
 
 # Save manifest so next --update diffs against today's state, not the
 # prior run's baseline (prevents ghost-node reports on subsequent updates).
@@ -143,7 +143,7 @@ print(f'[graphify update] Merged extraction written ({len(merged_out[\"nodes\"])
 # the scan root — portable across clones/machines, so --update keeps matching
 # cached files instead of missing every one after a move (#1417).
 save_manifest(incremental['files'], root='INPUT_PATH')
-print('[graphify update] Manifest saved.')
+print('[CodeGraph update] Manifest saved.')
 "
 ```
 
@@ -186,7 +186,7 @@ Clean up after: `rm -f graphify-out/.graphify_old.json`
 Skip Steps 1–3. Re-run clustering on the existing graph:
 
 ```bash
-graphify cluster-only .
+./scripts/codegraph cluster-only .
 ```
 
-`graphify cluster-only .` is **self-contained**: it re-clusters, names communities, and regenerates `GRAPH_REPORT.md`, `graph.json`, and `graph.html` from the existing graph. **Do not re-run Steps 5–9** — they read intermediate files (`.graphify_extract.json`, `.graphify_detect.json`, `.graphify_analysis.json`) that a prior build's cleanup (Step 9) already deleted, so they raise `FileNotFoundError` (#1392). When it finishes, present the refreshed `GRAPH_REPORT.md` summary as usual.
+`./scripts/codegraph cluster-only .` is **self-contained**: it re-clusters, names communities, and regenerates `GRAPH_REPORT.md`, `graph.json`, and `graph.html` from the existing graph. **Do not re-run Steps 5–9** — they read intermediate files (`.graphify_extract.json`, `.graphify_detect.json`, `.graphify_analysis.json`) that a prior build's cleanup (Step 9) already deleted, so they raise `FileNotFoundError` (#1392). When it finishes, present the refreshed `GRAPH_REPORT.md` summary as usual.

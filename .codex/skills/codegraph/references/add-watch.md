@@ -1,8 +1,8 @@
-# graphify reference: add a URL and watch a folder
+# CodeGraph reference: add a URL and watch a folder
 
-Load this when the user ran `/graphify add <url>` or passed `--watch`. Neither is part of the default build.
+Load this when the user ran `/codegraph add <url>` or passed `--watch`. Neither is part of the default build.
 
-## For /graphify add
+## For /codegraph add
 
 Fetch a URL and add it to the corpus, then update the graph.
 
@@ -47,10 +47,10 @@ $(cat graphify-out/.graphify_python) -m graphify.watch INPUT_PATH --debounce 3
 Replace INPUT_PATH with the folder to watch. Behavior depends on what changed:
 
 - **Code files only (.py, .ts, .go, etc.):** re-runs AST extraction + rebuild + cluster immediately, no LLM needed. `graph.json` and `GRAPH_REPORT.md` are updated automatically.
-- **Docs, papers, or images:** writes a `graphify-out/needs_update` flag and prints a notification to run `/graphify --update` (LLM semantic re-extraction required).
+- **Docs, papers, or images:** writes a `graphify-out/needs_update` flag and prints a notification to run `/codegraph --update` (LLM semantic re-extraction required).
 
 Debounce (default 3s): waits until file activity stops before triggering, so a wave of parallel agent writes doesn't trigger a rebuild per file.
 
 Press Ctrl+C to stop.
 
-For agentic workflows: run `--watch` in a background terminal. Code changes from agent waves are picked up automatically between waves. If agents are also writing docs or notes, you'll need a manual `/graphify --update` after those waves.
+For agentic workflows: run `--watch` in a background terminal. Code changes from agent waves are picked up automatically between waves. If agents are also writing docs or notes, you'll need a manual `/codegraph --update` after those waves.

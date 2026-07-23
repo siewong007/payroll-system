@@ -1,6 +1,6 @@
-# graphify reference: query, path, explain
+# CodeGraph reference: query, path, explain
 
-Load this when the user asks a question against an existing graph, or runs `/graphify path` or `/graphify explain`. The core's query stub points here for the full traversal flow. These flows use the `graphify query` CLI when it is available and fall back to an inline NetworkX traversal otherwise.
+Load this when the user asks a question against an existing graph, or runs `/codegraph path` or `/codegraph explain`. The core's query stub points here for the full traversal flow. These flows use the `./scripts/codegraph query` CLI when it is available and fall back to an inline NetworkX traversal otherwise.
 
 Two traversal modes - choose based on the question:
 
@@ -14,15 +14,15 @@ First check the graph exists:
 $(cat graphify-out/.graphify_python) -c "
 from pathlib import Path
 if not Path('graphify-out/graph.json').exists():
-    print('ERROR: No graph found. Run /graphify <path> first to build the graph.')
+    print('ERROR: No graph found. Run /codegraph <path> first to build the graph.')
     raise SystemExit(1)
 "
 ```
-If it fails, stop and tell the user to run `/graphify <path>` first.
+If it fails, stop and tell the user to run `/codegraph <path>` first.
 
 ### Step 0 — Constrained query expansion (REQUIRED before traversal)
 
-graphify's `query` CLI matches nodes via case-folded substring + IDF — there is **no stemming, no synonyms, no cross-language match** inside the binary, and the inline fallback below matches the same way. If the user's question uses different language or different domain vocabulary than the graph's labels (user says "обработчик" / graph says "handler"; user says "authentication" / graph says "Guardian"), the literal matcher returns 0 hits and the answer collapses to noise.
+The backing runtime's `query` CLI matches nodes via case-folded substring + IDF — there is **no stemming, no synonyms, no cross-language match** inside the binary, and the inline fallback below matches the same way. If the user's question uses different language or different domain vocabulary than the graph's labels (user says "обработчик" / graph says "handler"; user says "authentication" / graph says "Guardian"), the literal matcher returns 0 hits and the answer collapses to noise.
 
 Fix this **without inventing tokens** by expanding the query against the actual graph vocabulary first:
 
@@ -64,8 +64,8 @@ Build the **expanded query string** by joining the selected tokens with spaces. 
 
 Prefer the CLI when it is installed:
 ```bash
-graphify query "QUESTION"
-# or: graphify query "QUESTION" --dfs --budget 3000
+./scripts/codegraph query "QUESTION"
+# or: ./scripts/codegraph query "QUESTION" --dfs --budget 3000
 ```
 
 If the CLI is unavailable, load `graphify-out/graph.json` and run the traversal inline:
@@ -179,16 +179,16 @@ Replace `ORIGINAL_QUESTION` with the user's verbatim question, `ANSWER` with you
 - `dead_end` — the question/path led nowhere; don't re-derive it next time.
 - `corrected` — the saved answer was wrong; `--correction` records what was right.
 
-At the **start** of graph work, refresh and read the lessons: run `graphify reflect --if-stale` (cheap, deterministic, no LLM; `--if-stale` makes it a no-op when `LESSONS.md` is already newer than every input, e.g. when the git hook just refreshed it), then read `graphify-out/reflections/LESSONS.md`. It lists **preferred sources** (start there), **known dead ends** (skip them), and prior **corrections**. Running `reflect` yourself keeps the lessons current even without the git hook installed; if the post-commit hook *is* installed, `--if-stale` means your session-start run costs almost nothing.
+At the **start** of graph work, refresh and read the lessons: run `./scripts/codegraph reflect --if-stale` (cheap, deterministic, no LLM; `--if-stale` makes it a no-op when `LESSONS.md` is already newer than every input, e.g. when the git hook just refreshed it), then read `graphify-out/reflections/LESSONS.md`. It lists **preferred sources** (start there), **known dead ends** (skip them), and prior **corrections**. Running `reflect` yourself keeps the lessons current even without the git hook installed; if the post-commit hook *is* installed, `--if-stale` means your session-start run costs almost nothing.
 
 ---
 
-## For /graphify path
+## For /codegraph path
 
 Find the shortest path between two named concepts in the graph. Prefer the CLI when installed:
 
 ```bash
-graphify path "NODE_A" "NODE_B"
+./scripts/codegraph path "NODE_A" "NODE_B"
 ```
 
 If the CLI is unavailable, run it inline:
@@ -251,12 +251,12 @@ $(cat graphify-out/.graphify_python) -m graphify save-result --question "Path fr
 
 ---
 
-## For /graphify explain
+## For /codegraph explain
 
 Give a plain-language explanation of a single node - everything connected to it. Prefer the CLI when installed:
 
 ```bash
-graphify explain "NODE_NAME"
+./scripts/codegraph explain "NODE_NAME"
 ```
 
 If the CLI is unavailable, run it inline:

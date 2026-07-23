@@ -52,7 +52,7 @@ crash.*.log
 *.csv
 !backend/migrations/**/*.csv
 
-# Generated Graphify knowledge graph and extraction cache
+# Generated CodeGraph knowledge graph and extraction cache (path kept for runtime compatibility)
 graphify-out/
 
 # Cross-built backend binary (deploy artifact, not source)
