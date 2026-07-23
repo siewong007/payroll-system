@@ -1,13 +1,22 @@
 name: Deploy Frontend
 
+# Deploys only after a successful push-triggered CI run on main, mirroring
+# deploy-backend.yml's gate: production must never receive an untested
+# revision, so there is intentionally no workflow_dispatch here either.
+
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
-  workflow_dispatch:
 
 permissions:
   id-token: write
   contents: read
+
+concurrency:
+  group: payroll-frontend-production
+  cancel-in-progress: false
 
 env:
   AWS_REGION: ap-southeast-1
@@ -16,19 +25,58 @@ env:
   VITE_API_URL: https://api.payrollmy.com/api
 
 jobs:
+  gate:
+    name: Select latest approved main commit
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    outputs:
+      deploy: ${{ steps.select.outputs.deploy }}
+      sha: ${{ steps.select.outputs.sha }}
+
+    steps:
+      - name: Reject superseded CI runs
+        id: select
+        shell: bash
+        env:
+          CANDIDATE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          latest_sha=$(git ls-remote --exit-code \
+            "https://github.com/$GITHUB_REPOSITORY.git" refs/heads/main | awk '{print $1}')
+          printf 'sha=%s\n' "$CANDIDATE_SHA" >> "$GITHUB_OUTPUT"
+          if [[ "$CANDIDATE_SHA" == "$latest_sha" ]]; then
+            printf 'deploy=true\n' >> "$GITHUB_OUTPUT"
+          else
+            printf 'deploy=false\n' >> "$GITHUB_OUTPUT"
+            echo "Skipping superseded commit $CANDIDATE_SHA; main is $latest_sha."
+          fi
+
   deploy-frontend:
     name: Deploy Frontend
+    needs: gate
+    if: needs.gate.outputs.deploy == 'true'
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    timeout-minutes: 15
+    environment: production
+    env:
+      DEPLOY_SHA: ${{ needs.gate.outputs.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out the tested commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: frontend/package.json
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
           role-to-assume: arn:aws:iam::371726673750:role/payroll-dev-cicd
           role-session-name: github-actions-frontend-deploy
