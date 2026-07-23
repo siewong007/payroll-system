@@ -35,6 +35,7 @@ Thumbs.db
 
 # Database and local generated data
 *.sql.bak
+backend/.sqlx/
 backend/uploads/
 uploads/
 
