@@ -36,6 +36,8 @@ export interface AttendanceRecord {
   checkout_longitude: number | null;
   notes: string | null;
   qr_token_id: string | null;
+  /** NULL for employee-initiated and cron-written rows; set on admin entries. */
+  created_by: string | null;
   hours_worked: string | null;
   overtime_hours: string | null;
   is_outside_geofence: boolean | null;

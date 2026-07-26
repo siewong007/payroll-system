@@ -200,7 +200,10 @@ export function PortalLayout() {
       </header>
 
       {/* Content */}
-      <main className="max-w-7xl mx-auto px-4 py-4 md:px-6 md:py-8 pb-20 md:pb-8">
+      {/* The bottom bar is ~56px plus env(safe-area-inset-bottom) (~34px on a
+          phone with a home indicator), so a flat pb-20 leaves the last row of
+          content under it on exactly the devices employees check in from. */}
+      <main className="max-w-7xl mx-auto px-4 py-4 md:px-6 md:py-8 pb-[calc(5rem+env(safe-area-inset-bottom))] md:pb-8">
         <PageTransition>
           <Outlet />
         </PageTransition>

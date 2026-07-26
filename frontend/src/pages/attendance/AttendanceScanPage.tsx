@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router';
-import { CheckCircle2, XCircle, Loader2, MapPin, QrCode, Info, RefreshCw } from 'lucide-react';
+import { CheckCircle2, XCircle, Loader2, MapPin, QrCode, Info, RefreshCw, Navigation } from 'lucide-react';
 import { checkInQr, getAttendanceMethod } from '@/api/attendance';
 import { useAuth } from '@/context/AuthContext';
 import { BrandLogo } from '@/components/ui/BrandLogo';
+import { classifyCheckInError, getGeolocation } from '@/lib/attendance';
 
 type State =
   | 'locating'
@@ -11,26 +12,10 @@ type State =
   | 'success'
   | 'already-checked-in'
   | 'location-required'
+  | 'outside-geofence'
   | 'error'
   | 'no-token'
   | 'login-required';
-
-/**
- * Resolve a position without ever rejecting. `needed` is false when the
- * company has geofencing off — the server discards coordinates then, so
- * blocking the queue on a GPS fix buys nothing. A recent cached fix is
- * accepted rather than forcing a cold lock.
- */
-function getCoords(needed: boolean): Promise<GeolocationCoordinates | null> {
-  return new Promise((resolve) => {
-    if (!needed || !navigator.geolocation) { resolve(null); return; }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => resolve(pos.coords),
-      () => resolve(null),
-      { timeout: 8000, maximumAge: 60_000 }
-    );
-  });
-}
 
 export function AttendanceScanPage() {
   const [searchParams] = useSearchParams();
@@ -57,7 +42,7 @@ export function AttendanceScanPage() {
     }
 
     setState(needsLocation ? 'locating' : 'checking-in');
-    const coords = await getCoords(needsLocation);
+    const coords = await getGeolocation(needsLocation);
 
     setState('checking-in');
     try {
@@ -69,15 +54,17 @@ export function AttendanceScanPage() {
       const message = err.response?.data?.error || 'Check-in failed. Please try again.';
       setError(message);
 
-      // Branch on what actually went wrong. Previously every failure — including
-      // "you already checked in", which means attendance *was* recorded — showed
-      // the same dead-end red card.
-      if (/already checked in/i.test(message)) {
-        setState('already-checked-in');
-      } else if (/location/i.test(message)) {
-        setState('location-required');
-      } else {
-        setState('error');
+      // Branch on what actually went wrong. Every failure — including "you
+      // already checked in", which means attendance *was* recorded — used to
+      // show the same dead-end red card. Note that an enforce-mode rejection
+      // reads "…check in from an approved office location", so matching a bare
+      // /location/ sent an off-site employee to a "grant permission and retry"
+      // screen that could never succeed; `classifyCheckInError` splits the two.
+      switch (classifyCheckInError(message)) {
+        case 'already-checked-in': setState('already-checked-in'); break;
+        case 'outside-geofence':   setState('outside-geofence'); break;
+        case 'location-permission': setState('location-required'); break;
+        default:                   setState('error');
       }
     }
   }, [token]); // eslint-disable-line react-hooks/exhaustive-deps -- Babel cannot identify setError as a stable React setter.
@@ -110,7 +97,7 @@ export function AttendanceScanPage() {
   const retry = () => setAttempt((n) => n + 1);
 
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+    <div className="theme-portal min-h-screen bg-[var(--background)] flex items-center justify-center p-6">
       <div className="w-full max-w-sm">
 
         {/* Logo */}
@@ -166,7 +153,7 @@ export function AttendanceScanPage() {
               </div>
               <button
                 onClick={() => navigate('/portal/attendance')}
-                className="w-full py-3 bg-black text-white rounded-2xl text-sm font-semibold hover:bg-gray-800 transition-colors"
+                className="w-full py-3 bg-teal-700 text-white rounded-2xl text-sm font-semibold hover:bg-teal-800 transition-colors"
               >
                 View My Attendance
               </button>
@@ -187,7 +174,7 @@ export function AttendanceScanPage() {
               </div>
               <button
                 onClick={() => navigate('/portal/attendance')}
-                className="w-full py-3 bg-black text-white rounded-2xl text-sm font-semibold hover:bg-gray-800 transition-colors"
+                className="w-full py-3 bg-teal-700 text-white rounded-2xl text-sm font-semibold hover:bg-teal-800 transition-colors"
               >
                 View My Attendance
               </button>
@@ -206,9 +193,36 @@ export function AttendanceScanPage() {
               </div>
               <button
                 onClick={retry}
-                className="w-full py-3 bg-black text-white rounded-2xl text-sm font-semibold hover:bg-gray-800 transition-colors flex items-center justify-center gap-2"
+                className="w-full py-3 bg-teal-700 text-white rounded-2xl text-sm font-semibold hover:bg-teal-800 transition-colors flex items-center justify-center gap-2"
               >
                 <RefreshCw className="w-4 h-4" /> Enable location and retry
+              </button>
+              <button
+                onClick={() => navigate('/portal/attendance')}
+                className="w-full py-3 border border-gray-200 text-gray-700 rounded-2xl text-sm font-semibold hover:bg-gray-50 transition-colors"
+              >
+                Go to Portal
+              </button>
+            </>
+          )}
+
+          {/* Off-site — the position was resolved fine, it just isn't an
+              approved one. Retrying from here is only useful after moving, so
+              the copy says so instead of blaming permissions. */}
+          {state === 'outside-geofence' && (
+            <>
+              <div className="w-20 h-20 bg-amber-50 rounded-full flex items-center justify-center">
+                <Navigation className="w-10 h-10 text-amber-500" />
+              </div>
+              <div>
+                <h2 className="text-xl font-bold text-gray-900 mb-1">You're not at an approved location</h2>
+                <p className="text-sm text-gray-500">{error}</p>
+              </div>
+              <button
+                onClick={retry}
+                className="w-full py-3 bg-teal-700 text-white rounded-2xl text-sm font-semibold hover:bg-teal-800 transition-colors flex items-center justify-center gap-2"
+              >
+                <RefreshCw className="w-4 h-4" /> I've moved — try again
               </button>
               <button
                 onClick={() => navigate('/portal/attendance')}
@@ -231,7 +245,7 @@ export function AttendanceScanPage() {
               </div>
               <button
                 onClick={retry}
-                className="w-full py-3 bg-black text-white rounded-2xl text-sm font-semibold hover:bg-gray-800 transition-colors flex items-center justify-center gap-2"
+                className="w-full py-3 bg-teal-700 text-white rounded-2xl text-sm font-semibold hover:bg-teal-800 transition-colors flex items-center justify-center gap-2"
               >
                 <RefreshCw className="w-4 h-4" /> Try again
               </button>
