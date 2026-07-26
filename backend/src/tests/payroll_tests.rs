@@ -259,12 +259,16 @@ async fn committed_payslip_stores_a_reconciling_breakdown() {
     let employee_id = seed_employee(&pool, company_id, Some(group_id), 500_000).await;
     let user_id = seed_user(&pool, company_id, "payroll_admin").await;
 
+    // `company_id` is not optional: migration 1009 anchors the row to its tenant
+    // and this seed uses the runtime `sqlx::query`, so a missing column is a
+    // not-null violation at run time rather than a compile error.
     sqlx::query(
         r#"INSERT INTO employee_allowances
-              (employee_id, category, name, amount, is_taxable, is_recurring, effective_from, is_active)
-           VALUES ($1, 'earning', 'Travel allowance', 30_000, TRUE, TRUE, '2020-01-01', TRUE)"#,
+              (employee_id, company_id, category, name, amount, is_taxable, is_recurring, effective_from, is_active)
+           VALUES ($1, $2, 'earning', 'Travel allowance', 30_000, TRUE, TRUE, '2020-01-01', TRUE)"#,
     )
     .bind(employee_id)
+    .bind(company_id)
     .execute(&pool)
     .await
     .expect("seed allowance");
@@ -667,4 +671,499 @@ async fn full_month_employee_is_not_prorated() {
 
     assert_eq!(basic_salary, 500_000, "full month pays the full basic");
     assert_eq!(is_prorated, Some(false));
+}
+
+// ─── Statutory wage bases ───
+
+/// Overtime is outside the EPF contributable wage but inside the SOCSO, EIS and
+/// PCB bases.
+///
+/// EPF Act 1991 s.2 expressly excludes overtime from "wages"; ESSA 1969 s.2 and
+/// EIS Act 2017 s.2 expressly include it, and MTD rates on total taxable
+/// remuneration. The engine used to feed one OT-inclusive `gross` to all four,
+/// so any payslip carrying overtime resolved an inflated EPF Third Schedule
+/// band. The basic here sits exactly on an EPF band edge, so two hours of
+/// overtime is enough to move it: before the fix EPF came back 34_000/37_500.
+#[tokio::test]
+async fn overtime_is_excluded_from_the_epf_wage_but_not_socso_eis_pcb() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+
+    let company_id = seed_company(&pool).await;
+    let group_id = seed_payroll_group(&pool, company_id).await;
+    let employee_id = seed_employee(&pool, company_id, Some(group_id), 300_000).await;
+    let user_id = seed_user(&pool, company_id, "payroll_admin").await;
+
+    // 2 h approved overtime at 1.5x on an hourly rate of 300_000 / 26 / 8.
+    sqlx::query(
+        r#"INSERT INTO overtime_applications
+              (employee_id, company_id, ot_date, start_time, end_time, hours, ot_type, status)
+           VALUES ($1, $2, '2024-04-10', TIME '18:00', TIME '20:00', 2.00, 'normal', 'approved')"#,
+    )
+    .bind(employee_id)
+    .bind(company_id)
+    .execute(&pool)
+    .await
+    .expect("seed approved overtime");
+
+    let run = payroll_engine::process_payroll(
+        &pool,
+        company_id,
+        group_id,
+        2024,
+        4,
+        NaiveDate::from_ymd_opt(2024, 5, 5).unwrap(),
+        user_id,
+        None,
+        None,
+    )
+    .await
+    .expect("process_payroll");
+
+    let (gross, total_overtime, epf_ee, epf_er, socso_ee, socso_er, eis_ee, eis_er): (
+        i64,
+        i64,
+        i64,
+        i64,
+        i64,
+        i64,
+        i64,
+        i64,
+    ) = sqlx::query_as(
+        r#"SELECT gross_salary, total_overtime, epf_employee, epf_employer,
+                  socso_employee, socso_employer, eis_employee, eis_employer
+           FROM payroll_items WHERE payroll_run_id = $1 AND employee_id = $2"#,
+    )
+    .bind(run.id)
+    .bind(employee_id)
+    .fetch_one(&pool)
+    .await
+    .expect("item should exist");
+
+    assert_eq!(total_overtime, 4_327, "2 h @ 1.5x on 300_000 / 26 / 8");
+    assert_eq!(
+        gross, 304_327,
+        "gross stays OT-inclusive — only the EPF base is narrowed"
+    );
+
+    // EPF rates on 300_000 (band 280001-300000), not on 304_327.
+    assert_eq!(epf_ee, 32_000, "EPF must ignore the overtime");
+    assert_eq!(epf_er, 35_000);
+
+    // SOCSO and EIS rate on 304_327 (band 300001-310000) — overtime is wages
+    // for both, so these deliberately differ from the OT-free figures.
+    assert_eq!(socso_ee, 1_125, "SOCSO includes overtime");
+    assert_eq!(socso_er, 2_065);
+    assert_eq!(eis_ee, 610, "EIS includes overtime");
+    assert_eq!(eis_er, 610);
+}
+
+/// The same split holds for attendance-derived overtime, which reaches the
+/// engine by a different route than an approved application.
+#[tokio::test]
+async fn epf_band_does_not_shift_with_attendance_overtime() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+
+    let company_id = seed_company(&pool).await;
+    let group_id = seed_payroll_group(&pool, company_id).await;
+    let employee_id = seed_employee(&pool, company_id, Some(group_id), 300_000).await;
+    let user_id = seed_user(&pool, company_id, "payroll_admin").await;
+
+    sqlx::query(
+        r#"INSERT INTO attendance_records
+              (company_id, employee_id, check_in_at, check_out_at, method, status,
+               hours_worked, overtime_hours)
+           VALUES ($1, $2,
+                   ('2024-06-10'::date + TIME '09:00')::timestamp AT TIME ZONE 'Asia/Kuala_Lumpur',
+                   ('2024-06-10'::date + TIME '20:00')::timestamp AT TIME ZONE 'Asia/Kuala_Lumpur',
+                   'manual', 'present', 11.00, 2.00)"#,
+    )
+    .bind(company_id)
+    .bind(employee_id)
+    .execute(&pool)
+    .await
+    .expect("seed attendance overtime");
+
+    let run = payroll_engine::process_payroll(
+        &pool,
+        company_id,
+        group_id,
+        2024,
+        6,
+        NaiveDate::from_ymd_opt(2024, 7, 5).unwrap(),
+        user_id,
+        None,
+        None,
+    )
+    .await
+    .expect("process_payroll");
+
+    let (gross, total_overtime, epf_ee, socso_ee): (i64, i64, i64, i64) = sqlx::query_as(
+        r#"SELECT gross_salary, total_overtime, epf_employee, socso_employee
+           FROM payroll_items WHERE payroll_run_id = $1 AND employee_id = $2"#,
+    )
+    .bind(run.id)
+    .bind(employee_id)
+    .fetch_one(&pool)
+    .await
+    .expect("item should exist");
+
+    assert_eq!(total_overtime, 4_327);
+    assert_eq!(gross, 304_327);
+    assert_eq!(
+        epf_ee, 32_000,
+        "attendance overtime is outside the EPF wage"
+    );
+    assert_eq!(socso_ee, 1_125, "but inside the SOCSO wage");
+}
+
+// ─── Missing date of birth ───
+
+/// Blank the employee's date of birth, as a tenant that imported without one has.
+async fn clear_date_of_birth(pool: &sqlx::PgPool, employee_id: uuid::Uuid) {
+    sqlx::query("UPDATE employees SET date_of_birth = NULL WHERE id = $1")
+        .bind(employee_id)
+        .execute(pool)
+        .await
+        .expect("clear date_of_birth");
+}
+
+/// A run refuses to commit rather than rating an employee at an assumed age.
+///
+/// The engine used to substitute 30, which clears every age-based branch: the
+/// SOCSO 55-59 guard, the Second Category split at 60, and the EIS 57-59 / 60+
+/// exemptions. A 60-year-old with no date of birth on record therefore had an
+/// employee contribution deducted they are exempt from.
+#[tokio::test]
+async fn payroll_run_is_blocked_when_an_employee_has_no_date_of_birth() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+
+    let company_id = seed_company(&pool).await;
+    let group_id = seed_payroll_group(&pool, company_id).await;
+    let employee_id = seed_employee(&pool, company_id, Some(group_id), 400_000).await;
+    let user_id = seed_user(&pool, company_id, "payroll_admin").await;
+    clear_date_of_birth(&pool, employee_id).await;
+
+    let employee_number: String =
+        sqlx::query_scalar("SELECT employee_number FROM employees WHERE id = $1")
+            .bind(employee_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+    let err = payroll_engine::process_payroll(
+        &pool,
+        company_id,
+        group_id,
+        2024,
+        4,
+        NaiveDate::from_ymd_opt(2024, 5, 5).unwrap(),
+        user_id,
+        None,
+        None,
+    )
+    .await
+    .expect_err("a run must not rate an employee whose age is unknown");
+
+    let message = format!("{err:?}");
+    assert!(
+        message.contains(&employee_number),
+        "the error must name the employee to fix, got: {message}"
+    );
+    assert!(
+        message.contains("date of birth"),
+        "the error must name the field to fix, got: {message}"
+    );
+
+    let items: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM payroll_items pi
+         JOIN payroll_runs pr ON pr.id = pi.payroll_run_id
+         WHERE pr.company_id = $1",
+    )
+    .bind(company_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(items, 0, "nothing may be committed by a refused run");
+}
+
+/// Preview names the affected employees under the blocking heading, once.
+#[tokio::test]
+async fn preview_blocks_and_names_employees_missing_a_date_of_birth() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+
+    let company_id = seed_company(&pool).await;
+    let group_id = seed_payroll_group(&pool, company_id).await;
+    let employee_id = seed_employee(&pool, company_id, Some(group_id), 400_000).await;
+    clear_date_of_birth(&pool, employee_id).await;
+
+    let preview = payroll_engine::preview_payroll(
+        &pool,
+        company_id,
+        group_id,
+        2024,
+        4,
+        NaiveDate::from_ymd_opt(2024, 5, 5).unwrap(),
+    )
+    .await
+    .expect("preview_payroll");
+
+    assert!(!preview.can_process, "the run must not be offered");
+
+    let flagged: Vec<_> = preview
+        .blocking
+        .iter()
+        .filter(|d| d.code == "missing_date_of_birth")
+        .collect();
+    assert_eq!(flagged.len(), 1, "one line per employee: {flagged:?}");
+    assert_eq!(flagged[0].employee_id, Some(employee_id));
+    assert!(flagged[0].employee_number.is_some());
+    assert!(flagged[0].employee_name.is_some());
+
+    assert!(
+        !preview
+            .warnings
+            .iter()
+            .any(|w| w.code == "missing_date_of_birth"),
+        "it is a blocker now, not an advisory: {:?}",
+        preview.warnings
+    );
+
+    // The generic calculation-failed line would repeat what the specific one
+    // already says, so it is suppressed for the same employee.
+    assert!(
+        !preview.blocking.iter().any(|d| {
+            d.code == "employee_calculation_failed" && d.employee_id == Some(employee_id)
+        }),
+        "the specific diagnostic must not be duplicated: {:?}",
+        preview.blocking
+    );
+
+    // The projected-payslip row still carries its own error so the UI can mark it.
+    let row = preview
+        .employees
+        .iter()
+        .find(|e| e.employee_id == employee_id)
+        .expect("the employee is still listed");
+    assert!(
+        row.error.is_some(),
+        "the row must be marked as uncalculable"
+    );
+}
+
+/// One unrateable employee does not hide what the rest of the group would be paid.
+#[tokio::test]
+async fn preview_still_prices_the_other_employees_when_one_is_missing_a_dob() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+
+    let company_id = seed_company(&pool).await;
+    let group_id = seed_payroll_group(&pool, company_id).await;
+    let rateable = seed_employee(&pool, company_id, Some(group_id), 400_000).await;
+    let unrateable = seed_employee(&pool, company_id, Some(group_id), 300_000).await;
+    clear_date_of_birth(&pool, unrateable).await;
+
+    let preview = payroll_engine::preview_payroll(
+        &pool,
+        company_id,
+        group_id,
+        2024,
+        4,
+        NaiveDate::from_ymd_opt(2024, 5, 5).unwrap(),
+    )
+    .await
+    .expect("preview_payroll");
+
+    assert_eq!(preview.employee_count, 2);
+    assert_eq!(preview.payable_count, 1, "only the rateable one computes");
+    assert_eq!(
+        preview.total_gross, 400_000,
+        "totals cover only the employees that could be rated"
+    );
+
+    let rateable_row = preview
+        .employees
+        .iter()
+        .find(|e| e.employee_id == rateable)
+        .expect("the rateable employee is listed");
+    assert!(rateable_row.error.is_none());
+    assert_eq!(rateable_row.gross_salary, 400_000);
+}
+
+// ─── Unrated (forgotten check-out) overtime ───
+
+/// Seed one closed attendance record on `date` whose overtime was left unrated.
+async fn seed_unrated_overtime_record(
+    pool: &sqlx::PgPool,
+    company_id: uuid::Uuid,
+    employee_id: uuid::Uuid,
+    date: NaiveDate,
+) {
+    sqlx::query(
+        r#"INSERT INTO attendance_records
+              (company_id, employee_id, check_in_at, check_out_at, method, status,
+               hours_worked, overtime_hours)
+           VALUES ($1, $2,
+                   ($3::date + TIME '09:00')::timestamp AT TIME ZONE 'Asia/Kuala_Lumpur',
+                   ($3::date + TIME '08:00' + INTERVAL '1 day')::timestamp AT TIME ZONE 'Asia/Kuala_Lumpur',
+                   'manual', 'present', 23.00, NULL)"#,
+    )
+    .bind(company_id)
+    .bind(employee_id)
+    .bind(date)
+    .execute(pool)
+    .await
+    .expect("seed unrated attendance record");
+}
+
+/// The ~14 h of overtime a forgotten check-out used to produce is not paid.
+///
+/// This is the regression that pins the defect: the figure was written from
+/// wall-clock elapsed time and flowed straight into gross, inflating every
+/// statutory contribution derived from it.
+#[tokio::test]
+async fn unrated_overtime_is_not_paid() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+
+    let company_id = seed_company(&pool).await;
+    let group_id = seed_payroll_group(&pool, company_id).await;
+    let employee_id = seed_employee(&pool, company_id, Some(group_id), 300_000).await;
+    let user_id = seed_user(&pool, company_id, "payroll_admin").await;
+
+    seed_unrated_overtime_record(
+        &pool,
+        company_id,
+        employee_id,
+        NaiveDate::from_ymd_opt(2024, 6, 10).unwrap(),
+    )
+    .await;
+
+    let run = payroll_engine::process_payroll(
+        &pool,
+        company_id,
+        group_id,
+        2024,
+        6,
+        NaiveDate::from_ymd_opt(2024, 7, 5).unwrap(),
+        user_id,
+        None,
+        None,
+    )
+    .await
+    .expect("an unrated record must not stop the run");
+
+    let (gross, total_overtime, epf_ee): (i64, i64, i64) = sqlx::query_as(
+        r#"SELECT gross_salary, total_overtime, epf_employee
+           FROM payroll_items WHERE payroll_run_id = $1 AND employee_id = $2"#,
+    )
+    .bind(run.id)
+    .bind(employee_id)
+    .fetch_one(&pool)
+    .await
+    .expect("item should exist");
+
+    assert_eq!(total_overtime, 0, "unrated hours are not paid");
+    assert_eq!(
+        gross, 300_000,
+        "gross matches a run with no attendance record at all"
+    );
+    assert_eq!(epf_ee, 32_000, "and so does every statutory figure");
+}
+
+/// An employee whose only attendance overtime is NULL must not fail the read.
+///
+/// `SUM` over an all-NULL group returns NULL while the group still exists, and
+/// the non-null assertion on the projection turned that into a runtime error
+/// that failed the whole run. Already reachable via a correction that clears the
+/// check-out; the per-day ceiling makes it routine.
+#[tokio::test]
+async fn payroll_reads_survive_an_employee_whose_only_overtime_is_null() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    use crate::repositories::reads::payroll as payroll_reads;
+
+    let company_id = seed_company(&pool).await;
+    let employee_id = seed_employee(&pool, company_id, None, 300_000).await;
+    seed_unrated_overtime_record(
+        &pool,
+        company_id,
+        employee_id,
+        NaiveDate::from_ymd_opt(2024, 6, 10).unwrap(),
+    )
+    .await;
+
+    let rows = payroll_reads::attendance_ot_hours(
+        &pool,
+        &[employee_id],
+        NaiveDate::from_ymd_opt(2024, 6, 1).unwrap(),
+        NaiveDate::from_ymd_opt(2024, 6, 30).unwrap(),
+        "Asia/Kuala_Lumpur",
+    )
+    .await
+    .expect("an all-NULL overtime group must not fail the read");
+
+    let hours = rows
+        .iter()
+        .find(|r| r.employee_id == employee_id)
+        .map(|r| r.hours)
+        .unwrap_or(0.0);
+    assert_eq!(hours, 0.0, "unrated hours read as zero, not as an error");
+}
+
+/// The preview tells the operator a correction is owed, without blocking the run.
+#[tokio::test]
+async fn preview_warns_about_unrated_overtime() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+
+    let company_id = seed_company(&pool).await;
+    let group_id = seed_payroll_group(&pool, company_id).await;
+    let employee_id = seed_employee(&pool, company_id, Some(group_id), 300_000).await;
+    seed_unrated_overtime_record(
+        &pool,
+        company_id,
+        employee_id,
+        NaiveDate::from_ymd_opt(2024, 6, 10).unwrap(),
+    )
+    .await;
+
+    let preview = payroll_engine::preview_payroll(
+        &pool,
+        company_id,
+        group_id,
+        2024,
+        6,
+        NaiveDate::from_ymd_opt(2024, 7, 5).unwrap(),
+    )
+    .await
+    .expect("preview_payroll");
+
+    let warning = preview
+        .warnings
+        .iter()
+        .find(|w| w.code == "unrated_overtime")
+        .expect("an unrated record must be surfaced");
+    assert_eq!(warning.employee_id, Some(employee_id));
+    assert!(
+        warning.message.contains("1 attendance record"),
+        "the warning names how many records are affected: {}",
+        warning.message
+    );
+    assert!(
+        preview.can_process,
+        "unrated hours are already excluded from pay, so this is advisory: {:?}",
+        preview.blocking
+    );
 }

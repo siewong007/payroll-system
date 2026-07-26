@@ -9,6 +9,7 @@ use chrono::Datelike;
 use crate::core::app_state::AppState;
 use crate::core::auth::{AuthUser, Permission};
 use crate::core::error::{AppError, AppResult};
+use crate::core::upload_path::{self, ALLOWED_UPLOAD_EXTENSIONS};
 use crate::models::employee::Employee;
 use crate::models::portal::*;
 use crate::models::upload::UploadAccess;
@@ -247,8 +248,7 @@ pub async fn upload_file(
     upload_service::validate_upload_bytes(&original_name, &data)?;
 
     // Save to uploads directory
-    let upload_dir = std::path::Path::new("uploads");
-    tokio::fs::create_dir_all(upload_dir)
+    tokio::fs::create_dir_all(upload_path::UPLOAD_DIR)
         .await
         .map_err(|e| AppError::Internal(format!("Failed to create upload dir: {}", e)))?;
 
@@ -258,13 +258,16 @@ pub async fn upload_file(
         sanitize_filename(&original_name),
         ext
     );
-    let file_path = upload_dir.join(&stored_name);
+    // The name is server-generated, so this cannot fail — it goes through the
+    // shared builder anyway so that no code path joins under the upload
+    // directory by hand.
+    let file_path = upload_path::stored_path(&stored_name)?;
 
     tokio::fs::write(&file_path, &data)
         .await
         .map_err(|e| AppError::Internal(format!("Failed to save file: {}", e)))?;
 
-    let file_url = format!("/api/uploads/{}", stored_name);
+    let file_url = format!("{}{}", upload_path::UPLOAD_URL_PREFIX, stored_name);
 
     Ok(Json(serde_json::json!({
         "url": file_url,

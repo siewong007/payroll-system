@@ -79,6 +79,28 @@ async fn provision_imported_employee_account(
     Ok(AccountImportOutcome::Created)
 }
 
+/// Resolve an archive-relative id to the id this restore minted for it.
+///
+/// Fail closed. An id that is absent from the archive is not "already correct" —
+/// it names a row this restore does not own. Passing it through verbatim (the
+/// old `unwrap_or(&old)`) let a hand-edited archive attach rows to another
+/// tenant's employees, and `employee_allowances` in particular has no other
+/// writer in the system: a recurring line appended there is picked up and paid
+/// by the victim's next payroll run, because `recurring_allowance_totals`
+/// filters on `employee_id` alone.
+///
+/// Type confusion is left to the database. `remap` is one flat namespace, so a
+/// forged archive can still point `employee_allowances.employee_id` at an
+/// exported *leave type* id; that resolves to a real minted id of the wrong
+/// kind and is then rejected by the foreign key to `employees`.
+fn remap_id(remap: &HashMap<Uuid, Uuid>, old: Uuid, field: &str) -> AppResult<Uuid> {
+    remap.get(&old).copied().ok_or_else(|| {
+        AppError::BadRequest(format!(
+            "Invalid backup: {field} references {old}, which is not part of this backup"
+        ))
+    })
+}
+
 fn normalize_employee_number_for_import(
     employee_number: &str,
     is_deleted: bool,
@@ -211,8 +233,15 @@ pub async fn import_company(
         remap.insert(cs.id, Uuid::now_v7());
     }
 
-    let r = |old: Uuid| -> Uuid { *remap.get(&old).unwrap_or(&old) };
-    let ro = |old: Option<Uuid>| -> Option<Uuid> { old.map(&r) };
+    // `remap` is complete from here on; every id the importer writes is either
+    // minted above or `new_company_id`. The field label is what makes a
+    // rejection diagnosable, so it names `<table>.<column>`. A rejection part-way
+    // through the insert block propagates out before `tx.commit()`, so the
+    // partial restore is rolled back and no files are written.
+    let r = |old: Uuid, field: &str| -> AppResult<Uuid> { remap_id(&remap, old, field) };
+    let ro = |old: Option<Uuid>, field: &str| -> AppResult<Option<Uuid>> {
+        old.map(|id| remap_id(&remap, id, field)).transpose()
+    };
 
     let mut tx = pool.begin().await?;
     let mut warnings = Vec::new();
@@ -234,15 +263,22 @@ pub async fn import_company(
     }
 
     for pg in &backup.payroll_groups {
-        backup_repo::insert_payroll_group(&mut *tx, r(pg.id), new_company_id, pg, now).await?;
+        backup_repo::insert_payroll_group(
+            &mut *tx,
+            r(pg.id, "payroll_groups.id")?,
+            new_company_id,
+            pg,
+            now,
+        )
+        .await?;
     }
     for e in &backup.employees {
-        let employee_id = r(e.id);
+        let employee_id = r(e.id, "employees.id")?;
         backup_repo::insert_employee(
             &mut *tx,
             employee_id,
             new_company_id,
-            ro(e.payroll_group_id),
+            ro(e.payroll_group_id, "employees.payroll_group_id")?,
             e,
             now,
         )
@@ -268,23 +304,54 @@ pub async fn import_company(
         }
     }
     for a in &backup.employee_allowances {
-        backup_repo::insert_employee_allowance(&mut *tx, r(a.id), r(a.employee_id), a, now).await?;
+        backup_repo::insert_employee_allowance(
+            &mut *tx,
+            r(a.id, "employee_allowances.id")?,
+            r(a.employee_id, "employee_allowances.employee_id")?,
+            new_company_id,
+            a,
+            now,
+        )
+        .await?;
     }
     for s in &backup.salary_history {
-        backup_repo::insert_salary_history(&mut *tx, r(s.id), r(s.employee_id), s, now).await?;
+        backup_repo::insert_salary_history(
+            &mut *tx,
+            r(s.id, "salary_history.id")?,
+            r(s.employee_id, "salary_history.employee_id")?,
+            new_company_id,
+            s,
+            now,
+        )
+        .await?;
     }
     for t in &backup.tp3_records {
-        backup_repo::insert_tp3_record(&mut *tx, r(t.id), r(t.employee_id), t, now).await?;
+        backup_repo::insert_tp3_record(
+            &mut *tx,
+            r(t.id, "tp3_records.id")?,
+            r(t.employee_id, "tp3_records.employee_id")?,
+            new_company_id,
+            t,
+            now,
+        )
+        .await?;
     }
     for lt in &backup.leave_types {
-        backup_repo::insert_leave_type(&mut *tx, r(lt.id), new_company_id, lt, now).await?;
+        backup_repo::insert_leave_type(
+            &mut *tx,
+            r(lt.id, "leave_types.id")?,
+            new_company_id,
+            lt,
+            now,
+        )
+        .await?;
     }
     for lb in &backup.leave_balances {
         backup_repo::insert_leave_balance(
             &mut *tx,
-            r(lb.id),
-            r(lb.employee_id),
-            r(lb.leave_type_id),
+            r(lb.id, "leave_balances.id")?,
+            r(lb.employee_id, "leave_balances.employee_id")?,
+            r(lb.leave_type_id, "leave_balances.leave_type_id")?,
             lb,
             now,
         )
@@ -293,10 +360,10 @@ pub async fn import_company(
     for lr in &backup.leave_requests {
         backup_repo::insert_leave_request(
             &mut *tx,
-            r(lr.id),
-            r(lr.employee_id),
+            r(lr.id, "leave_requests.id")?,
+            r(lr.employee_id, "leave_requests.employee_id")?,
             new_company_id,
-            r(lr.leave_type_id),
+            r(lr.leave_type_id, "leave_requests.leave_type_id")?,
             lr,
             now,
         )
@@ -305,8 +372,8 @@ pub async fn import_company(
     for cl in &backup.claims {
         backup_repo::insert_claim(
             &mut *tx,
-            r(cl.id),
-            r(cl.employee_id),
+            r(cl.id, "claims.id")?,
+            r(cl.employee_id, "claims.employee_id")?,
             new_company_id,
             cl,
             now,
@@ -316,8 +383,8 @@ pub async fn import_company(
     for ot in &backup.overtime_applications {
         backup_repo::insert_overtime(
             &mut *tx,
-            r(ot.id),
-            r(ot.employee_id),
+            r(ot.id, "overtime_applications.id")?,
+            r(ot.employee_id, "overtime_applications.employee_id")?,
             new_company_id,
             ot,
             now,
@@ -327,9 +394,9 @@ pub async fn import_company(
     for pr in &backup.payroll_runs {
         backup_repo::insert_payroll_run(
             &mut *tx,
-            r(pr.id),
+            r(pr.id, "payroll_runs.id")?,
             new_company_id,
-            r(pr.payroll_group_id),
+            r(pr.payroll_group_id, "payroll_runs.payroll_group_id")?,
             pr,
             now,
         )
@@ -338,9 +405,9 @@ pub async fn import_company(
     for pi in &backup.payroll_items {
         backup_repo::insert_payroll_item(
             &mut *tx,
-            r(pi.id),
-            r(pi.payroll_run_id),
-            r(pi.employee_id),
+            r(pi.id, "payroll_items.id")?,
+            r(pi.payroll_run_id, "payroll_items.payroll_run_id")?,
+            r(pi.employee_id, "payroll_items.employee_id")?,
             pi,
             now,
         )
@@ -349,8 +416,8 @@ pub async fn import_company(
     for pid in &backup.payroll_item_details {
         backup_repo::insert_payroll_item_detail(
             &mut *tx,
-            r(pid.id),
-            r(pid.payroll_item_id),
+            r(pid.id, "payroll_item_details.id")?,
+            r(pid.payroll_item_id, "payroll_item_details.payroll_item_id")?,
             pid,
             now,
         )
@@ -359,55 +426,84 @@ pub async fn import_company(
     for pe in &backup.payroll_entries {
         backup_repo::insert_payroll_entry(
             &mut *tx,
-            r(pe.id),
-            r(pe.employee_id),
+            r(pe.id, "payroll_entries.id")?,
+            r(pe.employee_id, "payroll_entries.employee_id")?,
             new_company_id,
-            ro(pe.payroll_run_id),
+            ro(pe.payroll_run_id, "payroll_entries.payroll_run_id")?,
             pe,
             now,
         )
         .await?;
     }
     for dc in &backup.document_categories {
-        backup_repo::insert_document_category(&mut *tx, r(dc.id), new_company_id, dc, now).await?;
+        backup_repo::insert_document_category(
+            &mut *tx,
+            r(dc.id, "document_categories.id")?,
+            new_company_id,
+            dc,
+            now,
+        )
+        .await?;
     }
     for d in &backup.documents {
         backup_repo::insert_document(
             &mut *tx,
-            r(d.id),
+            r(d.id, "documents.id")?,
             new_company_id,
-            ro(d.employee_id),
-            ro(d.category_id),
+            ro(d.employee_id, "documents.employee_id")?,
+            ro(d.category_id, "documents.category_id")?,
             d,
             now,
         )
         .await?;
     }
     for t in &backup.teams {
-        backup_repo::insert_team(&mut *tx, r(t.id), new_company_id, t, now).await?;
+        backup_repo::insert_team(&mut *tx, r(t.id, "teams.id")?, new_company_id, t, now).await?;
     }
     for tm in &backup.team_members {
         backup_repo::insert_team_member(
             &mut *tx,
-            r(tm.id),
-            r(tm.team_id),
-            r(tm.employee_id),
+            r(tm.id, "team_members.id")?,
+            r(tm.team_id, "team_members.team_id")?,
+            r(tm.employee_id, "team_members.employee_id")?,
             tm,
             now,
         )
         .await?;
     }
     for h in &backup.holidays {
-        backup_repo::insert_holiday(&mut *tx, r(h.id), new_company_id, h, now).await?;
+        backup_repo::insert_holiday(&mut *tx, r(h.id, "holidays.id")?, new_company_id, h, now)
+            .await?;
     }
     for w in &backup.working_day_config {
-        backup_repo::insert_working_day_config(&mut *tx, r(w.id), new_company_id, w, now).await?;
+        backup_repo::insert_working_day_config(
+            &mut *tx,
+            r(w.id, "working_day_config.id")?,
+            new_company_id,
+            w,
+            now,
+        )
+        .await?;
     }
     for et in &backup.email_templates {
-        backup_repo::insert_email_template(&mut *tx, r(et.id), new_company_id, et, now).await?;
+        backup_repo::insert_email_template(
+            &mut *tx,
+            r(et.id, "email_templates.id")?,
+            new_company_id,
+            et,
+            now,
+        )
+        .await?;
     }
     for cs in &backup.company_settings {
-        backup_repo::insert_company_setting(&mut *tx, r(cs.id), new_company_id, cs, now).await?;
+        backup_repo::insert_company_setting(
+            &mut *tx,
+            r(cs.id, "company_settings.id")?,
+            new_company_id,
+            cs,
+            now,
+        )
+        .await?;
     }
 
     // Older backup formats may omit one or more setup domains. Fill only
@@ -485,7 +581,42 @@ pub async fn import_company(
 mod tests {
     use super::*;
 
+    use chrono::NaiveDate;
+
+    use crate::models::backup::EmployeeAllowanceExport;
+    use crate::tests::support::{
+        seed_company, seed_employee, seed_payroll_group, seed_user, skip_if_no_db,
+    };
+
     const TEST_UUID: &str = "6c2e7095-7995-44c1-9580-6a751e18ebef";
+
+    /// Build the archive row a forger would append: a recurring, active earning
+    /// line pointing at an employee the archive does not contain.
+    fn forged_allowance(employee_id: Uuid) -> EmployeeAllowanceExport {
+        EmployeeAllowanceExport {
+            id: Uuid::new_v4(),
+            employee_id,
+            category: "earning".into(),
+            name: "Injected allowance".into(),
+            description: None,
+            amount: 999_999,
+            is_taxable: Some(true),
+            is_recurring: Some(true),
+            effective_from: NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(),
+            effective_to: None,
+            is_active: Some(true),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    async fn count_allowances_for_employee(pool: &PgPool, employee_id: Uuid) -> i64 {
+        sqlx::query_scalar("SELECT count(*) FROM employee_allowances WHERE employee_id = $1")
+            .bind(employee_id)
+            .fetch_one(pool)
+            .await
+            .expect("count allowances")
+    }
 
     #[test]
     fn legacy_deleted_suffix_is_removed_before_length_validation() {
@@ -551,6 +682,30 @@ mod tests {
         assert_eq!(importable_employee_email(None, None, false), None);
     }
 
+    #[test]
+    fn an_id_outside_the_archive_is_rejected_rather_than_passed_through() {
+        let archived = Uuid::new_v4();
+        let minted = Uuid::new_v4();
+        let foreign = Uuid::new_v4();
+        let remap = HashMap::from([(archived, minted)]);
+
+        assert_eq!(
+            remap_id(&remap, archived, "employee_allowances.employee_id").unwrap(),
+            minted
+        );
+
+        let error = remap_id(&remap, foreign, "employee_allowances.employee_id").unwrap_err();
+        assert!(
+            matches!(
+                error,
+                AppError::BadRequest(message)
+                    if message.contains("employee_allowances.employee_id")
+                        && message.contains(&foreign.to_string())
+            ),
+            "an unmapped id must be reported, never returned as itself"
+        );
+    }
+
     #[tokio::test]
     async fn provisioning_creates_and_then_relinks_an_employee_account() {
         let Some(pool) = crate::tests::support::skip_if_no_db().await else {
@@ -608,5 +763,224 @@ mod tests {
             .expect("reload account")
             .expect("account still exists");
         assert_eq!(account.employee_id, Some(replacement_employee_id));
+    }
+
+    /// The whole point of the fail-closed remap: an archive that names an
+    /// employee it does not contain is refused, so nothing lands in the tenant
+    /// that employee belongs to.
+    ///
+    /// `employee_allowances` has no writer in the system other than this
+    /// importer, and `recurring_allowance_totals` selects on `employee_id`
+    /// alone, so a row accepted here would be paid by the victim's next run.
+    #[tokio::test]
+    async fn a_forged_allowance_naming_another_tenant_is_refused() {
+        let Some(pool) = skip_if_no_db().await else {
+            return;
+        };
+        let source_company = seed_company(&pool).await;
+        seed_employee(&pool, source_company, None, 500_000).await;
+        let victim_company = seed_company(&pool).await;
+        let victim_employee = seed_employee(&pool, victim_company, None, 400_000).await;
+        let importing_user = seed_user(&pool, source_company, "admin").await;
+
+        let mut backup = crate::services::backup_service::export_company(&pool, source_company)
+            .await
+            .expect("export source company");
+        let archive_name = format!("Forged-{}", Uuid::new_v4());
+        backup.company.name = archive_name.clone();
+        backup
+            .employee_allowances
+            .push(forged_allowance(victim_employee));
+
+        let error = import_company(&pool, backup, None, importing_user)
+            .await
+            .expect_err("a forged reference must not restore");
+        assert!(
+            matches!(
+                &error,
+                AppError::BadRequest(message)
+                    if message.contains("employee_allowances.employee_id")
+                        && message.contains(&victim_employee.to_string())
+            ),
+            "the rejection must name the field and the offending id, got: {error:?}"
+        );
+
+        assert_eq!(
+            count_allowances_for_employee(&pool, victim_employee).await,
+            0,
+            "the victim tenant must not gain a payable allowance line"
+        );
+        let restored: i64 = sqlx::query_scalar("SELECT count(*) FROM companies WHERE name = $1")
+            .bind(&archive_name)
+            .fetch_one(&pool)
+            .await
+            .expect("count restored companies");
+        assert_eq!(restored, 0, "the partial restore must roll back entirely");
+    }
+
+    /// Fail-closed must not cost genuine restores anything. Every export read is
+    /// company-scoped and unfiltered, so a real archive resolves every reference
+    /// through the strict map.
+    #[tokio::test]
+    async fn an_unmodified_archive_still_restores_completely() {
+        let Some(pool) = skip_if_no_db().await else {
+            return;
+        };
+        let source_company = seed_company(&pool).await;
+        let group_id = seed_payroll_group(&pool, source_company).await;
+        let employee_id = seed_employee(&pool, source_company, Some(group_id), 500_000).await;
+        let importing_user = seed_user(&pool, source_company, "admin").await;
+
+        sqlx::query(
+            r#"INSERT INTO employee_allowances
+                  (employee_id, company_id, category, name, amount, is_recurring, effective_from, is_active)
+               VALUES ($1, $2, 'earning', 'Travel allowance', 30000, TRUE, '2020-01-01', TRUE)"#,
+        )
+        .bind(employee_id)
+        .bind(source_company)
+        .execute(&pool)
+        .await
+        .expect("seed allowance");
+        sqlx::query(
+            r#"INSERT INTO salary_history (employee_id, company_id, old_salary, new_salary, effective_date)
+               VALUES ($1, $2, 0, 500000, '2020-01-01')"#,
+        )
+        .bind(employee_id)
+        .bind(source_company)
+        .execute(&pool)
+        .await
+        .expect("seed salary history");
+        sqlx::query(
+            r#"INSERT INTO tp3_records (employee_id, company_id, tax_year, previous_income_ytd)
+               VALUES ($1, $2, 2024, 120000)"#,
+        )
+        .bind(employee_id)
+        .bind(source_company)
+        .execute(&pool)
+        .await
+        .expect("seed tp3 record");
+
+        let mut backup = crate::services::backup_service::export_company(&pool, source_company)
+            .await
+            .expect("export source company");
+        backup.company.name = format!("Restored-{}", Uuid::new_v4());
+
+        let result = import_company(&pool, backup, None, importing_user)
+            .await
+            .expect("a genuine archive must still restore");
+
+        for table in [
+            "payroll_groups",
+            "employees",
+            "employee_allowances",
+            "salary_history",
+            "tp3_records",
+        ] {
+            assert_eq!(
+                result.records_imported.get(table).copied(),
+                Some(1),
+                "{table} should have restored one row"
+            );
+        }
+
+        for table in ["employee_allowances", "salary_history", "tp3_records"] {
+            let statement = format!("SELECT count(*) FROM {table} WHERE company_id = $1");
+            let restored: i64 = sqlx::query_scalar(&statement)
+                .bind(result.new_company_id)
+                .fetch_one(&pool)
+                .await
+                .expect("count restored child rows");
+            assert_eq!(restored, 1, "{table} should be anchored to the new tenant");
+        }
+
+        assert_eq!(
+            count_allowances_for_employee(&pool, employee_id).await,
+            1,
+            "the source tenant's own row must be untouched"
+        );
+    }
+
+    /// The overwrite path clears the target first. A forged reference must still
+    /// be refused *after* that delete, and the target's data must come back
+    /// because the whole restore is one transaction.
+    #[tokio::test]
+    async fn an_overwrite_restore_rolls_back_the_target_wipe_when_a_reference_is_forged() {
+        let Some(pool) = skip_if_no_db().await else {
+            return;
+        };
+        let source_company = seed_company(&pool).await;
+        seed_employee(&pool, source_company, None, 500_000).await;
+        let target_company = seed_company(&pool).await;
+        let target_employee = seed_employee(&pool, target_company, None, 400_000).await;
+        let importing_user = seed_user(&pool, source_company, "admin").await;
+
+        sqlx::query(
+            r#"INSERT INTO employee_allowances
+                  (employee_id, company_id, category, name, amount, is_recurring, effective_from, is_active)
+               VALUES ($1, $2, 'earning', 'Existing allowance', 10000, TRUE, '2020-01-01', TRUE)"#,
+        )
+        .bind(target_employee)
+        .bind(target_company)
+        .execute(&pool)
+        .await
+        .expect("seed target allowance");
+
+        let mut backup = crate::services::backup_service::export_company(&pool, source_company)
+            .await
+            .expect("export source company");
+        backup
+            .employee_allowances
+            .push(forged_allowance(target_employee));
+
+        let error = import_company(&pool, backup, Some(target_company), importing_user)
+            .await
+            .expect_err("a forged reference must not restore");
+        assert!(
+            matches!(&error, AppError::BadRequest(message)
+                if message.contains("employee_allowances.employee_id")),
+            "unexpected error: {error:?}"
+        );
+
+        let surviving_employees: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM employees WHERE company_id = $1")
+                .bind(target_company)
+                .fetch_one(&pool)
+                .await
+                .expect("count target employees");
+        assert_eq!(surviving_employees, 1, "the target wipe must roll back");
+        assert_eq!(
+            count_allowances_for_employee(&pool, target_employee).await,
+            1,
+            "the target keeps its own allowance and gains no forged one"
+        );
+    }
+
+    /// The database backstop from migration 1009, pinned independently of the
+    /// importer: pairing an employee with a company that does not own them is a
+    /// foreign-key violation, not a stored row.
+    #[tokio::test]
+    async fn the_composite_foreign_key_refuses_a_cross_tenant_allowance() {
+        let Some(pool) = skip_if_no_db().await else {
+            return;
+        };
+        let owning_company = seed_company(&pool).await;
+        let employee_id = seed_employee(&pool, owning_company, None, 500_000).await;
+        let other_company = seed_company(&pool).await;
+
+        let error = sqlx::query(
+            r#"INSERT INTO employee_allowances
+                  (employee_id, company_id, category, name, amount, effective_from)
+               VALUES ($1, $2, 'earning', 'Cross-tenant', 100, '2020-01-01')"#,
+        )
+        .bind(employee_id)
+        .bind(other_company)
+        .execute(&pool)
+        .await
+        .expect_err("employees(id, company_id) must reject a mismatched tenant");
+
+        assert!(
+            matches!(&error, sqlx::Error::Database(db) if db.code().as_deref() == Some("23503")),
+            "expected a foreign-key violation, got: {error:?}"
+        );
     }
 }

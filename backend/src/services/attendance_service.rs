@@ -24,7 +24,9 @@ use crate::repositories::{
     platform_settings,
 };
 use crate::services::audit_service::{self, AuditRequestMeta};
-use crate::services::{attendance_network_service, geofence_service, passkey_service};
+use crate::services::{
+    attendance_network_service, geofence_service, passkey_service, settings_service,
+};
 
 // ─── QR Token TTL ───
 const QR_TOKEN_TTL_SECONDS: i64 = 300;
@@ -737,6 +739,14 @@ pub async fn check_out(
     let offsite_network =
         attendance_network_service::flag_for_checkout(pool, company_id, client_ip).await?;
 
+    // Above this many derived overtime hours the figure is treated as a
+    // forgotten check-out and left unrated for HR rather than paid. The decision
+    // is per-tenant configuration, so it is read here; the repository only
+    // applies the bound it is given.
+    let max_overtime_hours = settings_service::overtime_settings(pool, company_id)
+        .await
+        .max_overtime_hours_per_day;
+
     if let Some(record) = attendance_records::check_out(
         pool,
         employee_id,
@@ -745,6 +755,7 @@ pub async fn check_out(
         company_id,
         outside_geofence,
         offsite_network,
+        max_overtime_hours,
     )
     .await?
     {

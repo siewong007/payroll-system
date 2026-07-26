@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT ar.employee_id, COALESCE(SUM(ar.overtime_hours), 0)::FLOAT AS \"hours!\"\n           FROM attendance_records ar\n           LEFT JOIN overtime_applications oa\n               ON ar.employee_id = oa.employee_id\n               AND (ar.check_in_at AT TIME ZONE $4)::date = oa.ot_date\n               AND oa.status = 'approved'\n           WHERE ar.employee_id = ANY($1)\n             -- Bucket by the company's local date, as a half-open range on the\n             -- raw timestamptz. Comparing the UTC instant against ::date paid a\n             -- 00:00-08:00 local check-in on the 1st in the previous month, and\n             -- a closed upper bound at period_end + 1 day put a check-in at\n             -- exactly that midnight in two consecutive runs. Wrapping the\n             -- column in AT TIME ZONE fixed both but cost the\n             -- (company_id, check_in_at) index, and hardcoded MYT for tenants\n             -- that are not on it.\n             AND ar.check_in_at >= ($2::date)::timestamp AT TIME ZONE $4\n             AND ar.check_in_at < ($3::date + 1)::timestamp AT TIME ZONE $4\n             AND oa.id IS NULL\n           -- COALESCE, not a bare SUM: a group whose overtime is entirely NULL\n           -- (a forgotten check-out left unrated, or a correction that reopened\n           -- the session) still produces a row, and SUM returns NULL for it.\n           -- The non-null assertion on \"hours!\" turned that into a runtime error\n           -- that failed the whole run.\n           GROUP BY ar.employee_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "employee_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "hours!",
+        "type_info": "Float8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "UuidArray",
+        "Date",
+        "Date",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      null
+    ]
+  },
+  "hash": "b72d83c1f2c20d20030f7debeeb69f65bc5470fd509d95308b73ca0cc681d95a"
+}

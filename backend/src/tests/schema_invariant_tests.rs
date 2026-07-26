@@ -212,3 +212,188 @@ async fn user_group_members_must_share_the_group_company() {
         Some("user_group_members_same_company_check")
     );
 }
+
+/// Overtime is derived from the hours it sits inside, so it can never exceed
+/// them. Both application write paths compute `GREATEST(0, elapsed - shift)`
+/// against `hours_worked = elapsed` and already satisfy this; the constraint is
+/// what stops a future write path — or a hand-run UPDATE — reintroducing the
+/// inflated figure that made a forgotten check-out pay most of a day.
+#[tokio::test]
+async fn overtime_hours_cannot_exceed_hours_worked() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+
+    let company_id = seed_company(&pool).await;
+    let employee_id = seed_employee(&pool, company_id, None, 300_000).await;
+
+    let error = sqlx::query(
+        r#"
+        INSERT INTO attendance_records (
+            company_id, employee_id, check_in_at, check_out_at, method, status,
+            hours_worked, overtime_hours
+        ) VALUES ($1, $2, NOW() - INTERVAL '8 hours', NOW(), 'manual', 'present', 8, 14)
+        "#,
+    )
+    .bind(company_id)
+    .bind(employee_id)
+    .execute(&pool)
+    .await
+    .unwrap_err();
+
+    assert_eq!(
+        constraint_name(&error),
+        Some("attendance_records_overtime_within_hours_check")
+    );
+}
+
+/// Seed a leave type so an `attachment_url` can be attached to a leave request.
+async fn seed_leave_type(pool: &sqlx::PgPool, company_id: uuid::Uuid) -> uuid::Uuid {
+    sqlx::query_scalar(
+        r#"
+        INSERT INTO leave_types (company_id, name, default_days)
+        VALUES ($1, $2, 1)
+        RETURNING id
+        "#,
+    )
+    .bind(company_id)
+    .bind(format!(
+        "Upload guard leave {}",
+        &uuid::Uuid::new_v4().to_string()[..8]
+    ))
+    .fetch_one(pool)
+    .await
+    .expect("create leave type")
+}
+
+/// The three `*_url` columns that get joined onto a filesystem path must not be
+/// able to hold a traversal payload.
+///
+/// `core::upload_path::validate_file_url` is the real gate; these CHECKs are the
+/// backstop for a future write path that forgets to call it — which is exactly
+/// how the original defect arose, with four sinks and one ad-hoc guard between
+/// them.
+#[tokio::test]
+async fn upload_url_columns_reject_traversal_payloads() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+
+    let company = seed_company(&pool).await;
+    let employee = seed_employee(&pool, company, None, 300_000).await;
+    let leave_type = seed_leave_type(&pool, company).await;
+
+    let document_error = sqlx::query(
+        r#"
+        INSERT INTO documents (company_id, title, file_name, file_url)
+        VALUES ($1, 'Traversal', 'key.pem', '/api/uploads//etc/ssl/private/key.pem')
+        "#,
+    )
+    .bind(company)
+    .execute(&pool)
+    .await
+    .unwrap_err();
+
+    assert_eq!(
+        constraint_name(&document_error),
+        Some("documents_file_url_no_traversal")
+    );
+
+    let leave_error = sqlx::query(
+        r#"
+        INSERT INTO leave_requests (
+            employee_id, company_id, leave_type_id, start_date, end_date, days, attachment_url
+        ) VALUES ($1, $2, $3, $4, $4, 1, '/api/uploads/../../app/.env')
+        "#,
+    )
+    .bind(employee)
+    .bind(company)
+    .bind(leave_type)
+    .bind(NaiveDate::from_ymd_opt(2026, 3, 2).unwrap())
+    .execute(&pool)
+    .await
+    .unwrap_err();
+
+    assert_eq!(
+        constraint_name(&leave_error),
+        Some("leave_requests_attachment_url_no_traversal")
+    );
+
+    let claim_error = sqlx::query(
+        r#"
+        INSERT INTO claims (
+            employee_id, company_id, title, amount, expense_date, receipt_url
+        ) VALUES ($1, $2, 'Traversal', 100, $3, '/api/uploads/..\..\app\.env')
+        "#,
+    )
+    .bind(employee)
+    .bind(company)
+    .bind(NaiveDate::from_ymd_opt(2026, 3, 2).unwrap())
+    .execute(&pool)
+    .await
+    .unwrap_err();
+
+    assert_eq!(
+        constraint_name(&claim_error),
+        Some("claims_receipt_url_no_traversal")
+    );
+}
+
+/// The constraint must not reject anything the application legitimately writes:
+/// a stored upload, an external link, or no attachment at all.
+#[tokio::test]
+async fn upload_url_columns_accept_stored_uploads_external_links_and_null() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+
+    let company = seed_company(&pool).await;
+    let employee = seed_employee(&pool, company, None, 300_000).await;
+    let leave_type = seed_leave_type(&pool, company).await;
+
+    for url in [
+        "/api/uploads/0198f2c4-1f3a-7c21-9b0e-2f6a1c8d4e55_offer_letter.pdf",
+        "https://example.com/handbook.pdf",
+    ] {
+        sqlx::query(
+            r#"
+            INSERT INTO documents (company_id, title, file_name, file_url)
+            VALUES ($1, 'Permitted', 'permitted.pdf', $2)
+            "#,
+        )
+        .bind(company)
+        .bind(url)
+        .execute(&pool)
+        .await
+        .unwrap_or_else(|e| panic!("documents rejected permitted file_url {url:?}: {e}"));
+    }
+
+    sqlx::query(
+        r#"
+        INSERT INTO leave_requests (
+            employee_id, company_id, leave_type_id, start_date, end_date, days, attachment_url
+        ) VALUES ($1, $2, $3, $4, $4, 1, NULL)
+        "#,
+    )
+    .bind(employee)
+    .bind(company)
+    .bind(leave_type)
+    .bind(NaiveDate::from_ymd_opt(2026, 3, 3).unwrap())
+    .execute(&pool)
+    .await
+    .expect("leave_requests rejected a NULL attachment_url");
+
+    sqlx::query(
+        r#"
+        INSERT INTO claims (
+            employee_id, company_id, title, amount, expense_date, receipt_url
+        ) VALUES ($1, $2, 'Permitted', 100, $3, '/api/uploads/receipt.png')
+        "#,
+    )
+    .bind(employee)
+    .bind(company)
+    .bind(NaiveDate::from_ymd_opt(2026, 3, 3).unwrap())
+    .execute(&pool)
+    .await
+    .expect("claims rejected a permitted receipt_url");
+}

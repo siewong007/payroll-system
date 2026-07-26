@@ -2,6 +2,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::core::error::{AppError, AppResult};
+use crate::core::upload_path;
 use crate::models::document::{
     CreateDocumentCategoryRequest, CreateDocumentRequest, Document, DocumentCategory,
     UpdateDocumentRequest,
@@ -50,6 +51,12 @@ pub async fn create_document(
     req: CreateDocumentRequest,
     created_by: Uuid,
 ) -> AppResult<Document> {
+    // `file_url` is free text from the client and ends up joined onto a
+    // filesystem path by the delete and backup paths, so the shape is settled
+    // here, before it can be persisted. `UpdateDocumentRequest` carries no
+    // `file_url`, so this is the only write-time entry point for the column.
+    upload_path::validate_file_url(&req.file_url)?;
+
     let id = Uuid::now_v7();
     document_repo::insert(pool, id, company_id, &req, created_by).await
 }
@@ -75,10 +82,20 @@ pub async fn soft_delete_document(pool: &PgPool, id: Uuid, company_id: Uuid) -> 
     // Hard delete the record
     document_repo::delete(pool, id, company_id).await?;
 
-    // Remove the file from disk if it exists
-    if let Some(filename) = file_url.strip_prefix("/api/uploads/") {
-        let file_path = std::path::Path::new("uploads").join(filename);
-        let _ = tokio::fs::remove_file(&file_path).await;
+    // Remove the file from disk if it exists. A row poisoned before
+    // `validate_file_url` existed must not unlink whatever path it names, but it
+    // must also not fail the delete: the record is already gone at this point, so
+    // erroring here would leave the tenant unable to remove the document at all.
+    match upload_path::local_upload_path(&file_url) {
+        Ok(Some(file_path)) => {
+            let _ = tokio::fs::remove_file(&file_path).await;
+        }
+        // An external http(s) link — nothing of ours to unlink.
+        Ok(None) => {}
+        Err(_) => tracing::warn!(
+            %file_url,
+            "refusing to unlink a document whose file_url is not a safe upload path"
+        ),
     }
 
     Ok(())

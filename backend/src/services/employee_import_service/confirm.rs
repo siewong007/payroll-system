@@ -182,6 +182,7 @@ pub async fn confirm_import(
                 &mut *tx,
                 Uuid::now_v7(),
                 id,
+                company_id,
                 create_req.basic_salary,
                 create_req.date_joined,
                 user_id,

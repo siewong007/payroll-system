@@ -11,8 +11,8 @@ use uuid::Uuid;
 use crate::core::error::AppResult;
 use crate::models::payroll::{
     EmployeeBonusCommission, EmployeeCategoryTotal, EmployeeHours, EmployeeOtTypeHours,
-    EmployeeTotal, OrphanedEntryEmployee, PayrollEntryWithEmployee, PayrollItemSummary, PayrollYtd,
-    PayslipSourceLine,
+    EmployeeTotal, EmployeeUnratedOvertime, OrphanedEntryEmployee, PayrollEntryWithEmployee,
+    PayrollItemSummary, PayrollYtd, PayslipSourceLine,
 };
 
 /// Recurring allowances/deductions per employee, summed by category.
@@ -190,27 +190,81 @@ pub async fn attendance_ot_hours(
     employee_ids: &[Uuid],
     period_start: NaiveDate,
     period_end: NaiveDate,
+    tz: &str,
 ) -> AppResult<Vec<EmployeeHours>> {
     let rows = sqlx::query_as!(
         EmployeeHours,
-        r#"SELECT ar.employee_id, SUM(ar.overtime_hours)::FLOAT AS "hours!"
+        r#"SELECT ar.employee_id, COALESCE(SUM(ar.overtime_hours), 0)::FLOAT AS "hours!"
            FROM attendance_records ar
            LEFT JOIN overtime_applications oa
                ON ar.employee_id = oa.employee_id
-               AND (ar.check_in_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date = oa.ot_date
+               AND (ar.check_in_at AT TIME ZONE $4)::date = oa.ot_date
                AND oa.status = 'approved'
            WHERE ar.employee_id = ANY($1)
-             -- Bucket by Malaysian local date. The old window compared the UTC
-             -- instant against ::date, so a 00:00-08:00 MYT check-in on the 1st
-             -- was paid in the previous month; and its upper bound was closed at
-             -- period_end + 1 day, so a check-in at exactly that midnight fell in
-             -- two consecutive runs.
-             AND (ar.check_in_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date BETWEEN $2 AND $3
+             -- Bucket by the company's local date, as a half-open range on the
+             -- raw timestamptz. Comparing the UTC instant against ::date paid a
+             -- 00:00-08:00 local check-in on the 1st in the previous month, and
+             -- a closed upper bound at period_end + 1 day put a check-in at
+             -- exactly that midnight in two consecutive runs. Wrapping the
+             -- column in AT TIME ZONE fixed both but cost the
+             -- (company_id, check_in_at) index, and hardcoded MYT for tenants
+             -- that are not on it.
+             AND ar.check_in_at >= ($2::date)::timestamp AT TIME ZONE $4
+             AND ar.check_in_at < ($3::date + 1)::timestamp AT TIME ZONE $4
              AND oa.id IS NULL
+           -- COALESCE, not a bare SUM: a group whose overtime is entirely NULL
+           -- (a forgotten check-out left unrated, or a correction that reopened
+           -- the session) still produces a row, and SUM returns NULL for it.
+           -- The non-null assertion on "hours!" turned that into a runtime error
+           -- that failed the whole run.
            GROUP BY ar.employee_id"#,
         employee_ids,
         period_start,
         period_end,
+        tz,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(rows)
+}
+
+/// Closed attendance records in the period whose overtime was not rated —
+/// either left NULL by the per-day ceiling, or written before that ceiling
+/// existed and still above it. These are the forgotten check-outs.
+///
+/// The hours are already excluded from pay, so this feeds a preview warning
+/// rather than a blocker: the run is safe to commit, but an HR correction is
+/// owed to anyone who genuinely worked them.
+pub async fn unrated_overtime_records(
+    executor: impl Executor<'_, Database = Postgres>,
+    employee_ids: &[Uuid],
+    period_start: NaiveDate,
+    period_end: NaiveDate,
+    tz: &str,
+    max_overtime_hours: rust_decimal::Decimal,
+) -> AppResult<Vec<EmployeeUnratedOvertime>> {
+    let rows = sqlx::query_as!(
+        EmployeeUnratedOvertime,
+        r#"SELECT e.id AS "employee_id!", e.employee_number AS "employee_number!",
+                  e.full_name AS "employee_name!",
+                  COUNT(*)::BIGINT AS "record_count!",
+                  MAX(ar.hours_worked) AS "max_hours_worked?"
+           FROM attendance_records ar
+           JOIN employees e ON e.id = ar.employee_id
+           WHERE ar.employee_id = ANY($1)
+             AND ar.check_out_at IS NOT NULL
+             AND (ar.overtime_hours IS NULL OR ar.overtime_hours > $4)
+             -- Same sargable local-date bounds as attendance_ot_hours, so the
+             -- warning covers exactly the records that run would have paid.
+             AND ar.check_in_at >= ($2::date)::timestamp AT TIME ZONE $5
+             AND ar.check_in_at < ($3::date + 1)::timestamp AT TIME ZONE $5
+           GROUP BY e.id, e.employee_number, e.full_name
+           ORDER BY e.employee_number"#,
+        employee_ids,
+        period_start,
+        period_end,
+        max_overtime_hours,
+        tz,
     )
     .fetch_all(executor)
     .await?;

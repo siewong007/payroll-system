@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO salary_history (id, employee_id, company_id, old_salary, new_salary, effective_date, created_by)\n                VALUES ($1, $2, $3, $4, $5, NOW()::date, $6)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Int8",
+        "Int8",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1ec7bc3881804cf3ed64838cf2f735b1798bf71e89f4bcdca6291546586bf9ab"
+}

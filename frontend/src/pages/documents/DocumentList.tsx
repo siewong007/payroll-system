@@ -453,8 +453,13 @@ function CreateDocumentModal({
                   value={form.file_url}
                   onChange={(e) => setForm(f => ({ ...f, file_url: e.target.value }))}
                   className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-black focus:border-black outline-none text-sm bg-white transition-colors"
-                  placeholder="/uploads/document.pdf"
+                  placeholder="/api/uploads/document.pdf"
                 />
+                {/* The server accepts only these two shapes. The old placeholder
+                    suggested a bare /uploads/... path, which is now rejected. */}
+                <p className="text-xs text-gray-400 mt-1.5">
+                  An uploaded file path (/api/uploads/…) or a full https:// link.
+                </p>
               </div>
             </div>
 

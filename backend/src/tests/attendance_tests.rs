@@ -1,4 +1,5 @@
 use chrono::NaiveDate;
+use rust_decimal::Decimal;
 
 use crate::core::error::AppError;
 use crate::models::attendance::{
@@ -624,4 +625,153 @@ async fn reopening_a_session_conflicts_cleanly_when_another_is_open() {
         matches!(err, AppError::Conflict(_)),
         "expected Conflict, got: {err:?}"
     );
+}
+
+// ─── Derived overtime ceiling ───
+
+/// A session left open overnight closes with truthful hours but no overtime.
+///
+/// Check-out matches any open record inside 24h (deliberately, for night
+/// shifts), and the derived figure was written from wall-clock elapsed time with
+/// no ceiling — so a Monday check-in closed on Tuesday produced ~14 h of paid
+/// overtime. Above the ceiling the figure is left unrated rather than clamped:
+/// clamping would still pay the ceiling and erase the evidence, while NULL means
+/// "a human must decide" and is skipped by the payroll SUM.
+#[tokio::test]
+async fn forgotten_check_out_leaves_overtime_unrated() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let (company_id, employee_id) = seed_company_and_employee(&pool).await;
+
+    insert_open_record(&pool, company_id, employee_id, 23).await;
+
+    let record = attendance_service::check_out(&pool, employee_id, company_id, None, None)
+        .await
+        .expect("check_out must still close the session");
+
+    let hours = record.hours_worked.expect("hours worked are recorded");
+    assert!(
+        hours >= Decimal::new(2295, 2) && hours <= Decimal::new(2305, 2),
+        "hours_worked stays truthful — it is what the clock says: {hours}"
+    );
+    assert!(
+        record.overtime_hours.is_none(),
+        "14 h of derived overtime is an anomaly, not a payment: {:?}",
+        record.overtime_hours
+    );
+}
+
+/// The ceiling must not swallow legitimate overtime.
+#[tokio::test]
+async fn a_normal_overtime_check_out_is_still_rated() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let (company_id, employee_id) = seed_company_and_employee(&pool).await;
+
+    // 11 h against the 9 h default shift → 2 h, comfortably under the ceiling.
+    insert_open_record(&pool, company_id, employee_id, 11).await;
+
+    let record = attendance_service::check_out(&pool, employee_id, company_id, None, None)
+        .await
+        .expect("check_out should succeed");
+
+    assert_eq!(
+        record.overtime_hours,
+        Some(Decimal::new(200, 2)),
+        "ordinary overtime must still be rated"
+    );
+}
+
+/// The ceiling is a company setting, not a constant: a tenant that raises or
+/// lowers it changes what check-out will rate.
+#[tokio::test]
+async fn the_overtime_ceiling_is_read_from_company_settings() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let (company_id, employee_id) = seed_company_and_employee(&pool).await;
+
+    sqlx::query(
+        r#"INSERT INTO company_settings (company_id, category, key, value)
+           VALUES ($1, 'payroll', 'max_overtime_hours_per_day', '"1"'::jsonb)
+           ON CONFLICT (company_id, category, key) DO UPDATE SET value = EXCLUDED.value"#,
+    )
+    .bind(company_id)
+    .execute(&pool)
+    .await
+    .expect("set the company ceiling");
+
+    // The same 2 h that the previous test rates is now above the ceiling.
+    insert_open_record(&pool, company_id, employee_id, 11).await;
+
+    let record = attendance_service::check_out(&pool, employee_id, company_id, None, None)
+        .await
+        .expect("check_out should succeed");
+
+    assert!(
+        record.overtime_hours.is_none(),
+        "a 1 h ceiling must leave 2 h unrated: {:?}",
+        record.overtime_hours
+    );
+}
+
+/// The HR correction path is the designated remedy for an unrated record, so it
+/// is deliberately uncapped — capping it would leave an operator with no way to
+/// record a genuine long shift.
+#[tokio::test]
+async fn an_hr_correction_can_still_record_long_overtime() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let (company_id, employee_id) = seed_company_and_employee(&pool).await;
+    let admin = seed_user(&pool, company_id, "hr_manager").await;
+
+    let record_id: uuid::Uuid = sqlx::query_scalar(
+        r#"INSERT INTO attendance_records
+           (company_id, employee_id, check_in_at, check_out_at, method, status)
+           VALUES ($1, $2, NOW() - INTERVAL '23 hours', NOW() - INTERVAL '22 hours',
+                   'manual', 'present')
+           RETURNING id"#,
+    )
+    .bind(company_id)
+    .bind(employee_id)
+    .fetch_one(&pool)
+    .await
+    .expect("insert record");
+
+    let req = UpdateAttendanceRecordRequest {
+        check_in_at: None,
+        check_out_at: Some(chrono::Utc::now()),
+        status: None,
+        notes: None,
+        clear_check_out: None,
+        clear_notes: None,
+        reason: "Genuine 23-hour incident shift, confirmed with the supervisor".into(),
+    };
+
+    let record = attendance_service::update_attendance_record(
+        &pool, company_id, record_id, &req, admin, None,
+    )
+    .await
+    .expect("correction should succeed");
+
+    let overtime = record
+        .overtime_hours
+        .expect("a correction must not be nulled by the check-out ceiling");
+    assert!(
+        overtime > Decimal::from(4),
+        "the corrected figure is recorded as stated: {overtime}"
+    );
+
+    let audit_rows: i64 = sqlx::query_scalar(
+        r#"SELECT COUNT(*) FROM audit_logs
+           WHERE entity_type = 'attendance_record' AND action = 'update' AND entity_id = $1"#,
+    )
+    .bind(record_id)
+    .fetch_one(&pool)
+    .await
+    .expect("count audit rows");
+    assert_eq!(audit_rows, 1, "the correction must leave an audit trail");
 }

@@ -77,6 +77,7 @@ const baseRecord: AttendanceRecord = {
   hours_worked: null,
   overtime_hours: null,
   is_outside_geofence: null,
+  is_offsite_network: null,
   created_at: '2026-07-27T01:02:00Z',
   updated_at: '2026-07-27T01:02:00Z',
 };
@@ -270,6 +271,7 @@ function setMethod(method: 'qr_code' | 'face_id', geofence: 'none' | 'warn' | 'e
     allow_company_override: false,
     is_company_override: false,
     geofence_mode: geofence,
+    network_mode: 'none',
     timezone: 'Asia/Kuala_Lumpur',
   });
 }

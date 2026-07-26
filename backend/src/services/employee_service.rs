@@ -220,6 +220,7 @@ pub async fn update_employee(
             &mut *tx,
             history_id,
             id,
+            company_id,
             existing.basic_salary,
             new_salary,
             updated_by,
@@ -315,9 +316,10 @@ pub async fn get_salary_history(pool: &PgPool, employee_id: Uuid) -> AppResult<V
 pub async fn create_tp3(
     pool: &PgPool,
     employee_id: Uuid,
+    company_id: Uuid,
     req: CreateTp3Request,
     created_by: Uuid,
 ) -> AppResult<Tp3Record> {
     let id = Uuid::now_v7();
-    tp3_records::upsert(pool, id, employee_id, &req, created_by).await
+    tp3_records::upsert(pool, id, employee_id, company_id, &req, created_by).await
 }
