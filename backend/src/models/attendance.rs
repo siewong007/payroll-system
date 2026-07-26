@@ -85,12 +85,20 @@ pub struct CheckInQrRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct CheckInFaceIdRequest {
-    /// Raw ID of the WebAuthn credential used (from webauthn assertion)
-    pub credential_id: String,
-    /// Client assertion data (base64url encoded)
-    pub assertion: serde_json::Value,
+    /// Challenge issued by `POST /attendance/check-in/face-id/begin`
+    pub challenge_id: Uuid,
+    /// The WebAuthn assertion — verified server-side against the employee's
+    /// registered passkeys before the check-in is recorded.
+    pub credential: webauthn_rs::prelude::PublicKeyCredential,
     pub latitude: Option<f64>,
     pub longitude: Option<f64>,
+}
+
+/// Response for `POST /attendance/check-in/face-id/begin`
+#[derive(Debug, Serialize)]
+pub struct FaceIdBeginResponse {
+    pub challenge_id: Uuid,
+    pub options: webauthn_rs::prelude::RequestChallengeResponse,
 }
 
 #[derive(Debug, Deserialize)]
@@ -115,6 +123,8 @@ pub struct AttendanceListQuery {
     pub date_to: Option<NaiveDate>,
     pub status: Option<String>,
     pub method: Option<String>,
+    /// Only sessions that were never checked out (stale-session triage)
+    pub open_only: Option<bool>,
     /// Page number (1-based, default 1)
     pub page: Option<i64>,
     /// Items per page (default 50, max 200)
@@ -136,6 +146,14 @@ pub struct UpdateAttendanceRecordRequest {
     pub check_out_at: Option<DateTime<Utc>>,
     pub status: Option<String>,
     pub notes: Option<String>,
+    /// Explicitly clear the check-out (reopen the session). `check_out_at: None`
+    /// alone means "keep existing" — this flag is the unambiguous clear.
+    pub clear_check_out: Option<bool>,
+    /// Explicitly clear the notes. Same tri-state rationale as `clear_check_out`.
+    pub clear_notes: Option<bool>,
+    /// Why the record is being corrected. Required; persisted to the audit
+    /// trail (not to the record itself).
+    pub reason: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -201,10 +219,23 @@ pub struct AttendanceExportQuery {
     pub method: Option<String>,
 }
 
-/// Response for the effective attendance method of a company
+/// Response for the effective attendance method of a company. Also carries the
+/// geofence mode (so clients skip the GPS wait when it is 'none') and the
+/// company timezone (so clients compute "today" on the company calendar).
 #[derive(Debug, Serialize)]
 pub struct AttendanceMethodResponse {
     pub method: String,
     pub allow_company_override: bool,
     pub is_company_override: bool,
+    /// "none" | "warn" | "enforce"
+    pub geofence_mode: String,
+    /// IANA timezone the company's attendance days are bucketed in
+    pub timezone: String,
+}
+
+/// Request for the admin backfill of auto-absent marking
+#[derive(Debug, Deserialize)]
+pub struct AbsentRunRequest {
+    /// Local calendar date (company timezone) to mark absences for
+    pub date: NaiveDate,
 }

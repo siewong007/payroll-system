@@ -20,6 +20,19 @@ export const PAYROLL_APPROVAL_ROLES: AppRole[] = ['super_admin', 'finance'];
 export const REPORT_ROLES: AppRole[] = ALL_ROLES.filter((role) => role !== 'exec');
 export const SUPER_ADMIN_ROLES: AppRole[] = ['super_admin'];
 export const ADMIN_DATA_ROLES: AppRole[] = ['super_admin', 'admin'];
+/**
+ * May read company-wide attendance (records, summary, CSV export — which
+ * carry every colleague's movements and GPS coordinates). Mirrors the
+ * backend's `require_attendance_viewer` allow-list exactly.
+ */
+export const ATTENDANCE_VIEW_ROLES: AppRole[] = [
+  'super_admin',
+  'admin',
+  'hr_manager',
+  'payroll_admin',
+  'finance',
+  'exec',
+];
 
 export function roleList(value: MaybeAppRole): AppRole[] {
   if (!value) return [];

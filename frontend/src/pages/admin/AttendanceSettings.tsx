@@ -205,9 +205,9 @@ export function AttendanceSettings() {
               <p className="font-semibold mb-1">How this works</p>
               <ul className="space-y-1 text-amber-700">
                 <li>• The global method applies to <strong>all companies</strong> immediately.</li>
-                <li>• If "Allow Company Override" is on, admins can go to <strong>Attendance → Method</strong> to switch.</li>
-                <li>• QR codes are valid for <strong>60 seconds</strong> and are single-use for security.</li>
-                <li>• Face ID requires employees to register a passkey first.</li>
+                <li>• If "Allow Company Override" is on, a company admin can switch their own method on the <strong>Attendance</strong> page.</li>
+                <li>• A displayed QR code lasts <strong>5 minutes</strong>. Everyone present can scan the same code during that window; generating a new one retires the previous code on that screen.</li>
+                <li>• Face ID requires employees to register a passkey first. Each check-in runs a fresh passkey challenge that the server verifies.</li>
               </ul>
             </div>
           </div>

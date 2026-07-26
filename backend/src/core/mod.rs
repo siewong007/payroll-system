@@ -6,5 +6,6 @@ pub mod crypto;
 pub mod db;
 pub mod error;
 pub mod extract;
+pub mod rate_limit_key;
 pub mod redact;
 pub mod schedule;

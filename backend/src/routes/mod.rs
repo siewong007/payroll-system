@@ -7,6 +7,7 @@ use axum::{
 use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
 
 use crate::core::app_state::AppState;
+use crate::core::rate_limit_key::ClientIpKeyExtractor;
 use crate::handlers::{
     admin, approval, attendance, audit, auth, backup, calendar, company, dashboard, document,
     email, employee, employee_import, geofence, health, notification, oauth2, passkey, payroll,
@@ -14,8 +15,16 @@ use crate::handlers::{
 };
 
 pub fn create_router(state: AppState) -> Router {
+    // Behind a proxy the TCP peer is the proxy, so peer-IP keying collapses
+    // every client into one bucket (a kiosk fleet rate-limits itself). Trusting
+    // forwarded headers on a directly reachable API is worse — anyone could
+    // spoof one and bypass the login limiter. The operator declares which
+    // deployment this is; see core::rate_limit_key.
+    let ip_key = ClientIpKeyExtractor::new(state.config.trust_proxy_headers);
+
     // Rate limiter: 5 requests per 60 seconds per IP
     let auth_rate_limit = GovernorConfigBuilder::default()
+        .key_extractor(ip_key)
         .per_second(12)
         .burst_size(5)
         .finish()
@@ -23,6 +32,7 @@ pub fn create_router(state: AppState) -> Router {
 
     // Rate limiter: 3 requests per 60 seconds per IP (stricter for forgot-password)
     let forgot_rate_limit = GovernorConfigBuilder::default()
+        .key_extractor(ip_key)
         .period(Duration::from_secs(60))
         .burst_size(3)
         .finish()
@@ -30,6 +40,7 @@ pub fn create_router(state: AppState) -> Router {
 
     // Rate limiter: 10 requests per 60 seconds per IP (OAuth2 flow)
     let oauth2_rate_limit = GovernorConfigBuilder::default()
+        .key_extractor(ip_key)
         .per_second(6)
         .burst_size(10)
         .finish()
@@ -39,6 +50,7 @@ pub fn create_router(state: AppState) -> Router {
     // every minute, far below what a guesser would need to be effective against the
     // ≥244-bit secret space).
     let kiosk_rate_limit = GovernorConfigBuilder::default()
+        .key_extractor(ip_key)
         .per_second(2)
         .burst_size(10)
         .finish()
@@ -465,6 +477,10 @@ pub fn create_router(state: AppState) -> Router {
         // Employee check-in
         .route("/attendance/check-in/qr", post(attendance::check_in_qr))
         .route(
+            "/attendance/check-in/face-id/begin",
+            post(attendance::check_in_face_id_begin),
+        )
+        .route(
             "/attendance/check-in/face-id",
             post(attendance::check_in_face_id),
         )
@@ -482,6 +498,7 @@ pub fn create_router(state: AppState) -> Router {
             put(attendance::update_attendance),
         )
         .route("/attendance/manual", post(attendance::manual_attendance))
+        .route("/attendance/absent-run", post(attendance::absent_run))
         // ─── Work Schedules ───
         .route("/work-schedules", get(work_schedule::list_schedules))
         .route(

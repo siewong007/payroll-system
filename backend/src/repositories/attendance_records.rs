@@ -73,12 +73,15 @@ pub async fn insert_face(
 
 /// Close the most recent open check-in within 24h (handles overnight shifts), computing
 /// hours worked and overtime against the company's default schedule.
+/// `outside_geofence` ORs into the record's flag so an off-site checkout is
+/// visible even when the check-in was on-site.
 pub async fn check_out(
     executor: impl Executor<'_, Database = Postgres>,
     employee_id: Uuid,
     latitude: Option<f64>,
     longitude: Option<f64>,
     company_id: Uuid,
+    outside_geofence: bool,
 ) -> AppResult<Option<AttendanceRecord>> {
     let record = sqlx::query_as!(
         AttendanceRecord,
@@ -86,6 +89,7 @@ pub async fn check_out(
            SET check_out_at = NOW(),
                checkout_latitude = $2,
                checkout_longitude = $3,
+               is_outside_geofence = (COALESCE(ar.is_outside_geofence, FALSE) OR $5),
                hours_worked = ROUND(EXTRACT(EPOCH FROM (NOW() - ar.check_in_at)) / 3600.0, 2),
                overtime_hours = GREATEST(0,
                    ROUND(EXTRACT(EPOCH FROM (NOW() - ar.check_in_at)) / 3600.0, 2)
@@ -119,6 +123,7 @@ pub async fn check_out(
         latitude,
         longitude,
         company_id,
+        outside_geofence,
     )
     .fetch_optional(executor)
     .await?;
@@ -272,7 +277,6 @@ pub async fn insert_manual(
     Ok(record)
 }
 
-#[allow(clippy::too_many_arguments)]
 pub async fn update(
     executor: impl Executor<'_, Database = Postgres>,
     record_id: Uuid,
@@ -281,25 +285,29 @@ pub async fn update(
     check_out_at: Option<DateTime<Utc>>,
     status: &str,
     notes: Option<&str>,
-    hours_worked: Option<f64>,
 ) -> AppResult<AttendanceRecord> {
     let record = sqlx::query_as!(
         AttendanceRecord,
         r#"UPDATE attendance_records ar
            SET check_in_at = $3, check_out_at = $4, status = $5, notes = $6,
-               hours_worked = $7::float8,
-               -- Recompute overtime from the corrected hours. Leaving it untouched
-               -- kept the figure from the original check-out, so extending a
-               -- checkout grew hours_worked while overtime stayed stale (and a
-               -- manual record kept NULL). Same schedule expression as check_out,
-               -- including the past-midnight wrap for night shifts.
+               -- Recompute hours and overtime from the corrected timestamps, in
+               -- numeric — the correction path must not round-trip money-feeding
+               -- figures through float. Same schedule expression as check_out,
+               -- including the past-midnight wrap for night shifts. Clearing the
+               -- check-out clears both derived figures.
+               hours_worked = CASE
+                   WHEN $4::timestamptz IS NULL THEN NULL
+                   ELSE ROUND(EXTRACT(EPOCH FROM ($4::timestamptz - $3::timestamptz)) / 3600.0, 2)
+               END,
                overtime_hours = CASE
-                   WHEN $7::float8 IS NULL THEN NULL
-                   ELSE GREATEST(0, $7::float8 - COALESCE((
-                       SELECT MOD(EXTRACT(EPOCH FROM (ws.end_time - ws.start_time))::numeric + 86400, 86400) / 3600.0
-                       FROM company_work_schedules ws
-                       WHERE ws.company_id = ar.company_id AND ws.is_default = TRUE
-                   ), 9))
+                   WHEN $4::timestamptz IS NULL THEN NULL
+                   ELSE GREATEST(0,
+                       ROUND(EXTRACT(EPOCH FROM ($4::timestamptz - $3::timestamptz)) / 3600.0, 2)
+                       - COALESCE((
+                           SELECT MOD(EXTRACT(EPOCH FROM (ws.end_time - ws.start_time))::numeric + 86400, 86400) / 3600.0
+                           FROM company_work_schedules ws
+                           WHERE ws.company_id = ar.company_id AND ws.is_default = TRUE
+                       ), 9))
                END,
                updated_at = NOW()
            WHERE ar.id = $1 AND ar.company_id = $2
@@ -312,18 +320,49 @@ pub async fn update(
         check_out_at,
         status,
         notes,
-        hours_worked,
     )
     .fetch_one(executor)
     .await?;
     Ok(record)
 }
 
-/// Auto-mark absent for the given date (`tz`), skipping holidays, approved leave, and
-/// employees who already have a record. Returns the number of rows inserted.
+/// Remove today's auto-absent placeholder so a real (late) check-in
+/// supersedes it. Matches only rows the cron itself wrote: system-created
+/// (`created_by IS NULL`), method 'manual', status 'absent', with the cron's
+/// marker note — an HR-touched row no longer matches and is preserved.
+/// Returns the number of rows removed (0 or 1 in practice).
+pub async fn delete_auto_absent_today(
+    executor: impl Executor<'_, Database = Postgres>,
+    employee_id: Uuid,
+    tz: &str,
+) -> AppResult<u64> {
+    let result = sqlx::query!(
+        r#"DELETE FROM attendance_records
+           WHERE employee_id = $1
+             AND status = 'absent'
+             AND method = 'manual'
+             AND created_by IS NULL
+             AND notes = 'Auto-marked absent (no check-in recorded)'
+             AND DATE(check_in_at AT TIME ZONE $2) = DATE(NOW() AT TIME ZONE $2)"#,
+        employee_id,
+        tz,
+    )
+    .execute(executor)
+    .await?;
+    Ok(result.rows_affected())
+}
+
+/// Auto-mark absent for the given local calendar date in `tz`, skipping
+/// holidays, approved leave, and employees who already have a record on that
+/// date. Idempotent — the target date is a parameter (not NOW()) so missed
+/// runs can be backfilled and tests can pin a date. `company_id` limits the
+/// run to one tenant (admin backfill); `None` covers all companies (the daily
+/// job). Returns rows inserted.
 pub async fn mark_absent(
     executor: impl Executor<'_, Database = Postgres>,
     tz: &str,
+    target_date: chrono::NaiveDate,
+    company_id: Option<Uuid>,
 ) -> AppResult<u64> {
     let result = sqlx::query!(
         r#"INSERT INTO attendance_records
@@ -331,8 +370,8 @@ pub async fn mark_absent(
            SELECT
                e.company_id,
                e.id,
-               DATE(NOW() AT TIME ZONE $1) + TIME '00:00',
-               DATE(NOW() AT TIME ZONE $1) + TIME '00:00',
+               ($2::date)::timestamp AT TIME ZONE $1,
+               ($2::date)::timestamp AT TIME ZONE $1,
                'manual',
                'absent',
                'Auto-marked absent (no check-in recorded)'
@@ -342,47 +381,58 @@ pub async fn mark_absent(
            -- absent marking. Falls back to Mon-Fri, matching calendar_service.
            LEFT JOIN working_day_config wdc
                ON wdc.company_id = e.company_id
-               AND wdc.day_of_week = EXTRACT(DOW FROM (NOW() AT TIME ZONE $1))::int
+               AND wdc.day_of_week = EXTRACT(DOW FROM $2::date)::int
            WHERE e.is_active = TRUE
              AND e.deleted_at IS NULL
+             AND ($3::uuid IS NULL OR e.company_id = $3)
+             -- Only within the employment window. When this query was pinned to
+             -- NOW() an active employee had necessarily already joined, so the
+             -- guard was unreachable; now that the date is a parameter (catch-up
+             -- and admin backfill both target past dates) its absence would
+             -- invent absences from before a hire or after a resignation.
+             -- Mirrors the payroll eligibility filter in employees.rs.
+             AND e.date_joined <= $2::date
+             AND (e.date_resigned IS NULL OR e.date_resigned >= $2::date)
              AND CASE
                    WHEN EXISTS (
                        SELECT 1 FROM working_day_config w
                        WHERE w.company_id = e.company_id
                    ) THEN COALESCE(wdc.is_working_day, FALSE)
-                   ELSE EXTRACT(DOW FROM (NOW() AT TIME ZONE $1))::int BETWEEN 1 AND 5
+                   ELSE EXTRACT(DOW FROM $2::date)::int BETWEEN 1 AND 5
                  END
-             -- No holiday today. A recurring holiday is stored once, on the year it
-             -- was created, so matching only the exact date auto-marked everyone
+             -- No holiday that day. A recurring holiday is stored once, on the year
+             -- it was created, so matching only the exact date auto-marked everyone
              -- absent on every later occurrence.
              AND NOT EXISTS (
                  SELECT 1 FROM holidays h
                  WHERE h.company_id = e.company_id
                    AND (
-                       h.date = DATE(NOW() AT TIME ZONE $1)
+                       h.date = $2::date
                        OR (
                            h.is_recurring
-                           AND EXTRACT(MONTH FROM h.date)
-                               = EXTRACT(MONTH FROM (NOW() AT TIME ZONE $1))
-                           AND EXTRACT(DAY FROM h.date)
-                               = EXTRACT(DAY FROM (NOW() AT TIME ZONE $1))
+                           AND EXTRACT(MONTH FROM h.date) = EXTRACT(MONTH FROM $2::date)
+                           AND EXTRACT(DAY FROM h.date) = EXTRACT(DAY FROM $2::date)
                        )
                    )
              )
-             -- Not on approved leave today
+             -- Not on approved leave that day
              AND NOT EXISTS (
                  SELECT 1 FROM leave_requests lr
                  WHERE lr.employee_id = e.id
                    AND lr.status = 'approved'
-                   AND DATE(NOW() AT TIME ZONE $1) BETWEEN lr.start_date AND lr.end_date
+                   AND $2::date BETWEEN lr.start_date AND lr.end_date
              )
-             -- No attendance record today
+             -- No attendance record on that local date. Sargable range on the raw
+             -- timestamptz so the (employee_id, check_in_at) index serves it.
              AND NOT EXISTS (
                  SELECT 1 FROM attendance_records ar
                  WHERE ar.employee_id = e.id
-                   AND DATE(ar.check_in_at AT TIME ZONE $1) = DATE(NOW() AT TIME ZONE $1)
+                   AND ar.check_in_at >= ($2::date)::timestamp AT TIME ZONE $1
+                   AND ar.check_in_at < ($2::date + 1)::timestamp AT TIME ZONE $1
              )"#,
         tz,
+        target_date,
+        company_id,
     )
     .execute(executor)
     .await?;

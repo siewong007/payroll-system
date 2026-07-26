@@ -48,6 +48,28 @@ pub async fn insert(
     Ok(())
 }
 
+/// Purge tokens that expired more than `retain_days` ago and were never used
+/// for a check-in (no attendance_records row references them). Referenced
+/// tokens are kept as history. A kiosk mints ~288 rows/day, so without this
+/// the table grows without bound. The NOT EXISTS probe is served by the
+/// partial index on attendance_records(qr_token_id).
+pub async fn purge_expired(
+    executor: impl Executor<'_, Database = Postgres>,
+    retain_days: i32,
+) -> AppResult<u64> {
+    let result = sqlx::query!(
+        r#"DELETE FROM attendance_qr_tokens t
+           WHERE t.expires_at < NOW() - ($1::int * INTERVAL '1 day')
+             AND NOT EXISTS (
+                 SELECT 1 FROM attendance_records ar WHERE ar.qr_token_id = t.id
+             )"#,
+        retain_days,
+    )
+    .execute(executor)
+    .await?;
+    Ok(result.rows_affected())
+}
+
 pub async fn find_by_token(
     executor: impl Executor<'_, Database = Postgres>,
     token: &str,

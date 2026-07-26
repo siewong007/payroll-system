@@ -21,6 +21,31 @@ pub async fn find_default_timing(
     Ok(row.map(|r| (r.start_time, r.grace_minutes)))
 }
 
+/// `(company_id, timezone)` for every active company, falling back to the
+/// default zone when a company has no default schedule row. The auto-absent
+/// job needs each company's own zone: the placeholder it writes is matched
+/// later by `delete_auto_absent_today` and bucketed by the reads layer, both
+/// of which use the company timezone — writing on a different calendar would
+/// leave the placeholder unsuperseded and the day double-counted.
+pub async fn list_company_timezones(
+    executor: impl Executor<'_, Database = Postgres>,
+) -> AppResult<Vec<(Uuid, String)>> {
+    let rows = sqlx::query!(
+        r#"SELECT c.id AS "company_id!",
+                  COALESCE(ws.timezone, 'Asia/Kuala_Lumpur') AS "timezone!"
+           FROM companies c
+           LEFT JOIN company_work_schedules ws
+               ON ws.company_id = c.id AND ws.is_default = TRUE
+           WHERE c.is_active = TRUE"#
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| (r.company_id, r.timezone))
+        .collect())
+}
+
 /// Timezone for the company's default schedule, if set.
 pub async fn find_default_timezone(
     executor: impl Executor<'_, Database = Postgres>,

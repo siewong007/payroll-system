@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   QrCode, Fingerprint, LogIn, LogOut, CheckCircle2, Clock,
-  MapPin, Calendar, AlertCircle, ExternalLink,
+  MapPin, Calendar, AlertCircle, ExternalLink, RefreshCw,
 } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
 import {
@@ -10,10 +11,10 @@ import {
   getMyTodayAttendance,
   getMyAttendance,
   checkOut,
+  beginFaceIdCheckIn,
   checkInFaceId,
   type AttendanceRecord,
 } from '@/api/attendance';
-import { passkeyDiscoverableBegin } from '@/api/passkey';
 import { getPasskeyCredential } from '@/lib/webauthn';
 import { getErrorMessage } from '@/lib/utils';
 
@@ -25,13 +26,19 @@ function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString('en-MY', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-function getGeolocation(): Promise<GeolocationCoordinates | null> {
+/**
+ * Best-effort position. When the company has geofencing off the server ignores
+ * coordinates entirely, so skip the fix rather than make the employee wait for
+ * one. `maximumAge` accepts a recent cached fix instead of forcing a cold GPS
+ * lock at the kiosk queue.
+ */
+function getGeolocation(needed: boolean): Promise<GeolocationCoordinates | null> {
   return new Promise((resolve) => {
-    if (!navigator.geolocation) { resolve(null); return; }
+    if (!needed || !navigator.geolocation) { resolve(null); return; }
     navigator.geolocation.getCurrentPosition(
       (pos) => resolve(pos.coords),
       () => resolve(null),
-      { timeout: 8000, maximumAge: 0 }
+      { timeout: 8000, maximumAge: 60_000 }
     );
   });
 }
@@ -59,7 +66,9 @@ function QrScannerModal({ onClose, onScanned }: { onClose: () => void; onScanned
         const qr = scannerRef.current;
         
         const config = {
-          fps: 25,
+          // 10fps is ample for QR detection and much kinder to low-end phones
+          // than 25 — the decode loop was the bottleneck, not the frame rate.
+          fps: 10,
           qrbox: { width: 280, height: 280 },
         };
         const successCb = (decodedText: string) => {
@@ -269,7 +278,31 @@ const STATUS_STYLE: Record<string, string> = {
   half_day: 'bg-blue-100 text-blue-700',
 };
 
-function HistoryList({ records }: { records: AttendanceRecord[] }) {
+function HistoryList({
+  records,
+  isError,
+  onRetry,
+}: {
+  records: AttendanceRecord[];
+  isError: boolean;
+  onRetry: () => void;
+}) {
+  // A failed fetch must not look like an empty history.
+  if (isError) {
+    return (
+      <div className="flex flex-col items-center justify-center h-40 text-gray-500 gap-2">
+        <AlertCircle className="w-10 h-10 text-red-300" />
+        <p className="text-sm">Couldn't load your attendance history.</p>
+        <button
+          onClick={onRetry}
+          className="flex items-center gap-1.5 text-sm font-medium text-gray-900 hover:underline"
+        >
+          <RefreshCw className="w-3.5 h-3.5" /> Try again
+        </button>
+      </div>
+    );
+  }
+
   if (records.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-40 text-gray-400">
@@ -324,6 +357,7 @@ function HistoryList({ records }: { records: AttendanceRecord[] }) {
 
 export function MyAttendance() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [showScanner, setShowScanner] = useState(false);
   const [toast, setToast] = useState('');
   const [toastType, setToastType] = useState<'success' | 'error'>('success');
@@ -339,21 +373,32 @@ export function MyAttendance() {
     queryFn: getAttendanceMethod,
   });
 
-  const { data: todayData } = useQuery({
+  const {
+    data: todayData,
+    isError: todayError,
+    refetch: refetchToday,
+  } = useQuery({
     queryKey: ['attendance-today'],
     queryFn: getMyTodayAttendance,
     refetchInterval: 60_000,
   });
 
-  const { data: historyResult } = useQuery({
+  const {
+    data: historyResult,
+    isError: historyError,
+    refetch: refetchHistory,
+  } = useQuery({
     queryKey: ['attendance-my'],
     queryFn: () => getMyAttendance({ per_page: 100 }),
   });
   const history = historyResult?.data ?? [];
 
+  // Only fetch a position when the server will actually use it.
+  const needsLocation = (methodData?.geofence_mode ?? 'none') !== 'none';
+
   const checkOutMut = useMutation({
     mutationFn: async () => {
-      const coords = await getGeolocation();
+      const coords = await getGeolocation(needsLocation);
       return checkOut(coords?.latitude, coords?.longitude);
     },
     onSuccess: () => {
@@ -368,15 +413,15 @@ export function MyAttendance() {
 
   const faceIdCheckInMut = useMutation({
     mutationFn: async () => {
-      // Same discoverable-passkey ceremony the login page runs. The endpoint
-      // responds with { challenge_id, options }, so the previous hand-rolled
-      // fetch — which destructured a non-existent top-level `challenge` and then
-      // called .replace() on it — always threw before reaching the browser.
-      const { options } = await passkeyDiscoverableBegin();
-      const cred = await getPasskeyCredential(options);
+      // Dedicated check-in ceremony: the server issues a challenge bound to
+      // this user, then verifies the assertion before recording the record.
+      // (The old flow reused the login ceremony and the server verified
+      // nothing, so a face_id record proved no biometric presence at all.)
+      const { challenge_id, options } = await beginFaceIdCheckIn();
+      const cred = await getPasskeyCredential(options.publicKey);
 
-      const coords = await getGeolocation();
-      return checkInFaceId(cred.id, cred, coords?.latitude, coords?.longitude);
+      const coords = await getGeolocation(needsLocation);
+      return checkInFaceId(challenge_id, cred, coords?.latitude, coords?.longitude);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['attendance-today'] });
@@ -396,10 +441,11 @@ export function MyAttendance() {
     }
   };
 
-  const handleQrScanned = async (token: string) => {
+  const handleQrScanned = (token: string) => {
     setShowScanner(false);
-    // Navigate to the scan page which handles the actual check-in
-    window.location.href = `/attendance/scan?token=${token}`;
+    // Stay in the SPA: a full reload discards the in-memory access token and
+    // forces an /auth/refresh round trip before the check-in can even fire.
+    navigate(`/attendance/scan?token=${encodeURIComponent(token)}`);
   };
 
   const method = methodData?.method ?? 'qr_code';
@@ -423,15 +469,37 @@ export function MyAttendance() {
         </div>
       )}
 
-      {/* Today's Card */}
-      <TodayCard
-        record={today}
-        method={method}
-        onCheckIn={handleCheckIn}
-        onCheckOut={() => checkOutMut.mutate()}
-        isCheckingIn={faceIdCheckInMut.isPending}
-        isCheckingOut={checkOutMut.isPending}
-      />
+      {/* Today's Card. On a failed fetch we must not render "Not Checked In" —
+          that invites a second check-in that then fails as a duplicate. */}
+      {todayError ? (
+        <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-3xl p-6 text-white">
+          <div className="flex items-center gap-3 mb-4">
+            <AlertCircle className="w-6 h-6 text-amber-400 shrink-0" />
+            <div>
+              <h2 className="text-lg font-bold">Couldn't load today's status</h2>
+              <p className="text-gray-400 text-sm mt-0.5">
+                Check your connection — we didn't want to show a check-in button
+                without knowing whether you already checked in.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => refetchToday()}
+            className="w-full py-3 rounded-2xl font-semibold text-sm flex items-center justify-center gap-2 bg-white text-gray-900 hover:bg-gray-100 active:scale-95 transition-all"
+          >
+            <RefreshCw className="w-4 h-4" /> Retry
+          </button>
+        </div>
+      ) : (
+        <TodayCard
+          record={today}
+          method={method}
+          onCheckIn={handleCheckIn}
+          onCheckOut={() => checkOutMut.mutate()}
+          isCheckingIn={faceIdCheckInMut.isPending}
+          isCheckingOut={checkOutMut.isPending}
+        />
+      )}
 
       {/* Method info */}
       <div className="bg-white rounded-2xl p-4 flex items-center gap-3 text-sm border border-gray-100">
@@ -452,7 +520,11 @@ export function MyAttendance() {
           <Clock className="w-4 h-4 text-gray-400" />
           <h3 className="font-semibold text-gray-900 text-sm">Attendance History</h3>
         </div>
-        <HistoryList records={history} />
+        <HistoryList
+          records={history}
+          isError={historyError}
+          onRetry={() => refetchHistory()}
+        />
       </div>
 
       {showScanner && (

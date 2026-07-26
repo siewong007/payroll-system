@@ -20,6 +20,10 @@ pub struct AppConfig {
     pub smtp_password: Option<String>,
     pub smtp_from_email: Option<String>,
     pub smtp_from_name: Option<String>,
+    /// Whether `X-Forwarded-For` / `X-Real-IP` may be trusted for rate-limiting
+    /// keys. Enable only when a trusted proxy (CloudFront/ALB) is the sole path
+    /// to the API — otherwise clients can spoof the header and bypass limits.
+    pub trust_proxy_headers: bool,
 }
 
 impl AppConfig {
@@ -49,6 +53,11 @@ impl AppConfig {
             smtp_password: env::var("SMTP_PASSWORD").ok(),
             smtp_from_email: env::var("SMTP_FROM_EMAIL").ok(),
             smtp_from_name: env::var("SMTP_FROM_NAME").ok(),
+            // Defaults to false: believing a forwarded header on a directly
+            // reachable API lets anyone bypass the login rate limiter.
+            trust_proxy_headers: env::var("TRUST_PROXY_HEADERS")
+                .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+                .unwrap_or(false),
         }
     }
 

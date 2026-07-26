@@ -51,6 +51,28 @@ pub async fn consume(
     Ok(state_json)
 }
 
+/// Consume a challenge of a given type that was issued to a specific user.
+/// Returns None when the challenge is missing, expired, of another type, or
+/// belongs to a different user — callers must treat all four identically.
+pub async fn consume_for_user(
+    executor: impl Executor<'_, Database = Postgres>,
+    challenge_id: Uuid,
+    challenge_type: &str,
+    user_id: Uuid,
+) -> AppResult<Option<serde_json::Value>> {
+    let state_json = sqlx::query_scalar!(
+        r#"DELETE FROM passkey_challenges
+        WHERE id = $1 AND challenge_type = $2 AND user_id = $3 AND expires_at > NOW()
+        RETURNING state_json"#,
+        challenge_id,
+        challenge_type,
+        user_id,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(state_json)
+}
+
 /// Consume an `authentication` challenge, returning the targeted user and state.
 pub async fn consume_authentication(
     executor: impl Executor<'_, Database = Postgres>,

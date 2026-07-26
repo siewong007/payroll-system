@@ -138,7 +138,13 @@ fn payroll_permissions_enforce_separation_of_duties() {
 fn role_guards_cover_exec_employee_and_attendance_boundaries() {
     let exec = AuthUser(claims_with_roles(&["exec"]));
     assert!(matches!(exec.deny_exec(), Err(AppError::Forbidden(_))));
-    assert!(exec.require_attendance_qr_generator().is_ok());
+    // exec is read-mostly: may view attendance data, but generating a QR is a
+    // write (it retires the console's live token) and is denied.
+    assert!(exec.require_attendance_viewer().is_ok());
+    assert!(matches!(
+        exec.require_attendance_qr_generator(),
+        Err(AppError::Forbidden(_))
+    ));
     assert!(matches!(
         exec.require_kiosk_admin(),
         Err(AppError::Forbidden(_))
@@ -150,13 +156,25 @@ fn role_guards_cover_exec_employee_and_attendance_boundaries() {
         Err(AppError::Forbidden(_))
     ));
     assert!(matches!(
+        employee.require_attendance_viewer(),
+        Err(AppError::Forbidden(_))
+    ));
+    assert!(matches!(
         employee.require_attendance_qr_generator(),
+        Err(AppError::Forbidden(_))
+    ));
+
+    let finance = AuthUser(claims_with_roles(&["finance"]));
+    assert!(finance.require_attendance_viewer().is_ok());
+    assert!(matches!(
+        finance.require_attendance_qr_generator(),
         Err(AppError::Forbidden(_))
     ));
 
     let hr = AuthUser(claims_with_roles(&["hr_manager"]));
     assert!(hr.require_hr_admin().is_ok());
     assert!(hr.require_kiosk_admin().is_ok());
+    assert!(hr.require_attendance_qr_generator().is_ok());
     assert!(matches!(
         hr.require_company_admin(),
         Err(AppError::Forbidden(_))

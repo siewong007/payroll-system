@@ -56,8 +56,10 @@ with real employee data:
 
 - Tenant authorization is enforced by application permissions and
   company-scoped queries; PostgreSQL row-level security is not enabled.
-- The attendance option labelled Face ID does not verify a fresh biometric or
-  WebAuthn assertion at the check-in endpoint.
+- The public kiosk display URL carries its secret in the path, so it persists
+  in tablet browser history and any intermediary access logs. Credentials can
+  be revoked and their last use is recorded, but there is no expiry or rotation
+  yet.
 - Employee onboarding still uses a predictable initial-password fallback and
   permits the forced-password-change state to be skipped.
 - Uploaded files are stored on local API disk and served through unguessable

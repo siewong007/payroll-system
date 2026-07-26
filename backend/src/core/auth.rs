@@ -334,17 +334,32 @@ impl AuthUser {
     }
 
     /// Rejects users that cannot generate attendance QR codes.
+    /// Generating is a write (it retires the console's active token), so the
+    /// read-mostly `exec` role is deliberately excluded — same roster as
+    /// `require_kiosk_admin`.
     pub fn require_attendance_qr_generator(&self) -> AppResult<()> {
-        if !self.has_any_role(&[
-            "admin",
-            "super_admin",
-            "hr_manager",
-            "payroll_admin",
-            "exec",
-        ]) {
+        if !self.has_any_role(&["admin", "super_admin", "hr_manager", "payroll_admin"]) {
             return Err(AppError::Forbidden(
                 "Authorized role required to generate QR code".into(),
             ));
+        }
+        Ok(())
+    }
+
+    /// Rejects users that may not read company-wide attendance data (records
+    /// list, summary, CSV export — includes employee GPS coordinates).
+    /// Explicit allow-list: unlike `require_non_employee`, a role added later
+    /// does not gain this access by default.
+    pub fn require_attendance_viewer(&self) -> AppResult<()> {
+        if !self.has_any_role(&[
+            "super_admin",
+            "admin",
+            "hr_manager",
+            "payroll_admin",
+            "finance",
+            "exec",
+        ]) {
+            return Err(AppError::Forbidden("Not authorized".into()));
         }
         Ok(())
     }

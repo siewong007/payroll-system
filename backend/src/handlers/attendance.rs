@@ -23,14 +23,15 @@ use crate::services::{attendance_service, audit_service::AuditRequestMeta};
 
 // ─── Effective Method ───
 
-/// Returns the effective attendance method for the caller's company
+/// Returns the effective attendance method for the caller's company, plus the
+/// geofence mode and company timezone the clients need to behave well.
 pub async fn get_attendance_method(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> AppResult<Json<AttendanceMethodResponse>> {
     let company_id = auth.company_id()?;
 
-    let resp = attendance_service::get_effective_method(&state.pool, company_id).await?;
+    let resp = attendance_service::get_attendance_bootstrap(&state.pool, company_id).await?;
     Ok(Json(resp))
 }
 
@@ -117,16 +118,23 @@ pub async fn generate_qr_token(
     )
     .await?;
 
+    // Audit under its own entity type (a token mint is not a credential
+    // creation), and never persist the live token or scan URL — an audit
+    // reader must not gain a usable check-in token.
     let audit_meta = AuditRequestMeta::from_headers(&headers);
     let _ = crate::services::audit_service::log_action_with_metadata(
         &state.pool,
         Some(company_id),
         Some(auth.0.sub),
         "create",
-        "attendance_kiosk_credential",
+        "attendance_qr_token",
         None,
         None,
-        Some(serde_json::to_value(&resp).unwrap_or_default()),
+        Some(serde_json::json!({
+            "expires_at": resp.expires_at,
+            "ttl_seconds": resp.ttl_seconds,
+            "issuer": "console",
+        })),
         Some("Generated new attendance QR token"),
         Some(&audit_meta),
     )
@@ -184,9 +192,31 @@ pub async fn check_in_qr(
 
 // ─── Check In: Face ID ───
 
+/// Start the WebAuthn assertion ceremony for a face-id check-in. The
+/// completing call is `check_in_face_id` with the returned challenge id.
+pub async fn check_in_face_id_begin(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> AppResult<Json<crate::models::attendance::FaceIdBeginResponse>> {
+    // Same preconditions as the completing call, checked early for a clear error.
+    auth.employee_id()?;
+    let company_id = auth.company_id()?;
+
+    let effective = attendance_service::get_effective_method(&state.pool, company_id).await?;
+    if effective.method != "face_id" {
+        return Err(AppError::BadRequest(
+            "Face ID check-in is not enabled for this company".into(),
+        ));
+    }
+
+    let resp = attendance_service::face_id_begin(&state.pool, &state.webauthn, auth.0.sub).await?;
+    Ok(Json(resp))
+}
+
 pub async fn check_in_face_id(
     State(state): State<AppState>,
     auth: AuthUser,
+    headers: HeaderMap,
     Json(req): Json<CheckInFaceIdRequest>,
 ) -> AppResult<Json<AttendanceRecord>> {
     let employee_id = auth.employee_id()?;
@@ -200,15 +230,17 @@ pub async fn check_in_face_id(
         ));
     }
 
-    // The front-end has already completed WebAuthn assertion (authentication_complete passkey flow).
-    // Here we trust auth JWT — the user is already authenticated. Face ID is used as a UX signal.
-    // For a stricter flow, you would verify the passkey assertion here via webauthn_rs.
-    // Using the credential_id presence as a minimal server-side check.
-    if req.credential_id.is_empty() {
-        return Err(AppError::BadRequest(
-            "Missing Face ID credential information".into(),
-        ));
-    }
+    // Verify the passkey assertion server-side against this user's registered
+    // credentials. A record whose method claims biometric presence must not be
+    // creatable with a bare JWT.
+    attendance_service::face_id_verify(
+        &state.pool,
+        &state.webauthn,
+        auth.0.sub,
+        req.challenge_id,
+        &req.credential,
+    )
+    .await?;
 
     let record = attendance_service::check_in_face_id(
         &state.pool,
@@ -218,6 +250,22 @@ pub async fn check_in_face_id(
         req.longitude,
     )
     .await?;
+
+    // Audit parity with the QR path.
+    let audit_meta = AuditRequestMeta::from_headers(&headers);
+    let _ = crate::services::audit_service::log_action_with_metadata(
+        &state.pool,
+        Some(company_id),
+        Some(auth.0.sub),
+        "create",
+        "attendance_record",
+        Some(record.id),
+        None,
+        Some(serde_json::to_value(&record).unwrap_or_default()),
+        Some("Employee checked in via Face ID"),
+        Some(&audit_meta),
+    )
+    .await;
 
     Ok(Json(record))
 }
@@ -266,8 +314,10 @@ pub async fn my_attendance(
     Query(q): Query<AttendanceListQuery>,
 ) -> AppResult<Json<PaginatedAttendance<AttendanceRecord>>> {
     let employee_id = auth.employee_id()?;
+    let company_id = auth.company_id()?;
 
-    let result = attendance_service::get_my_attendance(&state.pool, employee_id, &q).await?;
+    let result =
+        attendance_service::get_my_attendance(&state.pool, employee_id, company_id, &q).await?;
     Ok(Json(result))
 }
 
@@ -279,7 +329,7 @@ pub async fn list_attendance(
     Query(q): Query<AttendanceListQuery>,
 ) -> AppResult<Json<PaginatedAttendance<AttendanceRecordWithEmployee>>> {
     let company_id = auth.company_id()?;
-    auth.require_non_employee()?;
+    auth.require_attendance_viewer()?;
 
     let result = attendance_service::list_attendance(&state.pool, company_id, &q).await?;
     Ok(Json(result))
@@ -316,7 +366,7 @@ pub async fn attendance_summary(
     Query(q): Query<AttendanceSummaryQuery>,
 ) -> AppResult<Json<Vec<AttendanceSummaryItem>>> {
     let company_id = auth.company_id()?;
-    auth.require_non_employee()?;
+    auth.require_attendance_viewer()?;
 
     let items = attendance_service::get_attendance_summary(&state.pool, company_id, &q).await?;
     Ok(Json(items))
@@ -330,7 +380,7 @@ pub async fn export_attendance(
     Query(q): Query<AttendanceExportQuery>,
 ) -> AppResult<Response<Body>> {
     let company_id = auth.company_id()?;
-    auth.require_non_employee()?;
+    auth.require_attendance_viewer()?;
 
     let csv = attendance_service::export_attendance_csv(&state.pool, company_id, &q).await?;
 
@@ -352,16 +402,61 @@ pub async fn export_attendance(
 pub async fn update_attendance(
     State(state): State<AppState>,
     auth: AuthUser,
+    headers: HeaderMap,
     Path(id): Path<Uuid>,
     Json(req): Json<UpdateAttendanceRecordRequest>,
 ) -> AppResult<Json<AttendanceRecord>> {
     let company_id = auth.company_id()?;
     auth.require_hr_admin()?;
+    let audit_meta = AuditRequestMeta::from_headers(&headers);
 
-    let record =
-        attendance_service::update_attendance_record(&state.pool, company_id, id, &req, auth.0.sub)
-            .await?;
+    let record = attendance_service::update_attendance_record(
+        &state.pool,
+        company_id,
+        id,
+        &req,
+        auth.0.sub,
+        Some(&audit_meta),
+    )
+    .await?;
     Ok(Json(record))
+}
+
+// ─── Admin: Auto-Absent Backfill ───
+
+/// Run the auto-absent marking for one past local date. Idempotent (dates
+/// that already have records are skipped), so re-running is safe. Covers the
+/// case where the daily job was down during its window.
+pub async fn absent_run(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    headers: HeaderMap,
+    Json(req): Json<crate::models::attendance::AbsentRunRequest>,
+) -> AppResult<Json<serde_json::Value>> {
+    let company_id = auth.company_id()?;
+    auth.require_hr_admin()?;
+
+    let marked =
+        attendance_service::mark_absent_for_company_date(&state.pool, company_id, req.date).await?;
+
+    let audit_meta = AuditRequestMeta::from_headers(&headers);
+    let _ = crate::services::audit_service::log_action_with_metadata(
+        &state.pool,
+        Some(company_id),
+        Some(auth.0.sub),
+        "create",
+        "attendance_record",
+        None,
+        None,
+        Some(serde_json::json!({ "date": req.date, "marked": marked })),
+        Some("Auto-absent marking run manually"),
+        Some(&audit_meta),
+    )
+    .await;
+
+    Ok(Json(
+        serde_json::json!({ "marked": marked, "date": req.date }),
+    ))
 }
 
 // ─── Kiosk Credentials (admin) ───
@@ -482,7 +577,7 @@ pub async fn kiosk_qr(
 
     let ip = client_ip_string(&headers);
 
-    let (resp, company_id) = attendance_service::generate_qr_via_kiosk(
+    let (resp, _company_id) = attendance_service::generate_qr_via_kiosk(
         &state.pool,
         &secret,
         &state.config.frontend_url,
@@ -490,20 +585,10 @@ pub async fn kiosk_qr(
     )
     .await?;
 
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
-    let _ = crate::services::audit_service::log_action_with_metadata(
-        &state.pool,
-        Some(company_id),
-        None, // No specific user for public kiosk endpoint
-        "create",
-        "attendance_kiosk_credential",
-        None,
-        None,
-        Some(serde_json::to_value(&resp).unwrap_or_default()),
-        Some("Generated new attendance QR token via kiosk"),
-        Some(&audit_meta),
-    )
-    .await;
+    // No audit row per mint: an always-on kiosk refreshes ~288×/day, which
+    // drowned the audit trail (mislabeled as credential creations, carrying
+    // the live token). The credential's last_used_at/last_used_ip heartbeat —
+    // updated by generate_qr_via_kiosk — is the kiosk activity record.
 
     Ok(Json(resp))
 }

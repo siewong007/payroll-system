@@ -26,20 +26,25 @@ pub struct AuditRequestMeta {
 
 impl AuditRequestMeta {
     pub fn from_headers(headers: &HeaderMap) -> Self {
+        // Truncated to the column width (audit_logs.ip_address is
+        // varchar(45)) exactly as user_agent is below: this is client-supplied
+        // header text, and an over-long value would fail the INSERT — fatal
+        // wherever an audit row shares a transaction with the change it
+        // describes.
         let ip_address = headers
             .get("x-forwarded-for")
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.split(',').next())
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned)
+            .map(|value| value.chars().take(45).collect::<String>())
             .or_else(|| {
                 headers
                     .get("x-real-ip")
                     .and_then(|value| value.to_str().ok())
                     .map(str::trim)
                     .filter(|value| !value.is_empty())
-                    .map(ToOwned::to_owned)
+                    .map(|value| value.chars().take(45).collect::<String>())
             });
 
         let user_agent = headers

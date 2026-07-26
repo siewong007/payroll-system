@@ -35,3 +35,36 @@ pub async fn local_time_in_tz(
     .await?;
     Ok(now_local)
 }
+
+/// Local calendar date and time-of-day in `tz`, per the DB clock, in a single
+/// round trip. The auto-absent catch-up uses both (date targeting + the
+/// "past the daily cutoff yet?" decision).
+pub async fn date_and_time_in_tz(
+    executor: impl Executor<'_, Database = Postgres>,
+    tz: &str,
+) -> AppResult<(chrono::NaiveDate, NaiveTime)> {
+    let row = sqlx::query!(
+        r#"SELECT (NOW() AT TIME ZONE $1)::date AS "today!",
+                  (NOW() AT TIME ZONE $1)::time AS "now_local!""#,
+        tz,
+    )
+    .fetch_one(executor)
+    .await?;
+    Ok((row.today, row.now_local))
+}
+
+/// Day-of-week (0=Sunday … 6=Saturday) and local time-of-day in `tz`, per the
+/// DB clock, in a single round trip. Check-in status determination needs both.
+pub async fn dow_and_time_in_tz(
+    executor: impl Executor<'_, Database = Postgres>,
+    tz: &str,
+) -> AppResult<(i16, NaiveTime)> {
+    let row = sqlx::query!(
+        r#"SELECT EXTRACT(DOW FROM (NOW() AT TIME ZONE $1))::int2 AS "dow!",
+                  (NOW() AT TIME ZONE $1)::time AS "now_local!""#,
+        tz,
+    )
+    .fetch_one(executor)
+    .await?;
+    Ok((row.dow, row.now_local))
+}

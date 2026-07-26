@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT (NOW() AT TIME ZONE $1)::date AS \"today!\",\n                  (NOW() AT TIME ZONE $1)::time AS \"now_local!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "today!",
+        "type_info": "Date"
+      },
+      {
+        "ordinal": 1,
+        "name": "now_local!",
+        "type_info": "Time"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "48ecaa5b4f27f26c5e831709207e3e20971a27dbe5a89ebd6d3e74b02c03dc6c"
+}

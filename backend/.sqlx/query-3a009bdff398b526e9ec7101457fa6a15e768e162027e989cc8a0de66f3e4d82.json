@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT c.id AS \"company_id!\",\n                  COALESCE(ws.timezone, 'Asia/Kuala_Lumpur') AS \"timezone!\"\n           FROM companies c\n           LEFT JOIN company_work_schedules ws\n               ON ws.company_id = c.id AND ws.is_default = TRUE\n           WHERE c.is_active = TRUE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "company_id!",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "timezone!",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      true,
+      null
+    ]
+  },
+  "hash": "3a009bdff398b526e9ec7101457fa6a15e768e162027e989cc8a0de66f3e4d82"
+}

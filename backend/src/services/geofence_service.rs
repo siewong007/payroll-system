@@ -265,6 +265,30 @@ pub async fn check_geofence(
     })
 }
 
+/// Evaluate the geofence for a check-out without ever rejecting: returns
+/// whether the record should be flagged as outside. A blocked check-out
+/// becomes a stale open session only an admin can fix, so even in 'enforce'
+/// mode an off-site (or GPS-less) check-out is recorded and flagged, not
+/// refused — the flag ORs into `is_outside_geofence` for admin review.
+pub async fn flag_geofence_for_checkout(
+    pool: &PgPool,
+    company_id: Uuid,
+    latitude: Option<f64>,
+    longitude: Option<f64>,
+) -> AppResult<bool> {
+    validate_optional_coordinates(latitude, longitude)?;
+    let mode = get_geofence_mode(pool, company_id).await?;
+    if mode == "none" {
+        return Ok(false);
+    }
+    let (lat, lng) = match (latitude, longitude) {
+        (Some(lat), Some(lng)) => (lat, lng),
+        _ => return Ok(true),
+    };
+    let result = check_geofence(pool, company_id, lat, lng).await?;
+    Ok(!result.is_within)
+}
+
 /// Validate geofence and return whether the record should be flagged.
 /// Returns Err if enforce mode and outside fence.
 /// Returns Ok(true) if outside fence (warn mode), Ok(false) if inside or no check.

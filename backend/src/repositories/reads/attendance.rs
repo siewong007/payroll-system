@@ -1,10 +1,19 @@
 //! Dynamic / cross-table attendance reads (filtered list, my-attendance, summary,
 //! export rows).
 //!
-//! These build SQL at runtime from optional filters, so they use the runtime query
-//! builder (not the compile-checked macros) and are not part of the offline cache.
+//! These build SQL at runtime from optional filters, so they use `sqlx::QueryBuilder`
+//! (not the compile-checked macros) and are not part of the offline cache.
+//! `push_bind` keeps each predicate and its bound value together, so there is no
+//! manual parameter-index bookkeeping to drift out of sync.
+//!
+//! Date-range filters are written as *sargable* ranges on the raw `timestamptz`
+//! (`check_in_at >= <local midnight of from> AND check_in_at < <local midnight
+//! after to>`) instead of wrapping the column in `AT TIME ZONE`, so the
+//! `(company_id, check_in_at)` / `(employee_id, check_in_at)` btrees serve them.
+//! The semantics are identical to bucketing by local calendar date.
 
-use sqlx::PgPool;
+use chrono::NaiveDate;
+use sqlx::{PgPool, Postgres, QueryBuilder};
 use uuid::Uuid;
 
 use crate::core::error::AppResult;
@@ -20,71 +29,50 @@ fn resolve_pagination(q: &AttendanceListQuery) -> (i64, i64, i64) {
     (page, per_page, offset)
 }
 
-/// Admin attendance list (joined with employee details), with optional filters + paging.
-pub async fn list_with_employee(
-    pool: &PgPool,
-    company_id: Uuid,
-    q: &AttendanceListQuery,
-) -> AppResult<PaginatedAttendance<AttendanceRecordWithEmployee>> {
-    let (page, per_page, offset) = resolve_pagination(q);
+/// `ar.check_in_at >= <local midnight of date, in tz>`
+fn push_date_from(qb: &mut QueryBuilder<'_, Postgres>, tz: &str, date_from: NaiveDate) {
+    qb.push(" AND ar.check_in_at >= (");
+    qb.push_bind(date_from);
+    qb.push("::date)::timestamp AT TIME ZONE ");
+    qb.push_bind(tz.to_owned());
+}
 
-    // Build WHERE clause (shared between count + data queries)
-    let mut where_clause = String::from("ar.company_id = $1");
-    let mut param_idx = 2usize;
+/// `ar.check_in_at < <local midnight after date, in tz>` (inclusive local date)
+fn push_date_to(qb: &mut QueryBuilder<'_, Postgres>, tz: &str, date_to: NaiveDate) {
+    qb.push(" AND ar.check_in_at < (");
+    qb.push_bind(date_to);
+    qb.push("::date + 1)::timestamp AT TIME ZONE ");
+    qb.push_bind(tz.to_owned());
+}
 
-    if q.employee_id.is_some() {
-        where_clause.push_str(&format!(" AND ar.employee_id = ${}", param_idx));
-        param_idx += 1;
-    }
-    if q.date_from.is_some() {
-        where_clause.push_str(&format!(
-            " AND (ar.check_in_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date >= ${}",
-            param_idx
-        ));
-        param_idx += 1;
-    }
-    if q.date_to.is_some() {
-        where_clause.push_str(&format!(
-            " AND (ar.check_in_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date <= ${}",
-            param_idx
-        ));
-        param_idx += 1;
-    }
-    if q.status.is_some() {
-        where_clause.push_str(&format!(" AND ar.status = ${}", param_idx));
-        param_idx += 1;
-    }
-    if q.method.is_some() {
-        where_clause.push_str(&format!(" AND ar.method = ${}", param_idx));
-        param_idx += 1;
-    }
-
-    // Count query
-    let count_sql = format!(
-        "SELECT COUNT(*) FROM attendance_records ar WHERE {}",
-        where_clause
-    );
-    let mut count_query = sqlx::query_scalar::<_, i64>(&count_sql).bind(company_id);
+/// Shared optional filters for the admin list / export queries.
+fn push_list_filters(qb: &mut QueryBuilder<'_, Postgres>, tz: &str, q: &AttendanceListQuery) {
     if let Some(eid) = q.employee_id {
-        count_query = count_query.bind(eid);
+        qb.push(" AND ar.employee_id = ");
+        qb.push_bind(eid);
     }
-    if let Some(ref df) = q.date_from {
-        count_query = count_query.bind(df);
+    if let Some(df) = q.date_from {
+        push_date_from(qb, tz, df);
     }
-    if let Some(ref dt) = q.date_to {
-        count_query = count_query.bind(dt);
+    if let Some(dt) = q.date_to {
+        push_date_to(qb, tz, dt);
     }
     if let Some(ref st) = q.status {
-        count_query = count_query.bind(st);
+        qb.push(" AND ar.status = ");
+        qb.push_bind(st.clone());
     }
     if let Some(ref m) = q.method {
-        count_query = count_query.bind(m);
+        qb.push(" AND ar.method = ");
+        qb.push_bind(m.clone());
     }
-    let total = count_query.fetch_one(pool).await?;
+    if q.open_only.unwrap_or(false) {
+        // Sessions still open (never checked out). Absent placeholders are
+        // closed rows, but exclude the status defensively anyway.
+        qb.push(" AND ar.check_out_at IS NULL AND ar.status <> 'absent'");
+    }
+}
 
-    // Data query
-    let data_sql = format!(
-        r#"SELECT
+const RECORD_WITH_EMPLOYEE_COLUMNS: &str = r#"
             ar.id, ar.company_id, ar.employee_id,
             e.employee_number, e.full_name, e.department,
             ar.check_in_at, ar.check_out_at,
@@ -93,37 +81,43 @@ pub async fn list_with_employee(
             ar.checkout_latitude, ar.checkout_longitude,
             ar.notes,
             ar.hours_worked, ar.overtime_hours, ar.is_outside_geofence,
-            ar.created_at
-           FROM attendance_records ar
-           JOIN employees e ON ar.employee_id = e.id
-           WHERE {}
-           ORDER BY ar.check_in_at DESC
-           LIMIT ${} OFFSET ${}"#,
-        where_clause,
-        param_idx,
-        param_idx + 1
-    );
+            ar.created_at"#;
 
-    let mut data_query =
-        sqlx::query_as::<_, AttendanceRecordWithEmployee>(&data_sql).bind(company_id);
-    if let Some(eid) = q.employee_id {
-        data_query = data_query.bind(eid);
-    }
-    if let Some(ref df) = q.date_from {
-        data_query = data_query.bind(df);
-    }
-    if let Some(ref dt) = q.date_to {
-        data_query = data_query.bind(dt);
-    }
-    if let Some(ref st) = q.status {
-        data_query = data_query.bind(st);
-    }
-    if let Some(ref m) = q.method {
-        data_query = data_query.bind(m);
-    }
-    let data = data_query
-        .bind(per_page)
-        .bind(offset)
+/// Admin attendance list (joined with employee details), with optional filters + paging.
+/// Dates are bucketed by the company's local calendar in `tz`.
+pub async fn list_with_employee(
+    pool: &PgPool,
+    company_id: Uuid,
+    tz: &str,
+    q: &AttendanceListQuery,
+) -> AppResult<PaginatedAttendance<AttendanceRecordWithEmployee>> {
+    let (page, per_page, offset) = resolve_pagination(q);
+
+    let mut count_qb =
+        QueryBuilder::new("SELECT COUNT(*) FROM attendance_records ar WHERE ar.company_id = ");
+    count_qb.push_bind(company_id);
+    push_list_filters(&mut count_qb, tz, q);
+    let total: i64 = count_qb.build_query_scalar().fetch_one(pool).await?;
+
+    let mut data_qb = QueryBuilder::new("SELECT");
+    data_qb.push(RECORD_WITH_EMPLOYEE_COLUMNS);
+    // Tenant equality on the JOIN as defence in depth: even if a record ever
+    // pointed at another company's employee, it must not leak their details.
+    data_qb.push(
+        r#"
+           FROM attendance_records ar
+           JOIN employees e ON ar.employee_id = e.id AND e.company_id = ar.company_id
+           WHERE ar.company_id = "#,
+    );
+    data_qb.push_bind(company_id);
+    push_list_filters(&mut data_qb, tz, q);
+    data_qb.push(" ORDER BY ar.check_in_at DESC LIMIT ");
+    data_qb.push_bind(per_page);
+    data_qb.push(" OFFSET ");
+    data_qb.push_bind(offset);
+
+    let data = data_qb
+        .build_query_as::<AttendanceRecordWithEmployee>()
         .fetch_all(pool)
         .await?;
 
@@ -142,59 +136,37 @@ pub async fn list_with_employee(
 pub async fn list_for_employee(
     pool: &PgPool,
     employee_id: Uuid,
+    tz: &str,
     q: &AttendanceListQuery,
 ) -> AppResult<PaginatedAttendance<AttendanceRecord>> {
     let (page, per_page, offset) = resolve_pagination(q);
 
-    let mut where_clause = String::from("employee_id = $1");
-    let mut param_idx = 2usize;
+    let push_filters = |qb: &mut QueryBuilder<'_, Postgres>| {
+        if let Some(df) = q.date_from {
+            push_date_from(qb, tz, df);
+        }
+        if let Some(dt) = q.date_to {
+            push_date_to(qb, tz, dt);
+        }
+    };
 
-    if q.date_from.is_some() {
-        where_clause.push_str(&format!(
-            " AND (check_in_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date >= ${}",
-            param_idx
-        ));
-        param_idx += 1;
-    }
-    if q.date_to.is_some() {
-        where_clause.push_str(&format!(
-            " AND (check_in_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date <= ${}",
-            param_idx
-        ));
-        param_idx += 1;
-    }
+    let mut count_qb =
+        QueryBuilder::new("SELECT COUNT(*) FROM attendance_records ar WHERE ar.employee_id = ");
+    count_qb.push_bind(employee_id);
+    push_filters(&mut count_qb);
+    let total: i64 = count_qb.build_query_scalar().fetch_one(pool).await?;
 
-    // Count
-    let count_sql = format!(
-        "SELECT COUNT(*) FROM attendance_records WHERE {}",
-        where_clause
-    );
-    let mut count_query = sqlx::query_scalar::<_, i64>(&count_sql).bind(employee_id);
-    if let Some(ref df) = q.date_from {
-        count_query = count_query.bind(df);
-    }
-    if let Some(ref dt) = q.date_to {
-        count_query = count_query.bind(dt);
-    }
-    let total = count_query.fetch_one(pool).await?;
+    let mut data_qb =
+        QueryBuilder::new("SELECT ar.* FROM attendance_records ar WHERE ar.employee_id = ");
+    data_qb.push_bind(employee_id);
+    push_filters(&mut data_qb);
+    data_qb.push(" ORDER BY ar.check_in_at DESC LIMIT ");
+    data_qb.push_bind(per_page);
+    data_qb.push(" OFFSET ");
+    data_qb.push_bind(offset);
 
-    // Data
-    let data_sql = format!(
-        "SELECT * FROM attendance_records WHERE {} ORDER BY check_in_at DESC LIMIT ${} OFFSET ${}",
-        where_clause,
-        param_idx,
-        param_idx + 1
-    );
-    let mut data_query = sqlx::query_as::<_, AttendanceRecord>(&data_sql).bind(employee_id);
-    if let Some(ref df) = q.date_from {
-        data_query = data_query.bind(df);
-    }
-    if let Some(ref dt) = q.date_to {
-        data_query = data_query.bind(dt);
-    }
-    let data = data_query
-        .bind(per_page)
-        .bind(offset)
+    let data = data_qb
+        .build_query_as::<AttendanceRecord>()
         .fetch_all(pool)
         .await?;
 
@@ -210,143 +182,119 @@ pub async fn list_for_employee(
 }
 
 /// Per-employee aggregate for a date range. Employees with no records still appear.
+///
+/// Counts are per distinct local *day*, not per record: an employee with a
+/// split shift (two present records in one day) counts one present day, and a
+/// day carrying both an auto-absent placeholder and a real late check-in
+/// counts once as late. Precedence within a day: late > half_day > present >
+/// absent.
 pub async fn summary(
     pool: &PgPool,
     company_id: Uuid,
+    tz: &str,
     q: &AttendanceSummaryQuery,
 ) -> AppResult<Vec<AttendanceSummaryItem>> {
-    let mut extra_where = String::new();
-    let mut param_idx = 4usize;
-
-    if q.employee_id.is_some() {
-        extra_where.push_str(&format!(" AND e.id = ${}", param_idx));
-        param_idx += 1;
-    }
-    if q.department.is_some() {
-        extra_where.push_str(&format!(" AND e.department = ${}", param_idx));
-        param_idx += 1;
-    }
-    let _ = param_idx; // suppress unused warning
-
-    let sql = format!(
+    let mut qb = QueryBuilder::new(
         r#"SELECT
                e.id              AS employee_id,
                e.employee_number,
                e.full_name,
                e.department,
-               COUNT(*) FILTER (WHERE ar.status = 'present')  AS present_days,
-               COUNT(*) FILTER (WHERE ar.status = 'late')     AS late_days,
-               COUNT(*) FILTER (WHERE ar.status = 'absent')   AS absent_days,
-               COUNT(*) FILTER (WHERE ar.status = 'half_day') AS half_days,
-               COALESCE(SUM(ar.hours_worked),    0)::NUMERIC(10,2) AS total_hours,
-               COALESCE(SUM(ar.overtime_hours),  0)::NUMERIC(10,2) AS overtime_hours,
-               COUNT(*) FILTER (
-                   WHERE ar.check_out_at IS NULL AND ar.status NOT IN ('absent')
-               ) AS unchecked_out_days
+               COUNT(*) FILTER (WHERE d.day_status = 'present')  AS present_days,
+               COUNT(*) FILTER (WHERE d.day_status = 'late')     AS late_days,
+               COUNT(*) FILTER (WHERE d.day_status = 'absent')   AS absent_days,
+               COUNT(*) FILTER (WHERE d.day_status = 'half_day') AS half_days,
+               COALESCE(SUM(d.hours_worked),    0)::NUMERIC(10,2) AS total_hours,
+               COALESCE(SUM(d.overtime_hours),  0)::NUMERIC(10,2) AS overtime_hours,
+               COUNT(*) FILTER (WHERE d.has_open) AS unchecked_out_days
            FROM employees e
-           LEFT JOIN attendance_records ar
-               ON  ar.employee_id = e.id
-               AND (ar.check_in_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date >= $2
-               AND (ar.check_in_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date <= $3
-           WHERE e.company_id   = $1
-             AND e.is_active    = TRUE
-             AND e.deleted_at   IS NULL
-             {}
-           GROUP BY e.id, e.employee_number, e.full_name, e.department
-           ORDER BY e.full_name"#,
-        extra_where
+           LEFT JOIN (
+               SELECT
+                   ar.employee_id,
+                   (ar.check_in_at AT TIME ZONE "#,
     );
-
-    let mut query = sqlx::query_as::<_, AttendanceSummaryItem>(&sql)
-        .bind(company_id)
-        .bind(q.date_from)
-        .bind(q.date_to);
-
+    qb.push_bind(tz.to_owned());
+    qb.push(
+        r#")::date AS local_date,
+                   CASE
+                       WHEN BOOL_OR(ar.status = 'late')     THEN 'late'
+                       WHEN BOOL_OR(ar.status = 'half_day') THEN 'half_day'
+                       WHEN BOOL_OR(ar.status = 'present')  THEN 'present'
+                       ELSE 'absent'
+                   END AS day_status,
+                   SUM(ar.hours_worked)   AS hours_worked,
+                   SUM(ar.overtime_hours) AS overtime_hours,
+                   BOOL_OR(ar.check_out_at IS NULL AND ar.status <> 'absent') AS has_open
+               FROM attendance_records ar
+               WHERE ar.company_id = "#,
+    );
+    qb.push_bind(company_id);
+    push_date_from(&mut qb, tz, q.date_from);
+    push_date_to(&mut qb, tz, q.date_to);
+    // Group by ordinal: the local-date expression uses a bound parameter, and
+    // repeating it with a *different* placeholder is not recognised as the same
+    // expression ("column must appear in the GROUP BY clause").
+    qb.push(
+        r#"
+               GROUP BY 1, 2
+           ) d ON d.employee_id = e.id
+           WHERE e.company_id = "#,
+    );
+    qb.push_bind(company_id);
+    qb.push(" AND e.is_active = TRUE AND e.deleted_at IS NULL");
     if let Some(eid) = q.employee_id {
-        query = query.bind(eid);
+        qb.push(" AND e.id = ");
+        qb.push_bind(eid);
     }
     if let Some(ref d) = q.department {
-        query = query.bind(d);
+        qb.push(" AND e.department = ");
+        qb.push_bind(d.clone());
     }
+    qb.push(
+        r#"
+           GROUP BY e.id, e.employee_number, e.full_name, e.department
+           ORDER BY e.full_name"#,
+    );
 
-    Ok(query.fetch_all(pool).await?)
+    Ok(qb
+        .build_query_as::<AttendanceSummaryItem>()
+        .fetch_all(pool)
+        .await?)
 }
 
 /// Rows for CSV export (joined with employee details), with optional filters.
+/// The service guarantees a bounded date range before calling this.
 pub async fn export_rows(
     pool: &PgPool,
     company_id: Uuid,
+    tz: &str,
     q: &AttendanceExportQuery,
 ) -> AppResult<Vec<AttendanceRecordWithEmployee>> {
-    let mut where_clause = String::from("ar.company_id = $1");
-    let mut param_idx = 2usize;
+    let list_filters = AttendanceListQuery {
+        employee_id: q.employee_id,
+        date_from: q.date_from,
+        date_to: q.date_to,
+        status: q.status.clone(),
+        method: q.method.clone(),
+        open_only: None,
+        page: None,
+        per_page: None,
+    };
 
-    if q.employee_id.is_some() {
-        where_clause.push_str(&format!(" AND ar.employee_id = ${}", param_idx));
-        param_idx += 1;
-    }
-    // Bucket by Malaysian local date, not the UTC instant: a 07:30 MYT check-in is
-    // 23:30 UTC the previous day, so a UTC-aligned comparison put early-morning
-    // records outside a range that should include them — and disagreed with
-    // get_today/mark_absent, which already bucket by company timezone.
-    if q.date_from.is_some() {
-        where_clause.push_str(&format!(
-            " AND (ar.check_in_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date >= ${}",
-            param_idx
-        ));
-        param_idx += 1;
-    }
-    if q.date_to.is_some() {
-        where_clause.push_str(&format!(
-            " AND (ar.check_in_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date <= ${}",
-            param_idx
-        ));
-        param_idx += 1;
-    }
-    if q.status.is_some() {
-        where_clause.push_str(&format!(" AND ar.status = ${}", param_idx));
-        param_idx += 1;
-    }
-    if q.method.is_some() {
-        where_clause.push_str(&format!(" AND ar.method = ${}", param_idx));
-        param_idx += 1;
-    }
-    let _ = param_idx;
-
-    let sql = format!(
-        r#"SELECT
-               ar.id, ar.company_id, ar.employee_id,
-               e.employee_number, e.full_name, e.department,
-               ar.check_in_at, ar.check_out_at,
-               ar.method, ar.status,
-               ar.latitude, ar.longitude,
-               ar.checkout_latitude, ar.checkout_longitude,
-               ar.notes, ar.hours_worked, ar.overtime_hours, ar.is_outside_geofence,
-               ar.created_at
+    let mut qb = QueryBuilder::new("SELECT");
+    qb.push(RECORD_WITH_EMPLOYEE_COLUMNS);
+    qb.push(
+        r#"
            FROM attendance_records ar
-           JOIN employees e ON ar.employee_id = e.id
-           WHERE {}
-           ORDER BY ar.check_in_at DESC"#,
-        where_clause
+           JOIN employees e ON ar.employee_id = e.id AND e.company_id = ar.company_id
+           WHERE ar.company_id = "#,
     );
+    qb.push_bind(company_id);
+    push_list_filters(&mut qb, tz, &list_filters);
+    qb.push(" ORDER BY ar.check_in_at DESC");
 
-    let mut dq = sqlx::query_as::<_, AttendanceRecordWithEmployee>(&sql).bind(company_id);
-    if let Some(eid) = q.employee_id {
-        dq = dq.bind(eid);
-    }
-    if let Some(ref f) = q.date_from {
-        dq = dq.bind(f);
-    }
-    if let Some(ref t) = q.date_to {
-        dq = dq.bind(t);
-    }
-    if let Some(ref s) = q.status {
-        dq = dq.bind(s);
-    }
-    // Bind order must match the predicate order above.
-    if let Some(ref m) = q.method {
-        dq = dq.bind(m);
-    }
-
-    Ok(dq.fetch_all(pool).await?)
+    Ok(qb
+        .build_query_as::<AttendanceRecordWithEmployee>()
+        .fetch_all(pool)
+        .await?)
 }

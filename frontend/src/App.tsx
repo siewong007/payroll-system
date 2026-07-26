@@ -8,6 +8,7 @@ import { PortalLayout } from '@/components/layout/PortalLayout';
 import { ForbiddenPage, NotFoundPage } from '@/pages/errors/ErrorPage';
 import {
   ADMIN_DATA_ROLES,
+  ATTENDANCE_VIEW_ROLES,
   PAYROLL_DATA_ROLES,
   PAYROLL_PREP_ROLES,
   REPORT_ROLES,
@@ -50,7 +51,6 @@ const LettersPage = lazyNamed(() => import('@/pages/letters/LettersPage'), 'Lett
 const BackupPage = lazyNamed(() => import('@/pages/backup/BackupPage'), 'BackupPage');
 const AuditTrailPage = lazyNamed(() => import('@/pages/audit/AuditTrailPage'), 'AuditTrailPage');
 const AttendancePage = lazyNamed(() => import('@/pages/attendance/AttendancePage'), 'AttendancePage');
-const AttendanceKiosk = lazyNamed(() => import('@/pages/attendance/AttendanceKiosk'), 'AttendanceKiosk');
 const AttendanceKioskPublic = lazyNamed(
   () => import('@/pages/attendance/AttendanceKioskPublic'),
   'AttendanceKioskPublic',
@@ -119,7 +119,9 @@ export default function App() {
               <Route path="/forgot-password" element={<ForgotPassword />} />
               <Route path="/reset-password" element={<ResetPassword />} />
               <Route path="/change-password" element={<ChangePassword />} />
-              <Route path="/attendance/kiosk" element={<AttendanceKiosk />} />
+              {/* The kiosk display is /kiosk/:kioskKey below — it needs no user
+                  session, so a wall-mounted tablet never falls back to a login
+                  screen. The old session-backed /attendance/kiosk is gone. */}
               <Route path="/attendance/scan" element={<AttendanceScanPage />} />
               <Route path="/kiosk/:kioskKey" element={<AttendanceKioskPublic />} />
               <Route path="/403" element={<ForbiddenPage />} />
@@ -216,7 +218,14 @@ export default function App() {
                     </RoleGuard>
                   )}
                 />
-                <Route path="/attendance" element={<AttendancePage />} />
+                <Route
+                  path="/attendance"
+                  element={(
+                    <RoleGuard allowedRoles={ATTENDANCE_VIEW_ROLES}>
+                      <AttendancePage />
+                    </RoleGuard>
+                  )}
+                />
                 <Route
                   path="/admin/attendance-settings"
                   element={(

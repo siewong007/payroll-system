@@ -43,9 +43,13 @@ details are logged rather than exposed in HTTP 500 responses.
 
 The API process also owns two operational jobs:
 
-- expired or revoked refresh-token cleanup every 24 hours;
-- hourly attendance evaluation that marks eligible employees absent around
-  12:30 PM Asia/Kuala_Lumpur, excluding approved leave and public holidays.
+- every 24 hours, cleanup of expired or revoked refresh tokens and of expired
+  attendance QR tokens that no check-in references;
+- a daily attendance evaluation at 12:30 PM Asia/Kuala_Lumpur (and once at
+  startup) that marks eligible employees absent, excluding approved leave,
+  non-working days, and public holidays. Each run catches up every due local
+  date since the last bookmarked success, so a window missed during a deploy is
+  recovered instead of skipped permanently.
 
 These jobs are suitable for the current single API instance. Multiple replicas
 would need a database lease, leader election, or a separate worker.
@@ -125,18 +129,31 @@ Attendance supports authenticated employee check-in, public kiosk display, and
 HR administration.
 
 - QR tokens are multi-use for their server-returned TTL. The `used` flag means
-  administratively revoked, not consumed by an employee scan.
+  administratively revoked, not consumed by an employee scan. Revocation is
+  scoped per display surface, so kiosks never retire each other's codes.
 - Check-out selects the most recent open record within 24 hours so overnight
-  shifts do not break at midnight.
+  shifts do not break at midnight. Nothing matching but an older open session
+  present is reported as a stale session needing an admin correction, rather
+  than as "no check-in" — the latter sent employees in a loop between the
+  check-out and check-in errors. Geofence never blocks a check-out; an off-site
+  one is recorded and flagged for review.
 - Geofence mode can be `none`, `warn`, or `enforce`; database checks protect
-  latitude, longitude, and positive radii.
+  latitude, longitude, and positive radii. The mode is published to clients so
+  they skip the location prompt when it is `none`.
 - The summary read model left-joins employees, so employees with no attendance
-  rows still appear. The same filters feed CSV export.
+  rows still appear. Counts aggregate distinct local days (with precedence
+  late > half_day > present > absent), so a split shift or an absence
+  superseded by a later check-in is not double-counted. The same filters feed
+  CSV export, which defaults to the current month when given no date range.
+- Date filters compare the raw `timestamptz` against local-midnight bounds and
+  take the company timezone as a parameter, keeping them index-usable.
 - Manual records and corrections are HR/admin operations and are audit logged.
-
-The option labelled Face ID is currently an authenticated convenience flow,
-not server-verified biometric proof. See [features.md](features.md) and
-[SECURITY.md](../SECURITY.md).
+  A correction requires a reason, uses explicit clear flags rather than
+  treating an omitted field as a clear, and writes its audit row in the same
+  transaction as the update.
+- Face ID check-in issues a per-check-in WebAuthn challenge and verifies the
+  assertion server-side against the employee's registered passkeys before
+  writing the record.
 
 ## Employee and approval workflows
 

@@ -62,15 +62,16 @@ repository.
 
 | Capability | Status | Notes |
 | --- | --- | --- |
-| Admin-generated QR and employee QR check-in | End to end | One QR can serve many employees during its server-provided TTL |
-| Public kiosk credentials and rotating QR display | End to end | Kiosk secrets are shown once and stored hashed |
-| Check-out including overnight shifts | End to end | Matches the newest open record within 24 hours |
-| Employee current-day/history view | End to end | Portal flow |
-| HR list, manual entry, correction, filters | End to end | Company-scoped and audit logged |
-| Per-employee attendance summary and CSV export | End to end | Includes employees with zero matching rows |
-| Locations and `none`/`warn`/`enforce` geofence modes | End to end | Coordinate/radius validity is enforced by the schema |
-| Automatic absence marking | End to end | In-process scheduler; safe for the current single API instance |
-| Face ID-labelled check-in | Known limitation | Requires an authenticated employee but only checks credential presence at this endpoint; it does not verify a fresh biometric/WebAuthn assertion |
+| Admin-generated QR and employee QR check-in | End to end | One QR can serve many employees during its server-provided TTL; the admin console only mints while the QR is actually displayed |
+| Public kiosk credentials and rotating QR display | End to end | Kiosk secrets are shown once and stored hashed; expired unreferenced tokens are purged daily |
+| Check-out including overnight shifts | End to end | Matches the newest open record within 24 hours; an older open session is reported as such instead of "please check in first". Never blocked by geofence — an off-site check-out is recorded and flagged |
+| Employee current-day/history view | End to end | Portal flow; fetch failures surface as retryable errors rather than an empty "not checked in" state |
+| HR list, manual entry, correction, filters | End to end | Company-scoped and audit logged. Manual entry picks employees by name/number and rejects cross-company ids; corrections require a reason and support explicit clearing of check-out/notes |
+| Open-session triage | End to end | `open_only` filter plus a "Still Checked In" tile for finding sessions nobody closed |
+| Per-employee attendance summary and CSV export | End to end | Includes employees with zero matching rows. Counts are per distinct local day (a split shift is one day; a superseded absence is not double-counted). Export defaults to the current month when no range is given |
+| Locations and `none`/`warn`/`enforce` geofence modes | End to end | Coordinate/radius validity is enforced by the schema; clients skip the GPS wait when the mode is `none` |
+| Automatic absence marking | End to end | In-process scheduler; safe for the current single API instance. Runs as a catch-up from the last bookmarked success, so a missed window is recovered rather than skipped, and HR can re-run a past date on demand |
+| Face ID check-in | End to end | A dedicated challenge is issued per check-in and the WebAuthn assertion is verified server-side against the employee's registered passkeys before the record is written |
 
 ## Employee self-service and approvals
 

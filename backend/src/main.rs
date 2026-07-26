@@ -88,11 +88,14 @@ async fn main() -> anyhow::Result<()> {
         // Outermost so it wraps the final response body.
         .layer(tower_http::compression::CompressionLayer::new());
 
-    // Background task: clean up stale refresh tokens every 24 hours.
-    // Every tick logs, even when nothing is deleted, so a silent log means the
-    // runtime's timers are wedged — not that the task had nothing to do.
+    // Background task: clean up stale refresh tokens and expired attendance
+    // QR tokens every 24 hours. Every tick logs, even when nothing is deleted,
+    // so a silent log means the runtime's timers are wedged — not that the
+    // task had nothing to do.
     let cleanup_pool = pool.clone();
     tokio::spawn(async move {
+        use payroll_system::repositories::attendance_qr_tokens;
+
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(24 * 60 * 60));
         // After an OS sleep/wake gap, fire one delayed tick instead of a
         // catch-up burst of every tick missed while suspended.
@@ -116,6 +119,13 @@ async fn main() -> anyhow::Result<()> {
                 }
                 Err(e) => tracing::error!("Failed to clean up refresh tokens: {}", e),
             }
+
+            // A kiosk mints ~288 QR tokens/day; unreferenced expired ones are
+            // dead weight. Tokens referenced by a check-in are kept as history.
+            match attendance_qr_tokens::purge_expired(&cleanup_pool, 7).await {
+                Ok(rows) => tracing::info!(rows, "qr-token cleanup: completed"),
+                Err(e) => tracing::error!("Failed to clean up attendance QR tokens: {}", e),
+            }
         }
     });
 
@@ -125,6 +135,11 @@ async fn main() -> anyhow::Result<()> {
     // computation is pure and unit-tested (core::schedule) with the invariant
     // that the delay is strictly positive, so this loop cannot arm a
     // zero-length sleep and spin.
+    //
+    // Each run is a *catch-up*: it processes every local date since the last
+    // recorded successful run (bounded), so a deploy or outage spanning the
+    // daily window no longer skips that day forever. The startup pass covers
+    // the restart-after-downtime case without waiting for the next window.
     let absent_pool = pool.clone();
     tokio::spawn(async move {
         use payroll_system::core::schedule::next_daily_run_utc;
@@ -132,6 +147,11 @@ async fn main() -> anyhow::Result<()> {
 
         const RUN_HOUR_UTC: u32 = 4;
         const RUN_MINUTE_UTC: u32 = 30;
+
+        match attendance_service::run_auto_absent_catchup(&absent_pool, "Asia/Kuala_Lumpur").await {
+            Ok(count) => tracing::info!(marked = count, "auto-absent: startup catch-up completed"),
+            Err(e) => tracing::error!("Auto-absent startup catch-up failed: {}", e),
+        }
 
         loop {
             let now = chrono::Utc::now();
@@ -151,7 +171,8 @@ async fn main() -> anyhow::Result<()> {
             tokio::time::sleep(delay).await;
 
             tracing::info!("auto-absent: tick fired; marking absentees");
-            match attendance_service::mark_absent_for_date(&absent_pool, "Asia/Kuala_Lumpur").await
+            match attendance_service::run_auto_absent_catchup(&absent_pool, "Asia/Kuala_Lumpur")
+                .await
             {
                 Ok(count) => tracing::info!(marked = count, "auto-absent: completed"),
                 Err(e) => tracing::error!("Auto-absent marking failed: {}", e),

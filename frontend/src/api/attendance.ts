@@ -1,9 +1,17 @@
 import api from './client';
+import type {
+  AuthenticationResponseJSON,
+  PublicKeyCredentialRequestOptionsJSON,
+} from '@/lib/webauthn';
 
 export interface AttendanceMethodResponse {
   method: 'qr_code' | 'face_id';
   allow_company_override: boolean;
   is_company_override: boolean;
+  /** When 'none', clients should not block on a GPS fix — the server ignores coordinates */
+  geofence_mode: 'none' | 'warn' | 'enforce';
+  /** IANA timezone the company's attendance days are bucketed in */
+  timezone: string;
 }
 
 export interface QrTokenResponse {
@@ -47,6 +55,8 @@ export interface AttendanceListQuery {
   date_to?: string;
   status?: string;
   method?: string;
+  /** Only sessions never checked out — stale-session triage */
+  open_only?: boolean;
   page?: number;
   per_page?: number;
 }
@@ -89,8 +99,29 @@ export function checkInQr(token: string, latitude?: number, longitude?: number):
   return api.post('/attendance/check-in/qr', { token, latitude, longitude }).then(r => r.data);
 }
 
-export function checkInFaceId(credential_id: string, assertion: unknown, latitude?: number, longitude?: number): Promise<AttendanceRecord> {
-  return api.post('/attendance/check-in/face-id', { credential_id, assertion, latitude, longitude }).then(r => r.data);
+export interface FaceIdBeginResponse {
+  challenge_id: string;
+  options: { publicKey: PublicKeyCredentialRequestOptionsJSON };
+}
+
+/**
+ * Start the Face ID (passkey) check-in ceremony. The assertion returned by the
+ * browser must be sent back via `checkInFaceId` with this challenge_id — the
+ * server verifies it before recording the check-in.
+ */
+export function beginFaceIdCheckIn(): Promise<FaceIdBeginResponse> {
+  return api.post('/attendance/check-in/face-id/begin').then(r => r.data);
+}
+
+export function checkInFaceId(
+  challenge_id: string,
+  credential: AuthenticationResponseJSON,
+  latitude?: number,
+  longitude?: number
+): Promise<AttendanceRecord> {
+  return api
+    .post('/attendance/check-in/face-id', { challenge_id, credential, latitude, longitude })
+    .then(r => r.data);
 }
 
 export function checkOut(latitude?: number, longitude?: number): Promise<AttendanceRecord> {
@@ -128,8 +159,22 @@ export function updateAttendanceRecord(id: string, data: {
   check_out_at?: string;
   status?: string;
   notes?: string;
+  /** Explicitly reopen the session. Omitting check_out_at only means "keep existing". */
+  clear_check_out?: boolean;
+  /** Explicitly blank the notes. Same tri-state rationale as clear_check_out. */
+  clear_notes?: boolean;
+  /** Required — recorded in the audit trail, not on the record */
+  reason: string;
 }): Promise<AttendanceRecord> {
   return api.put(`/attendance/records/${id}`, data).then(r => r.data);
+}
+
+/**
+ * Re-run auto-absent marking for a past date (idempotent). Covers days the
+ * daily job missed while the API was down.
+ */
+export function runAbsentMarking(date: string): Promise<{ marked: number; date: string }> {
+  return api.post('/attendance/absent-run', { date }).then(r => r.data);
 }
 
 // ─── Summary & Export ───

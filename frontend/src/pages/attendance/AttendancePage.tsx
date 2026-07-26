@@ -1,11 +1,11 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import {
   QrCode, RefreshCw, Clock, CheckCircle2,
   Filter, Plus, MapPin, Fingerprint,
   AlertCircle, Calendar, User, LogIn, LogOut, MoreVertical,
   ChevronLeft, ChevronRight, Pencil, AlertTriangle, Timer, Download,
-  Link2, Copy, Trash2, ShieldCheck, X,
+  Link2, Copy, Trash2, ShieldCheck, X, Search, ListChecks, Eye, EyeOff,
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import {
@@ -16,8 +16,11 @@ import {
   updateAttendanceRecord,
   downloadAttendanceCsv,
   getAttendanceSummary,
+  runAbsentMarking,
+  setCompanyAttendanceMethod,
   type AttendanceRecordWithEmployee,
 } from '@/api/attendance';
+import { getEmployees } from '@/api/employees';
 import {
   listKioskCredentials,
   createKioskCredential,
@@ -26,9 +29,34 @@ import {
 } from '@/api/kiosk';
 import { useAuth } from '@/context/AuthContext';
 import { hasAnyRole } from '@/lib/roles';
-import { toDateTimeLocalValue, todayLocalDate } from '@/lib/utils';
+import { toDateTimeLocalValue } from '@/lib/utils';
 import { WorkScheduleCard } from '@/components/attendance/WorkScheduleCard';
 import { GeofenceCard } from '@/components/attendance/GeofenceCard';
+
+/**
+ * Today's date on the *company* calendar, not the viewer's. Attendance days
+ * are bucketed in the company timezone server-side, so a viewer in another
+ * zone (or near midnight) would otherwise label the wrong day "today".
+ */
+function todayInZone(timeZone: string | undefined): string {
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: timeZone || 'Asia/Kuala_Lumpur',
+      year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(new Date());
+  } catch {
+    return new Intl.DateTimeFormat('en-CA').format(new Date());
+  }
+}
+
+function firstOfMonth(day: string): string {
+  return `${day.slice(0, 7)}-01`;
+}
+
+/** Extract a server error message, falling back to a caller-supplied default. */
+function apiError(e: unknown, fallback: string): string {
+  return (e as { response?: { data?: { error?: string } } }).response?.data?.error || fallback;
+}
 
 const STATUS_CONFIG = {
   present: { label: 'Present', color: 'bg-emerald-100 text-emerald-700' },
@@ -52,6 +80,109 @@ function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString('en-MY', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
+// ─── Employee Picker ────────────────────────────────────────────────────────
+
+/**
+ * Search-as-you-type employee selector. Replaces the raw UUID text input:
+ * an admin correcting a missed check-in should never have to go find the
+ * employee's UUID by hand.
+ */
+function EmployeePicker({
+  value,
+  onChange,
+  placeholder = 'Search by name or employee number…',
+}: {
+  value: string;
+  onChange: (id: string, label: string) => void;
+  placeholder?: string;
+}) {
+  const [search, setSearch] = useState('');
+  const [open, setOpen] = useState(false);
+  const [selectedLabel, setSelectedLabel] = useState('');
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['employees-picker', search],
+    queryFn: () => getEmployees({ search: search || undefined, is_active: true, per_page: 20 }),
+    enabled: open,
+    placeholderData: keepPreviousData,
+  });
+  const employees = data?.data ?? [];
+
+  // Close on outside click so the list doesn't linger over the form.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [open]);
+
+  // Follow the controlled value when it is reset from outside (the filter-bar
+  // "Clear" button, or the open-sessions tile). Otherwise the input keeps
+  // showing the old employee while the table shows everyone — and the X button,
+  // gated on `value`, disappears so the stale text cannot be cleared at all.
+  useEffect(() => {
+    if (!value) setSelectedLabel('');
+  }, [value]);
+
+  return (
+    <div className="relative" ref={containerRef}>
+      <div className="relative">
+        <Search className="w-3.5 h-3.5 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+        <input
+          type="text"
+          value={open ? search : selectedLabel}
+          onChange={e => { setSearch(e.target.value); setOpen(true); }}
+          onFocus={() => { setSearch(''); setOpen(true); }}
+          placeholder={placeholder}
+          className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-1 focus:ring-black outline-none"
+        />
+        {(value || selectedLabel) && !open && (
+          <button
+            type="button"
+            onClick={() => { onChange('', ''); setSelectedLabel(''); }}
+            className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-gray-700"
+            title="Clear"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        )}
+      </div>
+
+      {open && (
+        <div className="absolute z-10 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-56 overflow-y-auto">
+          {isLoading ? (
+            <div className="px-3 py-3 text-sm text-gray-400">Searching…</div>
+          ) : employees.length === 0 ? (
+            <div className="px-3 py-3 text-sm text-gray-400">No matching employees</div>
+          ) : (
+            employees.map(emp => (
+              <button
+                type="button"
+                key={emp.id}
+                onClick={() => {
+                  const label = `${emp.full_name} (${emp.employee_number})`;
+                  onChange(emp.id, label);
+                  setSelectedLabel(label);
+                  setOpen(false);
+                }}
+                className="w-full text-left px-3 py-2 hover:bg-gray-50 transition-colors"
+              >
+                <div className="text-sm font-medium text-gray-900">{emp.full_name}</div>
+                <div className="text-xs text-gray-400">
+                  {emp.employee_number}{emp.department ? ` · ${emp.department}` : ''}
+                </div>
+              </button>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Kiosk Credentials Modal ────────────────────────────────────────────────
 
 function formatDateTime(iso: string | null) {
@@ -72,7 +203,7 @@ function KioskCredentialsModal({ onClose }: { onClose: () => void }) {
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState('');
 
-  const { data: credentials = [], isLoading } = useQuery({
+  const { data: credentials = [], isLoading, isError: listError } = useQuery({
     queryKey: ['kiosk-credentials'],
     queryFn: listKioskCredentials,
   });
@@ -93,6 +224,7 @@ function KioskCredentialsModal({ onClose }: { onClose: () => void }) {
   const revokeMut = useMutation({
     mutationFn: (id: string) => revokeKioskCredential(id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['kiosk-credentials'] }),
+    onError: (e) => setError(apiError(e, 'Failed to revoke kiosk link')),
   });
 
   const copyUrl = async (url: string) => {
@@ -207,6 +339,13 @@ function KioskCredentialsModal({ onClose }: { onClose: () => void }) {
             <div className="flex items-center justify-center h-24">
               <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-black" />
             </div>
+          ) : listError ? (
+            // Must not read as "no links yet" — a 403 or network failure is a
+            // different situation entirely.
+            <p className="text-sm text-red-600 flex items-center gap-1.5">
+              <AlertCircle className="w-3.5 h-3.5" />
+              Couldn't load kiosk links. You may not have permission to manage them.
+            </p>
           ) : credentials.length === 0 ? (
             <p className="text-sm text-gray-400 italic">No kiosk links yet.</p>
           ) : (
@@ -284,29 +423,36 @@ function KioskCredentialsModal({ onClose }: { onClose: () => void }) {
 
 // ─── QR Panel ────────────────────────────────────────────────────────────────
 
-function QrPanel() {
+function QrPanel({ canGenerate }: { canGenerate: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [timeLeft, setTimeLeft] = useState(0);
   const [isExpired, setIsExpired] = useState(false);
   const [showKiosks, setShowKiosks] = useState(false);
+  // Opt-in display. The panel used to mint a token every 5 minutes for as long
+  // as any admin tab sat open — even one only viewing records.
+  const [showQr, setShowQr] = useState(false);
   const queryClient = useQueryClient();
 
-  const { data: token, refetch: generateNew } = useQuery({
+  const { data: token, refetch: generateNew, isError } = useQuery({
     queryKey: ['attendance-qr'],
     queryFn: generateQrToken,
+    enabled: showQr && canGenerate,
     refetchOnWindowFocus: false,
     staleTime: Infinity,
   });
 
-  // Draw QR on canvas
+  // Draw QR on canvas. `showQr` is a dependency because the canvas is
+  // unmounted while hidden: re-showing within the TTL returns the same cached
+  // token object, so keying on `token` alone left the fresh canvas unpainted
+  // until the token expired.
   useEffect(() => {
-    if (!token || !canvasRef.current) return;
+    if (!showQr || !token || !canvasRef.current) return;
     QRCode.toCanvas(canvasRef.current, token.scan_url, {
       width: 240,
       margin: 2,
       color: { dark: '#111827', light: '#ffffff' },
     });
-  }, [token]);
+  }, [token, showQr]);
 
   // Countdown timer
   useEffect(() => {
@@ -326,15 +472,23 @@ function QrPanel() {
     generateNew();
   }, [queryClient, generateNew]);
 
-  // Auto-refresh when expired
+  // Auto-refresh when expired, but only while the panel is actually visible on
+  // screen. A backgrounded tab kept minting tokens indefinitely.
   useEffect(() => {
-    if (isExpired) {
-      const t = setTimeout(handleRefresh, 500);
-      return () => clearTimeout(t);
+    if (!isExpired || !showQr) return;
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+      const onVisible = () => {
+        if (document.visibilityState === 'visible') void handleRefresh();
+      };
+      document.addEventListener('visibilitychange', onVisible);
+      return () => document.removeEventListener('visibilitychange', onVisible);
     }
-  }, [isExpired, handleRefresh]);
+    const t = setTimeout(handleRefresh, 500);
+    return () => clearTimeout(t);
+  }, [isExpired, showQr, handleRefresh]);
 
   const pct = token ? Math.max(0, (timeLeft / (token.ttl_seconds || 300)) * 100) : 0;
+  const ttlMinutes = token ? Math.round((token.ttl_seconds || 300) / 60) : 5;
 
   return (
     <div className="bg-white rounded-2xl shadow p-6 flex flex-col items-center gap-4">
@@ -343,46 +497,94 @@ function QrPanel() {
           <QrCode className="w-5 h-5 text-violet-600" />
           <h2 className="font-semibold text-gray-900">Attendance QR Code</h2>
         </div>
-        <button
-          onClick={handleRefresh}
-          className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-900 bg-gray-100 hover:bg-gray-200 px-3 py-1.5 rounded-lg transition-colors"
-        >
-          <RefreshCw className="w-3.5 h-3.5" />
-          Refresh
-        </button>
-      </div>
-
-      {/* QR Canvas */}
-      <div className={`relative rounded-2xl overflow-hidden p-3 transition-opacity ${isExpired ? 'opacity-30' : 'opacity-100'}`}>
-        <canvas ref={canvasRef} className="block rounded-xl" />
-        {isExpired && (
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className="bg-white/90 rounded-xl px-4 py-2 text-sm font-semibold text-gray-700">
-              Refreshing…
-            </div>
-          </div>
+        {showQr && canGenerate && (
+          <button
+            onClick={handleRefresh}
+            className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-900 bg-gray-100 hover:bg-gray-200 px-3 py-1.5 rounded-lg transition-colors"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            Refresh
+          </button>
         )}
       </div>
 
-      {/* Countdown */}
-      <div className="w-full">
-        <div className="flex justify-between text-xs text-gray-500 mb-1">
-          <span>Expires in</span>
-          <span className={`font-semibold tabular-nums ${timeLeft <= 10 ? 'text-red-500' : 'text-gray-700'}`}>
-            {timeLeft}s
-          </span>
+      {!canGenerate ? (
+        <p className="text-sm text-gray-500 text-center py-4">
+          Your role can view attendance but not display the check-in QR.
+        </p>
+      ) : !showQr ? (
+        <>
+          <div className="w-full py-6 flex flex-col items-center gap-2 text-center">
+            <div className="w-14 h-14 rounded-2xl bg-violet-50 flex items-center justify-center">
+              <QrCode className="w-7 h-7 text-violet-500" />
+            </div>
+            <p className="text-sm text-gray-500 px-2">
+              Show the rotating check-in code on this screen. For a permanent
+              wall display, create a kiosk link instead.
+            </p>
+          </div>
+          <button
+            onClick={() => setShowQr(true)}
+            className="w-full flex items-center justify-center gap-2 bg-black hover:bg-gray-800 text-white text-sm font-medium py-2.5 rounded-xl transition-colors"
+          >
+            <Eye className="w-4 h-4" />
+            Show QR code
+          </button>
+        </>
+      ) : isError ? (
+        <div className="w-full py-6 flex flex-col items-center gap-3 text-center">
+          <AlertCircle className="w-8 h-8 text-red-400" />
+          <p className="text-sm text-gray-600">Couldn't generate a QR code.</p>
+          <button
+            onClick={handleRefresh}
+            className="flex items-center gap-1.5 text-sm font-medium text-gray-900 hover:underline"
+          >
+            <RefreshCw className="w-3.5 h-3.5" /> Try again
+          </button>
         </div>
-        <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-          <div
-            className={`h-full rounded-full transition-all ${timeLeft <= 10 ? 'bg-red-400' : 'bg-violet-500'}`}
-            style={{ width: `${pct}%` }}
-          />
-        </div>
-      </div>
+      ) : (
+        <>
+          {/* QR Canvas */}
+          <div className={`relative rounded-2xl overflow-hidden p-3 transition-opacity ${isExpired ? 'opacity-30' : 'opacity-100'}`}>
+            <canvas ref={canvasRef} className="block rounded-xl" />
+            {isExpired && (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="bg-white/90 rounded-xl px-4 py-2 text-sm font-semibold text-gray-700">
+                  Refreshing…
+                </div>
+              </div>
+            )}
+          </div>
 
-      <p className="text-xs text-gray-400 text-center">
-        Display on kiosk screen. Employees scan with their phone.
-      </p>
+          {/* Countdown */}
+          <div className="w-full">
+            <div className="flex justify-between text-xs text-gray-500 mb-1">
+              <span>Expires in</span>
+              <span className={`font-semibold tabular-nums ${timeLeft <= 10 ? 'text-red-500' : 'text-gray-700'}`}>
+                {timeLeft}s
+              </span>
+            </div>
+            <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all ${timeLeft <= 10 ? 'bg-red-400' : 'bg-violet-500'}`}
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+          </div>
+
+          <p className="text-xs text-gray-400 text-center">
+            Display on kiosk screen. Employees scan with their phone. The code
+            works for everyone for {ttlMinutes} minutes, then rotates.
+          </p>
+
+          <button
+            onClick={() => setShowQr(false)}
+            className="text-xs text-gray-400 hover:text-gray-600 flex items-center gap-1"
+          >
+            <EyeOff className="w-3 h-3" /> Hide QR
+          </button>
+        </>
+      )}
 
       <button
         onClick={() => setShowKiosks(true)}
@@ -391,14 +593,6 @@ function QrPanel() {
         <Link2 className="w-4 h-4" />
         Kiosk links
       </button>
-      <a
-        href="/attendance/kiosk"
-        target="_blank"
-        rel="noopener noreferrer"
-        className="text-xs text-gray-400 hover:text-gray-600 underline"
-      >
-        Open kiosk in this browser (legacy, requires login)
-      </a>
 
       {showKiosks && <KioskCredentialsModal onClose={() => setShowKiosks(false)} />}
     </div>
@@ -407,40 +601,55 @@ function QrPanel() {
 
 // ─── Stats Bar ────────────────────────────────────────────────────────────────
 
-function StatsBar() {
+function StatsBar({ today, onShowOpen }: { today: string; onShowOpen: () => void }) {
   // These tiles report today across the whole company, so they must not be
   // derived from `records` — that is one 50-row page of the *currently filtered*
   // query, so a date filter or a second page made the numbers undercount or
   // collapse to zero while still being labelled "today".
-  const today = todayLocalDate();
   // Key is prefixed with 'attendance-records' so the existing invalidation after
   // a manual entry or edit refreshes these tiles too.
-  const { data } = useQuery({
+  const { data, isError } = useQuery({
     queryKey: ['attendance-records', 'today-stats', today],
     queryFn: () => getAttendanceSummary({ date_from: today, date_to: today }),
   });
   const items = data ?? [];
   const present = items.reduce((sum, i) => sum + i.present_days, 0);
   const late = items.reduce((sum, i) => sum + i.late_days, 0);
-  const checkedOut = items.reduce(
-    (sum, i) => sum + (i.present_days + i.late_days + i.half_days - i.unchecked_out_days),
-    0,
-  );
+  const stillIn = items.reduce((sum, i) => sum + i.unchecked_out_days, 0);
+
+  if (isError) {
+    return (
+      <div className="bg-white rounded-2xl shadow p-5 mb-6 flex items-center gap-3 text-sm text-gray-600">
+        <AlertCircle className="w-5 h-5 text-red-400 shrink-0" />
+        Couldn't load today's attendance figures.
+      </div>
+    );
+  }
 
   return (
     <div className="grid grid-cols-3 gap-4 mb-6">
       {[
-        { icon: CheckCircle2, label: 'Present Today', value: present, color: 'text-emerald-600', bg: 'bg-emerald-50' },
-        { icon: Clock,        label: 'Late',          value: late,    color: 'text-amber-600',   bg: 'bg-amber-50'   },
-        { icon: LogOut,       label: 'Checked Out',   value: checkedOut, color: 'text-blue-600', bg: 'bg-blue-50'    },
+        { icon: CheckCircle2, label: 'Present Today', value: present, color: 'text-emerald-600', bg: 'bg-emerald-50', action: undefined },
+        { icon: Clock,        label: 'Late',          value: late,    color: 'text-amber-600',   bg: 'bg-amber-50',   action: undefined },
+        // Actionable: these are the sessions someone has to chase or correct.
+        { icon: LogOut,       label: 'Still Checked In', value: stillIn, color: 'text-blue-600',  bg: 'bg-blue-50',   action: onShowOpen },
       ].map(s => (
-        <div key={s.label} className="bg-white rounded-2xl shadow p-5 flex items-center gap-4">
+        <div
+          key={s.label}
+          onClick={s.action}
+          className={`bg-white rounded-2xl shadow p-5 flex items-center gap-4 ${
+            s.action ? 'cursor-pointer hover:shadow-md transition-shadow' : ''
+          }`}
+        >
           <div className={`${s.bg} ${s.color} p-3 rounded-xl`}>
             <s.icon className="w-5 h-5" />
           </div>
           <div>
             <p className="text-2xl font-bold text-gray-900">{s.value}</p>
-            <p className="text-xs text-gray-500">{s.label}</p>
+            <p className="text-xs text-gray-500">
+              {s.label}
+              {s.action && s.value > 0 && <span className="ml-1 text-blue-600 font-medium">· review</span>}
+            </p>
           </div>
         </div>
       ))}
@@ -448,12 +657,147 @@ function StatsBar() {
   );
 }
 
+// ─── Summary Tab ──────────────────────────────────────────────────────────────
+
+/**
+ * Per-employee aggregate over a date range — the view HR actually needs each
+ * payroll cycle. The endpoint always supported the range and filters; nothing
+ * consumed them until now (the tiles above only ever asked for "today").
+ */
+function SummaryTab({ today, canExport }: { today: string; canExport: boolean }) {
+  const [range, setRange] = useState({ date_from: firstOfMonth(today), date_to: today });
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
+
+  const { data, isLoading, isError, refetch } = useQuery({
+    queryKey: ['attendance-summary', range],
+    queryFn: () => getAttendanceSummary(range),
+    placeholderData: keepPreviousData,
+  });
+  const items = data ?? [];
+
+  return (
+    <div className="bg-white rounded-2xl shadow">
+      <div className="flex flex-wrap items-center gap-3 p-5 border-b border-gray-100">
+        <div className="flex items-center gap-2 text-sm text-gray-600">
+          <Calendar className="w-4 h-4" /> Period:
+        </div>
+        <input
+          type="date"
+          value={range.date_from}
+          onChange={e => setRange(p => ({ ...p, date_from: e.target.value }))}
+          className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm outline-none focus:ring-1 focus:ring-black"
+        />
+        <input
+          type="date"
+          value={range.date_to}
+          onChange={e => setRange(p => ({ ...p, date_to: e.target.value }))}
+          className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm outline-none focus:ring-1 focus:ring-black"
+        />
+        {canExport && (
+          <button
+            onClick={async () => {
+              setExporting(true);
+              setExportError('');
+              try {
+                await downloadAttendanceCsv({ date_from: range.date_from, date_to: range.date_to });
+              } catch (e) {
+                setExportError(apiError(e, 'Export failed. Please try again.'));
+              } finally {
+                setExporting(false);
+              }
+            }}
+            disabled={exporting}
+            className="ml-auto flex items-center gap-2 text-sm font-medium px-4 py-1.5 rounded-lg border border-gray-300 hover:bg-gray-50 transition-colors disabled:opacity-50"
+          >
+            <Download className="w-4 h-4" />
+            {exporting ? 'Exporting…' : 'Export period'}
+          </button>
+        )}
+      </div>
+
+      {exportError && (
+        <p className="px-5 py-2 text-sm text-red-600 flex items-center gap-1.5">
+          <AlertCircle className="w-3.5 h-3.5" /> {exportError}
+        </p>
+      )}
+
+      {isLoading ? (
+        <div className="flex items-center justify-center h-48">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-black" />
+        </div>
+      ) : isError ? (
+        <div className="flex flex-col items-center justify-center h-48 gap-2 text-gray-600">
+          <AlertCircle className="w-8 h-8 text-red-400" />
+          <p className="text-sm">Couldn't load the attendance summary.</p>
+          <button onClick={() => refetch()} className="text-sm font-medium text-gray-900 hover:underline">
+            Try again
+          </button>
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-gray-100">
+                {['Employee', 'Department', 'Present', 'Late', 'Absent', 'Half', 'Hours', 'Overtime', 'Open'].map(h => (
+                  <th key={h} className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {items.map(i => (
+                <tr key={i.employee_id} className="hover:bg-gray-50/50 transition-colors">
+                  <td className="px-5 py-3">
+                    <div className="font-medium text-gray-900">{i.full_name}</div>
+                    <div className="text-xs text-gray-400">{i.employee_number}</div>
+                  </td>
+                  <td className="px-5 py-3 text-gray-600">{i.department ?? '—'}</td>
+                  <td className="px-5 py-3 tabular-nums text-emerald-700">{i.present_days}</td>
+                  <td className="px-5 py-3 tabular-nums text-amber-700">{i.late_days}</td>
+                  <td className="px-5 py-3 tabular-nums text-red-700">{i.absent_days}</td>
+                  <td className="px-5 py-3 tabular-nums text-blue-700">{i.half_days}</td>
+                  <td className="px-5 py-3 tabular-nums text-gray-700">{Number(i.total_hours).toFixed(1)}h</td>
+                  <td className="px-5 py-3 tabular-nums text-gray-700">{Number(i.overtime_hours).toFixed(1)}h</td>
+                  <td className="px-5 py-3 tabular-nums">
+                    {i.unchecked_out_days > 0 ? (
+                      <span className="inline-flex items-center gap-1 text-amber-600 font-medium">
+                        <AlertTriangle className="w-3.5 h-3.5" />
+                        {i.unchecked_out_days}
+                      </span>
+                    ) : (
+                      <span className="text-gray-300">—</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {items.length === 0 && (
+            <div className="flex flex-col items-center justify-center h-40 text-gray-400">
+              <Calendar className="w-10 h-10 mb-2 opacity-40" />
+              <p className="text-sm">No employees to summarize</p>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Manual Entry Modal ───────────────────────────────────────────────────────
 
-function ManualEntryModal({ onClose }: { onClose: () => void }) {
+function ManualEntryModal({
+  onClose,
+  presetEmployee,
+}: {
+  onClose: () => void;
+  presetEmployee?: { id: string; label: string };
+}) {
   const queryClient = useQueryClient();
   const [form, setForm] = useState({
-    employee_id: '',
+    employee_id: presetEmployee?.id ?? '',
     check_in_at: toDateTimeLocalValue(new Date()),
     check_out_at: '',
     status: 'present',
@@ -465,16 +809,15 @@ function ManualEntryModal({ onClose }: { onClose: () => void }) {
     mutationFn: createManualAttendance,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['attendance-records'] });
+      queryClient.invalidateQueries({ queryKey: ['attendance-summary'] });
       onClose();
     },
-    onError: (e: Error & { response?: { data?: { error?: string } } }) => {
-      setError(e.response?.data?.error || 'Failed to create record');
-    },
+    onError: (e) => setError(apiError(e, 'Failed to create record')),
   });
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.employee_id.trim()) { setError('Employee ID is required'); return; }
+    if (!form.employee_id.trim()) { setError('Please choose an employee'); return; }
     mutation.mutate({
       employee_id: form.employee_id.trim(),
       check_in_at: new Date(form.check_in_at).toISOString(),
@@ -490,14 +833,17 @@ function ManualEntryModal({ onClose }: { onClose: () => void }) {
         <h3 className="font-semibold text-gray-900 mb-5">Manual Attendance Entry</h3>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Employee ID (UUID)</label>
-            <input
-              type="text"
-              value={form.employee_id}
-              onChange={e => setForm(p => ({ ...p, employee_id: e.target.value }))}
-              placeholder="employee-uuid"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-1 focus:ring-black outline-none"
-            />
+            <label className="block text-sm font-medium text-gray-700 mb-1">Employee</label>
+            {presetEmployee ? (
+              <div className="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-800">
+                {presetEmployee.label}
+              </div>
+            ) : (
+              <EmployeePicker
+                value={form.employee_id}
+                onChange={(id) => setForm(p => ({ ...p, employee_id: id }))}
+              />
+            )}
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Check In</label>
@@ -556,8 +902,12 @@ function EditAttendanceModal({ record, onClose }: { record: AttendanceRecordWith
     check_out_at: record.check_out_at ? toDateTimeLocalValue(record.check_out_at) : '',
     status: record.status,
     notes: record.notes ?? '',
+    reason: '',
   });
   const [error, setError] = useState('');
+
+  const hadCheckOut = record.check_out_at != null;
+  const hadNotes = (record.notes ?? '') !== '';
 
   const mutation = useMutation({
     mutationFn: () => updateAttendanceRecord(record.id, {
@@ -565,22 +915,36 @@ function EditAttendanceModal({ record, onClose }: { record: AttendanceRecordWith
       check_out_at: form.check_out_at ? new Date(form.check_out_at).toISOString() : undefined,
       status: form.status,
       notes: form.notes || undefined,
+      // Emptying a field previously did nothing: the server read a missing
+      // value as "keep existing", so the record silently kept its old
+      // check-out (and its payroll-relevant hours). Say "clear" explicitly.
+      clear_check_out: hadCheckOut && !form.check_out_at ? true : undefined,
+      clear_notes: hadNotes && !form.notes ? true : undefined,
+      reason: form.reason.trim(),
     }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['attendance-records'] });
+      queryClient.invalidateQueries({ queryKey: ['attendance-summary'] });
       onClose();
     },
-    onError: (e: Error & { response?: { data?: { error?: string } } }) => {
-      setError(e.response?.data?.error || 'Failed to update record');
-    },
+    onError: (e) => setError(apiError(e, 'Failed to update record')),
   });
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!form.reason.trim()) {
+      setError('Please give a reason for this correction — it goes into the audit trail.');
+      return;
+    }
+    mutation.mutate();
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto">
         <h3 className="font-semibold text-gray-900 mb-1">Edit Attendance</h3>
         <p className="text-sm text-gray-500 mb-5">{record.full_name} ({record.employee_number})</p>
-        <form onSubmit={e => { e.preventDefault(); mutation.mutate(); }} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Check In</label>
             <input type="datetime-local" value={form.check_in_at}
@@ -594,6 +958,12 @@ function EditAttendanceModal({ record, onClose }: { record: AttendanceRecordWith
               onChange={e => setForm(p => ({ ...p, check_out_at: e.target.value }))}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-1 focus:ring-black outline-none"
             />
+            {hadCheckOut && !form.check_out_at && (
+              <p className="mt-1 text-xs text-amber-600 flex items-center gap-1">
+                <AlertTriangle className="w-3 h-3" />
+                Saving will reopen this session and clear its hours.
+              </p>
+            )}
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
@@ -610,6 +980,22 @@ function EditAttendanceModal({ record, onClose }: { record: AttendanceRecordWith
             <textarea value={form.notes} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))}
               rows={2} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-1 focus:ring-black outline-none resize-none"
             />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Reason for correction <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              value={form.reason}
+              onChange={e => setForm(p => ({ ...p, reason: e.target.value }))}
+              placeholder="e.g. Employee forgot to check out; confirmed with manager"
+              maxLength={400}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-1 focus:ring-black outline-none"
+            />
+            <p className="mt-1 text-xs text-gray-400">
+              Recorded in the audit trail, not on the employee's record.
+            </p>
           </div>
           {error && <p className="text-sm text-red-600 flex items-center gap-1"><AlertCircle className="w-3.5 h-3.5" />{error}</p>}
           <div className="flex gap-3 pt-2">
@@ -632,11 +1018,17 @@ function EditAttendanceModal({ record, onClose }: { record: AttendanceRecordWith
 
 export function AttendancePage() {
   const { user } = useAuth();
-  const [filters, setFilters] = useState({ date_from: '', date_to: '', status: '', method: '' });
+  const queryClient = useQueryClient();
+  const [tab, setTab] = useState<'records' | 'summary'>('records');
+  const [filters, setFilters] = useState({
+    date_from: '', date_to: '', status: '', method: '', employee_id: '', open_only: false,
+  });
   const [page, setPage] = useState(1);
   const [showManual, setShowManual] = useState(false);
   const [editRecord, setEditRecord] = useState<AttendanceRecordWithEmployee | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [pageError, setPageError] = useState('');
+  const [backfillDate, setBackfillDate] = useState('');
   const perPage = 50;
 
   const { data: method } = useQuery({
@@ -644,27 +1036,84 @@ export function AttendancePage() {
     queryFn: getAttendanceMethod,
   });
 
-  const { data: result, isLoading } = useQuery({
+  const today = todayInZone(method?.timezone);
+
+  const { data: result, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['attendance-records', filters, page],
     queryFn: () => getAttendanceRecords({
-      date_from: filters.date_from || undefined,
-      date_to:   filters.date_to   || undefined,
-      status:    filters.status    || undefined,
-      method:    filters.method    || undefined,
+      date_from:   filters.date_from   || undefined,
+      date_to:     filters.date_to     || undefined,
+      status:      filters.status      || undefined,
+      method:      filters.method      || undefined,
+      employee_id: filters.employee_id || undefined,
+      open_only:   filters.open_only   || undefined,
       page,
       per_page:  perPage,
     }),
+    // Keep the previous page rendered while the next one loads instead of
+    // collapsing the table into a spinner on every click.
+    placeholderData: keepPreviousData,
   });
 
   const records = result?.data ?? [];
   const totalPages = result?.total_pages ?? 1;
   const total = result?.total ?? 0;
+  const forbidden = (error as { response?: { status?: number } } | null)?.response?.status === 403;
 
-  const isAdmin = hasAnyRole(user, ['admin', 'super_admin', 'hr_manager', 'payroll_admin', 'exec']);
+  // Capability sets mirroring the backend gates, so we never render a control
+  // whose endpoint will 403. Previously one broad `isAdmin` showed payroll_admin
+  // and exec buttons that always failed, and hid Export from finance which the
+  // backend allows.
+  const canView = hasAnyRole(user, ['super_admin', 'admin', 'hr_manager', 'payroll_admin', 'finance', 'exec']);
+  const canEdit = hasAnyRole(user, ['super_admin', 'admin', 'hr_manager']);
+  const canManageKiosks = hasAnyRole(user, ['super_admin', 'admin', 'hr_manager', 'payroll_admin']);
+  const canGenerateQr = canManageKiosks;
+  const canConfigure = hasAnyRole(user, ['super_admin', 'admin', 'hr_manager']);
+
+  // The settings page tells super admins that company admins can switch method
+  // here when override is enabled. Until now nothing called the endpoint, so
+  // that documented flow was impossible.
+  const canSwitchMethod =
+    Boolean(method?.allow_company_override) && hasAnyRole(user, ['super_admin', 'admin']);
+
+  const methodMut = useMutation({
+    mutationFn: (m: string) => setCompanyAttendanceMethod(m),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['attendance-method'] });
+      setPageError('');
+    },
+    onError: (e) => setPageError(apiError(e, 'Failed to change attendance method')),
+  });
+
+  const backfillMut = useMutation({
+    mutationFn: (date: string) => runAbsentMarking(date),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['attendance-records'] });
+      queryClient.invalidateQueries({ queryKey: ['attendance-summary'] });
+      setPageError('');
+      setBackfillDate('');
+      alert(`Marked ${res.marked} absence${res.marked === 1 ? '' : 's'} for ${res.date}.`);
+    },
+    onError: (e) => setPageError(apiError(e, 'Absence marking failed')),
+  });
 
   // Reset to page 1 when filters change
-  const updateFilter = (key: string, value: string) => {
+  const updateFilter = (key: string, value: string | boolean) => {
     setFilters(p => ({ ...p, [key]: value }));
+    setPage(1);
+  };
+
+  const hasFilters = useMemo(
+    () => Boolean(
+      filters.date_from || filters.date_to || filters.status ||
+      filters.method || filters.employee_id || filters.open_only
+    ),
+    [filters],
+  );
+
+  const showOpenSessions = () => {
+    setTab('records');
+    setFilters({ date_from: '', date_to: '', status: '', method: '', employee_id: '', open_only: true });
     setPage(1);
   };
 
@@ -675,72 +1124,121 @@ export function AttendancePage() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Attendance</h1>
           {method && (
-            <p className="text-sm text-gray-500 mt-0.5">
-              Method:&nbsp;
-              <span className="font-medium text-gray-700">
-                {method.method === 'qr_code' ? 'QR Code' : 'Face ID'}
-              </span>
-              {method.is_company_override && (
-                <span className="ml-1.5 text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">Company Override</span>
+            <div className="text-sm text-gray-500 mt-0.5 flex items-center gap-1.5">
+              <span>Method:</span>
+              {canSwitchMethod ? (
+                <select
+                  value={method.method}
+                  onChange={e => methodMut.mutate(e.target.value)}
+                  disabled={methodMut.isPending}
+                  className="px-2 py-0.5 border border-gray-200 rounded-lg text-sm font-medium text-gray-700 outline-none focus:ring-1 focus:ring-black disabled:opacity-50"
+                >
+                  <option value="qr_code">QR Code</option>
+                  <option value="face_id">Face ID</option>
+                </select>
+              ) : (
+                <span className="font-medium text-gray-700">
+                  {method.method === 'qr_code' ? 'QR Code' : 'Face ID'}
+                </span>
               )}
-            </p>
+              {method.is_company_override && (
+                <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">Company Override</span>
+              )}
+            </div>
           )}
         </div>
         <div className="flex gap-2">
-          {isAdmin && (
-            <>
-              <button
-                onClick={async () => {
-                  setExporting(true);
-                  try {
-                    await downloadAttendanceCsv({
-                      date_from: filters.date_from || undefined,
-                      date_to:   filters.date_to   || undefined,
-                      status:    filters.status    || undefined,
-                      method:    filters.method    || undefined,
-                    });
-                  } finally {
-                    setExporting(false);
-                  }
-                }}
-                disabled={exporting}
-                className="flex items-center gap-2 text-sm font-medium px-4 py-2 rounded-xl border border-gray-300 hover:bg-gray-50 transition-colors disabled:opacity-50"
-              >
-                <Download className="w-4 h-4" />
-                {exporting ? 'Exporting…' : 'Export CSV'}
-              </button>
-              <button
-                onClick={() => setShowManual(true)}
-                className="flex items-center gap-2 bg-black text-white text-sm font-medium px-4 py-2 rounded-xl hover:bg-gray-800 transition-colors"
-              >
-                <Plus className="w-4 h-4" />
-                Manual Entry
-              </button>
-            </>
+          {canView && (
+            <button
+              onClick={async () => {
+                setExporting(true);
+                setPageError('');
+                try {
+                  await downloadAttendanceCsv({
+                    date_from:   filters.date_from   || undefined,
+                    date_to:     filters.date_to     || undefined,
+                    status:      filters.status      || undefined,
+                    method:      filters.method      || undefined,
+                    employee_id: filters.employee_id || undefined,
+                  });
+                } catch (e) {
+                  // Previously try/finally with no catch: a failed export was an
+                  // unhandled rejection and the admin saw nothing at all.
+                  setPageError(apiError(e, 'Export failed. Please try again.'));
+                } finally {
+                  setExporting(false);
+                }
+              }}
+              disabled={exporting}
+              className="flex items-center gap-2 text-sm font-medium px-4 py-2 rounded-xl border border-gray-300 hover:bg-gray-50 transition-colors disabled:opacity-50"
+            >
+              <Download className="w-4 h-4" />
+              {exporting ? 'Exporting…' : 'Export CSV'}
+            </button>
+          )}
+          {canEdit && (
+            <button
+              onClick={() => setShowManual(true)}
+              className="flex items-center gap-2 bg-black text-white text-sm font-medium px-4 py-2 rounded-xl hover:bg-gray-800 transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              Manual Entry
+            </button>
           )}
         </div>
       </div>
 
-      <StatsBar />
+      {pageError && (
+        <div className="mb-4 px-4 py-3 rounded-xl bg-red-50 border border-red-200 text-sm text-red-700 flex items-center gap-2">
+          <AlertCircle className="w-4 h-4 shrink-0" />
+          {pageError}
+        </div>
+      )}
 
-      {/* Work Schedule & Geofence (admin only) */}
-      {isAdmin && (
+      <StatsBar today={today} onShowOpen={showOpenSessions} />
+
+      {/* Work Schedule & Geofence */}
+      {canConfigure && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
           <WorkScheduleCard />
           <GeofenceCard />
         </div>
       )}
 
+      {/* Tabs */}
+      <div className="flex items-center gap-1 mb-4 border-b border-gray-200">
+        {([
+          { key: 'records', label: 'Records', icon: Clock },
+          { key: 'summary', label: 'Summary', icon: ListChecks },
+        ] as const).map(t => (
+          <button
+            key={t.key}
+            onClick={() => setTab(t.key)}
+            className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
+              tab === t.key
+                ? 'border-black text-gray-900'
+                : 'border-transparent text-gray-500 hover:text-gray-800'
+            }`}
+          >
+            <t.icon className="w-4 h-4" />
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'summary' ? (
+        <SummaryTab today={today} canExport={canView} />
+      ) : (
       <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
         {/* QR Panel — only in QR mode */}
-        {method?.method === 'qr_code' && isAdmin && (
+        {method?.method === 'qr_code' && canManageKiosks && (
           <div className="xl:col-span-1">
-            <QrPanel />
+            <QrPanel canGenerate={canGenerateQr} />
           </div>
         )}
 
         {/* Records Table */}
-        <div className={method?.method === 'qr_code' && isAdmin ? 'xl:col-span-3' : 'xl:col-span-4'}>
+        <div className={method?.method === 'qr_code' && canManageKiosks ? 'xl:col-span-3' : 'xl:col-span-4'}>
           <div className="bg-white rounded-2xl shadow">
             {/* Filters */}
             <div className="flex flex-wrap items-center gap-3 p-5 border-b border-gray-100">
@@ -782,25 +1280,90 @@ export function AttendancePage() {
                 <option value="face_id">Face ID</option>
                 <option value="manual">Manual</option>
               </select>
-              {(filters.date_from || filters.date_to || filters.status || filters.method) && (
+              <label className="flex items-center gap-1.5 text-sm text-gray-600 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={filters.open_only}
+                  onChange={e => updateFilter('open_only', e.target.checked)}
+                  className="rounded border-gray-300"
+                />
+                Open sessions only
+              </label>
+              {hasFilters && (
                 <button
-                  onClick={() => { setFilters({ date_from: '', date_to: '', status: '', method: '' }); setPage(1); }}
+                  onClick={() => {
+                    setFilters({ date_from: '', date_to: '', status: '', method: '', employee_id: '', open_only: false });
+                    setPage(1);
+                  }}
                   className="text-xs text-gray-500 hover:text-gray-900 underline"
                 >
                   Clear
                 </button>
               )}
+              {/* Employee filter — the API always accepted employee_id; without
+                  a control, auditing one person meant paging the whole company. */}
+              <div className="w-full sm:w-72">
+                <EmployeePicker
+                  value={filters.employee_id}
+                  onChange={(id) => updateFilter('employee_id', id)}
+                  placeholder="Filter by employee…"
+                />
+              </div>
             </div>
+
+            {/* Backfill a day the daily absence job missed (e.g. deploy window) */}
+            {canEdit && (
+              <div className="flex flex-wrap items-center gap-2 px-5 py-3 border-b border-gray-100 bg-gray-50/60">
+                <span className="text-xs text-gray-500">
+                  Missed absence marking for a past day?
+                </span>
+                <input
+                  type="date"
+                  value={backfillDate}
+                  max={today}
+                  onChange={e => setBackfillDate(e.target.value)}
+                  className="px-2.5 py-1 border border-gray-200 rounded-lg text-xs outline-none focus:ring-1 focus:ring-black"
+                />
+                <button
+                  onClick={() => backfillDate && backfillMut.mutate(backfillDate)}
+                  disabled={!backfillDate || backfillMut.isPending}
+                  className="text-xs font-medium px-3 py-1 rounded-lg border border-gray-300 bg-white hover:bg-gray-100 transition-colors disabled:opacity-40"
+                >
+                  {backfillMut.isPending ? 'Running…' : 'Mark absences'}
+                </button>
+                <span className="text-xs text-gray-400">
+                  Safe to re-run — days that already have records are skipped.
+                </span>
+              </div>
+            )}
 
             {/* Table */}
             {isLoading ? (
               <div className="flex items-center justify-center h-48">
                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-black" />
               </div>
+            ) : isError ? (
+              // A 403 or a network failure must not render as "no records" —
+              // that told an unauthorized user their company had no attendance.
+              <div className="flex flex-col items-center justify-center h-48 gap-2 text-gray-600 px-6 text-center">
+                <AlertCircle className="w-8 h-8 text-red-400" />
+                <p className="text-sm">
+                  {forbidden
+                    ? "You don't have permission to view company attendance records."
+                    : "Couldn't load attendance records."}
+                </p>
+                {!forbidden && (
+                  <button onClick={() => refetch()} className="text-sm font-medium text-gray-900 hover:underline">
+                    Try again
+                  </button>
+                )}
+              </div>
             ) : records.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-48 text-gray-400">
                 <Calendar className="w-10 h-10 mb-2 opacity-40" />
-                <p className="text-sm">No attendance records found</p>
+                <p className="text-sm">
+                  {filters.open_only ? 'No open sessions — everyone has checked out' : 'No attendance records found'}
+                </p>
               </div>
             ) : (
               <>
@@ -890,7 +1453,7 @@ export function AttendancePage() {
                                 <span className="text-gray-300 text-xs">---</span>
                               )}
                             </td>
-                            {isAdmin && (
+                            {canEdit && (
                               <td className="px-3 py-3.5">
                                 <button
                                   onClick={() => setEditRecord(r)}
@@ -955,6 +1518,7 @@ export function AttendancePage() {
           </div>
         </div>
       </div>
+      )}
 
       {showManual && <ManualEntryModal onClose={() => setShowManual(false)} />}
       {editRecord && <EditAttendanceModal record={editRecord} onClose={() => setEditRecord(null)} />}

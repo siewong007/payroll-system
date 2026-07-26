@@ -38,6 +38,10 @@ fn test_config(database_url: String) -> AppConfig {
         smtp_password: None,
         smtp_from_email: None,
         smtp_from_name: None,
+        // Route tests drive the router via `oneshot`, which carries no
+        // ConnectInfo; trusting the forwarded header the helper already sets
+        // keeps the rate limiters able to extract a key.
+        trust_proxy_headers: true,
     }
 }
 
@@ -478,6 +482,160 @@ async fn exec_cannot_create_employee() {
         .expect("route response");
 
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+// ─── Attendance route guards ───
+//
+// Every attendance guard lives inside its handler body, so only a wired-route
+// test catches a handler that drops its gate.
+
+/// A self-service employee must not read company-wide attendance — the list,
+/// summary and export carry every colleague's movements and GPS coordinates.
+#[tokio::test]
+async fn self_service_employee_cannot_read_company_attendance() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let token = token_for(&pool, company_id, "employee").await;
+    let app = app_for(pool).await;
+
+    for uri in [
+        "/api/attendance/records",
+        "/api/attendance/summary?date_from=2026-01-01&date_to=2026-01-31",
+        "/api/attendance/export",
+    ] {
+        let response = app
+            .clone()
+            .oneshot(request("GET", uri, &token, ""))
+            .await
+            .expect("route response");
+        assert_eq!(
+            response.status(),
+            StatusCode::FORBIDDEN,
+            "employee must be denied {uri}"
+        );
+    }
+}
+
+/// Manual entry and corrections rewrite payroll-feeding data: hr_admin only.
+#[tokio::test]
+async fn non_hr_admin_cannot_write_attendance_records() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let employee_id = seed_employee(&pool, company_id, None, 500_000).await;
+    let token = token_for(&pool, company_id, "finance").await;
+    let app = app_for(pool).await;
+
+    let manual = app
+        .clone()
+        .oneshot(request(
+            "POST",
+            "/api/attendance/manual",
+            &token,
+            &format!(
+                r#"{{"employee_id":"{employee_id}","check_in_at":"2026-06-01T01:00:00Z","status":"present"}}"#
+            ),
+        ))
+        .await
+        .expect("route response");
+    assert_eq!(manual.status(), StatusCode::FORBIDDEN);
+
+    let correction = app
+        .clone()
+        .oneshot(request(
+            "PUT",
+            &format!("/api/attendance/records/{}", uuid::Uuid::new_v4()),
+            &token,
+            r#"{"status":"present","reason":"test"}"#,
+        ))
+        .await
+        .expect("route response");
+    assert_eq!(correction.status(), StatusCode::FORBIDDEN);
+
+    let backfill = app
+        .oneshot(request(
+            "POST",
+            "/api/attendance/absent-run",
+            &token,
+            r#"{"date":"2026-06-01"}"#,
+        ))
+        .await
+        .expect("route response");
+    assert_eq!(backfill.status(), StatusCode::FORBIDDEN);
+}
+
+/// `exec` is read-mostly: it may view attendance, but generating a QR token
+/// retires the console's live code, and kiosk credentials are admin-only.
+#[tokio::test]
+async fn exec_can_view_attendance_but_not_generate_qr_or_manage_kiosks() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let token = token_for(&pool, company_id, "exec").await;
+    let app = app_for(pool).await;
+
+    let list = app
+        .clone()
+        .oneshot(request("GET", "/api/attendance/records", &token, ""))
+        .await
+        .expect("route response");
+    assert_eq!(list.status(), StatusCode::OK);
+
+    let qr = app
+        .clone()
+        .oneshot(request("POST", "/api/attendance/qr/generate", &token, "{}"))
+        .await
+        .expect("route response");
+    assert_eq!(qr.status(), StatusCode::FORBIDDEN);
+
+    let kiosks = app
+        .oneshot(request("GET", "/api/attendance/kiosks", &token, ""))
+        .await
+        .expect("route response");
+    assert_eq!(kiosks.status(), StatusCode::FORBIDDEN);
+}
+
+/// The public kiosk endpoint must reject a missing or garbage secret.
+#[tokio::test]
+async fn public_kiosk_endpoint_rejects_bad_secret() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let app = app_for(pool).await;
+
+    let missing = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/attendance/kiosk/qr")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header("x-forwarded-for", "203.0.113.11")
+                .body(Body::empty())
+                .expect("build request"),
+        )
+        .await
+        .expect("route response");
+    assert_eq!(missing.status(), StatusCode::UNAUTHORIZED);
+
+    let garbage = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/attendance/kiosk/qr")
+                .header(header::AUTHORIZATION, "Kiosk not-a-real-secret")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header("x-forwarded-for", "203.0.113.12")
+                .body(Body::empty())
+                .expect("build request"),
+        )
+        .await
+        .expect("route response");
+    assert_eq!(garbage.status(), StatusCode::UNAUTHORIZED);
 }
 
 /// A company `admin` is deliberately excluded from `ViewPayroll`, so it must not
