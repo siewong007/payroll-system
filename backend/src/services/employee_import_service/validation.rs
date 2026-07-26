@@ -36,6 +36,16 @@ fn validate_row(row: &ImportRowRaw) -> Vec<FieldError> {
             message: "Basic salary is required".into(),
         });
     }
+    // Required, not optional: SOCSO category and EIS eligibility are age-based,
+    // and payroll now refuses to rate an employee whose age it cannot establish.
+    // Importing without it produces rows that pass validation and then block the
+    // first run they are included in.
+    if row.date_of_birth.as_ref().is_none_or(|s| s.is_empty()) {
+        errors.push(FieldError {
+            field: "date_of_birth".into(),
+            message: "Date of birth is required — SOCSO and EIS contributions are age-based".into(),
+        });
+    }
 
     for (field, value) in [
         ("date_of_birth", &row.date_of_birth),
@@ -368,6 +378,7 @@ mod tests {
             "full_name": "Nurul Huda",
             "date_joined": "2026-01-15",
             "basic_salary": "3500.00",
+            "date_of_birth": "1990-01-01",
         });
         let serde_json::Value::Object(extra) = overrides else {
             panic!("row overrides must be a JSON object");
@@ -401,7 +412,7 @@ mod tests {
             serde_json::from_value(json!({ "row_number": 2 })).expect("bare row");
         let errors = validate_row(&bare);
 
-        // All four are reported together so the operator fixes the sheet once
+        // All of them are reported together so the operator fixes the sheet once
         // rather than re-uploading once per missing column.
         assert_eq!(
             fields(&errors),
@@ -409,9 +420,23 @@ mod tests {
                 "employee_number",
                 "full_name",
                 "date_joined",
-                "basic_salary"
+                "basic_salary",
+                "date_of_birth"
             ]
         );
+    }
+
+    /// A row that omits the date of birth is rejected at import rather than
+    /// creating an employee whose first payroll run blocks.
+    #[test]
+    fn date_of_birth_is_mandatory() {
+        for value in [json!(null), json!("")] {
+            let errors = validate_row(&row(json!({ "date_of_birth": value.clone() })));
+            assert!(
+                fields(&errors).contains(&"date_of_birth"),
+                "should reject date_of_birth {value:?}"
+            );
+        }
     }
 
     #[test]

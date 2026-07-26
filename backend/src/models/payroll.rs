@@ -255,6 +255,21 @@ pub struct OrphanedEntryEmployee {
     pub total_amount: i64,
 }
 
+/// Closed attendance records in the period whose derived overtime was left
+/// unrated, or predates the ceiling and still exceeds it.
+///
+/// Unrated hours are excluded from pay by construction (`SUM` skips NULL), so
+/// the only way an employee learns a forgotten check-out cost them is if the
+/// preview says so before the run commits.
+#[derive(Debug)]
+pub struct EmployeeUnratedOvertime {
+    pub employee_id: Uuid,
+    pub employee_number: String,
+    pub employee_name: String,
+    pub record_count: i64,
+    pub max_hours_worked: Option<Decimal>,
+}
+
 /// A dry run of `process_payroll` — the same calculation, nothing written.
 ///
 /// Processing used to be all-or-nothing and opaque: the operator picked a group
@@ -415,6 +430,12 @@ pub(crate) struct OvertimeSettings {
     pub(crate) multiplier_normal: Decimal,
     pub(crate) multiplier_rest_day: Decimal,
     pub(crate) multiplier_public_holiday: Decimal,
+    /// Above this, a check-out's derived overtime is left unrated (NULL) for HR
+    /// review instead of paid. Not a statutory figure: it is an anomaly
+    /// threshold separating a plausible long day from a forgotten check-out,
+    /// which the 24h check-out match window can otherwise turn into a whole
+    /// day of overtime. Companies running genuine long shifts raise it.
+    pub(crate) max_overtime_hours_per_day: Decimal,
 }
 
 impl OvertimeSettings {

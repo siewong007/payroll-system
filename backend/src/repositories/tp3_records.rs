@@ -10,16 +10,19 @@ pub async fn upsert(
     executor: impl Executor<'_, Database = Postgres>,
     id: Uuid,
     employee_id: Uuid,
+    company_id: Uuid,
     req: &CreateTp3Request,
     created_by: Uuid,
 ) -> AppResult<Tp3Record> {
+    // The `RETURNING` list is explicit rather than `*` so the tenant anchor added
+    // in 1009 stays out of `Tp3Record` and off the API contract.
     let record = sqlx::query_as!(
         Tp3Record,
         r#"INSERT INTO tp3_records (
-            id, employee_id, tax_year, previous_employer_name,
+            id, employee_id, company_id, tax_year, previous_employer_name,
             previous_income_ytd, previous_epf_ytd, previous_pcb_ytd,
             previous_socso_ytd, previous_zakat_ytd, created_by
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         ON CONFLICT (employee_id, tax_year)
         DO UPDATE SET
             previous_employer_name = EXCLUDED.previous_employer_name,
@@ -28,9 +31,12 @@ pub async fn upsert(
             previous_pcb_ytd = EXCLUDED.previous_pcb_ytd,
             previous_socso_ytd = EXCLUDED.previous_socso_ytd,
             previous_zakat_ytd = EXCLUDED.previous_zakat_ytd
-        RETURNING *"#,
+        RETURNING id, employee_id, tax_year, previous_employer_name,
+                  previous_income_ytd, previous_epf_ytd, previous_pcb_ytd,
+                  previous_socso_ytd, previous_zakat_ytd, created_at, created_by"#,
         id,
         employee_id,
+        company_id,
         req.tax_year,
         req.previous_employer_name,
         req.previous_income_ytd,

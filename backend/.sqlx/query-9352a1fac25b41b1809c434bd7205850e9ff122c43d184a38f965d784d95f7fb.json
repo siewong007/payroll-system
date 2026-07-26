@@ -1,0 +1,50 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT e.id AS \"employee_id!\", e.employee_number AS \"employee_number!\",\n                  e.full_name AS \"employee_name!\",\n                  COUNT(*)::BIGINT AS \"record_count!\",\n                  MAX(ar.hours_worked) AS \"max_hours_worked?\"\n           FROM attendance_records ar\n           JOIN employees e ON e.id = ar.employee_id\n           WHERE ar.employee_id = ANY($1)\n             AND ar.check_out_at IS NOT NULL\n             AND (ar.overtime_hours IS NULL OR ar.overtime_hours > $4)\n             -- Same sargable local-date bounds as attendance_ot_hours, so the\n             -- warning covers exactly the records that run would have paid.\n             AND ar.check_in_at >= ($2::date)::timestamp AT TIME ZONE $5\n             AND ar.check_in_at < ($3::date + 1)::timestamp AT TIME ZONE $5\n           GROUP BY e.id, e.employee_number, e.full_name\n           ORDER BY e.employee_number",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "employee_id!",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "employee_number!",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "employee_name!",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "record_count!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "max_hours_worked?",
+        "type_info": "Numeric"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "UuidArray",
+        "Date",
+        "Date",
+        "Numeric",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      null,
+      null
+    ]
+  },
+  "hash": "9352a1fac25b41b1809c434bd7205850e9ff122c43d184a38f965d784d95f7fb"
+}

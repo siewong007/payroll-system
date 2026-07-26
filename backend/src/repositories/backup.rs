@@ -746,15 +746,17 @@ pub async fn insert_employee_allowance(
     executor: impl Executor<'_, Database = Postgres>,
     id: Uuid,
     employee_id: Uuid,
+    company_id: Uuid,
     a: &EmployeeAllowanceExport,
     now: DateTime<Utc>,
 ) -> AppResult<()> {
     sqlx::query!(
-        r#"INSERT INTO employee_allowances (id, employee_id, category, name, description, amount,
+        r#"INSERT INTO employee_allowances (id, employee_id, company_id, category, name, description, amount,
                is_taxable, is_recurring, effective_from, effective_to, is_active, created_at, updated_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)"#,
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)"#,
         id,
         employee_id,
+        company_id,
         a.category,
         a.name,
         a.description,
@@ -776,14 +778,16 @@ pub async fn insert_salary_history(
     executor: impl Executor<'_, Database = Postgres>,
     id: Uuid,
     employee_id: Uuid,
+    company_id: Uuid,
     s: &SalaryHistoryExport,
     now: DateTime<Utc>,
 ) -> AppResult<()> {
     sqlx::query!(
-        r#"INSERT INTO salary_history (id, employee_id, old_salary, new_salary, effective_date, reason, created_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7)"#,
+        r#"INSERT INTO salary_history (id, employee_id, company_id, old_salary, new_salary, effective_date, reason, created_at)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8)"#,
         id,
         employee_id,
+        company_id,
         s.old_salary,
         s.new_salary,
         s.effective_date,
@@ -799,16 +803,18 @@ pub async fn insert_tp3_record(
     executor: impl Executor<'_, Database = Postgres>,
     id: Uuid,
     employee_id: Uuid,
+    company_id: Uuid,
     t: &Tp3RecordExport,
     now: DateTime<Utc>,
 ) -> AppResult<()> {
     sqlx::query!(
-        r#"INSERT INTO tp3_records (id, employee_id, tax_year, previous_employer_name,
+        r#"INSERT INTO tp3_records (id, employee_id, company_id, tax_year, previous_employer_name,
                previous_income_ytd, previous_epf_ytd, previous_pcb_ytd, previous_socso_ytd,
                previous_zakat_ytd, created_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"#,
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"#,
         id,
         employee_id,
+        company_id,
         t.tax_year,
         t.previous_employer_name,
         t.previous_income_ytd,

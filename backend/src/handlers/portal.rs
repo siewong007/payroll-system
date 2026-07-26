@@ -9,6 +9,7 @@ use chrono::Datelike;
 use crate::core::app_state::AppState;
 use crate::core::auth::AuthUser;
 use crate::core::error::{AppError, AppResult};
+use crate::core::upload_path::{self, ALLOWED_UPLOAD_EXTENSIONS};
 use crate::models::employee::Employee;
 use crate::models::portal::*;
 use crate::services::portal_service;
@@ -210,9 +211,6 @@ pub async fn delete_overtime(
 // ─── File Upload ───
 
 const MAX_UPLOAD_SIZE: usize = 10 * 1024 * 1024; // 10 MB
-const ALLOWED_EXTENSIONS: &[&str] = &[
-    "jpg", "jpeg", "png", "gif", "webp", "pdf", "doc", "docx", "xls", "xlsx",
-];
 
 pub async fn upload_file(
     _auth: AuthUser,
@@ -235,11 +233,11 @@ pub async fn upload_file(
         .unwrap_or("")
         .to_lowercase();
 
-    if !ALLOWED_EXTENSIONS.contains(&ext.as_str()) {
+    if !ALLOWED_UPLOAD_EXTENSIONS.contains(&ext.as_str()) {
         return Err(AppError::BadRequest(format!(
             "File type .{} is not allowed. Allowed: {}",
             ext,
-            ALLOWED_EXTENSIONS.join(", ")
+            ALLOWED_UPLOAD_EXTENSIONS.join(", ")
         )));
     }
 
@@ -263,8 +261,7 @@ pub async fn upload_file(
     }
 
     // Save to uploads directory
-    let upload_dir = std::path::Path::new("uploads");
-    tokio::fs::create_dir_all(upload_dir)
+    tokio::fs::create_dir_all(upload_path::UPLOAD_DIR)
         .await
         .map_err(|e| AppError::Internal(format!("Failed to create upload dir: {}", e)))?;
 
@@ -274,13 +271,16 @@ pub async fn upload_file(
         sanitize_filename(&original_name),
         ext
     );
-    let file_path = upload_dir.join(&stored_name);
+    // The name is server-generated, so this cannot fail — it goes through the
+    // shared builder anyway so that no code path joins under the upload
+    // directory by hand.
+    let file_path = upload_path::stored_path(&stored_name)?;
 
     tokio::fs::write(&file_path, &data)
         .await
         .map_err(|e| AppError::Internal(format!("Failed to save file: {}", e)))?;
 
-    let file_url = format!("/api/uploads/{}", stored_name);
+    let file_url = format!("{}{}", upload_path::UPLOAD_URL_PREFIX, stored_name);
 
     Ok(Json(serde_json::json!({
         "url": file_url,
@@ -448,12 +448,10 @@ pub async fn serve_upload(
     use axum::body::Body;
     use axum::http::{Response, StatusCode, header};
 
-    // Prevent directory traversal
-    if filename.contains("..") || filename.contains('/') || filename.contains('\\') {
-        return Err(AppError::BadRequest("Invalid filename".into()));
-    }
-
-    let file_path = std::path::Path::new("uploads").join(&filename);
+    // Traversal is rejected by the shared validator rather than by a local
+    // check: this used to be the only guarded filesystem sink, and keeping a
+    // second implementation is how the others drifted out of sync with it.
+    let file_path = upload_path::stored_path(&filename)?;
 
     let data = tokio::fs::read(&file_path)
         .await

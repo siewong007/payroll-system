@@ -1,7 +1,9 @@
+use rust_decimal::Decimal;
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::core::error::{AppError, AppResult};
+use crate::models::payroll::OvertimeSettings;
 use crate::models::setting::{CompanySetting, SettingUpdate};
 use crate::repositories::company_settings;
 use crate::services::audit_service::{self, AuditRequestMeta};
@@ -23,6 +25,83 @@ pub async fn get_setting(
     company_settings::get(pool, company_id, category, key)
         .await?
         .ok_or_else(|| AppError::NotFound("Setting not found".into()))
+}
+
+/// The company's overtime configuration, read once by every caller that rates
+/// overtime.
+///
+/// Lives here rather than in `payroll_engine` because two callers now need it:
+/// the run (which prices overtime) and attendance check-out (which decides
+/// whether a derived figure is plausible enough to rate at all). Two copies
+/// would let a company's ceiling and its multipliers drift apart.
+///
+/// A missing or unparsable setting falls back to the statutory defaults
+/// (Employment Act multipliers, 26-day month, 8-hour day). Zero is treated as
+/// unset: it is never a meaningful divisor, multiplier or ceiling, and one
+/// blanked field would otherwise silently zero every overtime payment.
+pub(crate) async fn overtime_settings(pool: &PgPool, company_id: Uuid) -> OvertimeSettings {
+    async fn decimal_setting(
+        pool: &PgPool,
+        company_id: Uuid,
+        key: &str,
+        default: Decimal,
+    ) -> Decimal {
+        get_setting(pool, company_id, "payroll", key)
+            .await
+            .ok()
+            .and_then(|s| {
+                s.value
+                    .as_str()
+                    .and_then(|v| Decimal::from_str_exact(v).ok())
+            })
+            .filter(|v| !v.is_zero())
+            .unwrap_or(default)
+    }
+
+    OvertimeSettings {
+        effective_hours_per_day: decimal_setting(
+            pool,
+            company_id,
+            "effective_hours_per_day",
+            Decimal::from(8),
+        )
+        .await,
+        working_days_per_month: decimal_setting(
+            pool,
+            company_id,
+            "unpaid_leave_divisor",
+            Decimal::from(26),
+        )
+        .await,
+        multiplier_normal: decimal_setting(
+            pool,
+            company_id,
+            "overtime_multiplier_normal",
+            Decimal::new(15, 1),
+        )
+        .await,
+        multiplier_rest_day: decimal_setting(
+            pool,
+            company_id,
+            "overtime_multiplier_rest",
+            Decimal::from(2),
+        )
+        .await,
+        multiplier_public_holiday: decimal_setting(
+            pool,
+            company_id,
+            "overtime_multiplier_public",
+            Decimal::from(3),
+        )
+        .await,
+        max_overtime_hours_per_day: decimal_setting(
+            pool,
+            company_id,
+            "max_overtime_hours_per_day",
+            Decimal::from(4),
+        )
+        .await,
+    }
 }
 
 /// One audit row per changed setting, carrying the old and new value.

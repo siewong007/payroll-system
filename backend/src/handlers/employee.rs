@@ -325,7 +325,7 @@ pub async fn create_tp3(
     // Tenant isolation: confirm the employee belongs to the caller's company
     // before writing a TP3 record. `get_employee` is company-scoped.
     employee_service::get_employee(&state.pool, id, company_id).await?;
-    let record = employee_service::create_tp3(&state.pool, id, req, auth.0.sub).await?;
+    let record = employee_service::create_tp3(&state.pool, id, company_id, req, auth.0.sub).await?;
     Ok(Json(record))
 }
 

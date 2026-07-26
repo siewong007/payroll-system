@@ -16,8 +16,8 @@ use crate::models::payroll::{
 use crate::models::statutory::{EisContribution, EpfContribution, PcbInput, SocsoContribution};
 use crate::repositories::reads::payroll as payroll_reads;
 use crate::repositories::{
-    claims, employees as employee_repo, payroll_entries, payroll_item_details, payroll_items,
-    payroll_runs, tp3_records,
+    claims, company_work_schedules, employees as employee_repo, payroll_entries,
+    payroll_item_details, payroll_items, payroll_runs, tp3_records,
 };
 use crate::services::audit_service::AuditRequestMeta;
 use crate::services::eis_service;
@@ -102,7 +102,14 @@ struct RunInputs {
     bulk: BulkPayrollData,
     statutory: StatutoryTables,
     ot_settings: OvertimeSettings,
+    /// The company's own timezone, resolved once. Attendance is bucketed by
+    /// local calendar date, and hardcoding MYT puts an early-morning check-in in
+    /// the wrong month for a tenant that is not on it.
+    tz: String,
 }
+
+/// Fallback when a company has no default work schedule to read a timezone from.
+const DEFAULT_TIMEZONE: &str = "Asia/Kuala_Lumpur";
 
 /// Compute every employee, collecting failures instead of stopping at the first.
 ///
@@ -165,6 +172,10 @@ async fn gather_run_inputs(
 
     let employee_ids: Vec<Uuid> = employees.iter().map(|e| e.id).collect();
 
+    let tz = company_work_schedules::find_default_timezone(&mut *conn, company_id)
+        .await?
+        .unwrap_or_else(|| DEFAULT_TIMEZONE.to_string());
+
     // 1. Batch fetch recurring allowances and deductions
     let mut recurring_allowances_map = HashMap::new();
     let mut recurring_deductions_map = HashMap::new();
@@ -226,12 +237,17 @@ async fn gather_run_inputs(
             .collect();
 
     // 3. Batch fetch attendance OT hours
-    let attendance_ot_map: HashMap<Uuid, f64> =
-        payroll_reads::attendance_ot_hours(&mut *conn, &employee_ids, period_start, period_end)
-            .await?
-            .into_iter()
-            .map(|r| (r.employee_id, r.hours))
-            .collect();
+    let attendance_ot_map: HashMap<Uuid, f64> = payroll_reads::attendance_ot_hours(
+        &mut *conn,
+        &employee_ids,
+        period_start,
+        period_end,
+        &tz,
+    )
+    .await?
+    .into_iter()
+    .map(|r| (r.employee_id, r.hours))
+    .collect();
 
     // 3b. Batch fetch approved overtime applications
     let mut approved_ot_map: HashMap<Uuid, Vec<(String, f64)>> = HashMap::new();
@@ -294,7 +310,7 @@ async fn gather_run_inputs(
     // this snapshot, so a run is not held open across ~15 statutory round trips
     // per employee.
     let statutory = StatutoryTables::load(pool, effective_date).await?;
-    let ot_settings = load_overtime_settings(pool, company_id).await;
+    let ot_settings = settings_service::overtime_settings(pool, company_id).await;
 
     Ok(RunInputs {
         employees,
@@ -316,6 +332,7 @@ async fn gather_run_inputs(
         },
         statutory,
         ot_settings,
+        tz,
     })
 }
 
@@ -455,10 +472,14 @@ pub async fn preview_payroll(
 
     let mut warnings = Vec::new();
     for emp in &inputs.employees {
+        // Blocking, not advisory: SOCSO category and the EIS 57-59 / 60+
+        // branches are all age-based, and there is no defensible age to assume.
+        // The run refuses in `compute_payslip` for the same reason, so reporting
+        // it as a warning here would promise a preview that cannot be processed.
         if emp.date_of_birth.is_none() {
-            warnings.push(PayrollDiagnostic::for_employee(
+            blocking.push(PayrollDiagnostic::for_employee(
                 "missing_date_of_birth",
-                "No date of birth on record. SOCSO and EIS eligibility is age-based; this employee is rated as age 30.",
+                "No date of birth on record. SOCSO category and EIS eligibility are age-based, so this employee cannot be rated. Open the employee record, set the date of birth, and preview again.",
                 emp.id,
                 emp.employee_number.clone(),
                 emp.full_name.clone(),
@@ -508,6 +529,36 @@ pub async fn preview_payroll(
         ));
     }
 
+    // Overtime the check-out path refused to rate is silently absent from this
+    // run's figures — the employee simply sees a smaller payslip. A warning
+    // rather than a blocker: nothing unworked is being paid, so the run is safe
+    // to commit; what is owed is an HR correction to the affected records.
+    let ceiling = inputs.ot_settings.max_overtime_hours_per_day;
+    let employee_ids: Vec<Uuid> = inputs.employees.iter().map(|emp| emp.id).collect();
+    for row in payroll_reads::unrated_overtime_records(
+        &mut *conn,
+        &employee_ids,
+        period.period_start,
+        period.period_end,
+        &inputs.tz,
+        ceiling,
+    )
+    .await?
+    {
+        warnings.push(PayrollDiagnostic::for_employee(
+            "unrated_overtime",
+            format!(
+                "{} attendance record(s) this period have overtime above the {} h/day ceiling (longest shift {} h) and were left unrated, so no overtime is paid for them. Correct the check-out times if the hours were genuinely worked.",
+                row.record_count,
+                trim_decimal(ceiling),
+                row.max_hours_worked.map(trim_decimal).unwrap_or_else(|| "?".into()),
+            ),
+            row.employee_id,
+            row.employee_number,
+            row.employee_name,
+        ));
+    }
+
     let mut totals = RunTotals::default();
     let employees = inputs
         .employees
@@ -551,7 +602,19 @@ pub async fn preview_payroll(
         })
         .collect();
 
-    blocking.extend(failures);
+    // An employee already named by a specific blocking diagnostic above also
+    // fails `compute_payslip` — that is what makes the diagnostic blocking — so
+    // the generic "calculation failed" line would just repeat it in less useful
+    // words. Keyed on the employee rather than on any one diagnostic code, so a
+    // later specific diagnostic gets the same treatment for free. The per-row
+    // `error` in the projected-payslip table is built from `failures` above and
+    // is unaffected, so the operator still sees which row is at fault.
+    let already_reported: std::collections::HashSet<Uuid> =
+        blocking.iter().filter_map(|d| d.employee_id).collect();
+    blocking.extend(failures.into_iter().filter(|f| {
+        f.employee_id
+            .is_none_or(|id| !already_reported.contains(&id))
+    }));
 
     Ok(PayrollPreview {
         payroll_group_id,
@@ -675,6 +738,7 @@ pub async fn process_payroll(
         bulk: bulk_data,
         statutory,
         ot_settings,
+        tz,
     } = inputs;
 
     if employees.is_empty() {
@@ -694,6 +758,7 @@ pub async fn process_payroll(
         bulk: bulk_data,
         statutory,
         ot_settings,
+        tz,
     };
     let (computed, failures) = compute_all(&inputs.employees, &period, &inputs);
 
@@ -796,69 +861,6 @@ pub async fn process_payroll(
     Ok(run)
 }
 
-/// Reads the company's overtime configuration once per run.
-///
-/// Same keys the approval path uses, so attendance-based overtime and approved
-/// overtime are rated identically. A missing or unparsable setting falls back to
-/// the statutory defaults (Employment Act multipliers, 26-day month, 8-hour day).
-async fn load_overtime_settings(pool: &PgPool, company_id: Uuid) -> OvertimeSettings {
-    async fn decimal_setting(
-        pool: &PgPool,
-        company_id: Uuid,
-        key: &str,
-        default: Decimal,
-    ) -> Decimal {
-        settings_service::get_setting(pool, company_id, "payroll", key)
-            .await
-            .ok()
-            .and_then(|s| {
-                s.value
-                    .as_str()
-                    .and_then(|v| Decimal::from_str_exact(v).ok())
-            })
-            .filter(|v| !v.is_zero())
-            .unwrap_or(default)
-    }
-
-    OvertimeSettings {
-        effective_hours_per_day: decimal_setting(
-            pool,
-            company_id,
-            "effective_hours_per_day",
-            Decimal::from(8),
-        )
-        .await,
-        working_days_per_month: decimal_setting(
-            pool,
-            company_id,
-            "unpaid_leave_divisor",
-            Decimal::from(26),
-        )
-        .await,
-        multiplier_normal: decimal_setting(
-            pool,
-            company_id,
-            "overtime_multiplier_normal",
-            Decimal::new(15, 1),
-        )
-        .await,
-        multiplier_rest_day: decimal_setting(
-            pool,
-            company_id,
-            "overtime_multiplier_rest",
-            Decimal::from(2),
-        )
-        .await,
-        multiplier_public_holiday: decimal_setting(
-            pool,
-            company_id,
-            "overtime_multiplier_public",
-            Decimal::from(3),
-        )
-        .await,
-    }
-}
-
 /// Compute a single employee's payslip. Pure â€” no database access.
 ///
 /// Split out from persistence so the same arithmetic backs both the committed
@@ -878,8 +880,21 @@ fn compute_payslip(
         ..
     } = *period;
 
-    // Calculate age
-    let age = calculate_age(emp.date_of_birth, effective_date);
+    // SOCSO's First/Second category split, its 55-59 guard and the EIS 57-59 /
+    // 60+ branches are all age-based, and the substituted default of 30 cleared
+    // every one of them: a 62-year-old with no date of birth on record was rated
+    // as a 30-year-old and had an employee contribution deducted they are exempt
+    // from. Fail closed — an unlawful deduction is worse than a blocked run, and
+    // the preview names every affected employee before it gets this far.
+    let age = match emp.date_of_birth {
+        Some(dob) => calculate_age(dob, effective_date),
+        None => {
+            return Err(AppError::Validation(format!(
+                "Employee {} ({}) has no date of birth on record. SOCSO and EIS eligibility is age-based and cannot be assumed. Add the date of birth on the employee record, then re-run the preview.",
+                emp.employee_number, emp.full_name
+            )));
+        }
+    };
     let is_foreigner = emp.residency_status == "foreigner";
     let epf_category = emp.epf_category.clone().unwrap_or_else(|| "A".to_string());
 
@@ -986,11 +1001,19 @@ fn compute_payslip(
     // Approved claims (reimbursements, not part of gross â€” added to net)
     let total_claims = *bulk.approved_claims.get(&emp.id).unwrap_or(&0);
 
-    let gross = basic + allowances_total + variable_earnings + total_overtime;
+    // EPF Act 1991 s.2 excludes overtime from "wages"; ESSA 1969 s.2 and EIS Act
+    // 2017 s.2 both include it, and MTD is computed on total taxable
+    // remuneration. One shared `gross` therefore cannot serve all four â€” it
+    // resolved every OT-carrying payslip in an inflated EPF Third Schedule band.
+    // Claims are outside both bases: they are reimbursements paid on top of net,
+    // not remuneration. `gross` is derived from `epf_wage` rather than the
+    // reverse so no later edit can subtract the two apart.
+    let epf_wage = basic + allowances_total + variable_earnings;
+    let gross = epf_wage + total_overtime;
     let total_allowances = allowances_total + monthly_allowances;
 
     // EPF / SOCSO / EIS â€” resolved from the run's rule snapshot, no I/O.
-    let epf = epf_service::calculate_epf_with(statutory, gross, &epf_category)?;
+    let epf = epf_service::calculate_epf_with(statutory, epf_wage, &epf_category)?;
     let socso = socso_service::calculate_socso_with(statutory, gross, age, is_foreigner)?;
     let eis = eis_service::calculate_eis_with(statutory, gross, age, is_foreigner)?;
 
@@ -1298,17 +1321,15 @@ fn trim_decimal(value: Decimal) -> String {
     value.normalize().to_string()
 }
 
-fn calculate_age(dob: Option<NaiveDate>, as_of: NaiveDate) -> i32 {
-    match dob {
-        Some(dob) => {
-            let mut age = as_of.year() - dob.year();
-            if (as_of.month(), as_of.day()) < (dob.month(), dob.day()) {
-                age -= 1;
-            }
-            age
-        }
-        None => 30, // default assumption if DOB not provided
+/// Takes a `NaiveDate`, not an `Option`, so the "assume 30" fallback this
+/// function used to carry is unrepresentable. The caller decides what a missing
+/// date of birth means, and for payroll it means the employee cannot be rated.
+fn calculate_age(dob: NaiveDate, as_of: NaiveDate) -> i32 {
+    let mut age = as_of.year() - dob.year();
+    if (as_of.month(), as_of.day()) < (dob.month(), dob.day()) {
+        age -= 1;
     }
+    age
 }
 
 #[cfg(test)]
@@ -1316,45 +1337,29 @@ mod tests {
     use super::calculate_age;
     use chrono::NaiveDate;
 
+    fn date(y: i32, m: u32, d: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(y, m, d).expect("valid date")
+    }
+
     #[test]
     fn calculates_age_on_and_before_birthday() {
-        let dob = NaiveDate::from_ymd_opt(1990, 7, 1);
-        assert_eq!(
-            calculate_age(dob, NaiveDate::from_ymd_opt(2023, 6, 30).unwrap()),
-            32
-        );
-        assert_eq!(
-            calculate_age(dob, NaiveDate::from_ymd_opt(2023, 7, 1).unwrap()),
-            33
-        );
+        let dob = date(1990, 7, 1);
+        assert_eq!(calculate_age(dob, date(2023, 6, 30)), 32);
+        assert_eq!(calculate_age(dob, date(2023, 7, 1)), 33);
     }
 
     #[test]
     fn leap_year_day_offset_does_not_advance_age_early() {
-        let dob = NaiveDate::from_ymd_opt(1990, 7, 1);
-        let leap_year_day_before_birthday = NaiveDate::from_ymd_opt(2024, 6, 30).unwrap();
+        let dob = date(1990, 7, 1);
+        let leap_year_day_before_birthday = date(2024, 6, 30);
 
         assert_eq!(calculate_age(dob, leap_year_day_before_birthday), 33);
     }
 
     #[test]
     fn february_29_birthday_advances_on_march_1_in_non_leap_year() {
-        let dob = NaiveDate::from_ymd_opt(2000, 2, 29);
-        assert_eq!(
-            calculate_age(dob, NaiveDate::from_ymd_opt(2026, 2, 28).unwrap()),
-            25
-        );
-        assert_eq!(
-            calculate_age(dob, NaiveDate::from_ymd_opt(2026, 3, 1).unwrap()),
-            26
-        );
-    }
-
-    #[test]
-    fn missing_birth_date_keeps_documented_default_age() {
-        assert_eq!(
-            calculate_age(None, NaiveDate::from_ymd_opt(2026, 7, 14).unwrap()),
-            30
-        );
+        let dob = date(2000, 2, 29);
+        assert_eq!(calculate_age(dob, date(2026, 2, 28)), 25);
+        assert_eq!(calculate_age(dob, date(2026, 3, 1)), 26);
     }
 }

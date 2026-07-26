@@ -75,6 +75,9 @@ pub async fn insert_face(
 /// hours worked and overtime against the company's default schedule.
 /// `outside_geofence` ORs into the record's flag so an off-site checkout is
 /// visible even when the check-in was on-site.
+///
+/// `max_overtime_hours` is the company's per-day ceiling, decided by the service
+/// — the repository does not read settings.
 pub async fn check_out(
     executor: impl Executor<'_, Database = Postgres>,
     employee_id: Uuid,
@@ -82,6 +85,7 @@ pub async fn check_out(
     longitude: Option<f64>,
     company_id: Uuid,
     outside_geofence: bool,
+    max_overtime_hours: rust_decimal::Decimal,
 ) -> AppResult<Option<AttendanceRecord>> {
     let record = sqlx::query_as!(
         AttendanceRecord,
@@ -90,30 +94,48 @@ pub async fn check_out(
                checkout_latitude = $2,
                checkout_longitude = $3,
                is_outside_geofence = (COALESCE(ar.is_outside_geofence, FALSE) OR $5),
-               hours_worked = ROUND(EXTRACT(EPOCH FROM (NOW() - ar.check_in_at)) / 3600.0, 2),
-               overtime_hours = GREATEST(0,
-                   ROUND(EXTRACT(EPOCH FROM (NOW() - ar.check_in_at)) / 3600.0, 2)
-                   - COALESCE((
-                       -- Wrap past midnight: a night shift (e.g. 22:00->06:00)
-                       -- has end_time < start_time, and a plain subtraction
-                       -- yields -16h, which would turn an 8h shift into 24h of
-                       -- overtime. Adding a day before the modulo maps that
-                       -- back to 8h and leaves same-day shifts unchanged.
-                       SELECT MOD(EXTRACT(EPOCH FROM (ws.end_time - ws.start_time))::numeric + 86400, 86400) / 3600.0
-                       FROM company_work_schedules ws
-                       WHERE ws.company_id = ar.company_id AND ws.is_default = TRUE
-                   ), 9)
-               ),
+               hours_worked = src.elapsed_hours,
+               -- A forgotten check-out is indistinguishable from a genuine long
+               -- shift at write time, and the 24h match window below means the
+               -- elapsed figure can be most of a day. Above the company's
+               -- per-day ceiling the overtime is left UNRATED (NULL) rather than
+               -- clamped: SUM() in the payroll read skips it so nothing unworked
+               -- is paid, while the record stays visible for an HR correction.
+               -- Clamping would still pay the ceiling and erase the evidence.
+               -- hours_worked stays truthful either way — it is what the clock
+               -- says, and blunting it would hide the anomaly from the
+               -- attendance summary too.
+               overtime_hours = CASE
+                   WHEN src.overtime_hours > $6 THEN NULL
+                   ELSE src.overtime_hours
+               END,
                updated_at = NOW()
-           WHERE ar.id = (
-               SELECT id FROM attendance_records
-               WHERE employee_id = $1
-                 AND company_id = $4
-                 AND check_out_at IS NULL
-                 AND check_in_at > NOW() - INTERVAL '24 hours'
-               ORDER BY check_in_at DESC
-               LIMIT 1
-           )
+           FROM (
+               SELECT open_record.id,
+                      open_record.elapsed_hours,
+                      GREATEST(0, open_record.elapsed_hours - COALESCE((
+                          -- Wrap past midnight: a night shift (e.g. 22:00->06:00)
+                          -- has end_time < start_time, and a plain subtraction
+                          -- yields -16h, which would turn an 8h shift into 24h of
+                          -- overtime. Adding a day before the modulo maps that
+                          -- back to 8h and leaves same-day shifts unchanged.
+                          SELECT MOD(EXTRACT(EPOCH FROM (ws.end_time - ws.start_time))::numeric + 86400, 86400) / 3600.0
+                          FROM company_work_schedules ws
+                          WHERE ws.company_id = open_record.company_id AND ws.is_default = TRUE
+                      ), 9)) AS overtime_hours
+               FROM (
+                   SELECT id, company_id,
+                          ROUND(EXTRACT(EPOCH FROM (NOW() - check_in_at)) / 3600.0, 2) AS elapsed_hours
+                   FROM attendance_records
+                   WHERE employee_id = $1
+                     AND company_id = $4
+                     AND check_out_at IS NULL
+                     AND check_in_at > NOW() - INTERVAL '24 hours'
+                   ORDER BY check_in_at DESC
+                   LIMIT 1
+               ) open_record
+           ) src
+           WHERE ar.id = src.id
            RETURNING ar.id, ar.company_id, ar.employee_id, ar.check_in_at, ar.check_out_at,
                      ar.method, ar.status, ar.latitude, ar.longitude, ar.checkout_latitude,
                      ar.checkout_longitude, ar.notes, ar.qr_token_id, ar.created_by,
@@ -124,6 +146,7 @@ pub async fn check_out(
         longitude,
         company_id,
         outside_geofence,
+        max_overtime_hours,
     )
     .fetch_optional(executor)
     .await?;
