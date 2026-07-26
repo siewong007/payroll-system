@@ -7,7 +7,7 @@ use axum::{
 use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
 
 use crate::core::app_state::AppState;
-use crate::core::rate_limit_key::ClientIpKeyExtractor;
+use crate::core::rate_limit_key::{ClientIpKeyExtractor, SessionOrIpKeyExtractor};
 use crate::handlers::{
     admin, approval, attendance, audit, auth, backup, calendar, company, dashboard, document,
     email, employee, employee_import, geofence, health, notification, oauth2, passkey, payroll,
@@ -79,6 +79,67 @@ pub fn create_router(state: AppState) -> Router {
         .route("/attendance/kiosk/qr", post(attendance::kiosk_qr))
         .layer(GovernorLayer::new(kiosk_rate_limit));
 
+    // ─── Authenticated cost controls ───
+    //
+    // Everything above limits unauthenticated surfaces. The expensive
+    // authenticated ones were unlimited, so a valid session could run payroll
+    // in a loop, re-upload until the disk filled, or drive the SMTP relay hard
+    // enough to get the sending domain blocked. These are keyed per session
+    // rather than per IP — see `SessionOrIpKeyExtractor` for why.
+    let session_key = SessionOrIpKeyExtractor::new(state.config.trust_proxy_headers);
+
+    // Outbound mail: ~10/min sustained, bursts of 20 for a letter run. The
+    // sharpest limit of the group because the damage is external and
+    // irreversible — spam complaints against the sending domain outlive the
+    // request.
+    let email_rate_limit = GovernorConfigBuilder::default()
+        .key_extractor(session_key)
+        .per_second(6)
+        .burst_size(20)
+        .finish()
+        .expect("Failed to build email rate limiter");
+
+    // Payroll runs, previews and bulk imports: each walks every employee in
+    // the company inside one transaction. ~6/min with a burst of 5 is far
+    // above deliberate use and far below what makes the database suffer.
+    let heavy_job_rate_limit = GovernorConfigBuilder::default()
+        .key_extractor(session_key)
+        .per_second(10)
+        .burst_size(5)
+        .finish()
+        .expect("Failed to build heavy job rate limiter");
+
+    // Uploads: 10 MB apiece into the API container's local disk, with no quota
+    // behind them.
+    let upload_rate_limit = GovernorConfigBuilder::default()
+        .key_extractor(session_key)
+        .per_second(4)
+        .burst_size(10)
+        .finish()
+        .expect("Failed to build upload rate limiter");
+
+    let rate_limited_email = Router::new()
+        .route("/email/send", post(email::send_letter))
+        .layer(GovernorLayer::new(email_rate_limit));
+
+    let rate_limited_heavy = Router::new()
+        .route("/payroll/run", post(payroll::process))
+        .route("/payroll/preview", post(payroll::preview))
+        .route(
+            "/employees/import/confirm",
+            post(employee_import::confirm_import),
+        )
+        .route("/admin/backup/export", get(backup::export_company))
+        .route("/admin/backup/import", post(backup::import_company))
+        .layer(GovernorLayer::new(heavy_job_rate_limit));
+
+    let rate_limited_uploads = Router::new()
+        .route(
+            "/uploads",
+            post(portal::upload_file).layer(axum::extract::DefaultBodyLimit::max(11 * 1024 * 1024)),
+        )
+        .layer(GovernorLayer::new(upload_rate_limit));
+
     let api = Router::new()
         // Health check (no auth required, used by ALB)
         .route("/health", get(|| async { "ok" }))
@@ -88,6 +149,9 @@ pub fn create_router(state: AppState) -> Router {
         .merge(rate_limited_forgot)
         .merge(rate_limited_oauth2)
         .merge(rate_limited_kiosk)
+        .merge(rate_limited_email)
+        .merge(rate_limited_heavy)
+        .merge(rate_limited_uploads)
         // Auth (non-rate-limited)
         .route("/auth/me", get(auth::me))
         .route("/auth/refresh", post(auth::refresh_token))
@@ -173,9 +237,6 @@ pub fn create_router(state: AppState) -> Router {
             "/admin/users/{id}",
             put(admin::update_user).delete(admin::delete_user),
         )
-        // Backup / Data Migration
-        .route("/admin/backup/export", get(backup::export_company))
-        .route("/admin/backup/import", post(backup::import_company))
         // Employees
         .route("/employees", get(employee::list).post(employee::create))
         .route(
@@ -198,15 +259,10 @@ pub fn create_router(state: AppState) -> Router {
             "/employees/import/validate",
             post(employee_import::validate_import),
         )
-        .route(
-            "/employees/import/confirm",
-            post(employee_import::confirm_import),
-        )
+        // POST /employees/import/confirm is rate-limited above.
         // Payroll Groups
         .route("/payroll-groups", get(payroll::list_groups))
-        // Payroll Runs
-        .route("/payroll/run", post(payroll::process))
-        .route("/payroll/preview", post(payroll::preview))
+        // Payroll Runs (/payroll/run and /payroll/preview are rate-limited above)
         .route(
             "/payroll/entries",
             get(payroll::list_entries).post(payroll::create_entry),
@@ -296,12 +352,7 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route("/portal/overtime/{id}/cancel", put(portal::cancel_overtime))
         .route("/portal/overtime/{id}", delete(portal::delete_overtime))
-        // File uploads. Raise the body limit above Axum's 2 MB default so the
-        // 10 MB upload cap enforced inside the handler is actually reachable.
-        .route(
-            "/uploads",
-            post(portal::upload_file).layer(axum::extract::DefaultBodyLimit::max(11 * 1024 * 1024)),
-        )
+        // POST /uploads is rate-limited above (with the raised body limit).
         .route("/uploads/{filename}", get(portal::serve_upload))
         // Dashboard
         .route("/dashboard/summary", get(dashboard::summary))
@@ -419,7 +470,7 @@ pub fn create_router(state: AppState) -> Router {
                 .delete(email::delete_template),
         )
         .route("/email/preview", post(email::preview_letter))
-        .route("/email/send", post(email::send_letter))
+        // POST /email/send is rate-limited above.
         .route("/email/logs", get(email::list_email_logs))
         // Audit Trail
         .route("/audit-logs", get(audit::list_audit_logs))
