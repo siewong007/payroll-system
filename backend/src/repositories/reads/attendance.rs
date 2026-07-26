@@ -285,6 +285,7 @@ pub async fn export_rows(
         method: q.method.clone(),
         open_only: None,
         outside_geofence_only: None,
+        offsite_network_only: None,
         page: None,
         per_page: None,
     };
