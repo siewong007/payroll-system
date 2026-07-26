@@ -7,57 +7,49 @@ use uuid::Uuid;
 use crate::core::error::AppResult;
 use crate::models::portal::Claim;
 
-/// Mark an employee's approved claims within a period as processed (paid via payroll).
-pub async fn mark_processed(
+/// Mark exactly the claims a run reimbursed as paid, linking them to the run.
+///
+/// By id, not by predicate. The engine used to sum a period-bounded predicate
+/// and then re-run it to mark rows processed, so a claim approved between the
+/// two was marked paid without ever being paid. `status = 'approved' AND
+/// payroll_run_id IS NULL` is kept as a compare-and-swap so a row a concurrent
+/// run already took is left alone rather than double-claimed.
+pub async fn mark_paid(
     executor: impl Executor<'_, Database = Postgres>,
-    employee_id: Uuid,
-    company_id: Uuid,
-    period_start: NaiveDate,
-    period_end: NaiveDate,
+    run_id: Uuid,
+    claim_ids: &[Uuid],
 ) -> AppResult<()> {
-    // NOTE: indentation matches the byte-exact SQL in the offline `.sqlx` cache
-    // (this UPDATE was originally nested inside an `if`, hence the deeper indent).
     sqlx::query!(
-        r#"UPDATE claims SET status = 'processed', updated_at = NOW()
-            WHERE employee_id = $1 AND company_id = $2
-              AND status = 'approved'
-              AND expense_date >= $3 AND expense_date <= $4"#,
-        employee_id,
-        company_id,
-        period_start,
-        period_end,
+        r#"UPDATE claims
+        SET status = 'processed', payroll_run_id = $1, updated_at = NOW()
+        WHERE id = ANY($2) AND status = 'approved' AND payroll_run_id IS NULL"#,
+        run_id,
+        claim_ids,
     )
     .execute(executor)
     .await?;
     Ok(())
 }
 
-/// Revert a run's processed claims back to approved (used when deleting a run).
+/// Revert a run's paid claims back to approved (used when deleting a run).
 ///
-/// Scoped to the employees that the run actually paid. `mark_processed` marks
-/// per employee, so reverting by company+period alone would also un-process
-/// claims belonging to a *different* payroll group whose run for the same month
-/// is still live — the next run touching those employees would pay them again.
-/// Must be called before `payroll_items::delete_for_run`, which is where the
-/// run's employee set is read from.
-pub async fn revert_processed_for_run(
+/// By run id, which is exact. A period-bounded revert cannot express this once
+/// selection is carry-forward: a run legitimately pays claims incurred before
+/// its own period, and un-processing by period would revert claims an *earlier*
+/// run already paid. The old employee-set subquery against `payroll_items` also
+/// forced an ordering constraint against `payroll_items::delete_for_run`; this
+/// has none.
+pub async fn revert_for_run(
     executor: impl Executor<'_, Database = Postgres>,
-    company_id: Uuid,
     run_id: Uuid,
-    period_start: NaiveDate,
-    period_end: NaiveDate,
+    company_id: Uuid,
 ) -> AppResult<()> {
     sqlx::query!(
-        r#"UPDATE claims SET status = 'approved', updated_at = NOW()
-        WHERE company_id = $1 AND status = 'processed'
-          AND expense_date >= $2 AND expense_date <= $3
-          AND employee_id IN (
-              SELECT employee_id FROM payroll_items WHERE payroll_run_id = $4
-          )"#,
-        company_id,
-        period_start,
-        period_end,
+        r#"UPDATE claims
+        SET status = 'approved', payroll_run_id = NULL, updated_at = NOW()
+        WHERE payroll_run_id = $1 AND company_id = $2"#,
         run_id,
+        company_id,
     )
     .execute(executor)
     .await?;
@@ -217,21 +209,28 @@ pub async fn delete(
     Ok(())
 }
 
+/// Cancel a claim that is still cancellable. `None` if it is not.
+///
+/// A compare-and-swap rather than an unconditional UPDATE: the status was read
+/// on an earlier statement, so a run committing in between could otherwise have
+/// its just-paid ('processed') claim cancelled out from under it — the money is
+/// already in the payslip.
 pub async fn set_cancelled(
     executor: impl Executor<'_, Database = Postgres>,
     claim_id: Uuid,
     company_id: Uuid,
-) -> AppResult<Claim> {
+) -> AppResult<Option<Claim>> {
     let cancelled = sqlx::query_as!(
         Claim,
         r#"UPDATE claims
         SET status = 'cancelled', updated_at = NOW()
         WHERE id = $1 AND company_id = $2
+          AND status IN ('pending', 'approved', 'rejected')
         RETURNING *"#,
         claim_id,
         company_id,
     )
-    .fetch_one(executor)
+    .fetch_optional(executor)
     .await?;
     Ok(cancelled)
 }
@@ -379,17 +378,24 @@ pub async fn get_cancellable_for_employee(
     Ok(claim)
 }
 
+/// Cancel an employee's own claim. `false` if it is no longer cancellable.
+///
+/// Same compare-and-swap as `set_cancelled`, for the same reason: a run
+/// committing between the read and this write must not have its paid claim
+/// cancelled.
 pub async fn mark_cancelled(
     executor: impl Executor<'_, Database = Postgres>,
     claim_id: Uuid,
-) -> AppResult<()> {
-    sqlx::query!(
-        "UPDATE claims SET status = 'cancelled', updated_at = NOW() WHERE id = $1",
+) -> AppResult<bool> {
+    let rows = sqlx::query!(
+        r#"UPDATE claims SET status = 'cancelled', updated_at = NOW()
+        WHERE id = $1 AND status IN ('pending', 'approved', 'rejected')"#,
         claim_id,
     )
     .execute(executor)
-    .await?;
-    Ok(())
+    .await?
+    .rows_affected();
+    Ok(rows > 0)
 }
 
 pub async fn delete_draft_or_cancelled(

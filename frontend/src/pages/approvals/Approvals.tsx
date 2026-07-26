@@ -222,6 +222,16 @@ export function Approvals() {
   const queryClient = useQueryClient();
   const activeCompanyId = user?.company_id ?? null;
 
+  // Maker-checker. The server is the gate — `approve_claim` / `approve_leave` /
+  // `approve_overtime` return 403 when the reviewer is the subject, resolving
+  // the link from the `users` row rather than from the token. This only stops
+  // the UI offering an action that cannot succeed, and must never be mistaken
+  // for the control itself. `super_admin` carries the documented override.
+  const isSelfApproval = (employeeId: string) =>
+    Boolean(user?.employee_id) &&
+    user?.employee_id === employeeId &&
+    !(user?.roles ?? []).includes('super_admin');
+
   const { data: employeeResp } = useQuery({
     queryKey: ['approval-employees', activeCompanyId],
     queryFn: () => getEmployees({ is_active: true, page: 1, per_page: 100 }),
@@ -712,6 +722,11 @@ export function Approvals() {
                       <XCircle className="w-4 h-4" />
                       {rejectLeaveM.isPending ? 'Rejecting...' : 'Reject'}
                     </button>
+                    {isSelfApproval(request.employee_id) ? (
+                      <p className="text-sm text-gray-500 max-w-xs text-right">
+                        You cannot approve your own leave request. Ask another approver, or a super admin, to review it.
+                      </p>
+                    ) : (
                     <button
                       onClick={() => approveLeaveM.mutate({ id: request.id, notes: reviewNotes[request.id] }, { onSuccess: close })}
                       disabled={approveLeaveM.isPending}
@@ -720,6 +735,7 @@ export function Approvals() {
                       <CheckCircle className="w-4 h-4" />
                       {approveLeaveM.isPending ? 'Approving...' : 'Approve'}
                     </button>
+                    )}
                 </div>
               ) : null
             }
@@ -833,6 +849,11 @@ export function Approvals() {
                       <XCircle className="w-4 h-4" />
                       {rejectClaimM.isPending ? 'Rejecting...' : 'Reject'}
                     </button>
+                    {isSelfApproval(claim.employee_id) ? (
+                      <p className="text-sm text-gray-500 max-w-xs text-right">
+                        You cannot approve your own claim. Ask another approver, or a super admin, to review it.
+                      </p>
+                    ) : (
                     <button
                       onClick={() => approveClaimM.mutate({ id: claim.id, notes: reviewNotes[claim.id] }, { onSuccess: close })}
                       disabled={approveClaimM.isPending}
@@ -841,6 +862,7 @@ export function Approvals() {
                       <CheckCircle className="w-4 h-4" />
                       {approveClaimM.isPending ? 'Approving...' : 'Approve'}
                     </button>
+                    )}
                 </div>
               ) : null
             }
@@ -946,6 +968,11 @@ export function Approvals() {
                       <XCircle className="w-4 h-4" />
                       {rejectOvertimeM.isPending ? 'Rejecting...' : 'Reject'}
                     </button>
+                    {isSelfApproval(overtime.employee_id) ? (
+                      <p className="text-sm text-gray-500 max-w-xs text-right">
+                        You cannot approve your own overtime. Ask another approver, or a super admin, to review it.
+                      </p>
+                    ) : (
                     <button
                       onClick={() => approveOvertimeM.mutate({ id: overtime.id, notes: reviewNotes[overtime.id] }, { onSuccess: close })}
                       disabled={approveOvertimeM.isPending}
@@ -954,6 +981,7 @@ export function Approvals() {
                       <CheckCircle className="w-4 h-4" />
                       {approveOvertimeM.isPending ? 'Approving...' : 'Approve'}
                     </button>
+                    )}
                 </div>
               ) : null
             }

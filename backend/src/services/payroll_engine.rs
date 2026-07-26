@@ -10,8 +10,8 @@ use uuid::Uuid;
 use crate::core::error::{AppError, AppResult};
 use crate::models::employee::Employee;
 use crate::models::payroll::{
-    BulkPayrollData, OvertimeSettings, PayrollDiagnostic, PayrollItem, PayrollPreview,
-    PayrollPreviewEmployee, PayrollRun, PayslipLine, Tp3Totals, YtdTotals,
+    BulkPayrollData, OvertimeSettings, PayableClaim, PayrollDiagnostic, PayrollItem,
+    PayrollPreview, PayrollPreviewEmployee, PayrollRun, PayslipLine, Tp3Totals, YtdTotals,
 };
 use crate::models::statutory::{EisContribution, EpfContribution, PcbInput, SocsoContribution};
 use crate::repositories::reads::payroll as payroll_reads;
@@ -70,6 +70,10 @@ struct ComputedPayslip {
     total_allowances: i64,
     total_overtime: i64,
     total_claims: i64,
+    /// Exactly the claims `total_claims` was summed from, so persistence marks
+    /// those rows paid rather than re-running a predicate that may have picked
+    /// up a claim approved since.
+    claim_ids: Vec<Uuid>,
     epf: EpfContribution,
     socso: SocsoContribution,
     eis: EisContribution,
@@ -261,18 +265,15 @@ async fn gather_run_inputs(
             .push((row.ot_type, row.hours));
     }
 
-    // 3c. Batch fetch approved claims
-    let claims_map: HashMap<Uuid, i64> = payroll_reads::approved_claim_totals(
-        &mut *conn,
-        &employee_ids,
-        company_id,
-        period_start,
-        period_end,
-    )
-    .await?
-    .into_iter()
-    .map(|r| (r.employee_id, r.total))
-    .collect();
+    // 3c. Batch fetch the approved claims this run will reimburse. Carry-forward
+    // rather than period-bounded, so a claim approved after its own expense
+    // month closed is picked up here instead of never being paid at all.
+    let mut claims_map: HashMap<Uuid, Vec<PayableClaim>> = HashMap::new();
+    for claim in
+        payroll_reads::payable_claims(&mut *conn, &employee_ids, company_id, period_end).await?
+    {
+        claims_map.entry(claim.employee_id).or_default().push(claim);
+    }
 
     // 4. Batch fetch TP3 data
     let tp3_map: HashMap<Uuid, Tp3Totals> =
@@ -521,6 +522,64 @@ pub async fn preview_payroll(
                 "{} staged {} totalling {} sen will not be paid by this run — this employee is not in the selected payroll group for this period.",
                 orphan.entry_count,
                 if orphan.entry_count == 1 { "entry" } else { "entries" },
+                orphan.total_amount
+            ),
+            orphan.employee_id,
+            orphan.employee_number,
+            orphan.employee_name,
+        ));
+    }
+
+    // Claim selection is carry-forward, so the first run after this change
+    // sweeps every claim that was stuck 'approved' because it was approved after
+    // its own expense month closed. That money is owed, but the run total will
+    // jump against any hand-forecast, so say so before it commits rather than
+    // after.
+    for emp in &inputs.employees {
+        let Some(claims_for_employee) = inputs.bulk.approved_claims.get(&emp.id) else {
+            continue;
+        };
+        let earlier: Vec<&PayableClaim> = claims_for_employee
+            .iter()
+            .filter(|claim| claim.expense_date < period.period_start)
+            .collect();
+        let Some(oldest) = earlier.iter().map(|claim| claim.expense_date).min() else {
+            continue;
+        };
+        let total: i64 = earlier.iter().map(|claim| claim.amount).sum();
+        warnings.push(PayrollDiagnostic::for_employee(
+            "claims_from_earlier_periods",
+            format!(
+                "{} approved {} from before this period, totalling {} sen (oldest expense {}), will be reimbursed by this run. They were incurred earlier but never paid.",
+                earlier.len(),
+                if earlier.len() == 1 { "claim" } else { "claims" },
+                total,
+                oldest
+            ),
+            emp.id,
+            emp.employee_number.clone(),
+            emp.full_name.clone(),
+        ));
+    }
+
+    // The claims mirror of the staged-entry warning: a claim belonging to
+    // someone outside the selected group is swept by no run at all, and stays
+    // 'approved' with nothing to show for it.
+    for orphan in payroll_reads::approved_claims_outside_run(
+        &mut *conn,
+        company_id,
+        payroll_group_id,
+        period.period_start,
+        period.period_end,
+    )
+    .await?
+    {
+        warnings.push(PayrollDiagnostic::for_employee(
+            "approved_claims_outside_run",
+            format!(
+                "{} approved {} totalling {} sen will not be reimbursed by this run — this employee is not in the selected payroll group for this period.",
+                orphan.entry_count,
+                if orphan.entry_count == 1 { "claim" } else { "claims" },
                 orphan.total_amount
             ),
             orphan.employee_id,
@@ -999,7 +1058,14 @@ fn compute_payslip(
     let total_overtime = attendance_ot_pay + approved_ot_pay;
 
     // Approved claims (reimbursements, not part of gross â€” added to net)
-    let total_claims = *bulk.approved_claims.get(&emp.id).unwrap_or(&0);
+    // Summed from the individual rows rather than read as a pre-aggregated
+    // total, so `persist_payslip` can mark exactly these claims paid.
+    let payable_claims: &[PayableClaim] = bulk
+        .approved_claims
+        .get(&emp.id)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let total_claims: i64 = payable_claims.iter().map(|claim| claim.amount).sum();
 
     // EPF Act 1991 s.2 excludes overtime from "wages"; ESSA 1969 s.2 and EIS Act
     // 2017 s.2 both include it, and MTD is computed on total taxable
@@ -1108,7 +1174,7 @@ fn compute_payslip(
         days_worked,
         period_days,
         overtime_lines,
-        total_claims,
+        payable_claims,
         &epf,
         &socso,
         &eis,
@@ -1125,6 +1191,7 @@ fn compute_payslip(
         total_allowances,
         total_overtime,
         total_claims,
+        claim_ids: payable_claims.iter().map(|claim| claim.id).collect(),
         epf,
         socso,
         eis,
@@ -1205,16 +1272,11 @@ async fn persist_payslip(
     // Mark staged entries as processed
     payroll_entries::mark_processed(&mut **tx, run_id, emp.id, period.year, period.month).await?;
 
-    // Mark approved claims as processed
-    if computed.total_claims > 0 {
-        claims::mark_processed(
-            &mut **tx,
-            emp.id,
-            emp.company_id,
-            period.period_start,
-            period.period_end,
-        )
-        .await?;
+    // Mark exactly the claims this payslip reimbursed, by id. The old call
+    // re-ran the period predicate, so a claim approved between the read and this
+    // write was marked paid without appearing in any payslip.
+    if !computed.claim_ids.is_empty() {
+        claims::mark_paid(&mut **tx, run_id, &computed.claim_ids).await?;
     }
 
     Ok(item)
@@ -1242,7 +1304,7 @@ fn build_payslip_lines(
     days_worked: i64,
     period_days: i64,
     overtime_lines: Vec<PayslipLine>,
-    total_claims: i64,
+    payable_claims: &[PayableClaim],
     epf: &EpfContribution,
     socso: &SocsoContribution,
     eis: &EisContribution,
@@ -1293,11 +1355,21 @@ fn build_payslip_lines(
     lines.append(&mut earnings);
     lines.extend(overtime_lines);
 
+    // One line per claim, not one aggregate. Selection is carry-forward, so a
+    // July payslip can legitimately reimburse a June expense — naming the claim
+    // and its expense date is the only way the employee can tell why.
     // Reimbursements are paid on top of net rather than forming part of gross,
-    // so the line is recorded as non-taxable to match how the engine treats it.
-    lines.push(
-        PayslipLine::earning("claim_reimbursement", "Approved claims", total_claims).taxable(false),
-    );
+    // so each line is recorded as non-taxable to match how the engine treats it.
+    for claim in payable_claims {
+        lines.push(
+            PayslipLine::earning(
+                "claim_reimbursement",
+                format!("Claim: {} ({})", claim.title, claim.expense_date),
+                claim.amount,
+            )
+            .taxable(false),
+        );
+    }
 
     lines.push(PayslipLine::deduction("epf", "EPF (employee)", epf.employee).statutory());
     lines.push(PayslipLine::deduction("socso", "SOCSO (employee)", socso.employee).statutory());

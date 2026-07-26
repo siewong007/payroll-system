@@ -13,6 +13,7 @@ use crate::core::auth::{
 use crate::core::cookie::{clear_refresh_cookie, extract_refresh_token, set_refresh_cookie};
 use crate::core::error::AppError;
 use crate::models::audit::AuditRequestMeta;
+use crate::services::approval_service::ensure_overtime_hours_within_window;
 use crate::services::auth_service::validate_password_strength;
 use crate::services::oauth2_service::{
     STALE_GRANT_MESSAGE, classify_token_exchange_error, compute_code_challenge,
@@ -585,4 +586,55 @@ fn audit_metadata_without_any_address_records_none() {
     let headers = HeaderMap::new();
     let meta = AuditRequestMeta::from_request(&headers, None, false);
     assert_eq!(meta.ip_address, None);
+}
+
+fn hhmm(value: &str) -> chrono::NaiveTime {
+    chrono::NaiveTime::parse_from_str(value, "%H:%M").expect("valid time")
+}
+
+/// `hours` is multiplied by an hourly rate to stage a payroll earning, and the
+/// three admin paths took it straight from the request. The exploit in the
+/// report is 999.99 hours declared over a one-hour window.
+#[test]
+fn overtime_hours_cannot_exceed_the_declared_window() {
+    assert!(
+        ensure_overtime_hours_within_window(dec!(999.99), hhmm("09:00"), hhmm("10:00")).is_err(),
+        "999.99 hours over a one-hour window must be refused"
+    );
+    assert!(ensure_overtime_hours_within_window(dec!(8), hhmm("09:00"), hhmm("17:00")).is_ok());
+}
+
+#[test]
+fn overtime_hours_must_be_positive() {
+    // A negative value stages a negative earning; zero stages nothing but is
+    // not a meaningful application either.
+    assert!(ensure_overtime_hours_within_window(dec!(0), hhmm("09:00"), hhmm("17:00")).is_err());
+    assert!(ensure_overtime_hours_within_window(dec!(-50), hhmm("09:00"), hhmm("17:00")).is_err());
+}
+
+/// The wrap past midnight is what a night shift needs — a naive `end > start`
+/// check would reject every one of them.
+#[test]
+fn overtime_window_wraps_past_midnight() {
+    assert!(ensure_overtime_hours_within_window(dec!(8), hhmm("22:00"), hhmm("06:00")).is_ok());
+    assert!(
+        ensure_overtime_hours_within_window(dec!(9), hhmm("22:00"), hhmm("06:00")).is_err(),
+        "the wrapped window is still a bound, not an exemption"
+    );
+}
+
+#[test]
+fn overtime_window_boundary_is_inclusive() {
+    assert!(ensure_overtime_hours_within_window(dec!(2), hhmm("09:00"), hhmm("11:00")).is_ok());
+    assert!(ensure_overtime_hours_within_window(dec!(2.01), hhmm("09:00"), hhmm("11:00")).is_err());
+}
+
+/// The wrap makes the declared window at most 24 h by construction, so the
+/// service rule already entails the `hours <= 24` database CHECK rather than
+/// contradicting it.
+#[test]
+fn overtime_window_never_admits_more_than_a_day() {
+    // Equal start and end wraps to a full 24 h — the widest window expressible.
+    assert!(ensure_overtime_hours_within_window(dec!(24), hhmm("09:00"), hhmm("09:00")).is_ok());
+    assert!(ensure_overtime_hours_within_window(dec!(24.5), hhmm("09:00"), hhmm("09:00")).is_err());
 }

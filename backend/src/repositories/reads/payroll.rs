@@ -11,8 +11,8 @@ use uuid::Uuid;
 use crate::core::error::AppResult;
 use crate::models::payroll::{
     EmployeeBonusCommission, EmployeeCategoryTotal, EmployeeHours, EmployeeOtTypeHours,
-    EmployeeTotal, EmployeeUnratedOvertime, OrphanedEntryEmployee, PayrollEntryWithEmployee,
-    PayrollItemSummary, PayrollYtd, PayslipSourceLine,
+    EmployeeTotal, EmployeeUnratedOvertime, OrphanedEntryEmployee, PayableClaim,
+    PayrollEntryWithEmployee, PayrollItemSummary, PayrollYtd, PayslipSourceLine,
 };
 
 /// Recurring allowances/deductions per employee, summed by category.
@@ -97,11 +97,15 @@ pub async fn entry_lines(
 ///
 /// Excludes the item types the engine recomputes from their own authoritative
 /// source: `overtime` comes from `approved_ot_totals`/`attendance_ot_hours` and
-/// `claim_reimbursement` from `approved_claim_totals`. Approving an OT
-/// application or a claim also stages a `payroll_entries` row, so counting
-/// those rows here would add the same money a second time — and, for claims,
-/// would pull a reimbursement into gross where it becomes EPF/SOCSO/EIS/PCB
-/// liable despite not being wages.
+/// `claim_reimbursement` from `payable_claims`. Approving an OT application
+/// stages a `payroll_entries` row, so counting those rows here would add the
+/// same money a second time.
+///
+/// The `claim_reimbursement` half of the exclusion is now defence in depth:
+/// claim approval no longer stages an entry and migration 1010 deleted the rows
+/// it used to write. It stays because dropping it would make a reimbursement
+/// EPF/SOCSO/EIS/PCB-liable the moment any future write path reintroduces the
+/// item type — which is the exact failure the staging was retired to prevent.
 pub async fn entry_category_totals(
     executor: impl Executor<'_, Database = Postgres>,
     employee_ids: &[Uuid],
@@ -295,25 +299,82 @@ pub async fn approved_ot_totals(
     Ok(rows)
 }
 
-/// Approved claims per employee within the period.
-pub async fn approved_claim_totals(
+/// The approved, not-yet-paid claims a run will reimburse.
+///
+/// Carry-forward, not period-bounded. The old predicate required
+/// `expense_date BETWEEN period_start AND period_end`, so a claim approved after
+/// its own expense month had closed fell into a hole: that month's run refuses
+/// to be re-created, and the next month's window excludes the expense date.
+/// Nothing paid it and its status stayed 'approved' forever. Every approved and
+/// unpaid claim incurred on or before the period end is swept here instead; a
+/// future-dated expense still waits.
+///
+/// Rows rather than a `SUM` because the engine marks exactly the ids it summed.
+/// Summing and then re-running the same predicate to mark them paid meant a
+/// claim approved between the two was marked paid without being paid.
+pub async fn payable_claims(
     executor: impl Executor<'_, Database = Postgres>,
     employee_ids: &[Uuid],
     company_id: Uuid,
-    period_start: NaiveDate,
     period_end: NaiveDate,
-) -> AppResult<Vec<EmployeeTotal>> {
+) -> AppResult<Vec<PayableClaim>> {
     let rows = sqlx::query_as!(
-        EmployeeTotal,
-        r#"SELECT employee_id, SUM(amount)::BIGINT AS "total!"
+        PayableClaim,
+        r#"SELECT id, employee_id, title, amount, expense_date
            FROM claims
            WHERE employee_id = ANY($1)
              AND company_id = $2
              AND status = 'approved'
-             AND expense_date >= $3 AND expense_date <= $4
-           GROUP BY employee_id"#,
+             AND payroll_run_id IS NULL
+             AND expense_date <= $3
+           ORDER BY employee_id, expense_date, id"#,
         employee_ids,
         company_id,
+        period_end,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(rows)
+}
+
+/// Employees holding payable claims that this run will not reimburse.
+///
+/// The mirror of `staged_entries_outside_run` for the other money source the
+/// engine reads from its own authoritative table. A claim belonging to someone
+/// outside the selected payroll group is swept by no run at all, and without
+/// this the operator has nowhere to notice — the claim simply stays 'approved'.
+pub async fn approved_claims_outside_run(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    payroll_group_id: Uuid,
+    period_start: NaiveDate,
+    period_end: NaiveDate,
+) -> AppResult<Vec<OrphanedEntryEmployee>> {
+    let rows = sqlx::query_as!(
+        OrphanedEntryEmployee,
+        r#"SELECT e.id AS "employee_id!", e.employee_number AS "employee_number!",
+                  e.full_name AS "employee_name!",
+                  COUNT(*)::BIGINT AS "entry_count!",
+                  COALESCE(SUM(c.amount), 0)::BIGINT AS "total_amount!"
+           FROM claims c
+           JOIN employees e ON e.id = c.employee_id
+           WHERE c.company_id = $1
+             AND c.status = 'approved'
+             AND c.payroll_run_id IS NULL
+             AND c.expense_date <= $4
+             -- Same negation as staged_entries_outside_run, and COALESCE for the
+             -- same reason: an employee with no payroll group compares NULL, and
+             -- a NULL would drop exactly the case worth warning about.
+             AND NOT COALESCE(
+                   e.payroll_group_id = $2
+                   AND e.is_active = TRUE AND e.deleted_at IS NULL
+                   AND e.date_joined <= $4
+                   AND (e.date_resigned IS NULL OR e.date_resigned >= $3)
+                 , FALSE)
+           GROUP BY e.id, e.employee_number, e.full_name
+           ORDER BY e.employee_number"#,
+        company_id,
+        payroll_group_id,
         period_start,
         period_end,
     )

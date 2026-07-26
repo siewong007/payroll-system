@@ -743,6 +743,85 @@ async fn user_directory_is_readable_by_admins_and_closed_to_everyone_else() {
     }
 }
 
+/// `documents.file_url` is free text from the client and is joined onto a
+/// filesystem path by the delete and backup paths, so a value that escapes
+/// `uploads/` must be refused at the wired route, not merely somewhere in a
+/// service. `/api/uploads//etc/ssl/private/key.pem` is the reported exploit:
+/// `Path::join` drops the base on an absolute component, so the document delete
+/// would have unlinked the host's TLS private key.
+#[tokio::test]
+async fn document_create_rejects_a_file_url_that_escapes_the_upload_directory() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    // `hr_manager` holds ManageDocuments — the gate the exploit would clear.
+    let token = token_for(&pool, company_id, "hr_manager").await;
+    let app = app_for(pool.clone()).await;
+
+    for hostile in [
+        "/api/uploads//etc/ssl/private/key.pem",
+        "/api/uploads/../../app/.env",
+        "/uploads/document.pdf",
+        "javascript:alert(1)",
+    ] {
+        let title = format!("Hostile {}", uuid::Uuid::new_v4());
+        let response = app
+            .clone()
+            .oneshot(request(
+                "POST",
+                "/api/documents",
+                &token,
+                &format!(r#"{{"title":"{title}","file_name":"x.pdf","file_url":"{hostile}"}}"#),
+            ))
+            .await
+            .expect("route response");
+
+        assert_eq!(
+            response.status(),
+            StatusCode::BAD_REQUEST,
+            "{hostile} must be refused"
+        );
+
+        let stored: i64 = sqlx::query_scalar("SELECT count(*) FROM documents WHERE title = $1")
+            .bind(&title)
+            .fetch_one(&pool)
+            .await
+            .expect("count documents");
+        assert_eq!(stored, 0, "{hostile} must not reach the database");
+    }
+}
+
+/// The other half of the same gate: the two shapes the product actually uses
+/// must still be accepted, or the fix is a regression for every tenant.
+#[tokio::test]
+async fn document_create_accepts_an_uploaded_file_and_an_external_link() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let token = token_for(&pool, company_id, "hr_manager").await;
+    let app = app_for(pool).await;
+
+    for file_url in [
+        "/api/uploads/0198f2c4-1f3a-7c21-9b0e-2f6a1c8d4e55_offer.pdf",
+        "https://example.com/handbook.pdf",
+    ] {
+        let response = app
+            .clone()
+            .oneshot(request(
+                "POST",
+                "/api/documents",
+                &token,
+                &format!(r#"{{"title":"Legitimate","file_name":"x.pdf","file_url":"{file_url}"}}"#),
+            ))
+            .await
+            .expect("route response");
+
+        assert_eq!(response.status(), StatusCode::OK, "{file_url} must be kept");
+    }
+}
+
 /// `ValidatedJson` rejects a malformed email before the handler runs, so junk
 /// never reaches the service or the database.
 #[tokio::test]

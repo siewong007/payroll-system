@@ -639,6 +639,12 @@ export interface Claim {
   reviewed_at: string | null;
   review_notes: string | null;
   created_at: string;
+  /**
+   * The payroll run that reimbursed this claim. `null` until a run pays it —
+   * `claims` is the single authority for claim payment, and a claim is
+   * outstanding while this is null regardless of how long ago it was approved.
+   */
+  payroll_run_id: string | null;
 }
 
 export interface CreateClaimRequest {

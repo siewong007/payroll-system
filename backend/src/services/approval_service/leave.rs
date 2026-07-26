@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 use crate::core::config::AppConfig;
 use crate::core::error::{AppError, AppResult};
+use crate::core::upload_path::validate_optional_file_url;
 use crate::models::portal::{CreateLeaveRequest, LeaveRequest, UpdateLeaveRequest};
 use crate::repositories::reads::approvals as approval_reads;
 use crate::repositories::{
@@ -17,7 +18,10 @@ use crate::services::calendar_service;
 use crate::services::email_service;
 use crate::services::notification_service;
 
-use super::common::{ensure_employee_in_company, ensure_leave_type_in_company};
+use super::common::{
+    Reviewer, audit_self_approval_override, ensure_employee_in_company,
+    ensure_leave_type_in_company, ensure_not_self_approval, reviewer_employee_id,
+};
 
 pub use crate::models::approval::LeaveRequestWithEmployee;
 
@@ -46,6 +50,9 @@ pub async fn create_leave_request_admin(
     )?;
     ensure_employee_in_company(pool, company_id, employee_id).await?;
     ensure_leave_type_in_company(pool, company_id, req.leave_type_id).await?;
+    // `attachment_url` is joined onto a filesystem path by the backup export and
+    // restore paths, so it is settled here rather than at every sink.
+    validate_optional_file_url(req.attachment_url.as_deref())?;
 
     if leave_requests::overlaps_existing(pool, employee_id, req.start_date, req.end_date, None)
         .await?
@@ -130,6 +137,7 @@ pub async fn update_leave_request_admin(
         calendar_service::count_working_days_between(pool, company_id, start_date, end_date)
             .await?;
     crate::services::leave_rules::validate_period(start_date, end_date, days, working_days)?;
+    validate_optional_file_url(req.attachment_url.as_deref())?;
 
     if leave_requests::overlaps_existing(
         &mut *tx,
@@ -426,10 +434,12 @@ pub async fn approve_leave(
     config: &AppConfig,
     company_id: Uuid,
     request_id: Uuid,
-    reviewer_id: Uuid,
+    reviewer: Reviewer,
     notes: Option<&str>,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<LeaveRequest> {
+    let reviewer_id = reviewer.user_id;
+
     // Everything this approval writes has to commit together — the state
     // transition, the pending->taken balance move, and (for unpaid leave) the
     // salary deduction. The deduction used to be staged on the pool *after* the
@@ -455,22 +465,38 @@ pub async fn approve_leave(
         None
     };
 
+    // Resolved on the pool for the same reason as the deduction inputs, and
+    // compared inside the transaction against the row the CAS returned.
+    let reviewer_employee = reviewer_employee_id(pool, &reviewer).await?;
+
     let mut tx = pool.begin().await?;
     let lr = leave_requests::set_approved(&mut *tx, request_id, company_id, reviewer_id, notes)
         .await?
         .ok_or_else(|| AppError::BadRequest("Leave request not found or not pending".into()))?;
 
+    // Read from the CAS-returned row, not from `preview`: the drift check below
+    // does not cover `employee_id`, so comparing the earlier read would leave the
+    // guard raceable.
+    ensure_not_self_approval(reviewer_employee, lr.employee_id, "leave request")?;
+
     // The request could have been edited between the read above and the CAS —
     // the CAS only guarantees it was still *pending*, not unchanged. Anything
     // the deduction depends on having moved means the figure is stale.
-    if (lr.leave_type_id, lr.start_date, lr.end_date, lr.days)
-        != (
-            preview.leave_type_id,
-            preview.start_date,
-            preview.end_date,
-            preview.days,
-        )
-    {
+    // `employee_id` is in the tuple because the deduction was computed from that
+    // employee's basic salary and company calendar.
+    if (
+        lr.employee_id,
+        lr.leave_type_id,
+        lr.start_date,
+        lr.end_date,
+        lr.days,
+    ) != (
+        preview.employee_id,
+        preview.leave_type_id,
+        preview.start_date,
+        preview.end_date,
+        preview.days,
+    ) {
         return Err(AppError::Conflict(
             "This leave request changed while it was being approved. Please review it again."
                 .into(),
@@ -504,6 +530,17 @@ pub async fn approve_leave(
     }
 
     tx.commit().await?;
+
+    audit_self_approval_override(
+        pool,
+        &reviewer,
+        company_id,
+        "leave_request",
+        lr.id,
+        lr.employee_id,
+        audit_meta,
+    )
+    .await;
 
     // Notify employee
     let employee_user = user_repo::active_id_for_employee(pool, lr.employee_id).await?;

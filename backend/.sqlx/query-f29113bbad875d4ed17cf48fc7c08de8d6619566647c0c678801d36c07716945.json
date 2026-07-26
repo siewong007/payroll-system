@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE claims\n        SET status = 'processed', payroll_run_id = $1, updated_at = NOW()\n        WHERE id = ANY($2) AND status = 'approved' AND payroll_run_id IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "UuidArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f29113bbad875d4ed17cf48fc7c08de8d6619566647c0c678801d36c07716945"
+}

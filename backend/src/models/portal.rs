@@ -116,6 +116,14 @@ pub struct Claim {
     pub review_notes: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// The run that reimbursed this claim, set when it is marked `processed`.
+    /// `claims` is the single authority for claim payment: this is the link
+    /// `payroll_service::delete_run` reverts by, and the half of "not yet paid"
+    /// that a status alone cannot express.
+    ///
+    /// Declared last because these queries use `SELECT *` / `RETURNING *` and
+    /// the column was added by `ALTER TABLE`, so it arrives after `updated_at`.
+    pub payroll_run_id: Option<Uuid>,
 }
 
 #[derive(Debug, Deserialize)]

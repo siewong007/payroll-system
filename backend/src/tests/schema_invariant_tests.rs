@@ -247,6 +247,60 @@ async fn overtime_hours_cannot_exceed_hours_worked() {
     );
 }
 
+/// Declared overtime hours are multiplied by an hourly rate to stage a payroll
+/// earning, so an unbounded value pays out arbitrary money and a negative one
+/// stages a negative earning. The service rule is tighter — it caps against the
+/// window the applicant declared, which the database cannot see — but this is
+/// the outer bound that rule already implies, and the backstop for a write path
+/// that forgets to call it.
+#[tokio::test]
+async fn overtime_hours_check_rejects_out_of_range_insert() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+
+    let company_id = seed_company(&pool).await;
+    let employee_id = seed_employee(&pool, company_id, None, 300_000).await;
+
+    for hours in ["0", "-50", "25"] {
+        let error = sqlx::query(&format!(
+            r#"
+            INSERT INTO overtime_applications (
+                employee_id, company_id, ot_date, start_time, end_time, hours, ot_type
+            ) VALUES ($1, $2, $3, TIME '09:00', TIME '11:00', {hours}, 'normal')
+            "#
+        ))
+        .bind(employee_id)
+        .bind(company_id)
+        .bind(NaiveDate::from_ymd_opt(2026, 3, 4).unwrap())
+        .execute(&pool)
+        .await
+        .unwrap_err();
+
+        assert_eq!(
+            constraint_name(&error),
+            Some("overtime_applications_hours_check"),
+            "hours = {hours} should violate the bound"
+        );
+    }
+
+    // The boundary itself is legal: a 24 h window is expressible (a shift whose
+    // end time wraps all the way round), so 24 must not be rejected.
+    sqlx::query(
+        r#"
+        INSERT INTO overtime_applications (
+            employee_id, company_id, ot_date, start_time, end_time, hours, ot_type
+        ) VALUES ($1, $2, $3, TIME '09:00', TIME '09:00', 24, 'normal')
+        "#,
+    )
+    .bind(employee_id)
+    .bind(company_id)
+    .bind(NaiveDate::from_ymd_opt(2026, 3, 5).unwrap())
+    .execute(&pool)
+    .await
+    .expect("24 hours is the inclusive upper bound, not a violation");
+}
+
 /// Seed a leave type so an `attachment_url` can be attached to a leave request.
 async fn seed_leave_type(pool: &sqlx::PgPool, company_id: uuid::Uuid) -> uuid::Uuid {
     sqlx::query_scalar(

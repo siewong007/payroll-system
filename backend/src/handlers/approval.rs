@@ -15,9 +15,22 @@ use crate::models::portal::{
     OvertimeApplication, UpdateClaimRequest, UpdateLeaveRequest, UpdateOvertimeRequest,
 };
 use crate::services::approval_service::{
-    self, ClaimWithEmployee, LeaveRequestWithEmployee, OvertimeWithEmployee,
+    self, ClaimWithEmployee, LeaveRequestWithEmployee, OvertimeWithEmployee, Reviewer,
 };
 use crate::services::audit_service::AuditRequestMeta;
+
+/// Maker-checker context for the three `approve_*` handlers.
+///
+/// Built here rather than inside the services so `services/` keeps no
+/// dependency on the Axum extractor. `super_admin` is the override anchor:
+/// `Permission::ManageUsers` belongs to no role set except SUPER_ADMIN, so a
+/// tenant cannot mint itself the role that lifts the guard.
+fn reviewer(auth: &AuthUser) -> Reviewer {
+    Reviewer {
+        user_id: auth.0.sub,
+        may_self_approve: auth.has_any_role(&["super_admin"]),
+    }
+}
 
 // ─── Leave ───
 
@@ -129,7 +142,7 @@ pub async fn approve_leave(
         &state.config,
         company_id,
         id,
-        auth.0.sub,
+        reviewer(&auth),
         req.notes.as_deref(),
         Some(&audit_meta),
     )
@@ -268,7 +281,7 @@ pub async fn approve_claim(
         &state.config,
         company_id,
         id,
-        auth.0.sub,
+        reviewer(&auth),
         req.notes.as_deref(),
         Some(&audit_meta),
     )
@@ -406,7 +419,7 @@ pub async fn approve_overtime(
         &state.pool,
         company_id,
         id,
-        auth.0.sub,
+        reviewer(&auth),
         req.notes.as_deref(),
         Some(&audit_meta),
     )

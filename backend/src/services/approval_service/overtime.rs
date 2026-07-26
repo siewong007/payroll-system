@@ -15,7 +15,11 @@ use crate::services::audit_service::AuditRequestMeta;
 use crate::services::notification_service;
 use crate::services::settings_service;
 
-use super::common::{ensure_employee_in_company, parse_overtime_times, validate_overtime_type};
+use super::common::{
+    Reviewer, audit_self_approval_override, ensure_employee_in_company, ensure_not_self_approval,
+    ensure_overtime_hours_within_window, parse_overtime_times, reviewer_employee_id,
+    validate_overtime_type,
+};
 
 pub use crate::models::approval::OvertimeWithEmployee;
 
@@ -31,6 +35,7 @@ pub async fn create_overtime_admin(
     let ot_type = req.ot_type.as_deref().unwrap_or("normal");
     validate_overtime_type(ot_type)?;
     let (start_time, end_time) = parse_overtime_times(&req.start_time, &req.end_time)?;
+    ensure_overtime_hours_within_window(req.hours, start_time, end_time)?;
 
     let overtime = overtime_applications::insert(
         pool,
@@ -97,6 +102,14 @@ pub async fn update_overtime_admin(
 
     let ot_type = req.ot_type.as_deref().unwrap_or(&current.ot_type);
     validate_overtime_type(ot_type)?;
+
+    // Validate the EFFECTIVE values, not just the supplied ones: `update_full`
+    // COALESCEs, so validating only what the request carried would let an edit
+    // keep out-of-range hours and shrink the window around them. The
+    // consequence is intended — an edit that touches only `reason` on a legacy
+    // out-of-range row fails until the hours are corrected.
+    let hours = req.hours.unwrap_or(current.hours);
+    ensure_overtime_hours_within_window(hours, start_time, end_time)?;
 
     let updated = overtime_applications::update_full(
         pool,
@@ -284,7 +297,7 @@ pub async fn approve_overtime(
     pool: &PgPool,
     company_id: Uuid,
     ot_id: Uuid,
-    reviewer_id: Uuid,
+    reviewer: Reviewer,
     notes: Option<&str>,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<OvertimeApplication> {
@@ -301,9 +314,29 @@ pub async fn approve_overtime(
     // The settings reads stay on the pool, ahead of the transaction — they are
     // company configuration, not request state, and `settings_service` takes
     // `&PgPool`. The row the CAS approves is re-checked below.
+    let reviewer_id = reviewer.user_id;
     let preview = overtime_applications::get_pending(pool, ot_id, company_id)
         .await?
         .ok_or_else(|| AppError::BadRequest("OT application not found or not pending".into()))?;
+
+    // Approval is the third call site of the hours rule, and the one the
+    // database cannot cover. Rows written before the bound existed are outside
+    // the NOT VALID CHECK entirely, and the CHECK is in any case only the outer
+    // 0 < h <= 24 bound — it cannot see the declared window. Without this a
+    // legacy application still stages the money it was always going to stage.
+    //
+    // The message keeps the offending figure and the window the validator
+    // names, so an HR user can correct the row without raising a ticket.
+    ensure_overtime_hours_within_window(preview.hours, preview.start_time, preview.end_time)
+        .map_err(|err| match err {
+            AppError::BadRequest(detail) => AppError::BadRequest(format!(
+                "The overtime application for {} cannot be approved. {detail}. Edit the hours or the times, then approve it again.",
+                preview.ot_date
+            )),
+            other => other,
+        })?;
+
+    let reviewer_employee = reviewer_employee_id(pool, &reviewer).await?;
 
     // Get employee hourly rate
     let staged = if let Some((hourly_rate, basic_salary)) =
@@ -372,6 +405,10 @@ pub async fn approve_overtime(
         .await?
         .ok_or_else(|| AppError::BadRequest("OT application not found or not pending".into()))?;
 
+    // Compared against the row the CAS returned, inside the transaction, so a
+    // denial rolls the approval back rather than leaving it approved.
+    ensure_not_self_approval(reviewer_employee, ot.employee_id, "overtime")?;
+
     // The CAS guarantees the application was still pending, not that it was
     // unchanged since the figures above were computed.
     if (ot.employee_id, ot.ot_date, ot.ot_type.as_str(), ot.hours)
@@ -417,6 +454,17 @@ pub async fn approve_overtime(
     }
 
     tx.commit().await?;
+
+    audit_self_approval_override(
+        pool,
+        &reviewer,
+        company_id,
+        "overtime",
+        ot.id,
+        ot.employee_id,
+        audit_meta,
+    )
+    .await;
 
     // Notify employee
     let employee_user = user_repo::active_id_for_employee(pool, ot.employee_id).await?;

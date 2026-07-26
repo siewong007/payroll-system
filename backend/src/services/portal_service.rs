@@ -3,12 +3,16 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::core::error::{AppError, AppResult};
+use crate::core::upload_path::validate_optional_file_url;
 use crate::models::employee::Employee;
 use crate::models::portal::*;
 use crate::repositories::reads::portal as portal_reads;
 use crate::repositories::{
     claims, employees as employee_repo, leave_balances, leave_requests, leave_types,
     overtime_applications, payroll_entries,
+};
+use crate::services::approval_service::{
+    ensure_overtime_hours_within_window, validate_overtime_type,
 };
 use crate::services::notification_service;
 
@@ -68,6 +72,10 @@ pub async fn create_leave_request(
     if !leave_types::exists_active(pool, req.leave_type_id, company_id).await? {
         return Err(AppError::NotFound("Leave type not found".into()));
     }
+
+    // `attachment_url` is joined onto a filesystem path by the backup export and
+    // restore paths, so it is settled at write time rather than at every sink.
+    validate_optional_file_url(req.attachment_url.as_deref())?;
 
     if leave_requests::overlaps_existing(pool, employee_id, req.start_date, req.end_date, None)
         .await?
@@ -226,6 +234,8 @@ pub async fn create_claim(
     company_id: Uuid,
     req: CreateClaimRequest,
 ) -> AppResult<Claim> {
+    validate_optional_file_url(req.receipt_url.as_deref())?;
+
     let claim = claims::insert_draft(
         pool,
         employee_id,
@@ -273,46 +283,31 @@ pub async fn submit_claim(pool: &PgPool, employee_id: Uuid, claim_id: Uuid) -> A
 pub async fn cancel_claim(pool: &PgPool, employee_id: Uuid, claim_id: Uuid) -> AppResult<()> {
     let mut tx = pool.begin().await?;
 
-    let claim = claims::get_cancellable_for_employee(&mut *tx, claim_id, employee_id)
+    // The `payroll_entries` probe this used to carry is gone with the staging it
+    // inspected: a paid claim is now 'processed' with a `payroll_run_id`, which
+    // `get_cancellable_for_employee` already excludes. The probe was keyed to
+    // the approval month and reported "already in processed payroll" for claims
+    // no run had paid.
+    //
+    // The read stays so a claim that was never cancellable still reports 400
+    // rather than the 409 below, which means "someone got there first".
+    if claims::get_cancellable_for_employee(&mut *tx, claim_id, employee_id)
         .await?
-        .ok_or_else(|| AppError::BadRequest("Claim not found or cannot be cancelled".into()))?;
-
-    if claim.status == "approved" {
-        let staged_at = claim.reviewed_at.unwrap_or_else(chrono::Utc::now);
-        let description = format!("Claim: {}", claim.title);
-        let staged_year = staged_at.year();
-        let staged_month = staged_at.month() as i32;
-        let processed = payroll_entries::exists_processed_claim(
-            &mut *tx,
-            claim.employee_id,
-            claim.company_id,
-            staged_year,
-            staged_month,
-            &description,
-            claim.amount,
-        )
-        .await?;
-
-        if processed {
-            return Err(AppError::BadRequest(
-                "Approved claim already included in processed payroll and cannot be cancelled"
-                    .into(),
-            ));
-        }
-
-        payroll_entries::delete_unprocessed_claim(
-            &mut *tx,
-            claim.employee_id,
-            claim.company_id,
-            staged_year,
-            staged_month,
-            &description,
-            claim.amount,
-        )
-        .await?;
+        .is_none()
+    {
+        return Err(AppError::BadRequest(
+            "Claim not found or cannot be cancelled".into(),
+        ));
     }
 
-    claims::mark_cancelled(&mut *tx, claim_id).await?;
+    // Compare-and-swap, so a run committing between the read and this write
+    // cannot have its just-paid claim cancelled.
+    if !claims::mark_cancelled(&mut *tx, claim_id).await? {
+        return Err(AppError::Conflict(
+            "This claim was paid or cancelled while it was being cancelled. Reload and try again."
+                .into(),
+        ));
+    }
 
     tx.commit().await?;
 
@@ -350,35 +345,12 @@ pub async fn create_overtime_application(
     let end_time = chrono::NaiveTime::parse_from_str(&req.end_time, "%H:%M")
         .map_err(|_| AppError::BadRequest("Invalid end_time format, expected HH:MM".into()))?;
 
+    // Both rules live in `approval_service::common` now. This path used to own
+    // the only hours check in the codebase while the three admin paths had
+    // none, and a duplicated ot_type allow-list besides.
     let ot_type = req.ot_type.as_deref().unwrap_or("normal");
-    if !["normal", "rest_day", "public_holiday"].contains(&ot_type) {
-        return Err(AppError::BadRequest("Invalid ot_type".into()));
-    }
-
-    // `hours` is multiplied by the hourly rate to stage a payroll earning on
-    // approval, and neither the schema nor the approval path bounds it. A
-    // negative value would stage a negative earning; an inflated one pays out
-    // arbitrary money. Cap against the window the applicant declared, allowing
-    // the wrap past midnight that a night shift needs.
-    let declared_minutes = (end_time - start_time).num_minutes();
-    let declared_minutes = if declared_minutes <= 0 {
-        declared_minutes + 24 * 60
-    } else {
-        declared_minutes
-    };
-    let declared_hours =
-        rust_decimal::Decimal::from(declared_minutes) / rust_decimal::Decimal::from(60);
-    if req.hours <= rust_decimal::Decimal::ZERO {
-        return Err(AppError::BadRequest(
-            "Overtime hours must be greater than zero".into(),
-        ));
-    }
-    if req.hours > declared_hours {
-        return Err(AppError::BadRequest(format!(
-            "Overtime hours ({}) cannot exceed the {} hour(s) between start_time and end_time",
-            req.hours, declared_hours
-        )));
-    }
+    validate_overtime_type(ot_type)?;
+    ensure_overtime_hours_within_window(req.hours, start_time, end_time)?;
 
     let app = overtime_applications::insert(
         pool,

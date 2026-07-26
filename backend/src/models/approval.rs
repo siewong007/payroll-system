@@ -117,6 +117,9 @@ pub struct ClaimWithEmployee {
     pub review_notes: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
+    /// Between `updated_at` and the joined employee columns: the reads select
+    /// `c.*`, and the column was added by `ALTER TABLE`.
+    pub payroll_run_id: Option<Uuid>,
     pub employee_name: Option<String>,
     pub employee_number: Option<String>,
 }

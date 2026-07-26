@@ -135,8 +135,10 @@ pub async fn delete_run(
 
     let mut tx = pool.begin().await?;
     payroll_entries::revert_for_run(&mut *tx, id, company_id, actor_id).await?;
-    claims::revert_processed_for_run(&mut *tx, company_id, id, run.period_start, run.period_end)
-        .await?;
+    // By run id, not by period: a run legitimately reimburses claims incurred
+    // before its own period, so a period-bounded revert would un-process claims
+    // an earlier run already paid.
+    claims::revert_for_run(&mut *tx, id, company_id).await?;
     payroll_item_details::delete_for_run(&mut *tx, id).await?;
     payroll_items::delete_for_run(&mut *tx, id).await?;
     // Re-checks status/lock atomically: the guard above ran outside this

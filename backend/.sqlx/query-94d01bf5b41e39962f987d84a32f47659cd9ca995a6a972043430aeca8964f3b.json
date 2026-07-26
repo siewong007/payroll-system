@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE claims\n        SET status = 'cancelled', updated_at = NOW()\n        WHERE id = $1 AND company_id = $2\n        RETURNING *",
+  "query": "UPDATE claims\n        SET status = 'cancelled', updated_at = NOW()\n        WHERE id = $1 AND company_id = $2\n          AND status IN ('pending', 'approved', 'rejected')\n        RETURNING *",
   "describe": {
     "columns": [
       {
@@ -87,6 +87,11 @@
         "ordinal": 16,
         "name": "updated_at",
         "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 17,
+        "name": "payroll_run_id",
+        "type_info": "Uuid"
       }
     ],
     "parameters": {
@@ -112,8 +117,9 @@
       true,
       true,
       false,
-      false
+      false,
+      true
     ]
   },
-  "hash": "4e6cb9ad722abe094d741431f11040cc2d927001bbc954164acfe7d323d1a26d"
+  "hash": "94d01bf5b41e39962f987d84a32f47659cd9ca995a6a972043430aeca8964f3b"
 }

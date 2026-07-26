@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE claims SET status = 'cancelled', updated_at = NOW()\n        WHERE id = $1 AND status IN ('pending', 'approved', 'rejected')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e3b475cd724a505ed11ec8cc3d7934cf082881ed34cf279487c23df5752a6f7e"
+}

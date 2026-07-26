@@ -246,6 +246,21 @@ pub struct PayslipBreakdown {
     pub lines: Vec<PayrollItemDetail>,
 }
 
+/// An approved, not-yet-paid claim a run will reimburse.
+///
+/// Selection is carry-forward (`expense_date <= period_end` AND
+/// `payroll_run_id IS NULL`) rather than period-bounded, so a claim approved
+/// after its own expense month closed is swept by the next run instead of
+/// falling into a hole no run's window covers.
+#[derive(Debug, Clone)]
+pub struct PayableClaim {
+    pub id: Uuid,
+    pub employee_id: Uuid,
+    pub title: String,
+    pub amount: i64,
+    pub expense_date: NaiveDate,
+}
+
 #[derive(Debug)]
 pub struct OrphanedEntryEmployee {
     pub employee_id: Uuid,
@@ -408,7 +423,12 @@ pub(crate) struct BulkPayrollData {
     pub(crate) variable_deductions: HashMap<Uuid, i64>,
     pub(crate) attendance_ot_hours: HashMap<Uuid, f64>,
     pub(crate) approved_ot: HashMap<Uuid, Vec<(String, f64)>>,
-    pub(crate) approved_claims: HashMap<Uuid, i64>,
+    /// The individual claims this run will reimburse, not a per-employee sum.
+    /// The engine used to SUM inside its transaction and then re-run the same
+    /// predicate to mark them paid, so a claim approved between the two was
+    /// marked paid without being paid. Marking exactly the rows that were summed
+    /// makes that unrepresentable, and the payslip can name each expense.
+    pub(crate) approved_claims: HashMap<Uuid, Vec<PayableClaim>>,
     pub(crate) tp3: HashMap<Uuid, Tp3Totals>,
     pub(crate) ytd: HashMap<Uuid, YtdTotals>,
     pub(crate) monthly_allowances: HashMap<Uuid, i64>,
