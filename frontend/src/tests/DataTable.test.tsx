@@ -1,4 +1,4 @@
-import { render, screen, waitForElementToBeRemoved, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
@@ -278,8 +278,11 @@ describe('DataTable summary modal', () => {
     expect(screen.getByText('Custom view for Employee 1')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Dismiss' }));
-    // The Modal unmounts through an AnimatePresence exit transition.
-    await waitForElementToBeRemoved(() => screen.queryByRole('dialog'));
+    // The Modal unmounts through an AnimatePresence exit transition. Assert the
+    // end state rather than the removal event: `user.click` flushes effects
+    // inside act(), so the exit can already have finished by the time we look,
+    // and waitForElementToBeRemoved treats an already-absent element as an error.
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   });
 
   it('refreshes the open row when the underlying data is refetched', async () => {
@@ -329,7 +332,11 @@ describe('DataTable summary modal', () => {
 
     await user.click(screen.getByRole('button', { name: 'Delete first' }));
 
-    await waitForElementToBeRemoved(() => screen.queryByRole('dialog'));
+    // Closing here is indirect — the data change re-runs DataTable's effect,
+    // which clears selectedRow — so the whole sequence lands inside the click's
+    // act() flush more often than not, leaving no dialog to observe being
+    // removed. Assert it is gone, which holds whether it went now or shortly.
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   });
 });
 
