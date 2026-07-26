@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE attendance_records ar\n           SET check_out_at = NOW(),\n               checkout_latitude = $2,\n               checkout_longitude = $3,\n               is_outside_geofence = (COALESCE(ar.is_outside_geofence, FALSE) OR $5),\n               hours_worked = ROUND(EXTRACT(EPOCH FROM (NOW() - ar.check_in_at)) / 3600.0, 2),\n               overtime_hours = GREATEST(0,\n                   ROUND(EXTRACT(EPOCH FROM (NOW() - ar.check_in_at)) / 3600.0, 2)\n                   - COALESCE((\n                       -- Wrap past midnight: a night shift (e.g. 22:00->06:00)\n                       -- has end_time < start_time, and a plain subtraction\n                       -- yields -16h, which would turn an 8h shift into 24h of\n                       -- overtime. Adding a day before the modulo maps that\n                       -- back to 8h and leaves same-day shifts unchanged.\n                       SELECT MOD(EXTRACT(EPOCH FROM (ws.end_time - ws.start_time))::numeric + 86400, 86400) / 3600.0\n                       FROM company_work_schedules ws\n                       WHERE ws.company_id = ar.company_id AND ws.is_default = TRUE\n                   ), 9)\n               ),\n               updated_at = NOW()\n           WHERE ar.id = (\n               SELECT id FROM attendance_records\n               WHERE employee_id = $1\n                 AND company_id = $4\n                 AND check_out_at IS NULL\n                 AND check_in_at > NOW() - INTERVAL '24 hours'\n               ORDER BY check_in_at DESC\n               LIMIT 1\n           )\n           RETURNING ar.id, ar.company_id, ar.employee_id, ar.check_in_at, ar.check_out_at,\n                     ar.method, ar.status, ar.latitude, ar.longitude, ar.checkout_latitude,\n                     ar.checkout_longitude, ar.notes, ar.qr_token_id, ar.created_by,\n                     ar.hours_worked, ar.overtime_hours, ar.is_outside_geofence,\n                     ar.created_at, ar.updated_at",
+  "query": "UPDATE attendance_records ar\n           SET check_in_at = $3, check_out_at = $4, status = $5, notes = $6,\n               -- Recompute hours and overtime from the corrected timestamps, in\n               -- numeric — the correction path must not round-trip money-feeding\n               -- figures through float. Same schedule expression as check_out,\n               -- including the past-midnight wrap for night shifts. Clearing the\n               -- check-out clears both derived figures.\n               hours_worked = CASE\n                   WHEN $4::timestamptz IS NULL THEN NULL\n                   ELSE ROUND(EXTRACT(EPOCH FROM ($4::timestamptz - $3::timestamptz)) / 3600.0, 2)\n               END,\n               overtime_hours = CASE\n                   WHEN $4::timestamptz IS NULL THEN NULL\n                   ELSE GREATEST(0,\n                       ROUND(EXTRACT(EPOCH FROM ($4::timestamptz - $3::timestamptz)) / 3600.0, 2)\n                       - COALESCE((\n                           SELECT MOD(EXTRACT(EPOCH FROM (ws.end_time - ws.start_time))::numeric + 86400, 86400) / 3600.0\n                           FROM company_work_schedules ws\n                           WHERE ws.company_id = ar.company_id AND ws.is_default = TRUE\n                       ), 9))\n               END,\n               updated_at = NOW()\n           WHERE ar.id = $1 AND ar.company_id = $2\n           RETURNING id, company_id, employee_id, check_in_at, check_out_at, method, status,\n                     latitude, longitude, checkout_latitude, checkout_longitude, notes, qr_token_id,\n                     created_by, hours_worked, overtime_hours, is_outside_geofence, is_offsite_network,\n                created_at, updated_at",
   "describe": {
     "columns": [
       {
@@ -90,11 +90,16 @@
       },
       {
         "ordinal": 17,
+        "name": "is_offsite_network",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 18,
         "name": "created_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 18,
+        "ordinal": 19,
         "name": "updated_at",
         "type_info": "Timestamptz"
       }
@@ -102,10 +107,11 @@
     "parameters": {
       "Left": [
         "Uuid",
-        "Float8",
-        "Float8",
         "Uuid",
-        "Bool"
+        "Timestamptz",
+        "Timestamptz",
+        "Varchar",
+        "Text"
       ]
     },
     "nullable": [
@@ -126,9 +132,10 @@
       true,
       true,
       true,
+      true,
       false,
       false
     ]
   },
-  "hash": "15ee9b9d18ea70a7f2fc70f1ccf8c50621b8a28b7e241c72208cce8a7c7c657a"
+  "hash": "fd9745b268c9d1b39122edcd117eda51c6f8981b3b9f6ca3134f472fe84e0ee9"
 }

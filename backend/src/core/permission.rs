@@ -42,6 +42,7 @@ pub enum Permission {
     GenerateAttendanceQr,
     ManageKiosks,
     SetCompanyAttendanceMethod,
+    ManageAttendanceNetworks,
 
     // ─── Teams ───
     ViewTeams,
@@ -100,6 +101,7 @@ impl Permission {
         Permission::GenerateAttendanceQr,
         Permission::ManageKiosks,
         Permission::SetCompanyAttendanceMethod,
+        Permission::ManageAttendanceNetworks,
         Permission::ViewTeams,
         Permission::ManageTeams,
         Permission::ViewCalendar,
@@ -142,6 +144,7 @@ impl Permission {
             Permission::GenerateAttendanceQr => "generate_attendance_qr",
             Permission::ManageKiosks => "manage_kiosks",
             Permission::SetCompanyAttendanceMethod => "set_company_attendance_method",
+            Permission::ManageAttendanceNetworks => "manage_attendance_networks",
             Permission::ViewTeams => "view_teams",
             Permission::ManageTeams => "manage_teams",
             Permission::ViewCalendar => "view_calendar",
@@ -185,6 +188,7 @@ impl Permission {
             Permission::GenerateAttendanceQr => "Generate attendance QR codes",
             Permission::ManageKiosks => "Manage kiosk credentials",
             Permission::SetCompanyAttendanceMethod => "Set company attendance method",
+            Permission::ManageAttendanceNetworks => "Approve attendance office networks",
             Permission::ViewTeams => "View teams",
             Permission::ManageTeams => "Manage teams",
             Permission::ViewCalendar => "View calendar",
@@ -226,7 +230,8 @@ impl Permission {
             | Permission::ManageAttendance
             | Permission::GenerateAttendanceQr
             | Permission::ManageKiosks
-            | Permission::SetCompanyAttendanceMethod => "Attendance",
+            | Permission::SetCompanyAttendanceMethod
+            | Permission::ManageAttendanceNetworks => "Attendance",
             Permission::ViewTeams | Permission::ManageTeams => "Teams",
             Permission::ViewCalendar | Permission::ManageCalendar => "Calendar",
             Permission::ViewApprovals | Permission::ManageApprovals => "Approvals",
@@ -278,6 +283,7 @@ const ADMIN: &[Permission] = &[
     P::GenerateAttendanceQr,
     P::ManageKiosks,
     P::SetCompanyAttendanceMethod,
+    P::ManageAttendanceNetworks,
     P::ViewTeams,
     P::ManageTeams,
     P::ViewCalendar,
@@ -333,6 +339,7 @@ const HR_MANAGER: &[Permission] = &[
     P::ManageAttendance,
     P::GenerateAttendanceQr,
     P::ManageKiosks,
+    P::ManageAttendanceNetworks,
     P::ViewTeams,
     P::ManageTeams,
     P::ViewCalendar,

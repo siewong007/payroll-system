@@ -1,0 +1,60 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT o.network                          AS \"network!\",\n                  o.prefix_len                       AS \"prefix_len!\",\n                  COUNT(DISTINCT o.employee_id)      AS \"distinct_employees!\",\n                  SUM(o.observation_count)::bigint   AS \"observation_count!\",\n                  SUM(o.anchored_count)::bigint      AS \"anchored_count!\",\n                  MIN(o.first_seen_at)               AS \"first_seen_at!\",\n                  MAX(o.last_seen_at)                AS \"last_seen_at!\"\n           FROM attendance_network_observations o\n           WHERE o.company_id = $1 AND o.network = $2 AND o.prefix_len = $3\n           GROUP BY o.network, o.prefix_len",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "network!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "prefix_len!",
+        "type_info": "Int2"
+      },
+      {
+        "ordinal": 2,
+        "name": "distinct_employees!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "observation_count!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "anchored_count!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "first_seen_at!",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "last_seen_at!",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Int2"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "2a1a5fcbef3aa6ce6d99b7f4ac685e67dc2a66a9dcccb49ac55c5426cdd04cdd"
+}

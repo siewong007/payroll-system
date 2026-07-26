@@ -9,6 +9,7 @@ use uuid::Uuid;
 use crate::core::app_state::AppState;
 use crate::core::auth::{AuthUser, Permission};
 use crate::core::error::{AppError, AppResult};
+use crate::core::extract::ClientIp;
 use crate::models::attendance::{
     AttendanceExportQuery, AttendanceListQuery, AttendanceMethodResponse, AttendanceRecord,
     AttendanceRecordWithEmployee, AttendanceSummaryItem, AttendanceSummaryQuery,
@@ -146,6 +147,7 @@ pub async fn check_in_qr(
     State(state): State<AppState>,
     auth: AuthUser,
     audit_meta: AuditRequestMeta,
+    ClientIp(client_ip): ClientIp,
     Json(req): Json<CheckInQrRequest>,
 ) -> AppResult<Json<AttendanceRecord>> {
     let employee_id = auth.employee_id()?;
@@ -166,6 +168,7 @@ pub async fn check_in_qr(
         &req.token,
         req.latitude,
         req.longitude,
+        client_ip,
     )
     .await?;
 
@@ -213,6 +216,7 @@ pub async fn check_in_face_id(
     State(state): State<AppState>,
     auth: AuthUser,
     audit_meta: AuditRequestMeta,
+    ClientIp(client_ip): ClientIp,
     Json(req): Json<CheckInFaceIdRequest>,
 ) -> AppResult<Json<AttendanceRecord>> {
     let employee_id = auth.employee_id()?;
@@ -244,6 +248,7 @@ pub async fn check_in_face_id(
         company_id,
         req.latitude,
         req.longitude,
+        client_ip,
     )
     .await?;
 
@@ -270,6 +275,7 @@ pub async fn check_in_face_id(
 pub async fn check_out(
     State(state): State<AppState>,
     auth: AuthUser,
+    ClientIp(client_ip): ClientIp,
     Json(req): Json<CheckOutRequest>,
 ) -> AppResult<Json<AttendanceRecord>> {
     let employee_id = auth.employee_id()?;
@@ -281,6 +287,7 @@ pub async fn check_out(
         company_id,
         req.latitude,
         req.longitude,
+        client_ip,
     )
     .await?;
     Ok(Json(record))

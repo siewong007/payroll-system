@@ -73,6 +73,9 @@ fn push_list_filters(qb: &mut QueryBuilder<'_, Postgres>, tz: &str, q: &Attendan
     if q.outside_geofence_only.unwrap_or(false) {
         qb.push(" AND ar.is_outside_geofence = TRUE");
     }
+    if q.offsite_network_only.unwrap_or(false) {
+        qb.push(" AND ar.is_offsite_network = TRUE");
+    }
 }
 
 const RECORD_WITH_EMPLOYEE_COLUMNS: &str = r#"
@@ -84,6 +87,7 @@ const RECORD_WITH_EMPLOYEE_COLUMNS: &str = r#"
             ar.checkout_latitude, ar.checkout_longitude,
             ar.notes,
             ar.hours_worked, ar.overtime_hours, ar.is_outside_geofence,
+            ar.is_offsite_network,
             ar.created_at"#;
 
 /// Admin attendance list (joined with employee details), with optional filters + paging.
@@ -281,6 +285,7 @@ pub async fn export_rows(
         method: q.method.clone(),
         open_only: None,
         outside_geofence_only: None,
+        offsite_network_only: None,
         page: None,
         per_page: None,
     };

@@ -6,6 +6,7 @@
 
 pub mod approvals;
 pub mod attendance;
+pub mod attendance_networks;
 pub mod audit;
 pub mod dashboard;
 pub mod ea_form;
@@ -18,4 +19,5 @@ pub mod reports;
 pub mod statutory;
 pub mod system;
 pub mod teams;
+pub mod uploads;
 pub mod user_management;

@@ -183,6 +183,36 @@ pub async fn set_geofence_mode(
     Ok(())
 }
 
+/// The company's attendance network mode (`none`/`learn`/`warn`/`enforce`);
+/// `None` if the company is absent.
+pub async fn get_attendance_network_mode(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+) -> AppResult<Option<String>> {
+    let mode = sqlx::query_scalar!(
+        "SELECT attendance_network_mode FROM companies WHERE id = $1",
+        company_id
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(mode)
+}
+
+pub async fn set_attendance_network_mode(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    mode: &str,
+) -> AppResult<()> {
+    sqlx::query!(
+        "UPDATE companies SET attendance_network_mode = $1 WHERE id = $2",
+        mode,
+        company_id,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
 /// Hard-delete a company and all of its data, in dependency order. Runs many
 /// statements (including a runtime-query loop over the company-scoped tables), so
 /// it takes the caller's transaction connection. Returns the number of company

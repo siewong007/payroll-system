@@ -72,7 +72,7 @@ describe('WebAuthn helpers', () => {
         attestationObject: buffer(0, 255),
         clientDataJSON: buffer(250, 251, 252),
       },
-    } as PublicKeyCredential);
+    } as unknown as PublicKeyCredential);
 
     const result = await createPasskeyCredential(options);
     const browserOptions = createCredential.mock.calls[0][0] as CredentialCreationOptions;
@@ -106,7 +106,7 @@ describe('WebAuthn helpers', () => {
         signature: buffer(255, 254),
         userHandle: buffer(16, 17),
       },
-    } as PublicKeyCredential);
+    } as unknown as PublicKeyCredential);
 
     const result = await getPasskeyCredential(options);
     const browserOptions = getCredential.mock.calls[0][0] as CredentialRequestOptions;
@@ -137,7 +137,7 @@ describe('WebAuthn helpers', () => {
         signature: buffer(4),
         userHandle: null,
       },
-    } as PublicKeyCredential);
+    } as unknown as PublicKeyCredential);
 
     const result = await getPasskeyCredential({ challenge: 'AQ' });
     expect(result.response.userHandle).toBeNull();

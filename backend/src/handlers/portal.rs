@@ -7,11 +7,12 @@ use uuid::Uuid;
 use chrono::Datelike;
 
 use crate::core::app_state::AppState;
-use crate::core::auth::AuthUser;
+use crate::core::auth::{AuthUser, Permission};
 use crate::core::error::{AppError, AppResult};
 use crate::models::employee::Employee;
 use crate::models::portal::*;
-use crate::services::portal_service;
+use crate::models::upload::UploadAccess;
+use crate::services::{portal_service, upload_service};
 
 fn get_employee_id(auth: &AuthUser) -> AppResult<Uuid> {
     auth.0
@@ -209,11 +210,6 @@ pub async fn delete_overtime(
 
 // ─── File Upload ───
 
-const MAX_UPLOAD_SIZE: usize = 10 * 1024 * 1024; // 10 MB
-const ALLOWED_EXTENSIONS: &[&str] = &[
-    "jpg", "jpeg", "png", "gif", "webp", "pdf", "doc", "docx", "xls", "xlsx",
-];
-
 pub async fn upload_file(
     _auth: AuthUser,
     mut multipart: Multipart,
@@ -229,17 +225,15 @@ pub async fn upload_file(
         .map(|s| s.to_string())
         .unwrap_or_else(|| "upload".to_string());
 
-    let ext = original_name
-        .rsplit('.')
-        .next()
-        .unwrap_or("")
-        .to_lowercase();
+    let ext = upload_service::extension_of(&original_name);
 
-    if !ALLOWED_EXTENSIONS.contains(&ext.as_str()) {
+    // Reject an unusable type before pulling the whole body off the wire; the
+    // full gate below re-checks it alongside the size cap and the magic bytes.
+    if !upload_service::ALLOWED_EXTENSIONS.contains(&ext.as_str()) {
         return Err(AppError::BadRequest(format!(
             "File type .{} is not allowed. Allowed: {}",
             ext,
-            ALLOWED_EXTENSIONS.join(", ")
+            upload_service::ALLOWED_EXTENSIONS.join(", ")
         )));
     }
 
@@ -248,19 +242,9 @@ pub async fn upload_file(
         .await
         .map_err(|e| AppError::BadRequest(format!("Failed to read file: {}", e)))?;
 
-    if data.len() > MAX_UPLOAD_SIZE {
-        return Err(AppError::BadRequest(format!(
-            "File too large. Maximum size is {} MB",
-            MAX_UPLOAD_SIZE / 1024 / 1024
-        )));
-    }
-
-    // Validate file content matches claimed extension (magic number check)
-    if !validate_magic_bytes(&data, &ext) {
-        return Err(AppError::BadRequest(
-            "File content does not match its extension".into(),
-        ));
-    }
+    // Shared with backup restore, so a file cannot enter the store through an
+    // archive that would have been refused at this door.
+    upload_service::validate_upload_bytes(&original_name, &data)?;
 
     // Save to uploads directory
     let upload_dir = std::path::Path::new("uploads");
@@ -408,19 +392,6 @@ pub async fn download_payslip_pdf(
         .unwrap())
 }
 
-fn validate_magic_bytes(data: &[u8], claimed_ext: &str) -> bool {
-    match claimed_ext {
-        "pdf" => data.starts_with(b"%PDF"),
-        "jpg" | "jpeg" => data.starts_with(&[0xFF, 0xD8, 0xFF]),
-        "png" => data.starts_with(&[0x89, 0x50, 0x4E, 0x47]),
-        "gif" => data.starts_with(b"GIF8"),
-        "webp" => data.len() >= 12 && &data[8..12] == b"WEBP",
-        "doc" | "xls" => data.starts_with(&[0xD0, 0xCF, 0x11, 0xE0]),
-        "docx" | "xlsx" => data.starts_with(&[0x50, 0x4B, 0x03, 0x04]),
-        _ => false,
-    }
-}
-
 fn sanitize_filename(name: &str) -> String {
     let stem = name
         .rsplit('.')
@@ -443,21 +414,25 @@ fn sanitize_filename(name: &str) -> String {
 }
 
 pub async fn serve_upload(
+    State(state): State<AppState>,
+    auth: AuthUser,
     Path(filename): Path<String>,
 ) -> Result<axum::response::Response, AppError> {
     use axum::body::Body;
     use axum::http::{Response, StatusCode, header};
 
-    // Prevent directory traversal
-    if filename.contains("..") || filename.contains('/') || filename.contains('\\') {
-        return Err(AppError::BadRequest("Invalid filename".into()));
-    }
+    // An upload has no owner of its own, so entitlement is decided by the record
+    // that references it. Filename validation and the reverse lookup both live
+    // in the service; this handler only lifts the caller's authority out of the
+    // token.
+    let access = UploadAccess {
+        company_id: get_company_id(&auth)?,
+        employee_id: auth.0.employee_id,
+        can_view_approvals: auth.can(Permission::ViewApprovals),
+        can_view_documents: auth.can(Permission::ViewDocuments),
+    };
 
-    let file_path = std::path::Path::new("uploads").join(&filename);
-
-    let data = tokio::fs::read(&file_path)
-        .await
-        .map_err(|_| AppError::NotFound("File not found".into()))?;
+    let data = upload_service::read_authorized(&state.pool, &filename, &access).await?;
 
     let content_type = match filename
         .rsplit('.')
@@ -478,16 +453,14 @@ pub async fn serve_upload(
         _ => "application/octet-stream",
     };
 
-    // Defense-in-depth for a capability-URL file store:
+    // Defense-in-depth behind the authorization above:
     //   - `nosniff` stops the browser MIME-sniffing an upload into an
     //     executable type (e.g. treating a disguised file as HTML/JS).
     //   - A locked-down CSP neutralizes any active content if a markup file
     //     were ever served from this same-origin path.
-    //   - `private` caching keeps user documents out of shared/CDN caches.
-    // NOTE: this endpoint is still reachable without per-user authentication.
-    // Closing that requires either an upload-scoped session cookie or S3
-    // pre-signed URLs (see SECURITY follow-up) — tracked separately because it
-    // touches every file-preview/download site in the frontend.
+    //   - `private` caching keeps user documents out of shared/CDN caches, and
+    //     now also out of a cache that a *different* user could read from: the
+    //     response body varies by caller, not by URL alone.
     Ok(Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, content_type)

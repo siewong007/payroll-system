@@ -416,9 +416,7 @@ pub async fn import_company(
 
     tx.commit().await?;
 
-    if let Some(warning) = files::restore_backup_files(&backup.files).await {
-        warnings.push(warning);
-    }
+    warnings.extend(files::restore_backup_files(&backup.files).await);
     if accounts_created > 0 {
         warnings.push(format!(
             "Created {accounts_created} employee login account(s). Employees must use Forgot Password before signing in."

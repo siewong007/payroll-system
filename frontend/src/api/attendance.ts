@@ -10,6 +10,13 @@ export interface AttendanceMethodResponse {
   is_company_override: boolean;
   /** When 'none', clients should not block on a GPS fix — the server ignores coordinates */
   geofence_mode: 'none' | 'warn' | 'enforce';
+  /**
+   * Office-network requirement. 'learn' observes without blocking or flagging.
+   * Only 'enforce' can refuse a check-in. The browser cannot read the Wi-Fi
+   * network itself — the server decides from the address it observes — so this
+   * is only ever used to *explain* the requirement, never to pre-check it.
+   */
+  network_mode: 'none' | 'learn' | 'warn' | 'enforce';
   /** IANA timezone the company's attendance days are bucketed in */
   timezone: string;
 }
@@ -36,9 +43,13 @@ export interface AttendanceRecord {
   checkout_longitude: number | null;
   notes: string | null;
   qr_token_id: string | null;
+  /** NULL for employee-initiated and cron-written rows; set on admin entries. */
+  created_by: string | null;
   hours_worked: string | null;
   overtime_hours: string | null;
   is_outside_geofence: boolean | null;
+  /** Null means the network was never evaluated — mode was off or only learning. */
+  is_offsite_network: boolean | null;
   created_at: string;
   updated_at: string;
 }
@@ -59,6 +70,8 @@ export interface AttendanceListQuery {
   open_only?: boolean;
   /** Only check-ins recorded outside the geofence — off-site triage */
   outside_geofence_only?: boolean;
+  /** Only check-ins recorded off the approved networks — same triage need */
+  offsite_network_only?: boolean;
   page?: number;
   per_page?: number;
 }

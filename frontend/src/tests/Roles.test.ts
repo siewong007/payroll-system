@@ -8,6 +8,7 @@ import {
   canAccessPayrollData,
   canApprovePayroll,
   canPreparePayroll,
+  canUseAdminConsole,
   hasAnyRole,
   hasOnlyEmployeeRole,
   roleList,
@@ -49,6 +50,19 @@ describe('role helpers', () => {
     expect(hasOnlyEmployeeRole('employee')).toBe(true);
     expect(hasOnlyEmployeeRole(['employee', 'hr_manager'])).toBe(false);
     expect(hasOnlyEmployeeRole([])).toBe(false);
+  });
+
+  it('offers the admin console to everyone AppLayout keeps out of the portal', () => {
+    // The portal's way back must be offered on exactly the condition that
+    // AppLayout will not redirect them out again — a second role is what holds
+    // someone in the admin shell, so it is also what earns the link.
+    expect(canUseAdminConsole(['employee', 'hr_manager'])).toBe(true);
+    expect(canUseAdminConsole(multiRoleUser)).toBe(true);
+    expect(canUseAdminConsole('employee')).toBe(false);
+    // Not a mirror of hasOnlyEmployeeRole at the edges: a roleless identity has
+    // no console to return to, though AppLayout would not have redirected it.
+    expect(canUseAdminConsole([])).toBe(false);
+    expect(canUseAdminConsole(null)).toBe(false);
   });
 
   it('keeps payroll preparation and approval duties separated', () => {

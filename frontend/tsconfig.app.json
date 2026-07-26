@@ -28,5 +28,9 @@
     "noUncheckedSideEffectImports": true
   },
   "include": ["src"],
-  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"]
+  /* The suite (and its setup/support files) is checked by tsconfig.test.json,
+     which adds the vitest and jest-dom ambient types this project must not
+     carry. Excluding it here only drops those files as *roots* — anything the
+     app itself imports is still checked. */
+  "exclude": ["src/tests"]
 }

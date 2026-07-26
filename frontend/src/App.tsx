@@ -311,6 +311,19 @@ export default function App() {
                     </PermissionGuard>
                   )}
                 />
+                {/* Self-service attendance inside the admin shell, for staff the
+                    portal redirect never catches: `AppLayout` sends only
+                    sole-role employees to `/portal`, so a supervisor holding
+                    ['employee', 'hr_manager'] lives here. The same page as
+                    `/portal/attendance` — one implementation of check-in — but
+                    reached without dropping them into `PortalLayout`, which
+                    carries no link back to the console they were working in.
+
+                    No `PermissionGuard`: acting on your own record is not a
+                    company-wide capability, so there is no permission to key on,
+                    and `CheckInCard` already handles a login with no employee
+                    profile. The API scopes every call to the caller. */}
+                <Route path="/my/attendance" element={<MyAttendance />} />
               </Route>
 
               <Route element={<PortalLayout />}>

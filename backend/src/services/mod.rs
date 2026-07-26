@@ -1,4 +1,5 @@
 pub mod approval_service;
+pub mod attendance_network_service;
 pub mod attendance_service;
 pub mod audit_service;
 pub mod auth_service;
@@ -36,6 +37,7 @@ pub mod statutory_rules;
 pub mod statutory_tables;
 pub mod team_service;
 pub mod totp_service;
+pub mod upload_service;
 pub mod user_group_service;
 pub mod user_service;
 pub mod work_schedule_service;

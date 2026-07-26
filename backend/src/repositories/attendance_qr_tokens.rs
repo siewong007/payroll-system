@@ -70,6 +70,28 @@ pub async fn purge_expired(
     Ok(result.rows_affected())
 }
 
+/// Whether this token was minted by a kiosk credential rather than the admin
+/// console.
+///
+/// The attendance network learner treats a kiosk-minted token as corroboration:
+/// the code was displayed by a device that is physically in the building and
+/// holds a secret the employee does not, so it is not something an employee can
+/// manufacture from home. A console-minted token proves nothing of the sort —
+/// an administrator can generate one anywhere.
+pub async fn is_kiosk_minted(
+    executor: impl Executor<'_, Database = Postgres>,
+    token_id: Uuid,
+) -> AppResult<bool> {
+    let minted = sqlx::query_scalar!(
+        r#"SELECT (kiosk_credential_id IS NOT NULL) AS "minted!"
+           FROM attendance_qr_tokens WHERE id = $1"#,
+        token_id,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(minted.unwrap_or(false))
+}
+
 pub async fn find_by_token(
     executor: impl Executor<'_, Database = Postgres>,
     token: &str,

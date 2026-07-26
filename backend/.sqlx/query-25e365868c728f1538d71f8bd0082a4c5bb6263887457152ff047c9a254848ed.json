@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO attendance_network_observations\n               (company_id, employee_id, network, prefix_len, observation_count, anchored_count)\n           VALUES ($1, $2, $3, $4, 1, $5)\n           ON CONFLICT (company_id, employee_id, network, prefix_len)\n           DO UPDATE SET\n               observation_count = attendance_network_observations.observation_count + 1,\n               anchored_count = attendance_network_observations.anchored_count + $5,\n               last_seen_at = NOW()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Int2",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "25e365868c728f1538d71f8bd0082a4c5bb6263887457152ff047c9a254848ed"
+}

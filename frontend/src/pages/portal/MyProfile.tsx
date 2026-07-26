@@ -4,6 +4,9 @@ import { getMyProfile } from '@/api/portal';
 import { formatMYR, formatDate } from '@/lib/utils';
 import { PasskeyManagement } from '@/components/PasskeyManagement';
 import { SessionManagement } from '@/components/SessionManagement';
+import { CheckInCard } from '@/components/attendance/CheckInCard';
+
+type Profile = NonNullable<Awaited<ReturnType<typeof getMyProfile>>>;
 
 const Field = ({ label, value }: { label: string; value: string | null | undefined }) => (
   <div className="py-3 flex items-start justify-between gap-4">
@@ -22,24 +25,9 @@ const SectionIcon = ({ icon: Icon, label, num }: { icon: React.ElementType; labe
   </div>
 );
 
-export function MyProfile() {
-  const { data: profile, isLoading } = useQuery({
-    queryKey: ['my-profile'],
-    queryFn: getMyProfile,
-  });
-
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900" />
-      </div>
-    );
-  }
-
-  if (!profile) return <div className="text-center py-12 text-gray-400">Profile not found</div>;
-
+function ProfileDetails({ profile }: { profile: Profile }) {
   return (
-    <div className="space-y-6">
+    <>
       <div className="page-header">
         <p className="page-subtitle">Employee Profile</p>
         <h1 className="page-title">{profile.full_name}</h1>
@@ -128,6 +116,33 @@ export function MyProfile() {
           <SessionManagement />
         </div>
       </div>
+    </>
+  );
+}
+
+export function MyProfile() {
+  const { data: profile, isLoading } = useQuery({
+    queryKey: ['my-profile'],
+    queryFn: getMyProfile,
+  });
+
+  // The check-in card renders before — and independently of — the profile
+  // fetch. This is the portal's landing screen, so gating it behind an
+  // unrelated request would put a spinner between the employee and the one
+  // action they open the app to perform twice a day.
+  return (
+    <div className="space-y-6">
+      <CheckInCard />
+
+      {isLoading ? (
+        <div className="flex items-center justify-center h-64">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900" />
+        </div>
+      ) : !profile ? (
+        <div className="text-center py-12 text-gray-400">Profile not found</div>
+      ) : (
+        <ProfileDetails profile={profile} />
+      )}
     </div>
   );
 }

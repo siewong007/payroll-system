@@ -7,6 +7,7 @@ pub mod crypto;
 pub mod db;
 pub mod error;
 pub mod extract;
+pub mod ip_prefix;
 pub mod permission;
 pub mod rate_limit_key;
 pub mod redact;
