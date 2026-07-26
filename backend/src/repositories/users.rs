@@ -448,14 +448,35 @@ pub async fn delete(executor: impl Executor<'_, Database = Postgres>, id: Uuid) 
 /// never be destroyed through it no matter how `employee_id` came to point at
 /// that row. `employee_service` also refuses to create such a link in the first
 /// place; this is the second lock on the same door.
-pub async fn delete_by_employee(
+/// Retire the portal login belonging to a deleted employee.
+///
+/// A soft delete, not a `DELETE`. Seventeen foreign keys reference `users` with
+/// no ON DELETE policy — `attendance_records.created_by`,
+/// `payroll_runs.approved_by`, `leave_requests.reviewed_by`,
+/// `teams.created_by`, and so on — so the hard delete this used to be raised
+/// 23503 for any user who had ever done anything in the product. Deleting an
+/// employee therefore failed outright for every non-trivial account.
+///
+/// Soft-deleting also matches how the rest of the system already behaves:
+/// `admin::delete_user` uses `soft_delete`, and `create_user_for_employee`
+/// explicitly refuses to resurrect an account with `is_deleted` set, so
+/// tombstones are an expected state rather than a new one.
+///
+/// The `roles <@ ARRAY['employee']` guard is kept: an account that also holds an
+/// administrative role is not merely this employee's login and must survive.
+pub async fn soft_delete_by_employee(
     executor: impl Executor<'_, Database = Postgres>,
     employee_id: Uuid,
+    deleted_by: Uuid,
 ) -> AppResult<()> {
     sqlx::query!(
-        r#"DELETE FROM users
-        WHERE employee_id = $1 AND roles <@ ARRAY['employee']::VARCHAR(50)[]"#,
+        r#"UPDATE users SET
+            is_active = FALSE, deleted_at = NOW(), deleted_by = $2, updated_at = NOW()
+        WHERE employee_id = $1
+            AND deleted_at IS NULL
+            AND roles <@ ARRAY['employee']::VARCHAR(50)[]"#,
         employee_id,
+        deleted_by,
     )
     .execute(executor)
     .await?;

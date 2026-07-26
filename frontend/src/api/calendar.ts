@@ -11,9 +11,6 @@ import type {
 export const getHolidays = (year?: number) =>
   api.get<Holiday[]>('/calendar/holidays', { params: { year } }).then(r => r.data);
 
-export const getHoliday = (id: string) =>
-  api.get<Holiday>(`/calendar/holidays/${id}`).then(r => r.data);
-
 export const createHoliday = (data: CreateHolidayRequest) =>
   api.post<Holiday>('/calendar/holidays', data).then(r => r.data);
 

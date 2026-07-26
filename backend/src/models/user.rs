@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use validator::Validate;
 
+use crate::core::permission::{Permission, role_permissions};
+
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct User {
     pub id: Uuid,
@@ -51,6 +53,14 @@ pub struct UserResponse {
     pub company_id: Option<Uuid>,
     pub employee_id: Option<Uuid>,
     pub must_change_password: bool,
+    /// Effective permissions, derived from `roles`.
+    ///
+    /// Shipped with the session rather than fetched separately so the frontend
+    /// can decide what to render synchronously — a route guard that had to await
+    /// a second request would either flash a 403 or block every navigation on a
+    /// spinner. It is a *rendering* input only; every permission is re-checked
+    /// server-side on the request that acts on it.
+    pub permissions: Vec<&'static str>,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -70,6 +80,7 @@ pub struct UserContact {
 
 impl From<User> for UserResponse {
     fn from(u: User) -> Self {
+        let permissions = effective_permissions(&u.roles);
         Self {
             id: u.id,
             email: u.email,
@@ -78,6 +89,21 @@ impl From<User> for UserResponse {
             company_id: u.company_id,
             employee_id: u.employee_id,
             must_change_password: u.must_change_password,
+            permissions,
         }
     }
+}
+
+/// The union of every role's grants, de-duplicated, in `Permission::ALL` order
+/// so the response is stable regardless of how the roles were ordered.
+fn effective_permissions(roles: &[String]) -> Vec<&'static str> {
+    Permission::ALL
+        .iter()
+        .filter(|permission| {
+            roles
+                .iter()
+                .any(|role| role_permissions(role).contains(permission))
+        })
+        .map(|permission| permission.as_str())
+        .collect()
 }

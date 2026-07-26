@@ -1,7 +1,6 @@
 use axum::{
     Json,
     extract::{Path, Query, State},
-    http::HeaderMap,
 };
 use uuid::Uuid;
 
@@ -104,7 +103,7 @@ pub async fn list(
     auth: AuthUser,
     Query(query): Query<ListQuery>,
 ) -> AppResult<Json<PaginatedResponse<Employee>>> {
-    auth.require_non_employee()?;
+    auth.require_permission(Permission::ViewEmployees)?;
     let company_id = auth
         .0
         .company_id
@@ -126,7 +125,7 @@ pub async fn list(
     .await?;
 
     let hide_payroll = !auth.is_payroll_privileged();
-    let hide_personal = hide_payroll && !auth.can_manage_employees();
+    let hide_personal = hide_payroll && !auth.can(Permission::ManageEmployees);
     for emp in &mut employees {
         if hide_payroll {
             redact_payroll_fields(emp);
@@ -149,7 +148,7 @@ pub async fn get(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<Employee>> {
-    auth.require_non_employee()?;
+    auth.require_permission(Permission::ViewEmployees)?;
     let company_id = auth
         .0
         .company_id
@@ -158,7 +157,7 @@ pub async fn get(
     let mut emp = employee_service::get_employee(&state.pool, id, company_id).await?;
     if !auth.is_payroll_privileged() {
         redact_payroll_fields(&mut emp);
-        if !auth.can_manage_employees() {
+        if !auth.can(Permission::ManageEmployees) {
             redact_personal_fields(&mut emp);
         }
     }
@@ -168,10 +167,10 @@ pub async fn get(
 pub async fn create(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Json(req): Json<CreateEmployeeRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
-    auth.require_employee_manager()?;
+    auth.require_permission(Permission::ManageEmployees)?;
     if !auth.is_payroll_privileged() && create_request_touches_payroll_fields(&req) {
         return Err(AppError::Forbidden(
             "Payroll fields are not available for this role".into(),
@@ -181,7 +180,6 @@ pub async fn create(
         .0
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
 
     let (emp, account_info) = employee_service::create_employee(
         &state.pool,
@@ -251,11 +249,11 @@ pub async fn create(
 pub async fn update(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Path(id): Path<Uuid>,
     Json(req): Json<UpdateEmployeeRequest>,
 ) -> AppResult<Json<Employee>> {
-    auth.require_employee_manager()?;
+    auth.require_permission(Permission::ManageEmployees)?;
     if !auth.is_payroll_privileged() && update_request_touches_payroll_fields(&req) {
         return Err(AppError::Forbidden(
             "Payroll fields are not available for this role".into(),
@@ -265,7 +263,6 @@ pub async fn update(
         .0
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
 
     let emp = employee_service::update_employee(
         &state.pool,
@@ -282,15 +279,23 @@ pub async fn update(
 pub async fn delete(
     State(state): State<AppState>,
     auth: AuthUser,
+    audit_meta: AuditRequestMeta,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<serde_json::Value>> {
-    auth.require_employee_manager()?;
+    auth.require_permission(Permission::ManageEmployees)?;
     let company_id = auth
         .0
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    employee_service::soft_delete_employee(&state.pool, id, company_id).await?;
+    employee_service::soft_delete_employee(
+        &state.pool,
+        id,
+        company_id,
+        auth.0.sub,
+        Some(&audit_meta),
+    )
+    .await?;
     Ok(Json(serde_json::json!({"message": "Employee deleted"})))
 }
 
@@ -330,7 +335,7 @@ pub async fn initialize_balances(
     Path(id): Path<Uuid>,
     Query(q): Query<InitBalancesQuery>,
 ) -> AppResult<Json<serde_json::Value>> {
-    auth.require_employee_manager()?;
+    auth.require_permission(Permission::ManageEmployees)?;
     let company_id = auth
         .0
         .company_id
@@ -358,7 +363,7 @@ pub async fn process_carry_forward(
     auth: AuthUser,
     Json(req): Json<CarryForwardRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
-    auth.require_employee_manager()?;
+    auth.require_permission(Permission::ManageEmployees)?;
     let company_id = auth
         .0
         .company_id

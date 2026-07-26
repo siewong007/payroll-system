@@ -1,3 +1,5 @@
+import type { PermissionKey } from '@/api/permissions';
+
 export type AppRole = 'super_admin' | 'admin' | 'payroll_admin' | 'hr_manager' | 'finance' | 'exec' | 'employee';
 
 export interface User {
@@ -8,6 +10,16 @@ export interface User {
   company_id: string | null;
   employee_id: string | null;
   must_change_password?: boolean;
+  /**
+   * Effective permissions, derived server-side from `roles`. Gate UI on these
+   * via `usePermissions()` rather than on role names — see
+   * `backend/src/core/permission.rs`, which is the only definition of the two.
+   *
+   * Optional so a session restored from a `localStorage` mirror written by an
+   * older build still parses; treat a missing value as "no permissions" and let
+   * the next `/auth/refresh` fill it in.
+   */
+  permissions?: PermissionKey[];
 }
 
 export interface LoginResponse {
@@ -25,29 +37,6 @@ export interface MfaRequiredResponse {
   mfa_token: string;
 }
 
-// Password Reset
-// OAuth2
-export interface LinkedOAuth2Account {
-  id: string;
-  provider: string;
-  provider_email: string | null;
-  provider_name: string | null;
-  avatar_url: string | null;
-  linked_at: string;
-}
-
-export interface PasswordResetRequest {
-  id: string;
-  user_id: string;
-  status: 'pending' | 'approved' | 'rejected' | 'completed' | 'expired';
-  requested_at: string;
-  reviewed_by: string | null;
-  reviewed_at: string | null;
-  completed_at: string | null;
-  user_email: string;
-  user_full_name: string;
-  user_role: string;
-}
 
 // Admin - Company Management
 export interface CompanySummary {
@@ -418,20 +407,6 @@ export interface UpdatePayrollPcbRequest {
   pcb_amount: number;
 }
 
-export interface DashboardSummary {
-  total_employees: number;
-  active_employees: number;
-  last_payroll_period: string | null;
-  last_payroll_total_net: number | null;
-  last_payroll_total_gross: number | null;
-  last_payroll_employee_count: number | null;
-  ytd_total_gross: number;
-  ytd_total_epf_employer: number;
-  ytd_total_socso_employer: number;
-  ytd_total_eis_employer: number;
-  departments: { department: string; count: number }[];
-}
-
 export interface YearMonthsOption {
   year: number;
   months: number[];
@@ -455,18 +430,6 @@ export interface SalaryHistory {
   effective_date: string;
   reason: string | null;
   created_at: string;
-}
-
-export interface Tp3Record {
-  id: string;
-  employee_id: string;
-  tax_year: number;
-  previous_employer_name: string | null;
-  previous_income_ytd: number;
-  previous_epf_ytd: number;
-  previous_pcb_ytd: number;
-  previous_socso_ytd: number;
-  previous_zakat_ytd: number;
 }
 
 // Documents
@@ -923,13 +886,6 @@ export interface CreateEmailTemplateRequest {
   letter_type: LetterType;
   subject: string;
   body_html: string;
-}
-
-export interface UpdateEmailTemplateRequest {
-  name?: string;
-  subject?: string;
-  body_html?: string;
-  is_active?: boolean;
 }
 
 export interface EmailLog {

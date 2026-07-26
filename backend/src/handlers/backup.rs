@@ -8,25 +8,24 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use crate::core::app_state::AppState;
-use crate::core::auth::AuthUser;
+use crate::core::auth::{AuthUser, Permission};
 use crate::core::error::{AppError, AppResult};
 use crate::models::backup::{CompanyBackup, ExportQuery, ImportResult};
 use crate::services::backup_service;
 
 /// A company backup carries payroll_runs/items/entries, salary_history and raw
-/// employee rows (bank account, IC, TIN). Admin roles are deliberately excluded
-/// from `Permission::ViewPayroll`, so requiring only the admin role here would
-/// hand them, via export, exactly the figures every payroll endpoint denies
-/// them — and let import overwrite those tables. Both checks must pass.
-fn require_admin(auth: &AuthUser) -> AppResult<(Option<Uuid>, Uuid)> {
-    auth.require_payroll_privileged()?;
-    if auth.has_any_role(&["super_admin"]) {
-        return Ok((auth.0.company_id, auth.0.sub));
-    }
-    if auth.has_any_role(&["admin"]) {
-        return Ok((Some(auth.company_id()?), auth.0.sub));
-    }
-    Err(AppError::Forbidden("Admin access required".into()))
+/// employee rows (bank account, IC, TIN), and import overwrites those tables.
+/// `Permission::ManageBackups` is granted to `super_admin` alone.
+///
+/// This previously required `ViewPayroll` *and* membership of
+/// `super_admin`/`admin`. Since `admin` is deliberately excluded from
+/// `ViewPayroll`, the `admin` branch was unreachable, and `payroll_admin` /
+/// `finance` cleared the first check only to fail the second — so the effective
+/// roster was already `super_admin` alone. That is now stated directly instead
+/// of emerging from two checks that contradict each other.
+fn require_backup_admin(auth: &AuthUser) -> AppResult<(Option<Uuid>, Uuid)> {
+    auth.require_permission(Permission::ManageBackups)?;
+    Ok((auth.0.company_id, auth.0.sub))
 }
 
 pub async fn export_company(
@@ -34,7 +33,7 @@ pub async fn export_company(
     auth: AuthUser,
     Query(query): Query<ExportQuery>,
 ) -> Result<impl IntoResponse, AppError> {
-    let (user_company_id, _user_id) = require_admin(&auth)?;
+    let (user_company_id, _user_id) = require_backup_admin(&auth)?;
 
     let company_id = if auth.has_any_role(&["super_admin"]) {
         query.company_id.ok_or_else(|| {
@@ -76,7 +75,7 @@ pub async fn import_company(
     auth: AuthUser,
     mut multipart: Multipart,
 ) -> AppResult<Json<ImportResult>> {
-    let (admin_company_id, user_id) = require_admin(&auth)?;
+    let (admin_company_id, user_id) = require_backup_admin(&auth)?;
 
     let mut file_data: Option<Vec<u8>> = None;
     let mut requested_company_id: Option<Uuid> = None;
@@ -154,7 +153,11 @@ pub async fn import_company(
                 "Only super admins can create a company from a backup.".into(),
             ));
         }
-        Some(admin_company_id.expect("company admin authorization always has a company"))
+        // Unreachable while `ManageBackups` is super_admin-only, but an
+        // `expect` here would become a panic the moment that grant widens.
+        Some(admin_company_id.ok_or_else(|| {
+            AppError::Forbidden("No company assigned for a company-scoped import".into())
+        })?)
     };
 
     let result =

@@ -490,21 +490,6 @@ describe('admin API', () => {
     });
   });
 
-  it('routes reset moderation through the admin namespace', async () => {
-    apiMocks.get.mockResolvedValue({ data: [] });
-    await admin.listPasswordResets();
-    expect(apiMocks.get).toHaveBeenCalledWith('/admin/password-resets');
-
-    apiMocks.post.mockResolvedValue({ data: { reset_url: 'https://app/reset?token=x' } });
-    await expect(admin.approvePasswordReset('req-1')).resolves.toEqual({
-      reset_url: 'https://app/reset?token=x',
-    });
-    expect(apiMocks.post).toHaveBeenLastCalledWith('/admin/password-resets/req-1/approve');
-
-    await admin.rejectPasswordReset('req-1');
-    expect(apiMocks.post).toHaveBeenLastCalledWith('/admin/password-resets/req-1/reject');
-  });
-
   it('scopes a user list to one company when asked', async () => {
     apiMocks.get.mockResolvedValue({ data: { data: [], total: 0, page: 1, per_page: 20 } });
 

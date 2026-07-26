@@ -1,11 +1,13 @@
 pub mod app_state;
 pub mod auth;
+pub mod client_ip;
 pub mod config;
 pub mod cookie;
 pub mod crypto;
 pub mod db;
 pub mod error;
 pub mod extract;
+pub mod permission;
 pub mod rate_limit_key;
 pub mod redact;
 pub mod schedule;

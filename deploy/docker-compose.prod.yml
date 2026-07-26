@@ -73,6 +73,18 @@ services:
       JWT_EXPIRY_HOURS: "${JWT_EXPIRY_HOURS:-1}"
       SERVER_HOST: "0.0.0.0"
       SERVER_PORT: "8080"
+      # The host Caddy is the ONLY path to this container: port 8080 is
+      # published on 127.0.0.1 alone (see `ports:` above), so nothing off-host
+      # can reach Axum directly and forge X-Forwarded-For. Caddy appends the
+      # real peer to that header, and core::client_ip reads the right-most
+      # entry — the proxy-appended one, not the client-controlled left-most.
+      #
+      # Without this, the TCP peer Axum sees is the Docker bridge gateway,
+      # identical for every request on Earth: every audit_logs row records
+      # 172.x.0.1, and every tower_governor limiter collapses into a single
+      # global bucket, so one attacker tripping the login limiter locks out
+      # every legitimate user.
+      TRUST_PROXY_HEADERS: "true"
       FRONTEND_URL: "${FRONTEND_URL:-https://payrollmy.com}"
       WEBAUTHN_RP_ID: "${WEBAUTHN_RP_ID:-payrollmy.com}"
       WEBAUTHN_RP_ORIGIN: "${WEBAUTHN_RP_ORIGIN:-https://payrollmy.com}"

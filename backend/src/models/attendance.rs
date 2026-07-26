@@ -2,16 +2,6 @@ use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-// ─── Platform Setting ───
-
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct PlatformSetting {
-    pub key: String,
-    pub value: String,
-    pub updated_at: DateTime<Utc>,
-    pub updated_by: Option<Uuid>,
-}
-
 // ─── QR Token ───
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]

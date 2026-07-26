@@ -30,8 +30,14 @@ pub async fn list_with_member_count(
 }
 
 /// Members of a team, joined with employee details.
+///
+/// Scoped by `company_id` in the SQL, not at the call site: this projection
+/// carries colleague names, employee numbers, departments and designations, so
+/// an unscoped `team_id` lookup let an administrator in one company read
+/// another company's roster by guessing a UUID.
 pub async fn list_members(
     executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
     team_id: Uuid,
 ) -> AppResult<Vec<TeamMember>> {
     let members = sqlx::query_as!(
@@ -40,10 +46,12 @@ pub async fn list_members(
             e.full_name AS "employee_name?", e.employee_number AS "employee_number?",
             e.department, e.designation
         FROM team_members tm
+        JOIN teams t ON t.id = tm.team_id
         JOIN employees e ON tm.employee_id = e.id
-        WHERE tm.team_id = $1
+        WHERE tm.team_id = $1 AND t.company_id = $2
         ORDER BY tm.role DESC, e.full_name"#,
         team_id,
+        company_id,
     )
     .fetch_all(executor)
     .await?;

@@ -57,15 +57,30 @@ pub async fn create_employee(
     let account_info = create_user_for_employee(pool, &emp).await?;
 
     // Initialize leave balances for the current year (prorated for mid-year joiners)
+    //
+    // Logged rather than discarded: `initialize_leave_balances` does not log
+    // internally either, so a half-provisioned employee — created, with an
+    // account, and no leave entitlement — used to produce no output at any level.
+    // Still non-fatal: the employee and their account exist and are usable, and
+    // balances can be re-initialised from the UI.
     let current_year = chrono::Utc::now().year();
-    let _ = crate::services::portal_service::initialize_leave_balances(
+    if let Err(e) = crate::services::portal_service::initialize_leave_balances(
         pool,
         emp.id,
         company_id,
         emp.date_joined,
         current_year,
     )
-    .await;
+    .await
+    {
+        tracing::error!(
+            employee_id = %emp.id,
+            company_id = %company_id,
+            year = current_year,
+            error = %e,
+            "Failed to initialise leave balances for a newly created employee"
+        );
+    }
 
     // Audit Log
     let _ = crate::services::audit_service::log_action_with_metadata(
@@ -185,13 +200,24 @@ pub async fn update_employee(
 ) -> AppResult<Employee> {
     let existing = get_employee(pool, id, company_id).await?;
 
+    // The employee row is written first, and both writes share one transaction.
+    //
+    // This is not a race — it was deterministic. `employees::update` casts
+    // free-text into enum columns (`gender_type`, `race_type`,
+    // `employment_type`), so one PUT carrying a new salary *and* an invalid
+    // gender committed a salary-history row asserting a raise and then failed on
+    // the employee update. The salary history is what the audit trail and the EA
+    // form read, so it recorded a raise that never happened.
+    let mut tx = pool.begin().await?;
+    let emp = employees::update(&mut *tx, id, company_id, &req, updated_by).await?;
+
     // Track salary change
     if let Some(new_salary) = req.basic_salary
         && new_salary != existing.basic_salary
     {
         let history_id = Uuid::now_v7();
         salary_history::insert(
-            pool,
+            &mut *tx,
             history_id,
             id,
             existing.basic_salary,
@@ -200,8 +226,7 @@ pub async fn update_employee(
         )
         .await?;
     }
-
-    let emp = employees::update(pool, id, company_id, &req, updated_by).await?;
+    tx.commit().await?;
 
     // Audit Log
     let _ = crate::services::audit_service::log_action_with_metadata(
@@ -224,17 +249,61 @@ pub async fn update_employee(
     Ok(emp)
 }
 
-pub async fn soft_delete_employee(pool: &PgPool, id: Uuid, company_id: Uuid) -> AppResult<()> {
-    let rows = employees::soft_delete(pool, id, company_id).await?;
+/// Soft-delete an employee and tear down their portal login.
+///
+/// All four writes share one transaction. Split across connections, a failure
+/// part-way left the employee soft-deleted with a live account and valid refresh
+/// tokens — or, in the other order, an orphaned login for a record that still
+/// existed. Nothing retried it, because the first write had already succeeded.
+///
+/// It is also audited now. This is the most destructive HR mutation in the
+/// system and it recorded nothing at all, while `create_employee` and
+/// `update_employee` either side of it both capture actor, before/after and
+/// request metadata. The prior state goes into `old_values` so the row itself is
+/// the record of what was removed.
+pub async fn soft_delete_employee(
+    pool: &PgPool,
+    id: Uuid,
+    company_id: Uuid,
+    deleted_by: Uuid,
+    audit_meta: Option<&AuditRequestMeta>,
+) -> AppResult<()> {
+    // Read before deleting: afterwards there is nothing left to describe.
+    let existing = get_employee(pool, id, company_id).await?;
+
+    let mut tx = pool.begin().await?;
+    let rows = employees::soft_delete(&mut *tx, id, company_id).await?;
 
     if rows == 0 {
         return Err(AppError::NotFound("Employee not found".into()));
     }
 
-    // Delete the user account linked to this employee
-    user_companies::delete_by_employee(pool, id).await?;
-    refresh_tokens::delete_by_employee(pool, id).await?;
-    users::delete_by_employee(pool, id).await?;
+    // Retire the portal login linked to this employee. The company links and
+    // refresh tokens really are deleted — they are access, not history — but the
+    // user row is soft-deleted so the audit trail, payroll approvals and
+    // attendance records that reference it stay intact.
+    user_companies::delete_by_employee(&mut *tx, id).await?;
+    refresh_tokens::delete_by_employee(&mut *tx, id).await?;
+    users::soft_delete_by_employee(&mut *tx, id, deleted_by).await?;
+
+    crate::services::audit_service::log_action_with_metadata(
+        &mut *tx,
+        Some(company_id),
+        Some(deleted_by),
+        "delete_employee",
+        "employee",
+        Some(id),
+        Some(serde_json::to_value(&existing).unwrap_or_default()),
+        None,
+        Some(&format!(
+            "Deleted employee {} ({})",
+            existing.full_name, existing.employee_number
+        )),
+        audit_meta,
+    )
+    .await?;
+
+    tx.commit().await?;
 
     Ok(())
 }

@@ -88,7 +88,7 @@ export function WorkScheduleCard() {
 
   return (
     <div className="bg-white rounded-2xl shadow">
-      <div className="p-6 border-b border-gray-100">
+      <div className="p-5 sm:p-6 border-b border-gray-100">
         <div className="flex items-center gap-2 mb-1">
           <Clock className="w-5 h-5 text-gray-700" />
           <h2 className="font-semibold text-gray-900">Work Schedule</h2>
@@ -98,9 +98,10 @@ export function WorkScheduleCard() {
         </p>
       </div>
 
-      <div className="p-6 space-y-5">
-        {/* Time row */}
-        <div className="grid grid-cols-2 gap-4">
+      <div className="p-5 sm:p-6 space-y-5">
+        {/* Time row — stacked on phones; two 150px-wide time controls side by
+            side left no room for the values. */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <TimeSelector
             label="Start Time"
             value={form.start_time}
@@ -149,21 +150,21 @@ export function WorkScheduleCard() {
       </div>
 
       {/* Save */}
-      <div className="flex items-center justify-between px-6 py-4 border-t border-gray-100 bg-gray-50 rounded-b-2xl">
-        <div className="h-5">
+      <div className="flex items-center justify-between gap-3 px-5 sm:px-6 py-4 border-t border-gray-100 bg-gray-50 rounded-b-2xl">
+        <div className="min-w-0 h-5">
           {toast && (
             <span className={`flex items-center gap-1.5 text-sm font-medium ${
               toastType === 'success' ? 'text-emerald-600' : 'text-red-600'
             }`}>
-              {toastType === 'success' ? <CheckCircle2 className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
-              {toast}
+              {toastType === 'success' ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />}
+              <span className="truncate">{toast}</span>
             </span>
           )}
         </div>
         <button
           onClick={() => mutation.mutate()}
           disabled={mutation.isPending}
-          className="bg-black text-white px-5 py-2 rounded-xl text-sm font-medium hover:bg-gray-800 transition-colors disabled:opacity-50"
+          className="shrink-0 whitespace-nowrap bg-black text-white px-5 py-2 rounded-xl text-sm font-medium hover:bg-gray-800 transition-colors disabled:opacity-50"
         >
           {mutation.isPending ? 'Saving...' : 'Save Schedule'}
         </button>

@@ -70,11 +70,38 @@ function processQueue(error: unknown, token: string | null) {
   failedQueue = [];
 }
 
+/**
+ * Turns a 429 into a message a person can act on.
+ *
+ * The backend limits expensive endpoints per session — payroll runs, bulk
+ * imports, uploads, outbound mail. Without this the raw axios error surfaces as
+ * "Request failed with status code 429", which reads like a bug and invites the
+ * user to retry immediately, which is the one thing that keeps them limited.
+ */
+function describeRateLimit(error: {
+  response?: { status?: number; headers?: Record<string, unknown> };
+  rateLimitMessage?: string;
+}) {
+  const retryAfter = Number(error.response?.headers?.['retry-after']);
+  const wait =
+    Number.isFinite(retryAfter) && retryAfter > 0
+      ? `Try again in ${retryAfter} second${retryAfter === 1 ? '' : 's'}.`
+      : 'Try again shortly.';
+  return `Too many requests. ${wait}`;
+}
+
 // Handle 401 responses with refresh token retry (cookie-based)
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
     const originalRequest = error.config;
+
+    // Attach before any other handling: a 429 is never a session problem, so it
+    // must not fall through to the refresh-and-redirect path below.
+    if (error.response?.status === 429) {
+      error.rateLimitMessage = describeRateLimit(error);
+      return Promise.reject(error);
+    }
 
     // The public kiosk endpoint authenticates via a kiosk secret, not the user JWT.
     // A 401 there means the kiosk credential was revoked — surface it to the caller

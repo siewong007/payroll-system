@@ -5,26 +5,13 @@ use axum::{
 use uuid::Uuid;
 
 use crate::core::app_state::AppState;
-use crate::core::auth::AuthUser;
+use crate::core::auth::{AuthUser, Permission};
 use crate::core::error::{AppError, AppResult};
 use crate::models::calendar::{
     CreateHolidayRequest, Holiday, ImportIcsRequest, MonthCalendar, MonthQuery,
     UpdateHolidayRequest, UpdateWorkingDaysRequest, WorkingDayConfig, YearQuery,
 };
 use crate::services::calendar_service;
-
-fn require_admin(auth: &AuthUser) -> AppResult<Uuid> {
-    if auth.has_any_role(&[
-        "super_admin",
-        "admin",
-        "payroll_admin",
-        "hr_manager",
-        "exec",
-    ]) {
-        return auth.company_id();
-    }
-    Err(AppError::Forbidden("Admin access required".into()))
-}
 
 // ─── Holidays ───
 
@@ -33,7 +20,7 @@ pub async fn list_holidays(
     auth: AuthUser,
     Query(q): Query<YearQuery>,
 ) -> AppResult<Json<Vec<Holiday>>> {
-    let company_id = require_admin(&auth)?;
+    let company_id = auth.authorize(Permission::ViewCalendar)?;
     let year = q.year.unwrap_or_else(|| chrono::Utc::now().year());
     let holidays = calendar_service::get_holidays(&state.pool, company_id, year).await?;
     Ok(Json(holidays))
@@ -44,7 +31,7 @@ pub async fn get_holiday(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<Holiday>> {
-    let company_id = require_admin(&auth)?;
+    let company_id = auth.authorize(Permission::ViewCalendar)?;
     let holiday = calendar_service::get_holiday(&state.pool, company_id, id).await?;
     Ok(Json(holiday))
 }
@@ -54,7 +41,7 @@ pub async fn create_holiday(
     auth: AuthUser,
     Json(req): Json<CreateHolidayRequest>,
 ) -> AppResult<Json<Holiday>> {
-    let company_id = require_admin(&auth)?;
+    let company_id = auth.authorize(Permission::ManageCalendar)?;
     let holiday = calendar_service::create_holiday(
         &state.pool,
         company_id,
@@ -76,7 +63,7 @@ pub async fn update_holiday(
     Path(id): Path<Uuid>,
     Json(req): Json<UpdateHolidayRequest>,
 ) -> AppResult<Json<Holiday>> {
-    let company_id = require_admin(&auth)?;
+    let company_id = auth.authorize(Permission::ManageCalendar)?;
     let holiday = calendar_service::update_holiday(
         &state.pool,
         company_id,
@@ -98,7 +85,7 @@ pub async fn delete_holiday(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<serde_json::Value>> {
-    let company_id = require_admin(&auth)?;
+    let company_id = auth.authorize(Permission::ManageCalendar)?;
     calendar_service::delete_holiday(&state.pool, company_id, id).await?;
     Ok(Json(serde_json::json!({"success": true})))
 }
@@ -109,7 +96,7 @@ pub async fn get_working_days(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> AppResult<Json<Vec<WorkingDayConfig>>> {
-    let company_id = require_admin(&auth)?;
+    let company_id = auth.authorize(Permission::ViewCalendar)?;
     let config = calendar_service::get_working_days(&state.pool, company_id).await?;
     Ok(Json(config))
 }
@@ -119,7 +106,7 @@ pub async fn update_working_days(
     auth: AuthUser,
     Json(req): Json<UpdateWorkingDaysRequest>,
 ) -> AppResult<Json<Vec<WorkingDayConfig>>> {
-    let company_id = require_admin(&auth)?;
+    let company_id = auth.authorize(Permission::ManageCalendar)?;
     let days: Vec<(i16, bool)> = req
         .days
         .iter()
@@ -136,7 +123,7 @@ pub async fn get_month_calendar(
     auth: AuthUser,
     Query(q): Query<MonthQuery>,
 ) -> AppResult<Json<MonthCalendar>> {
-    let company_id = require_admin(&auth)?;
+    let company_id = auth.authorize(Permission::ViewCalendar)?;
     let cal =
         calendar_service::get_month_calendar(&state.pool, company_id, q.year, q.month).await?;
     Ok(Json(cal))
@@ -151,7 +138,7 @@ pub async fn import_ics(
     auth: AuthUser,
     Json(req): Json<ImportIcsRequest>,
 ) -> AppResult<Json<Vec<Holiday>>> {
-    let company_id = require_admin(&auth)?;
+    let company_id = auth.authorize(Permission::ManageCalendar)?;
     let holidays =
         calendar_service::import_from_ics(&state.pool, company_id, &req.url, auth.0.sub).await?;
     Ok(Json(holidays))
@@ -164,7 +151,7 @@ pub async fn import_ics_file(
     auth: AuthUser,
     mut multipart: Multipart,
 ) -> AppResult<Json<Vec<Holiday>>> {
-    let company_id = require_admin(&auth)?;
+    let company_id = auth.authorize(Permission::ManageCalendar)?;
 
     let field = multipart
         .next_field()

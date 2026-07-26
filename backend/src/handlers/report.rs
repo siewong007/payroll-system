@@ -5,28 +5,10 @@ use axum::{
 use chrono::{Datelike, NaiveDate, Utc};
 
 use crate::core::app_state::AppState;
-use crate::core::auth::AuthUser;
-use crate::core::error::{AppError, AppResult};
+use crate::core::auth::{AuthUser, Permission};
+use crate::core::error::AppResult;
 use crate::models::report::{DateRangeQuery, EaFormQuery, YearMonthQuery, YearQuery};
 use crate::services::report_service::{self, *};
-
-fn require_admin(auth: &AuthUser) -> AppResult<uuid::Uuid> {
-    if auth.has_any_role(&[
-        "super_admin",
-        "admin",
-        "payroll_admin",
-        "hr_manager",
-        "finance",
-    ]) {
-        return auth.company_id();
-    }
-    Err(AppError::Forbidden("Admin access required".into()))
-}
-
-fn require_payroll_access(auth: &AuthUser) -> AppResult<uuid::Uuid> {
-    auth.require_payroll_privileged()?;
-    auth.company_id()
-}
 
 fn current_year_month() -> (i32, i32) {
     let now = Utc::now().date_naive();
@@ -41,7 +23,7 @@ pub async fn report_periods(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> AppResult<Json<ReportPeriodsResponse>> {
-    let company_id = require_admin(&auth)?;
+    let company_id = auth.authorize(Permission::ViewReports)?;
     let mut periods = report_service::report_periods(&state.pool, company_id).await?;
     if !auth.is_payroll_privileged() {
         periods.payroll_years.clear();
@@ -56,7 +38,7 @@ pub async fn payroll_summary(
     auth: AuthUser,
     Query(q): Query<YearQuery>,
 ) -> AppResult<Json<Vec<PayrollSummaryRow>>> {
-    let company_id = require_payroll_access(&auth)?;
+    let company_id = auth.authorize(Permission::ViewPayroll)?;
     let year = q.year.unwrap_or_else(current_year);
     let rows = report_service::payroll_summary(&state.pool, company_id, year).await?;
     Ok(Json(rows))
@@ -67,7 +49,7 @@ pub async fn payroll_by_department(
     auth: AuthUser,
     Query(q): Query<YearMonthQuery>,
 ) -> AppResult<Json<Vec<DepartmentPayrollRow>>> {
-    let company_id = require_payroll_access(&auth)?;
+    let company_id = auth.authorize(Permission::ViewPayroll)?;
     let (default_year, default_month) = current_year_month();
     let year = q.year.unwrap_or(default_year);
     let month = q.month.unwrap_or(default_month);
@@ -80,7 +62,7 @@ pub async fn leave_report(
     auth: AuthUser,
     Query(q): Query<YearQuery>,
 ) -> AppResult<Json<Vec<LeaveReportRow>>> {
-    let company_id = require_admin(&auth)?;
+    let company_id = auth.authorize(Permission::ViewReports)?;
     let year = q.year.unwrap_or_else(current_year);
     let rows = report_service::leave_report(&state.pool, company_id, year).await?;
     Ok(Json(rows))
@@ -91,7 +73,7 @@ pub async fn claims_report(
     auth: AuthUser,
     Query(q): Query<DateRangeQuery>,
 ) -> AppResult<Json<Vec<ClaimsReportRow>>> {
-    let company_id = require_admin(&auth)?;
+    let company_id = auth.authorize(Permission::ViewReports)?;
     let current_year = current_year();
     let start = q
         .start_date
@@ -108,7 +90,7 @@ pub async fn statutory_report(
     auth: AuthUser,
     Query(q): Query<YearMonthQuery>,
 ) -> AppResult<Json<Vec<StatutoryReportRow>>> {
-    let company_id = require_payroll_access(&auth)?;
+    let company_id = auth.authorize(Permission::ViewStatutoryExports)?;
     let (default_year, default_month) = current_year_month();
     let year = q.year.unwrap_or(default_year);
     let month = q.month.unwrap_or(default_month);
@@ -129,7 +111,7 @@ pub async fn export_epf(
     use axum::body::Body;
     use axum::http::{Response, StatusCode, header};
 
-    let company_id = require_payroll_access(&auth)?;
+    let company_id = auth.authorize(Permission::ViewStatutoryExports)?;
     let (default_year, default_month) = current_year_month();
     let year = q.year.unwrap_or(default_year);
     let month = q.month.unwrap_or(default_month);
@@ -157,7 +139,7 @@ pub async fn export_socso(
     use axum::body::Body;
     use axum::http::{Response, StatusCode, header};
 
-    let company_id = require_payroll_access(&auth)?;
+    let company_id = auth.authorize(Permission::ViewStatutoryExports)?;
     let (default_year, default_month) = current_year_month();
     let year = q.year.unwrap_or(default_year);
     let month = q.month.unwrap_or(default_month);
@@ -186,7 +168,7 @@ pub async fn export_eis(
     use axum::body::Body;
     use axum::http::{Response, StatusCode, header};
 
-    let company_id = require_payroll_access(&auth)?;
+    let company_id = auth.authorize(Permission::ViewStatutoryExports)?;
     let (default_year, default_month) = current_year_month();
     let year = q.year.unwrap_or(default_year);
     let month = q.month.unwrap_or(default_month);
@@ -214,7 +196,7 @@ pub async fn export_pcb(
     use axum::body::Body;
     use axum::http::{Response, StatusCode, header};
 
-    let company_id = require_payroll_access(&auth)?;
+    let company_id = auth.authorize(Permission::ViewStatutoryExports)?;
     let (default_year, default_month) = current_year_month();
     let year = q.year.unwrap_or(default_year);
     let month = q.month.unwrap_or(default_month);
@@ -242,7 +224,7 @@ pub async fn list_ea_employees(
     auth: AuthUser,
     Query(q): Query<YearQuery>,
 ) -> AppResult<Json<Vec<ea_form_service::EaEmployeeSummary>>> {
-    let company_id = require_payroll_access(&auth)?;
+    let company_id = auth.authorize(Permission::ViewStatutoryExports)?;
     let year = q.year.unwrap_or_else(current_year);
     let rows = ea_form_service::list_employees_for_ea(&state.pool, company_id, year).await?;
     Ok(Json(rows))
@@ -256,7 +238,7 @@ pub async fn get_ea_form(
     use axum::body::Body;
     use axum::http::{Response, StatusCode, header};
 
-    let company_id = require_payroll_access(&auth)?;
+    let company_id = auth.authorize(Permission::ViewStatutoryExports)?;
     let year = q.year.unwrap_or_else(current_year);
     let employee_id = q.employee_id.ok_or_else(|| {
         crate::core::error::AppError::BadRequest("employee_id is required".into())

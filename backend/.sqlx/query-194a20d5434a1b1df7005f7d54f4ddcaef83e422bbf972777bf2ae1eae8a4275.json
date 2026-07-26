@@ -1,0 +1,47 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT m.group_id, m.user_id, m.added_at,\n            u.full_name AS \"full_name!\", u.email AS \"email!\"\n        FROM user_group_members m\n        JOIN user_groups g ON g.id = m.group_id\n        JOIN users u ON u.id = m.user_id\n        WHERE m.group_id = $1 AND g.company_id = $2 AND u.deleted_at IS NULL\n        ORDER BY u.full_name",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "group_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "user_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "added_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 3,
+        "name": "full_name!",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "email!",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "194a20d5434a1b1df7005f7d54f4ddcaef83e422bbf972777bf2ae1eae8a4275"
+}

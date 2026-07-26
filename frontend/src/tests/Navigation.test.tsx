@@ -5,6 +5,7 @@ import type { ReactNode } from 'react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppRole, User } from '@/types';
+import { userWithRoles } from './support/permissions';
 
 const authMocks = vi.hoisted(() => ({ useAuth: vi.fn() }));
 const adminMocks = vi.hoisted(() => ({ getMyCompanies: vi.fn() }));
@@ -20,16 +21,10 @@ vi.mock('react-router', async (importOriginal) => ({
 import { Sidebar } from '@/components/layout/Sidebar';
 import { CompanySwitcher } from '@/components/layout/CompanySwitcher';
 
+// The sidebar filters links by permission now, so a fixture user must carry the
+// permissions its roles imply — see `support/permissions`.
 function asUser(roles: AppRole[], overrides: Partial<User> = {}): User {
-  return {
-    id: 'user-1',
-    email: 'person@example.com',
-    full_name: 'Aisyah Rahman',
-    roles,
-    company_id: 'company-1',
-    employee_id: null,
-    ...overrides,
-  };
+  return userWithRoles(roles, { full_name: 'Aisyah Rahman', ...overrides });
 }
 
 function renderWithProviders(ui: ReactNode, route = '/company') {
@@ -99,7 +94,7 @@ describe('Sidebar role-based navigation', () => {
     }
   });
 
-  it('hides Reports from exec, matching the /reports RoleGuard', () => {
+  it('hides Reports from exec, matching the /reports PermissionGuard', () => {
     authMocks.useAuth.mockReturnValue({ user: asUser(['exec']), logout: vi.fn() });
     renderWithProviders(<Sidebar />);
 
@@ -118,10 +113,21 @@ describe('Sidebar role-based navigation', () => {
     expect(navLinks()).not.toContain('Backup');
   });
 
-  it('shows Audit Trail and Backup to an admin', () => {
+  it('shows Audit Trail to an admin but not Backup', () => {
     renderWithProviders(<Sidebar />);
 
-    expect(navLinks()).toEqual(expect.arrayContaining(['Audit Trail', 'Backup']));
+    expect(navLinks()).toContain('Audit Trail');
+    // Backup is super_admin-only: the archive carries payroll_items,
+    // salary_history and raw employee rows, and `admin` is excluded from
+    // payroll entirely. The link used to be offered here and 403'd on click.
+    expect(navLinks()).not.toContain('Backup');
+  });
+
+  it('shows Backup to a super_admin', () => {
+    authMocks.useAuth.mockReturnValue({ user: asUser(['super_admin']), logout: vi.fn() });
+    renderWithProviders(<Sidebar />);
+
+    expect(navLinks()).toContain('Backup');
   });
 
   it('drops a section heading entirely when the role sees none of its items', () => {

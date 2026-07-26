@@ -285,11 +285,29 @@ configure_caddy() {
     cp -p "$CADDY_SITE_FILE" "$site_backup"
   fi
 
+  # Caddy runs as the `caddy` user; the package normally creates this, but a
+  # hand-rolled install may not have.
+  install -d -o caddy -g caddy -m 0750 /var/log/caddy 2>/dev/null || mkdir -p /var/log/caddy
+
+  # The access log is the only request-level evidence that exists anywhere in
+  # this stack: Axum's TraceLayer emits at DEBUG and RUST_LOG is info, and
+  # core::error maps 401/403 to a status code without logging. Without this
+  # file a credential-stuffing run leaves no trace at all, and fail2ban has
+  # nothing to read. JSON format so a jail filter can anchor on remote_ip.
   cat > "$site_tmp" <<CADDY
 ${API_DOMAIN} {
     encode zstd gzip
 
     header ?Strict-Transport-Security "max-age=31536000; includeSubDomains"
+
+    log {
+        output file /var/log/caddy/payroll-access.log {
+            roll_size 20MiB
+            roll_keep 5
+            roll_keep_for 336h
+        }
+        format json
+    }
 
     reverse_proxy 127.0.0.1:8080
 }

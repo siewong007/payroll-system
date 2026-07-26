@@ -271,6 +271,15 @@ pub async fn get_pending_overtime(
     approval_reads::list_pending_overtime(pool, company_id, status).await
 }
 
+/// An overtime payroll entry, computed but not yet written.
+struct StagedOvertime {
+    period_year: i32,
+    period_month: i32,
+    description: String,
+    amount: i64,
+    rate: i64,
+}
+
 pub async fn approve_overtime(
     pool: &PgPool,
     company_id: Uuid,
@@ -279,14 +288,28 @@ pub async fn approve_overtime(
     notes: Option<&str>,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<OvertimeApplication> {
-    let ot = overtime_applications::set_approved(pool, ot_id, company_id, reviewer_id, notes)
+    // Approval, the staged payroll entry and the replacement-leave grant all
+    // commit together. They used to be four writes on four separate connections
+    // after the state transition had already committed, and `set_approved` is a
+    // compare-and-swap on `status = 'pending'`, so a retry after any of them
+    // failed returned "not found or not pending". Two concrete losses: the
+    // staged `payroll_entries` row is the marker
+    // `portal_service::exists_processed_overtime` gates cancellation on, so
+    // dropping it let an employee cancel already-paid overtime; and the
+    // public-holiday replacement-leave day simply vanished.
+    //
+    // The settings reads stay on the pool, ahead of the transaction — they are
+    // company configuration, not request state, and `settings_service` takes
+    // `&PgPool`. The row the CAS approves is re-checked below.
+    let preview = overtime_applications::get_pending(pool, ot_id, company_id)
         .await?
         .ok_or_else(|| AppError::BadRequest("OT application not found or not pending".into()))?;
 
     // Get employee hourly rate
-    if let Some((hourly_rate, basic_salary)) =
-        employee_repo::overtime_rate_basis(pool, ot.employee_id).await?
+    let staged = if let Some((hourly_rate, basic_salary)) =
+        employee_repo::overtime_rate_basis(pool, preview.employee_id).await?
     {
+        let ot = &preview;
         // Use hourly_rate if set, otherwise calculate from basic: basic / working_days / effective_hours
         // effective_hours_per_day excludes rest time (e.g. 8h for a 9h day with 1h lunch)
         let effective_hours: i64 =
@@ -326,21 +349,10 @@ pub async fn approve_overtime(
         let ot_rate = (base_hourly as f64 * multiplier) as i64;
         let ot_amount = (ot_rate as f64 * ot_hours_f64) as i64;
 
-        // Stage payroll entry
-        let period_year = ot.ot_date.year();
-        let period_month = ot.ot_date.month0() as i32 + 1;
-
-        // Propagate rather than swallow: this staged row is the marker
-        // portal_service::exists_processed_overtime gates cancellation on, so a
-        // dropped insert let an employee cancel already-paid overtime.
-        payroll_entries::insert_overtime(
-            pool,
-            Uuid::now_v7(),
-            ot.employee_id,
-            company_id,
-            period_year,
-            period_month,
-            &format!(
+        Some(StagedOvertime {
+            period_year: ot.ot_date.year(),
+            period_month: ot.ot_date.month0() as i32 + 1,
+            description: format!(
                 "OT {} - {} ({} {}h @ {:.1}x)",
                 ot.ot_date,
                 ot.ot_type.replace('_', " "),
@@ -348,9 +360,46 @@ pub async fn approve_overtime(
                 ot.hours,
                 multiplier
             ),
-            ot_amount,
+            amount: ot_amount,
+            rate: ot_rate,
+        })
+    } else {
+        None
+    };
+
+    let mut tx = pool.begin().await?;
+    let ot = overtime_applications::set_approved(&mut *tx, ot_id, company_id, reviewer_id, notes)
+        .await?
+        .ok_or_else(|| AppError::BadRequest("OT application not found or not pending".into()))?;
+
+    // The CAS guarantees the application was still pending, not that it was
+    // unchanged since the figures above were computed.
+    if (ot.employee_id, ot.ot_date, ot.ot_type.as_str(), ot.hours)
+        != (
+            preview.employee_id,
+            preview.ot_date,
+            preview.ot_type.as_str(),
+            preview.hours,
+        )
+    {
+        return Err(AppError::Conflict(
+            "This overtime application changed while it was being approved. Please review it again."
+                .into(),
+        ));
+    }
+
+    if let Some(s) = &staged {
+        payroll_entries::insert_overtime(
+            &mut *tx,
+            Uuid::now_v7(),
+            ot.employee_id,
+            company_id,
+            s.period_year,
+            s.period_month,
+            &s.description,
+            s.amount,
             ot.hours,
-            ot_rate,
+            s.rate,
             reviewer_id,
         )
         .await?;
@@ -359,12 +408,15 @@ pub async fn approve_overtime(
     // Replacement leave: if OT was on a public holiday, grant 1 day replacement leave
     if ot.ot_type == "public_holiday" {
         // Find or create system "Replacement Leave" type for this company
-        let rl_type_id = leave_types::upsert_replacement_leave(pool, company_id).await?;
+        let rl_type_id = leave_types::upsert_replacement_leave(&mut *tx, company_id).await?;
 
         // UPSERT leave balance: increment entitled_days by 1
         let year = ot.ot_date.year();
-        leave_balances::upsert_entitled_replacement(pool, ot.employee_id, rl_type_id, year).await?;
+        leave_balances::upsert_entitled_replacement(&mut *tx, ot.employee_id, rl_type_id, year)
+            .await?;
     }
+
+    tx.commit().await?;
 
     // Notify employee
     let employee_user = user_repo::active_id_for_employee(pool, ot.employee_id).await?;

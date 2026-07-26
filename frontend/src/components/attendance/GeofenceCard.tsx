@@ -165,7 +165,7 @@ export function GeofenceCard() {
 
   return (
     <div className="bg-white rounded-2xl shadow">
-      <div className="p-6 border-b border-gray-100">
+      <div className="p-5 sm:p-6 border-b border-gray-100">
         <div className="flex items-center gap-2 mb-1">
           <Shield className="w-5 h-5 text-gray-700" />
           <h2 className="font-semibold text-gray-900">Geofencing</h2>
@@ -175,25 +175,26 @@ export function GeofenceCard() {
         </p>
       </div>
 
-      <div className="p-6 space-y-5">
-        {/* Mode selector */}
+      <div className="p-5 sm:p-6 space-y-5">
+        {/* Mode selector — one per row on phones; a third of 343px cannot hold
+            a sentence of description without shredding it into single words. */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">Enforcement Mode</label>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
             {MODE_OPTIONS.map(opt => (
               <button
                 key={opt.value}
                 onClick={() => modeMut.mutate(opt.value)}
-                className={`p-3 rounded-xl border-2 text-left transition-all ${
+                className={`relative p-3 rounded-xl border-2 text-left transition-all ${
                   currentMode === opt.value
                     ? 'border-black bg-gray-50'
                     : 'border-gray-200 hover:border-gray-300'
                 }`}
               >
-                <p className="text-sm font-semibold text-gray-900">{opt.label}</p>
+                <p className="text-sm font-semibold text-gray-900 pr-5">{opt.label}</p>
                 <p className="text-xs text-gray-500 mt-0.5">{opt.desc}</p>
                 {currentMode === opt.value && (
-                  <CheckCircle2 className="w-3.5 h-3.5 text-black mt-1.5" />
+                  <CheckCircle2 className="w-3.5 h-3.5 text-black absolute top-3 right-3 sm:static sm:mt-1.5" />
                 )}
               </button>
             ))}

@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO user_group_permissions (group_id, permission, granted_by)\n        SELECT $1, permission, $3\n        FROM UNNEST($2::VARCHAR[]) AS permission\n        ON CONFLICT (group_id, permission) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "VarcharArray",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "577fc97de0b790ef43fd9fcccf24246b0639f9160b1442521456198f54fe6005"
+}

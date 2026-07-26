@@ -3,14 +3,50 @@
 //! `ValidatedJson<T>` deserializes the request body like `Json<T>` but also
 //! runs `validator::Validate` on the result. Field-level violations surface
 //! as a 422 `AppError::Validation`; malformed JSON surfaces as 400.
+//!
+//! `AuditRequestMeta` resolves the caller's IP and user agent for the audit
+//! trail. It is an extractor rather than a helper a handler calls on a
+//! `HeaderMap` because getting it right needs two things a handler does not
+//! otherwise hold — the TCP peer address and the operator's
+//! `TRUST_PROXY_HEADERS` setting — and the old header-only helper silently
+//! recorded a forgeable address instead.
 
-use axum::extract::FromRequest;
+use std::convert::Infallible;
+use std::net::SocketAddr;
+
 use axum::extract::rejection::JsonRejection;
+use axum::extract::{ConnectInfo, FromRequest, FromRequestParts};
+use axum::http::request::Parts;
 use axum::{Json, extract::Request};
 use serde::de::DeserializeOwned;
 use validator::Validate;
 
+use crate::core::app_state::AppState;
 use crate::core::error::AppError;
+use crate::models::audit::AuditRequestMeta;
+
+impl FromRequestParts<AppState> for AuditRequestMeta {
+    /// Never fails: a request with no resolvable address still gets an audit
+    /// row, just without an IP. Refusing the request instead would mean a
+    /// missing `ConnectInfo` could block an otherwise valid payroll change.
+    type Rejection = Infallible;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let peer = parts
+            .extensions
+            .get::<ConnectInfo<SocketAddr>>()
+            .map(|ConnectInfo(addr)| addr.ip());
+
+        Ok(AuditRequestMeta::from_request(
+            &parts.headers,
+            peer,
+            state.config.trust_proxy_headers,
+        ))
+    }
+}
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ValidatedJson<T>(pub T);

@@ -11,7 +11,8 @@ describe('TimeSelector', () => {
     render(<TimeSelector label="Shift starts" value="09:30" minuteStep={15} onChange={onChange} />);
     const [hourSelect, minuteSelect] = screen.getAllByRole('combobox');
 
-    expect(screen.getByText('09:30')).toBeInTheDocument();
+    expect(hourSelect).toHaveValue('09');
+    expect(minuteSelect).toHaveValue('30');
     expect(minuteSelect.querySelectorAll('option')).toHaveLength(4);
 
     await user.selectOptions(hourSelect, '14');
@@ -25,8 +26,9 @@ describe('TimeSelector', () => {
     render(<TimeSelector label="Shift ends" value="" disabled onChange={vi.fn()} />);
     const controls = screen.getAllByRole('combobox');
 
-    expect(screen.getByText('09:00')).toBeInTheDocument();
     expect(controls).toHaveLength(2);
+    expect(controls[0]).toHaveValue('09');
+    expect(controls[1]).toHaveValue('00');
     expect(controls[0]).toBeDisabled();
     expect(controls[1]).toBeDisabled();
   });

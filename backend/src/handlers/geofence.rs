@@ -1,12 +1,11 @@
 use axum::{
     Json,
     extract::{Path, State},
-    http::HeaderMap,
 };
 use uuid::Uuid;
 
 use crate::core::app_state::AppState;
-use crate::core::auth::AuthUser;
+use crate::core::auth::{AuthUser, Permission};
 use crate::core::error::AppResult;
 use crate::models::company_location::{
     CompanyLocation, CreateLocationRequest, SetGeofenceModeRequest, UpdateLocationRequest,
@@ -28,12 +27,11 @@ pub async fn list_locations(
 pub async fn create_location(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Json(req): Json<CreateLocationRequest>,
 ) -> AppResult<Json<CompanyLocation>> {
     let company_id = auth.company_id()?;
-    auth.require_hr_admin()?;
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
+    auth.require_permission(Permission::ManageGeofence)?;
 
     let loc = geofence_service::create_location(
         &state.pool,
@@ -50,13 +48,12 @@ pub async fn create_location(
 pub async fn update_location(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Path(id): Path<Uuid>,
     Json(req): Json<UpdateLocationRequest>,
 ) -> AppResult<Json<CompanyLocation>> {
     let company_id = auth.company_id()?;
-    auth.require_hr_admin()?;
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
+    auth.require_permission(Permission::ManageGeofence)?;
 
     let loc = geofence_service::update_location(
         &state.pool,
@@ -74,12 +71,11 @@ pub async fn update_location(
 pub async fn delete_location(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<serde_json::Value>> {
     let company_id = auth.company_id()?;
-    auth.require_hr_admin()?;
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
+    auth.require_permission(Permission::ManageGeofence)?;
 
     geofence_service::delete_location(&state.pool, company_id, id, auth.0.sub, Some(&audit_meta))
         .await?;
@@ -101,12 +97,11 @@ pub async fn get_mode(
 pub async fn set_mode(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Json(req): Json<SetGeofenceModeRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
     let company_id = auth.company_id()?;
-    auth.require_hr_admin()?;
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
+    auth.require_permission(Permission::ManageGeofence)?;
 
     geofence_service::set_geofence_mode(
         &state.pool,

@@ -343,6 +343,84 @@ pub async fn get_pending_leave_requests(
     approval_reads::list_pending_leave(pool, company_id, status).await
 }
 
+/// A staged unpaid-leave salary deduction, computed but not yet written.
+struct UnpaidLeaveDeduction {
+    period_year: i32,
+    period_month: i32,
+    description: String,
+    amount: i64,
+}
+
+/// Compute the deduction for an unpaid leave request: (basic_salary /
+/// working_days_in_month) * unpaid_leave_working_days.
+///
+/// Pure reads, so it runs before the approval transaction opens. Returns `None`
+/// when there is nothing to stage (unknown employee, no working days in range,
+/// or an amount that rounds to zero).
+async fn compute_unpaid_leave_deduction(
+    pool: &PgPool,
+    lr: &LeaveRequest,
+) -> AppResult<Option<UnpaidLeaveDeduction>> {
+    let Some((basic_salary, emp_company_id)) =
+        employee_repo::basic_salary_and_company(pool, lr.employee_id).await?
+    else {
+        return Ok(None);
+    };
+
+    // Count working days of unpaid leave (excluding weekends/holidays)
+    let unpaid_working_days = calendar_service::count_working_days_between(
+        pool,
+        emp_company_id,
+        lr.start_date,
+        lr.end_date,
+    )
+    .await
+    .unwrap_or_else(|_| {
+        // Fallback when the calendar lookup fails. Rounding the Decimal
+        // directly matters: formatting it and calling parse::<i32>() fails
+        // for any fractional value like "1.5", yielding 0 working days and
+        // silently staging no deduction at all.
+        use rust_decimal::prelude::ToPrimitive;
+        lr.days.round().to_i32().unwrap_or(0)
+    });
+
+    if unpaid_working_days <= 0 {
+        return Ok(None);
+    }
+
+    // Working days in the leave month, for the daily rate.
+    let leave_month = lr.start_date.month();
+    let leave_year = lr.start_date.year();
+    let total_working_days =
+        calendar_service::get_working_days_in_month(pool, emp_company_id, leave_year, leave_month)
+            .await
+            .unwrap_or(22); // fallback to 22 days
+
+    let daily_rate = if total_working_days > 0 {
+        basic_salary / total_working_days as i64
+    } else {
+        0
+    };
+    let amount = daily_rate * unpaid_working_days as i64;
+    if amount <= 0 {
+        return Ok(None);
+    }
+
+    Ok(Some(UnpaidLeaveDeduction {
+        // Staged against the month the leave was taken, not the month it happened
+        // to be approved in. Using the approval date deducted December leave from
+        // July payroll when approval lagged, and this matches how approved
+        // overtime is staged (by ot_date).
+        period_year: leave_year,
+        period_month: leave_month as i32,
+        description: format!(
+            "Unpaid leave: {} to {} ({} working days)",
+            lr.start_date, lr.end_date, unpaid_working_days
+        ),
+        amount,
+    }))
+}
+
 pub async fn approve_leave(
     pool: &PgPool,
     config: &AppConfig,
@@ -352,14 +430,52 @@ pub async fn approve_leave(
     notes: Option<&str>,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<LeaveRequest> {
-    // Approval and the pending->taken move must commit together. Separately, a
-    // failure between them left the request approved with the days stuck in
-    // pending_days and never in taken_days; a later cancel then subtracted from
-    // taken_days (floored by GREATEST), permanently corrupting the balance.
+    // Everything this approval writes has to commit together — the state
+    // transition, the pending->taken balance move, and (for unpaid leave) the
+    // salary deduction. The deduction used to be staged on the pool *after* the
+    // commit, and because `set_approved` is a compare-and-swap on
+    // `status = 'pending'`, a retry after that failed returned "not found or not
+    // pending". So a dropped insert was unrecoverable: the leave read as
+    // approved, no `payroll_entries` row existed, and the next run paid the
+    // employee full basic for a month they took unpaid.
+    //
+    // The deduction inputs are read *before* the transaction opens: the two
+    // `calendar_service` helpers take `&PgPool`, and acquiring a second pooled
+    // connection while holding this transaction risks exhausting the pool. The
+    // fields they were computed from are re-checked against the row the CAS
+    // actually approved, below, so a concurrent edit cannot slip past.
+    let preview = leave_requests::get_pending_with_type(pool, request_id, company_id)
+        .await?
+        .ok_or_else(|| AppError::BadRequest("Leave request not found or not pending".into()))?;
+
+    let is_paid = leave_types::get_is_paid(pool, preview.leave_type_id).await?;
+    let deduction = if is_paid == Some(false) {
+        compute_unpaid_leave_deduction(pool, &preview).await?
+    } else {
+        None
+    };
+
     let mut tx = pool.begin().await?;
     let lr = leave_requests::set_approved(&mut *tx, request_id, company_id, reviewer_id, notes)
         .await?
         .ok_or_else(|| AppError::BadRequest("Leave request not found or not pending".into()))?;
+
+    // The request could have been edited between the read above and the CAS —
+    // the CAS only guarantees it was still *pending*, not unchanged. Anything
+    // the deduction depends on having moved means the figure is stale.
+    if (lr.leave_type_id, lr.start_date, lr.end_date, lr.days)
+        != (
+            preview.leave_type_id,
+            preview.start_date,
+            preview.end_date,
+            preview.days,
+        )
+    {
+        return Err(AppError::Conflict(
+            "This leave request changed while it was being approved. Please review it again."
+                .into(),
+        ));
+    }
 
     // Move from pending to taken
     let year = lr.start_date.year();
@@ -371,84 +487,23 @@ pub async fn approve_leave(
         year,
     )
     .await?;
-    tx.commit().await?;
 
-    // Check if this is unpaid leave — if so, auto-create payroll deduction
-    let is_paid = leave_types::get_is_paid(pool, lr.leave_type_id).await?;
-
-    if is_paid == Some(false) {
-        // Calculate deduction: (basic_salary / working_days_in_month) * unpaid_leave_working_days
-        if let Some((basic_salary, emp_company_id)) =
-            employee_repo::basic_salary_and_company(pool, lr.employee_id).await?
-        {
-            // Count working days of unpaid leave (excluding weekends/holidays)
-            let unpaid_working_days = calendar_service::count_working_days_between(
-                pool,
-                emp_company_id,
-                lr.start_date,
-                lr.end_date,
-            )
-            .await
-            .unwrap_or_else(|_| {
-                // Fallback when the calendar lookup fails. Rounding the Decimal
-                // directly matters: formatting it and calling parse::<i32>() fails
-                // for any fractional value like "1.5", yielding 0 working days and
-                // silently staging no deduction at all.
-                use rust_decimal::prelude::ToPrimitive;
-                lr.days.round().to_i32().unwrap_or(0)
-            });
-
-            if unpaid_working_days > 0 {
-                // Get working days in the leave month for daily rate calculation
-                let leave_month = lr.start_date.month();
-                let leave_year = lr.start_date.year();
-                let total_working_days = calendar_service::get_working_days_in_month(
-                    pool,
-                    emp_company_id,
-                    leave_year,
-                    leave_month,
-                )
-                .await
-                .unwrap_or(22); // fallback to 22 days
-
-                let daily_rate = if total_working_days > 0 {
-                    basic_salary / total_working_days as i64
-                } else {
-                    0
-                };
-                let deduction_amount = daily_rate * unpaid_working_days as i64;
-
-                if deduction_amount > 0 {
-                    // Stage against the month the leave was taken, not the month it
-                    // happened to be approved in. Using the approval date deducted
-                    // December leave from July payroll when approval lagged, and
-                    // matches how approved overtime is staged (by ot_date).
-                    let period_year = leave_year;
-                    let period_month = leave_month as i32;
-
-                    // Propagate rather than swallow: 'unpaid_leave' is NOT in the
-                    // item_type exclusion in reads/payroll.rs, so this staged row is
-                    // what actually applies the deduction. A dropped insert silently
-                    // overpaid the employee by the full amount.
-                    payroll_entries::insert_unpaid_leave_deduction(
-                        pool,
-                        Uuid::now_v7(),
-                        lr.employee_id,
-                        company_id,
-                        period_year,
-                        period_month,
-                        &format!(
-                            "Unpaid leave: {} to {} ({} working days)",
-                            lr.start_date, lr.end_date, unpaid_working_days
-                        ),
-                        deduction_amount,
-                        reviewer_id,
-                    )
-                    .await?;
-                }
-            }
-        }
+    if let Some(d) = &deduction {
+        payroll_entries::insert_unpaid_leave_deduction(
+            &mut *tx,
+            Uuid::now_v7(),
+            lr.employee_id,
+            company_id,
+            d.period_year,
+            d.period_month,
+            &d.description,
+            d.amount,
+            reviewer_id,
+        )
+        .await?;
     }
+
+    tx.commit().await?;
 
     // Notify employee
     let employee_user = user_repo::active_id_for_employee(pool, lr.employee_id).await?;
@@ -551,13 +606,21 @@ pub async fn reject_leave(
     notes: Option<&str>,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<LeaveRequest> {
-    let lr = leave_requests::set_rejected(pool, request_id, company_id, reviewer_id, notes)
+    // Rejection and the refund of the reserved days commit together. Split
+    // across two connections, a failure after `set_rejected` stranded the days
+    // in `pending_days` forever — nothing recomputes that column, so the
+    // employee's usable entitlement stayed squeezed until the year rolled over,
+    // and the CAS on `status = 'pending'` meant a retry could not repair it.
+    let mut tx = pool.begin().await?;
+    let lr = leave_requests::set_rejected(&mut *tx, request_id, company_id, reviewer_id, notes)
         .await?
         .ok_or_else(|| AppError::BadRequest("Leave request not found or not pending".into()))?;
 
     // Remove from pending
     let year = lr.start_date.year();
-    leave_balances::subtract_pending(pool, lr.employee_id, lr.leave_type_id, lr.days, year).await?;
+    leave_balances::subtract_pending(&mut *tx, lr.employee_id, lr.leave_type_id, lr.days, year)
+        .await?;
+    tx.commit().await?;
 
     // Notify employee
     let employee_user = user_repo::active_id_for_employee(pool, lr.employee_id).await?;

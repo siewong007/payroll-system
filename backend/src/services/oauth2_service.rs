@@ -117,6 +117,55 @@ pub fn google_authorize_url(
     )
 }
 
+/// Message shown when the user's authorization code is no longer usable. The
+/// state is single-use and already consumed by this point, so restarting the
+/// flow is genuinely the only way forward.
+pub const STALE_GRANT_MESSAGE: &str =
+    "Your Google sign-in took too long or was already used. Please try signing in again.";
+
+/// Message shown when Google itself could not be reached or is failing.
+pub const UPSTREAM_UNAVAILABLE_MESSAGE: &str =
+    "Google sign-in is temporarily unavailable. Please try again in a moment.";
+
+/// Classify a non-2xx response from Google's token endpoint.
+///
+/// Google reports failures with the RFC 6749 §5.2 error codes. Only some of them
+/// describe a stale sign-in attempt the user can retry; the rest mean *this*
+/// deployment's OAuth2 credentials are wrong, which no amount of retrying fixes
+/// and which must not be echoed to the caller. Returning a blanket 500 for the
+/// whole set told a user with an expired code that the server was broken.
+pub fn classify_token_exchange_error(status: u16, body: &str) -> AppError {
+    let code = serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v.get("error")?.as_str().map(str::to_owned))
+        .unwrap_or_default();
+
+    match code.as_str() {
+        // The code expired, was already redeemed, or was issued for a different
+        // redirect_uri. Routine, and the user's to resolve by starting over.
+        "invalid_grant" => AppError::BadRequest(STALE_GRANT_MESSAGE.into()),
+
+        // Our client_id/secret/scope registration is wrong. The user can do
+        // nothing about it, so log the detail and return a generic 500.
+        "invalid_client"
+        | "unauthorized_client"
+        | "invalid_scope"
+        | "unsupported_grant_type"
+        | "invalid_request" => AppError::Internal(format!(
+            "Google OAuth2 is misconfigured (error={code}, status={status}): {body}"
+        )),
+
+        // No recognisable OAuth2 error code. A 5xx is Google having a bad day;
+        // anything else is unexpected and worth surfacing in the logs.
+        _ if (500..600).contains(&status) => {
+            AppError::BadGateway(UPSTREAM_UNAVAILABLE_MESSAGE.into())
+        }
+        _ => AppError::Internal(format!(
+            "Unexpected Google token exchange failure (status={status}): {body}"
+        )),
+    }
+}
+
 /// Exchange an authorization code for tokens with Google (with PKCE code_verifier).
 pub async fn google_exchange_code(
     client_id: &str,
@@ -138,14 +187,16 @@ pub async fn google_exchange_code(
         ])
         .send()
         .await
-        .map_err(|e| AppError::Internal(format!("Google token exchange failed: {}", e)))?;
+        .map_err(|e| {
+            // Never reached Google at all — DNS, TLS or timeout.
+            tracing::warn!("Google token exchange request failed: {}", e);
+            AppError::BadGateway(UPSTREAM_UNAVAILABLE_MESSAGE.into())
+        })?;
 
+    let status = resp.status().as_u16();
     if !resp.status().is_success() {
         let body = resp.text().await.unwrap_or_default();
-        return Err(AppError::Internal(format!(
-            "Google token exchange error: {}",
-            body
-        )));
+        return Err(classify_token_exchange_error(status, &body));
     }
 
     resp.json::<GoogleTokenResponse>()
@@ -161,12 +212,23 @@ pub async fn google_user_info(access_token: &str) -> AppResult<GoogleUserInfo> {
         .bearer_auth(access_token)
         .send()
         .await
-        .map_err(|e| AppError::Internal(format!("Google userinfo request failed: {}", e)))?;
+        .map_err(|e| {
+            tracing::warn!("Google userinfo request failed: {}", e);
+            AppError::BadGateway(UPSTREAM_UNAVAILABLE_MESSAGE.into())
+        })?;
 
     if !resp.status().is_success() {
-        return Err(AppError::Internal(
-            "Failed to fetch Google user info".into(),
-        ));
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        // The token was minted seconds ago, so a rejection here is Google's
+        // problem rather than the user's — but still not a bug in this service.
+        return Err(if status.is_server_error() {
+            AppError::BadGateway(UPSTREAM_UNAVAILABLE_MESSAGE.into())
+        } else {
+            AppError::Internal(format!(
+                "Google userinfo request rejected (status={status}): {body}"
+            ))
+        });
     }
 
     resp.json::<GoogleUserInfo>()

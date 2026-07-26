@@ -38,50 +38,55 @@ export function TimeSelector({
   const setHour = (nextHour: string) => onChange(`${nextHour}:${minute}`);
   const setMinute = (nextMinute: string) => onChange(`${hour}:${nextMinute}`);
 
+  // Native select chrome (the chevron) collides with the value once the control
+  // gets narrow — two of these sit side by side inside a card. `appearance-none`
+  // plus a centred value keeps "09" readable at phone widths.
+  const selectClass =
+    'w-12 shrink-0 appearance-none bg-transparent py-1.5 text-center text-sm font-semibold ' +
+    'tabular-nums text-gray-900 outline-none disabled:text-gray-400 disabled:cursor-not-allowed';
+
   return (
     <div>
       <label className="form-label">{label}</label>
-      <div className="rounded-xl border border-gray-300 bg-white px-3 py-3">
-        <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-gray-400">
-          <Clock3 className="w-3.5 h-3.5" />
-          Time Selector
-        </div>
-        <div className="mt-3 grid grid-cols-[1fr_auto_1fr] items-center gap-2">
-          <select
-            value={hour}
-            onChange={(event) => setHour(event.target.value)}
-            className="form-input !mb-0 !py-2"
-            disabled={disabled}
-          >
-            {Array.from({ length: 24 }, (_, index) => {
-              const option = pad(index);
-              return (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              );
-            })}
-          </select>
-          <span className="text-lg font-semibold text-gray-400">:</span>
-          <select
-            value={minute}
-            onChange={(event) => setMinute(event.target.value)}
-            className="form-input !mb-0 !py-2"
-            disabled={disabled}
-          >
-            {minuteOptions.map((option) => {
-              const value = pad(option);
-              return (
-                <option key={value} value={value}>
-                  {value}
-                </option>
-              );
-            })}
-          </select>
-        </div>
-        <p className="mt-2 text-xs text-gray-500">
-          Selected time: <span className="font-medium text-gray-700">{hour}:{minute}</span>
-        </p>
+      <div
+        className={`flex items-center gap-1 rounded-xl border border-gray-300 bg-white px-2.5 py-1.5 transition-shadow focus-within:border-gray-900 focus-within:ring-1 focus-within:ring-gray-900 ${
+          disabled ? 'bg-gray-50' : ''
+        }`}
+      >
+        <Clock3 className="w-4 h-4 shrink-0 text-gray-400" />
+        <select
+          value={hour}
+          onChange={(event) => setHour(event.target.value)}
+          className={selectClass}
+          disabled={disabled}
+          aria-label={`${label} — hour`}
+        >
+          {Array.from({ length: 24 }, (_, index) => {
+            const option = pad(index);
+            return (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            );
+          })}
+        </select>
+        <span className="text-sm font-semibold text-gray-300">:</span>
+        <select
+          value={minute}
+          onChange={(event) => setMinute(event.target.value)}
+          className={selectClass}
+          disabled={disabled}
+          aria-label={`${label} — minute`}
+        >
+          {minuteOptions.map((option) => {
+            const value = pad(option);
+            return (
+              <option key={value} value={value}>
+                {value}
+              </option>
+            );
+          })}
+        </select>
       </div>
     </div>
   );

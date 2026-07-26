@@ -32,10 +32,6 @@ export interface UpdateWorkScheduleRequest {
   timezone?: string;
 }
 
-export function listWorkSchedules(): Promise<WorkSchedule[]> {
-  return api.get('/work-schedules').then(r => r.data);
-}
-
 export function getDefaultSchedule(): Promise<{ schedule: WorkSchedule | null }> {
   return api.get('/work-schedules/default').then(r => r.data);
 }

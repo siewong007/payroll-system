@@ -23,28 +23,48 @@ import { CompanySwitcher } from './CompanySwitcher';
 import { AnimatePresence, motion } from 'framer-motion';
 import { BrandLogo } from '@/components/ui/BrandLogo';
 import { hasAnyRole, roleList, type AppRole } from '@/lib/roles';
+import { userCan } from '@/lib/usePermissions';
+import type { PermissionKey } from '@/api/permissions';
 
+/**
+ * `requires` is the permission the destination route enforces, so a link is
+ * shown exactly when following it will work. Hand-maintained role lists here had
+ * drifted from the routes twice over: `Backup` was offered to `admin`, which the
+ * API grants to `super_admin` alone, and `Reports` was offered to `employee`.
+ *
+ * `hideFor` is a separate, presentational rule and stays role-based: `super_admin`
+ * holds every permission but works from the Administration section, so the
+ * company workspace links are suppressed for it rather than being unauthorized.
+ */
 const navigation = [
   { name: 'Company', href: '/company', icon: Building2, hideFor: ['super_admin'], section: 'workspace' },
-  { name: 'Employees', href: '/employees', icon: Users, hideFor: ['super_admin'], section: 'workspace' },
-  { name: 'Payroll', href: '/payroll', icon: Calculator, showFor: ['super_admin', 'payroll_admin', 'finance'], section: 'workspace' },
-  { name: 'Teams', href: '/teams', icon: Users2, hideFor: ['super_admin'], section: 'workspace' },
-  { name: 'Calendar', href: '/calendar', icon: CalendarDays, hideFor: ['super_admin'], section: 'workspace' },
-  { name: 'Attendance', href: '/attendance', icon: ScanLine, hideFor: ['super_admin'], section: 'workspace' },
-  { name: 'Approvals', href: '/approvals', icon: ClipboardCheck, hideFor: ['super_admin'], section: 'workspace' },
-  { name: 'Reports', href: '/reports', icon: BarChart3, hideFor: ['exec'], section: 'workspace' },
-  { name: 'Documents', href: '/documents', icon: FileText, hideFor: ['super_admin'], section: 'workspace' },
-  { name: 'Letters', href: '/letters', icon: Mail, hideFor: ['super_admin'], section: 'workspace' },
-  { name: 'Settings', href: '/settings', icon: Settings, hideFor: ['super_admin'], section: 'workspace' },
-  { name: 'Companies', href: '/companies', icon: Building2, showFor: ['super_admin'], section: 'admin' },
-  { name: 'Users', href: '/users', icon: UserCog, showFor: ['super_admin'], section: 'admin' },
-  { name: 'Roles', href: '/roles', icon: Shield, showFor: ['super_admin'], section: 'admin' },
-  { name: 'Attendance Settings', href: '/admin/attendance-settings', icon: ScanLine, showFor: ['super_admin'], section: 'admin' },
-  // Must match the /audit-trail RoleGuard and the backend's audit handler, which
-  // both allow super_admin + admin only — hr_manager saw a link that 403s.
-  { name: 'Audit Trail', href: '/audit-trail', icon: ScrollText, showFor: ['super_admin', 'admin'], section: 'admin' },
-  { name: 'Backup', href: '/backup', icon: DatabaseBackup, showFor: ['super_admin', 'admin'], section: 'admin' },
-];
+  { name: 'Employees', href: '/employees', icon: Users, requires: 'view_employees', hideFor: ['super_admin'], section: 'workspace' },
+  { name: 'Payroll', href: '/payroll', icon: Calculator, requires: 'view_payroll', section: 'workspace' },
+  { name: 'Teams', href: '/teams', icon: Users2, requires: 'view_teams', hideFor: ['super_admin'], section: 'workspace' },
+  { name: 'Calendar', href: '/calendar', icon: CalendarDays, requires: 'view_calendar', hideFor: ['super_admin'], section: 'workspace' },
+  { name: 'Attendance', href: '/attendance', icon: ScanLine, requires: 'view_attendance', hideFor: ['super_admin'], section: 'workspace' },
+  { name: 'Approvals', href: '/approvals', icon: ClipboardCheck, requires: 'view_approvals', hideFor: ['super_admin'], section: 'workspace' },
+  // No `hideFor`: super_admin keeps Reports and Payroll, as it did before —
+  // these are the two platform-wide entries in the workspace section.
+  { name: 'Reports', href: '/reports', icon: BarChart3, requires: 'view_reports', section: 'workspace' },
+  { name: 'Documents', href: '/documents', icon: FileText, requires: 'view_documents', hideFor: ['super_admin'], section: 'workspace' },
+  { name: 'Letters', href: '/letters', icon: Mail, requires: 'view_email_logs', hideFor: ['super_admin'], section: 'workspace' },
+  { name: 'Settings', href: '/settings', icon: Settings, requires: 'manage_company_settings', hideFor: ['super_admin'], section: 'workspace' },
+  { name: 'Companies', href: '/companies', icon: Building2, requires: 'manage_companies', section: 'admin' },
+  { name: 'Users', href: '/users', icon: UserCog, requires: 'manage_users', section: 'admin' },
+  { name: 'Roles', href: '/roles', icon: Shield, requires: 'manage_users', section: 'admin' },
+  { name: 'User Groups', href: '/user-groups', icon: Users2, requires: 'manage_users', section: 'admin' },
+  { name: 'Attendance Settings', href: '/admin/attendance-settings', icon: ScanLine, requires: 'manage_platform_settings', section: 'admin' },
+  { name: 'Audit Trail', href: '/audit-trail', icon: ScrollText, requires: 'view_audit_log', section: 'admin' },
+  { name: 'Backup', href: '/backup', icon: DatabaseBackup, requires: 'manage_backups', section: 'admin' },
+] satisfies ReadonlyArray<{
+  name: string;
+  href: string;
+  icon: typeof Building2;
+  requires?: PermissionKey;
+  hideFor?: AppRole[];
+  section: string;
+}>;
 
 const sections = [
   { key: 'workspace', label: 'Workspace' },
@@ -61,10 +81,8 @@ function SidebarContent({ onClose }: { onClose?: () => void }) {
   const { user, logout } = useAuth();
 
   const visibleNav = navigation.filter((item) => {
-    const hideFor = item.hideFor as AppRole[] | undefined;
-    const showFor = item.showFor as AppRole[] | undefined;
-    if (hideFor && hasAnyRole(user, hideFor)) return false;
-    if (showFor && !hasAnyRole(user, showFor)) return false;
+    if (item.hideFor && hasAnyRole(user, item.hideFor)) return false;
+    if (item.requires && !userCan(user, item.requires)) return false;
     return true;
   });
 

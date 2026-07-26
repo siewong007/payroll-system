@@ -15,7 +15,7 @@ use crate::models::employee_import::{
 use crate::services::employee_import_service;
 
 fn require_payroll_admin(auth: &AuthUser) -> AppResult<(Uuid, Uuid)> {
-    auth.require_permission(Permission::ManagePayrollDraft)?;
+    auth.require_permission(Permission::ImportEmployees)?;
     let company_id = auth
         .0
         .company_id
@@ -125,12 +125,19 @@ pub async fn validate_import(
 pub async fn confirm_import(
     State(state): State<AppState>,
     auth: AuthUser,
+    audit_meta: crate::services::audit_service::AuditRequestMeta,
     Json(req): Json<ImportConfirmRequest>,
 ) -> AppResult<Json<crate::models::employee_import::ImportConfirmResponse>> {
     let (company_id, user_id) = require_payroll_admin(&auth)?;
 
-    let response =
-        employee_import_service::confirm_import(&state.pool, company_id, user_id, req).await?;
+    let response = employee_import_service::confirm_import(
+        &state.pool,
+        company_id,
+        user_id,
+        req,
+        Some(&audit_meta),
+    )
+    .await?;
 
     Ok(Json(response))
 }

@@ -6,16 +6,9 @@ import { useAuth } from '@/context/AuthContext';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { PortalLayout } from '@/components/layout/PortalLayout';
 import { ForbiddenPage, NotFoundPage } from '@/pages/errors/ErrorPage';
-import {
-  ADMIN_DATA_ROLES,
-  ATTENDANCE_VIEW_ROLES,
-  PAYROLL_DATA_ROLES,
-  PAYROLL_PREP_ROLES,
-  REPORT_ROLES,
-  SUPER_ADMIN_ROLES,
-  hasAnyRole,
-  type AppRole,
-} from '@/lib/roles';
+import { SUPER_ADMIN_ROLES, hasAnyRole } from '@/lib/roles';
+import { userCanAny } from '@/lib/usePermissions';
+import type { PermissionKey } from '@/api/permissions';
 
 function lazyNamed<T extends ComponentType<Record<string, never>>>(
   loader: () => Promise<Record<string, T>>,
@@ -46,6 +39,7 @@ const TeamsPage = lazyNamed(() => import('@/pages/teams/TeamsPage'), 'TeamsPage'
 const CompanyManagement = lazyNamed(() => import('@/pages/admin/CompanyManagement'), 'CompanyManagement');
 const UserManagement = lazyNamed(() => import('@/pages/admin/UserManagement'), 'UserManagement');
 const RoleManagement = lazyNamed(() => import('@/pages/admin/RoleManagement'), 'RoleManagement');
+const UserGroups = lazyNamed(() => import('@/pages/admin/UserGroups'), 'UserGroups');
 const AttendanceSettings = lazyNamed(() => import('@/pages/admin/AttendanceSettings'), 'AttendanceSettings');
 const LettersPage = lazyNamed(() => import('@/pages/letters/LettersPage'), 'LettersPage');
 const BackupPage = lazyNamed(() => import('@/pages/backup/BackupPage'), 'BackupPage');
@@ -73,17 +67,29 @@ function RouteFallback() {
   );
 }
 
-export function RoleGuard({ allowedRoles, children }: { allowedRoles: AppRole[]; children: ReactNode }) {
+/**
+ * Route guard keyed on capabilities rather than role names.
+ *
+ * `requires` is satisfied by holding *any* of the listed permissions. The
+ * previous role-list version needed a special case to stop `exec` slipping into
+ * payroll routes through a second role, and its `REPORT_ROLES` list included
+ * `employee` — so a self-service account reached `/reports` and only then hit a
+ * 403 from the API. Neither problem survives the move to permissions: `exec` and
+ * `employee` simply hold no payroll or report permission.
+ *
+ * Presentation only. The API re-checks every permission on the request itself.
+ */
+export function PermissionGuard({
+  requires,
+  children,
+}: {
+  requires: PermissionKey | PermissionKey[];
+  children: ReactNode;
+}) {
   const { user } = useAuth();
   const location = useLocation();
-  // `roles` is an array and hasAnyRole passes on a single match, so a user with
-  // ['exec','employee'] would reach /reports via the permitted `employee`.
-  // `exec` is read-mostly and must never see payroll figures or reports, so when
-  // a route does not list it, holding it denies access outright. Other roles
-  // keep additive semantics — ['payroll_admin','hr_manager'] still reaches
-  // /payroll on the strength of payroll_admin.
-  const execBlocked = !allowedRoles.includes('exec') && hasAnyRole(user, ['exec']);
-  if (user && (!hasAnyRole(user, allowedRoles) || execBlocked)) {
+  const needed = Array.isArray(requires) ? requires : [requires];
+  if (user && !userCanAny(user, needed)) {
     return <Navigate to="/403" replace state={{ from: location.pathname }} />;
   }
   return <>{children}</>;
@@ -129,109 +135,180 @@ export default function App() {
               <Route element={<AppLayout />}>
                 <Route path="/" element={<HomeRedirect />} />
                 <Route path="/company" element={<CompanyProfile />} />
-                <Route path="/employees" element={<EmployeeList />} />
-                <Route path="/employees/new" element={<EmployeeCreate />} />
+                <Route
+                  path="/employees"
+                  element={(
+                    <PermissionGuard requires="view_employees">
+                      <EmployeeList />
+                    </PermissionGuard>
+                  )}
+                />
+                <Route
+                  path="/employees/new"
+                  element={(
+                    <PermissionGuard requires="manage_employees">
+                      <EmployeeCreate />
+                    </PermissionGuard>
+                  )}
+                />
                 <Route
                   path="/employees/import"
                   element={(
-                    <RoleGuard allowedRoles={PAYROLL_PREP_ROLES}>
+                    <PermissionGuard requires="import_employees">
                       <EmployeeImport />
-                    </RoleGuard>
+                    </PermissionGuard>
                   )}
                 />
-                <Route path="/employees/:id" element={<EmployeeDetail />} />
+                <Route
+                  path="/employees/:id"
+                  element={(
+                    <PermissionGuard requires="view_employees">
+                      <EmployeeDetail />
+                    </PermissionGuard>
+                  )}
+                />
                 <Route
                   path="/payroll"
                   element={(
-                    <RoleGuard allowedRoles={PAYROLL_DATA_ROLES}>
+                    <PermissionGuard requires="view_payroll">
                       <PayrollList />
-                    </RoleGuard>
+                    </PermissionGuard>
                   )}
                 />
                 <Route
                   path="/payroll/process"
                   element={(
-                    <RoleGuard allowedRoles={PAYROLL_PREP_ROLES}>
+                    <PermissionGuard requires="manage_payroll_draft">
                       <PayrollProcess />
-                    </RoleGuard>
+                    </PermissionGuard>
                   )}
                 />
                 <Route
                   path="/payroll/:id"
                   element={(
-                    <RoleGuard allowedRoles={PAYROLL_DATA_ROLES}>
+                    <PermissionGuard requires="view_payroll">
                       <PayrollDetail />
-                    </RoleGuard>
+                    </PermissionGuard>
                   )}
                 />
-                <Route path="/documents" element={<DocumentList />} />
-                <Route path="/calendar" element={<CalendarPage />} />
-                <Route path="/teams" element={<TeamsPage />} />
-                <Route path="/approvals" element={<Approvals />} />
+                <Route
+                  path="/documents"
+                  element={(
+                    <PermissionGuard requires="view_documents">
+                      <DocumentList />
+                    </PermissionGuard>
+                  )}
+                />
+                <Route
+                  path="/calendar"
+                  element={(
+                    <PermissionGuard requires="view_calendar">
+                      <CalendarPage />
+                    </PermissionGuard>
+                  )}
+                />
+                <Route
+                  path="/teams"
+                  element={(
+                    <PermissionGuard requires="view_teams">
+                      <TeamsPage />
+                    </PermissionGuard>
+                  )}
+                />
+                <Route
+                  path="/approvals"
+                  element={(
+                    <PermissionGuard requires="view_approvals">
+                      <Approvals />
+                    </PermissionGuard>
+                  )}
+                />
                 <Route
                   path="/reports"
                   element={(
-                    <RoleGuard allowedRoles={REPORT_ROLES}>
+                    <PermissionGuard requires="view_reports">
                       <Reports />
-                    </RoleGuard>
+                    </PermissionGuard>
                   )}
                 />
-                <Route path="/letters" element={<LettersPage />} />
-                <Route path="/settings" element={<SettingsPage />} />
+                <Route
+                  path="/letters"
+                  element={(
+                    <PermissionGuard requires="view_email_logs">
+                      <LettersPage />
+                    </PermissionGuard>
+                  )}
+                />
+                <Route
+                  path="/settings"
+                  element={(
+                    <PermissionGuard requires="manage_company_settings">
+                      <SettingsPage />
+                    </PermissionGuard>
+                  )}
+                />
                 <Route
                   path="/companies"
                   element={(
-                    <RoleGuard allowedRoles={SUPER_ADMIN_ROLES}>
+                    <PermissionGuard requires="manage_companies">
                       <CompanyManagement />
-                    </RoleGuard>
+                    </PermissionGuard>
                   )}
                 />
                 <Route
                   path="/users"
                   element={(
-                    <RoleGuard allowedRoles={SUPER_ADMIN_ROLES}>
+                    <PermissionGuard requires="manage_users">
                       <UserManagement />
-                    </RoleGuard>
+                    </PermissionGuard>
                   )}
                 />
                 <Route
                   path="/roles"
                   element={(
-                    <RoleGuard allowedRoles={SUPER_ADMIN_ROLES}>
+                    <PermissionGuard requires="manage_users">
                       <RoleManagement />
-                    </RoleGuard>
+                    </PermissionGuard>
+                  )}
+                />
+                <Route
+                  path="/user-groups"
+                  element={(
+                    <PermissionGuard requires="manage_users">
+                      <UserGroups />
+                    </PermissionGuard>
                   )}
                 />
                 <Route
                   path="/backup"
                   element={(
-                    <RoleGuard allowedRoles={ADMIN_DATA_ROLES}>
+                    <PermissionGuard requires="manage_backups">
                       <BackupPage />
-                    </RoleGuard>
+                    </PermissionGuard>
                   )}
                 />
                 <Route
                   path="/audit-trail"
                   element={(
-                    <RoleGuard allowedRoles={ADMIN_DATA_ROLES}>
+                    <PermissionGuard requires="view_audit_log">
                       <AuditTrailPage />
-                    </RoleGuard>
+                    </PermissionGuard>
                   )}
                 />
                 <Route
                   path="/attendance"
                   element={(
-                    <RoleGuard allowedRoles={ATTENDANCE_VIEW_ROLES}>
+                    <PermissionGuard requires="view_attendance">
                       <AttendancePage />
-                    </RoleGuard>
+                    </PermissionGuard>
                   )}
                 />
                 <Route
                   path="/admin/attendance-settings"
                   element={(
-                    <RoleGuard allowedRoles={SUPER_ADMIN_ROLES}>
+                    <PermissionGuard requires="manage_platform_settings">
                       <AttendanceSettings />
-                    </RoleGuard>
+                    </PermissionGuard>
                   )}
                 />
               </Route>

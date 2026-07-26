@@ -1,24 +1,18 @@
 //! Rate-limiting key extraction.
 //!
-//! Two deployments, two correct answers:
-//!
-//! - **Behind a trusted proxy** (CloudFront/ALB): the TCP peer is the proxy, so
-//!   peer-IP keying collapses every client into one bucket — a fleet of kiosks
-//!   rate-limits itself, and one attacker shares a bucket with real users.
-//!   The client IP must come from `X-Forwarded-For` / `X-Real-IP`.
-//!
-//! - **Reached directly** (containers on a host, local dev): forwarded headers
-//!   are attacker-controlled. Trusting them lets anyone bypass the login limiter
-//!   by rotating a fake `X-Forwarded-For`, which is worse than a shared bucket.
-//!
-//! So this is not a guess we can make at runtime — the operator declares it via
-//! `TRUST_PROXY_HEADERS`, and the default is the safe one (peer IP).
+//! The decision of *which* address identifies a client — peer vs. forwarded
+//! header — lives in `core::client_ip`, shared with the audit trail so the two
+//! cannot drift apart. This module only adapts it to `tower_governor`.
 
+use std::fmt::Write;
 use std::net::{IpAddr, SocketAddr};
 
 use axum::extract::ConnectInfo;
 use axum::http::Request;
+use sha2::{Digest, Sha256};
 use tower_governor::{errors::GovernorError, key_extractor::KeyExtractor};
+
+use super::client_ip::client_ip;
 
 /// Extracts the client IP, optionally trusting proxy headers.
 #[derive(Debug, Clone, Copy)]
@@ -41,36 +35,74 @@ fn peer_ip<T>(req: &Request<T>) -> Option<IpAddr> {
         .map(|ConnectInfo(addr)| addr.ip())
 }
 
-/// Right-most entry of `X-Forwarded-For`, i.e. the address appended by the
-/// closest (trusted) proxy. Taking the left-most instead would read whatever
-/// the client sent, which is exactly the value an attacker controls.
-fn forwarded_ip<T>(req: &Request<T>) -> Option<IpAddr> {
-    let headers = req.headers();
-    if let Some(xff) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok())
-        && let Some(ip) = xff
-            .split(',')
-            .rev()
-            .filter_map(|part| part.trim().parse::<IpAddr>().ok())
-            .next()
-    {
-        return Some(ip);
-    }
-    headers
-        .get("x-real-ip")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.trim().parse::<IpAddr>().ok())
-}
-
 impl KeyExtractor for ClientIpKeyExtractor {
     type Key = IpAddr;
 
     fn extract<T>(&self, req: &Request<T>) -> Result<Self::Key, GovernorError> {
-        if self.trust_forwarded
-            && let Some(ip) = forwarded_ip(req)
-        {
-            return Ok(ip);
+        // No usable address means no key. Returning a placeholder would put
+        // every such request in one shared bucket, which is the failure mode
+        // this whole module exists to avoid.
+        client_ip(req.headers(), peer_ip(req), self.trust_forwarded)
+            .ok_or(GovernorError::UnableToExtractKey)
+    }
+}
+
+/// Keys on the caller's session when there is one, falling back to the client
+/// IP.
+///
+/// IP keying alone is the wrong shape for authenticated endpoints. A whole
+/// office behind one NAT shares a bucket, so a colleague's bulk import can
+/// throttle everyone else; meanwhile a single authenticated user can spread
+/// abuse across as many addresses as they can reach. Expensive authenticated
+/// work — payroll runs, bulk imports, uploads, outbound mail — belongs to the
+/// session that requested it.
+///
+/// The key is a hash of the bearer token, not its `sub` claim: extracting a
+/// verified user id would mean decoding the JWT here, ahead of the `AuthUser`
+/// extractor that exists to do exactly that. Hashing needs no secret and no
+/// trust — an attacker can only ever change their own bucket by presenting a
+/// different token, and a token they cannot mint fails auth downstream anyway.
+/// The hash also keeps the raw credential out of the limiter's key store.
+#[derive(Debug, Clone, Copy)]
+pub struct SessionOrIpKeyExtractor {
+    trust_forwarded: bool,
+}
+
+impl SessionOrIpKeyExtractor {
+    pub fn new(trust_forwarded: bool) -> Self {
+        Self { trust_forwarded }
+    }
+}
+
+fn bearer_token<T>(req: &Request<T>) -> Option<&str> {
+    req.headers()
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+}
+
+impl KeyExtractor for SessionOrIpKeyExtractor {
+    type Key = String;
+
+    fn extract<T>(&self, req: &Request<T>) -> Result<Self::Key, GovernorError> {
+        if let Some(token) = bearer_token(req) {
+            let mut hasher = Sha256::new();
+            hasher.update(token.as_bytes());
+            let digest = hasher.finalize();
+            // Half the digest is ample to keep distinct sessions in distinct
+            // buckets; this is a partitioning key, not a security boundary.
+            let mut key = String::with_capacity(2 + 32);
+            key.push_str("s:");
+            for byte in digest.iter().take(16) {
+                let _ = write!(key, "{byte:02x}");
+            }
+            return Ok(key);
         }
-        peer_ip(req).ok_or(GovernorError::UnableToExtractKey)
+        client_ip(req.headers(), peer_ip(req), self.trust_forwarded)
+            .map(|ip| format!("i:{ip}"))
+            .ok_or(GovernorError::UnableToExtractKey)
     }
 }
 
@@ -130,5 +162,94 @@ mod tests {
         let extractor = ClientIpKeyExtractor::new(true);
         let req = request_with(None, None);
         assert!(extractor.extract(&req).is_err());
+    }
+
+    fn request_with_token(token: Option<&str>, peer: Option<&str>) -> Request<()> {
+        let mut builder = Request::builder();
+        if let Some(token) = token {
+            builder = builder.header("authorization", format!("Bearer {token}"));
+        }
+        let mut req = builder.body(()).expect("build request");
+        if let Some(addr) = peer {
+            req.extensions_mut().insert(ConnectInfo(
+                addr.parse::<SocketAddr>().expect("valid socket addr"),
+            ));
+        }
+        req
+    }
+
+    #[test]
+    fn two_sessions_from_one_address_get_separate_buckets() {
+        let extractor = SessionOrIpKeyExtractor::new(false);
+        let a = extractor
+            .extract(&request_with_token(Some("token-a"), Some("10.0.0.7:1")))
+            .unwrap();
+        let b = extractor
+            .extract(&request_with_token(Some("token-b"), Some("10.0.0.7:1")))
+            .unwrap();
+        assert_ne!(
+            a, b,
+            "an office behind one NAT must not share a single bucket"
+        );
+    }
+
+    #[test]
+    fn one_session_from_two_addresses_shares_a_bucket() {
+        let extractor = SessionOrIpKeyExtractor::new(false);
+        let a = extractor
+            .extract(&request_with_token(Some("same"), Some("10.0.0.7:1")))
+            .unwrap();
+        let b = extractor
+            .extract(&request_with_token(Some("same"), Some("192.0.2.9:1")))
+            .unwrap();
+        assert_eq!(
+            a, b,
+            "rotating source addresses must not multiply a user's allowance"
+        );
+    }
+
+    #[test]
+    fn the_raw_token_never_appears_in_the_key() {
+        let extractor = SessionOrIpKeyExtractor::new(false);
+        let key = extractor
+            .extract(&request_with_token(
+                Some("secret-token"),
+                Some("10.0.0.7:1"),
+            ))
+            .unwrap();
+        assert!(!key.contains("secret-token"));
+    }
+
+    #[test]
+    fn an_anonymous_request_falls_back_to_its_address() {
+        let extractor = SessionOrIpKeyExtractor::new(false);
+        let key = extractor
+            .extract(&request_with_token(None, Some("10.0.0.7:1")))
+            .unwrap();
+        assert_eq!(key, "i:10.0.0.7");
+    }
+
+    #[test]
+    fn session_and_address_keys_cannot_collide() {
+        // Distinct prefixes, so a crafted address can never land in the bucket
+        // of a session (or the reverse).
+        let extractor = SessionOrIpKeyExtractor::new(false);
+        let session = extractor
+            .extract(&request_with_token(Some("t"), Some("10.0.0.7:1")))
+            .unwrap();
+        let anonymous = extractor
+            .extract(&request_with_token(None, Some("10.0.0.7:1")))
+            .unwrap();
+        assert!(session.starts_with("s:"));
+        assert!(anonymous.starts_with("i:"));
+    }
+
+    #[test]
+    fn an_empty_bearer_value_is_treated_as_anonymous() {
+        let extractor = SessionOrIpKeyExtractor::new(false);
+        let key = extractor
+            .extract(&request_with_token(Some("   "), Some("10.0.0.7:1")))
+            .unwrap();
+        assert_eq!(key, "i:10.0.0.7");
     }
 }
