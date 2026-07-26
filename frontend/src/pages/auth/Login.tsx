@@ -123,12 +123,12 @@ export function Login() {
       if (email && hasPasskey) {
         // Email-based flow: server sends allowCredentials for this user
         const { challenge_id, options } = await passkeyAuthBegin(email);
-        const credential = await getPasskeyCredential(options);
+        const credential = await getPasskeyCredential(options.publicKey);
         response = await passkeyAuthComplete(challenge_id, credential);
       } else {
         // Discoverable flow: browser shows all available passkeys for this site
         const { challenge_id, options } = await passkeyDiscoverableBegin();
-        const credential = await getPasskeyCredential(options);
+        const credential = await getPasskeyCredential(options.publicKey);
         response = await passkeyDiscoverableComplete(challenge_id, credential);
       }
 

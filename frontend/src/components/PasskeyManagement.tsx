@@ -50,7 +50,7 @@ export function PasskeyManagement() {
       const { challenge_id, options } = await passkeyRegisterBegin();
 
       // Step 2: Browser WebAuthn ceremony
-      const credential = await createPasskeyCredential(options);
+      const credential = await createPasskeyCredential(options.publicKey);
 
       // Step 3: Send credential to server
       const name = newName.trim() || 'My Passkey';
