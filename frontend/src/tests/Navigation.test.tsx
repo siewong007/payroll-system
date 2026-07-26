@@ -9,10 +9,12 @@ import { userWithRoles } from './support/permissions';
 
 const authMocks = vi.hoisted(() => ({ useAuth: vi.fn() }));
 const adminMocks = vi.hoisted(() => ({ getMyCompanies: vi.fn() }));
+const notificationMocks = vi.hoisted(() => ({ getNotificationCount: vi.fn() }));
 const navigateMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/context/AuthContext', () => ({ useAuth: authMocks.useAuth }));
 vi.mock('@/api/admin', () => ({ getMyCompanies: adminMocks.getMyCompanies }));
+vi.mock('@/api/notifications', () => ({ getNotificationCount: notificationMocks.getNotificationCount }));
 vi.mock('react-router', async (importOriginal) => ({
   ...(await importOriginal<typeof import('react-router')>()),
   useNavigate: () => navigateMock,
@@ -20,6 +22,7 @@ vi.mock('react-router', async (importOriginal) => ({
 
 import { Sidebar } from '@/components/layout/Sidebar';
 import { CompanySwitcher } from '@/components/layout/CompanySwitcher';
+import { PortalLayout } from '@/components/layout/PortalLayout';
 
 // The sidebar filters links by permission now, so a fixture user must carry the
 // permissions its roles imply — see `support/permissions`.
@@ -45,6 +48,7 @@ function navLinks() {
 beforeEach(() => {
   authMocks.useAuth.mockReset();
   adminMocks.getMyCompanies.mockReset().mockResolvedValue([]);
+  notificationMocks.getNotificationCount.mockReset().mockResolvedValue({ unread: 0 });
   navigateMock.mockReset();
   authMocks.useAuth.mockReturnValue({ user: asUser(['admin']), logout: vi.fn(), switchCompany: vi.fn() });
 });
@@ -192,6 +196,45 @@ describe('Sidebar user panel', () => {
 
     expect(screen.getByText('User')).toBeInTheDocument();
     expect(screen.getByText('U')).toBeInTheDocument();
+  });
+});
+
+describe('Portal header', () => {
+  function renderPortal(roles: AppRole[]) {
+    authMocks.useAuth.mockReturnValue({
+      user: asUser(roles),
+      logout: vi.fn(),
+      isAuthenticated: true,
+      isLoading: false,
+    });
+    return renderWithProviders(<PortalLayout />, '/portal/profile');
+  }
+
+  function openUserMenu() {
+    return userEvent.click(screen.getByRole('button', { name: /Aisyah Rahman/ }));
+  }
+
+  it('offers a way back to the console to staff holding a second role', async () => {
+    // AppLayout holds everyone who is not a sole-role employee, so a supervisor
+    // standing in the portal is here by choice — and until now their only route
+    // out was the browser's back button or a hand-typed URL.
+    renderPortal(['employee', 'hr_manager']);
+    await openUserMenu();
+
+    // `/` rather than a fixed page: HomeRedirect resolves the landing screen
+    // their roles allow, which is /companies for a super_admin and /company
+    // otherwise. Hardcoding either would 403 half the people who see this link.
+    expect(await screen.findByRole('link', { name: /admin console/i })).toHaveAttribute('href', '/');
+  });
+
+  it('shows no console link to a sole-role employee', async () => {
+    renderPortal(['employee']);
+    await openUserMenu();
+
+    // Sign Out first: it proves the menu actually opened, so the absence below
+    // is an assertion about the link rather than about an unopened dropdown.
+    expect(await screen.findByRole('button', { name: /sign out/i })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /admin console/i })).not.toBeInTheDocument();
   });
 });
 

@@ -85,7 +85,7 @@ async fn check_out_matches_open_record_within_24h() {
     // Overnight check-in: 20 hours ago, still open.
     let open_id = insert_open_record(&pool, company_id, employee_id, 20).await;
 
-    let record = attendance_service::check_out(&pool, employee_id, company_id, None, None)
+    let record = attendance_service::check_out(&pool, employee_id, company_id, None, None, None)
         .await
         .expect("check_out should succeed for a record within 24h");
 
@@ -103,7 +103,7 @@ async fn check_out_ignores_stale_record_older_than_24h() {
     // Only record is 30h old — outside the 24-hour window.
     insert_open_record(&pool, company_id, employee_id, 30).await;
 
-    let err = attendance_service::check_out(&pool, employee_id, company_id, None, None)
+    let err = attendance_service::check_out(&pool, employee_id, company_id, None, None, None)
         .await
         .expect_err("check_out must reject when no in-window open record exists");
 
@@ -128,7 +128,7 @@ async fn check_out_is_scoped_to_company() {
     // asserts company_id = company_b. That mismatch must not close the record.
     insert_open_record(&pool, company_a, employee_a, 4).await;
 
-    let err = attendance_service::check_out(&pool, employee_a, company_b, None, None)
+    let err = attendance_service::check_out(&pool, employee_a, company_b, None, None, None)
         .await
         .expect_err("check_out must not cross company boundaries");
     assert!(format!("{err:?}").contains("No active check-in"));
@@ -335,7 +335,7 @@ async fn checkin_supersedes_todays_auto_absent_row() {
     }
 
     // A real (service-level) check-in afterwards must remove the placeholder.
-    let record = attendance_service::check_in_face_id(&pool, employee_id, company_id, None, None)
+    let record = attendance_service::check_in_face_id(&pool, employee_id, company_id, None, None, None)
         .await
         .expect("check-in should succeed after auto-absent");
     assert_ne!(record.status, "absent");
