@@ -1,9 +1,8 @@
-use aes_gcm::aead::Aead;
+use aes_gcm::aead::{Aead, Generate};
 use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use sha2::{Digest, Sha256};
-use uuid::Uuid;
 
 use super::error::{AppError, AppResult};
 
@@ -18,10 +17,10 @@ fn derive_key(jwt_secret: &str) -> [u8; 32] {
     hasher.finalize().into()
 }
 
+/// Fills all 12 bytes straight from the OS CSPRNG. This used to truncate a
+/// UUIDv4, whose fixed version/variant bits left only ~90 bits of variability.
 fn random_nonce() -> [u8; NONCE_LEN] {
-    let mut buf = [0u8; NONCE_LEN];
-    buf.copy_from_slice(&Uuid::new_v4().as_bytes()[..NONCE_LEN]);
-    buf
+    <[u8; NONCE_LEN]>::generate()
 }
 
 /// Encrypts a secret at rest (AES-256-GCM) with a key derived from JWT_SECRET.
@@ -93,6 +92,25 @@ mod tests {
         let a = encrypt_secret(secret, jwt_secret).unwrap();
         let b = encrypt_secret(secret, jwt_secret).unwrap();
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn nonce_has_no_fixed_bits() {
+        // Guards against reintroducing a nonce derived from a structured source
+        // (e.g. UUIDv4, whose version/variant bits are constant).
+        let mut ever_set = [0u8; NONCE_LEN];
+        let mut ever_clear = [0u8; NONCE_LEN];
+
+        for _ in 0..256 {
+            let nonce = random_nonce();
+            for i in 0..NONCE_LEN {
+                ever_set[i] |= nonce[i];
+                ever_clear[i] |= !nonce[i];
+            }
+        }
+
+        assert_eq!(ever_set, [0xffu8; NONCE_LEN], "some bit was never set");
+        assert_eq!(ever_clear, [0xffu8; NONCE_LEN], "some bit was never clear");
     }
 
     #[test]
