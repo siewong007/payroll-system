@@ -1,11 +1,14 @@
 {
   "compilerOptions": {
-    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.test.tsbuildinfo",
     "target": "ES2023",
     "useDefineForClassFields": true,
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "module": "ESNext",
-    "types": ["vite/client"],
+    /* vitest runs with `globals: true`, and setup.ts pulls in the jest-dom
+       matchers — without these two the suite fails to resolve `describe`,
+       `expect` and `toBeInTheDocument`. */
+    "types": ["vite/client", "vitest/globals", "@testing-library/jest-dom"],
     "skipLibCheck": true,
 
     /* Bundler mode */
@@ -27,10 +30,5 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true
   },
-  "include": ["src"],
-  /* The suite (and its setup/support files) is checked by tsconfig.test.json,
-     which adds the vitest and jest-dom ambient types this project must not
-     carry. Excluding it here only drops those files as *roots* — anything the
-     app itself imports is still checked. */
-  "exclude": ["src/tests"]
+  "include": ["src/tests"]
 }
