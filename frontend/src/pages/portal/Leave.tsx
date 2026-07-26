@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, ArrowLeft, Paperclip, ExternalLink, X, Calendar, FileText, AlertTriangle, Download, Trash2 } from 'lucide-react';
+import { Plus, ArrowLeft, Paperclip, ExternalLink, X, Calendar, AlertTriangle, Download, Trash2 } from 'lucide-react';
 import { getLeaveBalances, getLeaveRequests, getLeaveTypes, createLeaveRequest, cancelLeaveRequest, deleteLeaveRequest, uploadFile, getMyProfile, exportLeaveIcs } from '@/api/portal';
 import { formatDate, getErrorMessage } from '@/lib/utils';
+import { AttachmentLink, AttachmentPreview } from '@/components/ui/AttachmentPreview';
 import { DataTable, type Column } from '@/components/ui/DataTable';
 import type { Employee, LeaveBalance, LeaveRequest, LeaveType } from '@/types';
 
@@ -107,12 +108,12 @@ const requestColumns: Column<LeaveRequest>[] = [
             <span className="truncate max-w-[100px]">Unavailable</span>
           </span>
         ) : (
-          <a href={r.attachment_url} target="_blank" rel="noopener noreferrer"
+          <AttachmentLink url={r.attachment_url}
             className="inline-flex items-center gap-1 text-gray-900 hover:text-black text-sm">
             <Paperclip className="w-3 h-3" />
             <span className="truncate max-w-[100px]">{r.attachment_name || 'View'}</span>
             <ExternalLink className="w-3 h-3" />
-          </a>
+          </AttachmentLink>
         )
       ) : <span className="text-gray-300">\u2014</span>
     ),
@@ -427,75 +428,6 @@ function SummaryField({ label, value }: { label: string; value: string }) {
     <div>
       <p className="text-xs text-gray-400 uppercase tracking-wide">{label}</p>
       <p className="text-sm font-medium text-gray-900 mt-0.5">{value}</p>
-    </div>
-  );
-}
-
-function isImageUrl(url: string) {
-  return /\.(jpg|jpeg|png|gif|webp|bmp|svg)(\?|$)/i.test(url);
-}
-
-function isBlobUrl(url: string) {
-  return url.startsWith('blob:');
-}
-
-function AttachmentPreview({ url, name }: { url: string; name: string | null }) {
-  const displayName = name || 'Attachment';
-
-  if (isBlobUrl(url)) {
-    return (
-      <div className="mt-1 inline-flex items-center gap-2 px-4 py-3 bg-red-50 border border-red-200 rounded-lg">
-        <div className="w-10 h-10 rounded-lg bg-red-100 flex items-center justify-center shrink-0">
-          <FileText className="w-5 h-5 text-red-400" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium text-red-700 truncate">{displayName}</div>
-          <div className="text-xs text-red-400">File unavailable — was not uploaded properly</div>
-        </div>
-      </div>
-    );
-  }
-
-  const isImage = isImageUrl(url);
-
-  return (
-    <div className="mt-1">
-      {isImage ? (
-        <div className="space-y-2">
-          <a href={url} target="_blank" rel="noopener noreferrer" className="block">
-            <img
-              src={url}
-              alt={displayName}
-              className="max-w-full max-h-64 rounded-lg border border-gray-200 object-contain bg-gray-50"
-            />
-          </a>
-          <a
-            href={url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 text-sm text-gray-900 hover:text-black"
-          >
-            <ExternalLink className="w-3.5 h-3.5" />
-            Open full size
-          </a>
-        </div>
-      ) : (
-        <a
-          href={url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-2 px-4 py-3 bg-gray-50 border border-gray-200 rounded-lg hover:bg-gray-100 hover:border-gray-300 transition-colors group"
-        >
-          <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center shrink-0">
-            <FileText className="w-5 h-5 text-gray-700" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="text-sm font-medium text-gray-700 group-hover:text-gray-900 truncate">{displayName}</div>
-            <div className="text-xs text-gray-400">Click to open</div>
-          </div>
-          <ExternalLink className="w-4 h-4 text-gray-400 group-hover:text-gray-700 shrink-0" />
-        </a>
-      )}
     </div>
   );
 }

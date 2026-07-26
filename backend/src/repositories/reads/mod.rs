@@ -18,4 +18,5 @@ pub mod reports;
 pub mod statutory;
 pub mod system;
 pub mod teams;
+pub mod uploads;
 pub mod user_management;

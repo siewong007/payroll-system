@@ -768,3 +768,276 @@ async fn create_user_rejects_a_malformed_email_with_422() {
 
     assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }
+
+// ─── Uploaded file downloads ───
+//
+// `GET /api/uploads/{filename}` served any caller that held the URL, so a
+// forwarded link or a proxy log entry was enough to read another tenant's claim
+// receipt. Access is now decided by the record that references the file; these
+// pin every branch of that rule, including the allow path, because a fix that
+// over-blocks silently breaks every attachment in the product.
+
+/// Mints a token whose claims carry an employee profile, which `token_for` does
+/// not — self-service access to an attachment is decided on exactly that field.
+async fn token_for_employee(
+    pool: &sqlx::PgPool,
+    company_id: uuid::Uuid,
+    employee_id: uuid::Uuid,
+    role: &str,
+) -> String {
+    let user_id = seed_user(pool, company_id, role).await;
+    let (session_id, _) = session_service::create_session(pool, user_id, None)
+        .await
+        .expect("create test session");
+    create_token(
+        user_id,
+        "upload-test@example.invalid",
+        &[role.to_string()],
+        Some(company_id),
+        Some(employee_id),
+        session_id,
+        JWT_SECRET,
+        1,
+    )
+    .expect("create jwt")
+}
+
+/// Records a claim that references `stored_name`, which is what makes the file
+/// reachable at all.
+async fn seed_claim_with_receipt(
+    pool: &sqlx::PgPool,
+    company_id: uuid::Uuid,
+    employee_id: uuid::Uuid,
+    stored_name: &str,
+) {
+    sqlx::query(
+        r#"INSERT INTO claims
+           (employee_id, company_id, title, amount, expense_date, receipt_url)
+           VALUES ($1, $2, 'Test claim', 1000, $3, $4)"#,
+    )
+    .bind(employee_id)
+    .bind(company_id)
+    .bind(NaiveDate::from_ymd_opt(2026, 1, 15).unwrap())
+    .bind(format!("/api/uploads/{stored_name}"))
+    .execute(pool)
+    .await
+    .expect("insert claim");
+}
+
+/// Writes real bytes for a stored name, because authorization passing and the
+/// file being absent are the same 404 to a caller: an allow-path test that
+/// skipped this would pass even if the rule denied everything.
+async fn write_test_upload(stored_name: &str) -> std::path::PathBuf {
+    tokio::fs::create_dir_all("uploads")
+        .await
+        .expect("create uploads dir");
+    let path = std::path::Path::new("uploads").join(stored_name);
+    tokio::fs::write(&path, b"%PDF-1.4 test receipt")
+        .await
+        .expect("write test upload");
+    path
+}
+
+#[tokio::test]
+async fn downloading_an_upload_requires_authentication() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+
+    let response = app_for(pool)
+        .await
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/uploads/whatever.pdf")
+                .body(Body::empty())
+                .expect("build request"),
+        )
+        .await
+        .expect("route response");
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn an_upload_is_not_readable_from_another_company() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let owning_company = seed_company(&pool).await;
+    let owning_employee = seed_employee(&pool, owning_company, None, 500_000).await;
+    let stored_name = format!("{}_receipt.pdf", uuid::Uuid::new_v4());
+    seed_claim_with_receipt(&pool, owning_company, owning_employee, &stored_name).await;
+    let path = write_test_upload(&stored_name).await;
+
+    // A different tenant, holding the permission that would cover this file if
+    // the claim were theirs.
+    let other_company = seed_company(&pool).await;
+    let token = token_for(&pool, other_company, "hr_manager").await;
+
+    let response = app_for(pool)
+        .await
+        .oneshot(request(
+            "GET",
+            &format!("/api/uploads/{stored_name}"),
+            &token,
+            "",
+        ))
+        .await
+        .expect("route response");
+
+    let status = response.status();
+    tokio::fs::remove_file(&path).await.ok();
+
+    // 404, never 403: a 403 would confirm the filename is real somewhere else.
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn an_employee_cannot_read_a_colleagues_receipt() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let owner = seed_employee(&pool, company_id, None, 500_000).await;
+    let colleague = seed_employee(&pool, company_id, None, 500_000).await;
+    let stored_name = format!("{}_receipt.pdf", uuid::Uuid::new_v4());
+    seed_claim_with_receipt(&pool, company_id, owner, &stored_name).await;
+    let path = write_test_upload(&stored_name).await;
+
+    let token = token_for_employee(&pool, company_id, colleague, "employee").await;
+
+    let response = app_for(pool)
+        .await
+        .oneshot(request(
+            "GET",
+            &format!("/api/uploads/{stored_name}"),
+            &token,
+            "",
+        ))
+        .await
+        .expect("route response");
+
+    let status = response.status();
+    tokio::fs::remove_file(&path).await.ok();
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn an_employee_reads_the_receipt_on_their_own_claim() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let employee_id = seed_employee(&pool, company_id, None, 500_000).await;
+    let stored_name = format!("{}_receipt.pdf", uuid::Uuid::new_v4());
+    seed_claim_with_receipt(&pool, company_id, employee_id, &stored_name).await;
+    let path = write_test_upload(&stored_name).await;
+
+    let token = token_for_employee(&pool, company_id, employee_id, "employee").await;
+
+    let response = app_for(pool)
+        .await
+        .oneshot(request(
+            "GET",
+            &format!("/api/uploads/{stored_name}"),
+            &token,
+            "",
+        ))
+        .await
+        .expect("route response");
+
+    let status = response.status();
+    tokio::fs::remove_file(&path).await.ok();
+
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn an_approver_reads_a_claim_receipt_in_their_company() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let employee_id = seed_employee(&pool, company_id, None, 500_000).await;
+    let stored_name = format!("{}_receipt.pdf", uuid::Uuid::new_v4());
+    seed_claim_with_receipt(&pool, company_id, employee_id, &stored_name).await;
+    let path = write_test_upload(&stored_name).await;
+
+    // hr_manager holds ViewApprovals, which is what covers a claim receipt
+    // belonging to somebody else.
+    let token = token_for(&pool, company_id, "hr_manager").await;
+
+    let response = app_for(pool)
+        .await
+        .oneshot(request(
+            "GET",
+            &format!("/api/uploads/{stored_name}"),
+            &token,
+            "",
+        ))
+        .await
+        .expect("route response");
+
+    let status = response.status();
+    tokio::fs::remove_file(&path).await.ok();
+
+    assert_eq!(status, StatusCode::OK);
+}
+
+/// `finance` holds neither ViewApprovals nor a claim of its own, so a receipt
+/// stays closed to it even inside its own company.
+#[tokio::test]
+async fn a_role_without_approvals_access_cannot_read_a_receipt() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let employee_id = seed_employee(&pool, company_id, None, 500_000).await;
+    let stored_name = format!("{}_receipt.pdf", uuid::Uuid::new_v4());
+    seed_claim_with_receipt(&pool, company_id, employee_id, &stored_name).await;
+    let path = write_test_upload(&stored_name).await;
+
+    let token = token_for(&pool, company_id, "finance").await;
+
+    let response = app_for(pool)
+        .await
+        .oneshot(request(
+            "GET",
+            &format!("/api/uploads/{stored_name}"),
+            &token,
+            "",
+        ))
+        .await
+        .expect("route response");
+
+    let status = response.status();
+    tokio::fs::remove_file(&path).await.ok();
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn a_traversal_filename_is_rejected_before_any_lookup() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let token = token_for(&pool, company_id, "hr_manager").await;
+
+    let response = app_for(pool)
+        .await
+        .oneshot(request("GET", "/api/uploads/..%2F..%2F.env", &token, ""))
+        .await
+        .expect("route response");
+
+    assert!(
+        matches!(
+            response.status(),
+            StatusCode::BAD_REQUEST | StatusCode::NOT_FOUND
+        ),
+        "traversal attempt returned {}",
+        response.status()
+    );
+}

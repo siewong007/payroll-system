@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, ArrowLeft, Send, Trash2, Receipt, Upload, X, FileText, Image, Paperclip, ExternalLink } from 'lucide-react';
 import { listMyClaims, createClaim, cancelClaim, deleteClaim, submitClaim, uploadFile } from '@/api/claims';
+import { AttachmentLink } from '@/components/ui/AttachmentPreview';
 import { formatMYR, formatDate, getErrorMessage, todayLocalDate } from '@/lib/utils';
 
 const STATUS_TABS = [
@@ -246,12 +247,12 @@ export function Claims() {
                           <span className="truncate max-w-[100px]">Unavailable</span>
                         </span>
                       ) : (
-                        <a href={c.receipt_url} target="_blank" rel="noopener noreferrer"
+                        <AttachmentLink url={c.receipt_url}
                           className="inline-flex items-center gap-1 text-gray-900 hover:text-black text-sm">
                           <Paperclip className="w-3 h-3" />
                           <span className="truncate max-w-[100px]">{c.receipt_file_name || 'View'}</span>
                           <ExternalLink className="w-3 h-3" />
-                        </a>
+                        </AttachmentLink>
                       )
                     ) : <span className="text-gray-300">—</span>}
                     </td>

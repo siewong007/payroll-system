@@ -1,275 +1,18 @@
-import { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import {
-  QrCode, Fingerprint, LogIn, LogOut, CheckCircle2, Clock,
-  MapPin, Calendar, AlertCircle, ExternalLink, RefreshCw,
-} from 'lucide-react';
-import { Html5Qrcode } from 'html5-qrcode';
-import {
-  getAttendanceMethod,
-  getMyTodayAttendance,
-  getMyAttendance,
-  checkOut,
-  beginFaceIdCheckIn,
-  checkInFaceId,
-  type AttendanceRecord,
-} from '@/api/attendance';
-import { getPasskeyCredential } from '@/lib/webauthn';
-import { getErrorMessage } from '@/lib/utils';
+import { useQuery } from '@tanstack/react-query';
+import { LogIn, LogOut, CheckCircle2, Clock, MapPin, Calendar, AlertCircle, RefreshCw } from 'lucide-react';
+import { getAttendanceMethod, getMyAttendance, type AttendanceRecord } from '@/api/attendance';
+import { CheckInCard } from '@/components/attendance/CheckInCard';
+import { formatZonedTime } from '@/lib/attendance';
 
-function formatTime(iso: string | null) {
-  if (!iso) return '—';
-  return new Date(iso).toLocaleTimeString('en-MY', { hour: '2-digit', minute: '2-digit' });
+const FALLBACK_TZ = 'Asia/Kuala_Lumpur';
+
+function formatDate(iso: string, timeZone: string) {
+  try {
+    return new Date(iso).toLocaleDateString('en-MY', { timeZone, day: 'numeric', month: 'short', year: 'numeric' });
+  } catch {
+    return new Date(iso).toLocaleDateString('en-MY', { day: 'numeric', month: 'short', year: 'numeric' });
+  }
 }
-function formatDate(iso: string) {
-  return new Date(iso).toLocaleDateString('en-MY', { day: 'numeric', month: 'short', year: 'numeric' });
-}
-
-/**
- * Best-effort position. When the company has geofencing off the server ignores
- * coordinates entirely, so skip the fix rather than make the employee wait for
- * one. `maximumAge` accepts a recent cached fix instead of forcing a cold GPS
- * lock at the kiosk queue.
- */
-function getGeolocation(needed: boolean): Promise<GeolocationCoordinates | null> {
-  return new Promise((resolve) => {
-    if (!needed || !navigator.geolocation) { resolve(null); return; }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => resolve(pos.coords),
-      () => resolve(null),
-      { timeout: 8000, maximumAge: 60_000 }
-    );
-  });
-}
-
-// ─── QR Scanner Modal ─────────────────────────────────────────────────────────
-
-function QrScannerModal({ onClose, onScanned }: { onClose: () => void; onScanned: (token: string) => void }) {
-  const [error, setError] = useState('');
-  const [started, setStarted] = useState(false);
-  const scannerRef = useRef<Html5Qrcode | null>(null);
-
-  useEffect(() => {
-    let stopped = false;
-    
-    const initScanner = async () => {
-      try {
-        // Wait a small bit to ensure DOM is ready and styled
-        await new Promise(r => setTimeout(r, 300));
-        
-        if (stopped) return;
-
-        if (!scannerRef.current) {
-          scannerRef.current = new Html5Qrcode('qr-reader');
-        }
-        const qr = scannerRef.current;
-        
-        const config = {
-          // 10fps is ample for QR detection and much kinder to low-end phones
-          // than 25 — the decode loop was the bottleneck, not the frame rate.
-          fps: 10,
-          qrbox: { width: 280, height: 280 },
-        };
-        const successCb = (decodedText: string) => {
-          if (stopped) return;
-          stopped = true;
-          qr.stop().then(() => {
-            try {
-              const url = new URL(decodedText);
-              const token = url.searchParams.get('token');
-              if (token) {
-                onScanned(token);
-              } else {
-                setError('Invalid QR code. Please scan the attendance kiosk QR.');
-              }
-            } catch {
-              setError('Invalid QR code format.');
-            }
-          }).catch(console.error);
-        };
-        const errorCb = () => { /* scanning in progress */ };
-
-        try {
-          // Simplest possible start to ensure compatibility
-          await qr.start({ facingMode: 'environment' }, config, successCb, errorCb);
-        } catch (err1) {
-          console.warn('Environment camera failed, trying user camera', err1);
-          try {
-            await qr.start({ facingMode: 'user' }, config, successCb, errorCb);
-          } catch (err2) {
-            console.error('All camera attempts failed', err2);
-            throw new Error('Could not access camera. Please check your browser permissions.');
-          }
-        }
-        
-        if (!stopped) setStarted(true);
-      } catch (err: unknown) {
-        console.error('QR Scanner error:', err);
-        setError(getErrorMessage(err, 'Camera access denied or device not supported.'));
-      }
-    };
-    
-    initScanner();
-
-    return () => {
-      stopped = true;
-      if (scannerRef.current) {
-        const qr = scannerRef.current;
-        if (qr.isScanning) {
-          qr.stop().then(() => qr.clear()).catch(console.error);
-        } else {
-          qr.clear();
-        }
-      }
-    };
-  }, [onScanned]);
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 p-4">
-      <div className="bg-white rounded-3xl w-full max-w-sm overflow-hidden">
-        <div className="p-5 border-b border-gray-100 flex items-center justify-between">
-          <h3 className="font-semibold text-gray-900 flex items-center gap-2">
-            <QrCode className="w-5 h-5 text-violet-600" />
-            Scan Attendance QR
-          </h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-xl leading-none transition-colors">&times;</button>
-        </div>
-
-        <div className="p-5">
-          <div className="relative h-64 bg-gray-50 rounded-2xl overflow-hidden mb-4 border border-gray-100">
-            {!started && !error && (
-              <div className="absolute inset-0 flex items-center justify-center z-10">
-                <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-black" />
-              </div>
-            )}
-            
-            {error && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center bg-red-50 gap-3 z-20">
-                <AlertCircle className="w-10 h-10 text-red-400" />
-                <p className="text-sm text-red-600 text-center px-4">{error}</p>
-              </div>
-            )}
-            
-            <div id="qr-reader" className="w-full h-full" />
-          </div>
-
-          <p className="text-xs text-gray-400 text-center">
-            Point your camera at the QR code on the kiosk screen
-          </p>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Today Status Card ────────────────────────────────────────────────────────
-
-function TodayCard({
-  record,
-  method,
-  onCheckIn,
-  onCheckOut,
-  isCheckingIn,
-  isCheckingOut,
-}: {
-  record: AttendanceRecord | null;
-  method: string;
-  onCheckIn: () => void;
-  onCheckOut: () => void;
-  isCheckingIn: boolean;
-  isCheckingOut: boolean;
-}) {
-  const now = new Date();
-  const dateStr = now.toLocaleDateString('en-MY', { weekday: 'long', day: 'numeric', month: 'long' });
-  const isCheckedIn = !!record && !record.check_out_at;
-
-  return (
-    <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-3xl p-6 text-white">
-      <div className="flex items-start justify-between mb-6">
-        <div>
-          <p className="text-gray-400 text-sm">{dateStr}</p>
-          <h2 className="text-xl font-bold mt-0.5">
-            {!record ? 'Not Checked In' : !record.check_out_at ? 'Checked In' : 'Checked Out'}
-          </h2>
-        </div>
-        <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${
-          !record ? 'bg-gray-700' : !record.check_out_at ? 'bg-emerald-500' : 'bg-blue-500'
-        }`}>
-          {!record ? <LogIn className="w-6 h-6 text-gray-300" /> :
-           !record.check_out_at ? <CheckCircle2 className="w-6 h-6 text-white" /> :
-           <LogOut className="w-6 h-6 text-white" />}
-        </div>
-      </div>
-
-      {record && (
-        <div className="flex gap-4 mb-6">
-          <div>
-            <p className="text-xs text-gray-400 mb-0.5">Check In</p>
-            <p className="text-lg font-bold tabular-nums">{formatTime(record.check_in_at)}</p>
-          </div>
-          {record.check_out_at && (
-            <div>
-              <p className="text-xs text-gray-400 mb-0.5">Check Out</p>
-              <p className="text-lg font-bold tabular-nums">{formatTime(record.check_out_at)}</p>
-            </div>
-          )}
-          {record.latitude && record.longitude && (
-            <div className="ml-auto">
-              <a
-                href={`https://maps.google.com/?q=${record.latitude},${record.longitude}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-1 text-sky-400 text-xs mt-4"
-              >
-                <MapPin className="w-3.5 h-3.5" />
-                Location
-                <ExternalLink className="w-3 h-3" />
-              </a>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Action Button */}
-      {!record ? (
-        <button
-          onClick={onCheckIn}
-          disabled={isCheckingIn}
-          className={`w-full py-3 rounded-2xl font-semibold text-sm flex items-center justify-center gap-2.5 transition-all
-            ${isCheckingIn ? 'bg-gray-600 text-gray-400 cursor-not-allowed' : 'bg-white text-gray-900 hover:bg-gray-100 active:scale-95'}`}
-        >
-          {isCheckingIn ? (
-            <><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-400" /> Checking in…</>
-          ) : method === 'qr_code' ? (
-            <><QrCode className="w-4 h-4" /> Scan QR Code to Check In</>
-          ) : (
-            <><Fingerprint className="w-4 h-4" /> Face ID Check In</>
-          )}
-        </button>
-      ) : isCheckedIn ? (
-        <button
-          onClick={onCheckOut}
-          disabled={isCheckingOut}
-          className={`w-full py-3 rounded-2xl font-semibold text-sm flex items-center justify-center gap-2.5 transition-all
-            ${isCheckingOut ? 'bg-gray-600 text-gray-400 cursor-not-allowed' : 'bg-white/10 text-white border border-white/20 hover:bg-white/20 active:scale-95'}`}
-        >
-          {isCheckingOut ? (
-            <><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-300" /> Checking out…</>
-          ) : (
-            <><LogOut className="w-4 h-4" /> Check Out</>
-          )}
-        </button>
-      ) : (
-        <div className="w-full py-3 rounded-2xl bg-blue-500/20 text-blue-300 text-sm text-center font-medium">
-          ✓ Attendance complete for today
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── History List ─────────────────────────────────────────────────────────────
 
 const STATUS_STYLE: Record<string, string> = {
   present:  'bg-emerald-100 text-emerald-700',
@@ -280,10 +23,12 @@ const STATUS_STYLE: Record<string, string> = {
 
 function HistoryList({
   records,
+  timeZone,
   isError,
   onRetry,
 }: {
   records: AttendanceRecord[];
+  timeZone: string;
   isError: boolean;
   onRetry: () => void;
 }) {
@@ -317,17 +62,32 @@ function HistoryList({
       {records.map(r => (
         <div key={r.id} className="flex items-center gap-4 py-3.5 px-5">
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-gray-900">{formatDate(r.check_in_at)}</p>
+            <p className="text-sm font-medium text-gray-900">{formatDate(r.check_in_at, timeZone)}</p>
             <div className="flex items-center gap-3 mt-0.5">
-              <span className="text-xs text-gray-500 flex items-center gap-1">
-                <LogIn className="w-3 h-3 text-emerald-400" />
-                {formatTime(r.check_in_at)}
-              </span>
-              {r.check_out_at && (
-                <span className="text-xs text-gray-500 flex items-center gap-1">
-                  <LogOut className="w-3 h-3 text-gray-400" />
-                  {formatTime(r.check_out_at)}
-                </span>
+              {/* An auto-absent placeholder carries a midnight timestamp that
+                  never happened — showing "12:00 AM" reads as a real check-in. */}
+              {r.status === 'absent' ? (
+                <span className="text-xs text-gray-400">No attendance recorded</span>
+              ) : (
+                <>
+                  <span className="text-xs text-gray-500 flex items-center gap-1">
+                    <LogIn className="w-3 h-3 text-emerald-400" />
+                    {formatZonedTime(r.check_in_at, timeZone)}
+                  </span>
+                  {r.check_out_at ? (
+                    <span className="text-xs text-gray-500 flex items-center gap-1">
+                      <LogOut className="w-3 h-3 text-gray-400" />
+                      {formatZonedTime(r.check_out_at, timeZone)}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-amber-600 flex items-center gap-1">
+                      <Clock className="w-3 h-3" /> Never checked out
+                    </span>
+                  )}
+                  {r.hours_worked && (
+                    <span className="text-xs text-gray-400 tabular-nums">{r.hours_worked}h</span>
+                  )}
+                </>
               )}
             </div>
           </div>
@@ -353,36 +113,8 @@ function HistoryList({
   );
 }
 
-// ─── Main ─────────────────────────────────────────────────────────────────────
-
 export function MyAttendance() {
-  const queryClient = useQueryClient();
-  const navigate = useNavigate();
-  const [showScanner, setShowScanner] = useState(false);
-  const [toast, setToast] = useState('');
-  const [toastType, setToastType] = useState<'success' | 'error'>('success');
-
-  const showToast = (msg: string, type: 'success' | 'error' = 'success') => {
-    setToast(msg);
-    setToastType(type);
-    setTimeout(() => setToast(''), 3000);
-  };
-
-  const { data: methodData } = useQuery({
-    queryKey: ['attendance-method'],
-    queryFn: getAttendanceMethod,
-  });
-
-  const {
-    data: todayData,
-    isError: todayError,
-    refetch: refetchToday,
-  } = useQuery({
-    queryKey: ['attendance-today'],
-    queryFn: getMyTodayAttendance,
-    refetchInterval: 60_000,
-  });
-
+  const { data: method } = useQuery({ queryKey: ['attendance-method'], queryFn: getAttendanceMethod });
   const {
     data: historyResult,
     isError: historyError,
@@ -391,148 +123,40 @@ export function MyAttendance() {
     queryKey: ['attendance-my'],
     queryFn: () => getMyAttendance({ per_page: 100 }),
   });
+
   const history = historyResult?.data ?? [];
-
-  // Only fetch a position when the server will actually use it.
-  const needsLocation = (methodData?.geofence_mode ?? 'none') !== 'none';
-
-  const checkOutMut = useMutation({
-    mutationFn: async () => {
-      const coords = await getGeolocation(needsLocation);
-      return checkOut(coords?.latitude, coords?.longitude);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['attendance-today'] });
-      queryClient.invalidateQueries({ queryKey: ['attendance-my'] });
-      showToast('Checked out successfully!');
-    },
-    onError: (e: Error & { response?: { data?: { error?: string } } }) => {
-      showToast(e.response?.data?.error || 'Check-out failed', 'error');
-    },
-  });
-
-  const faceIdCheckInMut = useMutation({
-    mutationFn: async () => {
-      // Dedicated check-in ceremony: the server issues a challenge bound to
-      // this user, then verifies the assertion before recording the record.
-      // (The old flow reused the login ceremony and the server verified
-      // nothing, so a face_id record proved no biometric presence at all.)
-      const { challenge_id, options } = await beginFaceIdCheckIn();
-      const cred = await getPasskeyCredential(options.publicKey);
-
-      const coords = await getGeolocation(needsLocation);
-      return checkInFaceId(challenge_id, cred, coords?.latitude, coords?.longitude);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['attendance-today'] });
-      queryClient.invalidateQueries({ queryKey: ['attendance-my'] });
-      showToast('Checked in successfully with Face ID! ✓');
-    },
-    onError: (e: Error & { response?: { data?: { error?: string } } }) => {
-      showToast(e.response?.data?.error || 'Face ID check-in failed', 'error');
-    },
-  });
-
-  const handleCheckIn = () => {
-    if (methodData?.method === 'qr_code') {
-      setShowScanner(true);
-    } else {
-      faceIdCheckInMut.mutate();
-    }
-  };
-
-  const handleQrScanned = (token: string) => {
-    setShowScanner(false);
-    // Stay in the SPA: a full reload discards the in-memory access token and
-    // forces an /auth/refresh round trip before the check-in can even fire.
-    navigate(`/attendance/scan?token=${encodeURIComponent(token)}`);
-  };
-
-  const method = methodData?.method ?? 'qr_code';
-  const today = todayData?.record ?? null;
+  const timeZone = method?.timezone || FALLBACK_TZ;
+  const thisMonth = history.filter(r => r.status !== 'absent' && r.check_out_at).length;
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div>
+      <div className="page-header">
         <h1 className="page-title">My Attendance</h1>
         <p className="page-subtitle">Check in and track your daily attendance</p>
       </div>
 
-      {/* Toast */}
-      {toast && (
-        <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-2xl text-sm font-medium shadow-lg flex items-center gap-2 ${
-          toastType === 'success' ? 'bg-emerald-600 text-white' : 'bg-red-600 text-white'
-        }`}>
-          {toastType === 'success' ? <CheckCircle2 className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
-          {toast}
-        </div>
-      )}
+      {/* The same card as the portal home — one implementation of check-in,
+          so the two surfaces cannot drift apart. */}
+      <CheckInCard />
 
-      {/* Today's Card. On a failed fetch we must not render "Not Checked In" —
-          that invites a second check-in that then fails as a duplicate. */}
-      {todayError ? (
-        <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-3xl p-6 text-white">
-          <div className="flex items-center gap-3 mb-4">
-            <AlertCircle className="w-6 h-6 text-amber-400 shrink-0" />
-            <div>
-              <h2 className="text-lg font-bold">Couldn't load today's status</h2>
-              <p className="text-gray-400 text-sm mt-0.5">
-                Check your connection — we didn't want to show a check-in button
-                without knowing whether you already checked in.
-              </p>
-            </div>
-          </div>
-          <button
-            onClick={() => refetchToday()}
-            className="w-full py-3 rounded-2xl font-semibold text-sm flex items-center justify-center gap-2 bg-white text-gray-900 hover:bg-gray-100 active:scale-95 transition-all"
-          >
-            <RefreshCw className="w-4 h-4" /> Retry
-          </button>
-        </div>
-      ) : (
-        <TodayCard
-          record={today}
-          method={method}
-          onCheckIn={handleCheckIn}
-          onCheckOut={() => checkOutMut.mutate()}
-          isCheckingIn={faceIdCheckInMut.isPending}
-          isCheckingOut={checkOutMut.isPending}
-        />
-      )}
-
-      {/* Method info */}
-      <div className="bg-white rounded-2xl p-4 flex items-center gap-3 text-sm border border-gray-100">
-        {method === 'qr_code' ? (
-          <QrCode className="w-5 h-5 text-violet-600 shrink-0" />
-        ) : (
-          <Fingerprint className="w-5 h-5 text-sky-600 shrink-0" />
-        )}
-        <span className="text-gray-600">
-          Your company uses <strong className="text-gray-800">{method === 'qr_code' ? 'QR Code' : 'Face ID'}</strong> for attendance.
-          {method === 'qr_code' && ' Scan the QR code at the kiosk to check in.'}
-        </span>
-      </div>
-
-      {/* History */}
       <div className="bg-white rounded-2xl shadow overflow-hidden">
         <div className="px-5 py-4 border-b border-gray-100 flex items-center gap-2">
           <Clock className="w-4 h-4 text-gray-400" />
           <h3 className="font-semibold text-gray-900 text-sm">Attendance History</h3>
+          {!historyError && history.length > 0 && (
+            <span className="ml-auto flex items-center gap-1.5 text-xs text-gray-400">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+              {thisMonth} completed
+            </span>
+          )}
         </div>
         <HistoryList
           records={history}
+          timeZone={timeZone}
           isError={historyError}
-          onRetry={() => refetchHistory()}
+          onRetry={() => void refetchHistory()}
         />
       </div>
-
-      {showScanner && (
-        <QrScannerModal
-          onClose={() => setShowScanner(false)}
-          onScanned={handleQrScanned}
-        />
-      )}
     </div>
   );
 }

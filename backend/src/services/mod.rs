@@ -36,6 +36,7 @@ pub mod statutory_rules;
 pub mod statutory_tables;
 pub mod team_service;
 pub mod totp_service;
+pub mod upload_service;
 pub mod user_group_service;
 pub mod user_service;
 pub mod work_schedule_service;

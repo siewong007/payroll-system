@@ -25,6 +25,7 @@ pub mod setting;
 pub mod statutory;
 pub mod team;
 pub mod totp;
+pub mod upload;
 pub mod user;
 pub mod user_company;
 pub mod user_group;
