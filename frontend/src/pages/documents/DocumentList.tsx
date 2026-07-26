@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Search, Plus, FileText, AlertTriangle, Trash2, X, Lock, User } from 'lucide-react';
 import { getDocuments, getDocumentCategories, createDocument, deleteDocument } from '@/api/documents';
 import { getEmployees } from '@/api/employees';
+import { AttachmentLink } from '@/components/ui/AttachmentPreview';
 import { formatDate } from '@/lib/utils';
 
 
@@ -240,14 +241,12 @@ function EmployeeDocumentsModal({
                       {doc.category_id ? categoryMap.get(doc.category_id) ?? '-' : '-'}
                     </td>
                     <td className="px-6 py-3">
-                      <a
-                        href={doc.file_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
+                      <AttachmentLink
+                        url={doc.file_url}
                         className="text-sm text-gray-900 hover:text-black hover:underline"
                       >
                         {doc.file_name}
-                      </a>
+                      </AttachmentLink>
                       {doc.file_size && (
                         <div className="text-xs text-gray-400">{(doc.file_size / 1024).toFixed(0)} KB</div>
                       )}

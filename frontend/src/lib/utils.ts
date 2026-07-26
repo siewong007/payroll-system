@@ -59,6 +59,17 @@ export function safeRedirectPath(raw: string | null | undefined): string | null 
   return raw;
 }
 
+/**
+ * Whether an attachment URL names an image, and can therefore be previewed
+ * inline rather than offered as a download.
+ *
+ * Matches on the stored URL, which for an API-served upload still ends in the
+ * uploader's original extension even though the file is fetched as a blob.
+ */
+export function isImageUrl(url: string): boolean {
+  return /\.(jpg|jpeg|png|gif|webp|bmp|svg)(\?|$)/i.test(url);
+}
+
 /** Extract error message from Axios-style or standard Error objects */
 export function getErrorMessage(err: unknown, fallback = 'Action failed'): string {
   if (typeof err === 'object' && err !== null && 'response' in err) {

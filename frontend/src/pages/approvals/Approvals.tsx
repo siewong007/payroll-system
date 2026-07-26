@@ -4,7 +4,6 @@ import {
   CheckCircle,
   Clock,
   ExternalLink,
-  FileText,
   Filter,
   Image,
   Paperclip,
@@ -43,11 +42,12 @@ import {
 } from '@/api/approvals';
 import { getEmployees } from '@/api/employees';
 import { getLeaveTypes, uploadFile } from '@/api/portal';
+import { AttachmentLink, AttachmentPreview } from '@/components/ui/AttachmentPreview';
 import { Modal } from '@/components/ui/Modal';
 import { DataTable, type Column } from '@/components/ui/DataTable';
 import { TimeSelector } from '@/components/ui/TimeSelector';
 import { useAuth } from '@/context/AuthContext';
-import { formatDate, getErrorMessage, todayLocalDate } from '@/lib/utils';
+import { formatDate, getErrorMessage, isImageUrl, todayLocalDate } from '@/lib/utils';
 import type {
   AdminCreateClaimRequest,
   AdminCreateLeaveRequest,
@@ -74,71 +74,6 @@ const statusBadge = (status: string) => {
   };
   return <span className={`badge ${cls[status] || 'badge-draft'}`}>{status}</span>;
 };
-
-function isImageUrl(url: string) {
-  return /\.(jpg|jpeg|png|gif|webp|bmp|svg)(\?|$)/i.test(url);
-}
-
-function AttachmentPreview({ url, name }: { url: string; name: string | null }) {
-  const displayName = name || 'Attachment';
-
-  if (url.startsWith('blob:')) {
-    return (
-      <div className="mt-1 inline-flex items-center gap-2 px-4 py-3 bg-red-50 border border-red-200 rounded-lg">
-        <div className="w-10 h-10 rounded-lg bg-red-100 flex items-center justify-center shrink-0">
-          <FileText className="w-5 h-5 text-red-400" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium text-red-700 truncate">{displayName}</div>
-          <div className="text-xs text-red-400">File unavailable — was not uploaded properly</div>
-        </div>
-      </div>
-    );
-  }
-
-  const isImage = isImageUrl(url);
-
-  return (
-    <div className="mt-1">
-      {isImage ? (
-        <div className="space-y-2">
-          <a href={url} target="_blank" rel="noopener noreferrer" className="block">
-            <img
-              src={url}
-              alt={displayName}
-              className="max-w-full max-h-64 rounded-lg border border-gray-200 object-contain bg-gray-50"
-            />
-          </a>
-          <a
-            href={url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 text-sm text-gray-900 hover:text-black"
-          >
-            <ExternalLink className="w-3.5 h-3.5" />
-            Open full size
-          </a>
-        </div>
-      ) : (
-        <a
-          href={url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-2 px-4 py-3 bg-gray-50 border border-gray-200 rounded-lg hover:bg-gray-100 hover:border-gray-300 transition-colors group"
-        >
-          <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center shrink-0">
-            <FileText className="w-5 h-5 text-gray-700" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="text-sm font-medium text-gray-700 group-hover:text-gray-900 truncate">{displayName}</div>
-            <div className="text-xs text-gray-400">Click to open</div>
-          </div>
-          <ExternalLink className="w-4 h-4 text-gray-400 group-hover:text-gray-700 shrink-0" />
-        </a>
-      )}
-    </div>
-  );
-}
 
 function SummaryField({ label, value, children }: { label: string; value?: string; children?: React.ReactNode }) {
   return (
@@ -484,16 +419,14 @@ export function Approvals() {
       header: 'Receipt',
       render: (claim) =>
         claim.receipt_url ? (
-          <a
-            href={claim.receipt_url}
-            target="_blank"
-            rel="noopener noreferrer"
+          <AttachmentLink
+            url={claim.receipt_url}
             className="inline-flex items-center gap-1 text-gray-900 hover:text-black text-sm"
           >
             {isImageUrl(claim.receipt_url) ? <Image className="w-3 h-3" /> : <Paperclip className="w-3 h-3" />}
             <span className="truncate max-w-[80px]">{claim.receipt_file_name || 'Receipt'}</span>
             <ExternalLink className="w-3 h-3" />
-          </a>
+          </AttachmentLink>
         ) : (
           <span className="text-gray-300">\u2014</span>
         ),
