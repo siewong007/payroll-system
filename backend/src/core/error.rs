@@ -23,6 +23,12 @@ pub enum AppError {
     #[error("Internal error: {0}")]
     Internal(String),
 
+    /// An upstream dependency (e.g. Google's OAuth2 endpoints) was unreachable or
+    /// failed. Distinct from `Internal` so a third party's outage is not reported
+    /// as a bug in this service — and so the message reaches the caller.
+    #[error("Upstream error: {0}")]
+    BadGateway(String),
+
     #[error("Database error: {0}")]
     Database(#[from] sqlx::Error),
 
@@ -30,15 +36,23 @@ pub enum AppError {
     Validation(String),
 }
 
-impl IntoResponse for AppError {
-    fn into_response(self) -> Response {
-        let (status, message) = match &self {
+impl AppError {
+    /// The HTTP status and the message that is safe to show the caller.
+    ///
+    /// Logging of the underlying detail happens here, and nothing that names
+    /// internals (a Postgres message, a client secret rejection) is ever part of
+    /// the returned string. Callers that render an error themselves — such as the
+    /// OAuth2 redirect handler, which puts this text in a URL fragment — can rely
+    /// on that and cannot leak detail by accident.
+    pub fn client_response(&self) -> (StatusCode, String) {
+        match self {
             AppError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
             AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
             AppError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg.clone()),
             AppError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg.clone()),
             AppError::Conflict(msg) => (StatusCode::CONFLICT, msg.clone()),
             AppError::Validation(msg) => (StatusCode::UNPROCESSABLE_ENTITY, msg.clone()),
+            AppError::BadGateway(msg) => (StatusCode::BAD_GATEWAY, msg.clone()),
             AppError::Internal(msg) => {
                 tracing::error!("Internal error: {}", msg);
                 (
@@ -53,7 +67,13 @@ impl IntoResponse for AppError {
                     "Internal server error".to_string(),
                 )
             }
-        };
+        }
+    }
+}
+
+impl IntoResponse for AppError {
+    fn into_response(self) -> Response {
+        let (status, message) = self.client_response();
 
         let body = json!({
             "error": message,

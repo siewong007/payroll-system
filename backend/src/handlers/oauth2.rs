@@ -2,7 +2,7 @@ use axum::{
     Json,
     extract::{Path, Query, State},
     http::HeaderMap,
-    response::{IntoResponse, Redirect},
+    response::{IntoResponse, Redirect, Response},
 };
 use uuid::Uuid;
 
@@ -27,12 +27,63 @@ pub async fn list_providers(
     Ok(Json(providers))
 }
 
+/// Send the browser back into the SPA with a message for its error card.
+///
+/// The message travels in the fragment, not the query string, so it never
+/// reaches a server log or `Referer` header on the way.
+fn oauth2_error_redirect(frontend_url: &str, message: &str) -> Response {
+    Redirect::temporary(&format!(
+        "{}/oauth2/callback#error={}",
+        frontend_url,
+        urlencoding::encode(message),
+    ))
+    .into_response()
+}
+
 /// Google OAuth2 callback — validates state/PKCE, exchanges code, finds/links user, redirects.
+///
+/// This endpoint is loaded by the user's browser, not by our own client, so it
+/// always answers with a redirect: returning an `AppError` here rendered a raw
+/// JSON body in the address bar instead of the login screen.
 pub async fn google_callback(
     State(state): State<AppState>,
     headers: HeaderMap,
     Query(query): Query<OAuth2CallbackQuery>,
-) -> Result<impl IntoResponse, AppError> {
+) -> Response {
+    let frontend_url = state.config.frontend_url.clone();
+
+    match google_callback_inner(state, headers, query).await {
+        Ok(response) => response,
+        Err(err) => {
+            // `client_response` logs the detail of Internal/Database errors and
+            // hands back only what is safe to show.
+            let (_, message) = err.client_response();
+            oauth2_error_redirect(&frontend_url, &message)
+        }
+    }
+}
+
+async fn google_callback_inner(
+    state: AppState,
+    headers: HeaderMap,
+    query: OAuth2CallbackQuery,
+) -> AppResult<Response> {
+    // Google reports a declined consent screen by redirecting back with `error`
+    // and no code; say so plainly rather than complaining about a missing code.
+    if let Some(provider_error) = query.error.as_deref() {
+        return Err(match provider_error {
+            "access_denied" => {
+                AppError::BadRequest("Google sign-in was cancelled. Please try again.".into())
+            }
+            other => {
+                tracing::warn!("Google returned an authorization error: {}", other);
+                AppError::BadRequest(
+                    "Google could not complete the sign-in. Please try again.".into(),
+                )
+            }
+        });
+    }
+
     // Validate state parameter (CSRF protection)
     let oauth_state = query
         .state
@@ -166,7 +217,7 @@ pub async fn google_callback(
         ),
     };
 
-    Ok((headers, Redirect::temporary(&redirect_url)))
+    Ok((headers, Redirect::temporary(&redirect_url)).into_response())
 }
 
 /// Initiate Google OAuth2 flow — generates PKCE + state, returns the authorization URL.

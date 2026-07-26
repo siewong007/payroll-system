@@ -6,6 +6,33 @@ import { TwoFactorPrompt } from '@/components/TwoFactorPrompt';
 import { BrandLogo } from '@/components/ui/BrandLogo';
 import type { User } from '@/types';
 
+/**
+ * The credentials arrive in the URL fragment and must be read exactly once per
+ * page load: reading also clears the hash, so a second read sees nothing.
+ *
+ * This deliberately lives outside the component. StrictMode remounts it in
+ * development, and a remount resets hooks — so a `useRef`/`useState` guard still
+ * ran the effect a second time, found an empty hash, and overwrote the real
+ * outcome with "Missing authentication data". That masked both the server's
+ * error message and the 2FA prompt.
+ */
+let callbackParams: URLSearchParams | null = null;
+
+function takeCallbackParams(): URLSearchParams {
+  const fromHash = new URLSearchParams(window.location.hash.substring(1));
+
+  // Only a hash that actually carried something replaces the memo. Caching an
+  // empty read would poison every later mount in the same JS context — and the
+  // remount is precisely when the hash is already gone.
+  if (Array.from(fromHash.keys()).length > 0) {
+    callbackParams = fromHash;
+    // The fragment is single-use and shouldn't linger in the URL or history.
+    window.history.replaceState(null, '', window.location.pathname);
+  }
+
+  return callbackParams ?? fromHash;
+}
+
 export function OAuth2Callback() {
   const navigate = useNavigate();
   const { setSession } = useAuth();
@@ -13,16 +40,19 @@ export function OAuth2Callback() {
   const [mfaToken, setMfaToken] = useState<string | null>(null);
 
   useEffect(() => {
-    const hash = window.location.hash.substring(1);
-    const params = new URLSearchParams(hash);
+    const params = takeCallbackParams();
 
     const token = params.get('token');
     const userStr = params.get('user');
     const pendingMfaToken = params.get('mfa_token');
+    // The backend redirects here with a human-readable reason when the exchange
+    // fails, rather than leaving the browser on a raw JSON error body.
+    const serverError = params.get('error');
 
-    // Clear the hash fragment from browser history either way — it's
-    // single-use and shouldn't linger in the URL.
-    window.history.replaceState(null, '', window.location.pathname);
+    if (serverError) {
+      setError(serverError);
+      return;
+    }
 
     if (pendingMfaToken) {
       setMfaToken(pendingMfaToken);
