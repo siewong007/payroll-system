@@ -23,11 +23,23 @@ resource "aws_iam_role" "cicd" {
           StringEquals = {
             "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
           }
-          # Pin to THIS repository's main branch. Previously `repo:*` allowed any
-          # GitHub repository on github.com to assume this deploy role and thereby
+          # Pin to THIS repository. Previously `repo:*` allowed any GitHub
+          # repository on github.com to assume this deploy role and thereby
           # write to the frontend S3 bucket and invalidate CloudFront.
+          #
+          # Both subjects are required because GitHub rewrites the OIDC `sub`
+          # claim when a job targets an environment: a job with
+          # `environment: production` presents `…:environment:production`, NOT
+          # `…:ref:refs/heads/main`. deploy.yml's frontend job gained that
+          # binding when frontend deploys were gated on CI, so listing only the
+          # ref form denied it with a trust-policy error at the "Configure AWS
+          # credentials" step. Both entries stay pinned to this repository, so
+          # the fix does not widen who may assume the role.
           StringLike = {
-            "token.actions.githubusercontent.com:sub" = "repo:${var.github_repository}:ref:refs/heads/main"
+            "token.actions.githubusercontent.com:sub" = [
+              "repo:${var.github_repository}:ref:refs/heads/main",
+              "repo:${var.github_repository}:environment:production",
+            ]
           }
         }
       }
