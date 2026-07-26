@@ -1,7 +1,8 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, Eye, Trash2 } from 'lucide-react';
-import { deletePayrollRun, getPayrollRuns } from '@/api/payroll';
+import { deletePayrollRun, getPayrollGroups, getPayrollRuns } from '@/api/payroll';
 import { formatMYR, getErrorMessage } from '@/lib/utils';
 import { DataTable, type Column } from '@/components/ui/DataTable';
 import { useAuth } from '@/context/AuthContext';
@@ -35,11 +36,23 @@ const MONTHS = [
 
 const canDeletePayrollRun = (run: PayrollRun) => ['draft', 'processed', 'cancelled'].includes(run.status);
 
-const columns: Column<PayrollRun>[] = [
+const buildColumns = (groupName: (id: string) => string): Column<PayrollRun>[] => [
   {
     key: 'period',
     header: 'Period',
     render: (run) => <span className="font-medium">{MONTHS[run.period_month]} {run.period_year}</span>,
+  },
+  {
+    // Without this the period is the only identifier, so two payroll groups
+    // processed for the same month render as indistinguishable rows.
+    key: 'group',
+    header: 'Payroll Group',
+    render: (run) => (
+      <div>
+        <div className="text-sm">{groupName(run.payroll_group_id)}</div>
+        {run.version > 1 && <div className="text-xs text-gray-400">version {run.version}</div>}
+      </div>
+    ),
   },
   {
     key: 'employees',
@@ -81,10 +94,31 @@ export function PayrollList() {
   const queryClient = useQueryClient();
   const { user } = useAuth();
   const canPrepare = canPreparePayroll(user);
+  const [statusFilter, setStatusFilter] = useState('');
+  const [yearFilter, setYearFilter] = useState('');
+  const [groupFilter, setGroupFilter] = useState('');
+
   const { data: runs, isLoading } = useQuery({
     queryKey: ['payrollRuns'],
     queryFn: getPayrollRuns,
   });
+
+  const { data: groups } = useQuery({
+    queryKey: ['payrollGroups'],
+    queryFn: getPayrollGroups,
+  });
+
+  const groupName = (id: string) =>
+    groups?.find((group) => group.id === id)?.name ?? 'Unknown group';
+  const columns = buildColumns(groupName);
+
+  const years = [...new Set((runs ?? []).map((run) => run.period_year))].sort((a, b) => b - a);
+  const visibleRuns = (runs ?? []).filter(
+    (run) =>
+      (!statusFilter || run.status === statusFilter) &&
+      (!yearFilter || run.period_year === Number(yearFilter)) &&
+      (!groupFilter || run.payroll_group_id === groupFilter),
+  );
 
   const deleteMutation = useMutation({
     mutationFn: deletePayrollRun,
@@ -115,17 +149,60 @@ export function PayrollList() {
         )}
       </div>
 
+      <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <select
+          value={groupFilter}
+          onChange={(e) => setGroupFilter(e.target.value)}
+          className="w-full rounded-lg border border-gray-200 p-2 text-sm outline-none focus:ring-1 focus:ring-black"
+          aria-label="Filter by payroll group"
+        >
+          <option value="">All payroll groups</option>
+          {groups?.map((group) => (
+            <option key={group.id} value={group.id}>{group.name}</option>
+          ))}
+        </select>
+        <select
+          value={yearFilter}
+          onChange={(e) => setYearFilter(e.target.value)}
+          className="w-full rounded-lg border border-gray-200 p-2 text-sm outline-none focus:ring-1 focus:ring-black"
+          aria-label="Filter by year"
+        >
+          <option value="">All years</option>
+          {years.map((year) => (
+            <option key={year} value={year}>{year}</option>
+          ))}
+        </select>
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+          className="w-full rounded-lg border border-gray-200 p-2 text-sm outline-none focus:ring-1 focus:ring-black"
+          aria-label="Filter by status"
+        >
+          <option value="">All statuses</option>
+          {Object.entries(STATUS_LABELS).map(([value, label]) => (
+            <option key={value} value={value}>{label}</option>
+          ))}
+        </select>
+      </div>
+
       <DataTable
         columns={columns}
-        data={runs ?? []}
+        data={visibleRuns}
         perPage={10}
         isLoading={isLoading}
-        emptyMessage='No payroll runs yet. Click "Process Payroll" to start.'
+        emptyMessage={
+          runs?.length
+            ? 'No payroll runs match these filters.'
+            : 'No payroll runs yet. Click "Process Payroll" to start.'
+        }
         summaryTitle={(run) => `${MONTHS[run.period_month]} ${run.period_year} Payroll`}
         renderSummary={(run) => (
           <div className="space-y-5">
             <div className="flex items-center justify-between">
-              <span className="text-lg font-semibold">{MONTHS[run.period_month]} {run.period_year}</span>
+              <div>
+                <span className="text-lg font-semibold">{MONTHS[run.period_month]} {run.period_year}</span>
+                <p className="text-xs text-gray-400">{groupName(run.payroll_group_id)}</p>
+              </div>
               <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-medium ${STATUS_STYLES[run.status] || ''}`}>
                 {STATUS_LABELS[run.status] ?? run.status}
               </span>

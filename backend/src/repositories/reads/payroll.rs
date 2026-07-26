@@ -11,7 +11,8 @@ use uuid::Uuid;
 use crate::core::error::AppResult;
 use crate::models::payroll::{
     EmployeeBonusCommission, EmployeeCategoryTotal, EmployeeHours, EmployeeOtTypeHours,
-    EmployeeTotal, PayrollEntryWithEmployee, PayrollItemSummary, PayrollYtd,
+    EmployeeTotal, OrphanedEntryEmployee, PayrollEntryWithEmployee, PayrollItemSummary, PayrollYtd,
+    PayslipSourceLine,
 };
 
 /// Recurring allowances/deductions per employee, summed by category.
@@ -29,6 +30,63 @@ pub async fn recurring_allowance_totals(
            GROUP BY employee_id, category"#,
         employee_ids,
         effective_date,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(rows)
+}
+
+/// Recurring allowances/deductions per employee, one row per configured line.
+///
+/// `recurring_allowance_totals` gives the engine the figure it needs for gross;
+/// this gives it the lines it needs for the payslip breakdown, which used to be
+/// discarded — `payroll_item_details` was never written, so a payslip could show
+/// `total_allowances` without saying what the allowances were. Both reads apply
+/// the same filters, so the lines always sum to the total.
+pub async fn recurring_allowance_lines(
+    executor: impl Executor<'_, Database = Postgres>,
+    employee_ids: &[Uuid],
+    effective_date: NaiveDate,
+) -> AppResult<Vec<PayslipSourceLine>> {
+    let rows = sqlx::query_as!(
+        PayslipSourceLine,
+        r#"SELECT employee_id, category, name AS "description!", amount,
+                  COALESCE(is_taxable, TRUE) AS "is_taxable!"
+           FROM employee_allowances
+           WHERE employee_id = ANY($1) AND is_active = TRUE AND is_recurring = TRUE
+             AND effective_from <= $2 AND (effective_to IS NULL OR effective_to >= $2)
+           ORDER BY employee_id, category, name"#,
+        employee_ids,
+        effective_date,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(rows)
+}
+
+/// Staged payroll entries per employee, one row per entry.
+///
+/// Filters match `entry_category_totals` exactly (including the `overtime` /
+/// `claim_reimbursement` exclusion), so these lines reconcile to the totals the
+/// engine puts into gross.
+pub async fn entry_lines(
+    executor: impl Executor<'_, Database = Postgres>,
+    employee_ids: &[Uuid],
+    year: i32,
+    month: i32,
+) -> AppResult<Vec<PayslipSourceLine>> {
+    let rows = sqlx::query_as!(
+        PayslipSourceLine,
+        r#"SELECT employee_id, category, description AS "description!", amount,
+                  COALESCE(is_taxable, TRUE) AS "is_taxable!"
+           FROM payroll_entries
+           WHERE employee_id = ANY($1) AND period_year = $2 AND period_month = $3
+             AND is_processed = FALSE
+             AND item_type NOT IN ('overtime', 'claim_reimbursement')
+           ORDER BY employee_id, category, created_at"#,
+        employee_ids,
+        year,
+        month,
     )
     .fetch_all(executor)
     .await?;
@@ -202,6 +260,57 @@ pub async fn approved_claim_totals(
            GROUP BY employee_id"#,
         employee_ids,
         company_id,
+        period_start,
+        period_end,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(rows)
+}
+
+/// Employees holding unprocessed entries for the period that this run will not pay.
+///
+/// A staged allowance or deduction is only picked up if its employee is selected
+/// by `employees::list_for_payroll_run`, so an entry staged against someone in a
+/// different payroll group — or someone resigned before the period, or with no
+/// group at all — is silently left behind. The predicate below is the negation of
+/// that selection, so the preview can say so before the run is committed.
+pub async fn staged_entries_outside_run(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    payroll_group_id: Uuid,
+    year: i32,
+    month: i32,
+    period_start: NaiveDate,
+    period_end: NaiveDate,
+) -> AppResult<Vec<OrphanedEntryEmployee>> {
+    let rows = sqlx::query_as!(
+        OrphanedEntryEmployee,
+        r#"SELECT e.id AS "employee_id!", e.employee_number AS "employee_number!",
+                  e.full_name AS "employee_name!",
+                  COUNT(*)::BIGINT AS "entry_count!",
+                  COALESCE(SUM(pe.amount), 0)::BIGINT AS "total_amount!"
+           FROM payroll_entries pe
+           JOIN employees e ON e.id = pe.employee_id
+           WHERE pe.company_id = $1
+             AND pe.period_year = $2 AND pe.period_month = $3
+             AND pe.is_processed = FALSE
+             AND pe.item_type NOT IN ('overtime', 'claim_reimbursement')
+             -- COALESCE, not a bare NOT: an employee with no payroll group
+             -- compares NULL here, and a NULL would drop them from the warning
+             -- when they are exactly the case worth warning about.
+             AND NOT COALESCE(
+                   e.payroll_group_id = $4
+                   AND e.is_active = TRUE AND e.deleted_at IS NULL
+                   AND e.date_joined <= $6
+                   AND (e.date_resigned IS NULL OR e.date_resigned >= $5)
+                 , FALSE)
+           GROUP BY e.id, e.employee_number, e.full_name
+           ORDER BY e.employee_number"#,
+        company_id,
+        year,
+        month,
+        payroll_group_id,
         period_start,
         period_end,
     )

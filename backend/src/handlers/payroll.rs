@@ -10,11 +10,27 @@ use crate::core::auth::{AuthUser, Permission};
 use crate::core::error::{AppError, AppResult};
 use crate::models::payroll::{
     CreatePayrollEntryRequest, PayrollEntry, PayrollEntryQuery, PayrollEntryWithEmployee,
-    PayrollGroup, PayrollItem, PayrollRun, PayrollSummary, ProcessPayrollRequest,
-    ReturnPayrollRunRequest, UpdatePayrollEntryRequest, UpdatePayrollPcbRequest,
+    PayrollGroup, PayrollItem, PayrollPreview, PayrollRun, PayrollSummary, PayslipBreakdown,
+    ProcessPayrollRequest, ReturnPayrollRunRequest, UpdatePayrollEntryRequest,
+    UpdatePayrollPcbRequest,
 };
 use crate::services::audit_service::{AuditLogWithUser, AuditRequestMeta};
 use crate::services::{payroll_engine, payroll_entry_service, payroll_service};
+
+/// Pay date for a request that does not name one: the 28th, falling back to the
+/// 1st only if that day does not exist in the month.
+///
+/// Shared by `process` and `preview` so the preview is dated exactly as the run
+/// it is previewing.
+fn default_pay_date(req: &ProcessPayrollRequest) -> chrono::NaiveDate {
+    req.pay_date.unwrap_or_else(|| {
+        chrono::NaiveDate::from_ymd_opt(req.period_year, req.period_month as u32, 28)
+            .unwrap_or_else(|| {
+                chrono::NaiveDate::from_ymd_opt(req.period_year, req.period_month as u32, 1)
+                    .unwrap()
+            })
+    })
+}
 
 pub async fn process(
     State(state): State<AppState>,
@@ -28,14 +44,7 @@ pub async fn process(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
     let audit_meta = AuditRequestMeta::from_headers(&headers);
-
-    let pay_date = req.pay_date.unwrap_or_else(|| {
-        chrono::NaiveDate::from_ymd_opt(req.period_year, req.period_month as u32, 28)
-            .unwrap_or_else(|| {
-                chrono::NaiveDate::from_ymd_opt(req.period_year, req.period_month as u32, 1)
-                    .unwrap()
-            })
-    });
+    let pay_date = default_pay_date(&req);
 
     let run = payroll_engine::process_payroll(
         &state.pool,
@@ -51,6 +60,45 @@ pub async fn process(
     .await?;
 
     Ok(Json(run))
+}
+
+/// Dry-run the same calculation `process` would commit.
+///
+/// Gated on `ManagePayrollDraft` like `process` itself: the response carries
+/// every employee's projected net pay, which is payroll data.
+pub async fn preview(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Json(req): Json<ProcessPayrollRequest>,
+) -> AppResult<Json<PayrollPreview>> {
+    auth.require_permission(Permission::ManagePayrollDraft)?;
+    let company_id = auth.company_id()?;
+
+    let preview = payroll_engine::preview_payroll(
+        &state.pool,
+        company_id,
+        req.payroll_group_id,
+        req.period_year,
+        req.period_month,
+        default_pay_date(&req),
+    )
+    .await?;
+
+    Ok(Json(preview))
+}
+
+pub async fn get_payslip_breakdown(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path((run_id, employee_id)): Path<(Uuid, Uuid)>,
+) -> AppResult<Json<PayslipBreakdown>> {
+    auth.require_permission(Permission::ViewPayroll)?;
+    let company_id = auth.company_id()?;
+
+    Ok(Json(
+        payroll_service::get_payslip_breakdown(&state.pool, company_id, run_id, employee_id)
+            .await?,
+    ))
 }
 
 pub async fn list_runs(

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE payroll_runs SET calculation_snapshot = $2 WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "cfe23aaf840b66e6dcf83b51a57e6659fc2e5401168d06f67e794e6a7efd5fb5"
+}

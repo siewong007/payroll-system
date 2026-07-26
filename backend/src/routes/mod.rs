@@ -209,6 +209,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/payroll-groups", get(payroll::list_groups))
         // Payroll Runs
         .route("/payroll/run", post(payroll::process))
+        .route("/payroll/preview", post(payroll::preview))
         .route(
             "/payroll/entries",
             get(payroll::list_entries).post(payroll::create_entry),
@@ -230,6 +231,10 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/payroll/runs/{run_id}/items/{employee_id}/pcb",
             put(payroll::update_item_pcb),
+        )
+        .route(
+            "/payroll/runs/{run_id}/items/{employee_id}/breakdown",
+            get(payroll::get_payslip_breakdown),
         )
         .route(
             "/payroll/runs/{id}/submit-approval",

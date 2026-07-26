@@ -258,9 +258,107 @@ export interface PayrollItemSummary {
   pcb_amount: number;
 }
 
+/// Provenance recorded when a run was processed. Absent on runs processed
+/// before the backend began recording it.
+export interface PayrollCalculationSnapshot {
+  effective_date: string;
+  statutory_rule_sets: {
+    rule_code: string;
+    rule_set_id: string;
+    dataset_key: string;
+    source_version: string | null;
+    source_sha256: string | null;
+    effective_from: string;
+    effective_to: string | null;
+  }[];
+  overtime_settings: {
+    effective_hours_per_day: string;
+    working_days_per_month: string;
+    multiplier_normal: string;
+    multiplier_rest_day: string;
+    multiplier_public_holiday: string;
+  };
+}
+
 export interface PayrollSummary {
   payroll_run: PayrollRun;
   items: PayrollItemSummary[];
+  calculation_snapshot: PayrollCalculationSnapshot | null;
+}
+
+export interface PayrollItemDetail {
+  id: string;
+  payroll_item_id: string;
+  category: 'earning' | 'deduction';
+  item_type: string;
+  description: string;
+  amount: number;
+  is_taxable: boolean | null;
+  is_statutory: boolean | null;
+}
+
+export interface PayslipBreakdown {
+  employee_id: string;
+  employee_name: string;
+  employee_number: string;
+  item: Record<string, unknown> & { gross_salary: number; total_deductions: number; net_salary: number };
+  lines: PayrollItemDetail[];
+}
+
+export interface PayrollDiagnostic {
+  code: string;
+  message: string;
+  employee_id: string | null;
+  employee_number: string | null;
+  employee_name: string | null;
+}
+
+export interface PayrollPreviewEmployee {
+  employee_id: string;
+  employee_name: string;
+  employee_number: string;
+  basic_salary: number;
+  total_allowances: number;
+  total_overtime: number;
+  total_claims: number;
+  gross_salary: number;
+  epf_employee: number;
+  socso_employee: number;
+  eis_employee: number;
+  pcb_amount: number;
+  total_deductions: number;
+  net_salary: number;
+  employer_cost: number;
+  working_days: number;
+  days_worked: number;
+  is_prorated: boolean;
+  error: string | null;
+}
+
+export interface PayrollPreview {
+  payroll_group_id: string;
+  period_year: number;
+  period_month: number;
+  period_start: string;
+  period_end: string;
+  pay_date: string;
+  employee_count: number;
+  payable_count: number;
+  total_gross: number;
+  total_net: number;
+  total_employer_cost: number;
+  total_epf_employee: number;
+  total_epf_employer: number;
+  total_socso_employee: number;
+  total_socso_employer: number;
+  total_eis_employee: number;
+  total_eis_employer: number;
+  total_pcb: number;
+  total_zakat: number;
+  can_process: boolean;
+  blocking: PayrollDiagnostic[];
+  warnings: PayrollDiagnostic[];
+  employees: PayrollPreviewEmployee[];
 }
 
 export interface ProcessPayrollRequest {

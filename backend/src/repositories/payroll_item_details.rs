@@ -4,6 +4,66 @@ use sqlx::{Executor, Postgres};
 use uuid::Uuid;
 
 use crate::core::error::AppResult;
+use crate::models::payroll::{PayrollItemDetail, PayslipLine};
+
+/// Insert a payslip's breakdown lines in one statement.
+///
+/// One round trip regardless of line count, because a run writes these for every
+/// employee inside the payroll transaction — a per-line insert would reintroduce
+/// exactly the per-employee chatter the statutory snapshot removed.
+pub async fn insert_lines(
+    executor: impl Executor<'_, Database = Postgres>,
+    payroll_item_id: Uuid,
+    lines: &[PayslipLine],
+) -> AppResult<()> {
+    if lines.is_empty() {
+        return Ok(());
+    }
+
+    let categories: Vec<String> = lines.iter().map(|l| l.category.clone()).collect();
+    let item_types: Vec<String> = lines.iter().map(|l| l.item_type.clone()).collect();
+    let descriptions: Vec<String> = lines.iter().map(|l| l.description.clone()).collect();
+    let amounts: Vec<i64> = lines.iter().map(|l| l.amount).collect();
+    let taxable: Vec<bool> = lines.iter().map(|l| l.is_taxable).collect();
+    let statutory: Vec<bool> = lines.iter().map(|l| l.is_statutory).collect();
+
+    sqlx::query!(
+        r#"INSERT INTO payroll_item_details
+            (payroll_item_id, category, item_type, description, amount, is_taxable, is_statutory)
+        SELECT $1, category, item_type, description, amount, is_taxable, is_statutory
+        FROM UNNEST($2::varchar[], $3::varchar[], $4::varchar[], $5::bigint[], $6::bool[], $7::bool[])
+            AS t(category, item_type, description, amount, is_taxable, is_statutory)"#,
+        payroll_item_id,
+        &categories,
+        &item_types,
+        &descriptions,
+        &amounts,
+        &taxable,
+        &statutory,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
+/// Breakdown lines for one payslip, earnings before deductions.
+pub async fn list_for_item(
+    executor: impl Executor<'_, Database = Postgres>,
+    payroll_item_id: Uuid,
+) -> AppResult<Vec<PayrollItemDetail>> {
+    let rows = sqlx::query_as!(
+        PayrollItemDetail,
+        r#"SELECT id, payroll_item_id, category, item_type, description, amount,
+                  is_taxable, is_statutory, created_at
+        FROM payroll_item_details
+        WHERE payroll_item_id = $1
+        ORDER BY category DESC, is_statutory, id"#,
+        payroll_item_id,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(rows)
+}
 
 /// Delete all detail rows belonging to a run's payslip items.
 pub async fn delete_for_run(

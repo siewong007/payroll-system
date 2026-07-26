@@ -102,6 +102,22 @@ employee. Money is stored as integer sen in the
 database and represented with exact decimal types where fractional arithmetic
 is required; payroll code must never use binary floating point.
 
+Calculation is separated from persistence. The engine reads every applicable
+statutory band, bracket, and relief once per run into an in-memory snapshot, and
+the four calculators are pure functions over it, so resolving an employee costs
+no database round trips. Every employee is computed before any payslip is
+written: a run that cannot calculate some of its employees reports all of them
+together and commits nothing. The same calculation is exposed as a preview that
+writes nothing, so an operator reviews the projected payslips and any problems
+before committing.
+
+Each committed payslip stores the lines that explain it — the named allowances,
+the overtime hours and rate multipliers, and each statutory deduction — and each
+run records the verified rule sets and overtime configuration it was calculated
+from. Both inputs are mutable and effective-dated, so without that record a
+later rule import or settings change would leave historical figures
+unreproducible.
+
 The database enforces at most one non-cancelled run for a company, payroll
 group, year, and month. This closes the race between the service's existence
 check and concurrent inserts. A processed run permits controlled PCB edits;

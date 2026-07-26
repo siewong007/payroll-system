@@ -5,8 +5,10 @@ import type {
   PayrollEntry,
   PayrollEntryWithEmployee,
   PayrollGroup,
+  PayrollPreview,
   PayrollRun,
   PayrollSummary,
+  PayslipBreakdown,
   ProcessPayrollRequest,
   UpdatePayrollEntryRequest,
   UpdatePayrollPcbRequest,
@@ -38,6 +40,20 @@ export async function deletePayrollRun(id: string): Promise<void> {
 
 export async function processPayroll(req: ProcessPayrollRequest): Promise<PayrollRun> {
   const { data } = await api.post('/payroll/run', req);
+  return data;
+}
+
+/// Dry-run the same calculation `processPayroll` would commit. Writes nothing.
+export async function previewPayroll(req: ProcessPayrollRequest): Promise<PayrollPreview> {
+  const { data } = await api.post('/payroll/preview', req);
+  return data;
+}
+
+export async function getPayslipBreakdown(
+  runId: string,
+  employeeId: string,
+): Promise<PayslipBreakdown> {
+  const { data } = await api.get(`/payroll/runs/${runId}/items/${employeeId}/breakdown`);
   return data;
 }
 

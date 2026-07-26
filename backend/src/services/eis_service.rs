@@ -3,8 +3,8 @@ use sqlx::PgPool;
 
 use crate::core::error::{AppError, AppResult};
 use crate::models::statutory::EisContribution;
-use crate::repositories::eis_rates;
 use crate::services::statutory_rules;
+use crate::services::statutory_tables::StatutoryTables;
 
 /// Calculate EIS contribution.
 ///
@@ -22,15 +22,16 @@ pub async fn calculate_eis(
     effective_date: NaiveDate,
 ) -> AppResult<EisContribution> {
     statutory_rules::require_verified(pool, statutory_rules::EIS, effective_date).await?;
-    calculate_eis_after_preflight(pool, wage, age, is_foreigner, effective_date).await
+    let tables = StatutoryTables::load(pool, effective_date).await?;
+    calculate_eis_with(&tables, wage, age, is_foreigner)
 }
 
-pub(crate) async fn calculate_eis_after_preflight(
-    pool: &PgPool,
+/// Resolve EIS from an already-loaded schedule. See `epf_service::calculate_epf_with`.
+pub(crate) fn calculate_eis_with(
+    tables: &StatutoryTables,
     wage: i64,
     age: i32,
     is_foreigner: bool,
-    effective_date: NaiveDate,
 ) -> AppResult<EisContribution> {
     if is_foreigner || age >= 60 {
         return Ok(EisContribution {
@@ -46,16 +47,14 @@ pub(crate) async fn calculate_eis_after_preflight(
         ));
     }
 
-    let rate = eis_rates::find_rate(pool, wage, effective_date).await?;
-
-    match rate {
-        Some(r) => Ok(EisContribution {
-            employee: r.employee_contribution,
-            employer: r.employer_contribution,
+    match tables.eis_band(wage) {
+        Some(band) => Ok(EisContribution {
+            employee: band.employee_contribution,
+            employer: band.employer_contribution,
         }),
         None => Err(AppError::Validation(format!(
             "Verified EIS rules contain no contribution band for wage {} sen on {}",
-            wage, effective_date
+            wage, tables.effective_date
         ))),
     }
 }

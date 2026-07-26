@@ -3,8 +3,8 @@ use sqlx::PgPool;
 
 use crate::core::error::{AppError, AppResult};
 use crate::models::statutory::{SocsoCategory, SocsoContribution};
-use crate::repositories::socso_rates;
 use crate::services::statutory_rules;
+use crate::services::statutory_tables::StatutoryTables;
 
 /// Calculate SOCSO contribution.
 ///
@@ -22,15 +22,16 @@ pub async fn calculate_socso(
     effective_date: NaiveDate,
 ) -> AppResult<SocsoContribution> {
     statutory_rules::require_verified(pool, statutory_rules::SOCSO, effective_date).await?;
-    calculate_socso_after_preflight(pool, wage, age, is_foreigner, effective_date).await
+    let tables = StatutoryTables::load(pool, effective_date).await?;
+    calculate_socso_with(&tables, wage, age, is_foreigner)
 }
 
-pub(crate) async fn calculate_socso_after_preflight(
-    pool: &PgPool,
+/// Resolve SOCSO from an already-loaded schedule. See `epf_service::calculate_epf_with`.
+pub(crate) fn calculate_socso_with(
+    tables: &StatutoryTables,
     wage: i64,
     age: i32,
     is_foreigner: bool,
-    effective_date: NaiveDate,
 ) -> AppResult<SocsoContribution> {
     if is_foreigner {
         return Err(AppError::Validation(
@@ -52,18 +53,16 @@ pub(crate) async fn calculate_socso_after_preflight(
         SocsoCategory::FirstCategory
     };
 
-    let rate = socso_rates::find_rate(pool, wage, effective_date).await?;
-
-    match rate {
-        Some(r) => match category {
+    match tables.socso_band(wage) {
+        Some(band) => match category {
             SocsoCategory::FirstCategory => Ok(SocsoContribution {
-                employee: r.first_cat_employee,
-                employer: r.first_cat_employer,
+                employee: band.first_cat_employee,
+                employer: band.first_cat_employer,
                 category,
             }),
             SocsoCategory::SecondCategory => Ok(SocsoContribution {
                 employee: 0,
-                employer: r.second_cat_employer,
+                employer: band.second_cat_employer,
                 category,
             }),
             SocsoCategory::Exempt => Ok(SocsoContribution {
@@ -74,7 +73,7 @@ pub(crate) async fn calculate_socso_after_preflight(
         },
         None => Err(AppError::Validation(format!(
             "Verified SOCSO rules contain no contribution band for wage {} sen on {}",
-            wage, effective_date
+            wage, tables.effective_date
         ))),
     }
 }

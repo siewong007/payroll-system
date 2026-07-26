@@ -9,11 +9,15 @@ use uuid::Uuid;
 
 use crate::core::error::{AppError, AppResult};
 use crate::models::employee::Employee;
-use crate::models::payroll::{BulkPayrollData, OvertimeSettings, PayrollItem, PayrollRun};
-use crate::models::statutory::PcbInput;
+use crate::models::payroll::{
+    BulkPayrollData, OvertimeSettings, PayrollDiagnostic, PayrollItem, PayrollPreview,
+    PayrollPreviewEmployee, PayrollRun, PayslipLine, Tp3Totals, YtdTotals,
+};
+use crate::models::statutory::{EisContribution, EpfContribution, PcbInput, SocsoContribution};
 use crate::repositories::reads::payroll as payroll_reads;
 use crate::repositories::{
-    claims, employees as employee_repo, payroll_entries, payroll_items, payroll_runs, tp3_records,
+    claims, employees as employee_repo, payroll_entries, payroll_item_details, payroll_items,
+    payroll_runs, tp3_records,
 };
 use crate::services::audit_service::AuditRequestMeta;
 use crate::services::eis_service;
@@ -22,6 +26,559 @@ use crate::services::pcb_calculator;
 use crate::services::settings_service;
 use crate::services::socso_service;
 use crate::services::statutory_rules;
+use crate::services::statutory_tables::StatutoryTables;
+
+/// The dates a run covers. `effective_date` is the period end: statutory rules
+/// and recurring allowances are effective-dated, and a run is rated as at the
+/// last day of the month it pays.
+#[derive(Debug, Clone, Copy)]
+struct RunPeriod {
+    year: i32,
+    month: i32,
+    period_start: NaiveDate,
+    period_end: NaiveDate,
+    effective_date: NaiveDate,
+}
+
+impl RunPeriod {
+    fn resolve(year: i32, month: i32) -> AppResult<Self> {
+        let period_start = NaiveDate::from_ymd_opt(year, month as u32, 1)
+            .ok_or_else(|| AppError::BadRequest("Invalid period".into()))?;
+        let period_end = if month == 12 {
+            NaiveDate::from_ymd_opt(year + 1, 1, 1)
+        } else {
+            NaiveDate::from_ymd_opt(year, (month + 1) as u32, 1)
+        }
+        .and_then(|d| d.pred_opt())
+        .ok_or_else(|| AppError::BadRequest("Invalid period".into()))?;
+
+        Ok(Self {
+            year,
+            month,
+            period_start,
+            period_end,
+            effective_date: period_end,
+        })
+    }
+}
+
+/// One employee's payslip, computed but not yet written.
+struct ComputedPayslip {
+    employee_id: Uuid,
+    basic: i64,
+    gross: i64,
+    total_allowances: i64,
+    total_overtime: i64,
+    total_claims: i64,
+    epf: EpfContribution,
+    socso: SocsoContribution,
+    eis: EisContribution,
+    pcb: i64,
+    zakat: i64,
+    ptptn: i64,
+    tabung_haji: i64,
+    other_deductions: i64,
+    total_deductions: i64,
+    net: i64,
+    employer_cost: i64,
+    new_ytd_gross: i64,
+    new_ytd_epf: i64,
+    new_ytd_pcb: i64,
+    new_ytd_socso: i64,
+    new_ytd_eis: i64,
+    new_ytd_zakat: i64,
+    new_ytd_net: i64,
+    total_bonus: i64,
+    total_commission: i64,
+    period_days: i64,
+    days_worked: i64,
+    is_prorated: bool,
+    lines: Vec<PayslipLine>,
+}
+
+/// Every input a run needs, read once.
+struct RunInputs {
+    employees: Vec<Employee>,
+    bulk: BulkPayrollData,
+    statutory: StatutoryTables,
+    ot_settings: OvertimeSettings,
+}
+
+/// Compute every employee, collecting failures instead of stopping at the first.
+///
+/// A run used to abort on the first employee whose figures could not be
+/// produced â€” an over-staged deduction, a wage outside the verified bands â€” so
+/// the operator fixed one, re-ran, and met the next. All of them are returned
+/// together here.
+fn compute_all(
+    employees: &[Employee],
+    period: &RunPeriod,
+    inputs: &RunInputs,
+) -> (Vec<ComputedPayslip>, Vec<PayrollDiagnostic>) {
+    let mut computed = Vec::with_capacity(employees.len());
+    let mut failures = Vec::new();
+
+    for emp in employees {
+        match compute_payslip(emp, period, &inputs.bulk, &inputs.statutory) {
+            Ok(payslip) => computed.push(payslip),
+            Err(err) => failures.push(PayrollDiagnostic::for_employee(
+                "employee_calculation_failed",
+                err.to_string(),
+                emp.id,
+                emp.employee_number.clone(),
+                emp.full_name.clone(),
+            )),
+        }
+    }
+
+    (computed, failures)
+}
+
+/// Read the employees and every prefetched input a run needs.
+///
+/// Executor-generic over a connection so `process_payroll` can gather inside its
+/// transaction (unchanged from before) while `preview_payroll` gathers on a
+/// pooled connection without opening one.
+async fn gather_run_inputs(
+    conn: &mut sqlx::PgConnection,
+    pool: &PgPool,
+    company_id: Uuid,
+    payroll_group_id: Uuid,
+    period: &RunPeriod,
+) -> AppResult<RunInputs> {
+    let RunPeriod {
+        year,
+        month,
+        period_start,
+        period_end,
+        effective_date,
+    } = *period;
+
+    let employees = employee_repo::list_for_payroll_run(
+        &mut *conn,
+        company_id,
+        payroll_group_id,
+        period_end,
+        period_start,
+    )
+    .await?;
+
+    let employee_ids: Vec<Uuid> = employees.iter().map(|e| e.id).collect();
+
+    // 1. Batch fetch recurring allowances and deductions
+    let mut recurring_allowances_map = HashMap::new();
+    let mut recurring_deductions_map = HashMap::new();
+    for row in
+        payroll_reads::recurring_allowance_totals(&mut *conn, &employee_ids, effective_date).await?
+    {
+        if row.category == "earning" {
+            recurring_allowances_map.insert(row.employee_id, row.total);
+        } else {
+            recurring_deductions_map.insert(row.employee_id, row.total);
+        }
+    }
+
+    // 1b. The individual lines behind those totals, for the stored payslip
+    // breakdown. Same filters as the totals above, so the two reconcile.
+    let mut recurring_lines_map: HashMap<Uuid, Vec<_>> = HashMap::new();
+    for line in
+        payroll_reads::recurring_allowance_lines(&mut *conn, &employee_ids, effective_date).await?
+    {
+        recurring_lines_map
+            .entry(line.employee_id)
+            .or_default()
+            .push(line);
+    }
+
+    // 2. Batch fetch staged payroll entries
+    let mut variable_earnings_map = HashMap::new();
+    let mut variable_deductions_map = HashMap::new();
+    for row in payroll_reads::entry_category_totals(&mut *conn, &employee_ids, year, month).await? {
+        if row.category == "earning" {
+            variable_earnings_map.insert(row.employee_id, row.total);
+        } else {
+            variable_deductions_map.insert(row.employee_id, row.total);
+        }
+    }
+
+    let mut entry_lines_map: HashMap<Uuid, Vec<_>> = HashMap::new();
+    for line in payroll_reads::entry_lines(&mut *conn, &employee_ids, year, month).await? {
+        entry_lines_map
+            .entry(line.employee_id)
+            .or_default()
+            .push(line);
+    }
+
+    let mut monthly_allowances_map = HashMap::new();
+    for row in
+        payroll_reads::monthly_allowance_totals(&mut *conn, &employee_ids, year, month).await?
+    {
+        monthly_allowances_map.insert(row.employee_id, row.total);
+    }
+
+    // Bonus/commission are already inside variable_earnings (and therefore gross);
+    // this is purely so they can also be stored as their own payslip line items.
+    let bonus_commission_map: HashMap<Uuid, (i64, i64)> =
+        payroll_reads::bonus_commission_totals(&mut *conn, &employee_ids, year, month)
+            .await?
+            .into_iter()
+            .map(|r| (r.employee_id, (r.bonus, r.commission)))
+            .collect();
+
+    // 3. Batch fetch attendance OT hours
+    let attendance_ot_map: HashMap<Uuid, f64> =
+        payroll_reads::attendance_ot_hours(&mut *conn, &employee_ids, period_start, period_end)
+            .await?
+            .into_iter()
+            .map(|r| (r.employee_id, r.hours))
+            .collect();
+
+    // 3b. Batch fetch approved overtime applications
+    let mut approved_ot_map: HashMap<Uuid, Vec<(String, f64)>> = HashMap::new();
+    for row in
+        payroll_reads::approved_ot_totals(&mut *conn, &employee_ids, period_start, period_end)
+            .await?
+    {
+        approved_ot_map
+            .entry(row.employee_id)
+            .or_default()
+            .push((row.ot_type, row.hours));
+    }
+
+    // 3c. Batch fetch approved claims
+    let claims_map: HashMap<Uuid, i64> = payroll_reads::approved_claim_totals(
+        &mut *conn,
+        &employee_ids,
+        company_id,
+        period_start,
+        period_end,
+    )
+    .await?
+    .into_iter()
+    .map(|r| (r.employee_id, r.total))
+    .collect();
+
+    // 4. Batch fetch TP3 data
+    let tp3_map: HashMap<Uuid, Tp3Totals> =
+        tp3_records::list_ytd_for_employees(&mut *conn, &employee_ids, year)
+            .await?
+            .into_iter()
+            .map(|r| {
+                (
+                    r.employee_id,
+                    (
+                        r.previous_income_ytd,
+                        r.previous_epf_ytd,
+                        r.previous_pcb_ytd,
+                        r.previous_socso_ytd,
+                        r.previous_zakat_ytd,
+                    ),
+                )
+            })
+            .collect();
+
+    // 5. Batch fetch YTD figures
+    let ytd_map: HashMap<Uuid, YtdTotals> =
+        payroll_reads::payroll_ytd(&mut *conn, &employee_ids, year, month)
+            .await?
+            .into_iter()
+            .map(|r| {
+                (
+                    r.employee_id,
+                    (r.gross, r.pcb, r.epf, r.socso, r.eis, r.zakat, r.net),
+                )
+            })
+            .collect();
+
+    // Read every rule table once. The per-employee calculators are pure over
+    // this snapshot, so a run is not held open across ~15 statutory round trips
+    // per employee.
+    let statutory = StatutoryTables::load(pool, effective_date).await?;
+    let ot_settings = load_overtime_settings(pool, company_id).await;
+
+    Ok(RunInputs {
+        employees,
+        bulk: BulkPayrollData {
+            recurring_allowances: recurring_allowances_map,
+            recurring_deductions: recurring_deductions_map,
+            recurring_lines: recurring_lines_map,
+            entry_lines: entry_lines_map,
+            variable_earnings: variable_earnings_map,
+            variable_deductions: variable_deductions_map,
+            attendance_ot_hours: attendance_ot_map,
+            approved_ot: approved_ot_map,
+            approved_claims: claims_map,
+            tp3: tp3_map,
+            ytd: ytd_map,
+            monthly_allowances: monthly_allowances_map,
+            bonus_commission: bonus_commission_map,
+            ot_settings: ot_settings.clone(),
+        },
+        statutory,
+        ot_settings,
+    })
+}
+
+/// Run-level aggregates, accumulated as payslips are written.
+#[derive(Debug, Default)]
+struct RunTotals {
+    total_gross: i64,
+    total_net: i64,
+    total_employer_cost: i64,
+    total_epf_ee: i64,
+    total_epf_er: i64,
+    total_socso_ee: i64,
+    total_socso_er: i64,
+    total_eis_ee: i64,
+    total_eis_er: i64,
+    total_pcb: i64,
+    total_zakat: i64,
+}
+
+impl RunTotals {
+    fn add(&mut self, item: &PayrollItem) {
+        self.total_gross += item.gross_salary;
+        self.total_net += item.net_salary;
+        self.total_employer_cost += item.employer_cost;
+        self.total_epf_ee += item.epf_employee;
+        self.total_epf_er += item.epf_employer;
+        self.total_socso_ee += item.socso_employee;
+        self.total_socso_er += item.socso_employer;
+        self.total_eis_ee += item.eis_employee;
+        self.total_eis_er += item.eis_employer;
+        self.total_pcb += item.pcb_amount;
+        self.total_zakat += item.zakat_amount;
+    }
+}
+
+/// Render collected per-employee failures as one message.
+///
+/// Capped because a misconfigured rule set fails every employee, and a response
+/// listing a thousand identical lines is no more actionable than ten.
+fn format_failures(failures: &[PayrollDiagnostic]) -> String {
+    const SHOWN: usize = 10;
+
+    let mut message = format!(
+        "Payroll cannot be processed: {} of the selected employees could not be calculated. Nothing has been saved.",
+        failures.len()
+    );
+    for failure in failures.iter().take(SHOWN) {
+        message.push_str(&format!(
+            "\n• {} {}: {}",
+            failure.employee_number.as_deref().unwrap_or(""),
+            failure.employee_name.as_deref().unwrap_or(""),
+            failure.message
+        ));
+    }
+    if failures.len() > SHOWN {
+        message.push_str(&format!(
+            "\n… and {} more. Use the payroll preview to see the full list.",
+            failures.len() - SHOWN
+        ));
+    }
+    message
+}
+
+/// Compute a payroll run without writing anything.
+///
+/// Same inputs, same arithmetic and the same fail-closed statutory gate as
+/// `process_payroll`, so what the operator reviews is what would be committed.
+pub async fn preview_payroll(
+    pool: &PgPool,
+    company_id: Uuid,
+    payroll_group_id: Uuid,
+    year: i32,
+    month: i32,
+    pay_date: NaiveDate,
+) -> AppResult<PayrollPreview> {
+    let period = RunPeriod::resolve(year, month)?;
+    let mut blocking = Vec::new();
+
+    if payroll_runs::count_active_for_period(pool, company_id, payroll_group_id, year, month)
+        .await?
+        > 0
+    {
+        blocking.push(PayrollDiagnostic::run(
+            "duplicate_period",
+            "A payroll run already exists for this group and period. Delete the existing run before processing again.",
+        ));
+    }
+
+    // Report the statutory gate as a diagnostic rather than an error: the
+    // operator should still see who would be paid and what else is wrong.
+    if let Err(err) = statutory_rules::require_all_verified(pool, period.effective_date).await {
+        blocking.push(PayrollDiagnostic::run("statutory_rules", err.to_string()));
+        return Ok(PayrollPreview {
+            payroll_group_id,
+            period_year: year,
+            period_month: month,
+            period_start: period.period_start,
+            period_end: period.period_end,
+            pay_date,
+            employee_count: 0,
+            payable_count: 0,
+            total_gross: 0,
+            total_net: 0,
+            total_employer_cost: 0,
+            total_epf_employee: 0,
+            total_epf_employer: 0,
+            total_socso_employee: 0,
+            total_socso_employer: 0,
+            total_eis_employee: 0,
+            total_eis_employer: 0,
+            total_pcb: 0,
+            total_zakat: 0,
+            can_process: false,
+            blocking,
+            warnings: Vec::new(),
+            employees: Vec::new(),
+        });
+    }
+
+    let mut conn = pool.acquire().await?;
+    let inputs = gather_run_inputs(&mut conn, pool, company_id, payroll_group_id, &period).await?;
+
+    if inputs.employees.is_empty() {
+        blocking.push(PayrollDiagnostic::run(
+            "no_employees",
+            "No active employees found in this payroll group for the selected period.",
+        ));
+    }
+
+    let (computed, failures) = compute_all(&inputs.employees, &period, &inputs);
+    let computed_by_employee: HashMap<Uuid, &ComputedPayslip> =
+        computed.iter().map(|c| (c.employee_id, c)).collect();
+    let failure_by_employee: HashMap<Uuid, &PayrollDiagnostic> = failures
+        .iter()
+        .filter_map(|f| f.employee_id.map(|id| (id, f)))
+        .collect();
+
+    let mut warnings = Vec::new();
+    for emp in &inputs.employees {
+        if emp.date_of_birth.is_none() {
+            warnings.push(PayrollDiagnostic::for_employee(
+                "missing_date_of_birth",
+                "No date of birth on record. SOCSO and EIS eligibility is age-based; this employee is rated as age 30.",
+                emp.id,
+                emp.employee_number.clone(),
+                emp.full_name.clone(),
+            ));
+        }
+        if emp
+            .bank_account_number
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or("")
+            .is_empty()
+        {
+            warnings.push(PayrollDiagnostic::for_employee(
+                "missing_bank_account",
+                "No bank account on record, so this payslip cannot be paid by bank transfer.",
+                emp.id,
+                emp.employee_number.clone(),
+                emp.full_name.clone(),
+            ));
+        }
+    }
+
+    // Entries staged against someone this run will not pay stay unprocessed and
+    // roll forward silently — the operator has no other place to notice.
+    for orphan in payroll_reads::staged_entries_outside_run(
+        &mut *conn,
+        company_id,
+        payroll_group_id,
+        year,
+        month,
+        period.period_start,
+        period.period_end,
+    )
+    .await?
+    {
+        warnings.push(PayrollDiagnostic::for_employee(
+            "staged_entries_not_in_run",
+            format!(
+                "{} staged {} totalling {} sen will not be paid by this run — this employee is not in the selected payroll group for this period.",
+                orphan.entry_count,
+                if orphan.entry_count == 1 { "entry" } else { "entries" },
+                orphan.total_amount
+            ),
+            orphan.employee_id,
+            orphan.employee_number,
+            orphan.employee_name,
+        ));
+    }
+
+    let mut totals = RunTotals::default();
+    let employees = inputs
+        .employees
+        .iter()
+        .map(|emp| {
+            let computed = computed_by_employee.get(&emp.id);
+            if let Some(c) = computed {
+                totals.total_gross += c.gross;
+                totals.total_net += c.net;
+                totals.total_employer_cost += c.employer_cost;
+                totals.total_epf_ee += c.epf.employee;
+                totals.total_epf_er += c.epf.employer;
+                totals.total_socso_ee += c.socso.employee;
+                totals.total_socso_er += c.socso.employer;
+                totals.total_eis_ee += c.eis.employee;
+                totals.total_eis_er += c.eis.employer;
+                totals.total_pcb += c.pcb;
+                totals.total_zakat += c.zakat;
+            }
+            PayrollPreviewEmployee {
+                employee_id: emp.id,
+                employee_name: emp.full_name.clone(),
+                employee_number: emp.employee_number.clone(),
+                basic_salary: computed.map_or(0, |c| c.basic),
+                total_allowances: computed.map_or(0, |c| c.total_allowances),
+                total_overtime: computed.map_or(0, |c| c.total_overtime),
+                total_claims: computed.map_or(0, |c| c.total_claims),
+                gross_salary: computed.map_or(0, |c| c.gross),
+                epf_employee: computed.map_or(0, |c| c.epf.employee),
+                socso_employee: computed.map_or(0, |c| c.socso.employee),
+                eis_employee: computed.map_or(0, |c| c.eis.employee),
+                pcb_amount: computed.map_or(0, |c| c.pcb),
+                total_deductions: computed.map_or(0, |c| c.total_deductions),
+                net_salary: computed.map_or(0, |c| c.net),
+                employer_cost: computed.map_or(0, |c| c.employer_cost),
+                working_days: computed.map_or(0, |c| c.period_days as i32),
+                days_worked: computed.map_or(0, |c| c.days_worked),
+                is_prorated: computed.is_some_and(|c| c.is_prorated),
+                error: failure_by_employee.get(&emp.id).map(|f| f.message.clone()),
+            }
+        })
+        .collect();
+
+    blocking.extend(failures);
+
+    Ok(PayrollPreview {
+        payroll_group_id,
+        period_year: year,
+        period_month: month,
+        period_start: period.period_start,
+        period_end: period.period_end,
+        pay_date,
+        employee_count: inputs.employees.len() as i32,
+        payable_count: computed.len() as i32,
+        total_gross: totals.total_gross,
+        total_net: totals.total_net,
+        total_employer_cost: totals.total_employer_cost,
+        total_epf_employee: totals.total_epf_ee,
+        total_epf_employer: totals.total_epf_er,
+        total_socso_employee: totals.total_socso_ee,
+        total_socso_employer: totals.total_socso_er,
+        total_eis_employee: totals.total_eis_ee,
+        total_eis_employer: totals.total_eis_er,
+        total_pcb: totals.total_pcb,
+        total_zakat: totals.total_zakat,
+        can_process: blocking.is_empty(),
+        blocking,
+        warnings,
+        employees,
+    })
+}
 
 /// Process payroll for a group in a given period.
 ///
@@ -64,42 +621,13 @@ pub async fn process_payroll(
         ));
     }
 
-    // Period dates
-    let period_start = NaiveDate::from_ymd_opt(year, month as u32, 1)
-        .ok_or_else(|| AppError::BadRequest("Invalid period".into()))?;
-    let period_end = if month == 12 {
-        NaiveDate::from_ymd_opt(year + 1, 1, 1)
-    } else {
-        NaiveDate::from_ymd_opt(year, (month + 1) as u32, 1)
-    }
-    .and_then(|d| d.pred_opt())
-    .ok_or_else(|| AppError::BadRequest("Invalid period".into()))?;
-
-    let effective_date = period_end;
-
-    // Fetch active employees in this payroll group
-    let employees = employee_repo::list_for_payroll_run(
-        pool,
-        company_id,
-        payroll_group_id,
-        period_end,
-        period_start,
-    )
-    .await?;
-
-    if employees.is_empty() {
-        return Err(AppError::BadRequest(
-            "No active employees found in this payroll group for the selected period".into(),
-        ));
-    }
+    let period = RunPeriod::resolve(year, month)?;
+    let effective_date = period.effective_date;
 
     // Validate the four statutory domains once per run. Individual lookups
     // remain linked to verified rule-set IDs, so this avoids four extra
     // metadata queries for every employee without weakening fail-closed use.
     statutory_rules::require_all_verified(pool, effective_date).await?;
-
-    tracing::Span::current().record("employee_count", employees.len());
-    info!(employees = employees.len(), "starting payroll run");
 
     // Begin transaction
     let mut tx = pool.begin().await?;
@@ -114,8 +642,8 @@ pub async fn process_payroll(
         payroll_group_id,
         year,
         month,
-        period_start,
-        period_end,
+        period.period_start,
+        period.period_end,
         pay_date,
         processed_by,
         notes,
@@ -141,174 +669,63 @@ pub async fn process_payroll(
         return Err(err);
     }
 
-    let employee_ids: Vec<Uuid> = employees.iter().map(|e| e.id).collect();
+    let inputs = gather_run_inputs(&mut tx, pool, company_id, payroll_group_id, &period).await?;
+    let RunInputs {
+        employees,
+        bulk: bulk_data,
+        statutory,
+        ot_settings,
+    } = inputs;
 
-    // 1. Batch fetch recurring allowances and deductions
-    let mut recurring_allowances_map = HashMap::new();
-    let mut recurring_deductions_map = HashMap::new();
-    let allowances =
-        payroll_reads::recurring_allowance_totals(&mut *tx, &employee_ids, effective_date).await?;
-
-    for row in allowances {
-        if row.category == "earning" {
-            recurring_allowances_map.insert(row.employee_id, row.total);
-        } else {
-            recurring_deductions_map.insert(row.employee_id, row.total);
-        }
+    if employees.is_empty() {
+        return Err(AppError::BadRequest(
+            "No active employees found in this payroll group for the selected period".into(),
+        ));
     }
 
-    // 2. Batch fetch staged payroll entries
-    let mut monthly_allowances_map = HashMap::new();
-    let mut variable_earnings_map = HashMap::new();
-    let mut variable_deductions_map = HashMap::new();
-    let entries =
-        payroll_reads::entry_category_totals(&mut *tx, &employee_ids, year, month).await?;
+    tracing::Span::current().record("employee_count", employees.len());
+    info!(employees = employees.len(), "starting payroll run");
 
-    for row in entries {
-        if row.category == "earning" {
-            variable_earnings_map.insert(row.employee_id, row.total);
-        } else {
-            variable_deductions_map.insert(row.employee_id, row.total);
-        }
-    }
-
-    let monthly_allowances =
-        payroll_reads::monthly_allowance_totals(&mut *tx, &employee_ids, year, month).await?;
-
-    for row in monthly_allowances {
-        monthly_allowances_map.insert(row.employee_id, row.total);
-    }
-
-    // Bonus/commission are already inside variable_earnings (and therefore gross);
-    // this is purely so they can also be stored as their own payslip line items.
-    let bonus_commission =
-        payroll_reads::bonus_commission_totals(&mut *tx, &employee_ids, year, month).await?;
-    let bonus_commission_map: HashMap<Uuid, (i64, i64)> = bonus_commission
-        .into_iter()
-        .map(|r| (r.employee_id, (r.bonus, r.commission)))
-        .collect();
-
-    // 3. Batch fetch attendance OT hours
-    let ot_hours =
-        payroll_reads::attendance_ot_hours(&mut *tx, &employee_ids, period_start, period_end)
-            .await?;
-    let attendance_ot_map: HashMap<Uuid, f64> = ot_hours
-        .into_iter()
-        .map(|r| (r.employee_id, r.hours))
-        .collect();
-
-    // 3b. Batch fetch approved overtime applications
-    let approved_ot =
-        payroll_reads::approved_ot_totals(&mut *tx, &employee_ids, period_start, period_end)
-            .await?;
-    let mut approved_ot_map: HashMap<Uuid, Vec<(String, f64)>> = HashMap::new();
-    for row in approved_ot {
-        approved_ot_map
-            .entry(row.employee_id)
-            .or_default()
-            .push((row.ot_type, row.hours));
-    }
-
-    // 3c. Batch fetch approved claims
-    let approved_claims = payroll_reads::approved_claim_totals(
-        &mut *tx,
-        &employee_ids,
-        company_id,
-        period_start,
-        period_end,
-    )
-    .await?;
-    let claims_map: HashMap<Uuid, i64> = approved_claims
-        .into_iter()
-        .map(|r| (r.employee_id, r.total))
-        .collect();
-
-    // 4. Batch fetch TP3 data
-    let tp3_data = tp3_records::list_ytd_for_employees(&mut *tx, &employee_ids, year).await?;
-    let tp3_map: HashMap<Uuid, (i64, i64, i64, i64, i64)> = tp3_data
-        .into_iter()
-        .map(|r| {
-            (
-                r.employee_id,
-                (
-                    r.previous_income_ytd,
-                    r.previous_epf_ytd,
-                    r.previous_pcb_ytd,
-                    r.previous_socso_ytd,
-                    r.previous_zakat_ytd,
-                ),
-            )
-        })
-        .collect();
-
-    // 5. Batch fetch YTD figures
-    let ytd_data = payroll_reads::payroll_ytd(&mut *tx, &employee_ids, year, month).await?;
-    let ytd_map: HashMap<Uuid, (i64, i64, i64, i64, i64, i64, i64)> = ytd_data
-        .into_iter()
-        .map(|r| {
-            (
-                r.employee_id,
-                (r.gross, r.pcb, r.epf, r.socso, r.eis, r.zakat, r.net),
-            )
-        })
-        .collect();
-
-    let bulk_data = BulkPayrollData {
-        recurring_allowances: recurring_allowances_map,
-        recurring_deductions: recurring_deductions_map,
-        variable_earnings: variable_earnings_map,
-        variable_deductions: variable_deductions_map,
-        attendance_ot_hours: attendance_ot_map,
-        approved_ot: approved_ot_map,
-        approved_claims: claims_map,
-        tp3: tp3_map,
-        ytd: ytd_map,
-        monthly_allowances: monthly_allowances_map,
-        bonus_commission: bonus_commission_map,
-        ot_settings: load_overtime_settings(pool, company_id).await,
+    // Compute everyone first. Nothing is written until every employee succeeds,
+    // and a failure reports all of them rather than only the first — the old
+    // loop aborted mid-run, so fixing one problem just revealed the next.
+    let inputs = RunInputs {
+        employees,
+        bulk: bulk_data,
+        statutory,
+        ot_settings,
     };
+    let (computed, failures) = compute_all(&inputs.employees, &period, &inputs);
 
-    let mut total_gross: i64 = 0;
-    let mut total_net: i64 = 0;
-    let mut total_employer_cost: i64 = 0;
-    let mut total_epf_ee: i64 = 0;
-    let mut total_epf_er: i64 = 0;
-    let mut total_socso_ee: i64 = 0;
-    let mut total_socso_er: i64 = 0;
-    let mut total_eis_ee: i64 = 0;
-    let mut total_eis_er: i64 = 0;
-    let mut total_pcb: i64 = 0;
-    let mut total_zakat: i64 = 0;
-
-    for emp in &employees {
-        let emp_span = info_span!("payroll.employee", employee_id = %emp.id);
-        let item = process_employee(
-            pool,
-            &mut tx,
-            run_id,
-            emp,
-            year,
-            month,
-            period_start,
-            period_end,
-            effective_date,
-            &bulk_data,
-        )
-        .instrument(emp_span)
-        .await?;
-
-        total_gross += item.gross_salary;
-        total_net += item.net_salary;
-        total_employer_cost += item.employer_cost;
-        total_epf_ee += item.epf_employee;
-        total_epf_er += item.epf_employer;
-        total_socso_ee += item.socso_employee;
-        total_socso_er += item.socso_employer;
-        total_eis_ee += item.eis_employee;
-        total_eis_er += item.eis_employer;
-        total_pcb += item.pcb_amount;
-        total_zakat += item.zakat_amount;
+    if !failures.is_empty() {
+        return Err(AppError::BadRequest(format_failures(&failures)));
     }
+
+    let mut totals = RunTotals::default();
+    for (emp, payslip) in inputs.employees.iter().zip(&computed) {
+        let emp_span = info_span!("payroll.employee", employee_id = %emp.id);
+        let item = persist_payslip(&mut tx, run_id, emp, &period, payslip)
+            .instrument(emp_span)
+            .await?;
+        totals.add(&item);
+    }
+
+    let RunTotals {
+        total_gross,
+        total_net,
+        total_employer_cost,
+        total_epf_ee,
+        total_epf_er,
+        total_socso_ee,
+        total_socso_er,
+        total_eis_ee,
+        total_eis_er,
+        total_pcb,
+        total_zakat,
+    } = totals;
+    let employees = &inputs.employees;
+    let statutory = &inputs.statutory;
+    let ot_settings = &inputs.ot_settings;
 
     // Update run totals
     payroll_runs::update_totals(
@@ -326,6 +743,20 @@ pub async fn process_payroll(
         total_pcb,
         total_zakat,
         employees.len() as i32,
+    )
+    .await?;
+
+    // Record what produced these figures. The statutory tables and the company
+    // overtime settings are both mutable, so without this a later rule import or
+    // settings change leaves the run's numbers unreproducible.
+    payroll_runs::set_calculation_snapshot(
+        &mut *tx,
+        run_id,
+        serde_json::json!({
+            "effective_date": effective_date,
+            "statutory_rule_sets": statutory.rule_sets(),
+            "overtime_settings": ot_settings,
+        }),
     )
     .await?;
 
@@ -428,20 +859,25 @@ async fn load_overtime_settings(pool: &PgPool, company_id: Uuid) -> OvertimeSett
     }
 }
 
-/// Process a single employee's payroll
-#[allow(clippy::too_many_arguments)]
-async fn process_employee(
-    pool: &PgPool,
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    run_id: Uuid,
+/// Compute a single employee's payslip. Pure â€” no database access.
+///
+/// Split out from persistence so the same arithmetic backs both the committed
+/// run and the preview, and so a failure here is a value the caller can collect
+/// rather than an abort that discards the other employees' results.
+fn compute_payslip(
     emp: &Employee,
-    year: i32,
-    month: i32,
-    _period_start: NaiveDate,
-    _period_end: NaiveDate,
-    effective_date: NaiveDate,
+    period: &RunPeriod,
     bulk: &BulkPayrollData,
-) -> AppResult<PayrollItem> {
+    statutory: &StatutoryTables,
+) -> AppResult<ComputedPayslip> {
+    let RunPeriod {
+        month,
+        period_start: _period_start,
+        period_end: _period_end,
+        effective_date,
+        ..
+    } = *period;
+
     // Calculate age
     let age = calculate_age(emp.date_of_birth, effective_date);
     let is_foreigner = emp.residency_status == "foreigner";
@@ -449,8 +885,8 @@ async fn process_employee(
 
     // Gross salary = basic + recurring allowances + overtime
     // Prorate an incomplete month. Employment Act 1955 s.18B uses CALENDAR days
-    // for an incomplete month (monthly wages ÷ days in the month × days eligible),
-    // not working days — so `working_days` below is deliberately the calendar-day
+    // for an incomplete month (monthly wages Ã· days in the month Ã— days eligible),
+    // not working days â€” so `working_days` below is deliberately the calendar-day
     // count of the period. Employees selected for the run may have joined after
     // period_start or resigned before period_end; paying the full basic in those
     // months also over-stated every statutory contribution derived from gross.
@@ -481,7 +917,7 @@ async fn process_employee(
 
     // Hourly rate in Decimal, from company settings rather than hardcoded 26/8.
     // The old `basic / 26 / 8` truncated twice (RM5,000 gave 2403 sen instead of
-    // 2403.85), and the f64 multiply below truncated again — always against the
+    // 2403.85), and the f64 multiply below truncated again â€” always against the
     // employee. Keep the rate unrounded and round only the final amount.
     let ot = &bulk.ot_settings;
     let hourly_rate = match emp.hourly_rate {
@@ -498,10 +934,25 @@ async fn process_employee(
             .unwrap_or(0)
     };
 
+    // Overtime lines are built alongside the figures: an OT amount is a product
+    // of hours, an hourly rate derived from company settings, and a type
+    // multiplier, none of which survive in `total_overtime` alone.
+    let mut overtime_lines: Vec<PayslipLine> = Vec::new();
+
     // Attendance-based OT (records without approved OT applications)
     let attendance_ot_pay = if attendance_ot_hours > 0.0 {
         let hours = Decimal::try_from(attendance_ot_hours).unwrap_or_default();
-        round_sen(hourly_rate * ot.multiplier_normal * hours)
+        let amount = round_sen(hourly_rate * ot.multiplier_normal * hours);
+        overtime_lines.push(PayslipLine::earning(
+            "overtime",
+            format!(
+                "Overtime (attendance) â€” {} h @ {}x",
+                trim_decimal(hours),
+                trim_decimal(ot.multiplier_normal)
+            ),
+            amount,
+        ));
+        amount
     } else {
         0
     };
@@ -511,7 +962,19 @@ async fn process_employee(
         let mut total = 0i64;
         for (ot_type, hours) in ot_entries {
             let hours = Decimal::try_from(*hours).unwrap_or_default();
-            total += round_sen(hourly_rate * ot.multiplier_for(ot_type) * hours);
+            let multiplier = ot.multiplier_for(ot_type);
+            let amount = round_sen(hourly_rate * multiplier * hours);
+            overtime_lines.push(PayslipLine::earning(
+                "overtime",
+                format!(
+                    "Overtime ({}) â€” {} h @ {}x",
+                    ot_type.replace('_', " "),
+                    trim_decimal(hours),
+                    trim_decimal(multiplier)
+                ),
+                amount,
+            ));
+            total += amount;
         }
         total
     } else {
@@ -520,31 +983,16 @@ async fn process_employee(
 
     let total_overtime = attendance_ot_pay + approved_ot_pay;
 
-    // Approved claims (reimbursements, not part of gross — added to net)
+    // Approved claims (reimbursements, not part of gross â€” added to net)
     let total_claims = *bulk.approved_claims.get(&emp.id).unwrap_or(&0);
 
     let gross = basic + allowances_total + variable_earnings + total_overtime;
     let total_allowances = allowances_total + monthly_allowances;
 
-    // EPF
-    let epf =
-        epf_service::calculate_epf_after_preflight(pool, gross, &epf_category, effective_date)
-            .await?;
-
-    // SOCSO
-    let socso = socso_service::calculate_socso_after_preflight(
-        pool,
-        gross,
-        age,
-        is_foreigner,
-        effective_date,
-    )
-    .await?;
-
-    // EIS
-    let eis =
-        eis_service::calculate_eis_after_preflight(pool, gross, age, is_foreigner, effective_date)
-            .await?;
+    // EPF / SOCSO / EIS â€” resolved from the run's rule snapshot, no I/O.
+    let epf = epf_service::calculate_epf_with(statutory, gross, &epf_category)?;
+    let socso = socso_service::calculate_socso_with(statutory, gross, age, is_foreigner)?;
+    let eis = eis_service::calculate_eis_with(statutory, gross, age, is_foreigner)?;
 
     // Get YTD figures (from previous months this year)
     let (ytd_gross, ytd_pcb, ytd_epf, ytd_socso, ytd_eis, ytd_zakat, ytd_net) =
@@ -585,8 +1033,7 @@ async fn process_employee(
         bonus_amount: 0,
     };
 
-    let pcb =
-        pcb_calculator::calculate_pcb_after_preflight(pool, &pcb_input, effective_date).await?;
+    let pcb = pcb_calculator::calculate_pcb_with(statutory, &pcb_input)?;
 
     // PTPTN and Tabung Haji
     let ptptn = emp.ptptn_monthly_amount.unwrap_or(0);
@@ -627,29 +1074,42 @@ async fn process_employee(
     let new_ytd_zakat = ytd_zakat + zakat;
     let new_ytd_net = ytd_net + net;
 
-    // Insert payroll item
-    let item_id = Uuid::now_v7();
-    let item = payroll_items::insert(
-        &mut **tx,
-        item_id,
-        run_id,
-        emp.id,
+    // The breakdown that explains every figure above, built while the inputs are
+    // still in scope. Persisted alongside the item so a payslip can never exist
+    // without the lines that justify it.
+    let lines = build_payslip_lines(
+        emp,
+        bulk,
+        basic,
+        is_prorated,
+        days_worked,
+        period_days,
+        overtime_lines,
+        total_claims,
+        &epf,
+        &socso,
+        &eis,
+        pcb,
+        zakat,
+        ptptn,
+        tabung_haji,
+    );
+
+    Ok(ComputedPayslip {
+        employee_id: emp.id,
         basic,
         gross,
         total_allowances,
         total_overtime,
         total_claims,
-        epf.employee,
-        epf.employer,
-        socso.employee,
-        socso.employer,
-        eis.employee,
-        eis.employer,
+        epf,
+        socso,
+        eis,
         pcb,
         zakat,
         ptptn,
         tabung_haji,
-        recurring_deductions + variable_deductions,
+        other_deductions: recurring_deductions + variable_deductions,
         total_deductions,
         net,
         employer_cost,
@@ -662,28 +1122,180 @@ async fn process_employee(
         new_ytd_net,
         total_bonus,
         total_commission,
-        Some(period_days as i32),
-        Some(Decimal::from(days_worked)),
+        period_days,
+        days_worked,
         is_prorated,
+        lines,
+    })
+}
+
+/// Write one computed payslip and retire the source rows it consumed.
+async fn persist_payslip(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    run_id: Uuid,
+    emp: &Employee,
+    period: &RunPeriod,
+    computed: &ComputedPayslip,
+) -> AppResult<PayrollItem> {
+    let item_id = Uuid::now_v7();
+    let item = payroll_items::insert(
+        &mut **tx,
+        item_id,
+        run_id,
+        emp.id,
+        computed.basic,
+        computed.gross,
+        computed.total_allowances,
+        computed.total_overtime,
+        computed.total_claims,
+        computed.epf.employee,
+        computed.epf.employer,
+        computed.socso.employee,
+        computed.socso.employer,
+        computed.eis.employee,
+        computed.eis.employer,
+        computed.pcb,
+        computed.zakat,
+        computed.ptptn,
+        computed.tabung_haji,
+        computed.other_deductions,
+        computed.total_deductions,
+        computed.net,
+        computed.employer_cost,
+        computed.new_ytd_gross,
+        computed.new_ytd_epf,
+        computed.new_ytd_pcb,
+        computed.new_ytd_socso,
+        computed.new_ytd_eis,
+        computed.new_ytd_zakat,
+        computed.new_ytd_net,
+        computed.total_bonus,
+        computed.total_commission,
+        Some(computed.period_days as i32),
+        Some(Decimal::from(computed.days_worked)),
+        computed.is_prorated,
     )
     .await?;
 
+    payroll_item_details::insert_lines(&mut **tx, item_id, &computed.lines).await?;
+
     // Mark staged entries as processed
-    payroll_entries::mark_processed(&mut **tx, run_id, emp.id, year, month).await?;
+    payroll_entries::mark_processed(&mut **tx, run_id, emp.id, period.year, period.month).await?;
 
     // Mark approved claims as processed
-    if total_claims > 0 {
+    if computed.total_claims > 0 {
         claims::mark_processed(
             &mut **tx,
             emp.id,
             emp.company_id,
-            _period_start,
-            _period_end,
+            period.period_start,
+            period.period_end,
         )
         .await?;
     }
 
     Ok(item)
+}
+
+/// Assemble the stored payslip breakdown for one employee.
+///
+/// The lines are exhaustive by construction: earnings sum to gross and
+/// deductions sum to `total_deductions`, because each line is emitted from the
+/// same value that fed those totals. Zero-valued lines are dropped so a payslip
+/// does not list deductions the employee does not have â€” basic salary is kept
+/// unconditionally, since a payslip with no basic line reads as missing data
+/// rather than as a zero.
+///
+/// `is_statutory` marks the four amounts computed from verified statutory rule
+/// sets (EPF, SOCSO, EIS, PCB). Zakat, PTPTN and Tabung Haji are configured
+/// fixed amounts, so they are ordinary deductions here even though they are also
+/// remitted onward.
+#[allow(clippy::too_many_arguments)]
+fn build_payslip_lines(
+    emp: &Employee,
+    bulk: &BulkPayrollData,
+    basic: i64,
+    is_prorated: bool,
+    days_worked: i64,
+    period_days: i64,
+    overtime_lines: Vec<PayslipLine>,
+    total_claims: i64,
+    epf: &EpfContribution,
+    socso: &SocsoContribution,
+    eis: &EisContribution,
+    pcb: i64,
+    zakat: i64,
+    ptptn: i64,
+    tabung_haji: i64,
+) -> Vec<PayslipLine> {
+    let mut lines = Vec::new();
+
+    let basic_description = if is_prorated {
+        format!(
+            "Basic salary (prorated â€” {} of {} days)",
+            days_worked, period_days
+        )
+    } else {
+        "Basic salary".to_string()
+    };
+    lines.push(PayslipLine::earning(
+        "basic_salary",
+        basic_description,
+        basic,
+    ));
+
+    let source_lines = bulk
+        .recurring_lines
+        .get(&emp.id)
+        .into_iter()
+        .flatten()
+        .chain(bulk.entry_lines.get(&emp.id).into_iter().flatten());
+
+    let (mut earnings, mut deductions) = (Vec::new(), Vec::new());
+    for line in source_lines {
+        if line.category == "earning" {
+            earnings.push(
+                PayslipLine::earning("allowance", line.description.clone(), line.amount)
+                    .taxable(line.is_taxable),
+            );
+        } else {
+            deductions.push(PayslipLine::deduction(
+                "other_deduction",
+                line.description.clone(),
+                line.amount,
+            ));
+        }
+    }
+
+    lines.append(&mut earnings);
+    lines.extend(overtime_lines);
+
+    // Reimbursements are paid on top of net rather than forming part of gross,
+    // so the line is recorded as non-taxable to match how the engine treats it.
+    lines.push(
+        PayslipLine::earning("claim_reimbursement", "Approved claims", total_claims).taxable(false),
+    );
+
+    lines.push(PayslipLine::deduction("epf", "EPF (employee)", epf.employee).statutory());
+    lines.push(PayslipLine::deduction("socso", "SOCSO (employee)", socso.employee).statutory());
+    lines.push(PayslipLine::deduction("eis", "EIS (employee)", eis.employee).statutory());
+    lines.push(PayslipLine::deduction("pcb", "PCB (monthly tax deduction)", pcb).statutory());
+    lines.push(PayslipLine::deduction("zakat", "Zakat", zakat));
+    lines.push(PayslipLine::deduction("ptptn", "PTPTN", ptptn));
+    lines.push(PayslipLine::deduction(
+        "tabung_haji",
+        "Tabung Haji",
+        tabung_haji,
+    ));
+    lines.append(&mut deductions);
+
+    lines.retain(|line| line.amount != 0 || line.item_type == "basic_salary");
+    lines
+}
+
+/// Render a `Decimal` without trailing zeros, for descriptions like "3 h @ 1.5x".
+fn trim_decimal(value: Decimal) -> String {
+    value.normalize().to_string()
 }
 
 fn calculate_age(dob: Option<NaiveDate>, as_of: NaiveDate) -> i32 {

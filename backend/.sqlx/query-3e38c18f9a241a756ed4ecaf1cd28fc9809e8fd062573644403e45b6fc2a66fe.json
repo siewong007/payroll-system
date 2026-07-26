@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO payroll_item_details\n            (payroll_item_id, category, item_type, description, amount, is_taxable, is_statutory)\n        SELECT $1, category, item_type, description, amount, is_taxable, is_statutory\n        FROM UNNEST($2::varchar[], $3::varchar[], $4::varchar[], $5::bigint[], $6::bool[], $7::bool[])\n            AS t(category, item_type, description, amount, is_taxable, is_statutory)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "VarcharArray",
+        "VarcharArray",
+        "VarcharArray",
+        "Int8Array",
+        "BoolArray",
+        "BoolArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3e38c18f9a241a756ed4ecaf1cd28fc9809e8fd062573644403e45b6fc2a66fe"
+}

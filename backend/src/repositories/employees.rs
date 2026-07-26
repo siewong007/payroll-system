@@ -143,6 +143,22 @@ pub async fn full_name(
     Ok(name)
 }
 
+/// Display identity for an employee, scoped to a company.
+pub async fn name_and_number(
+    executor: impl Executor<'_, Database = Postgres>,
+    id: Uuid,
+    company_id: Uuid,
+) -> AppResult<Option<(String, String)>> {
+    let row = sqlx::query!(
+        "SELECT full_name, employee_number FROM employees WHERE id = $1 AND company_id = $2",
+        id,
+        company_id,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(row.map(|r| (r.full_name, r.employee_number)))
+}
+
 /// Active flag for an employee, used by auth to reject logins for deleted staff.
 /// `None` means the row is absent (also treated as inactive by callers).
 pub async fn get_active_status(

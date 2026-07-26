@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT reliefs.relief_type, reliefs.amount\n        FROM pcb_reliefs reliefs\n        JOIN statutory_rule_sets rules ON rules.id = reliefs.rule_set_id\n        WHERE rules.rule_code = 'pcb'\n          AND rules.status = 'verified'\n          AND rules.effective_from <= $2\n          AND (rules.effective_to IS NULL OR rules.effective_to >= $2)\n          AND reliefs.effective_year = $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "relief_type",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "amount",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Date"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "e87bfe46b91a8c279cf62609c1eaeae3940427528655bbb3582100a13523a426"
+}

@@ -8,10 +8,12 @@ import {
   deletePayrollEntry,
   getPayrollEntries,
   getPayrollGroups,
+  previewPayroll,
   processPayroll,
   updatePayrollEntry,
 } from '@/api/payroll';
 import { formatMYR, getErrorMessage } from '@/lib/utils';
+import { PayrollPreviewPanel } from './PayrollPreviewPanel';
 import type { PayrollEntryWithEmployee } from '@/types';
 
 const MONTHS = [
@@ -48,6 +50,7 @@ export function PayrollProcess() {
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [notes, setNotes] = useState('');
+  const [processError, setProcessError] = useState('');
   const [editingEntry, setEditingEntry] = useState<PayrollEntryWithEmployee | null>(null);
   const [entryError, setEntryError] = useState('');
   const [entryForm, setEntryForm] = useState({
@@ -78,13 +81,28 @@ export function PayrollProcess() {
     queryFn: () => getPayrollEntries({ period_year: year, period_month: month }),
   });
 
+  // Processing is now a two-step review: the preview holds the projected run so
+  // the operator confirms figures rather than discovering them afterwards.
+  const previewMutation = useMutation({
+    mutationFn: previewPayroll,
+    onError: (err: unknown) => {
+      setProcessError(getErrorMessage(err, 'Failed to preview payroll'));
+    },
+    onSuccess: () => setProcessError(''),
+  });
+
   const mutation = useMutation({
     mutationFn: processPayroll,
     onSuccess: (run) => {
       queryClient.invalidateQueries({ queryKey: ['payrollRuns'] });
       navigate(`/payroll/${run.id}`);
     },
+    onError: (err: unknown) => {
+      setProcessError(getErrorMessage(err, 'Failed to process payroll'));
+    },
   });
+
+  const preview = previewMutation.data;
 
   const saveEntryMutation = useMutation({
     mutationFn: () => {
@@ -108,6 +126,7 @@ export function PayrollProcess() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['payrollEntries'] });
+      invalidatePreview();
       resetEntryForm();
     },
     onError: (err: unknown) => {
@@ -117,17 +136,35 @@ export function PayrollProcess() {
 
   const deleteEntryMutation = useMutation({
     mutationFn: deletePayrollEntry,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['payrollEntries'] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['payrollEntries'] });
+      invalidatePreview();
+    },
   });
+
+  const runRequest = () => ({
+    payroll_group_id: groupId,
+    period_year: year,
+    period_month: month,
+    notes: notes || undefined,
+  });
+
+  const handleReview = () => {
+    if (!groupId) return;
+    setProcessError('');
+    previewMutation.mutate(runRequest());
+  };
 
   const handleProcess = () => {
     if (!groupId) return;
-    mutation.mutate({
-      payroll_group_id: groupId,
-      period_year: year,
-      period_month: month,
-      notes: notes || undefined,
-    });
+    mutation.mutate(runRequest());
+  };
+
+  /// Any change to the period, the group, or the staged entries makes the
+  /// reviewed figures stale, so the preview is discarded rather than left
+  /// showing numbers that no longer describe what would be committed.
+  const invalidatePreview = () => {
+    if (previewMutation.data || previewMutation.isError) previewMutation.reset();
   };
 
   const resetEntryForm = () => {
@@ -186,19 +223,30 @@ export function PayrollProcess() {
 
       <h1 className="text-2xl font-bold text-gray-900 mb-6">Process Monthly Payroll</h1>
 
-      <div className="bg-white rounded-2xl shadow border border-gray-200 p-6 space-y-6 max-w-2xl">
-        {mutation.isError && (
-          <div className="bg-red-50 text-red-600 text-sm px-4 py-3 rounded-lg">
-            {(mutation.error as Error & { response?: { data?: { error?: string } } })?.response?.data?.error ||
-              'Failed to process payroll'}
-          </div>
-        )}
+      {preview && (
+        <PayrollPreviewPanel
+          preview={preview}
+          onProcess={handleProcess}
+          onBack={() => previewMutation.reset()}
+          isProcessing={mutation.isPending}
+        />
+      )}
 
+      {processError && (
+        <div className="whitespace-pre-line rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {processError}
+        </div>
+      )}
+
+      <div className={`bg-white rounded-2xl shadow border border-gray-200 p-6 space-y-6 max-w-2xl ${preview ? 'hidden' : ''}`}>
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Payroll Group *</label>
           <select
             value={groupId}
-            onChange={(e) => setGroupId(e.target.value)}
+            onChange={(e) => {
+              setGroupId(e.target.value);
+              invalidatePreview();
+            }}
             className="w-full border border-gray-200 p-2 rounded-lg focus:ring-1 focus:ring-black outline-none"
           >
             <option value="">Select payroll group</option>
@@ -215,7 +263,10 @@ export function PayrollProcess() {
             <label className="block text-sm font-medium text-gray-700 mb-1">Year *</label>
             <select
               value={year}
-              onChange={(e) => setYear(parseInt(e.target.value))}
+              onChange={(e) => {
+                setYear(parseInt(e.target.value));
+                invalidatePreview();
+              }}
               className="w-full border border-gray-200 p-2 rounded-lg focus:ring-1 focus:ring-black outline-none"
             >
               {[year - 1, year, year + 1].map((y) => (
@@ -227,7 +278,10 @@ export function PayrollProcess() {
             <label className="block text-sm font-medium text-gray-700 mb-1">Month *</label>
             <select
               value={month}
-              onChange={(e) => setMonth(parseInt(e.target.value))}
+              onChange={(e) => {
+                setMonth(parseInt(e.target.value));
+                invalidatePreview();
+              }}
               className="w-full border border-gray-200 p-2 rounded-lg focus:ring-1 focus:ring-black outline-none"
             >
               {MONTHS.map((m) => (
@@ -249,17 +303,18 @@ export function PayrollProcess() {
         </div>
 
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-800">
-          This will calculate EPF, SOCSO, EIS, PCB, and all deductions for every active employee
-          in the selected payroll group for the selected period.
+          This calculates EPF, SOCSO, EIS, PCB, and all deductions for every active employee in the
+          selected payroll group. You will see every payslip and any problems before anything is
+          saved.
         </div>
 
         <button
-          onClick={handleProcess}
-          disabled={!groupId || mutation.isPending}
+          onClick={handleReview}
+          disabled={!groupId || previewMutation.isPending}
           className="flex items-center gap-2 bg-black text-white px-6 py-2.5 rounded-lg font-medium hover:bg-gray-800 disabled:opacity-50 transition-colors"
         >
           <Calculator className="w-4 h-4" />
-          {mutation.isPending ? 'Processing...' : 'Process Payroll'}
+          {previewMutation.isPending ? 'Calculating...' : 'Review Payroll'}
         </button>
       </div>
 

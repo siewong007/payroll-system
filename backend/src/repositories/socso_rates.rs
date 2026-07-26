@@ -4,49 +4,36 @@ use chrono::NaiveDate;
 use sqlx::{Executor, Postgres};
 
 use crate::core::error::AppResult;
-use crate::models::statutory::SocsoContributionRate;
+use crate::models::statutory::SocsoBand;
 
-/// SOCSO rate band for a wage/date, capped by the newest applicable schedule.
-pub async fn find_rate(
+/// Every SOCSO band applicable on a date, newest schedule first.
+///
+/// Schedule selection and the wage-ceiling clamp that `find_rate` does in SQL are
+/// applied by the caller (`services::statutory_tables`) so a payroll run resolves
+/// all employees from one read rather than one read each.
+pub async fn list_bands(
     executor: impl Executor<'_, Database = Postgres>,
-    wage: i64,
     effective_date: NaiveDate,
-) -> AppResult<Option<SocsoContributionRate>> {
-    let rate = sqlx::query_as!(
-        SocsoContributionRate,
+) -> AppResult<Vec<SocsoBand>> {
+    let bands = sqlx::query_as!(
+        SocsoBand,
         r#"
-        WITH applicable_schedule AS (
-            SELECT rates.effective_from, MAX(rates.wage_to) AS wage_ceiling
-            FROM socso_rates rates
-            JOIN statutory_rule_sets rules ON rules.id = rates.rule_set_id
-            WHERE rules.rule_code = 'socso'
-              AND rules.status = 'verified'
-              AND rules.effective_from <= $2
-              AND (rules.effective_to IS NULL OR rules.effective_to >= $2)
-              AND rates.effective_from <= $2
-              AND (rates.effective_to IS NULL OR rates.effective_to >= $2)
-            GROUP BY rates.effective_from
-            ORDER BY rates.effective_from DESC
-            LIMIT 1
-        )
-        SELECT r.first_cat_employee, r.first_cat_employer, r.second_cat_employer
-        FROM socso_rates r
-        JOIN applicable_schedule schedule
-          ON schedule.effective_from = r.effective_from
-        JOIN statutory_rule_sets rules ON rules.id = r.rule_set_id
-        WHERE r.wage_from <= LEAST($1, schedule.wage_ceiling)
-          AND r.wage_to >= LEAST($1, schedule.wage_ceiling)
-          AND (r.effective_to IS NULL OR r.effective_to >= $2)
-          AND rules.rule_code = 'socso'
+        SELECT rates.wage_from, rates.wage_to, rates.first_cat_employee,
+               rates.first_cat_employer, rates.second_cat_employer,
+               rates.effective_from
+        FROM socso_rates rates
+        JOIN statutory_rule_sets rules ON rules.id = rates.rule_set_id
+        WHERE rules.rule_code = 'socso'
           AND rules.status = 'verified'
-          AND rules.effective_from <= $2
-          AND (rules.effective_to IS NULL OR rules.effective_to >= $2)
-        LIMIT 1
+          AND rules.effective_from <= $1
+          AND (rules.effective_to IS NULL OR rules.effective_to >= $1)
+          AND rates.effective_from <= $1
+          AND (rates.effective_to IS NULL OR rates.effective_to >= $1)
+        ORDER BY rates.effective_from DESC
         "#,
-        wage,
         effective_date,
     )
-    .fetch_optional(executor)
+    .fetch_all(executor)
     .await?;
-    Ok(rate)
+    Ok(bands)
 }

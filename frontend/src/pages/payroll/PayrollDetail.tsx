@@ -16,6 +16,8 @@ import {
 import { formatMYR, getErrorMessage } from '@/lib/utils';
 import { useAuth } from '@/context/AuthContext';
 import { canApprovePayroll, canPreparePayroll } from '@/lib/roles';
+import { PayslipBreakdownDrawer } from './PayslipBreakdownDrawer';
+import type { PayrollSummary } from '@/types';
 
 const MONTHS = [
   '', 'January', 'February', 'March', 'April', 'May', 'June',
@@ -40,6 +42,7 @@ export function PayrollDetail() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { user } = useAuth();
+  const [breakdownEmployeeId, setBreakdownEmployeeId] = useState<string | null>(null);
   const [editingPcbEmployeeId, setEditingPcbEmployeeId] = useState<string | null>(null);
   const [pcbInput, setPcbInput] = useState('');
   const [pcbError, setPcbError] = useState('');
@@ -323,11 +326,11 @@ export function PayrollDetail() {
       <div className="bg-white rounded-2xl shadow border border-gray-200 overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-200">
           <h2 className="font-semibold">Employee Breakdown</h2>
-          {canEditPcb && (
-            <p className="mt-1 text-sm text-gray-500">
-              PCB can be edited while this payroll run is processed and before it is submitted for approval.
-            </p>
-          )}
+          <p className="mt-1 text-sm text-gray-500">
+            Select an employee to see the stored line-by-line breakdown behind their figures.
+            {canEditPcb &&
+              ' PCB can be edited while this payroll run is processed and before it is submitted for approval.'}
+          </p>
           {pcbError && (
             <div className="mt-3 rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">
               {pcbError}
@@ -356,8 +359,16 @@ export function PayrollDetail() {
               {items.map((item) => (
                 <tr key={item.employee_id} className="hover:bg-gray-50">
                   <td className="px-4 py-3">
-                    <div className="text-sm font-medium">{item.employee_name}</div>
-                    <div className="text-xs text-gray-400">{item.employee_number}</div>
+                    <button
+                      type="button"
+                      onClick={() => setBreakdownEmployeeId(item.employee_id)}
+                      className="text-left"
+                    >
+                      <div className="text-sm font-medium text-gray-900 underline decoration-gray-300 underline-offset-2 hover:decoration-gray-900">
+                        {item.employee_name}
+                      </div>
+                      <div className="text-xs text-gray-400">{item.employee_number}</div>
+                    </button>
                   </td>
                   <td className="px-4 py-3 text-sm text-right">{formatMYR(item.basic_salary)}</td>
                   <td className="px-4 py-3 text-sm text-right">{item.total_allowances > 0 ? formatMYR(item.total_allowances) : '-'}</td>
@@ -424,6 +435,66 @@ export function PayrollDetail() {
           </table>
         </div>
       </div>
+
+      <CalculationProvenance snapshot={data.calculation_snapshot} />
+
+      {breakdownEmployeeId && (
+        <PayslipBreakdownDrawer
+          runId={id!}
+          employeeId={breakdownEmployeeId}
+          onClose={() => setBreakdownEmployeeId(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+/// What produced this run's figures.
+///
+/// The statutory rule tables and the company's overtime multipliers are both
+/// mutable and effective-dated, so a run recomputed today may not match what was
+/// paid. The run records its inputs at commit time; this surfaces them.
+function CalculationProvenance({ snapshot }: { snapshot: PayrollSummary['calculation_snapshot'] }) {
+  if (!snapshot) return null;
+
+  const ot = snapshot.overtime_settings;
+
+  return (
+    <div className="mt-6 rounded-2xl border border-gray-200 bg-white p-4 shadow">
+      <h2 className="mb-1 text-sm font-semibold text-gray-900">Calculation Basis</h2>
+      <p className="mb-3 text-xs text-gray-500">
+        Rated as at {snapshot.effective_date}. These are the rules that produced the figures above,
+        recorded when the run was processed.
+      </p>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="text-left text-xs uppercase tracking-wide text-gray-400">
+            <tr>
+              <th className="py-1 pr-4">Domain</th>
+              <th className="py-1 pr-4">Dataset</th>
+              <th className="py-1 pr-4">Source version</th>
+              <th className="py-1">Effective</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {snapshot.statutory_rule_sets.map((ruleSet) => (
+              <tr key={ruleSet.rule_set_id}>
+                <td className="py-1.5 pr-4 font-medium uppercase">{ruleSet.rule_code}</td>
+                <td className="py-1.5 pr-4 text-gray-600">{ruleSet.dataset_key}</td>
+                <td className="py-1.5 pr-4 text-gray-600">{ruleSet.source_version ?? '—'}</td>
+                <td className="py-1.5 text-gray-600">
+                  {ruleSet.effective_from} → {ruleSet.effective_to ?? 'open'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="mt-3 text-xs text-gray-500">
+        Overtime rated at {ot.multiplier_normal}× normal, {ot.multiplier_rest_day}× rest day,{' '}
+        {ot.multiplier_public_holiday}× public holiday, on a {ot.working_days_per_month}-day month
+        and {ot.effective_hours_per_day}-hour day.
+      </p>
     </div>
   );
 }

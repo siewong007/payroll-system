@@ -6,11 +6,14 @@ use uuid::Uuid;
 
 use crate::core::error::{AppError, AppResult};
 use crate::models::audit::AuditLogWithUser;
-use crate::models::payroll::{PayrollGroup, PayrollItem, PayrollRun, PayrollSummary};
+use crate::models::payroll::{
+    PayrollGroup, PayrollItem, PayrollRun, PayrollSummary, PayslipBreakdown,
+};
 use crate::repositories::reads::audit as audit_reads;
 use crate::repositories::reads::payroll as payroll_reads;
 use crate::repositories::{
-    claims, payroll_entries, payroll_groups, payroll_item_details, payroll_items, payroll_runs,
+    claims, employees as employee_reads, payroll_entries, payroll_groups, payroll_item_details,
+    payroll_items, payroll_runs,
 };
 use crate::services::audit_service::{self, AuditRequestMeta};
 
@@ -20,9 +23,42 @@ pub async fn get_summary(pool: &PgPool, company_id: Uuid, id: Uuid) -> AppResult
         .await?
         .ok_or_else(|| AppError::NotFound("Payroll run not found".into()))?;
     let items = payroll_reads::item_summaries_for_run(pool, id).await?;
+    let calculation_snapshot = payroll_runs::get_calculation_snapshot(pool, id, company_id).await?;
     Ok(PayrollSummary {
         payroll_run: run,
         items,
+        calculation_snapshot,
+    })
+}
+
+/// One payslip with the stored lines behind each figure.
+///
+/// `NotFound` if the run is not in the company, so a run id alone cannot expose
+/// another tenant's payslip — the same rule `list_items` applies.
+pub async fn get_payslip_breakdown(
+    pool: &PgPool,
+    company_id: Uuid,
+    run_id: Uuid,
+    employee_id: Uuid,
+) -> AppResult<PayslipBreakdown> {
+    if !payroll_runs::exists(pool, run_id, company_id).await? {
+        return Err(AppError::NotFound("Payroll run not found".into()));
+    }
+
+    let item = payroll_items::get_for_employee(pool, run_id, employee_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Payroll item not found".into()))?;
+    let employee = employee_reads::name_and_number(pool, employee_id, company_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Employee not found".into()))?;
+    let lines = payroll_item_details::list_for_item(pool, item.id).await?;
+
+    Ok(PayslipBreakdown {
+        employee_id,
+        employee_name: employee.0,
+        employee_number: employee.1,
+        item,
+        lines,
     })
 }
 

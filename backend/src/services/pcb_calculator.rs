@@ -1,12 +1,12 @@
-use chrono::{Datelike, NaiveDate};
+use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::*;
 use sqlx::PgPool;
 
 use crate::core::error::{AppError, AppResult};
 use crate::models::statutory::PcbInput;
-use crate::repositories::{pcb_brackets, pcb_reliefs};
 use crate::services::statutory_rules;
+use crate::services::statutory_tables::StatutoryTables;
 
 /// Calculate the repository's legacy academic PCB approximation.
 ///
@@ -27,15 +27,18 @@ pub async fn calculate_pcb(
     effective_date: NaiveDate,
 ) -> AppResult<i64> {
     statutory_rules::require_verified(pool, statutory_rules::PCB, effective_date).await?;
-    calculate_pcb_after_preflight(pool, input, effective_date).await
+    let tables = StatutoryTables::load(pool, effective_date).await?;
+    calculate_pcb_with(&tables, input)
 }
 
-pub(crate) async fn calculate_pcb_after_preflight(
-    pool: &PgPool,
-    input: &PcbInput,
-    effective_date: NaiveDate,
-) -> AppResult<i64> {
-    let tax_year = effective_date.year();
+/// Resolve PCB from an already-loaded schedule.
+///
+/// Pure, and the largest win of the run-scoped snapshot: a single PCB figure
+/// reads six reliefs, the bracket list and a rebate, so the previous
+/// database-backed form cost roughly a dozen round trips *per employee* for
+/// values that are identical across the whole run.
+pub(crate) fn calculate_pcb_with(tables: &StatutoryTables, input: &PcbInput) -> AppResult<i64> {
+    let tax_year = tables.tax_year;
     let current_month = input.months_worked;
     let remaining_months = 12 - current_month + 1; // including current month
 
@@ -44,20 +47,18 @@ pub(crate) async fn calculate_pcb_after_preflight(
     let annual_income = input.ytd_gross + (input.monthly_gross * remaining_months as i64);
 
     // Step 2: Calculate annual reliefs
-    let reliefs =
-        calculate_reliefs(pool, input, remaining_months, tax_year, effective_date).await?;
+    let reliefs = calculate_reliefs(tables, input, remaining_months, tax_year)?;
 
     // Step 3: Chargeable income
     let chargeable_income = (annual_income - reliefs).max(0);
 
     // Step 4: Calculate annual tax from brackets
-    let annual_tax =
-        calculate_tax_from_brackets(pool, chargeable_income, tax_year, effective_date).await?;
+    let annual_tax = calculate_tax_from_brackets(tables, chargeable_income, tax_year)?;
 
     // Step 5: Apply tax rebate
     let rebate = if chargeable_income <= 3500000 {
         // RM35,000 = 3500000 sen
-        get_rebate(pool, tax_year, effective_date).await?
+        get_rebate(tables, tax_year)?
     } else {
         0
     };
@@ -80,15 +81,13 @@ pub(crate) async fn calculate_pcb_after_preflight(
     // If bonus month, add Schedule 2 computation
     if input.is_bonus_month && input.bonus_amount > 0 {
         let bonus_pcb = calculate_bonus_pcb(
-            pool,
+            tables,
             input,
             annual_income,
             reliefs,
             chargeable_income,
             tax_year,
-            effective_date,
-        )
-        .await?;
+        )?;
         Ok(pcb + bonus_pcb)
     } else {
         Ok(pcb)
@@ -96,40 +95,39 @@ pub(crate) async fn calculate_pcb_after_preflight(
 }
 
 /// Calculate annual reliefs
-async fn calculate_reliefs(
-    pool: &PgPool,
+fn calculate_reliefs(
+    tables: &StatutoryTables,
     input: &PcbInput,
     remaining_months: i32,
     tax_year: i32,
-    effective_date: NaiveDate,
 ) -> AppResult<i64> {
     // Individual relief
-    let individual_relief = get_relief_amount(pool, "individual", tax_year, effective_date).await?;
+    let individual_relief = get_relief_amount(tables, "individual", tax_year)?;
 
     // EPF relief (capped)
-    let epf_cap = get_relief_amount(pool, "life_insurance", tax_year, effective_date).await?; // RM3,000
+    let epf_cap = get_relief_amount(tables, "life_insurance", tax_year)?; // RM3,000
     let annual_epf = input.ytd_epf + (input.epf_employee_monthly * remaining_months as i64);
     let epf_relief = annual_epf.min(epf_cap);
 
     // SOCSO relief
-    let socso_cap = get_relief_amount(pool, "socso_relief", tax_year, effective_date).await?;
+    let socso_cap = get_relief_amount(tables, "socso_relief", tax_year)?;
     let annual_socso = input.ytd_socso + (input.socso_employee_monthly * remaining_months as i64);
     let socso_relief = annual_socso.min(socso_cap);
 
     // EIS relief
-    let eis_cap = get_relief_amount(pool, "eis_relief", tax_year, effective_date).await?;
+    let eis_cap = get_relief_amount(tables, "eis_relief", tax_year)?;
     let annual_eis = input.ytd_eis + (input.eis_employee_monthly * remaining_months as i64);
     let eis_relief = annual_eis.min(eis_cap);
 
     // Spouse relief (non-working spouse only)
     let spouse_relief = if input.marital_status == "married" && !input.working_spouse {
-        get_relief_amount(pool, "spouse", tax_year, effective_date).await?
+        get_relief_amount(tables, "spouse", tax_year)?
     } else {
         0
     };
 
     // Child relief
-    let child_relief = get_relief_amount(pool, "child_under_18", tax_year, effective_date).await?;
+    let child_relief = get_relief_amount(tables, "child_under_18", tax_year)?;
     let total_child_relief = child_relief * input.num_children as i64;
 
     let total_reliefs = individual_relief
@@ -143,13 +141,12 @@ async fn calculate_reliefs(
 }
 
 /// Look up tax from brackets
-async fn calculate_tax_from_brackets(
-    pool: &PgPool,
+fn calculate_tax_from_brackets(
+    tables: &StatutoryTables,
     chargeable_income: i64,
     tax_year: i32,
-    effective_date: NaiveDate,
 ) -> AppResult<i64> {
-    let brackets = pcb_brackets::list_for_year(pool, tax_year, effective_date).await?;
+    let brackets = tables.pcb_brackets();
 
     if brackets.is_empty() {
         return Err(AppError::Validation(format!(
@@ -160,7 +157,7 @@ async fn calculate_tax_from_brackets(
 
     let mut tax: i64 = 0;
 
-    for b in &brackets {
+    for b in brackets {
         if chargeable_income > b.chargeable_income_from {
             let taxable_in_bracket =
                 chargeable_income.min(b.chargeable_income_to) - b.chargeable_income_from;
@@ -180,41 +177,30 @@ async fn calculate_tax_from_brackets(
 /// Calculate bonus PCB using Schedule 2.
 ///
 /// Schedule 2: Tax on (annual_income + bonus) minus tax on (annual_income without bonus)
-async fn calculate_bonus_pcb(
-    pool: &PgPool,
+fn calculate_bonus_pcb(
+    tables: &StatutoryTables,
     input: &PcbInput,
     annual_income_without_bonus: i64,
     reliefs: i64,
     _chargeable_without_bonus: i64,
     tax_year: i32,
-    effective_date: NaiveDate,
 ) -> AppResult<i64> {
     let annual_income_with_bonus = annual_income_without_bonus + input.bonus_amount;
     let chargeable_with_bonus = (annual_income_with_bonus - reliefs).max(0);
 
-    let tax_with_bonus =
-        calculate_tax_from_brackets(pool, chargeable_with_bonus, tax_year, effective_date).await?;
+    let tax_with_bonus = calculate_tax_from_brackets(tables, chargeable_with_bonus, tax_year)?;
     let tax_without_bonus = calculate_tax_from_brackets(
-        pool,
+        tables,
         (annual_income_without_bonus - reliefs).max(0),
         tax_year,
-        effective_date,
-    )
-    .await?;
+    )?;
 
     let bonus_tax = (tax_with_bonus - tax_without_bonus).max(0);
     Ok(round_up_to_ringgit(bonus_tax))
 }
 
-async fn get_relief_amount(
-    pool: &PgPool,
-    relief_type: &str,
-    tax_year: i32,
-    effective_date: NaiveDate,
-) -> AppResult<i64> {
-    let result = pcb_reliefs::get_amount(pool, relief_type, tax_year, effective_date).await?;
-
-    result.ok_or_else(|| {
+fn get_relief_amount(tables: &StatutoryTables, relief_type: &str, tax_year: i32) -> AppResult<i64> {
+    tables.pcb_relief(relief_type).ok_or_else(|| {
         AppError::Validation(format!(
             "Verified PCB rules are missing relief '{}' for year {}",
             relief_type, tax_year
@@ -222,8 +208,8 @@ async fn get_relief_amount(
     })
 }
 
-async fn get_rebate(pool: &PgPool, tax_year: i32, effective_date: NaiveDate) -> AppResult<i64> {
-    get_relief_amount(pool, "tax_rebate_individual", tax_year, effective_date).await
+fn get_rebate(tables: &StatutoryTables, tax_year: i32) -> AppResult<i64> {
+    get_relief_amount(tables, "tax_rebate_individual", tax_year)
 }
 
 /// Round up to nearest RM (100 sen)

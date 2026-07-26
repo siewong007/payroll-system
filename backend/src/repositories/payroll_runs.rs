@@ -120,6 +120,44 @@ pub async fn update_totals(
     Ok(())
 }
 
+/// The recorded calculation provenance for a run, if it has one.
+///
+/// Returned separately rather than as a `PayrollRun` field: the run struct is
+/// serialized into every audit row, and embedding the whole snapshot there would
+/// bloat the trail with a copy per transition.
+pub async fn get_calculation_snapshot(
+    executor: impl Executor<'_, Database = Postgres>,
+    run_id: Uuid,
+    company_id: Uuid,
+) -> AppResult<Option<serde_json::Value>> {
+    let snapshot = sqlx::query_scalar!(
+        r#"SELECT calculation_snapshot FROM payroll_runs WHERE id = $1 AND company_id = $2"#,
+        run_id,
+        company_id,
+    )
+    .fetch_optional(executor)
+    .await?
+    .flatten();
+    Ok(snapshot)
+}
+
+/// Record the statutory rule sets and overtime configuration a run was computed
+/// from, so its figures stay reproducible after those inputs change.
+pub async fn set_calculation_snapshot(
+    executor: impl Executor<'_, Database = Postgres>,
+    run_id: Uuid,
+    snapshot: serde_json::Value,
+) -> AppResult<()> {
+    sqlx::query!(
+        r#"UPDATE payroll_runs SET calculation_snapshot = $2 WHERE id = $1"#,
+        run_id,
+        snapshot,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
 /// Whether a run with this id exists in the company.
 pub async fn exists(
     executor: impl Executor<'_, Database = Postgres>,

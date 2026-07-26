@@ -1,0 +1,46 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT rates.wage_from, rates.wage_to, rates.employee_contribution,\n               rates.employer_contribution, rates.effective_from\n        FROM eis_rates rates\n        JOIN statutory_rule_sets rules ON rules.id = rates.rule_set_id\n        WHERE rules.rule_code = 'eis'\n          AND rules.status = 'verified'\n          AND rules.effective_from <= $1\n          AND (rules.effective_to IS NULL OR rules.effective_to >= $1)\n          AND rates.effective_from <= $1\n          AND (rates.effective_to IS NULL OR rates.effective_to >= $1)\n        ORDER BY rates.effective_from DESC\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "wage_from",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "wage_to",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "employee_contribution",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "employer_contribution",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "effective_from",
+        "type_info": "Date"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Date"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "fc23368901cc01a47df5bc165d852d917301b7665f013d86d588883cc3cb27d7"
+}

@@ -121,6 +121,23 @@ pub async fn list_for_run(
     Ok(items)
 }
 
+/// One employee's payslip row within a run.
+pub async fn get_for_employee(
+    executor: impl Executor<'_, Database = Postgres>,
+    run_id: Uuid,
+    employee_id: Uuid,
+) -> AppResult<Option<PayrollItem>> {
+    let item = sqlx::query_as!(
+        PayrollItem,
+        "SELECT * FROM payroll_items WHERE payroll_run_id = $1 AND employee_id = $2",
+        run_id,
+        employee_id,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(item)
+}
+
 pub async fn delete_for_run(
     executor: impl Executor<'_, Database = Postgres>,
     run_id: Uuid,

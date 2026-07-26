@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT full_name, employee_number FROM employees WHERE id = $1 AND company_id = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "full_name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "employee_number",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "13f2a0db084ec57a5fdee43aeb35bb45c6e5d66db8f7e94b886bbe0960814b25"
+}
