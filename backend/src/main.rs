@@ -6,6 +6,7 @@ use anyhow::Context;
 use tokio::net::TcpListener;
 
 use axum::http::{HeaderValue, Method};
+use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
@@ -17,6 +18,31 @@ use payroll_system::core::auth::JwtSecret;
 use payroll_system::core::config::AppConfig;
 use payroll_system::core::db;
 use payroll_system::routes;
+
+/// Response for a caught handler panic.
+///
+/// Mirrors `AppError`'s `{"error","status"}` shape so a client parsing our error
+/// body needs no special case for a crash. The panic payload is logged and never
+/// sent — it routinely contains internal state.
+fn panic_response(err: Box<dyn std::any::Any + Send + 'static>) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    let detail = err
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| err.downcast_ref::<&'static str>().copied())
+        .unwrap_or("non-string panic payload");
+    tracing::error!(panic = detail, "Handler panicked — returning 500");
+
+    (
+        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+        axum::Json(serde_json::json!({
+            "error": "Internal server error",
+            "status": 500,
+        })),
+    )
+        .into_response()
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -81,6 +107,13 @@ async fn main() -> anyhow::Result<()> {
 
     // Build router
     let app = routes::create_router(state)
+        // Innermost of the added layers, so it wraps the handlers themselves.
+        // A panic in a handler otherwise kills the task and drops the
+        // connection: the client sees a reset rather than a response, and
+        // nothing distinguishes it from a network fault. Applied *inside* the
+        // CORS layer so the 500 it synthesises still carries CORS headers and
+        // the browser can read it.
+        .layer(CatchPanicLayer::custom(panic_response))
         .layer(cors)
         .layer(TraceLayer::new_for_http())
         .layer(axum::Extension(JwtSecret(config.jwt_secret.clone())))

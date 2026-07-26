@@ -60,15 +60,125 @@ impl AppError {
                     "Internal server error".to_string(),
                 )
             }
-            AppError::Database(err) => {
-                tracing::error!("Database error: {}", err);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "Internal server error".to_string(),
-                )
-            }
+            AppError::Database(err) => match classify_db_error(err) {
+                // A constraint the caller can act on. Still logged (with the
+                // SQLSTATE and constraint name, so it stays greppable), but at
+                // warn — it is a rejected request, not a server fault.
+                Some((status, message)) => {
+                    let db_err = err.as_database_error();
+                    tracing::warn!(
+                        sqlstate = ?db_err.and_then(|e| e.code()),
+                        constraint = ?db_err.and_then(|e| e.constraint()),
+                        "Rejected by a database constraint: {}",
+                        err
+                    );
+                    (status, message)
+                }
+                None => {
+                    tracing::error!("Database error: {}", err);
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "Internal server error".to_string(),
+                    )
+                }
+            },
         }
     }
+}
+
+/// Human text for the constraints a caller can actually do something about.
+///
+/// Only constraints whose violation is a *user* mistake belong here. Anything
+/// absent falls through to the SQLSTATE default in [`classify_db_error`].
+fn known_constraint(constraint: &str) -> Option<(StatusCode, &'static str)> {
+    let hit = match constraint {
+        "employees_company_employee_number_active" => (
+            StatusCode::CONFLICT,
+            "An active employee already uses that employee number.",
+        ),
+        "attendance_one_open_per_employee" => (
+            StatusCode::CONFLICT,
+            "This employee already has an open attendance session. Close it before starting another.",
+        ),
+        "payroll_runs_one_active_period"
+        | "payroll_runs_company_id_payroll_group_id_period_year_period_key" => (
+            StatusCode::CONFLICT,
+            "A payroll run already exists for this group and period.",
+        ),
+        "document_categories_company_id_name_key" => (
+            StatusCode::CONFLICT,
+            "A document category with that name already exists.",
+        ),
+        "company_settings_company_id_category_key_key" => {
+            (StatusCode::CONFLICT, "That setting already exists.")
+        }
+        "attendance_records_checkout_order_check" => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "Check-out cannot be earlier than check-in.",
+        ),
+        "attendance_records_hours_check" => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "Hours worked is outside the permitted range.",
+        ),
+        _ => return None,
+    };
+    Some(hit)
+}
+
+/// Classify a database failure the caller can fix into a 4xx.
+///
+/// `AppError::Database` used to collapse every `sqlx::Error` into a bare 500, so
+/// a duplicate employee number or a stale foreign key — both things the caller
+/// can correct — arrived as `{"error":"Internal server error"}`. Services that
+/// cared worked around it by hand-matching SQLSTATEs at the call site
+/// (`user_service::map_user_write_error`, `payroll_engine`, `team_members`,
+/// `user_groups`, `attendance_service`). Those stay: they can name the specific
+/// record and give better text than anything reachable from here. This is the
+/// floor beneath them, so a path nobody remembered to wrap degrades to an
+/// accurate status instead of a 500.
+///
+/// The raw Postgres message is deliberately never forwarded — it carries table,
+/// column and index names.
+fn classify_db_error(err: &sqlx::Error) -> Option<(StatusCode, String)> {
+    let db_err = err.as_database_error()?;
+
+    if let Some(constraint) = db_err.constraint()
+        && let Some((status, message)) = known_constraint(constraint)
+    {
+        return Some((status, message.to_string()));
+    }
+
+    let (status, message) = match db_err.code()?.as_ref() {
+        "23505" => (StatusCode::CONFLICT, "That record already exists."),
+        "23503" => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "A referenced record does not exist, or is still in use elsewhere.",
+        ),
+        "23502" => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "A required field was missing.",
+        ),
+        "23514" => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "A value failed a validation rule.",
+        ),
+        "22001" => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "A value was too long for the field it was written to.",
+        ),
+        "22003" | "22P02" | "22007" => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "A value was not in the expected format or range.",
+        ),
+        // Serialization failure / deadlock: nothing is wrong with the request,
+        // it just lost a race. Retrying it is the correct client behaviour.
+        "40001" | "40P01" => (
+            StatusCode::CONFLICT,
+            "This record was changed concurrently. Please retry.",
+        ),
+        _ => return None,
+    };
+    Some((status, message.to_string()))
 }
 
 impl IntoResponse for AppError {
