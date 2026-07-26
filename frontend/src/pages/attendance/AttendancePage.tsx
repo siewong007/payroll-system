@@ -19,6 +19,7 @@ import {
   runAbsentMarking,
   setCompanyAttendanceMethod,
   type AttendanceRecordWithEmployee,
+  type AttendanceSummaryItem,
 } from '@/api/attendance';
 import { getEmployees } from '@/api/employees';
 import {
@@ -626,38 +627,106 @@ function StatsBar({ today, onShowOpen }: { today: string; onShowOpen: () => void
     );
   }
 
+  const tiles = [
+    { icon: CheckCircle2, label: 'Present Today', short: 'Present', value: present, color: 'text-emerald-600', bg: 'bg-emerald-50', action: undefined },
+    { icon: Clock,        label: 'Late',          short: 'Late',    value: late,    color: 'text-amber-600',   bg: 'bg-amber-50',   action: undefined },
+    // Actionable: these are the sessions someone has to chase or correct.
+    { icon: LogOut,       label: 'Still Checked In', short: 'Still in', value: stillIn, color: 'text-blue-600', bg: 'bg-blue-50', action: onShowOpen },
+  ];
+
   return (
-    <div className="grid grid-cols-3 gap-4 mb-6">
-      {[
-        { icon: CheckCircle2, label: 'Present Today', value: present, color: 'text-emerald-600', bg: 'bg-emerald-50', action: undefined },
-        { icon: Clock,        label: 'Late',          value: late,    color: 'text-amber-600',   bg: 'bg-amber-50',   action: undefined },
-        // Actionable: these are the sessions someone has to chase or correct.
-        { icon: LogOut,       label: 'Still Checked In', value: stillIn, color: 'text-blue-600',  bg: 'bg-blue-50',   action: onShowOpen },
-      ].map(s => (
-        <div
-          key={s.label}
-          onClick={s.action}
-          className={`bg-white rounded-2xl shadow p-5 flex items-center gap-4 ${
-            s.action ? 'cursor-pointer hover:shadow-md transition-shadow' : ''
-          }`}
-        >
-          <div className={`${s.bg} ${s.color} p-3 rounded-xl`}>
-            <s.icon className="w-5 h-5" />
-          </div>
-          <div>
-            <p className="text-2xl font-bold text-gray-900">{s.value}</p>
-            <p className="text-xs text-gray-500">
-              {s.label}
-              {s.action && s.value > 0 && <span className="ml-1 text-blue-600 font-medium">· review</span>}
-            </p>
-          </div>
-        </div>
-      ))}
+    <div className="grid grid-cols-3 gap-2.5 sm:gap-4 mb-6">
+      {tiles.map(s => {
+        // Phone tiles stack icon over value: three side-by-side rows at 375px
+        // pushed the label clean off the right edge of the card.
+        const body = (
+          <>
+            <div className={`${s.bg} ${s.color} p-2 sm:p-3 rounded-xl shrink-0 w-fit`}>
+              <s.icon className="w-4 h-4 sm:w-5 sm:h-5" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-xl sm:text-2xl font-bold text-gray-900 leading-tight">{s.value}</p>
+              <p className="text-[11px] sm:text-xs text-gray-500 leading-tight">
+                <span className="sm:hidden">{s.short}</span>
+                <span className="hidden sm:inline">{s.label}</span>
+                {s.action && s.value > 0 && <span className="ml-1 text-blue-600 font-medium">· review</span>}
+              </p>
+            </div>
+          </>
+        );
+        const shell =
+          'bg-white rounded-2xl shadow p-3 sm:p-5 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 min-w-0';
+
+        return s.action ? (
+          <button
+            key={s.label}
+            type="button"
+            onClick={s.action}
+            className={`${shell} text-left cursor-pointer hover:shadow-md transition-shadow`}
+          >
+            {body}
+          </button>
+        ) : (
+          <div key={s.label} className={shell}>{body}</div>
+        );
+      })}
     </div>
   );
 }
 
 // ─── Summary Tab ──────────────────────────────────────────────────────────────
+
+/**
+ * One employee's period aggregate as a card, for the same reason as
+ * `RecordCard`: nine numeric columns do not survive a phone. The four day
+ * counts stay on one row so they remain scannable down the list.
+ */
+function SummaryCard({ item: i }: { item: AttendanceSummaryItem }) {
+  const counts = [
+    { label: 'Present', value: i.present_days, color: 'text-emerald-700' },
+    { label: 'Late',    value: i.late_days,    color: 'text-amber-700'   },
+    { label: 'Absent',  value: i.absent_days,  color: 'text-red-700'     },
+    { label: 'Half',    value: i.half_days,    color: 'text-blue-700'    },
+  ];
+
+  return (
+    <div className="p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="font-medium text-gray-900 line-clamp-2">{i.full_name}</p>
+          <p className="text-xs text-gray-400 truncate">
+            {i.employee_number}{i.department ? ` · ${i.department}` : ''}
+          </p>
+        </div>
+        {i.unchecked_out_days > 0 && (
+          <span
+            title="Days with no check-out"
+            className="shrink-0 inline-flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700"
+          >
+            <AlertTriangle className="w-3.5 h-3.5" />
+            {i.unchecked_out_days} open
+          </span>
+        )}
+      </div>
+
+      <div className="mt-3 grid grid-cols-4 gap-2">
+        {counts.map(c => (
+          <div key={c.label} className="rounded-lg bg-gray-50 px-2 py-1.5 text-center">
+            <p className={`text-base font-semibold tabular-nums ${c.color}`}>{c.value}</p>
+            <p className="text-[11px] text-gray-500">{c.label}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-2.5 flex items-center gap-4 text-xs text-gray-600">
+        <span className="tabular-nums">{Number(i.total_hours).toFixed(1)}h worked</span>
+        <span className="tabular-nums">
+          <Timer className="w-3 h-3 inline text-amber-600" /> {Number(i.overtime_hours).toFixed(1)}h OT
+        </span>
+      </div>
+    </div>
+  );
+}
 
 /**
  * Per-employee aggregate over a date range — the view HR actually needs each
@@ -678,21 +747,21 @@ function SummaryTab({ today, canExport }: { today: string; canExport: boolean })
 
   return (
     <div className="bg-white rounded-2xl shadow">
-      <div className="flex flex-wrap items-center gap-3 p-5 border-b border-gray-100">
-        <div className="flex items-center gap-2 text-sm text-gray-600">
+      <div className="flex flex-wrap items-center gap-2.5 sm:gap-3 p-4 sm:p-5 border-b border-gray-100">
+        <div className="flex w-full sm:w-auto items-center gap-2 text-sm text-gray-600">
           <Calendar className="w-4 h-4" /> Period:
         </div>
         <input
           type="date"
           value={range.date_from}
           onChange={e => setRange(p => ({ ...p, date_from: e.target.value }))}
-          className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm outline-none focus:ring-1 focus:ring-black"
+          className="min-w-[8.5rem] flex-1 sm:flex-none px-3 py-1.5 border border-gray-200 rounded-lg text-sm outline-none focus:ring-1 focus:ring-black"
         />
         <input
           type="date"
           value={range.date_to}
           onChange={e => setRange(p => ({ ...p, date_to: e.target.value }))}
-          className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm outline-none focus:ring-1 focus:ring-black"
+          className="min-w-[8.5rem] flex-1 sm:flex-none px-3 py-1.5 border border-gray-200 rounded-lg text-sm outline-none focus:ring-1 focus:ring-black"
         />
         {canExport && (
           <button
@@ -708,9 +777,9 @@ function SummaryTab({ today, canExport }: { today: string; canExport: boolean })
               }
             }}
             disabled={exporting}
-            className="ml-auto flex items-center gap-2 text-sm font-medium px-4 py-1.5 rounded-lg border border-gray-300 hover:bg-gray-50 transition-colors disabled:opacity-50"
+            className="w-full sm:w-auto sm:ml-auto flex items-center justify-center gap-2 whitespace-nowrap text-sm font-medium px-4 py-2 sm:py-1.5 rounded-lg border border-gray-300 hover:bg-gray-50 transition-colors disabled:opacity-50"
           >
-            <Download className="w-4 h-4" />
+            <Download className="w-4 h-4 shrink-0" />
             {exporting ? 'Exporting…' : 'Export period'}
           </button>
         )}
@@ -735,7 +804,15 @@ function SummaryTab({ today, canExport }: { today: string; canExport: boolean })
           </button>
         </div>
       ) : (
-        <div className="overflow-x-auto">
+        <>
+        {/* Cards below lg, table above — see SummaryCard. */}
+        <div className="divide-y divide-gray-100 lg:hidden">
+          {items.map(i => (
+            <SummaryCard key={i.employee_id} item={i} />
+          ))}
+        </div>
+
+        <div className="hidden lg:block overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100">
@@ -774,13 +851,17 @@ function SummaryTab({ today, canExport }: { today: string; canExport: boolean })
               ))}
             </tbody>
           </table>
-          {items.length === 0 && (
-            <div className="flex flex-col items-center justify-center h-40 text-gray-400">
-              <Calendar className="w-10 h-10 mb-2 opacity-40" />
-              <p className="text-sm">No employees to summarize</p>
-            </div>
-          )}
         </div>
+
+        {/* Outside the table wrapper — that wrapper is display:none on phones,
+            which would have turned "no results" into a blank panel. */}
+        {items.length === 0 && (
+          <div className="flex flex-col items-center justify-center h-40 text-gray-400">
+            <Calendar className="w-10 h-10 mb-2 opacity-40" />
+            <p className="text-sm">No employees to summarize</p>
+          </div>
+        )}
+        </>
       )}
     </div>
   );
@@ -1014,6 +1095,107 @@ function EditAttendanceModal({ record, onClose }: { record: AttendanceRecordWith
   );
 }
 
+// ─── Record Card (narrow screens) ─────────────────────────────────────────────
+
+/**
+ * One attendance record as a card. The nine-column table needs ~1000px, so on
+ * anything narrower it became a horizontal scroller where Status, Location and
+ * the edit control sat off-screen — invisible unless you thought to swipe the
+ * table sideways. Same fields, stacked.
+ */
+function RecordCard({
+  record: r,
+  canEdit,
+  onEdit,
+}: {
+  record: AttendanceRecordWithEmployee;
+  canEdit: boolean;
+  onEdit: () => void;
+}) {
+  const statusCfg = STATUS_CONFIG[r.status as keyof typeof STATUS_CONFIG];
+  const methodCfg = METHOD_CONFIG[r.method as keyof typeof METHOD_CONFIG];
+  const MethodIcon = methodCfg?.icon ?? MoreVertical;
+
+  return (
+    <div className="p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          {/* Two lines, not `truncate` — this is the field you identify the
+              record by, and Malaysian full names routinely exceed one line. */}
+          <p className="font-medium text-gray-900 line-clamp-2">{r.full_name}</p>
+          <p className="text-xs text-gray-400 truncate">
+            {r.employee_number} · {formatDate(r.check_in_at)}
+          </p>
+        </div>
+        <div className="flex items-center gap-1.5 shrink-0">
+          {statusCfg && (
+            <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${statusCfg.color}`}>
+              {statusCfg.label}
+            </span>
+          )}
+          {r.is_outside_geofence && (
+            <span title="Checked in outside office radius" className="text-amber-500">
+              <AlertTriangle className="w-4 h-4" />
+            </span>
+          )}
+          {canEdit && (
+            <button
+              onClick={onEdit}
+              className="-mr-1 p-2 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+              title="Edit record"
+            >
+              <Pencil className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="mt-3 grid grid-cols-2 gap-3">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">Check in</p>
+          <p className="mt-0.5 flex items-center gap-1.5 text-sm tabular-nums text-gray-700">
+            <LogIn className="w-3.5 h-3.5 shrink-0 text-emerald-500" />
+            {formatTime(r.check_in_at)}
+          </p>
+        </div>
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">Check out</p>
+          <p className="mt-0.5 flex items-center gap-1.5 text-sm tabular-nums text-gray-700">
+            <LogOut className="w-3.5 h-3.5 shrink-0 text-gray-400" />
+            {formatTime(r.check_out_at)}
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs">
+        <span className="tabular-nums text-gray-600">
+          {r.hours_worked != null ? `${Number(r.hours_worked).toFixed(1)}h` : '—'}
+          {r.overtime_hours != null && Number(r.overtime_hours) > 0 && (
+            <span className="ml-1 text-amber-600 font-medium">
+              <Timer className="w-3 h-3 inline" /> +{Number(r.overtime_hours).toFixed(1)}
+            </span>
+          )}
+        </span>
+        <span className={`flex items-center gap-1.5 ${methodCfg?.color ?? 'text-gray-500'}`}>
+          <MethodIcon className="w-3.5 h-3.5" />
+          <span className="font-medium">{methodCfg?.label ?? r.method}</span>
+        </span>
+        {r.latitude && r.longitude && (
+          <a
+            href={`https://maps.google.com/?q=${r.latitude},${r.longitude}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1 text-sky-600 hover:text-sky-700"
+          >
+            <MapPin className="w-3.5 h-3.5" />
+            Location
+          </a>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export function AttendancePage() {
@@ -1119,9 +1301,10 @@ export function AttendancePage() {
 
   return (
     <div>
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
+      {/* Header — actions drop to their own row on phones rather than
+          squeezing the title into a two-line button stack. */}
+      <div className="flex flex-col gap-3 mb-6 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
           <h1 className="text-2xl font-bold text-gray-900">Attendance</h1>
           {method && (
             <div className="text-sm text-gray-500 mt-0.5 flex items-center gap-1.5">
@@ -1147,7 +1330,7 @@ export function AttendancePage() {
             </div>
           )}
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 shrink-0">
           {canView && (
             <button
               onClick={async () => {
@@ -1170,18 +1353,18 @@ export function AttendancePage() {
                 }
               }}
               disabled={exporting}
-              className="flex items-center gap-2 text-sm font-medium px-4 py-2 rounded-xl border border-gray-300 hover:bg-gray-50 transition-colors disabled:opacity-50"
+              className="flex flex-1 sm:flex-none items-center justify-center gap-2 whitespace-nowrap text-sm font-medium px-4 py-2 rounded-xl border border-gray-300 hover:bg-gray-50 transition-colors disabled:opacity-50"
             >
-              <Download className="w-4 h-4" />
+              <Download className="w-4 h-4 shrink-0" />
               {exporting ? 'Exporting…' : 'Export CSV'}
             </button>
           )}
           {canEdit && (
             <button
               onClick={() => setShowManual(true)}
-              className="flex items-center gap-2 bg-black text-white text-sm font-medium px-4 py-2 rounded-xl hover:bg-gray-800 transition-colors"
+              className="flex flex-1 sm:flex-none items-center justify-center gap-2 whitespace-nowrap bg-black text-white text-sm font-medium px-4 py-2 rounded-xl hover:bg-gray-800 transition-colors"
             >
-              <Plus className="w-4 h-4" />
+              <Plus className="w-4 h-4 shrink-0" />
               Manual Entry
             </button>
           )}
@@ -1241,28 +1424,28 @@ export function AttendancePage() {
         <div className={method?.method === 'qr_code' && canManageKiosks ? 'xl:col-span-3' : 'xl:col-span-4'}>
           <div className="bg-white rounded-2xl shadow">
             {/* Filters */}
-            <div className="flex flex-wrap items-center gap-3 p-5 border-b border-gray-100">
-              <div className="flex items-center gap-2 text-sm text-gray-600">
+            <div className="flex flex-wrap items-center gap-2.5 sm:gap-3 p-4 sm:p-5 border-b border-gray-100">
+              <div className="flex w-full sm:w-auto items-center gap-2 text-sm text-gray-600">
                 <Filter className="w-4 h-4" /> Filters:
               </div>
               <input
                 type="date"
                 value={filters.date_from}
                 onChange={e => updateFilter('date_from', e.target.value)}
-                className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm outline-none focus:ring-1 focus:ring-black"
+                className="min-w-[8.5rem] flex-1 sm:flex-none px-3 py-1.5 border border-gray-200 rounded-lg text-sm outline-none focus:ring-1 focus:ring-black"
                 placeholder="From"
               />
               <input
                 type="date"
                 value={filters.date_to}
                 onChange={e => updateFilter('date_to', e.target.value)}
-                className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm outline-none focus:ring-1 focus:ring-black"
+                className="min-w-[8.5rem] flex-1 sm:flex-none px-3 py-1.5 border border-gray-200 rounded-lg text-sm outline-none focus:ring-1 focus:ring-black"
                 placeholder="To"
               />
               <select
                 value={filters.status}
                 onChange={e => updateFilter('status', e.target.value)}
-                className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm outline-none focus:ring-1 focus:ring-black"
+                className="min-w-[8.5rem] flex-1 sm:flex-none px-3 py-1.5 border border-gray-200 rounded-lg text-sm outline-none focus:ring-1 focus:ring-black"
               >
                 <option value="">All Status</option>
                 <option value="present">Present</option>
@@ -1273,14 +1456,14 @@ export function AttendancePage() {
               <select
                 value={filters.method}
                 onChange={e => updateFilter('method', e.target.value)}
-                className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm outline-none focus:ring-1 focus:ring-black"
+                className="min-w-[8.5rem] flex-1 sm:flex-none px-3 py-1.5 border border-gray-200 rounded-lg text-sm outline-none focus:ring-1 focus:ring-black"
               >
                 <option value="">All Methods</option>
                 <option value="qr_code">QR Code</option>
                 <option value="face_id">Face ID</option>
                 <option value="manual">Manual</option>
               </select>
-              <label className="flex items-center gap-1.5 text-sm text-gray-600 cursor-pointer select-none">
+              <label className="flex w-full sm:w-auto items-center gap-1.5 text-sm text-gray-600 cursor-pointer select-none">
                 <input
                   type="checkbox"
                   checked={filters.open_only}
@@ -1313,7 +1496,7 @@ export function AttendancePage() {
 
             {/* Backfill a day the daily absence job missed (e.g. deploy window) */}
             {canEdit && (
-              <div className="flex flex-wrap items-center gap-2 px-5 py-3 border-b border-gray-100 bg-gray-50/60">
+              <div className="flex flex-wrap items-center gap-2 px-4 sm:px-5 py-3 border-b border-gray-100 bg-gray-50/60">
                 <span className="text-xs text-gray-500">
                   Missed absence marking for a past day?
                 </span>
@@ -1367,7 +1550,19 @@ export function AttendancePage() {
               </div>
             ) : (
               <>
-                <div className="overflow-x-auto">
+                {/* Cards below lg, table above — see RecordCard. */}
+                <div className="divide-y divide-gray-100 lg:hidden">
+                  {records.map(r => (
+                    <RecordCard
+                      key={r.id}
+                      record={r}
+                      canEdit={canEdit}
+                      onEdit={() => setEditRecord(r)}
+                    />
+                  ))}
+                </div>
+
+                <div className="hidden lg:block overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-gray-100">
@@ -1473,11 +1668,11 @@ export function AttendancePage() {
 
                 {/* Pagination */}
                 {totalPages > 1 && (
-                  <div className="flex items-center justify-between px-5 py-3 border-t border-gray-100">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-4 sm:px-5 py-3 border-t border-gray-100">
                     <p className="text-xs text-gray-500">
                       Showing {(page - 1) * perPage + 1}–{Math.min(page * perPage, total)} of {total} records
                     </p>
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center justify-center gap-1">
                       <button
                         onClick={() => setPage(p => Math.max(1, p - 1))}
                         disabled={page <= 1}
