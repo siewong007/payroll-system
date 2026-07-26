@@ -21,14 +21,25 @@ use crate::services::{payroll_engine, payroll_entry_service, payroll_service};
 ///
 /// Shared by `process` and `preview` so the preview is dated exactly as the run
 /// it is previewing.
-fn default_pay_date(req: &ProcessPayrollRequest) -> chrono::NaiveDate {
-    req.pay_date.unwrap_or_else(|| {
-        chrono::NaiveDate::from_ymd_opt(req.period_year, req.period_month as u32, 28)
-            .unwrap_or_else(|| {
-                chrono::NaiveDate::from_ymd_opt(req.period_year, req.period_month as u32, 1)
-                    .unwrap()
-            })
-    })
+/// Fallible because it runs *before* `RunPeriod::resolve` validates the month.
+/// `period_month` is caller-supplied, so 13 (or 0, or a negative that casts to a
+/// huge `u32`) makes both `from_ymd_opt` calls return `None` — and the inner one
+/// used to be `.unwrap()`ed, panicking the handler task on both `process` and
+/// `preview` before any validation ran.
+fn default_pay_date(req: &ProcessPayrollRequest) -> AppResult<chrono::NaiveDate> {
+    if let Some(pay_date) = req.pay_date {
+        return Ok(pay_date);
+    }
+    let month = u32::try_from(req.period_month)
+        .ok()
+        .filter(|m| (1..=12).contains(m))
+        .ok_or_else(|| {
+            AppError::BadRequest(format!("Invalid period month: {}", req.period_month))
+        })?;
+
+    chrono::NaiveDate::from_ymd_opt(req.period_year, month, 28)
+        .or_else(|| chrono::NaiveDate::from_ymd_opt(req.period_year, month, 1))
+        .ok_or_else(|| AppError::BadRequest(format!("Invalid period year: {}", req.period_year)))
 }
 
 pub async fn process(
@@ -42,7 +53,7 @@ pub async fn process(
         .0
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
-    let pay_date = default_pay_date(&req);
+    let pay_date = default_pay_date(&req)?;
 
     let run = payroll_engine::process_payroll(
         &state.pool,
@@ -78,7 +89,7 @@ pub async fn preview(
         req.payroll_group_id,
         req.period_year,
         req.period_month,
-        default_pay_date(&req),
+        default_pay_date(&req)?,
     )
     .await?;
 
