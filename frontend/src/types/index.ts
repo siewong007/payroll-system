@@ -1,3 +1,5 @@
+import type { PermissionKey } from '@/api/permissions';
+
 export type AppRole = 'super_admin' | 'admin' | 'payroll_admin' | 'hr_manager' | 'finance' | 'exec' | 'employee';
 
 export interface User {
@@ -8,6 +10,16 @@ export interface User {
   company_id: string | null;
   employee_id: string | null;
   must_change_password?: boolean;
+  /**
+   * Effective permissions, derived server-side from `roles`. Gate UI on these
+   * via `usePermissions()` rather than on role names — see
+   * `backend/src/core/permission.rs`, which is the only definition of the two.
+   *
+   * Optional so a session restored from a `localStorage` mirror written by an
+   * older build still parses; treat a missing value as "no permissions" and let
+   * the next `/auth/refresh` fill it in.
+   */
+  permissions?: PermissionKey[];
 }
 
 export interface LoginResponse {

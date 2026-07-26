@@ -1,7 +1,7 @@
 use axum::{Json, extract::State};
 
 use crate::core::app_state::AppState;
-use crate::core::auth::AuthUser;
+use crate::core::auth::{AuthUser, Permission};
 use crate::core::error::{AppError, AppResult};
 use crate::models::company::{Company, CompanyStats, UpdateCompanyRequest};
 use crate::services::company_service;
@@ -42,7 +42,7 @@ pub async fn update(
     auth: AuthUser,
     Json(req): Json<UpdateCompanyRequest>,
 ) -> AppResult<Json<Company>> {
-    auth.require_company_admin()?;
+    auth.require_permission(Permission::ManageCompanySettings)?;
     if request_touches_payroll_fields(&req) && !auth.is_payroll_privileged() {
         return Err(AppError::Forbidden(
             "Payroll settings not available for this role".into(),

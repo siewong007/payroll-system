@@ -62,7 +62,10 @@ fn request(method: &str, uri: &str, token: &str, body: &str) -> Request<Body> {
         .uri(uri)
         .header(header::AUTHORIZATION, format!("Bearer {token}"))
         .header(header::CONTENT_TYPE, "application/json")
-        .header("x-forwarded-for", "203.0.113.10, 10.0.0.1")
+        // Left entry is what the caller claimed, right entry is what the proxy
+        // appended. `app_for` runs with `trust_proxy_headers: true`, so only
+        // the right-most value may ever reach the audit trail.
+        .header("x-forwarded-for", "198.51.100.99, 203.0.113.10")
         .header(header::USER_AGENT, "PayrollRouteTest/1.0")
         .body(Body::from(body.to_string()))
         .expect("build request")
@@ -207,6 +210,9 @@ async fn audited_route_writes_request_metadata() {
     .await
     .expect("audit metadata row");
 
+    // The proxy-appended entry, never the caller's claim of 198.51.100.99.
+    // An audit trail that records a caller-chosen address is worse than one
+    // with no address, because it reads as evidence.
     assert_eq!(row.0.as_deref(), Some("203.0.113.10"));
     assert_eq!(row.1.as_deref(), Some("PayrollRouteTest/1.0"));
 }

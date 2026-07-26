@@ -61,22 +61,43 @@ pub async fn delete_team(pool: &PgPool, company_id: Uuid, team_id: Uuid) -> AppR
 }
 
 // ─── Members ───
+//
+// Every entry point here takes the caller's `company_id` and threads it into
+// the query. A team id alone is not proof of ownership: these endpoints are
+// reachable by any administrator, so an unscoped `team_id` was enough to read
+// or edit another tenant's roster.
 
-pub async fn list_members(pool: &PgPool, team_id: Uuid) -> AppResult<Vec<TeamMember>> {
-    team_reads::list_members(pool, team_id).await
+pub async fn list_members(
+    pool: &PgPool,
+    company_id: Uuid,
+    team_id: Uuid,
+) -> AppResult<Vec<TeamMember>> {
+    // Resolve the team first so a mistyped id is a 404 rather than an empty
+    // list. The read below is scoped independently — that is the guarantee
+    // that survives if this check is ever refactored away.
+    get_team(pool, company_id, team_id).await?;
+    team_reads::list_members(pool, company_id, team_id).await
 }
 
 pub async fn add_member(
     pool: &PgPool,
+    company_id: Uuid,
     team_id: Uuid,
     employee_id: Uuid,
     role: &str,
 ) -> AppResult<TeamMember> {
-    team_members::insert(pool, team_id, employee_id, role).await
+    team_members::insert(pool, company_id, team_id, employee_id, role)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Team or employee not found".into()))
 }
 
-pub async fn remove_member(pool: &PgPool, team_id: Uuid, employee_id: Uuid) -> AppResult<()> {
-    let rows = team_members::delete(pool, team_id, employee_id).await?;
+pub async fn remove_member(
+    pool: &PgPool,
+    company_id: Uuid,
+    team_id: Uuid,
+    employee_id: Uuid,
+) -> AppResult<()> {
+    let rows = team_members::delete(pool, company_id, team_id, employee_id).await?;
     if rows == 0 {
         return Err(AppError::NotFound("Member not found in this team".into()));
     }

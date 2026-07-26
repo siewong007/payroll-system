@@ -15,7 +15,7 @@ use crate::models::employee_import::{
 use crate::services::employee_import_service;
 
 fn require_payroll_admin(auth: &AuthUser) -> AppResult<(Uuid, Uuid)> {
-    auth.require_permission(Permission::ManagePayrollDraft)?;
+    auth.require_permission(Permission::ImportEmployees)?;
     let company_id = auth
         .0
         .company_id

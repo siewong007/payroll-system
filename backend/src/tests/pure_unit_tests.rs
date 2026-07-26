@@ -137,48 +137,54 @@ fn payroll_permissions_enforce_separation_of_duties() {
 #[test]
 fn role_guards_cover_exec_employee_and_attendance_boundaries() {
     let exec = AuthUser(claims_with_roles(&["exec"]));
-    assert!(matches!(exec.deny_exec(), Err(AppError::Forbidden(_))));
     // exec is read-mostly: may view attendance data, but generating a QR is a
-    // write (it retires the console's live token) and is denied.
-    assert!(exec.require_attendance_viewer().is_ok());
+    // write (it retires the console's live token) and is denied. Correcting
+    // team membership and managing kiosks are writes too.
+    assert!(exec.can(Permission::ViewAttendance));
+    assert!(!exec.can(Permission::GenerateAttendanceQr));
+    assert!(!exec.can(Permission::ManageKiosks));
+    assert!(!exec.can(Permission::ManageAttendance));
+    assert!(exec.can(Permission::ViewTeams));
+    assert!(!exec.can(Permission::ManageTeams));
     assert!(matches!(
-        exec.require_attendance_qr_generator(),
-        Err(AppError::Forbidden(_))
-    ));
-    assert!(matches!(
-        exec.require_kiosk_admin(),
+        exec.require_permission(Permission::ViewPayroll),
         Err(AppError::Forbidden(_))
     ));
 
     let employee = AuthUser(claims_with_roles(&["employee"]));
-    assert!(matches!(
-        employee.require_non_employee(),
-        Err(AppError::Forbidden(_))
-    ));
-    assert!(matches!(
-        employee.require_attendance_viewer(),
-        Err(AppError::Forbidden(_))
-    ));
-    assert!(matches!(
-        employee.require_attendance_qr_generator(),
-        Err(AppError::Forbidden(_))
-    ));
+    assert!(!employee.can(Permission::ViewEmployees));
+    assert!(!employee.can(Permission::ViewAttendance));
+    assert!(!employee.can(Permission::GenerateAttendanceQr));
+    assert!(!employee.can(Permission::ViewDocuments));
 
     let finance = AuthUser(claims_with_roles(&["finance"]));
-    assert!(finance.require_attendance_viewer().is_ok());
-    assert!(matches!(
-        finance.require_attendance_qr_generator(),
-        Err(AppError::Forbidden(_))
-    ));
+    assert!(finance.can(Permission::ViewAttendance));
+    assert!(!finance.can(Permission::GenerateAttendanceQr));
 
     let hr = AuthUser(claims_with_roles(&["hr_manager"]));
-    assert!(hr.require_hr_admin().is_ok());
-    assert!(hr.require_kiosk_admin().is_ok());
-    assert!(hr.require_attendance_qr_generator().is_ok());
+    assert!(hr.can(Permission::ManageWorkSchedules));
+    assert!(hr.can(Permission::ManageKiosks));
+    assert!(hr.can(Permission::GenerateAttendanceQr));
     assert!(matches!(
-        hr.require_company_admin(),
+        hr.require_permission(Permission::ManageCompanySettings),
         Err(AppError::Forbidden(_))
     ));
+}
+
+/// A user holding several roles gets the union of their grants. The old
+/// deny-list guard `require_non_employee` inverted this for one specific
+/// combination, so it is worth pinning explicitly.
+#[test]
+fn multiple_roles_grant_the_union_of_their_permissions() {
+    let auth = AuthUser(claims_with_roles(&["finance", "hr_manager"]));
+    assert!(auth.can(Permission::ApprovePayroll), "from finance");
+    assert!(auth.can(Permission::ManageAttendance), "from hr_manager");
+    assert!(!auth.can(Permission::ManageUsers), "from neither");
+
+    // Holding `employee` alongside a privileged role must not subtract from it.
+    let mixed = AuthUser(claims_with_roles(&["hr_manager", "employee"]));
+    assert!(mixed.can(Permission::ViewEmployees));
+    assert!(mixed.can(Permission::ManageAttendance));
 }
 
 #[test]
@@ -406,8 +412,12 @@ fn money_formatting_handles_signs_and_grouping() {
     assert_eq!(sen_to_rm(-123_456), "-1,234.56");
 }
 
+fn peer(value: &str) -> Option<std::net::IpAddr> {
+    Some(value.parse().expect("valid ip"))
+}
+
 #[test]
-fn audit_metadata_prefers_forwarded_ip_and_truncates_user_agent() {
+fn audit_metadata_ignores_forwarded_headers_when_the_proxy_is_not_trusted() {
     let mut headers = HeaderMap::new();
     headers.insert(
         "x-forwarded-for",
@@ -419,9 +429,27 @@ fn audit_metadata_prefers_forwarded_ip_and_truncates_user_agent() {
         HeaderValue::from_str(&"x".repeat(600)).unwrap(),
     );
 
-    let meta = AuditRequestMeta::from_headers(&headers);
-    assert_eq!(meta.ip_address.as_deref(), Some("203.0.113.7"));
+    // This is the production configuration (`TRUST_PROXY_HEADERS` defaults to
+    // false). The recorded address must be the TCP peer, not anything the
+    // caller put in a header — an audit trail whose IP column is caller-chosen
+    // is worse than useless, because it looks like evidence.
+    let meta = AuditRequestMeta::from_request(&headers, peer("192.0.2.44"), false);
+    assert_eq!(meta.ip_address.as_deref(), Some("192.0.2.44"));
     assert_eq!(meta.user_agent.as_deref().map(str::len), Some(500));
+}
+
+#[test]
+fn audit_metadata_takes_the_proxy_appended_entry_when_trusted() {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        "x-forwarded-for",
+        HeaderValue::from_static(" 203.0.113.7, 10.0.0.1 "),
+    );
+
+    // Behind a trusted proxy the right-most entry is the one the proxy
+    // appended; 203.0.113.7 is whatever the client claimed.
+    let meta = AuditRequestMeta::from_request(&headers, peer("192.0.2.44"), true);
+    assert_eq!(meta.ip_address.as_deref(), Some("10.0.0.1"));
 }
 
 #[test]
@@ -431,7 +459,14 @@ fn audit_metadata_falls_back_to_real_ip_and_ignores_blank_values() {
     headers.insert("x-real-ip", HeaderValue::from_static(" 198.51.100.9 "));
     headers.insert(header::USER_AGENT, HeaderValue::from_static("  "));
 
-    let meta = AuditRequestMeta::from_headers(&headers);
+    let meta = AuditRequestMeta::from_request(&headers, peer("192.0.2.44"), true);
     assert_eq!(meta.ip_address.as_deref(), Some("198.51.100.9"));
     assert_eq!(meta.user_agent, None);
+}
+
+#[test]
+fn audit_metadata_without_any_address_records_none() {
+    let headers = HeaderMap::new();
+    let meta = AuditRequestMeta::from_request(&headers, None, false);
+    assert_eq!(meta.ip_address, None);
 }

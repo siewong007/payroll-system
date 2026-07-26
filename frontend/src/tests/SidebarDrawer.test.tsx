@@ -6,19 +6,20 @@ import { describe, expect, it, vi } from 'vitest';
 import type { User } from '@/types';
 import { AuthContext, type AuthContextType } from '@/context/AuthContext';
 import { Sidebar } from '@/components/layout/Sidebar';
+import { userWithRoles } from './support/permissions';
 
 vi.mock('@/api/admin', () => ({
   getMyCompanies: vi.fn().mockResolvedValue([]),
 }));
 
-const adminUser: User = {
+// The sidebar filters links by permission, so the fixture carries the grants
+// these roles imply — see `support/permissions`.
+const adminUser: User = userWithRoles(['admin', 'payroll_admin'], {
   id: 'u1',
   email: 'admin@test.local',
   full_name: 'Admin User',
-  roles: ['admin', 'payroll_admin'],
   company_id: 'c1',
-  employee_id: null,
-};
+});
 
 function makeAuth(user: User): AuthContextType {
   return {

@@ -1,12 +1,11 @@
 use axum::{
     Json,
     extract::{Path, Query, State},
-    http::HeaderMap,
 };
 use uuid::Uuid;
 
 use crate::core::app_state::AppState;
-use crate::core::auth::AuthUser;
+use crate::core::auth::{AuthUser, Permission};
 use crate::core::error::AppResult;
 use crate::core::extract::ValidatedJson;
 use crate::models::audit::AuditRequestMeta;
@@ -23,17 +22,13 @@ pub struct UserListQuery {
     pub per_page: Option<i64>,
 }
 
-fn require_super_admin(auth: &AuthUser) -> AppResult<()> {
-    auth.require_super_admin()
-}
-
 // ─── Companies ───
 
 pub async fn list_companies(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> AppResult<Json<Vec<Company>>> {
-    require_super_admin(&auth)?;
+    auth.require_permission(Permission::ManageCompanies)?;
     let companies = company_service::list_companies(&state.pool).await?;
     Ok(Json(companies))
 }
@@ -43,7 +38,7 @@ pub async fn create_company(
     auth: AuthUser,
     Json(req): Json<CreateCompanyRequest>,
 ) -> AppResult<Json<Company>> {
-    require_super_admin(&auth)?;
+    auth.require_permission(Permission::ManageCompanies)?;
     let company = company_service::create_company(&state.pool, req, auth.0.sub).await?;
     Ok(Json(company))
 }
@@ -54,7 +49,7 @@ pub async fn update_company(
     Path(company_id): Path<Uuid>,
     Json(req): Json<UpdateCompanyRequest>,
 ) -> AppResult<Json<Company>> {
-    require_super_admin(&auth)?;
+    auth.require_permission(Permission::ManageCompanies)?;
     let company = company_service::update_company(&state.pool, company_id, req, auth.0.sub).await?;
     Ok(Json(company))
 }
@@ -64,7 +59,7 @@ pub async fn delete_company(
     auth: AuthUser,
     Path(company_id): Path<Uuid>,
 ) -> AppResult<Json<serde_json::Value>> {
-    require_super_admin(&auth)?;
+    auth.require_permission(Permission::ManageCompanies)?;
     company_service::delete_company(&state.pool, company_id).await?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
@@ -76,7 +71,7 @@ pub async fn list_users(
     auth: AuthUser,
     Query(query): Query<UserListQuery>,
 ) -> AppResult<Json<PaginatedResponse<UserWithCompanies>>> {
-    auth.require_user_directory_reader()?;
+    auth.require_permission(Permission::ViewUserDirectory)?;
 
     let is_super_admin = auth.has_any_role(&["super_admin"]);
     let page = query.page.unwrap_or(1).max(1);
@@ -108,11 +103,10 @@ pub async fn list_users(
 pub async fn create_user(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    meta: AuditRequestMeta,
     ValidatedJson(req): ValidatedJson<CreateUserRequest>,
 ) -> AppResult<Json<UserWithCompanies>> {
-    require_super_admin(&auth)?;
-    let meta = AuditRequestMeta::from_headers(&headers);
+    auth.require_permission(Permission::ManageUsers)?;
     let user = user_service::create_user(&state.pool, req, auth.0.sub, Some(&meta)).await?;
     Ok(Json(user))
 }
@@ -121,11 +115,10 @@ pub async fn update_user(
     State(state): State<AppState>,
     auth: AuthUser,
     Path(user_id): Path<Uuid>,
-    headers: HeaderMap,
+    meta: AuditRequestMeta,
     ValidatedJson(req): ValidatedJson<UpdateUserRequest>,
 ) -> AppResult<Json<UserWithCompanies>> {
-    require_super_admin(&auth)?;
-    let meta = AuditRequestMeta::from_headers(&headers);
+    auth.require_permission(Permission::ManageUsers)?;
     let user =
         user_service::update_user(&state.pool, user_id, req, auth.0.sub, Some(&meta)).await?;
     Ok(Json(user))
@@ -135,10 +128,9 @@ pub async fn delete_user(
     State(state): State<AppState>,
     auth: AuthUser,
     Path(user_id): Path<Uuid>,
-    headers: HeaderMap,
+    meta: AuditRequestMeta,
 ) -> AppResult<Json<serde_json::Value>> {
-    require_super_admin(&auth)?;
-    let meta = AuditRequestMeta::from_headers(&headers);
+    auth.require_permission(Permission::ManageUsers)?;
     user_service::delete_user(&state.pool, user_id, auth.0.sub, Some(&meta)).await?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }

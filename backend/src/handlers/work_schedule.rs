@@ -1,12 +1,11 @@
 use axum::{
     Json,
     extract::{Path, State},
-    http::HeaderMap,
 };
 use uuid::Uuid;
 
 use crate::core::app_state::AppState;
-use crate::core::auth::AuthUser;
+use crate::core::auth::{AuthUser, Permission};
 use crate::core::error::AppResult;
 use crate::models::work_schedule::{
     CreateWorkScheduleRequest, UpdateWorkScheduleRequest, WorkSchedule,
@@ -39,12 +38,11 @@ pub async fn get_default_schedule(
 pub async fn upsert_default_schedule(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Json(req): Json<CreateWorkScheduleRequest>,
 ) -> AppResult<Json<WorkSchedule>> {
     let company_id = auth.company_id()?;
-    auth.require_hr_admin()?;
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
+    auth.require_permission(Permission::ManageWorkSchedules)?;
 
     let schedule = work_schedule_service::upsert_default_schedule(
         &state.pool,
@@ -61,13 +59,12 @@ pub async fn upsert_default_schedule(
 pub async fn update_schedule(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Path(id): Path<Uuid>,
     Json(req): Json<UpdateWorkScheduleRequest>,
 ) -> AppResult<Json<WorkSchedule>> {
     let company_id = auth.company_id()?;
-    auth.require_hr_admin()?;
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
+    auth.require_permission(Permission::ManageWorkSchedules)?;
 
     let schedule = work_schedule_service::update_schedule(
         &state.pool,

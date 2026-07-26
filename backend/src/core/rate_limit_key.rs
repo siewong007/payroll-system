@@ -1,24 +1,16 @@
 //! Rate-limiting key extraction.
 //!
-//! Two deployments, two correct answers:
-//!
-//! - **Behind a trusted proxy** (CloudFront/ALB): the TCP peer is the proxy, so
-//!   peer-IP keying collapses every client into one bucket — a fleet of kiosks
-//!   rate-limits itself, and one attacker shares a bucket with real users.
-//!   The client IP must come from `X-Forwarded-For` / `X-Real-IP`.
-//!
-//! - **Reached directly** (containers on a host, local dev): forwarded headers
-//!   are attacker-controlled. Trusting them lets anyone bypass the login limiter
-//!   by rotating a fake `X-Forwarded-For`, which is worse than a shared bucket.
-//!
-//! So this is not a guess we can make at runtime — the operator declares it via
-//! `TRUST_PROXY_HEADERS`, and the default is the safe one (peer IP).
+//! The decision of *which* address identifies a client — peer vs. forwarded
+//! header — lives in `core::client_ip`, shared with the audit trail so the two
+//! cannot drift apart. This module only adapts it to `tower_governor`.
 
 use std::net::{IpAddr, SocketAddr};
 
 use axum::extract::ConnectInfo;
 use axum::http::Request;
 use tower_governor::{errors::GovernorError, key_extractor::KeyExtractor};
+
+use super::client_ip::client_ip;
 
 /// Extracts the client IP, optionally trusting proxy headers.
 #[derive(Debug, Clone, Copy)]
@@ -41,36 +33,15 @@ fn peer_ip<T>(req: &Request<T>) -> Option<IpAddr> {
         .map(|ConnectInfo(addr)| addr.ip())
 }
 
-/// Right-most entry of `X-Forwarded-For`, i.e. the address appended by the
-/// closest (trusted) proxy. Taking the left-most instead would read whatever
-/// the client sent, which is exactly the value an attacker controls.
-fn forwarded_ip<T>(req: &Request<T>) -> Option<IpAddr> {
-    let headers = req.headers();
-    if let Some(xff) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok())
-        && let Some(ip) = xff
-            .split(',')
-            .rev()
-            .filter_map(|part| part.trim().parse::<IpAddr>().ok())
-            .next()
-    {
-        return Some(ip);
-    }
-    headers
-        .get("x-real-ip")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.trim().parse::<IpAddr>().ok())
-}
-
 impl KeyExtractor for ClientIpKeyExtractor {
     type Key = IpAddr;
 
     fn extract<T>(&self, req: &Request<T>) -> Result<Self::Key, GovernorError> {
-        if self.trust_forwarded
-            && let Some(ip) = forwarded_ip(req)
-        {
-            return Ok(ip);
-        }
-        peer_ip(req).ok_or(GovernorError::UnableToExtractKey)
+        // No usable address means no key. Returning a placeholder would put
+        // every such request in one shared bucket, which is the failure mode
+        // this whole module exists to avoid.
+        client_ip(req.headers(), peer_ip(req), self.trust_forwarded)
+            .ok_or(GovernorError::UnableToExtractKey)
     }
 }
 

@@ -9,5 +9,6 @@ mod route_auth_tests;
 mod schema_invariant_tests;
 mod statutory_tests;
 pub(crate) mod support;
+mod team_tests;
 mod totp_route_tests;
 mod user_management_tests;

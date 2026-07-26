@@ -1,7 +1,6 @@
 use axum::{
     Json,
     extract::{Path, Query, State},
-    http::HeaderMap,
 };
 use uuid::Uuid;
 
@@ -35,7 +34,7 @@ fn default_pay_date(req: &ProcessPayrollRequest) -> chrono::NaiveDate {
 pub async fn process(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Json(req): Json<ProcessPayrollRequest>,
 ) -> AppResult<Json<PayrollRun>> {
     auth.require_permission(Permission::ManagePayrollDraft)?;
@@ -43,7 +42,6 @@ pub async fn process(
         .0
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
     let pay_date = default_pay_date(&req);
 
     let run = payroll_engine::process_payroll(
@@ -151,7 +149,7 @@ pub async fn list_run_audit_logs(
 pub async fn delete_run(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<serde_json::Value>> {
     auth.require_permission(Permission::ManagePayrollDraft)?;
@@ -159,8 +157,6 @@ pub async fn delete_run(
         .0
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
-
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
 
     payroll_service::delete_run(&state.pool, company_id, id, auth.0.sub, Some(&audit_meta)).await?;
 
@@ -170,7 +166,7 @@ pub async fn delete_run(
 pub async fn update_item_pcb(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Path((run_id, employee_id)): Path<(Uuid, Uuid)>,
     Json(req): Json<UpdatePayrollPcbRequest>,
 ) -> AppResult<Json<PayrollSummary>> {
@@ -180,7 +176,6 @@ pub async fn update_item_pcb(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
     let summary = payroll_service::update_item_pcb(
         &state.pool,
         company_id,
@@ -198,7 +193,7 @@ pub async fn update_item_pcb(
 pub async fn submit_run_for_approval(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<PayrollRun>> {
     auth.require_permission(Permission::SubmitPayroll)?;
@@ -206,7 +201,6 @@ pub async fn submit_run_for_approval(
         .0
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
     let run = crate::services::payroll_lifecycle_service::submit_for_approval(
         &state.pool,
         company_id,
@@ -222,7 +216,7 @@ pub async fn submit_run_for_approval(
 pub async fn approve_run(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<PayrollRun>> {
     auth.require_permission(Permission::ApprovePayroll)?;
@@ -230,7 +224,6 @@ pub async fn approve_run(
         .0
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
     let run = crate::services::payroll_lifecycle_service::approve(
         &state.pool,
         company_id,
@@ -246,7 +239,7 @@ pub async fn approve_run(
 pub async fn return_run_for_changes(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Path(id): Path<Uuid>,
     Json(req): Json<ReturnPayrollRunRequest>,
 ) -> AppResult<Json<PayrollRun>> {
@@ -255,7 +248,6 @@ pub async fn return_run_for_changes(
         .0
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
     let run = crate::services::payroll_lifecycle_service::return_for_changes(
         &state.pool,
         company_id,
@@ -272,7 +264,7 @@ pub async fn return_run_for_changes(
 pub async fn lock_run(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<PayrollRun>> {
     auth.require_permission(Permission::MarkPayrollPaid)?;
@@ -280,7 +272,6 @@ pub async fn lock_run(
         .0
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
     let run = crate::services::payroll_lifecycle_service::lock_as_paid(
         &state.pool,
         company_id,
@@ -335,7 +326,7 @@ pub async fn list_entries(
 pub async fn create_entry(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Json(req): Json<CreatePayrollEntryRequest>,
 ) -> AppResult<Json<PayrollEntry>> {
     auth.require_permission(Permission::ManagePayrollDraft)?;
@@ -344,7 +335,6 @@ pub async fn create_entry(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
     let entry = payroll_entry_service::create_entry(
         &state.pool,
         company_id,
@@ -360,7 +350,7 @@ pub async fn create_entry(
 pub async fn update_entry(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Path(id): Path<Uuid>,
     Json(req): Json<UpdatePayrollEntryRequest>,
 ) -> AppResult<Json<PayrollEntry>> {
@@ -370,7 +360,6 @@ pub async fn update_entry(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
     let updated = payroll_entry_service::update_entry(
         &state.pool,
         company_id,
@@ -387,7 +376,7 @@ pub async fn update_entry(
 pub async fn delete_entry(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<serde_json::Value>> {
     auth.require_permission(Permission::ManagePayrollDraft)?;
@@ -396,7 +385,6 @@ pub async fn delete_entry(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
     payroll_entry_service::delete_entry(&state.pool, company_id, id, auth.0.sub, Some(&audit_meta))
         .await?;
 

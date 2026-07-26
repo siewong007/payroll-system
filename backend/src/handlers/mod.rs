@@ -17,6 +17,7 @@ pub mod notification;
 pub mod oauth2;
 pub mod passkey;
 pub mod payroll;
+pub mod permission;
 pub mod portal;
 pub mod report;
 pub mod settings;

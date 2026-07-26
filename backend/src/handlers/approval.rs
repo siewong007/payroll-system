@@ -1,13 +1,12 @@
 use axum::{
     Json,
     extract::{Path, Query, State},
-    http::HeaderMap,
 };
 use uuid::Uuid;
 
 use crate::core::app_state::AppState;
-use crate::core::auth::AuthUser;
-use crate::core::error::{AppError, AppResult};
+use crate::core::auth::{AuthUser, Permission};
+use crate::core::error::AppResult;
 use crate::models::approval::{
     AdminClaimRequest, AdminLeaveRequest, AdminOvertimeRequest, ReviewRequest, StatusQuery,
 };
@@ -20,19 +19,6 @@ use crate::services::approval_service::{
 };
 use crate::services::audit_service::AuditRequestMeta;
 
-fn require_admin(auth: &AuthUser) -> AppResult<Uuid> {
-    if auth.has_any_role(&[
-        "super_admin",
-        "admin",
-        "payroll_admin",
-        "hr_manager",
-        "exec",
-    ]) {
-        return auth.company_id();
-    }
-    Err(AppError::Forbidden("Admin access required".into()))
-}
-
 // ─── Leave ───
 
 pub async fn list_leave_requests(
@@ -40,7 +26,7 @@ pub async fn list_leave_requests(
     auth: AuthUser,
     Query(q): Query<StatusQuery>,
 ) -> AppResult<Json<Vec<LeaveRequestWithEmployee>>> {
-    let company_id = require_admin(&auth)?;
+    let company_id = auth.authorize(Permission::ViewApprovals)?;
     let requests =
         approval_service::get_pending_leave_requests(&state.pool, company_id, q.status.as_deref())
             .await?;
@@ -50,11 +36,10 @@ pub async fn list_leave_requests(
 pub async fn create_leave_request(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Json(req): Json<AdminLeaveRequest>,
 ) -> AppResult<Json<LeaveRequest>> {
-    let company_id = require_admin(&auth)?;
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
+    let company_id = auth.authorize(Permission::ManageApprovals)?;
     let leave = approval_service::create_leave_request_admin(
         &state.pool,
         company_id,
@@ -78,12 +63,11 @@ pub async fn create_leave_request(
 pub async fn update_leave_request(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Path(id): Path<Uuid>,
     Json(req): Json<UpdateLeaveRequest>,
 ) -> AppResult<Json<LeaveRequest>> {
-    let company_id = require_admin(&auth)?;
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
+    let company_id = auth.authorize(Permission::ManageApprovals)?;
     let leave = approval_service::update_leave_request_admin(
         &state.pool,
         company_id,
@@ -99,11 +83,10 @@ pub async fn update_leave_request(
 pub async fn delete_leave_request(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<serde_json::Value>> {
-    let company_id = require_admin(&auth)?;
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
+    let company_id = auth.authorize(Permission::ManageApprovals)?;
     approval_service::delete_leave_request_admin(
         &state.pool,
         company_id,
@@ -118,11 +101,10 @@ pub async fn delete_leave_request(
 pub async fn cancel_leave_request(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<LeaveRequest>> {
-    let company_id = require_admin(&auth)?;
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
+    let company_id = auth.authorize(Permission::ManageApprovals)?;
     let leave = approval_service::cancel_leave_request_admin(
         &state.pool,
         company_id,
@@ -137,12 +119,11 @@ pub async fn cancel_leave_request(
 pub async fn approve_leave(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Path(id): Path<Uuid>,
     Json(req): Json<ReviewRequest>,
 ) -> AppResult<Json<LeaveRequest>> {
-    let company_id = require_admin(&auth)?;
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
+    let company_id = auth.authorize(Permission::ManageApprovals)?;
     let lr = approval_service::approve_leave(
         &state.pool,
         &state.config,
@@ -159,12 +140,11 @@ pub async fn approve_leave(
 pub async fn reject_leave(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Path(id): Path<Uuid>,
     Json(req): Json<ReviewRequest>,
 ) -> AppResult<Json<LeaveRequest>> {
-    let company_id = require_admin(&auth)?;
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
+    let company_id = auth.authorize(Permission::ManageApprovals)?;
     let lr = approval_service::reject_leave(
         &state.pool,
         company_id,
@@ -184,7 +164,7 @@ pub async fn list_claims(
     auth: AuthUser,
     Query(q): Query<StatusQuery>,
 ) -> AppResult<Json<Vec<ClaimWithEmployee>>> {
-    let company_id = require_admin(&auth)?;
+    let company_id = auth.authorize(Permission::ViewApprovals)?;
     let claims =
         approval_service::get_pending_claims(&state.pool, company_id, q.status.as_deref()).await?;
     Ok(Json(claims))
@@ -193,11 +173,10 @@ pub async fn list_claims(
 pub async fn create_claim(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Json(req): Json<AdminClaimRequest>,
 ) -> AppResult<Json<Claim>> {
-    let company_id = require_admin(&auth)?;
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
+    let company_id = auth.authorize(Permission::ManageApprovals)?;
     let claim = approval_service::create_claim_admin(
         &state.pool,
         company_id,
@@ -221,12 +200,11 @@ pub async fn create_claim(
 pub async fn update_claim(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Path(id): Path<Uuid>,
     Json(req): Json<UpdateClaimRequest>,
 ) -> AppResult<Json<ClaimWithEmployee>> {
-    let company_id = require_admin(&auth)?;
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
+    let company_id = auth.authorize(Permission::ManageApprovals)?;
     let claim = approval_service::update_claim_admin(
         &state.pool,
         company_id,
@@ -244,11 +222,10 @@ pub async fn update_claim(
 pub async fn delete_claim(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<serde_json::Value>> {
-    let company_id = require_admin(&auth)?;
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
+    let company_id = auth.authorize(Permission::ManageApprovals)?;
     approval_service::delete_claim_admin(
         &state.pool,
         company_id,
@@ -263,11 +240,10 @@ pub async fn delete_claim(
 pub async fn cancel_claim(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<Claim>> {
-    let company_id = require_admin(&auth)?;
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
+    let company_id = auth.authorize(Permission::ManageApprovals)?;
     let claim = approval_service::cancel_claim_admin(
         &state.pool,
         company_id,
@@ -282,12 +258,11 @@ pub async fn cancel_claim(
 pub async fn approve_claim(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Path(id): Path<Uuid>,
     Json(req): Json<ReviewRequest>,
 ) -> AppResult<Json<Claim>> {
-    let company_id = require_admin(&auth)?;
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
+    let company_id = auth.authorize(Permission::ManageApprovals)?;
     let claim = approval_service::approve_claim(
         &state.pool,
         &state.config,
@@ -304,12 +279,11 @@ pub async fn approve_claim(
 pub async fn reject_claim(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Path(id): Path<Uuid>,
     Json(req): Json<ReviewRequest>,
 ) -> AppResult<Json<Claim>> {
-    let company_id = require_admin(&auth)?;
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
+    let company_id = auth.authorize(Permission::ManageApprovals)?;
     let claim = approval_service::reject_claim(
         &state.pool,
         company_id,
@@ -329,7 +303,7 @@ pub async fn list_overtime(
     auth: AuthUser,
     Query(q): Query<StatusQuery>,
 ) -> AppResult<Json<Vec<OvertimeWithEmployee>>> {
-    let company_id = require_admin(&auth)?;
+    let company_id = auth.authorize(Permission::ViewApprovals)?;
     let apps = approval_service::get_pending_overtime(&state.pool, company_id, q.status.as_deref())
         .await?;
     Ok(Json(apps))
@@ -338,11 +312,10 @@ pub async fn list_overtime(
 pub async fn create_overtime(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Json(req): Json<AdminOvertimeRequest>,
 ) -> AppResult<Json<OvertimeApplication>> {
-    let company_id = require_admin(&auth)?;
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
+    let company_id = auth.authorize(Permission::ManageApprovals)?;
     let overtime = approval_service::create_overtime_admin(
         &state.pool,
         company_id,
@@ -365,12 +338,11 @@ pub async fn create_overtime(
 pub async fn update_overtime(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Path(id): Path<Uuid>,
     Json(req): Json<UpdateOvertimeRequest>,
 ) -> AppResult<Json<OvertimeWithEmployee>> {
-    let company_id = require_admin(&auth)?;
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
+    let company_id = auth.authorize(Permission::ManageApprovals)?;
     let overtime = approval_service::update_overtime_admin(
         &state.pool,
         company_id,
@@ -389,11 +361,10 @@ pub async fn update_overtime(
 pub async fn delete_overtime(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<serde_json::Value>> {
-    let company_id = require_admin(&auth)?;
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
+    let company_id = auth.authorize(Permission::ManageApprovals)?;
     approval_service::delete_overtime_admin(
         &state.pool,
         company_id,
@@ -408,11 +379,10 @@ pub async fn delete_overtime(
 pub async fn cancel_overtime(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<OvertimeApplication>> {
-    let company_id = require_admin(&auth)?;
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
+    let company_id = auth.authorize(Permission::ManageApprovals)?;
     let ot = approval_service::cancel_overtime_admin(
         &state.pool,
         company_id,
@@ -427,12 +397,11 @@ pub async fn cancel_overtime(
 pub async fn approve_overtime(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Path(id): Path<Uuid>,
     Json(req): Json<ReviewRequest>,
 ) -> AppResult<Json<OvertimeApplication>> {
-    let company_id = require_admin(&auth)?;
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
+    let company_id = auth.authorize(Permission::ManageApprovals)?;
     let ot = approval_service::approve_overtime(
         &state.pool,
         company_id,
@@ -448,12 +417,11 @@ pub async fn approve_overtime(
 pub async fn reject_overtime(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Path(id): Path<Uuid>,
     Json(req): Json<ReviewRequest>,
 ) -> AppResult<Json<OvertimeApplication>> {
-    let company_id = require_admin(&auth)?;
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
+    let company_id = auth.authorize(Permission::ManageApprovals)?;
     let ot = approval_service::reject_overtime(
         &state.pool,
         company_id,

@@ -7,7 +7,7 @@ use axum::{
 use uuid::Uuid;
 
 use crate::core::app_state::AppState;
-use crate::core::auth::AuthUser;
+use crate::core::auth::{AuthUser, Permission};
 use crate::core::error::{AppError, AppResult};
 use crate::models::attendance::{
     AttendanceExportQuery, AttendanceListQuery, AttendanceMethodResponse, AttendanceRecord,
@@ -41,7 +41,7 @@ pub async fn get_platform_method(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> AppResult<Json<serde_json::Value>> {
-    auth.require_super_admin()?;
+    auth.require_permission(Permission::ManagePlatformSettings)?;
 
     let method = attendance_service::get_platform_attendance_method(&state.pool).await?;
     let allow_override = attendance_service::get_platform_allow_override(&state.pool).await?;
@@ -55,11 +55,10 @@ pub async fn get_platform_method(
 pub async fn set_platform_method(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Json(req): Json<SetAttendanceMethodRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
-    auth.require_super_admin()?;
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
+    auth.require_permission(Permission::ManagePlatformSettings)?;
 
     attendance_service::set_platform_attendance_method(
         &state.pool,
@@ -78,12 +77,11 @@ pub async fn set_platform_method(
 pub async fn set_company_method(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Json(req): Json<SetCompanyAttendanceMethodRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
     let company_id = auth.company_id()?;
-    auth.require_company_admin()?;
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
+    auth.require_permission(Permission::SetCompanyAttendanceMethod)?;
 
     attendance_service::set_company_attendance_method(
         &state.pool,
@@ -102,10 +100,10 @@ pub async fn set_company_method(
 pub async fn generate_qr_token(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
 ) -> AppResult<Json<QrTokenResponse>> {
     let company_id = auth.company_id()?;
-    auth.require_attendance_qr_generator()?;
+    auth.require_permission(Permission::GenerateAttendanceQr)?;
 
     // Also works for super_admin when managing a company
     // None: the admin console is its own display surface, so regenerating here
@@ -121,7 +119,6 @@ pub async fn generate_qr_token(
     // Audit under its own entity type (a token mint is not a credential
     // creation), and never persist the live token or scan URL — an audit
     // reader must not gain a usable check-in token.
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
     let _ = crate::services::audit_service::log_action_with_metadata(
         &state.pool,
         Some(company_id),
@@ -148,7 +145,7 @@ pub async fn generate_qr_token(
 pub async fn check_in_qr(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Json(req): Json<CheckInQrRequest>,
 ) -> AppResult<Json<AttendanceRecord>> {
     let employee_id = auth.employee_id()?;
@@ -172,7 +169,6 @@ pub async fn check_in_qr(
     )
     .await?;
 
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
     let _ = crate::services::audit_service::log_action_with_metadata(
         &state.pool,
         Some(company_id),
@@ -216,7 +212,7 @@ pub async fn check_in_face_id_begin(
 pub async fn check_in_face_id(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Json(req): Json<CheckInFaceIdRequest>,
 ) -> AppResult<Json<AttendanceRecord>> {
     let employee_id = auth.employee_id()?;
@@ -252,7 +248,6 @@ pub async fn check_in_face_id(
     .await?;
 
     // Audit parity with the QR path.
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
     let _ = crate::services::audit_service::log_action_with_metadata(
         &state.pool,
         Some(company_id),
@@ -329,7 +324,7 @@ pub async fn list_attendance(
     Query(q): Query<AttendanceListQuery>,
 ) -> AppResult<Json<PaginatedAttendance<AttendanceRecordWithEmployee>>> {
     let company_id = auth.company_id()?;
-    auth.require_attendance_viewer()?;
+    auth.require_permission(Permission::ViewAttendance)?;
 
     let result = attendance_service::list_attendance(&state.pool, company_id, &q).await?;
     Ok(Json(result))
@@ -340,12 +335,11 @@ pub async fn list_attendance(
 pub async fn manual_attendance(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Json(req): Json<ManualAttendanceRequest>,
 ) -> AppResult<Json<AttendanceRecord>> {
     let company_id = auth.company_id()?;
-    auth.require_hr_admin()?;
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
+    auth.require_permission(Permission::ManageAttendance)?;
 
     let record = attendance_service::manual_attendance(
         &state.pool,
@@ -366,7 +360,7 @@ pub async fn attendance_summary(
     Query(q): Query<AttendanceSummaryQuery>,
 ) -> AppResult<Json<Vec<AttendanceSummaryItem>>> {
     let company_id = auth.company_id()?;
-    auth.require_attendance_viewer()?;
+    auth.require_permission(Permission::ViewAttendance)?;
 
     let items = attendance_service::get_attendance_summary(&state.pool, company_id, &q).await?;
     Ok(Json(items))
@@ -380,7 +374,7 @@ pub async fn export_attendance(
     Query(q): Query<AttendanceExportQuery>,
 ) -> AppResult<Response<Body>> {
     let company_id = auth.company_id()?;
-    auth.require_attendance_viewer()?;
+    auth.require_permission(Permission::ViewAttendance)?;
 
     let csv = attendance_service::export_attendance_csv(&state.pool, company_id, &q).await?;
 
@@ -402,13 +396,12 @@ pub async fn export_attendance(
 pub async fn update_attendance(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Path(id): Path<Uuid>,
     Json(req): Json<UpdateAttendanceRecordRequest>,
 ) -> AppResult<Json<AttendanceRecord>> {
     let company_id = auth.company_id()?;
-    auth.require_hr_admin()?;
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
+    auth.require_permission(Permission::ManageAttendance)?;
 
     let record = attendance_service::update_attendance_record(
         &state.pool,
@@ -430,16 +423,15 @@ pub async fn update_attendance(
 pub async fn absent_run(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Json(req): Json<crate::models::attendance::AbsentRunRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
     let company_id = auth.company_id()?;
-    auth.require_hr_admin()?;
+    auth.require_permission(Permission::ManageAttendance)?;
 
     let marked =
         attendance_service::mark_absent_for_company_date(&state.pool, company_id, req.date).await?;
 
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
     let _ = crate::services::audit_service::log_action_with_metadata(
         &state.pool,
         Some(company_id),
@@ -464,12 +456,11 @@ pub async fn absent_run(
 pub async fn create_kiosk_credential(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Json(req): Json<CreateKioskCredentialRequest>,
 ) -> AppResult<Json<CreateKioskCredentialResponse>> {
     let company_id = auth.company_id()?;
-    auth.require_kiosk_admin()?;
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
+    auth.require_permission(Permission::ManageKiosks)?;
 
     let (credential, secret) = attendance_service::create_kiosk_credential(
         &state.pool,
@@ -498,7 +489,7 @@ pub async fn list_kiosk_credentials(
     auth: AuthUser,
 ) -> AppResult<Json<Vec<KioskCredential>>> {
     let company_id = auth.company_id()?;
-    auth.require_kiosk_admin()?;
+    auth.require_permission(Permission::ManageKiosks)?;
 
     let creds = attendance_service::list_kiosk_credentials(&state.pool, company_id).await?;
     Ok(Json(creds))
@@ -507,12 +498,11 @@ pub async fn list_kiosk_credentials(
 pub async fn revoke_kiosk_credential(
     State(state): State<AppState>,
     auth: AuthUser,
-    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<serde_json::Value>> {
     let company_id = auth.company_id()?;
-    auth.require_kiosk_admin()?;
-    let audit_meta = AuditRequestMeta::from_headers(&headers);
+    auth.require_permission(Permission::ManageKiosks)?;
 
     attendance_service::revoke_kiosk_credential(
         &state.pool,
@@ -546,42 +536,28 @@ fn extract_kiosk_secret(headers: &HeaderMap) -> Option<String> {
     }
 }
 
-/// Best-effort client IP for forensic audit. In prod the ALB/CloudFront sets
-/// `X-Forwarded-For`; locally this returns None which is fine.
-fn client_ip_string(headers: &HeaderMap) -> Option<String> {
-    let xff = headers
-        .get("x-forwarded-for")
-        .and_then(|h| h.to_str().ok())
-        .and_then(|s| s.split(',').next())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-    if xff.is_some() {
-        return xff;
-    }
-    headers
-        .get("x-real-ip")
-        .and_then(|h| h.to_str().ok())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-}
-
 /// Public endpoint. Reads the kiosk secret from the `Authorization` header,
 /// validates it, and returns the same `QrTokenResponse` shape as the authenticated
 /// `generate_qr_token`. NEVER log the presented secret.
 pub async fn kiosk_qr(
     State(state): State<AppState>,
+    audit_meta: AuditRequestMeta,
     headers: HeaderMap,
 ) -> AppResult<Json<QrTokenResponse>> {
     let secret = extract_kiosk_secret(&headers)
         .ok_or_else(|| AppError::Unauthorized("Missing kiosk credential".into()))?;
 
-    let ip = client_ip_string(&headers);
+    // `last_used_ip` is forensic evidence about an unauthenticated surface, so
+    // it resolves through the same `core::client_ip` path as the audit trail
+    // and the rate limiter. The local helper this replaced read the left-most
+    // `X-Forwarded-For` entry unconditionally — the one value the caller sets.
+    let ip = audit_meta.ip_address.as_deref();
 
     let (resp, _company_id) = attendance_service::generate_qr_via_kiosk(
         &state.pool,
         &secret,
         &state.config.frontend_url,
-        ip.as_deref(),
+        ip,
     )
     .await?;
 

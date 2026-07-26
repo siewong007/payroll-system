@@ -5,7 +5,7 @@ use axum::{
 use uuid::Uuid;
 
 use crate::core::app_state::AppState;
-use crate::core::auth::AuthUser;
+use crate::core::auth::{AuthUser, Permission};
 use crate::core::error::{AppError, AppResult};
 use crate::models::email::{
     CreateEmailTemplateRequest, EmailLog, EmailLogQuery, EmailTemplate, PreviewLetterRequest,
@@ -22,7 +22,7 @@ pub async fn list_templates(
     auth: AuthUser,
     Query(query): Query<TemplateQuery>,
 ) -> AppResult<Json<Vec<EmailTemplate>>> {
-    auth.require_non_employee()?;
+    auth.require_permission(Permission::ViewEmailLogs)?;
     let company_id = auth
         .0
         .company_id
@@ -39,7 +39,7 @@ pub async fn get_template(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<EmailTemplate>> {
-    auth.require_non_employee()?;
+    auth.require_permission(Permission::ViewEmailLogs)?;
     let company_id = auth
         .0
         .company_id
@@ -54,7 +54,7 @@ pub async fn create_template(
     auth: AuthUser,
     Json(req): Json<CreateEmailTemplateRequest>,
 ) -> AppResult<Json<EmailTemplate>> {
-    auth.require_non_employee()?;
+    auth.require_permission(Permission::ManageEmailTemplates)?;
     let company_id = auth
         .0
         .company_id
@@ -77,7 +77,7 @@ pub async fn update_template(
     Path(id): Path<Uuid>,
     Json(req): Json<UpdateEmailTemplateRequest>,
 ) -> AppResult<Json<EmailTemplate>> {
-    auth.require_non_employee()?;
+    auth.require_permission(Permission::ManageEmailTemplates)?;
     let company_id = auth
         .0
         .company_id
@@ -93,7 +93,7 @@ pub async fn delete_template(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<serde_json::Value>> {
-    auth.require_non_employee()?;
+    auth.require_permission(Permission::ManageEmailTemplates)?;
     let company_id = auth
         .0
         .company_id
@@ -110,7 +110,7 @@ pub async fn preview_letter(
     auth: AuthUser,
     Json(req): Json<PreviewLetterRequest>,
 ) -> AppResult<Json<PreviewLetterResponse>> {
-    auth.require_non_employee()?;
+    auth.require_permission(Permission::ManageEmailTemplates)?;
     let company_id = auth
         .0
         .company_id
@@ -195,7 +195,7 @@ pub async fn send_letter(
     auth: AuthUser,
     Json(req): Json<SendLetterRequest>,
 ) -> AppResult<Json<EmailLog>> {
-    auth.require_non_employee()?;
+    auth.require_permission(Permission::SendLetters)?;
     let company_id = auth
         .0
         .company_id
@@ -314,7 +314,7 @@ pub async fn list_email_logs(
     auth: AuthUser,
     Query(query): Query<EmailLogQuery>,
 ) -> AppResult<Json<PaginatedResponse<EmailLog>>> {
-    auth.require_non_employee()?;
+    auth.require_permission(Permission::ViewEmailLogs)?;
     let company_id = auth
         .0
         .company_id

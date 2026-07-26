@@ -11,7 +11,7 @@ use crate::core::rate_limit_key::ClientIpKeyExtractor;
 use crate::handlers::{
     admin, approval, attendance, audit, auth, backup, calendar, company, dashboard, document,
     email, employee, employee_import, geofence, health, notification, oauth2, passkey, payroll,
-    portal, report, settings, team, totp, work_schedule,
+    permission, portal, report, settings, team, totp, work_schedule,
 };
 
 pub fn create_router(state: AppState) -> Router {
@@ -106,6 +106,7 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route("/auth/switch-company", put(auth::switch_company))
         .route("/auth/my-companies", get(auth::my_companies))
+        .route("/auth/permissions/matrix", get(permission::matrix))
         // Passkey (WebAuthn) — unauthenticated
         .route("/auth/passkey/check", post(passkey::check_passkey))
         .route(
