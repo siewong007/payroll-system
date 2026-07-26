@@ -279,6 +279,7 @@ pub async fn update(
 pub async fn delete(
     State(state): State<AppState>,
     auth: AuthUser,
+    audit_meta: AuditRequestMeta,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<serde_json::Value>> {
     auth.require_permission(Permission::ManageEmployees)?;
@@ -287,7 +288,14 @@ pub async fn delete(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    employee_service::soft_delete_employee(&state.pool, id, company_id).await?;
+    employee_service::soft_delete_employee(
+        &state.pool,
+        id,
+        company_id,
+        auth.0.sub,
+        Some(&audit_meta),
+    )
+    .await?;
     Ok(Json(serde_json::json!({"message": "Employee deleted"})))
 }
 

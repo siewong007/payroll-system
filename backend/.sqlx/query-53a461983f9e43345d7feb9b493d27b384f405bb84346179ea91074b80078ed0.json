@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE users SET\n            is_active = FALSE, deleted_at = NOW(), deleted_by = $2, updated_at = NOW()\n        WHERE employee_id = $1\n            AND deleted_at IS NULL\n            AND roles <@ ARRAY['employee']::VARCHAR(50)[]",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "53a461983f9e43345d7feb9b493d27b384f405bb84346179ea91074b80078ed0"
+}
