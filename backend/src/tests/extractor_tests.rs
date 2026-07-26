@@ -9,18 +9,21 @@ use crate::core::auth::{AuthUser, Claims, Permission};
 use crate::core::extract::ValidatedJson;
 
 fn auth_with_role(role: &str) -> AuthUser {
-    AuthUser(Claims {
-        sub: uuid::Uuid::new_v4(),
-        email: format!("{role}@example.invalid"),
-        roles: vec![role.to_string()],
-        company_id: Some(uuid::Uuid::new_v4()),
-        employee_id: None,
-        sid: uuid::Uuid::new_v4(),
-        exp: 2_000_000_000,
-        iat: 1_700_000_000,
-        iss: crate::core::auth::JWT_ISSUER.to_string(),
-        aud: crate::core::auth::JWT_AUDIENCE.to_string(),
-    })
+    AuthUser(
+        Claims {
+            sub: uuid::Uuid::new_v4(),
+            email: format!("{role}@example.invalid"),
+            roles: vec![role.to_string()],
+            company_id: Some(uuid::Uuid::new_v4()),
+            employee_id: None,
+            sid: uuid::Uuid::new_v4(),
+            exp: 2_000_000_000,
+            iat: 1_700_000_000,
+            iss: crate::core::auth::JWT_ISSUER.to_string(),
+            aud: crate::core::auth::JWT_AUDIENCE.to_string(),
+        },
+        Vec::new(),
+    )
 }
 
 #[derive(Debug, Deserialize, Validate)]
@@ -103,18 +106,21 @@ fn payroll_permissions_separate_preparation_and_approval() {
 
 #[test]
 fn payroll_permissions_are_combined_across_multiple_roles() {
-    let auth = AuthUser(Claims {
-        sub: uuid::Uuid::new_v4(),
-        email: "combo@example.invalid".to_string(),
-        roles: vec!["payroll_admin".to_string(), "finance".to_string()],
-        company_id: Some(uuid::Uuid::new_v4()),
-        employee_id: None,
-        sid: uuid::Uuid::new_v4(),
-        exp: 2_000_000_000,
-        iat: 1_700_000_000,
-        iss: crate::core::auth::JWT_ISSUER.to_string(),
-        aud: crate::core::auth::JWT_AUDIENCE.to_string(),
-    });
+    let auth = AuthUser(
+        Claims {
+            sub: uuid::Uuid::new_v4(),
+            email: "combo@example.invalid".to_string(),
+            roles: vec!["payroll_admin".to_string(), "finance".to_string()],
+            company_id: Some(uuid::Uuid::new_v4()),
+            employee_id: None,
+            sid: uuid::Uuid::new_v4(),
+            exp: 2_000_000_000,
+            iat: 1_700_000_000,
+            iss: crate::core::auth::JWT_ISSUER.to_string(),
+            aud: crate::core::auth::JWT_AUDIENCE.to_string(),
+        },
+        Vec::new(),
+    );
 
     assert!(auth.can(Permission::ManagePayrollDraft));
     assert!(auth.can(Permission::SubmitPayroll));

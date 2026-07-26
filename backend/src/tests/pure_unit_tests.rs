@@ -15,7 +15,8 @@ use crate::core::error::AppError;
 use crate::models::audit::AuditRequestMeta;
 use crate::services::auth_service::validate_password_strength;
 use crate::services::oauth2_service::{
-    compute_code_challenge, generate_code_verifier, google_authorize_url,
+    STALE_GRANT_MESSAGE, classify_token_exchange_error, compute_code_challenge,
+    generate_code_verifier, google_authorize_url,
 };
 use crate::services::pcb_calculator::round_up_to_ringgit;
 use crate::services::pdf_helpers::sen_to_rm;
@@ -128,7 +129,7 @@ fn payroll_permissions_enforce_separation_of_duties() {
     ];
 
     for (role, expected) in cases {
-        let auth = AuthUser(claims_with_roles(&[role]));
+        let auth = AuthUser(claims_with_roles(&[role]), Vec::new());
         let actual = permissions.map(|permission| auth.can(permission));
         assert_eq!(actual, expected, "unexpected permissions for {role}");
     }
@@ -136,7 +137,7 @@ fn payroll_permissions_enforce_separation_of_duties() {
 
 #[test]
 fn role_guards_cover_exec_employee_and_attendance_boundaries() {
-    let exec = AuthUser(claims_with_roles(&["exec"]));
+    let exec = AuthUser(claims_with_roles(&["exec"]), Vec::new());
     // exec is read-mostly: may view attendance data, but generating a QR is a
     // write (it retires the console's live token) and is denied. Correcting
     // team membership and managing kiosks are writes too.
@@ -151,17 +152,17 @@ fn role_guards_cover_exec_employee_and_attendance_boundaries() {
         Err(AppError::Forbidden(_))
     ));
 
-    let employee = AuthUser(claims_with_roles(&["employee"]));
+    let employee = AuthUser(claims_with_roles(&["employee"]), Vec::new());
     assert!(!employee.can(Permission::ViewEmployees));
     assert!(!employee.can(Permission::ViewAttendance));
     assert!(!employee.can(Permission::GenerateAttendanceQr));
     assert!(!employee.can(Permission::ViewDocuments));
 
-    let finance = AuthUser(claims_with_roles(&["finance"]));
+    let finance = AuthUser(claims_with_roles(&["finance"]), Vec::new());
     assert!(finance.can(Permission::ViewAttendance));
     assert!(!finance.can(Permission::GenerateAttendanceQr));
 
-    let hr = AuthUser(claims_with_roles(&["hr_manager"]));
+    let hr = AuthUser(claims_with_roles(&["hr_manager"]), Vec::new());
     assert!(hr.can(Permission::ManageWorkSchedules));
     assert!(hr.can(Permission::ManageKiosks));
     assert!(hr.can(Permission::GenerateAttendanceQr));
@@ -176,15 +177,68 @@ fn role_guards_cover_exec_employee_and_attendance_boundaries() {
 /// combination, so it is worth pinning explicitly.
 #[test]
 fn multiple_roles_grant_the_union_of_their_permissions() {
-    let auth = AuthUser(claims_with_roles(&["finance", "hr_manager"]));
+    let auth = AuthUser(claims_with_roles(&["finance", "hr_manager"]), Vec::new());
     assert!(auth.can(Permission::ApprovePayroll), "from finance");
     assert!(auth.can(Permission::ManageAttendance), "from hr_manager");
     assert!(!auth.can(Permission::ManageUsers), "from neither");
 
     // Holding `employee` alongside a privileged role must not subtract from it.
-    let mixed = AuthUser(claims_with_roles(&["hr_manager", "employee"]));
+    let mixed = AuthUser(claims_with_roles(&["hr_manager", "employee"]), Vec::new());
     assert!(mixed.can(Permission::ViewEmployees));
     assert!(mixed.can(Permission::ManageAttendance));
+}
+
+/// Group membership adds permissions on top of roles and can never take one
+/// away — the property that keeps "why can this person do X?" answerable by
+/// union rather than by replaying an ordered set of allows and denies.
+#[test]
+fn group_grants_add_to_role_grants_and_never_subtract() {
+    let roles_only = AuthUser(claims_with_roles(&["hr_manager"]), Vec::new());
+    assert!(!roles_only.can(Permission::ViewAuditLog));
+
+    let with_group = AuthUser(
+        claims_with_roles(&["hr_manager"]),
+        vec![Permission::ViewAuditLog],
+    );
+    assert!(with_group.can(Permission::ViewAuditLog), "granted by group");
+    assert!(
+        with_group.can(Permission::ManageAttendance),
+        "the role's own grants survive"
+    );
+    assert!(
+        !with_group.can(Permission::ViewPayroll),
+        "a group grants only what it lists"
+    );
+
+    // A group that happens to list something the role already confers is a
+    // no-op, not a conflict.
+    let overlapping = AuthUser(
+        claims_with_roles(&["hr_manager"]),
+        vec![Permission::ManageAttendance],
+    );
+    assert!(overlapping.can(Permission::ManageAttendance));
+
+    // The effective set is de-duplicated across both sources.
+    let effective = overlapping.permissions();
+    let occurrences = effective
+        .iter()
+        .filter(|p| **p == Permission::ManageAttendance)
+        .count();
+    assert_eq!(occurrences, 1, "permissions() must not repeat a grant");
+}
+
+/// An employee-only account holds nothing by role, so a group is the only way
+/// it could gain a capability — and must gain exactly that one.
+#[test]
+fn a_group_can_grant_a_roleless_account_a_single_capability() {
+    let auth = AuthUser(
+        claims_with_roles(&["employee"]),
+        vec![Permission::ViewCalendar],
+    );
+    assert!(auth.can(Permission::ViewCalendar));
+    assert_eq!(auth.permissions(), vec![Permission::ViewCalendar]);
+    assert!(!auth.can(Permission::ViewPayroll));
+    assert!(!auth.can(Permission::ManageUsers));
 }
 
 #[test]
@@ -192,7 +246,7 @@ fn missing_company_and_employee_context_is_forbidden() {
     let mut claims = claims_with_roles(&["employee"]);
     claims.company_id = None;
     claims.employee_id = None;
-    let auth = AuthUser(claims);
+    let auth = AuthUser(claims, Vec::new());
 
     assert!(matches!(auth.company_id(), Err(AppError::Forbidden(_))));
     assert!(matches!(auth.employee_id(), Err(AppError::Forbidden(_))));
@@ -362,6 +416,68 @@ fn google_authorize_url_round_trips_encoded_parameters() {
         params.get("code_challenge_method").map(String::as_str),
         Some("S256")
     );
+}
+
+#[test]
+fn expired_authorization_code_is_the_users_problem_not_a_server_error() {
+    // A code that timed out or was replayed is the single most common OAuth2
+    // failure. Reporting it as a 500 told the user the server was broken and
+    // hid the one action that actually helps: start the sign-in again.
+    let err = classify_token_exchange_error(
+        400,
+        r#"{"error":"invalid_grant","error_description":"Bad Request"}"#,
+    );
+
+    assert!(matches!(err, AppError::BadRequest(_)));
+    let (status, message) = err.client_response();
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(message, STALE_GRANT_MESSAGE);
+}
+
+#[test]
+fn misconfigured_credentials_stay_a_generic_500() {
+    // client_id/secret problems are ours, not the caller's: the body names our
+    // deployment's configuration and must never be echoed back.
+    for code in [
+        "invalid_client",
+        "unauthorized_client",
+        "invalid_scope",
+        "unsupported_grant_type",
+        "invalid_request",
+    ] {
+        let body = format!(r#"{{"error":"{code}","error_description":"secret-ish detail"}}"#);
+        let err = classify_token_exchange_error(401, &body);
+
+        assert!(
+            matches!(err, AppError::Internal(_)),
+            "{code} should be treated as a server misconfiguration"
+        );
+        let (status, message) = err.client_response();
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(message, "Internal server error");
+        assert!(!message.contains("secret-ish detail"));
+    }
+}
+
+#[test]
+fn google_outage_is_reported_as_a_gateway_failure() {
+    // A 5xx with no OAuth2 error code is Google failing, not this service.
+    let err = classify_token_exchange_error(503, "<html>Service Unavailable</html>");
+
+    assert!(matches!(err, AppError::BadGateway(_)));
+    let (status, message) = err.client_response();
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    assert!(message.contains("temporarily unavailable"));
+}
+
+#[test]
+fn unrecognised_4xx_body_does_not_leak_and_is_not_retryable_advice() {
+    // Unparseable or unexpected 4xx: no guessing. Log it, return a generic 500
+    // rather than telling the user to retry something that will fail again.
+    let err = classify_token_exchange_error(418, "not json at all");
+
+    assert!(matches!(err, AppError::Internal(_)));
+    assert_eq!(err.client_response().0, StatusCode::INTERNAL_SERVER_ERROR);
 }
 
 #[test]

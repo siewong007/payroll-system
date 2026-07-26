@@ -53,6 +53,7 @@ const navigation = [
   { name: 'Companies', href: '/companies', icon: Building2, requires: 'manage_companies', section: 'admin' },
   { name: 'Users', href: '/users', icon: UserCog, requires: 'manage_users', section: 'admin' },
   { name: 'Roles', href: '/roles', icon: Shield, requires: 'manage_users', section: 'admin' },
+  { name: 'User Groups', href: '/user-groups', icon: Users2, requires: 'manage_users', section: 'admin' },
   { name: 'Attendance Settings', href: '/admin/attendance-settings', icon: ScanLine, requires: 'manage_platform_settings', section: 'admin' },
   { name: 'Audit Trail', href: '/audit-trail', icon: ScrollText, requires: 'view_audit_log', section: 'admin' },
   { name: 'Backup', href: '/backup', icon: DatabaseBackup, requires: 'manage_backups', section: 'admin' },

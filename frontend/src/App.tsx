@@ -39,6 +39,7 @@ const TeamsPage = lazyNamed(() => import('@/pages/teams/TeamsPage'), 'TeamsPage'
 const CompanyManagement = lazyNamed(() => import('@/pages/admin/CompanyManagement'), 'CompanyManagement');
 const UserManagement = lazyNamed(() => import('@/pages/admin/UserManagement'), 'UserManagement');
 const RoleManagement = lazyNamed(() => import('@/pages/admin/RoleManagement'), 'RoleManagement');
+const UserGroups = lazyNamed(() => import('@/pages/admin/UserGroups'), 'UserGroups');
 const AttendanceSettings = lazyNamed(() => import('@/pages/admin/AttendanceSettings'), 'AttendanceSettings');
 const LettersPage = lazyNamed(() => import('@/pages/letters/LettersPage'), 'LettersPage');
 const BackupPage = lazyNamed(() => import('@/pages/backup/BackupPage'), 'BackupPage');
@@ -267,6 +268,14 @@ export default function App() {
                   element={(
                     <PermissionGuard requires="manage_users">
                       <RoleManagement />
+                    </PermissionGuard>
+                  )}
+                />
+                <Route
+                  path="/user-groups"
+                  element={(
+                    <PermissionGuard requires="manage_users">
+                      <UserGroups />
                     </PermissionGuard>
                   )}
                 />

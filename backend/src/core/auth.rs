@@ -12,6 +12,7 @@ use super::{
     error::{AppError, AppResult},
     permission,
 };
+use crate::repositories::user_groups;
 use crate::repositories::user_sessions;
 use crate::repositories::users;
 
@@ -145,9 +146,15 @@ pub fn verify_mfa_pending_token(token: &str, secret: &str) -> AppResult<Uuid> {
     .map_err(|e| AppError::Unauthorized(format!("Invalid or expired MFA token: {}", e)))
 }
 
-/// Extractor for authenticated user claims from JWT
+/// Extractor for authenticated user claims from JWT.
+///
+/// The second field holds permissions granted by group membership in the
+/// active company, resolved per request rather than baked into the token: a
+/// group edit must take effect immediately, and a JWT lives long enough that
+/// revoking access through it would be a lie. It stays a tuple struct so the
+/// ~100 existing `auth.0.…` call sites keep working.
 #[derive(Debug, Clone)]
-pub struct AuthUser(pub Claims);
+pub struct AuthUser(pub Claims, pub Vec<Permission>);
 
 pub use super::permission::Permission;
 
@@ -187,7 +194,26 @@ impl FromRequestParts<AppState> for AuthUser {
                 "Session has expired or was revoked".into(),
             ));
         }
-        Ok(AuthUser(claims))
+
+        // Group grants are scoped to the active company, so a user with access
+        // to several companies does not carry one company's groups into
+        // another. Skipped entirely when there is no company context — there is
+        // nothing a group could be scoped to.
+        let group_permissions = match claims.company_id {
+            Some(company_id) => {
+                let keys =
+                    user_groups::effective_permissions(&state.pool, claims.sub, company_id).await?;
+                // A key that no longer maps to a `Permission` is dropped rather
+                // than refused: a capability removed from the enum must not lock
+                // out every member of a group that still references it.
+                keys.iter()
+                    .filter_map(|key| Permission::ALL.iter().find(|p| p.as_str() == key).copied())
+                    .collect()
+            }
+            None => Vec::new(),
+        };
+
+        Ok(AuthUser(claims, group_permissions))
     }
 }
 
@@ -229,7 +255,8 @@ impl AuthUser {
         self.can(Permission::ViewPayroll)
     }
 
-    /// The caller's effective permissions — the union across every role held.
+    /// The caller's effective permissions — every role held, unioned with the
+    /// grants of every group they belong to in the active company.
     pub fn permissions(&self) -> Vec<Permission> {
         let mut effective: Vec<Permission> = Vec::new();
         for role in &self.0.roles {
@@ -237,6 +264,11 @@ impl AuthUser {
                 if !effective.contains(permission) {
                     effective.push(*permission);
                 }
+            }
+        }
+        for permission in &self.1 {
+            if !effective.contains(permission) {
+                effective.push(*permission);
             }
         }
         effective
@@ -247,8 +279,11 @@ impl AuthUser {
     /// This is the only authorization predicate in the codebase. It replaced
     /// sixteen role allow-lists that had drifted apart; see
     /// [`crate::core::permission`] for the table it consults.
+    ///
+    /// Roles and groups are additive. Groups can only add, never subtract, so
+    /// no ordering between the two sources can change the answer.
     pub fn can(&self, permission: Permission) -> bool {
-        permission::roles_grant(&self.0.roles, permission)
+        permission::roles_grant(&self.0.roles, permission) || self.1.contains(&permission)
     }
 
     /// Rejects the request unless the caller holds `permission`.

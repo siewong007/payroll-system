@@ -11,7 +11,7 @@ use crate::core::rate_limit_key::{ClientIpKeyExtractor, SessionOrIpKeyExtractor}
 use crate::handlers::{
     admin, approval, attendance, audit, auth, backup, calendar, company, dashboard, document,
     email, employee, employee_import, geofence, health, notification, oauth2, passkey, payroll,
-    permission, portal, report, settings, team, totp, work_schedule,
+    permission, portal, report, settings, team, totp, user_group, work_schedule,
 };
 
 pub fn create_router(state: AppState) -> Router {
@@ -171,6 +171,25 @@ pub fn create_router(state: AppState) -> Router {
         .route("/auth/switch-company", put(auth::switch_company))
         .route("/auth/my-companies", get(auth::my_companies))
         .route("/auth/permissions/matrix", get(permission::matrix))
+        // User groups: company-scoped permission bundles layered on top of roles.
+        .route(
+            "/user-groups",
+            get(user_group::list_groups).post(user_group::create_group),
+        )
+        .route(
+            "/user-groups/{id}",
+            get(user_group::get_group)
+                .put(user_group::update_group)
+                .delete(user_group::delete_group),
+        )
+        .route(
+            "/user-groups/{id}/members",
+            get(user_group::list_members).post(user_group::add_member),
+        )
+        .route(
+            "/user-groups/{group_id}/members/{user_id}",
+            delete(user_group::remove_member),
+        )
         // Passkey (WebAuthn) — unauthenticated
         .route("/auth/passkey/check", post(passkey::check_passkey))
         .route(
