@@ -200,6 +200,36 @@ pub async fn update_employee(
 ) -> AppResult<Employee> {
     let existing = get_employee(pool, id, company_id).await?;
 
+    // Resignation dates decide who the payroll population contains and how much
+    // of the month they are paid for, so validate them before anything is
+    // written. These are service guards rather than CHECK constraints: an
+    // existing tenant may already hold a bad row, and a constraint added in a
+    // migration would fail the deploy instead of the request.
+    let clearing = req.clear_date_resigned.unwrap_or(false);
+    if clearing && req.date_resigned.is_some() {
+        return Err(AppError::BadRequest(
+            "Cannot set and clear the resignation date in the same request".into(),
+        ));
+    }
+    let effective_resigned = if clearing {
+        None
+    } else {
+        req.date_resigned.or(existing.date_resigned)
+    };
+    // Checked against the resulting row, not just the incoming field, so an
+    // update cannot leave behind a window `compute_payslip` would clamp to zero
+    // days worked. It therefore also catches a pre-existing bad date on an
+    // otherwise unrelated edit, which is why the message names the date and both
+    // remedies rather than only the rule.
+    if let Some(resigned) = effective_resigned
+        && resigned < existing.date_joined
+    {
+        return Err(AppError::BadRequest(format!(
+            "Resignation date {resigned} is earlier than the date joined {}. Correct the resignation date or clear it.",
+            existing.date_joined
+        )));
+    }
+
     // The employee row is written first, and both writes share one transaction.
     //
     // This is not a race — it was deterministic. `employees::update` casts

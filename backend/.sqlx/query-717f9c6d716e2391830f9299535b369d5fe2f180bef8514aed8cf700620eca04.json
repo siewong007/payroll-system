@@ -1,0 +1,36 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, employee_number, full_name\n           FROM employees\n           WHERE company_id = $1 AND payroll_group_id = $2\n             AND deleted_at IS NULL\n             AND is_active IS NOT TRUE\n             AND date_resigned IS NULL\n             AND date_joined <= $3\n           ORDER BY employee_number",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "employee_number",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "full_name",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Date"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "717f9c6d716e2391830f9299535b369d5fe2f180bef8514aed8cf700620eca04"
+}

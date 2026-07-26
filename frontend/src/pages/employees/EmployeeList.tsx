@@ -7,7 +7,7 @@ import { getPayrollGroups } from '@/api/payroll';
 import { formatMYR, formatDate, todayLocalDate } from '@/lib/utils';
 import { DataTable, type Column } from '@/components/ui/DataTable';
 import { Modal } from '@/components/ui/Modal';
-import type { Employee, CreateEmployeeRequest } from '@/types';
+import type { Employee, CreateEmployeeRequest, UpdateEmployeeRequest } from '@/types';
 import { useAuth } from '@/context/AuthContext';
 import { canAccessPayrollData } from '@/lib/roles';
 
@@ -403,7 +403,16 @@ function EmployeeProfile({ employeeId }: { employeeId: string }) {
 
 /* ───────────── Shared Employee Form Modal (Create + Edit) ───────────── */
 
-function employeeToForm(emp: Employee): CreateEmployeeRequest & { salaryDisplay: string } {
+/**
+ * The edit modal also drives the employment lifecycle, which `CreateEmployeeRequest`
+ * has no fields for — a new hire is not resigned.
+ */
+type EmployeeFormState = CreateEmployeeRequest & {
+  date_resigned?: string;
+  resignation_reason?: string;
+};
+
+function employeeToForm(emp: Employee): EmployeeFormState & { salaryDisplay: string } {
   return {
     employee_number: emp.employee_number,
     full_name: emp.full_name,
@@ -443,12 +452,15 @@ function employeeToForm(emp: Employee): CreateEmployeeRequest & { salaryDisplay:
     ptptn_monthly_amount: emp.ptptn_monthly_amount ?? undefined,
     payroll_group_id: emp.payroll_group_id ?? undefined,
     is_active: emp.is_active ?? undefined,
+    date_resigned: emp.date_resigned ?? undefined,
+    resignation_reason: emp.resignation_reason ?? undefined,
     salaryDisplay: (emp.basic_salary / 100).toFixed(2),
   };
 }
 
-function stripPayrollFields(form: CreateEmployeeRequest): Partial<CreateEmployeeRequest> {
-  const safeFields: Partial<CreateEmployeeRequest> = { ...form };
+// Neither lifecycle field is a payroll figure, so the HR-only path keeps them.
+function stripPayrollFields(form: EmployeeFormState): Partial<EmployeeFormState> {
+  const safeFields: Partial<EmployeeFormState> = { ...form };
   const payrollFields: (keyof CreateEmployeeRequest)[] = [
     'basic_salary',
     'tax_identification_number',
@@ -528,7 +540,7 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
     ? employeeToForm(initialData)
     : null;
 
-  const [form, setForm] = useState<CreateEmployeeRequest>(defaults ?? {
+  const [form, setForm] = useState<EmployeeFormState>(defaults ?? {
     employee_number: '',
     full_name: '',
     date_joined: todayLocalDate(),
@@ -552,7 +564,7 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
   });
 
   const updateMutation = useMutation({
-    mutationFn: (req: Partial<CreateEmployeeRequest>) => updateEmployee(employeeId!, req),
+    mutationFn: (req: UpdateEmployeeRequest) => updateEmployee(employeeId!, req),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['employees'] });
       queryClient.invalidateQueries({ queryKey: ['employee', employeeId] });
@@ -582,7 +594,15 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
       return;
     }
 
-    const payload = canViewPayroll ? form : stripPayrollFields(form);
+    const payload: UpdateEmployeeRequest = canViewPayroll ? { ...form } : stripPayrollFields(form);
+    // An omitted `date_resigned` means "keep existing" on the backend, so
+    // emptying the field has to be sent as an explicit clear or the resignation
+    // would be unremovable — which is what kept an un-terminated employee out of
+    // every later payroll run.
+    if (initialData?.date_resigned && !form.date_resigned) {
+      delete payload.date_resigned;
+      payload.clear_date_resigned = true;
+    }
     updateMutation.mutate(payload);
   };
 
@@ -850,17 +870,56 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
             />
           </div>
           {mode === 'edit' && (
-            <div>
-              <label className={labelClass}>Status</label>
-              <select
-                value={form.is_active ? 'active' : 'inactive'}
-                onChange={(e) => updateField('is_active', e.target.value === 'active')}
-                className={inputClass}
-              >
-                <option value="active">Active</option>
-                <option value="inactive">Inactive</option>
-              </select>
-            </div>
+            <>
+              <div>
+                <label className={labelClass}>Status</label>
+                <select
+                  value={form.is_active ? 'active' : 'inactive'}
+                  onChange={(e) => updateField('is_active', e.target.value === 'active')}
+                  className={inputClass}
+                >
+                  <option value="active">Active</option>
+                  <option value="inactive">Inactive</option>
+                </select>
+                {/*
+                  Warn, do not block: an HR admin must still be able to represent
+                  a never-started hire. The backend is what refuses the payroll
+                  run, because it cannot tell whether a final payslip is owed.
+                */}
+                {!form.is_active && !form.date_resigned && (
+                  <p className="mt-1.5 text-xs text-amber-700 flex items-start gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5 mt-px shrink-0" />
+                    <span>
+                      Inactive with no resignation date. Payroll runs will refuse to process this
+                      group until a resignation date is set, the employee is re-activated, or they
+                      are removed from the payroll group.
+                    </span>
+                  </p>
+                )}
+              </div>
+              <div>
+                <label className={labelClass}>Date Resigned</label>
+                <input
+                  type="date"
+                  value={form.date_resigned || ''}
+                  min={form.date_joined}
+                  onChange={(e) => updateField('date_resigned', e.target.value || undefined)}
+                  className={inputClass}
+                />
+                <p className="mt-1.5 text-xs text-gray-500">
+                  The final month is paid pro rata to this date. Clear it to un-terminate.
+                </p>
+              </div>
+              <div>
+                <label className={labelClass}>Resignation Reason</label>
+                <input
+                  type="text"
+                  value={form.resignation_reason || ''}
+                  onChange={(e) => updateField('resignation_reason', e.target.value || undefined)}
+                  className={inputClass}
+                />
+              </div>
+            </>
           )}
         </div>
       </section>

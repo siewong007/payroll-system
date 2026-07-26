@@ -367,7 +367,8 @@ pub async fn approved_claims_outside_run(
              -- a NULL would drop exactly the case worth warning about.
              AND NOT COALESCE(
                    e.payroll_group_id = $2
-                   AND e.is_active = TRUE AND e.deleted_at IS NULL
+                   AND e.deleted_at IS NULL
+                   AND (e.is_active = TRUE OR e.date_resigned IS NOT NULL)
                    AND e.date_joined <= $4
                    AND (e.date_resigned IS NULL OR e.date_resigned >= $3)
                  , FALSE)
@@ -416,7 +417,13 @@ pub async fn staged_entries_outside_run(
              -- when they are exactly the case worth warning about.
              AND NOT COALESCE(
                    e.payroll_group_id = $4
-                   AND e.is_active = TRUE AND e.deleted_at IS NULL
+                   AND e.deleted_at IS NULL
+                   -- Mirrors employees::list_for_payroll_run: selection is the
+                   -- employment window, and `is_active` only excludes someone
+                   -- with no resignation date to explain it. If the two drift, a
+                   -- leaver this run now pays is simultaneously reported as one
+                   -- it will not.
+                   AND (e.is_active = TRUE OR e.date_resigned IS NOT NULL)
                    AND e.date_joined <= $6
                    AND (e.date_resigned IS NULL OR e.date_resigned >= $5)
                  , FALSE)

@@ -121,6 +121,7 @@ export interface Employee {
   probation_end: string | null;
   confirmation_date: string | null;
   date_resigned: string | null;
+  resignation_reason: string | null;
   basic_salary: number; // in sen
   hourly_rate: number | null;
   daily_rate: number | null;
@@ -185,6 +186,19 @@ export interface CreateEmployeeRequest {
   ptptn_monthly_amount?: number;
   payroll_group_id?: string;
   is_active?: boolean;
+}
+
+/**
+ * Employment lifecycle fields exist only on the update path — a new hire is not
+ * resigned, so the backend `CreateEmployeeRequest` has no place for them and
+ * `Partial<CreateEmployeeRequest>` structurally cannot express them.
+ */
+export interface UpdateEmployeeRequest extends Partial<CreateEmployeeRequest> {
+  confirmation_date?: string;
+  date_resigned?: string;
+  resignation_reason?: string;
+  /** Explicit clear (un-terminate). Omitting `date_resigned` means "keep existing". */
+  clear_date_resigned?: boolean;
 }
 
 export interface PaginatedResponse<T> {

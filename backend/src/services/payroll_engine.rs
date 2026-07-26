@@ -110,6 +110,10 @@ struct RunInputs {
     /// local calendar date, and hardcoding MYT puts an early-morning check-in in
     /// the wrong month for a tenant that is not on it.
     tz: String,
+    /// `(id, employee_number, full_name)` for employees this run would otherwise
+    /// pay, held out only because they are inactive with no resignation date.
+    /// Read here so preview and process see the same list.
+    excluded_inactive: Vec<(Uuid, String, String)>,
 }
 
 /// Fallback when a company has no default work schedule to read a timezone from.
@@ -171,6 +175,17 @@ async fn gather_run_inputs(
         payroll_group_id,
         period_end,
         period_start,
+    )
+    .await?;
+
+    // The rows the population predicate holds out for an unexplained reason.
+    // Not an error here — `preview_payroll` reports them per employee and
+    // `process_payroll` refuses on them, so the operator sees who and why.
+    let excluded_inactive = employee_repo::list_inactive_without_resignation_for_run(
+        &mut *conn,
+        company_id,
+        payroll_group_id,
+        period_end,
     )
     .await?;
 
@@ -334,6 +349,7 @@ async fn gather_run_inputs(
         statutory,
         ot_settings,
         tz,
+        excluded_inactive,
     })
 }
 
@@ -460,6 +476,21 @@ pub async fn preview_payroll(
         blocking.push(PayrollDiagnostic::run(
             "no_employees",
             "No active employees found in this payroll group for the selected period.",
+        ));
+    }
+
+    // Deactivating a leaver is how a termination is recorded, so the population
+    // selects on the employment window rather than the flag. An inactive row
+    // with no resignation date says nothing either way, and guessing is how the
+    // final payslip used to disappear. Blocking rather than advisory: there is
+    // no figure to preview for these employees, only a decision to make.
+    for (id, number, name) in &inputs.excluded_inactive {
+        blocking.push(PayrollDiagnostic::for_employee(
+            "inactive_without_resignation_date",
+            "This employee is marked inactive but has no resignation date, so payroll cannot tell whether they are owed a final payslip. Set their resignation date to pay them for the days worked, re-activate them, or clear their payroll group to leave them out deliberately.",
+            *id,
+            number.clone(),
+            name.clone(),
         ));
     }
 
@@ -798,7 +829,26 @@ pub async fn process_payroll(
         statutory,
         ot_settings,
         tz,
+        excluded_inactive,
     } = inputs;
+
+    // Fail closed on employees the population held out for an unexplained
+    // reason. Paying them a full month or omitting them are both guesses, and
+    // the second one is the defect this replaced. The transaction is already
+    // open, so returning here drops `tx` un-committed and the `payroll_runs` row
+    // inserted above is rolled back with it.
+    if !excluded_inactive.is_empty() {
+        let named: String = excluded_inactive
+            .iter()
+            .take(10)
+            .map(|(_, number, name)| format!("\n• {number} {name}"))
+            .collect();
+        return Err(AppError::BadRequest(format!(
+            "Payroll cannot be processed: {} employee(s) in this group are inactive with no resignation date, so it is not known whether they are owed a final payslip. Set a resignation date, re-activate them, or clear their payroll group to leave them out deliberately. Nothing has been saved.{}",
+            excluded_inactive.len(),
+            named
+        )));
+    }
 
     if employees.is_empty() {
         return Err(AppError::BadRequest(
@@ -818,6 +868,7 @@ pub async fn process_payroll(
         statutory,
         ot_settings,
         tz,
+        excluded_inactive,
     };
     let (computed, failures) = compute_all(&inputs.employees, &period, &inputs);
 

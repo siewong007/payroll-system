@@ -202,7 +202,18 @@ pub async fn count_distinct_departments(
     Ok(count)
 }
 
-/// Active employees in a payroll group who were employed during the period.
+/// Employees in a payroll group whose employment window overlaps the period.
+///
+/// Selection is the employment window, not the `is_active` flag. HR deactivates
+/// a leaver the moment the resignation is recorded, but the month they left
+/// still owes them a prorated payslip and the statutory contributions on it —
+/// gating on the flag dropped that final payslip with no error and no preview
+/// diagnostic. `is_active` survives only to exclude someone deactivated with no
+/// resignation date to explain it; dropping it outright would silently start
+/// paying every intentionally-deactivated record (a never-started hire, an
+/// unpaid sabbatical) a full month's salary, trading a silent under-pay for a
+/// silent over-pay. Those rows are reported by
+/// `list_inactive_without_resignation_for_run` and block the run instead.
 pub async fn list_for_payroll_run(
     executor: impl Executor<'_, Database = Postgres>,
     company_id: Uuid,
@@ -227,7 +238,8 @@ pub async fn list_for_payroll_run(
             deleted_at, created_at, updated_at, created_by, updated_by
         FROM employees
         WHERE company_id = $1 AND payroll_group_id = $2
-        AND is_active = TRUE AND deleted_at IS NULL
+        AND deleted_at IS NULL
+        AND (is_active = TRUE OR date_resigned IS NOT NULL)
         AND date_joined <= $3
         AND (date_resigned IS NULL OR date_resigned >= $4)"#,
         company_id,
@@ -238,6 +250,47 @@ pub async fn list_for_payroll_run(
     .fetch_all(executor)
     .await?;
     Ok(employees)
+}
+
+/// Employees this run would otherwise pay, excluded solely because they are
+/// inactive with no resignation date to justify it. Returns
+/// `(id, employee_number, full_name)`.
+///
+/// The counterpart to the `is_active` half of `list_for_payroll_run`: nothing on
+/// the row says whether a final payslip is owed, so the run reports them and
+/// refuses rather than silently omitting them, which is the defect this replaced.
+///
+/// `period_start` is not a parameter — `date_resigned IS NULL` makes
+/// `date_resigned >= period_start` vacuous.
+///
+/// `is_active IS NOT TRUE`, not `= FALSE`: the column is nullable, and a NULL
+/// fails the population's `is_active = TRUE` the same way FALSE does. Matching
+/// only FALSE here would leave that row dropped as silently as before.
+pub async fn list_inactive_without_resignation_for_run(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    payroll_group_id: Uuid,
+    period_end: NaiveDate,
+) -> AppResult<Vec<(Uuid, String, String)>> {
+    let rows = sqlx::query!(
+        r#"SELECT id, employee_number, full_name
+           FROM employees
+           WHERE company_id = $1 AND payroll_group_id = $2
+             AND deleted_at IS NULL
+             AND is_active IS NOT TRUE
+             AND date_resigned IS NULL
+             AND date_joined <= $3
+           ORDER BY employee_number"#,
+        company_id,
+        payroll_group_id,
+        period_end,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| (r.id, r.employee_number, r.full_name))
+        .collect())
 }
 
 pub async fn exists_by_number(
@@ -541,8 +594,15 @@ pub async fn update(
             probation_start = COALESCE($24, probation_start),
             probation_end = COALESCE($25, probation_end),
             confirmation_date = COALESCE($26, confirmation_date),
-            date_resigned = COALESCE($27, date_resigned),
-            resignation_reason = COALESCE($28, resignation_reason),
+            -- Tri-state, same shape as `clear_check_out` on attendance: a value
+            -- sets, `$52` clears, absent keeps. Under a bare COALESCE a
+            -- resignation could be recorded but never undone, so an
+            -- un-terminated employee stayed out of the payroll population
+            -- forever. The reason clears with the date because it is meaningless
+            -- without one. `$52` is referenced out of order so the existing
+            -- bindings keep their numbers.
+            date_resigned = CASE WHEN $52::bool THEN NULL ELSE COALESCE($27, date_resigned) END,
+            resignation_reason = CASE WHEN $52::bool THEN NULL ELSE COALESCE($28, resignation_reason) END,
             basic_salary = COALESCE($29, basic_salary),
             hourly_rate = COALESCE($30, hourly_rate),
             daily_rate = COALESCE($31, daily_rate),
@@ -631,6 +691,7 @@ pub async fn update(
         req.salary_group,
         req.is_active,
         updated_by,
+        req.clear_date_resigned.unwrap_or(false),
     )
     .fetch_one(executor)
     .await?;

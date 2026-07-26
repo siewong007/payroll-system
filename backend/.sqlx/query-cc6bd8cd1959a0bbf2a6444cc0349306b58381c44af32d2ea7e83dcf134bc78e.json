@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, company_id, employee_number, full_name, ic_number, passport_number,\n            date_of_birth, gender::text AS \"gender?\", nationality, race::text AS \"race?\",\n            residency_status::text AS \"residency_status!\", marital_status::text AS \"marital_status?\",\n            email, phone, address_line1, address_line2, city, state, postcode,\n            department, designation, cost_centre, branch, employment_type::text AS \"employment_type!\",\n            date_joined, probation_start, probation_end, confirmation_date,\n            date_resigned, resignation_reason, basic_salary, hourly_rate, daily_rate,\n            bank_name, bank_account_number, bank_account_type,\n            tax_identification_number, epf_number, socso_number, eis_number,\n            working_spouse, num_children, epf_category, is_muslim, zakat_eligible,\n            zakat_monthly_amount, ptptn_monthly_amount, tabung_haji_amount,\n            hrdf_contribution, payroll_group_id, salary_group, is_active,\n            deleted_at, created_at, updated_at, created_by, updated_by\n        FROM employees\n        WHERE company_id = $1 AND payroll_group_id = $2\n        AND is_active = TRUE AND deleted_at IS NULL\n        AND date_joined <= $3\n        AND (date_resigned IS NULL OR date_resigned >= $4)",
+  "query": "SELECT id, company_id, employee_number, full_name, ic_number, passport_number,\n            date_of_birth, gender::text AS \"gender?\", nationality, race::text AS \"race?\",\n            residency_status::text AS \"residency_status!\", marital_status::text AS \"marital_status?\",\n            email, phone, address_line1, address_line2, city, state, postcode,\n            department, designation, cost_centre, branch, employment_type::text AS \"employment_type!\",\n            date_joined, probation_start, probation_end, confirmation_date,\n            date_resigned, resignation_reason, basic_salary, hourly_rate, daily_rate,\n            bank_name, bank_account_number, bank_account_type,\n            tax_identification_number, epf_number, socso_number, eis_number,\n            working_spouse, num_children, epf_category, is_muslim, zakat_eligible,\n            zakat_monthly_amount, ptptn_monthly_amount, tabung_haji_amount,\n            hrdf_contribution, payroll_group_id, salary_group, is_active,\n            deleted_at, created_at, updated_at, created_by, updated_by\n        FROM employees\n        WHERE company_id = $1 AND payroll_group_id = $2\n        AND deleted_at IS NULL\n        AND (is_active = TRUE OR date_resigned IS NOT NULL)\n        AND date_joined <= $3\n        AND (date_resigned IS NULL OR date_resigned >= $4)",
   "describe": {
     "columns": [
       {
@@ -357,5 +357,5 @@
       true
     ]
   },
-  "hash": "2be999ed72ca98843745711fe5c359780e80f8c61413004d4eea54613f14cf18"
+  "hash": "cc6bd8cd1959a0bbf2a6444cc0349306b58381c44af32d2ea7e83dcf134bc78e"
 }

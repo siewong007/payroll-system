@@ -293,6 +293,27 @@ describe('employees API', () => {
     await updateEmployee('emp-1', { department: 'Engineering' });
     expect(apiMocks.put).toHaveBeenCalledWith('/employees/emp-1', { department: 'Engineering' });
   });
+
+  it('sends the explicit resignation clear rather than an absent date', async () => {
+    apiMocks.put.mockResolvedValue({ data: { id: 'emp-1' } });
+
+    // Omitting date_resigned means "keep existing" on the backend, so an
+    // un-termination has to travel as its own flag or it is silently a no-op.
+    await updateEmployee('emp-1', { clear_date_resigned: true });
+
+    expect(apiMocks.put).toHaveBeenCalledWith('/employees/emp-1', { clear_date_resigned: true });
+  });
+
+  it('sends a recorded resignation date and reason', async () => {
+    apiMocks.put.mockResolvedValue({ data: { id: 'emp-1' } });
+
+    await updateEmployee('emp-1', { date_resigned: '2026-05-15', resignation_reason: 'New role' });
+
+    expect(apiMocks.put).toHaveBeenCalledWith('/employees/emp-1', {
+      date_resigned: '2026-05-15',
+      resignation_reason: 'New role',
+    });
+  });
 });
 
 describe('kiosk API', () => {
