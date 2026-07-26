@@ -131,8 +131,11 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           working-directory: backend
-          # sqlx-macros-core locks optional MySQL support, which pulls rsa,
-          # but this backend resolves Postgres-only SQLx features.
+          # RUSTSEC-2023-0071 (Marvin timing sidechannel) is in rsa, pulled in
+          # by jsonwebtoken's RS*/PS* algorithm support. This backend signs and
+          # verifies JWTs with HMAC only (`EncodingKey`/`DecodingKey`
+          # `::from_secret`, `Validation::default()` => HS256), so it never
+          # performs the RSA private-key operation the sidechannel needs.
           # printpdf 0.10 pins lopdf 0.39. RUSTSEC-2026-0187 only affects
           # parsing untrusted PDFs; this application uses printpdf for
           # document generation and never calls lopdf's load entry points.
