@@ -2,18 +2,6 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-// ─── Refresh Token ───
-
-#[derive(Debug, Clone, sqlx::FromRow)]
-pub struct RefreshToken {
-    pub id: Uuid,
-    pub user_id: Uuid,
-    pub token_hash: String,
-    pub expires_at: DateTime<Utc>,
-    pub revoked: bool,
-    pub created_at: DateTime<Utc>,
-}
-
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct UserSession {
     pub id: Uuid,
@@ -93,9 +81,4 @@ pub struct ResetPasswordRequest {
     pub token: String,
     #[validate(length(min = 8, message = "must be at least 8 characters"))]
     pub new_password: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct RefreshTokenRequest {
-    pub refresh_token: String,
 }

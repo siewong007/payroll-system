@@ -1,5 +1,5 @@
 import api from './client';
-import type { Employee, PaginatedResponse, CreateEmployeeRequest, SalaryHistory, Tp3Record, ImportValidationResponse, ImportConfirmRequest, ImportConfirmResponse } from '@/types';
+import type { Employee, PaginatedResponse, CreateEmployeeRequest, SalaryHistory, ImportValidationResponse, ImportConfirmRequest, ImportConfirmResponse } from '@/types';
 
 export async function getEmployees(params?: {
   search?: string;
@@ -46,19 +46,6 @@ export async function deleteEmployee(id: string): Promise<void> {
 
 export async function getSalaryHistory(employeeId: string): Promise<SalaryHistory[]> {
   const { data } = await api.get(`/employees/${employeeId}/salary-history`);
-  return data;
-}
-
-export async function createTp3(employeeId: string, req: {
-  tax_year: number;
-  previous_employer_name?: string;
-  previous_income_ytd: number;
-  previous_epf_ytd: number;
-  previous_pcb_ytd: number;
-  previous_socso_ytd: number;
-  previous_zakat_ytd?: number;
-}): Promise<Tp3Record> {
-  const { data } = await api.post(`/employees/${employeeId}/tp3`, req);
   return data;
 }
 

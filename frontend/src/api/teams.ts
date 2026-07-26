@@ -6,11 +6,6 @@ export async function getTeams(): Promise<TeamWithCount[]> {
   return data;
 }
 
-export async function getTeam(id: string): Promise<Team> {
-  const { data } = await api.get(`/teams/${id}`);
-  return data;
-}
-
 export async function createTeam(req: CreateTeamRequest): Promise<Team> {
   const { data } = await api.post('/teams', req);
   return data;

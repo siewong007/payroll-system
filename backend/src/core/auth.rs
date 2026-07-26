@@ -240,14 +240,6 @@ impl AuthUser {
             .ok_or_else(|| AppError::Forbidden("No employee profile linked".into()))
     }
 
-    /// Returns true if the user holds the 'exec' role.
-    ///
-    /// Prefer a [`Permission`] check. This remains only for presentation code
-    /// that varies by role rather than by capability.
-    pub fn is_exec(&self) -> bool {
-        self.has_any_role(&["exec"])
-    }
-
     /// Returns true if the role can access payroll and statutory data. Used by
     /// read paths that redact figures rather than refusing the request
     /// outright (the dashboard summary, report projections).

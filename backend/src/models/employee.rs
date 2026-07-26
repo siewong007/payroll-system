@@ -261,22 +261,3 @@ pub struct Tp3Ytd {
     pub previous_socso_ytd: i64,
     pub previous_zakat_ytd: i64,
 }
-
-#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
-pub struct EmployeeAllowance {
-    pub id: Uuid,
-    pub employee_id: Uuid,
-    pub category: String,
-    pub name: String,
-    pub description: Option<String>,
-    pub amount: i64,
-    pub is_taxable: Option<bool>,
-    pub is_recurring: Option<bool>,
-    pub effective_from: NaiveDate,
-    pub effective_to: Option<NaiveDate>,
-    pub is_active: Option<bool>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-    pub created_by: Option<Uuid>,
-    pub updated_by: Option<Uuid>,
-}

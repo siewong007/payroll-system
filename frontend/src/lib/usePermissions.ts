@@ -28,11 +28,6 @@ export function usePermissions() {
   };
 }
 
-/** Convenience wrapper for a single permission check. */
-export function usePermission(permission: PermissionKey): boolean {
-  return usePermissions().can(permission);
-}
-
 /**
  * Permission check for code that already holds the user (route guards, tests)
  * and cannot call a hook.

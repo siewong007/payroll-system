@@ -38,13 +38,6 @@ pub struct GoogleTokenResponse {
     pub id_token: Option<String>,
 }
 
-/// Request body for OAuth2 callback
-#[derive(Debug, Deserialize)]
-pub struct OAuth2CallbackRequest {
-    pub code: String,
-    pub state: Option<String>,
-}
-
 #[derive(Debug, Deserialize)]
 pub struct OAuth2CallbackQuery {
     pub code: Option<String>,
