@@ -62,7 +62,23 @@ jobs:
     if: needs.gate.outputs.deploy == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    environment: production
+    # TEMPORARY: `environment: production` is deliberately absent here.
+    #
+    # GitHub rewrites the OIDC `sub` claim for a job that targets an
+    # environment, so this job presented `repo:<repo>:environment:production`
+    # while the cicd role's trust policy accepted only
+    # `repo:<repo>:ref:refs/heads/main` -- every run died at "Configure AWS
+    # credentials" before reaching the S3 sync, stranding the frontend a
+    # release behind a backend that had already changed API shapes.
+    #
+    # infra/iam.tf now lists both subjects, but that fix is not live until
+    # someone runs `terraform apply -target=aws_iam_role.cicd`. Restore this
+    # line in a follow-up once it is applied.
+    #
+    # Removing it costs nothing operationally today: this job reads no
+    # environment secrets (it authenticates purely via OIDC) and the
+    # production environment carries no protection rules. deploy-backend.yml
+    # keeps its binding, which it needs for LIGHTSAIL_SSH_PRIVATE_KEY.
     env:
       DEPLOY_SHA: ${{ needs.gate.outputs.sha }}
     steps:
