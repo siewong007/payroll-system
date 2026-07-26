@@ -1,7 +1,7 @@
 import { Outlet, Link, useLocation, Navigate } from 'react-router-dom';
 import { User, FileText, Calendar, Receipt, LogOut, ChevronDown, Bell, Users, Clock, MoreHorizontal, ScanLine, Sparkles } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'framer-motion';
 import { getNotificationCount } from '@/api/notifications';
@@ -40,12 +40,28 @@ export function PortalLayout() {
   const location = useLocation();
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
+  const userMenuRef = useRef<HTMLDivElement>(null);
+  const moreMenuRef = useRef<HTMLDivElement>(null);
   const { data: notifCount } = useQuery({
     queryKey: ['notification-count'],
     queryFn: getNotificationCount,
     refetchInterval: 30_000,
     enabled: isAuthenticated,
   });
+
+  // Close dropdowns on outside click (same idiom as CompanySwitcher).
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
+        setShowUserMenu(false);
+      }
+      if (moreMenuRef.current && !moreMenuRef.current.contains(e.target as Node)) {
+        setShowMoreMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
 
   if (isLoading) {
     return (
@@ -142,7 +158,7 @@ export function PortalLayout() {
               )}
             </Link>
 
-            <div className="relative">
+            <div ref={userMenuRef} className="relative">
               <button
                 onClick={() => setShowUserMenu(!showUserMenu)}
                 className="flex items-center gap-2.5 text-sm text-gray-600 hover:text-gray-900 transition-all-fast"
@@ -158,27 +174,24 @@ export function PortalLayout() {
 
               <AnimatePresence>
                 {showUserMenu && (
-                  <>
-                    <div className="fixed top-0 left-0 z-10 w-screen h-screen" onClick={() => setShowUserMenu(false)} />
-                    <motion.div
-                      initial={{ opacity: 0, y: -6, scale: 0.97 }}
-                      animate={{ opacity: 1, y: 0, scale: 1 }}
-                      exit={{ opacity: 0, y: -6, scale: 0.97 }}
-                      transition={{ duration: 0.16, ease: 'easeOut' }}
-                      className="glass-menu absolute right-0 mt-2 w-52 rounded-2xl z-20 py-1 overflow-hidden"
+                  <motion.div
+                    initial={{ opacity: 0, y: -6, scale: 0.97 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -6, scale: 0.97 }}
+                    transition={{ duration: 0.16, ease: 'easeOut' }}
+                    className="glass-menu absolute right-0 mt-2 w-52 rounded-2xl z-20 py-1 overflow-hidden"
+                  >
+                    <div className="px-4 py-3 border-b border-gray-200/60">
+                      <p className="text-sm font-semibold text-gray-900">{user?.full_name}</p>
+                      <p className="text-xs text-gray-500 mt-0.5">{user?.email}</p>
+                    </div>
+                    <button
+                      onClick={logout}
+                      className="flex items-center gap-2.5 w-full px-4 py-3 text-sm text-gray-600 hover:bg-white/70 hover:text-red-600 transition-all-fast"
                     >
-                      <div className="px-4 py-3 border-b border-gray-200/60">
-                        <p className="text-sm font-semibold text-gray-900">{user?.full_name}</p>
-                        <p className="text-xs text-gray-500 mt-0.5">{user?.email}</p>
-                      </div>
-                      <button
-                        onClick={logout}
-                        className="flex items-center gap-2.5 w-full px-4 py-3 text-sm text-gray-600 hover:bg-white/70 hover:text-red-600 transition-all-fast"
-                      >
-                        <LogOut className="w-4 h-4" /> Sign Out
-                      </button>
-                    </motion.div>
-                  </>
+                      <LogOut className="w-4 h-4" /> Sign Out
+                    </button>
+                  </motion.div>
                 )}
               </AnimatePresence>
             </div>
@@ -204,7 +217,8 @@ export function PortalLayout() {
               <Link
                 key={item.name}
                 to={item.href}
-                className={`relative flex-1 flex flex-col items-center gap-0.5 py-2 pt-2.5 text-[10px] font-medium transition-colors ${
+                onClick={() => setShowMoreMenu(false)}
+                className={`relative z-20 flex-1 flex flex-col items-center gap-0.5 py-2 pt-2.5 text-[10px] font-medium transition-colors ${
                   isActive ? 'text-teal-600' : 'text-gray-400'
                 }`}
               >
@@ -222,7 +236,7 @@ export function PortalLayout() {
           })}
 
           {/* More tab */}
-          <div className="flex-1 relative">
+          <div ref={moreMenuRef} className="flex-1 relative">
             <button
               onClick={() => setShowMoreMenu(!showMoreMenu)}
               className={`relative w-full flex flex-col items-center gap-0.5 py-2 pt-2.5 text-[10px] font-medium transition-colors ${
@@ -242,8 +256,6 @@ export function PortalLayout() {
 
             <AnimatePresence>
               {showMoreMenu && (
-                <>
-                  <div className="fixed inset-0 z-10" onClick={() => setShowMoreMenu(false)} />
                   <motion.div
                     initial={{ opacity: 0, y: 8, scale: 0.97 }}
                     animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -277,7 +289,6 @@ export function PortalLayout() {
                       );
                     })}
                   </motion.div>
-                </>
               )}
             </AnimatePresence>
           </div>
