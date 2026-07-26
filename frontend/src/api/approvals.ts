@@ -7,10 +7,18 @@ import type {
   LeaveRequest,
   OvertimeApplication,
   OvertimeWithEmployee,
+  PaginatedResponse,
   UpdateClaimRequest,
   UpdateLeaveRequest,
   UpdateOvertimeRequest,
 } from '@/types';
+
+/** Paging for the approval inboxes. Omitted values fall back to the API defaults. */
+export interface ApprovalListParams {
+  status?: string;
+  page?: number;
+  per_page?: number;
+}
 
 export interface LeaveRequestWithEmployee extends LeaveRequest {
   employee_name: string | null;
@@ -24,8 +32,10 @@ export interface ClaimWithEmployee extends Claim {
 
 export type { OvertimeWithEmployee };
 
-export const getLeaveRequests = (status?: string) =>
-  api.get<LeaveRequestWithEmployee[]>('/approvals/leave', { params: { status } }).then(r => r.data);
+export const getLeaveRequests = (params: ApprovalListParams = {}) =>
+  api
+    .get<PaginatedResponse<LeaveRequestWithEmployee>>('/approvals/leave', { params })
+    .then(r => r.data);
 
 export const createLeaveRequest = (req: AdminCreateLeaveRequest) =>
   api.post<LeaveRequest>('/approvals/leave', req).then(r => r.data);
@@ -45,8 +55,8 @@ export const approveLeave = (id: string, notes?: string) =>
 export const rejectLeave = (id: string, notes?: string) =>
   api.put(`/approvals/leave/${id}/reject`, { notes }).then(r => r.data);
 
-export const getClaims = (status?: string) =>
-  api.get<ClaimWithEmployee[]>('/approvals/claims', { params: { status } }).then(r => r.data);
+export const getClaims = (params: ApprovalListParams = {}) =>
+  api.get<PaginatedResponse<ClaimWithEmployee>>('/approvals/claims', { params }).then(r => r.data);
 
 export const createClaim = (req: AdminCreateClaimRequest) =>
   api.post<Claim>('/approvals/claims', req).then(r => r.data);
@@ -67,8 +77,10 @@ export const rejectClaim = (id: string, notes?: string) =>
   api.put(`/approvals/claims/${id}/reject`, { notes }).then(r => r.data);
 
 // Overtime
-export const getOvertimeRequests = (status?: string) =>
-  api.get<OvertimeWithEmployee[]>('/approvals/overtime', { params: { status } }).then(r => r.data);
+export const getOvertimeRequests = (params: ApprovalListParams = {}) =>
+  api
+    .get<PaginatedResponse<OvertimeWithEmployee>>('/approvals/overtime', { params })
+    .then(r => r.data);
 
 export const createOvertimeRequest = (req: AdminCreateOvertimeRequest) =>
   api.post<OvertimeApplication>('/approvals/overtime', req).then(r => r.data);

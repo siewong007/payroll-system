@@ -70,6 +70,9 @@ fn push_list_filters(qb: &mut QueryBuilder<'_, Postgres>, tz: &str, q: &Attendan
         // closed rows, but exclude the status defensively anyway.
         qb.push(" AND ar.check_out_at IS NULL AND ar.status <> 'absent'");
     }
+    if q.outside_geofence_only.unwrap_or(false) {
+        qb.push(" AND ar.is_outside_geofence = TRUE");
+    }
 }
 
 const RECORD_WITH_EMPLOYEE_COLUMNS: &str = r#"
@@ -277,6 +280,7 @@ pub async fn export_rows(
         status: q.status.clone(),
         method: q.method.clone(),
         open_only: None,
+        outside_geofence_only: None,
         page: None,
         per_page: None,
     };

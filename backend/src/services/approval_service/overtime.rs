@@ -263,12 +263,18 @@ pub async fn get_overtime_with_employee_by_id(
         .ok_or_else(|| AppError::NotFound("Overtime application not found".into()))
 }
 
+/// One page of the overtime inbox, plus the true total matching the filter.
 pub async fn get_pending_overtime(
     pool: &PgPool,
     company_id: Uuid,
     status: Option<&str>,
-) -> AppResult<Vec<OvertimeWithEmployee>> {
-    approval_reads::list_pending_overtime(pool, company_id, status).await
+    limit: i64,
+    offset: i64,
+) -> AppResult<(Vec<OvertimeWithEmployee>, i64)> {
+    let total = approval_reads::count_overtime(pool, company_id, status).await?;
+    let apps =
+        approval_reads::list_pending_overtime(pool, company_id, status, limit, offset).await?;
+    Ok((apps, total))
 }
 
 /// An overtime payroll entry, computed but not yet written.

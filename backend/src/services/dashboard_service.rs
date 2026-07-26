@@ -7,16 +7,22 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::core::error::AppResult;
-use crate::models::dashboard::{DashboardSummary, DepartmentCount};
+use crate::models::dashboard::{DashboardSummary, DepartmentCount, NeedsAttention};
+use crate::repositories::clock;
 use crate::repositories::employees as employee_repo;
 use crate::repositories::reads::dashboard as dashboard_reads;
+use crate::services::attendance_service;
 
 /// Assemble the dashboard summary. When `can_access_payroll` is false, payroll
 /// figures are blanked (None / 0) so the `exec` role never sees them.
+///
+/// `window_days` sizes the attendance half of `needs_attention`; the approval
+/// queue depths it carries are deliberately unwindowed.
 pub async fn summary(
     pool: &PgPool,
     company_id: Uuid,
     can_access_payroll: bool,
+    window_days: i64,
 ) -> AppResult<DashboardSummary> {
     let total_employees = employee_repo::count(pool, company_id, None, None, None).await?;
     let active_employees = employee_repo::count(pool, company_id, None, None, Some(true)).await?;
@@ -27,6 +33,17 @@ pub async fn summary(
     let ytd = dashboard_reads::ytd_employer_totals(pool, company_id, current_year).await?;
 
     let departments = dashboard_reads::department_counts(pool, company_id).await?;
+
+    // Bucket the exception window on the company's own calendar, so "last 7
+    // days" here means the same 7 days the attendance list shows.
+    let tz = attendance_service::get_company_timezone(pool, company_id).await;
+    let (today, _) = clock::date_and_time_in_tz(pool, &tz).await?;
+    let date_from = today - chrono::Duration::days(window_days - 1);
+    let exceptions =
+        dashboard_reads::attendance_exception_totals(pool, company_id, &tz, date_from, today)
+            .await?;
+    let pending = dashboard_reads::pending_approval_counts(pool, company_id).await?;
+    let needs_attention = NeedsAttention::new(window_days, exceptions, pending);
 
     Ok(DashboardSummary {
         total_employees,
@@ -78,5 +95,6 @@ pub async fn summary(
                 count: row.count,
             })
             .collect(),
+        needs_attention,
     })
 }

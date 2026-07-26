@@ -52,6 +52,8 @@ impl AuditRequestMeta {
 #[derive(Debug, Deserialize)]
 pub struct AuditLogQuery {
     pub entity_type: Option<String>,
+    /// Scope to one record's history — "who changed this, and why".
+    pub entity_id: Option<Uuid>,
     pub action: Option<String>,
     pub user_id: Option<Uuid>,
     pub start_date: Option<NaiveDate>,

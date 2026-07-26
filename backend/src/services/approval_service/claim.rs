@@ -229,12 +229,18 @@ pub async fn get_claim_with_employee_by_id(
         .ok_or_else(|| AppError::NotFound("Claim not found".into()))
 }
 
+/// One page of the claims inbox, plus the true total matching the filter.
 pub async fn get_pending_claims(
     pool: &PgPool,
     company_id: Uuid,
     status: Option<&str>,
-) -> AppResult<Vec<ClaimWithEmployee>> {
-    approval_reads::list_pending_claims(pool, company_id, status).await
+    limit: i64,
+    offset: i64,
+) -> AppResult<(Vec<ClaimWithEmployee>, i64)> {
+    let total = approval_reads::count_claims(pool, company_id, status).await?;
+    let claims =
+        approval_reads::list_pending_claims(pool, company_id, status, limit, offset).await?;
+    Ok((claims, total))
 }
 
 pub async fn approve_claim(

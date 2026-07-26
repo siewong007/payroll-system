@@ -115,6 +115,12 @@ pub struct AttendanceListQuery {
     pub method: Option<String>,
     /// Only sessions that were never checked out (stale-session triage)
     pub open_only: Option<bool>,
+    /// Only check-ins recorded outside the geofence (off-site triage).
+    ///
+    /// The flag was already stored and rendered per row, but with no predicate
+    /// the only way to find off-site check-ins was to page through the whole
+    /// list looking for the warning icon.
+    pub outside_geofence_only: Option<bool>,
     /// Page number (1-based, default 1)
     pub page: Option<i64>,
     /// Items per page (default 50, max 200)

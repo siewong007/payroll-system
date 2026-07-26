@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   CheckCircle,
   Clock,
@@ -55,6 +55,7 @@ import type {
   CreateOvertimeRequest,
   Employee,
   LeaveType,
+  PaginatedResponse,
   UpdateClaimRequest,
   UpdateLeaveRequest,
   UpdateOvertimeRequest,
@@ -207,10 +208,14 @@ function ActionButtons({
   );
 }
 
+/** Rows per page in the approval inboxes. */
+const PER_PAGE = 20;
+
 export function Approvals() {
   const { user } = useAuth();
   const [tab, setTab] = useState<'leave' | 'claims' | 'overtime'>('leave');
   const [statusFilter, setStatusFilter] = useState<string>('pending');
+  const [page, setPage] = useState(1);
   const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
   const [leaveEditor, setLeaveEditor] = useState<LeaveRequestWithEmployee | null>(null);
   const [claimEditor, setClaimEditor] = useState<ClaimWithEmployee | null>(null);
@@ -239,22 +244,31 @@ export function Approvals() {
     [activeCompanyId, employeeResp?.data],
   );
 
+  // Server-side paging. The inboxes previously fetched a bare array capped at
+  // 100 rows and let DataTable slice it client-side, which rendered the cap as
+  // the queue total — so a manager with more than 100 requests saw "100 of 100"
+  // and could never reach the rest. Since the sort is newest-first, the rows
+  // being hidden were the oldest and most overdue.
   const leaveQuery = useQuery({
-    queryKey: ['approvals-leave', statusFilter],
-    queryFn: () => getLeaveRequests(statusFilter || undefined),
+    queryKey: ['approvals-leave', statusFilter, page],
+    queryFn: () => getLeaveRequests({ status: statusFilter || undefined, page, per_page: PER_PAGE }),
     enabled: tab === 'leave',
+    placeholderData: keepPreviousData,
   });
 
   const claimsQuery = useQuery({
-    queryKey: ['approvals-claims', statusFilter],
-    queryFn: () => getClaims(statusFilter || undefined),
+    queryKey: ['approvals-claims', statusFilter, page],
+    queryFn: () => getClaims({ status: statusFilter || undefined, page, per_page: PER_PAGE }),
     enabled: tab === 'claims',
+    placeholderData: keepPreviousData,
   });
 
   const overtimeQuery = useQuery({
-    queryKey: ['approvals-overtime', statusFilter],
-    queryFn: () => getOvertimeRequests(statusFilter || undefined),
+    queryKey: ['approvals-overtime', statusFilter, page],
+    queryFn: () =>
+      getOvertimeRequests({ status: statusFilter || undefined, page, per_page: PER_PAGE }),
     enabled: tab === 'overtime',
+    placeholderData: keepPreviousData,
   });
 
   const refreshLeave = () => queryClient.invalidateQueries({ queryKey: ['approvals-leave'] });
@@ -395,10 +409,10 @@ export function Approvals() {
   };
 
   const activeRows = tab === 'leave'
-    ? leaveQuery.data ?? []
+    ? leaveQuery.data?.data ?? []
     : tab === 'claims'
-      ? claimsQuery.data ?? []
-      : overtimeQuery.data ?? [];
+      ? claimsQuery.data?.data ?? []
+      : overtimeQuery.data?.data ?? [];
   const selectedRows = activeRows.filter((row) => selectedApprovalIds.includes(row.id));
   const selectedCancelableIds = selectedRows
     .filter((row) => ['pending', 'approved', 'rejected'].includes(row.status))
@@ -554,6 +568,7 @@ export function Approvals() {
                 setTab(itemTab);
                 setStatusFilter('pending');
                 setSelectedApprovalIds([]);
+                setPage(1);
               }}
               className={`px-5 py-2.5 text-sm font-medium border-b-2 transition-all-fast ${
                 tab === itemTab ? 'border-black text-gray-900' : 'border-transparent text-gray-400 hover:text-gray-700'
@@ -572,6 +587,7 @@ export function Approvals() {
               onClick={() => {
                 setSelectedApprovalIds([]);
                 setStatusFilter(status);
+                setPage(1);
               }}
               className={`px-3.5 py-1.5 text-xs font-medium rounded-full transition-all-fast ${
                 statusFilter === status
@@ -621,8 +637,11 @@ export function Approvals() {
         {tab === 'leave' && (
           <DataTable
             columns={leaveColumns}
-            data={leaveQuery.data ?? []}
-            perPage={10}
+            data={leaveQuery.data?.data ?? []}
+            total={leaveQuery.data?.total}
+            page={page}
+            onPageChange={setPage}
+            perPage={PER_PAGE}
             isLoading={leaveQuery.isLoading}
             emptyMessage="No leave requests found"
             emptyIcon={<Clock className="w-8 h-8 text-gray-200" />}
@@ -729,8 +748,11 @@ export function Approvals() {
         {tab === 'claims' && (
           <DataTable
             columns={claimColumns}
-            data={claimsQuery.data ?? []}
-            perPage={10}
+            data={claimsQuery.data?.data ?? []}
+            total={claimsQuery.data?.total}
+            page={page}
+            onPageChange={setPage}
+            perPage={PER_PAGE}
             isLoading={claimsQuery.isLoading}
             emptyMessage="No claims found"
             emptyIcon={<Clock className="w-8 h-8 text-gray-200" />}
@@ -850,8 +872,11 @@ export function Approvals() {
         {tab === 'overtime' && (
           <DataTable
             columns={overtimeColumns}
-            data={overtimeQuery.data ?? []}
-            perPage={10}
+            data={overtimeQuery.data?.data ?? []}
+            total={overtimeQuery.data?.total}
+            page={page}
+            onPageChange={setPage}
+            perPage={PER_PAGE}
             isLoading={overtimeQuery.isLoading}
             emptyMessage="No overtime applications found"
             emptyIcon={<Clock className="w-8 h-8 text-gray-200" />}
@@ -1343,15 +1368,19 @@ function ClaimCrudModal({
   const updateMutation = useMutation({
     mutationFn: ({ id, payload }: { id: string; payload: UpdateClaimRequest }) => updateClaim(id, payload),
     onSuccess: async (updatedClaim) => {
-      queryClient.setQueriesData<ClaimWithEmployee[]>({ queryKey: ['approvals-claims'] }, (current) =>
-        current?.map((claim) =>
-          claim.id === updatedClaim.id
+      // The cached value is the paginated envelope, not a bare array — patch
+      // inside `.data` or the optimistic update silently does nothing.
+      queryClient.setQueriesData<PaginatedResponse<ClaimWithEmployee>>(
+        { queryKey: ['approvals-claims'] },
+        (current) =>
+          current
             ? {
-                ...claim,
-                ...updatedClaim,
+                ...current,
+                data: current.data.map((claim) =>
+                  claim.id === updatedClaim.id ? { ...claim, ...updatedClaim } : claim
+                ),
               }
-            : claim
-        ) ?? current
+            : current
       );
       await queryClient.refetchQueries({ queryKey: ['approvals-claims'] });
       onSaved();
@@ -1607,15 +1636,20 @@ function OvertimeCrudModal({
   const updateMutation = useMutation({
     mutationFn: ({ id, payload }: { id: string; payload: UpdateOvertimeRequest }) => updateOvertimeRequest(id, payload),
     onSuccess: async (updatedOvertime) => {
-      queryClient.setQueriesData<OvertimeWithEmployee[]>({ queryKey: ['approvals-overtime'] }, (current) =>
-        current?.map((overtime) =>
-          overtime.id === updatedOvertime.id
+      // See the claims equivalent: the cache holds the paginated envelope.
+      queryClient.setQueriesData<PaginatedResponse<OvertimeWithEmployee>>(
+        { queryKey: ['approvals-overtime'] },
+        (current) =>
+          current
             ? {
-                ...overtime,
-                ...updatedOvertime,
+                ...current,
+                data: current.data.map((overtime) =>
+                  overtime.id === updatedOvertime.id
+                    ? { ...overtime, ...updatedOvertime }
+                    : overtime
+                ),
               }
-            : overtime
-        ) ?? current
+            : current
       );
       await queryClient.refetchQueries({ queryKey: ['approvals-overtime'] });
       onSaved();

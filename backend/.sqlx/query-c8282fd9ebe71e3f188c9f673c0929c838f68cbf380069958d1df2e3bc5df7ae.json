@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT al.id, al.user_id, al.action, al.entity_type, al.entity_id,\n            al.old_values, al.new_values, al.ip_address, al.user_agent,\n            al.description, al.created_at,\n            u.email AS \"user_email?\", u.full_name AS \"user_full_name?\"\n        FROM audit_logs al\n        LEFT JOIN users u ON al.user_id = u.id\n        WHERE al.company_id = $1\n        AND ($2::text IS NULL OR al.entity_type = $2)\n        AND ($3::text IS NULL OR al.action = $3)\n        AND ($4::uuid IS NULL OR al.user_id = $4)\n        AND ($5::date IS NULL OR al.created_at >= $5::date)\n        AND ($6::date IS NULL OR al.created_at < ($6::date + INTERVAL '1 day'))\n        ORDER BY al.created_at DESC\n        LIMIT $7 OFFSET $8",
+  "query": "SELECT al.id, al.user_id, al.action, al.entity_type, al.entity_id,\n            al.old_values, al.new_values, al.ip_address, al.user_agent,\n            al.description, al.created_at,\n            u.email AS \"user_email?\", u.full_name AS \"user_full_name?\"\n        FROM audit_logs al\n        LEFT JOIN users u ON al.user_id = u.id\n        WHERE al.company_id = $1\n        AND ($2::text IS NULL OR al.entity_type = $2)\n        AND ($3::uuid IS NULL OR al.entity_id = $3)\n        AND ($4::text IS NULL OR al.action = $4)\n        AND ($5::uuid IS NULL OR al.user_id = $5)\n        AND ($6::date IS NULL OR al.created_at >= $6::date)\n        AND ($7::date IS NULL OR al.created_at < ($7::date + INTERVAL '1 day'))\n        ORDER BY al.created_at DESC\n        LIMIT $8 OFFSET $9",
   "describe": {
     "columns": [
       {
@@ -73,6 +73,7 @@
       "Left": [
         "Uuid",
         "Text",
+        "Uuid",
         "Text",
         "Uuid",
         "Date",
@@ -97,5 +98,5 @@
       false
     ]
   },
-  "hash": "e886ea347609aaf3f472b423c8fd1b57e485b6f87ce11f50cffbbe17d119d977"
+  "hash": "c8282fd9ebe71e3f188c9f673c0929c838f68cbf380069958d1df2e3bc5df7ae"
 }

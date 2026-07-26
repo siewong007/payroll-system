@@ -1,0 +1,49 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n            COUNT(*) FILTER (WHERE ar.status = 'late')             AS \"late_count!\",\n            COUNT(*) FILTER (WHERE ar.status = 'absent')           AS \"absent_count!\",\n            COUNT(*) FILTER (WHERE ar.check_out_at IS NULL\n                             AND ar.status <> 'absent')            AS \"open_session_count!\",\n            COUNT(*) FILTER (WHERE ar.is_outside_geofence)         AS \"outside_geofence_count!\",\n            COUNT(*) FILTER (WHERE ar.method = 'manual')           AS \"manual_entry_count!\"\n        FROM attendance_records ar\n        WHERE ar.company_id = $1\n          AND ar.check_in_at >= ($2::date)::timestamp AT TIME ZONE $4\n          AND ar.check_in_at <  ($3::date + 1)::timestamp AT TIME ZONE $4",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "late_count!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "absent_count!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "open_session_count!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "outside_geofence_count!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "manual_entry_count!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Date",
+        "Date",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "3e5e01814cae57dd327fd10780fda305f9d41d013cc5a3287d425c35bf12c5ff"
+}

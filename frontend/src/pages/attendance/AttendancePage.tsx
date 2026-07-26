@@ -1198,13 +1198,18 @@ function RecordCard({
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
+/** Empty filter set. Named so "clear" and the triage shortcuts can't drift from
+ *  the initial state as filters are added. */
+const NO_FILTERS = {
+  date_from: '', date_to: '', status: '', method: '', employee_id: '',
+  open_only: false, outside_geofence_only: false,
+};
+
 export function AttendancePage() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<'records' | 'summary'>('records');
-  const [filters, setFilters] = useState({
-    date_from: '', date_to: '', status: '', method: '', employee_id: '', open_only: false,
-  });
+  const [filters, setFilters] = useState(NO_FILTERS);
   const [page, setPage] = useState(1);
   const [showManual, setShowManual] = useState(false);
   const [editRecord, setEditRecord] = useState<AttendanceRecordWithEmployee | null>(null);
@@ -1229,6 +1234,7 @@ export function AttendancePage() {
       method:      filters.method      || undefined,
       employee_id: filters.employee_id || undefined,
       open_only:   filters.open_only   || undefined,
+      outside_geofence_only: filters.outside_geofence_only || undefined,
       page,
       per_page:  perPage,
     }),
@@ -1288,14 +1294,15 @@ export function AttendancePage() {
   const hasFilters = useMemo(
     () => Boolean(
       filters.date_from || filters.date_to || filters.status ||
-      filters.method || filters.employee_id || filters.open_only
+      filters.method || filters.employee_id || filters.open_only ||
+      filters.outside_geofence_only
     ),
     [filters],
   );
 
   const showOpenSessions = () => {
     setTab('records');
-    setFilters({ date_from: '', date_to: '', status: '', method: '', employee_id: '', open_only: true });
+    setFilters({ ...NO_FILTERS, open_only: true });
     setPage(1);
   };
 
@@ -1472,10 +1479,22 @@ export function AttendancePage() {
                 />
                 Open sessions only
               </label>
+              {/* The off-site flag was stored and shown per row, but with no
+                  predicate the only way to find these was to page the whole
+                  list hunting for the warning icon. */}
+              <label className="flex w-full sm:w-auto items-center gap-1.5 text-sm text-gray-600 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={filters.outside_geofence_only}
+                  onChange={e => updateFilter('outside_geofence_only', e.target.checked)}
+                  className="rounded border-gray-300"
+                />
+                Off-site only
+              </label>
               {hasFilters && (
                 <button
                   onClick={() => {
-                    setFilters({ date_from: '', date_to: '', status: '', method: '', employee_id: '', open_only: false });
+                    setFilters(NO_FILTERS);
                     setPage(1);
                   }}
                   className="text-xs text-gray-500 hover:text-gray-900 underline"
@@ -1545,7 +1564,11 @@ export function AttendancePage() {
               <div className="flex flex-col items-center justify-center h-48 text-gray-400">
                 <Calendar className="w-10 h-10 mb-2 opacity-40" />
                 <p className="text-sm">
-                  {filters.open_only ? 'No open sessions — everyone has checked out' : 'No attendance records found'}
+                  {filters.open_only
+                    ? 'No open sessions — everyone has checked out'
+                    : filters.outside_geofence_only
+                      ? 'No off-site check-ins — everyone scanned inside the geofence'
+                      : 'No attendance records found'}
                 </p>
               </div>
             ) : (

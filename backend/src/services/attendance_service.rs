@@ -535,7 +535,11 @@ pub(crate) async fn determine_checkin_status(
 }
 
 /// Get the timezone for a company from its work schedule (fallback to default)
-async fn get_company_timezone(pool: &PgPool, company_id: Uuid) -> String {
+///
+/// `pub(crate)` so the dashboard can bucket its exception window on the same
+/// calendar the attendance screens use — a "last 7 days" count that disagreed
+/// with the list it links to would be worse than no count.
+pub(crate) async fn get_company_timezone(pool: &PgPool, company_id: Uuid) -> String {
     company_work_schedules::find_default_timezone(pool, company_id)
         .await
         .unwrap_or(None)

@@ -46,21 +46,25 @@ beforeEach(() => {
 });
 
 describe('approvals API — leave', () => {
-  it('filters the queue by status and unwraps the list', async () => {
-    apiMocks.get.mockResolvedValue({ data: [{ id: 'leave-1' }] });
+  it('filters the queue by status and returns the paginated envelope', async () => {
+    const page = { data: [{ id: 'leave-1' }], total: 137, page: 1, per_page: 20 };
+    apiMocks.get.mockResolvedValue({ data: page });
 
-    await expect(approvals.getLeaveRequests('pending')).resolves.toEqual([{ id: 'leave-1' }]);
+    // The envelope is returned whole: `total` is the real queue depth, which the
+    // inbox renders. It previously returned a bare array capped at 100 rows and
+    // the UI showed that cap as the total.
+    await expect(approvals.getLeaveRequests({ status: 'pending', page: 1, per_page: 20 })).resolves.toEqual(page);
     expect(apiMocks.get).toHaveBeenCalledWith('/approvals/leave', {
-      params: { status: 'pending' },
+      params: { status: 'pending', page: 1, per_page: 20 },
     });
   });
 
-  it('omits the status filter when none is given', async () => {
-    apiMocks.get.mockResolvedValue({ data: [] });
+  it('sends no params when none are given, so the API defaults apply', async () => {
+    apiMocks.get.mockResolvedValue({ data: { data: [], total: 0, page: 1, per_page: 25 } });
 
     await approvals.getLeaveRequests();
 
-    expect(apiMocks.get).toHaveBeenCalledWith('/approvals/leave', { params: { status: undefined } });
+    expect(apiMocks.get).toHaveBeenCalledWith('/approvals/leave', { params: {} });
   });
 
   it('carries approver notes on both approve and reject', async () => {
@@ -110,11 +114,11 @@ describe('approvals API — claims and overtime', () => {
   });
 
   it('keeps the three approval queues on distinct endpoints', async () => {
-    apiMocks.get.mockResolvedValue({ data: [] });
+    apiMocks.get.mockResolvedValue({ data: { data: [], total: 0, page: 1, per_page: 25 } });
 
-    await approvals.getLeaveRequests('pending');
-    await approvals.getClaims('pending');
-    await approvals.getOvertimeRequests('pending');
+    await approvals.getLeaveRequests({ status: 'pending' });
+    await approvals.getClaims({ status: 'pending' });
+    await approvals.getOvertimeRequests({ status: 'pending' });
 
     const paths = apiMocks.get.mock.calls.map((call) => call[0]);
     expect(paths).toEqual(['/approvals/leave', '/approvals/claims', '/approvals/overtime']);

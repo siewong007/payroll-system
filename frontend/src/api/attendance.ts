@@ -57,6 +57,8 @@ export interface AttendanceListQuery {
   method?: string;
   /** Only sessions never checked out — stale-session triage */
   open_only?: boolean;
+  /** Only check-ins recorded outside the geofence — off-site triage */
+  outside_geofence_only?: boolean;
   page?: number;
   per_page?: number;
 }

@@ -10,6 +10,7 @@ use crate::core::error::AppResult;
 use crate::models::approval::{
     AdminClaimRequest, AdminLeaveRequest, AdminOvertimeRequest, ReviewRequest, StatusQuery,
 };
+use crate::models::pagination::PaginatedResponse;
 use crate::models::portal::{
     Claim, CreateClaimRequest, CreateLeaveRequest, CreateOvertimeRequest, LeaveRequest,
     OvertimeApplication, UpdateClaimRequest, UpdateLeaveRequest, UpdateOvertimeRequest,
@@ -25,12 +26,23 @@ pub async fn list_leave_requests(
     State(state): State<AppState>,
     auth: AuthUser,
     Query(q): Query<StatusQuery>,
-) -> AppResult<Json<Vec<LeaveRequestWithEmployee>>> {
+) -> AppResult<Json<PaginatedResponse<LeaveRequestWithEmployee>>> {
     let company_id = auth.authorize(Permission::ViewApprovals)?;
-    let requests =
-        approval_service::get_pending_leave_requests(&state.pool, company_id, q.status.as_deref())
-            .await?;
-    Ok(Json(requests))
+    let (page, per_page, offset) = q.pagination();
+    let (data, total) = approval_service::get_pending_leave_requests(
+        &state.pool,
+        company_id,
+        q.status.as_deref(),
+        per_page,
+        offset,
+    )
+    .await?;
+    Ok(Json(PaginatedResponse {
+        data,
+        total,
+        page,
+        per_page,
+    }))
 }
 
 pub async fn create_leave_request(
@@ -163,11 +175,23 @@ pub async fn list_claims(
     State(state): State<AppState>,
     auth: AuthUser,
     Query(q): Query<StatusQuery>,
-) -> AppResult<Json<Vec<ClaimWithEmployee>>> {
+) -> AppResult<Json<PaginatedResponse<ClaimWithEmployee>>> {
     let company_id = auth.authorize(Permission::ViewApprovals)?;
-    let claims =
-        approval_service::get_pending_claims(&state.pool, company_id, q.status.as_deref()).await?;
-    Ok(Json(claims))
+    let (page, per_page, offset) = q.pagination();
+    let (data, total) = approval_service::get_pending_claims(
+        &state.pool,
+        company_id,
+        q.status.as_deref(),
+        per_page,
+        offset,
+    )
+    .await?;
+    Ok(Json(PaginatedResponse {
+        data,
+        total,
+        page,
+        per_page,
+    }))
 }
 
 pub async fn create_claim(
@@ -302,11 +326,23 @@ pub async fn list_overtime(
     State(state): State<AppState>,
     auth: AuthUser,
     Query(q): Query<StatusQuery>,
-) -> AppResult<Json<Vec<OvertimeWithEmployee>>> {
+) -> AppResult<Json<PaginatedResponse<OvertimeWithEmployee>>> {
     let company_id = auth.authorize(Permission::ViewApprovals)?;
-    let apps = approval_service::get_pending_overtime(&state.pool, company_id, q.status.as_deref())
-        .await?;
-    Ok(Json(apps))
+    let (page, per_page, offset) = q.pagination();
+    let (data, total) = approval_service::get_pending_overtime(
+        &state.pool,
+        company_id,
+        q.status.as_deref(),
+        per_page,
+        offset,
+    )
+    .await?;
+    Ok(Json(PaginatedResponse {
+        data,
+        total,
+        page,
+        per_page,
+    }))
 }
 
 pub async fn create_overtime(

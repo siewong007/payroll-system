@@ -5,6 +5,19 @@ use uuid::Uuid;
 #[derive(Debug, Deserialize)]
 pub struct StatusQuery {
     pub status: Option<String>,
+    /// Page number (1-based, default 1)
+    pub page: Option<i64>,
+    /// Items per page (default 25, max 200)
+    pub per_page: Option<i64>,
+}
+
+impl StatusQuery {
+    /// Resolved `(page, per_page, offset)` for the approval inboxes.
+    pub fn pagination(&self) -> (i64, i64, i64) {
+        let per_page = self.per_page.unwrap_or(25).clamp(1, 200);
+        let page = self.page.unwrap_or(1).max(1);
+        (page, per_page, (page - 1) * per_page)
+    }
 }
 
 #[derive(Debug, Deserialize)]

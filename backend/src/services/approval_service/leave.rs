@@ -335,12 +335,18 @@ pub async fn cancel_leave_request_admin(
 
 // ─── Leave Approval ───
 
+/// One page of the leave inbox, plus the true total matching the filter.
 pub async fn get_pending_leave_requests(
     pool: &PgPool,
     company_id: Uuid,
     status: Option<&str>,
-) -> AppResult<Vec<LeaveRequestWithEmployee>> {
-    approval_reads::list_pending_leave(pool, company_id, status).await
+    limit: i64,
+    offset: i64,
+) -> AppResult<(Vec<LeaveRequestWithEmployee>, i64)> {
+    let total = approval_reads::count_leave(pool, company_id, status).await?;
+    let requests =
+        approval_reads::list_pending_leave(pool, company_id, status, limit, offset).await?;
+    Ok((requests, total))
 }
 
 /// A staged unpaid-leave salary deduction, computed but not yet written.

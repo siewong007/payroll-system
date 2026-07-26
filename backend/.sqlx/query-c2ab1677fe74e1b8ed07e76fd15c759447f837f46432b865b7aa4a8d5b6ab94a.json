@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT COUNT(*) AS \"count!\" FROM leave_requests lr\n        WHERE lr.company_id = $1\n        AND ($2::text IS NULL OR lr.status = $2)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "c2ab1677fe74e1b8ed07e76fd15c759447f837f46432b865b7aa4a8d5b6ab94a"
+}

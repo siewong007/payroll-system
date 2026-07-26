@@ -8,11 +8,13 @@ use crate::core::error::AppResult;
 use sqlx::{Executor, Postgres};
 
 /// Count audit rows for a company matching the optional filters (entity type,
-/// action, actor, and an inclusive created-at date range).
+/// entity id, action, actor, and an inclusive created-at date range).
+#[allow(clippy::too_many_arguments)]
 pub async fn count_filtered(
     executor: impl Executor<'_, Database = Postgres>,
     company_id: Uuid,
     entity_type: Option<&str>,
+    entity_id: Option<Uuid>,
     action: Option<&str>,
     user_id: Option<Uuid>,
     start_date: Option<NaiveDate>,
@@ -25,12 +27,14 @@ pub async fn count_filtered(
         r#"SELECT COUNT(*) AS "count!" FROM audit_logs al
         WHERE al.company_id = $1
         AND ($2::text IS NULL OR al.entity_type = $2)
-        AND ($3::text IS NULL OR al.action = $3)
-        AND ($4::uuid IS NULL OR al.user_id = $4)
-        AND ($5::date IS NULL OR al.created_at >= $5::date)
-        AND ($6::date IS NULL OR al.created_at < ($6::date + INTERVAL '1 day'))"#,
+        AND ($3::uuid IS NULL OR al.entity_id = $3)
+        AND ($4::text IS NULL OR al.action = $4)
+        AND ($5::uuid IS NULL OR al.user_id = $5)
+        AND ($6::date IS NULL OR al.created_at >= $6::date)
+        AND ($7::date IS NULL OR al.created_at < ($7::date + INTERVAL '1 day'))"#,
         company_id,
         entity_type,
+        entity_id,
         action,
         user_id,
         start_date,

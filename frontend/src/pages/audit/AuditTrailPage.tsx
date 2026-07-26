@@ -45,6 +45,9 @@ const formatTimestamp = (value: string) =>
 
 export function AuditTrailPage() {
   const [entityType, setEntityType] = useState('');
+  // One record's full history. Set by clicking a row's entity id rather than by
+  // typing a UUID — the point is to answer "who changed *this*, and why".
+  const [entityId, setEntityId] = useState('');
   const [action, setAction] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
@@ -53,9 +56,10 @@ export function AuditTrailPage() {
   const perPage = 25;
 
   const { data, isLoading } = useQuery({
-    queryKey: ['audit-logs', entityType, action, startDate, endDate, page],
+    queryKey: ['audit-logs', entityType, entityId, action, startDate, endDate, page],
     queryFn: () => getAuditLogs({
       entity_type: entityType || undefined,
+      entity_id: entityId || undefined,
       action: action || undefined,
       start_date: startDate || undefined,
       end_date: endDate || undefined,
@@ -70,13 +74,14 @@ export function AuditTrailPage() {
 
   const clearFilters = () => {
     setEntityType('');
+    setEntityId('');
     setAction('');
     setStartDate('');
     setEndDate('');
     setPage(1);
   };
 
-  const hasFilters = entityType || action || startDate || endDate;
+  const hasFilters = entityType || entityId || action || startDate || endDate;
 
   return (
     <div className="space-y-6">
@@ -147,6 +152,24 @@ export function AuditTrailPage() {
             </button>
           )}
         </div>
+        {/* The record scope has no control of its own — surface it so it can't
+            silently narrow the trail. */}
+        {entityId && (
+          <div className="mt-3 flex items-center gap-2 text-xs text-gray-600">
+            <span className="inline-flex items-center gap-1.5 px-2 py-1 bg-gray-100 rounded-full">
+              <span className="font-medium">Record</span>
+              <span className="font-mono">{entityId.slice(0, 8)}...</span>
+              <button
+                type="button"
+                onClick={() => { setEntityId(''); setPage(1); }}
+                aria-label="Clear record filter"
+                className="text-gray-400 hover:text-gray-900"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Table */}
@@ -197,9 +220,20 @@ export function AuditTrailPage() {
                     <td className="px-4 py-3 text-gray-500 text-xs max-w-[260px]">
                       <div className="truncate">{log.description || '-'}</div>
                       {log.entity_id && (
-                        <div className="mt-0.5 font-mono text-[11px] text-gray-400">
+                        <button
+                          type="button"
+                          // stopPropagation: the row opens the detail drawer, and
+                          // filtering to the record is a different intent.
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEntityId(log.entity_id!);
+                            setPage(1);
+                          }}
+                          title="Show this record's full history"
+                          className="mt-0.5 font-mono text-[11px] text-gray-400 hover:text-gray-900 hover:underline"
+                        >
                           {log.entity_id.slice(0, 8)}...
-                        </div>
+                        </button>
                       )}
                     </td>
                   </tr>

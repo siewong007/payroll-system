@@ -3,6 +3,8 @@ import type { AuditLog, PaginatedResponse } from '@/types';
 
 export interface AuditLogQuery {
   entity_type?: string;
+  /** Scope to one record's history — "who changed this, and why". */
+  entity_id?: string;
   action?: string;
   user_id?: string;
   start_date?: string;

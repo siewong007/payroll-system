@@ -57,3 +57,6 @@ graphify-out/
 
 # Cross-built backend binary (deploy artifact, not source)
 payroll-system.amd64
+
+# Agent-managed git worktrees (checkouts, not source)
+.claude/worktrees/

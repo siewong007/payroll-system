@@ -10,12 +10,19 @@ use crate::models::approval::{
     ClaimWithEmployee, EmployeeEmailInfo, LeaveRequestWithEmployee, OvertimeWithEmployee,
 };
 
-/// Up to 100 most-recent leave requests for the admin inbox, optionally filtered
-/// by status.
+/// One page of leave requests for the admin inbox, optionally filtered by status.
+///
+/// These three inboxes used to end in a bare `LIMIT 100` with no count, and the
+/// UI rendered `data.length` as the queue total — so a manager with 140 pending
+/// requests saw "100 of 100" and had no way to reach the rest. Because the sort
+/// is `created_at DESC`, the rows silently dropped were the *oldest*, i.e. the
+/// most overdue. Real paging plus a real total is the fix.
 pub async fn list_pending_leave(
     executor: impl Executor<'_, Database = Postgres>,
     company_id: Uuid,
     status: Option<&str>,
+    limit: i64,
+    offset: i64,
 ) -> AppResult<Vec<LeaveRequestWithEmployee>> {
     let requests = sqlx::query_as!(
         LeaveRequestWithEmployee,
@@ -33,13 +40,33 @@ pub async fn list_pending_leave(
         WHERE lr.company_id = $1
         AND ($2::text IS NULL OR lr.status = $2)
         ORDER BY lr.created_at DESC
-        LIMIT 100"#,
+        LIMIT $3 OFFSET $4"#,
         company_id,
         status,
+        limit,
+        offset,
     )
     .fetch_all(executor)
     .await?;
     Ok(requests)
+}
+
+/// Total leave requests matching the inbox filter.
+pub async fn count_leave(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    status: Option<&str>,
+) -> AppResult<i64> {
+    let count = sqlx::query_scalar!(
+        r#"SELECT COUNT(*) AS "count!" FROM leave_requests lr
+        WHERE lr.company_id = $1
+        AND ($2::text IS NULL OR lr.status = $2)"#,
+        company_id,
+        status,
+    )
+    .fetch_one(executor)
+    .await?;
+    Ok(count)
 }
 
 /// Employee name/email plus company name, for composing approval emails.
@@ -84,10 +111,14 @@ pub async fn overtime_with_employee_by_id(
 
 /// Up to 100 most-recent overtime applications for the admin inbox, optionally
 /// filtered by status.
+/// One page of overtime applications for the admin inbox. See
+/// [`list_pending_leave`] for why this pages rather than truncating.
 pub async fn list_pending_overtime(
     executor: impl Executor<'_, Database = Postgres>,
     company_id: Uuid,
     status: Option<&str>,
+    limit: i64,
+    offset: i64,
 ) -> AppResult<Vec<OvertimeWithEmployee>> {
     let apps = sqlx::query_as!(
         OvertimeWithEmployee,
@@ -99,13 +130,33 @@ pub async fn list_pending_overtime(
         WHERE oa.company_id = $1
         AND ($2::text IS NULL OR oa.status = $2)
         ORDER BY oa.created_at DESC
-        LIMIT 100"#,
+        LIMIT $3 OFFSET $4"#,
         company_id,
         status,
+        limit,
+        offset,
     )
     .fetch_all(executor)
     .await?;
     Ok(apps)
+}
+
+/// Total overtime applications matching the inbox filter.
+pub async fn count_overtime(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    status: Option<&str>,
+) -> AppResult<i64> {
+    let count = sqlx::query_scalar!(
+        r#"SELECT COUNT(*) AS "count!" FROM overtime_applications oa
+        WHERE oa.company_id = $1
+        AND ($2::text IS NULL OR oa.status = $2)"#,
+        company_id,
+        status,
+    )
+    .fetch_one(executor)
+    .await?;
+    Ok(count)
 }
 
 /// A single claim joined to employee identity, or `None`.
@@ -131,10 +182,14 @@ pub async fn claim_with_employee_by_id(
 }
 
 /// Up to 100 most-recent claims for the admin inbox, optionally filtered by status.
+/// One page of claims for the admin inbox. See [`list_pending_leave`] for why
+/// this pages rather than truncating.
 pub async fn list_pending_claims(
     executor: impl Executor<'_, Database = Postgres>,
     company_id: Uuid,
     status: Option<&str>,
+    limit: i64,
+    offset: i64,
 ) -> AppResult<Vec<ClaimWithEmployee>> {
     let claims = sqlx::query_as!(
         ClaimWithEmployee,
@@ -146,11 +201,31 @@ pub async fn list_pending_claims(
         WHERE c.company_id = $1
         AND ($2::text IS NULL OR c.status = $2)
         ORDER BY c.created_at DESC
-        LIMIT 100"#,
+        LIMIT $3 OFFSET $4"#,
         company_id,
         status,
+        limit,
+        offset,
     )
     .fetch_all(executor)
     .await?;
     Ok(claims)
+}
+
+/// Total claims matching the inbox filter.
+pub async fn count_claims(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    status: Option<&str>,
+) -> AppResult<i64> {
+    let count = sqlx::query_scalar!(
+        r#"SELECT COUNT(*) AS "count!" FROM claims c
+        WHERE c.company_id = $1
+        AND ($2::text IS NULL OR c.status = $2)"#,
+        company_id,
+        status,
+    )
+    .fetch_one(executor)
+    .await?;
+    Ok(count)
 }
