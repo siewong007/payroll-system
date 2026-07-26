@@ -35,6 +35,10 @@ pub struct AttendanceRecord {
     pub hours_worked: Option<rust_decimal::Decimal>,
     pub overtime_hours: Option<rust_decimal::Decimal>,
     pub is_outside_geofence: Option<bool>,
+    /// Whether the check-in came from outside the company's approved networks.
+    /// `None` means the network was never evaluated — the mode was off or only
+    /// learning — which must stay distinguishable from "checked, and on-network".
+    pub is_offsite_network: Option<bool>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -60,6 +64,7 @@ pub struct AttendanceRecordWithEmployee {
     pub hours_worked: Option<rust_decimal::Decimal>,
     pub overtime_hours: Option<rust_decimal::Decimal>,
     pub is_outside_geofence: Option<bool>,
+    pub is_offsite_network: Option<bool>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -121,6 +126,11 @@ pub struct AttendanceListQuery {
     /// the only way to find off-site check-ins was to page through the whole
     /// list looking for the warning icon.
     pub outside_geofence_only: Option<bool>,
+    /// Only check-ins recorded off the company's approved networks. Same
+    /// triage need as `outside_geofence_only`: the flag is stored and rendered
+    /// per row, and without a predicate the only way to find these is to page
+    /// through the whole list looking for the icon.
+    pub offsite_network_only: Option<bool>,
     /// Page number (1-based, default 1)
     pub page: Option<i64>,
     /// Items per page (default 50, max 200)
@@ -225,6 +235,9 @@ pub struct AttendanceMethodResponse {
     pub is_company_override: bool,
     /// "none" | "warn" | "enforce"
     pub geofence_mode: String,
+    /// "none" | "learn" | "warn" | "enforce". Lets the check-in screen say up
+    /// front that office Wi-Fi is required, instead of only after a rejection.
+    pub network_mode: String,
     /// IANA timezone the company's attendance days are bucketed in
     pub timezone: String,
 }

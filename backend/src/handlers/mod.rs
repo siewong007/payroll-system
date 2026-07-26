@@ -1,6 +1,7 @@
 pub mod admin;
 pub mod approval;
 pub mod attendance;
+pub mod attendance_network;
 pub mod audit;
 pub mod auth;
 pub mod backup;

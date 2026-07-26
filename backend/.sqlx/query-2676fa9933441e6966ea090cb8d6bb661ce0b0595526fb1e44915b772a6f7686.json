@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM attendance_network_dismissals\n           WHERE company_id = $1 AND network = $2 AND prefix_len = $3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Int2"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2676fa9933441e6966ea090cb8d6bb661ce0b0595526fb1e44915b772a6f7686"
+}

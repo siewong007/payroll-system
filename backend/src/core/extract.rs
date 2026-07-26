@@ -10,9 +10,16 @@
 //! otherwise hold — the TCP peer address and the operator's
 //! `TRUST_PROXY_HEADERS` setting — and the old header-only helper silently
 //! recorded a forgeable address instead.
+//!
+//! `ClientIp` is the same address as a parsed `IpAddr` rather than a display
+//! string, for the one caller that has to *compare* it instead of record it:
+//! the attendance network check. It deliberately shares
+//! [`crate::core::client_ip::client_ip`] with the audit trail and the rate
+//! limiter, so a deployment can never enforce attendance against one notion of
+//! the client address while logging another.
 
 use std::convert::Infallible;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{ConnectInfo, FromRequest, FromRequestParts};
@@ -22,8 +29,41 @@ use serde::de::DeserializeOwned;
 use validator::Validate;
 
 use crate::core::app_state::AppState;
+use crate::core::client_ip::client_ip;
 use crate::core::error::AppError;
 use crate::models::audit::AuditRequestMeta;
+
+/// The address the server resolved for this request, if any.
+///
+/// `None` means the address could not be established at all — no
+/// `ConnectInfo` and no trusted forwarded header. Callers that gate on the
+/// network must treat that as "not on an approved network", never as a pass:
+/// an unknown address is exactly what a stripped header looks like.
+#[derive(Debug, Clone, Copy)]
+pub struct ClientIp(pub Option<IpAddr>);
+
+impl FromRequestParts<AppState> for ClientIp {
+    /// Never fails, for the same reason `AuditRequestMeta` never fails — the
+    /// absence of an address is information the handler should act on, not a
+    /// reason to reject the request before it reaches one.
+    type Rejection = Infallible;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let peer = parts
+            .extensions
+            .get::<ConnectInfo<SocketAddr>>()
+            .map(|ConnectInfo(addr)| addr.ip());
+
+        Ok(ClientIp(client_ip(
+            &parts.headers,
+            peer,
+            state.config.trust_proxy_headers,
+        )))
+    }
+}
 
 impl FromRequestParts<AppState> for AuditRequestMeta {
     /// Never fails: a request with no resolvable address still gets an audit

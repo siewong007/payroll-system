@@ -130,6 +130,32 @@ describe('Sidebar role-based navigation', () => {
     expect(navLinks()).toContain('Backup');
   });
 
+  it('offers My Attendance to staff held in the admin shell by a second role', () => {
+    // `AppLayout` redirects only *sole-role* employees to the portal, so a
+    // supervisor holding ['employee', 'hr_manager'] never sees the portal home's
+    // check-in card. Without this link their own attendance is reachable only by
+    // typing the URL.
+    authMocks.useAuth.mockReturnValue({
+      user: asUser(['employee', 'hr_manager'], { employee_id: 'employee-1' }),
+      logout: vi.fn(),
+    });
+    renderWithProviders(<Sidebar />);
+
+    expect(navLinks()).toContain('My Attendance');
+    // Not /portal/attendance: that leaves the admin shell, which has no way back.
+    expect(screen.getByRole('link', { name: 'My Attendance' })).toHaveAttribute('href', '/my/attendance');
+  });
+
+  it('hides My Attendance from a login with no employee record', () => {
+    // Gated on the employee link, not on a role name — the page could only tell
+    // an unlinked account to contact HR.
+    authMocks.useAuth.mockReturnValue({ user: asUser(['admin']), logout: vi.fn() });
+    renderWithProviders(<Sidebar />);
+
+    expect(navLinks()).not.toContain('My Attendance');
+    expect(screen.queryByText('Me')).not.toBeInTheDocument();
+  });
+
   it('drops a section heading entirely when the role sees none of its items', () => {
     authMocks.useAuth.mockReturnValue({ user: asUser(['hr_manager']), logout: vi.fn() });
     renderWithProviders(<Sidebar />);

@@ -6,6 +6,7 @@ pub mod backup;
 pub mod calendar;
 pub mod company;
 pub mod company_location;
+pub mod company_network;
 pub mod dashboard;
 pub mod document;
 pub mod ea_form;

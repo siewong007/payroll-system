@@ -14,6 +14,7 @@ import { getErrorMessage } from '@/lib/utils';
 import type { UpdateCompanyRequest } from '@/types';
 import { useAuth } from '@/context/AuthContext';
 import { canAccessPayrollData } from '@/lib/roles';
+import { CheckInCard } from '@/components/attendance/CheckInCard';
 
 const renderRow = (label: string, value: string | null | undefined) => (
   <div className="flex justify-between py-2.5 border-b border-gray-100 last:border-none text-sm">
@@ -48,7 +49,27 @@ const STATES = [
   'W.P. Kuala Lumpur', 'W.P. Labuan', 'W.P. Putrajaya',
 ];
 
+/**
+ * The admin landing screen — `/` redirects here for every non-super_admin — so
+ * it is also where a supervisor who punches a clock arrives on a cold open.
+ *
+ * The check-in card is mounted *before* the company fetch, deliberately: the
+ * portal home already refuses to put a spinner between an employee and the one
+ * action they open the app to perform twice a day, and this surface serves the
+ * same people. Keyed on the employee link rather than on the `employee` role, so
+ * it appears for exactly the accounts that have something to check into.
+ */
 export function CompanyProfile() {
+  const { user } = useAuth();
+  return (
+    <div className="space-y-6">
+      {user?.employee_id && <CheckInCard />}
+      <CompanyDetails />
+    </div>
+  );
+}
+
+function CompanyDetails() {
   const { user } = useAuth();
   const canViewPayroll = canAccessPayrollData(user);
   const queryClient = useQueryClient();

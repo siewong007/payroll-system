@@ -1,6 +1,7 @@
 import { Outlet, Link, useLocation, Navigate } from 'react-router';
-import { User, FileText, Calendar, Receipt, LogOut, ChevronDown, Bell, Users, Clock, MoreHorizontal, ScanLine, Sparkles } from 'lucide-react';
+import { User, FileText, Calendar, Receipt, LogOut, ChevronDown, Bell, Users, Clock, MoreHorizontal, ScanLine, Sparkles, LayoutDashboard } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
+import { canUseAdminConsole } from '@/lib/roles';
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -185,6 +186,22 @@ export function PortalLayout() {
                       <p className="text-sm font-semibold text-gray-900">{user?.full_name}</p>
                       <p className="text-xs text-gray-500 mt-0.5">{user?.email}</p>
                     </div>
+                    {/* Anyone who is not a sole-role employee lives in the admin
+                        shell — `AppLayout` only redirects the sole-role case — so
+                        they are here by choice and need a way back. Until now that
+                        was the browser's back button or a hand-typed URL.
+                        `/` rather than a fixed page: `HomeRedirect` picks the
+                        landing screen their roles actually allow, which is
+                        `/companies` for a super_admin and `/company` otherwise. */}
+                    {canUseAdminConsole(user) && (
+                      <Link
+                        to="/"
+                        onClick={() => setShowUserMenu(false)}
+                        className="flex items-center gap-2.5 w-full px-4 py-3 text-sm text-gray-600 border-b border-gray-200/60 hover:bg-white/70 hover:text-teal-700 transition-all-fast"
+                      >
+                        <LayoutDashboard className="w-4 h-4" /> Admin Console
+                      </Link>
+                    )}
                     <button
                       onClick={logout}
                       className="flex items-center gap-2.5 w-full px-4 py-3 text-sm text-gray-600 hover:bg-white/70 hover:text-red-600 transition-all-fast"

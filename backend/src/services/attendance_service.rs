@@ -1,4 +1,5 @@
 use std::future::Future;
+use std::net::IpAddr;
 use std::time::Duration;
 
 use chrono::{Datelike, Utc};
@@ -23,7 +24,7 @@ use crate::repositories::{
     platform_settings,
 };
 use crate::services::audit_service::{self, AuditRequestMeta};
-use crate::services::{geofence_service, passkey_service};
+use crate::services::{attendance_network_service, geofence_service, passkey_service};
 
 // ─── QR Token TTL ───
 const QR_TOKEN_TTL_SECONDS: i64 = 300;
@@ -153,6 +154,7 @@ pub async fn get_attendance_bootstrap(
 ) -> AppResult<AttendanceMethodResponse> {
     let effective = get_effective_method(pool, company_id).await?;
     let geofence_mode = geofence_service::get_geofence_mode(pool, company_id).await?;
+    let network_mode = attendance_network_service::get_mode(pool, company_id).await?;
     let timezone = get_company_timezone(pool, company_id).await;
 
     Ok(AttendanceMethodResponse {
@@ -160,6 +162,7 @@ pub async fn get_attendance_bootstrap(
         allow_company_override: effective.allow_company_override,
         is_company_override: effective.is_company_override,
         geofence_mode,
+        network_mode,
         timezone,
     })
 }
@@ -555,6 +558,7 @@ pub async fn check_in_qr(
     token: &str,
     latitude: Option<f64>,
     longitude: Option<f64>,
+    client_ip: Option<IpAddr>,
 ) -> AppResult<AttendanceRecord> {
     let tz = get_company_timezone(pool, company_id).await;
     ensure_no_active_checkin(pool, employee_id, &tz).await?;
@@ -563,10 +567,16 @@ pub async fn check_in_qr(
     let outside_geofence =
         geofence_service::validate_geofence(pool, company_id, latitude, longitude).await?;
 
+    // Network check (may reject in enforce mode). Ordered after the geofence so
+    // an employee who is off-site for both reasons is told the more actionable
+    // of the two first.
+    let offsite_network =
+        attendance_network_service::validate_for_checkin(pool, company_id, client_ip).await?;
+
     let token_id = validate_qr_token(pool, token, company_id).await?;
     let status = determine_checkin_status(pool, employee_id, company_id, &tz).await?;
 
-    insert_checkin(pool, employee_id, &tz, || async {
+    let record = insert_checkin(pool, employee_id, &tz, || async {
         let mut tx = pool.begin().await?;
         let record = attendance_records::insert_qr(
             &mut *tx,
@@ -577,6 +587,7 @@ pub async fn check_in_qr(
             longitude,
             token_id,
             outside_geofence,
+            offsite_network,
         )
         .await?;
         // A post-cron check-in supersedes the day's auto-absent placeholder —
@@ -585,7 +596,54 @@ pub async fn check_in_qr(
         tx.commit().await?;
         Ok(record)
     })
-    .await
+    .await?;
+
+    // A QR token minted by a kiosk credential is corroboration the employee
+    // cannot manufacture: a device physically in the building displayed it.
+    let kiosk_minted = attendance_qr_tokens::is_kiosk_minted(pool, token_id)
+        .await
+        .unwrap_or(false);
+    let anchored =
+        kiosk_minted || geofence_corroborates(pool, company_id, outside_geofence).await;
+    observe_network(pool, company_id, employee_id, client_ip, anchored).await;
+
+    Ok(record)
+}
+
+/// Whether "inside the geofence" is worth anything as corroboration here.
+///
+/// Only when the fence is actually being evaluated: with the mode off, every
+/// check-in reports `outside_geofence = false` because nothing was checked, and
+/// treating that as corroboration would anchor every observation — including
+/// the ones from employees' living rooms, which is precisely the poisoning the
+/// anchor exists to prevent.
+async fn geofence_corroborates(pool: &PgPool, company_id: Uuid, outside: bool) -> bool {
+    if outside {
+        return false;
+    }
+    matches!(
+        geofence_service::get_geofence_mode(pool, company_id)
+            .await
+            .as_deref(),
+        Ok("warn") | Ok("enforce")
+    )
+}
+
+/// Record the observation, swallowing failures — learning is evidence
+/// gathering, and losing a data point must never fail a real check-in.
+async fn observe_network(
+    pool: &PgPool,
+    company_id: Uuid,
+    employee_id: Uuid,
+    client_ip: Option<IpAddr>,
+    anchored: bool,
+) {
+    if let Err(e) =
+        attendance_network_service::observe(pool, company_id, employee_id, client_ip, anchored)
+            .await
+    {
+        tracing::warn!("Failed to record attendance network observation: {}", e);
+    }
 }
 
 pub async fn check_in_face_id(
@@ -594,6 +652,7 @@ pub async fn check_in_face_id(
     company_id: Uuid,
     latitude: Option<f64>,
     longitude: Option<f64>,
+    client_ip: Option<IpAddr>,
 ) -> AppResult<AttendanceRecord> {
     let tz = get_company_timezone(pool, company_id).await;
     ensure_no_active_checkin(pool, employee_id, &tz).await?;
@@ -602,9 +661,12 @@ pub async fn check_in_face_id(
     let outside_geofence =
         geofence_service::validate_geofence(pool, company_id, latitude, longitude).await?;
 
+    let offsite_network =
+        attendance_network_service::validate_for_checkin(pool, company_id, client_ip).await?;
+
     let status = determine_checkin_status(pool, employee_id, company_id, &tz).await?;
 
-    insert_checkin(pool, employee_id, &tz, || async {
+    let record = insert_checkin(pool, employee_id, &tz, || async {
         let mut tx = pool.begin().await?;
         let record = attendance_records::insert_face(
             &mut *tx,
@@ -614,13 +676,23 @@ pub async fn check_in_face_id(
             latitude,
             longitude,
             outside_geofence,
+            offsite_network,
         )
         .await?;
         attendance_records::delete_auto_absent_today(&mut *tx, employee_id, &tz).await?;
         tx.commit().await?;
         Ok(record)
     })
-    .await
+    .await?;
+
+    // No kiosk token on this path, so the geofence is the only corroboration
+    // available. A face-id company with the fence off learns nothing anchored,
+    // which is the correct outcome: there is genuinely nothing vouching for
+    // where the employee was.
+    let anchored = geofence_corroborates(pool, company_id, outside_geofence).await;
+    observe_network(pool, company_id, employee_id, client_ip, anchored).await;
+
+    Ok(record)
 }
 
 /// Run a check-in insert closure, translating the one-open-session unique
@@ -652,12 +724,18 @@ pub async fn check_out(
     company_id: Uuid,
     latitude: Option<f64>,
     longitude: Option<f64>,
+    client_ip: Option<IpAddr>,
 ) -> AppResult<AttendanceRecord> {
     // Never blocks: an off-site (or GPS-less) check-out is flagged for admin
     // review instead of refused, so employees cannot be trapped in an open
     // session that only an admin correction can close.
     let outside_geofence =
         geofence_service::flag_geofence_for_checkout(pool, company_id, latitude, longitude).await?;
+
+    // Same rule for the network, and for the same reason. Enforcing here would
+    // strand anyone who steps out of the building before closing their shift.
+    let offsite_network =
+        attendance_network_service::flag_for_checkout(pool, company_id, client_ip).await?;
 
     if let Some(record) = attendance_records::check_out(
         pool,
@@ -666,6 +744,7 @@ pub async fn check_out(
         longitude,
         company_id,
         outside_geofence,
+        offsite_network,
     )
     .await?
     {

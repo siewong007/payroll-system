@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT (kiosk_credential_id IS NOT NULL) AS \"minted!\"\n           FROM attendance_qr_tokens WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "minted!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "2456aa2f0e8b0ca0440a1d9b83e38d3a0bdaab463fe41ca4d88dbf38eb9a5fb3"
+}

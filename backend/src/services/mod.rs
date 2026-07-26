@@ -1,4 +1,5 @@
 pub mod approval_service;
+pub mod attendance_network_service;
 pub mod attendance_service;
 pub mod audit_service;
 pub mod auth_service;

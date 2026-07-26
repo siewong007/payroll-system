@@ -9,9 +9,9 @@ use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
 use crate::core::app_state::AppState;
 use crate::core::rate_limit_key::{ClientIpKeyExtractor, SessionOrIpKeyExtractor};
 use crate::handlers::{
-    admin, approval, attendance, audit, auth, backup, calendar, company, dashboard, document,
-    email, employee, employee_import, geofence, health, notification, oauth2, passkey, payroll,
-    permission, portal, report, settings, team, totp, user_group, work_schedule,
+    admin, approval, attendance, attendance_network, audit, auth, backup, calendar, company,
+    dashboard, document, email, employee, employee_import, geofence, health, notification, oauth2,
+    passkey, payroll, permission, portal, report, settings, team, totp, user_group, work_schedule,
 };
 
 pub fn create_router(state: AppState) -> Router {
@@ -590,6 +590,36 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/geofence/mode",
             get(geofence::get_mode).put(geofence::set_mode),
+        )
+        // ─── Attendance networks ───
+        // Every route gated on ManageAttendanceNetworks inside the handler.
+        .route(
+            "/attendance/networks",
+            get(attendance_network::list_networks).post(attendance_network::create_network),
+        )
+        .route(
+            "/attendance/networks/{id}",
+            put(attendance_network::update_network).delete(attendance_network::delete_network),
+        )
+        .route(
+            "/attendance/networks/mode",
+            get(attendance_network::get_mode).put(attendance_network::set_mode),
+        )
+        .route(
+            "/attendance/networks/candidates",
+            get(attendance_network::list_candidates),
+        )
+        .route(
+            "/attendance/networks/candidates/approve",
+            post(attendance_network::approve_candidate),
+        )
+        .route(
+            "/attendance/networks/candidates/dismiss",
+            post(attendance_network::dismiss_candidate),
+        )
+        .route(
+            "/attendance/networks/whoami",
+            get(attendance_network::whoami),
         );
 
     Router::new().nest("/api", api).with_state(state)

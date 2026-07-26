@@ -10,6 +10,7 @@
 //! - All SQL lives here; handlers and services never embed `sqlx::query*` directly.
 
 pub mod attendance_kiosk_credentials;
+pub mod attendance_network_observations;
 pub mod attendance_qr_tokens;
 pub mod attendance_records;
 pub mod audit_logs;
@@ -19,6 +20,7 @@ pub mod claims;
 pub mod clock;
 pub mod companies;
 pub mod company_locations;
+pub mod company_networks;
 pub mod company_settings;
 pub mod company_work_schedules;
 pub mod documents;

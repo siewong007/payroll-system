@@ -127,7 +127,8 @@ async fn main() -> anyhow::Result<()> {
     // task had nothing to do.
     let cleanup_pool = pool.clone();
     tokio::spawn(async move {
-        use payroll_system::repositories::attendance_qr_tokens;
+        use payroll_system::repositories::{attendance_network_observations, attendance_qr_tokens};
+        use payroll_system::services::attendance_network_service;
 
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(24 * 60 * 60));
         // After an OS sleep/wake gap, fire one delayed tick instead of a
@@ -158,6 +159,22 @@ async fn main() -> anyhow::Result<()> {
             match attendance_qr_tokens::purge_expired(&cleanup_pool, 7).await {
                 Ok(rows) => tracing::info!(rows, "qr-token cleanup: completed"),
                 Err(e) => tracing::error!("Failed to clean up attendance QR tokens: {}", e),
+            }
+
+            // Attendance network observations are employees' home and mobile
+            // addresses. They exist to inform a proposal, and stop being able
+            // to do that once they age out of the learning window — so this is
+            // a PDPA retention obligation, not a housekeeping nicety.
+            match attendance_network_observations::purge_older_than(
+                &cleanup_pool,
+                attendance_network_service::OBSERVATION_RETENTION_DAYS,
+            )
+            .await
+            {
+                Ok(rows) => tracing::info!(rows, "network-observation cleanup: completed"),
+                Err(e) => {
+                    tracing::error!("Failed to clean up network observations: {}", e)
+                }
             }
         }
     });

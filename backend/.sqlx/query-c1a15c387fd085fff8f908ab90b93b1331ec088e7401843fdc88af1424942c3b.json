@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM attendance_network_observations\n           WHERE last_seen_at < NOW() - make_interval(days => $1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c1a15c387fd085fff8f908ab90b93b1331ec088e7401843fdc88af1424942c3b"
+}

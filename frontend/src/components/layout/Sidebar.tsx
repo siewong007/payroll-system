@@ -17,6 +17,7 @@ import {
   ScrollText,
   X,
   ScanLine,
+  UserCheck,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { CompanySwitcher } from './CompanySwitcher';
@@ -35,6 +36,13 @@ import type { PermissionKey } from '@/api/permissions';
  * `hideFor` is a separate, presentational rule and stays role-based: `super_admin`
  * holds every permission but works from the Administration section, so the
  * company workspace links are suppressed for it rather than being unauthorized.
+ *
+ * `requiresEmployeeProfile` gates self-service links, which no permission covers
+ * — every authenticated user may act on their own record. It keys on the
+ * employee link rather than on holding the `employee` role: the link is what
+ * self-service actually needs, so a supervisor whose account carries a second
+ * role still gets the entry, and an admin login with nothing to check into
+ * never sees a link to a page that can only tell them to contact HR.
  */
 const navigation = [
   { name: 'Company', href: '/company', icon: Building2, hideFor: ['super_admin'], section: 'workspace' },
@@ -50,6 +58,10 @@ const navigation = [
   { name: 'Documents', href: '/documents', icon: FileText, requires: 'view_documents', hideFor: ['super_admin'], section: 'workspace' },
   { name: 'Letters', href: '/letters', icon: Mail, requires: 'view_email_logs', hideFor: ['super_admin'], section: 'workspace' },
   { name: 'Settings', href: '/settings', icon: Settings, requires: 'manage_company_settings', hideFor: ['super_admin'], section: 'workspace' },
+  // Own attendance, not the company's. `AppLayout` redirects only *sole-role*
+  // employees to the portal, so staff holding a second role are held in this
+  // shell with no route to their own check-in but a hand-typed URL.
+  { name: 'My Attendance', href: '/my/attendance', icon: UserCheck, requiresEmployeeProfile: true, section: 'personal' },
   { name: 'Companies', href: '/companies', icon: Building2, requires: 'manage_companies', section: 'admin' },
   { name: 'Users', href: '/users', icon: UserCog, requires: 'manage_users', section: 'admin' },
   { name: 'Roles', href: '/roles', icon: Shield, requires: 'manage_users', section: 'admin' },
@@ -63,11 +75,16 @@ const navigation = [
   icon: typeof Building2;
   requires?: PermissionKey;
   hideFor?: AppRole[];
+  requiresEmployeeProfile?: boolean;
   section: string;
 }>;
 
+// Own-record links sit in their own group: under Workspace, "My Attendance"
+// reads as a variant of the company-wide "Attendance" list two rows above it,
+// and the two go to very different places.
 const sections = [
   { key: 'workspace', label: 'Workspace' },
+  { key: 'personal', label: 'Me' },
   { key: 'admin', label: 'Administration' },
 ] as const;
 
@@ -83,6 +100,7 @@ function SidebarContent({ onClose }: { onClose?: () => void }) {
   const visibleNav = navigation.filter((item) => {
     if (item.hideFor && hasAnyRole(user, item.hideFor)) return false;
     if (item.requires && !userCan(user, item.requires)) return false;
+    if (item.requiresEmployeeProfile && !user?.employee_id) return false;
     return true;
   });
 

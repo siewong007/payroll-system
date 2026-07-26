@@ -20,15 +20,17 @@ pub async fn insert_qr(
     longitude: Option<f64>,
     qr_token_id: Uuid,
     is_outside_geofence: bool,
+    is_offsite_network: Option<bool>,
 ) -> AppResult<AttendanceRecord> {
     let record = sqlx::query_as!(
         AttendanceRecord,
         r#"INSERT INTO attendance_records
-           (company_id, employee_id, method, status, latitude, longitude, qr_token_id, is_outside_geofence)
-           VALUES ($1, $2, 'qr_code', $3, $4, $5, $6, $7)
+           (company_id, employee_id, method, status, latitude, longitude, qr_token_id, is_outside_geofence, is_offsite_network)
+           VALUES ($1, $2, 'qr_code', $3, $4, $5, $6, $7, $8)
            RETURNING id, company_id, employee_id, check_in_at, check_out_at, method, status,
                      latitude, longitude, checkout_latitude, checkout_longitude, notes, qr_token_id,
-                     created_by, hours_worked, overtime_hours, is_outside_geofence, created_at, updated_at"#,
+                     created_by, hours_worked, overtime_hours, is_outside_geofence, is_offsite_network,
+                     created_at, updated_at"#,
         company_id,
         employee_id,
         status,
@@ -36,6 +38,7 @@ pub async fn insert_qr(
         longitude,
         qr_token_id,
         is_outside_geofence,
+        is_offsite_network,
     )
     .fetch_one(executor)
     .await?;
@@ -50,21 +53,24 @@ pub async fn insert_face(
     latitude: Option<f64>,
     longitude: Option<f64>,
     is_outside_geofence: bool,
+    is_offsite_network: Option<bool>,
 ) -> AppResult<AttendanceRecord> {
     let record = sqlx::query_as!(
         AttendanceRecord,
         r#"INSERT INTO attendance_records
-           (company_id, employee_id, method, status, latitude, longitude, is_outside_geofence)
-           VALUES ($1, $2, 'face_id', $3, $4, $5, $6)
+           (company_id, employee_id, method, status, latitude, longitude, is_outside_geofence, is_offsite_network)
+           VALUES ($1, $2, 'face_id', $3, $4, $5, $6, $7)
            RETURNING id, company_id, employee_id, check_in_at, check_out_at, method, status,
                      latitude, longitude, checkout_latitude, checkout_longitude, notes, qr_token_id,
-                     created_by, hours_worked, overtime_hours, is_outside_geofence, created_at, updated_at"#,
+                     created_by, hours_worked, overtime_hours, is_outside_geofence, is_offsite_network,
+                     created_at, updated_at"#,
         company_id,
         employee_id,
         status,
         latitude,
         longitude,
         is_outside_geofence,
+        is_offsite_network,
     )
     .fetch_one(executor)
     .await?;
@@ -82,6 +88,7 @@ pub async fn check_out(
     longitude: Option<f64>,
     company_id: Uuid,
     outside_geofence: bool,
+    offsite_network: bool,
 ) -> AppResult<Option<AttendanceRecord>> {
     let record = sqlx::query_as!(
         AttendanceRecord,
@@ -90,6 +97,13 @@ pub async fn check_out(
                checkout_latitude = $2,
                checkout_longitude = $3,
                is_outside_geofence = (COALESCE(ar.is_outside_geofence, FALSE) OR $5),
+               -- Left NULL when the check-in was never evaluated and this
+               -- check-out was not either: "not checked" must stay
+               -- distinguishable from "checked and on-network".
+               is_offsite_network = CASE
+                   WHEN $6 THEN TRUE
+                   ELSE ar.is_offsite_network
+               END,
                hours_worked = ROUND(EXTRACT(EPOCH FROM (NOW() - ar.check_in_at)) / 3600.0, 2),
                overtime_hours = GREATEST(0,
                    ROUND(EXTRACT(EPOCH FROM (NOW() - ar.check_in_at)) / 3600.0, 2)
@@ -118,12 +132,13 @@ pub async fn check_out(
                      ar.method, ar.status, ar.latitude, ar.longitude, ar.checkout_latitude,
                      ar.checkout_longitude, ar.notes, ar.qr_token_id, ar.created_by,
                      ar.hours_worked, ar.overtime_hours, ar.is_outside_geofence,
-                     ar.created_at, ar.updated_at"#,
+                     ar.is_offsite_network, ar.created_at, ar.updated_at"#,
         employee_id,
         latitude,
         longitude,
         company_id,
         outside_geofence,
+        offsite_network,
     )
     .fetch_optional(executor)
     .await?;
@@ -142,7 +157,7 @@ pub async fn find_open_with_local_date(
         r#"SELECT id, company_id, employee_id, check_in_at, check_out_at, method, status,
                   latitude, longitude, checkout_latitude, checkout_longitude, notes, qr_token_id,
                   created_by, hours_worked, overtime_hours, is_outside_geofence,
-                  created_at, updated_at,
+                  is_offsite_network, created_at, updated_at,
                   DATE(check_in_at AT TIME ZONE $2) AS "local_date!",
                   (DATE(check_in_at AT TIME ZONE $2) = DATE(NOW() AT TIME ZONE $2)) AS "is_today!"
            FROM attendance_records
@@ -174,6 +189,7 @@ pub async fn find_open_with_local_date(
                 hours_worked: r.hours_worked,
                 overtime_hours: r.overtime_hours,
                 is_outside_geofence: r.is_outside_geofence,
+                is_offsite_network: r.is_offsite_network,
                 created_at: r.created_at,
                 updated_at: r.updated_at,
             },
@@ -212,7 +228,8 @@ pub async fn get_today(
         AttendanceRecord,
         "SELECT id, company_id, employee_id, check_in_at, check_out_at, method, status,
                 latitude, longitude, checkout_latitude, checkout_longitude, notes, qr_token_id,
-                created_by, hours_worked, overtime_hours, is_outside_geofence, created_at, updated_at
+                created_by, hours_worked, overtime_hours, is_outside_geofence, is_offsite_network,
+                created_at, updated_at
          FROM attendance_records
          WHERE employee_id = $1
            AND DATE(check_in_at AT TIME ZONE $2) = DATE(NOW() AT TIME ZONE $2)
@@ -235,7 +252,8 @@ pub async fn get_by_id(
         AttendanceRecord,
         "SELECT id, company_id, employee_id, check_in_at, check_out_at, method, status,
                 latitude, longitude, checkout_latitude, checkout_longitude, notes, qr_token_id,
-                created_by, hours_worked, overtime_hours, is_outside_geofence, created_at, updated_at
+                created_by, hours_worked, overtime_hours, is_outside_geofence, is_offsite_network,
+                created_at, updated_at
          FROM attendance_records WHERE id = $1 AND company_id = $2",
         record_id,
         company_id,
@@ -263,7 +281,8 @@ pub async fn insert_manual(
            VALUES ($1, $2, $3, $4, 'manual', $5, $6, $7)
            RETURNING id, company_id, employee_id, check_in_at, check_out_at, method, status,
                      latitude, longitude, checkout_latitude, checkout_longitude, notes, qr_token_id,
-                     created_by, hours_worked, overtime_hours, is_outside_geofence, created_at, updated_at"#,
+                     created_by, hours_worked, overtime_hours, is_outside_geofence, is_offsite_network,
+                created_at, updated_at"#,
         company_id,
         employee_id,
         check_in_at,
@@ -313,7 +332,8 @@ pub async fn update(
            WHERE ar.id = $1 AND ar.company_id = $2
            RETURNING id, company_id, employee_id, check_in_at, check_out_at, method, status,
                      latitude, longitude, checkout_latitude, checkout_longitude, notes, qr_token_id,
-                     created_by, hours_worked, overtime_hours, is_outside_geofence, created_at, updated_at"#,
+                     created_by, hours_worked, overtime_hours, is_outside_geofence, is_offsite_network,
+                created_at, updated_at"#,
         record_id,
         company_id,
         check_in_at,

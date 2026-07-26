@@ -44,12 +44,18 @@ vi.mock('@/api/attendance', () => ({
 
 vi.mock('@/api/workSchedule', () => ({ getDefaultSchedule: vi.fn() }));
 vi.mock('@/lib/webauthn', () => ({ getPasskeyCredential: vi.fn() }));
+vi.mock('@/api/company', () => ({
+  getCompany: vi.fn(), updateCompany: vi.fn(), getCompanyStats: vi.fn(),
+}));
 
 import {
   beginFaceIdCheckIn, checkInFaceId, checkInQr, checkOut, getAttendanceMethod, getMyTodayAttendance,
 } from '@/api/attendance';
 import { getDefaultSchedule } from '@/api/workSchedule';
+import { getCompany, getCompanyStats } from '@/api/company';
 import { getPasskeyCredential } from '@/lib/webauthn';
+import type { AuthenticationResponseJSON } from '@/lib/webauthn';
+import { CompanyProfile } from '@/pages/company/CompanyProfile';
 
 // ─── Pure helpers ─────────────────────────────────────────────────────────────
 
@@ -243,6 +249,21 @@ const methodMock = vi.mocked(getAttendanceMethod);
 const todayMock = vi.mocked(getMyTodayAttendance);
 const scheduleMock = vi.mocked(getDefaultSchedule);
 
+// A stand-in for a completed WebAuthn assertion. These tests only assert that
+// the ceremony ran and that the challenge id was forwarded, so the field values
+// are arbitrary — but the shape has to be whole.
+const faceIdAssertion: AuthenticationResponseJSON = {
+  id: 'cred1',
+  rawId: 'cred1',
+  type: 'public-key',
+  response: {
+    authenticatorData: 'AA',
+    clientDataJSON: 'AA',
+    signature: 'AA',
+    userHandle: null,
+  },
+};
+
 function setMethod(method: 'qr_code' | 'face_id', geofence: 'none' | 'warn' | 'enforce' = 'none') {
   methodMock.mockResolvedValue({
     method,
@@ -272,7 +293,7 @@ describe('CheckInCard', () => {
       challenge_id: 'ch1',
       options: { publicKey: { challenge: 'x' } },
     });
-    vi.mocked(getPasskeyCredential).mockResolvedValue({ id: 'cred1' });
+    vi.mocked(getPasskeyCredential).mockResolvedValue(faceIdAssertion);
     vi.mocked(checkInFaceId).mockResolvedValue({ ...baseRecord, method: 'face_id' });
 
     renderCard();
@@ -359,7 +380,7 @@ describe('CheckInCard', () => {
     vi.stubGlobal('navigator', { ...navigator, geolocation: { getCurrentPosition } });
 
     vi.mocked(beginFaceIdCheckIn).mockResolvedValue({ challenge_id: 'ch1', options: { publicKey: { challenge: 'x' } } });
-    vi.mocked(getPasskeyCredential).mockResolvedValue({ id: 'cred1' });
+    vi.mocked(getPasskeyCredential).mockResolvedValue(faceIdAssertion);
     vi.mocked(checkInFaceId).mockResolvedValue({ ...baseRecord, method: 'face_id' });
 
     renderCard();
@@ -377,7 +398,7 @@ describe('CheckInCard', () => {
     vi.stubGlobal('navigator', { ...navigator, geolocation: { getCurrentPosition } });
 
     vi.mocked(beginFaceIdCheckIn).mockResolvedValue({ challenge_id: 'ch1', options: { publicKey: { challenge: 'x' } } });
-    vi.mocked(getPasskeyCredential).mockResolvedValue({ id: 'cred1' });
+    vi.mocked(getPasskeyCredential).mockResolvedValue(faceIdAssertion);
     vi.mocked(checkInFaceId).mockResolvedValue({ ...baseRecord, method: 'face_id' });
 
     renderCard();
@@ -391,5 +412,48 @@ describe('CheckInCard', () => {
     renderCard({ ...employee, employee_id: null });
     expect(await screen.findByText(/isn't linked to an employee profile/i)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /check in/i })).not.toBeInTheDocument();
+  });
+});
+
+// ─── Admin landing screen ─────────────────────────────────────────────────────
+
+function renderCompanyProfile(user: User) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <AuthContext.Provider value={makeAuth(user)}>
+        <MemoryRouter initialEntries={['/company']}>
+          <CompanyProfile />
+        </MemoryRouter>
+      </AuthContext.Provider>
+    </QueryClientProvider>,
+  );
+}
+
+describe('CompanyProfile check-in card', () => {
+  beforeEach(() => {
+    // Left pending on purpose: the first case is that the card does not wait for
+    // the company payload.
+    vi.mocked(getCompany).mockReturnValue(new Promise(() => { /* never resolves */ }));
+    vi.mocked(getCompanyStats).mockReturnValue(new Promise(() => { /* never resolves */ }));
+  });
+
+  it('offers check-in to staff whose second role keeps them out of the portal', async () => {
+    // AppLayout redirects only sole-role employees, so ['employee', 'hr_manager']
+    // lands here and never sees the portal home's card. Check-in appears while
+    // the company fetch is still in flight — the day's one time-critical action
+    // must not queue behind an unrelated request.
+    renderCompanyProfile(userWithRoles(['employee', 'hr_manager'], { employee_id: 'e1' }));
+
+    expect(await screen.findByRole('button', { name: /^check in$/i })).toBeEnabled();
+  });
+
+  it('leaves the landing screen unchanged for a login with no employee record', () => {
+    renderCompanyProfile(userWithRoles(['admin']));
+
+    // Not even the card's "contact HR" state: an admin who was never an employee
+    // has nothing to check into, so the page stays exactly as it was.
+    expect(screen.queryByRole('button', { name: /check in/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/isn't linked to an employee profile/i)).not.toBeInTheDocument();
   });
 });

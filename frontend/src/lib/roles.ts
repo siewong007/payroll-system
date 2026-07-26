@@ -111,6 +111,21 @@ export function hasOnlyEmployeeRole(value: MaybeAppRole): boolean {
   return roles.length === 1 && roles[0] === 'employee';
 }
 
+/**
+ * Whether this identity has any business in the admin shell.
+ *
+ * Deliberately derived from `hasOnlyEmployeeRole` rather than restating the rule:
+ * it is the exact complement of the redirect in `AppLayout`, so the portal can
+ * offer a way back to the console on precisely the condition that `AppLayout`
+ * will not bounce them straight out again. Note the two are *not* mirror images
+ * on an empty role set — `AppLayout` lets that through, but an offer to visit a
+ * console is only worth making to someone who holds a role.
+ */
+export function canUseAdminConsole(value: MaybeAppRole): boolean {
+  const roles = roleList(value);
+  return roles.length > 0 && !hasOnlyEmployeeRole(roles);
+}
+
 export function canAccessPayrollData(role: MaybeAppRole): boolean {
   return hasAnyRole(role, PAYROLL_DATA_ROLES);
 }

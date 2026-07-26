@@ -6,6 +6,7 @@
 
 pub mod approvals;
 pub mod attendance;
+pub mod attendance_networks;
 pub mod audit;
 pub mod dashboard;
 pub mod ea_form;
