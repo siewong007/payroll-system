@@ -2,6 +2,7 @@ mod approval_flow_tests;
 mod attendance_tests;
 mod audit_tests;
 mod extractor_tests;
+mod import_atomicity_tests;
 mod payroll_lifecycle_tests;
 mod payroll_tests;
 mod pure_unit_tests;

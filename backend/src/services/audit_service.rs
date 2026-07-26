@@ -43,9 +43,16 @@ pub async fn list_audit_logs(
     Ok((logs, count))
 }
 
+/// Write one audit row.
+///
+/// Generic over the executor so a caller can pass `&pool` (best-effort, the
+/// common case) *or* `&mut *tx` to put the audit row in the same transaction as
+/// the change it describes. The second form matters wherever the trail is
+/// evidence: a row written on a separate connection survives a rollback of the
+/// change, and is lost if the change commits and the audit write then fails.
 #[allow(clippy::too_many_arguments)]
 pub async fn log_action_with_metadata(
-    pool: &PgPool,
+    executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
     company_id: Option<Uuid>,
     user_id: Option<Uuid>,
     action: &str,
@@ -60,7 +67,7 @@ pub async fn log_action_with_metadata(
     let user_agent = metadata.and_then(|meta| meta.user_agent.as_deref());
 
     let result = audit_logs::insert(
-        pool,
+        executor,
         company_id,
         user_id,
         action,

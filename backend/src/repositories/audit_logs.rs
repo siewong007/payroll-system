@@ -77,23 +77,10 @@ pub async fn insert(
     Ok(())
 }
 
-/// Record a bulk employee-import action in the audit trail.
-pub async fn insert_bulk_import(
-    executor: impl Executor<'_, Database = Postgres>,
-    id: Uuid,
-    user_id: Uuid,
-    description: &str,
-    new_values: serde_json::Value,
-) -> AppResult<()> {
-    sqlx::query!(
-        r#"INSERT INTO audit_logs (id, user_id, action, entity_type, description, new_values)
-        VALUES ($1, $2, 'bulk_import', 'employee', $3, $4)"#,
-        id,
-        user_id,
-        description,
-        new_values,
-    )
-    .execute(executor)
-    .await?;
-    Ok(())
-}
+// `insert_bulk_import` used to live here. It was the only writer whose INSERT
+// omitted `company_id`, and every read path filters `WHERE al.company_id = $1`
+// (`count_filtered` above, `reads::audit::list_filtered`) — so the highest-value
+// employee-creating operation in the product wrote a row no API could ever
+// return. The import now goes through `audit_service::log_action_with_metadata`
+// like every other mutation, which makes that class of drift impossible rather
+// than merely fixed once.

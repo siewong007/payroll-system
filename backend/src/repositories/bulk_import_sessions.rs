@@ -56,15 +56,26 @@ pub async fn insert_pending(
     Ok(())
 }
 
-pub async fn mark_confirmed(
+/// Claim a `pending` session for confirmation, returning false if it was
+/// already claimed.
+///
+/// Compare-and-swap rather than a blind UPDATE: the caller's `status ==
+/// "pending"` gate is a separate earlier statement, so two concurrent
+/// confirmations of the same session both passed it and both imported the file.
+/// Run inside the import transaction, this makes claiming the session and
+/// writing the employees one atomic act — the previous code marked the session
+/// confirmed on a *separate* connection after the commit, so a failed import
+/// still burned the session and left no way to retry it.
+pub async fn claim_for_confirmation(
     executor: impl Executor<'_, Database = Postgres>,
     id: Uuid,
-) -> AppResult<()> {
-    sqlx::query!(
-        "UPDATE bulk_import_sessions SET status = 'confirmed', confirmed_at = NOW() WHERE id = $1",
+) -> AppResult<bool> {
+    let result = sqlx::query!(
+        r#"UPDATE bulk_import_sessions SET status = 'confirmed', confirmed_at = NOW()
+        WHERE id = $1 AND status = 'pending'"#,
         id,
     )
     .execute(executor)
     .await?;
-    Ok(())
+    Ok(result.rows_affected() == 1)
 }
