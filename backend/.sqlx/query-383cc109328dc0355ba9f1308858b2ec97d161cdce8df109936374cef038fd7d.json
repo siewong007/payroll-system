@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH RECURSIVE walk AS (\n            (SELECT entity_type FROM audit_logs\n             WHERE company_id = $1\n             ORDER BY entity_type\n             LIMIT 1)\n            UNION ALL\n            SELECT (SELECT al.entity_type FROM audit_logs al\n                    WHERE al.company_id = $1 AND al.entity_type > walk.entity_type\n                    ORDER BY al.entity_type\n                    LIMIT 1)\n            FROM walk\n            WHERE walk.entity_type IS NOT NULL\n        )\n        SELECT entity_type AS \"entity_type!\" FROM walk\n        WHERE entity_type IS NOT NULL\n        ORDER BY entity_type",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "entity_type!",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "383cc109328dc0355ba9f1308858b2ec97d161cdce8df109936374cef038fd7d"
+}

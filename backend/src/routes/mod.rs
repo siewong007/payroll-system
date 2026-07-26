@@ -493,6 +493,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/email/logs", get(email::list_email_logs))
         // Audit Trail
         .route("/audit-logs", get(audit::list_audit_logs))
+        // Filter vocabulary, read from the company's own rows so the dropdowns
+        // cannot offer an option that matches nothing.
+        .route("/audit-logs/filters", get(audit::list_filter_options))
         // Leave enhancements
         .route(
             "/employees/{id}/leave-balances/initialize",

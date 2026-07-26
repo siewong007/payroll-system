@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH RECURSIVE walk AS (\n            (SELECT action FROM audit_logs\n             WHERE company_id = $1\n             ORDER BY action\n             LIMIT 1)\n            UNION ALL\n            SELECT (SELECT al.action FROM audit_logs al\n                    WHERE al.company_id = $1 AND al.action > walk.action\n                    ORDER BY al.action\n                    LIMIT 1)\n            FROM walk\n            WHERE walk.action IS NOT NULL\n        )\n        SELECT action AS \"action!\" FROM walk\n        WHERE action IS NOT NULL\n        ORDER BY action",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "action!",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "2c3b98d15e7e60c029aa46de639d7f24f6be95471b652bb5f2aaa6d31dc58a63"
+}

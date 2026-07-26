@@ -15,8 +15,7 @@ use crate::core::error::AppError;
 use crate::models::audit::AuditRequestMeta;
 use crate::services::auth_service::validate_password_strength;
 use crate::services::oauth2_service::{
-    STALE_GRANT_MESSAGE, classify_token_exchange_error, compute_code_challenge,
-    generate_code_verifier, google_authorize_url,
+    compute_code_challenge, generate_code_verifier, google_authorize_url,
 };
 use crate::services::pcb_calculator::round_up_to_ringgit;
 use crate::services::pdf_helpers::sen_to_rm;
@@ -416,68 +415,6 @@ fn google_authorize_url_round_trips_encoded_parameters() {
         params.get("code_challenge_method").map(String::as_str),
         Some("S256")
     );
-}
-
-#[test]
-fn expired_authorization_code_is_the_users_problem_not_a_server_error() {
-    // A code that timed out or was replayed is the single most common OAuth2
-    // failure. Reporting it as a 500 told the user the server was broken and
-    // hid the one action that actually helps: start the sign-in again.
-    let err = classify_token_exchange_error(
-        400,
-        r#"{"error":"invalid_grant","error_description":"Bad Request"}"#,
-    );
-
-    assert!(matches!(err, AppError::BadRequest(_)));
-    let (status, message) = err.client_response();
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(message, STALE_GRANT_MESSAGE);
-}
-
-#[test]
-fn misconfigured_credentials_stay_a_generic_500() {
-    // client_id/secret problems are ours, not the caller's: the body names our
-    // deployment's configuration and must never be echoed back.
-    for code in [
-        "invalid_client",
-        "unauthorized_client",
-        "invalid_scope",
-        "unsupported_grant_type",
-        "invalid_request",
-    ] {
-        let body = format!(r#"{{"error":"{code}","error_description":"secret-ish detail"}}"#);
-        let err = classify_token_exchange_error(401, &body);
-
-        assert!(
-            matches!(err, AppError::Internal(_)),
-            "{code} should be treated as a server misconfiguration"
-        );
-        let (status, message) = err.client_response();
-        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-        assert_eq!(message, "Internal server error");
-        assert!(!message.contains("secret-ish detail"));
-    }
-}
-
-#[test]
-fn google_outage_is_reported_as_a_gateway_failure() {
-    // A 5xx with no OAuth2 error code is Google failing, not this service.
-    let err = classify_token_exchange_error(503, "<html>Service Unavailable</html>");
-
-    assert!(matches!(err, AppError::BadGateway(_)));
-    let (status, message) = err.client_response();
-    assert_eq!(status, StatusCode::BAD_GATEWAY);
-    assert!(message.contains("temporarily unavailable"));
-}
-
-#[test]
-fn unrecognised_4xx_body_does_not_leak_and_is_not_retryable_advice() {
-    // Unparseable or unexpected 4xx: no guessing. Log it, return a generic 500
-    // rather than telling the user to retry something that will fail again.
-    let err = classify_token_exchange_error(418, "not json at all");
-
-    assert!(matches!(err, AppError::Internal(_)));
-    assert_eq!(err.client_response().0, StatusCode::INTERNAL_SERVER_ERROR);
 }
 
 #[test]

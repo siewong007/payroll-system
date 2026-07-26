@@ -1,41 +1,19 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ScrollText, Search, X, ChevronLeft, ChevronRight } from 'lucide-react';
-import { getAuditLogs } from '@/api/audit';
+import { getAuditFilterOptions, getAuditLogs } from '@/api/audit';
 import type { AuditLog } from '@/types';
 
-const ENTITY_TYPES: { value: string; label: string }[] = [
-  { value: 'employee', label: 'Employee' },
-  { value: 'payroll_run', label: 'Payroll run' },
-  { value: 'payroll_item', label: 'Payroll item' },
-  { value: 'payroll_entry', label: 'Payroll entry' },
-  { value: 'attendance_record', label: 'Attendance record' },
-  { value: 'platform_attendance_method', label: 'Platform attendance method' },
-  { value: 'company_attendance_method', label: 'Company attendance method' },
-  { value: 'attendance_kiosk_credential', label: 'Kiosk credential' },
-  { value: 'company_location', label: 'Geofence location' },
-  { value: 'geofence_mode', label: 'Geofence mode' },
-  { value: 'work_schedule', label: 'Work schedule' },
-  { value: 'leave_request', label: 'Leave request' },
-  { value: 'claim', label: 'Claim' },
-  { value: 'overtime', label: 'Overtime' },
-  { value: 'company', label: 'Company' },
-  { value: 'user', label: 'User' },
-  { value: 'team', label: 'Team' },
-  { value: 'document', label: 'Document' },
-  { value: 'holiday', label: 'Holiday' },
-  { value: 'setting', label: 'Setting' },
-  { value: 'leave_type', label: 'Leave type' },
-  { value: 'leave_balance', label: 'Leave balance' },
-  { value: 'email', label: 'Email' },
-];
-
-const ACTIONS = ['create', 'update', 'delete', 'revoke', 'approve', 'submit_approval', 'return_changes', 'lock', 'reject', 'cancel', 'login', 'process'];
-
-const ENTITY_LABELS = Object.fromEntries(ENTITY_TYPES.map((type) => [type.value, type.label]));
-
-const formatEntityType = (entityType: string) =>
-  ENTITY_LABELS[entityType] ?? entityType.replace(/_/g, ' ');
+/**
+ * Fallback label for a value the filter response has not supplied — a row
+ * rendered before the options query resolves, or an entity type whose rows
+ * exist on another page of results. Mirrors the backend's derivation closely
+ * enough to read the same; the backend's version is authoritative.
+ */
+const formatEntityType = (entityType: string) => {
+  const words = entityType.replace(/_/g, ' ').trim();
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : entityType;
+};
 
 const formatTimestamp = (value: string) =>
   new Date(value).toLocaleString('en-MY', {
@@ -54,6 +32,28 @@ export function AuditTrailPage() {
   const [page, setPage] = useState(1);
   const [selectedLog, setSelectedLog] = useState<AuditLog | null>(null);
   const perPage = 25;
+
+  // The filter vocabulary comes from the company's own rows, so the dropdowns
+  // offer exactly what exists. Cached longer than the log list: the set of
+  // entity types a company writes changes when the product does, not when
+  // someone clicks. A failure here leaves the dropdowns empty rather than
+  // breaking the page — the log list is the point, the filters are a
+  // refinement.
+  const { data: filterOptions } = useQuery({
+    queryKey: ['audit-logs', 'filters'],
+    queryFn: getAuditFilterOptions,
+    staleTime: 5 * 60_000,
+  });
+  const entityTypeOptions = useMemo(() => filterOptions?.entity_types ?? [], [filterOptions]);
+  const actionOptions = useMemo(() => filterOptions?.actions ?? [], [filterOptions]);
+  const actionLabels = useMemo(
+    () => new Map(actionOptions.map((option) => [option.value, option.label])),
+    [actionOptions],
+  );
+  const entityLabels = useMemo(
+    () => new Map(entityTypeOptions.map((option) => [option.value, option.label])),
+    [entityTypeOptions],
+  );
 
   const { data, isLoading } = useQuery({
     queryKey: ['audit-logs', entityType, entityId, action, startDate, endDate, page],
@@ -107,8 +107,8 @@ export function AuditTrailPage() {
               className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-black/5"
             >
               <option value="">All types</option>
-              {ENTITY_TYPES.map((type) => (
-                <option key={type.value} value={type.value}>{type.label}</option>
+              {entityTypeOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
               ))}
             </select>
           </div>
@@ -120,8 +120,8 @@ export function AuditTrailPage() {
               className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-black/5"
             >
               <option value="">All actions</option>
-              {ACTIONS.map(a => (
-                <option key={a} value={a}>{a}</option>
+              {actionOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
               ))}
             </select>
           </div>
@@ -211,11 +211,11 @@ export function AuditTrailPage() {
                     </td>
                     <td className="px-4 py-3">
                       <span className="inline-flex px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-700 rounded-full">
-                        {formatEntityType(log.entity_type)}
+                        {entityLabels.get(log.entity_type) ?? formatEntityType(log.entity_type)}
                       </span>
                     </td>
                     <td className="px-4 py-3">
-                      <ActionBadge action={log.action} />
+                      <ActionBadge action={log.action} label={actionLabels.get(log.action)} />
                     </td>
                     <td className="px-4 py-3 text-gray-500 text-xs max-w-[260px]">
                       <div className="truncate">{log.description || '-'}</div>
@@ -271,36 +271,73 @@ export function AuditTrailPage() {
 
       {/* Detail Modal */}
       {selectedLog && (
-        <AuditDetailModal log={selectedLog} onClose={() => setSelectedLog(null)} />
+        <AuditDetailModal
+          log={selectedLog}
+          entityLabel={entityLabels.get(selectedLog.entity_type)}
+          actionLabel={actionLabels.get(selectedLog.action)}
+          onClose={() => setSelectedLog(null)}
+        />
       )}
     </div>
   );
 }
 
-function ActionBadge({ action }: { action: string }) {
-  const colors: Record<string, string> = {
-    create: 'bg-green-50 text-green-700',
-    update: 'bg-blue-50 text-blue-700',
-    delete: 'bg-red-50 text-red-700',
-    revoke: 'bg-red-50 text-red-700',
-    approve: 'bg-emerald-50 text-emerald-700',
-    submit_approval: 'bg-blue-50 text-blue-700',
-    return_changes: 'bg-amber-50 text-amber-700',
-    lock: 'bg-gray-900 text-white',
-    reject: 'bg-orange-50 text-orange-700',
-    cancel: 'bg-yellow-50 text-yellow-700',
-    login: 'bg-purple-50 text-purple-700',
-    process: 'bg-indigo-50 text-indigo-700',
-  };
-  const cls = colors[action] || 'bg-gray-50 text-gray-700';
+/**
+ * Colour is keyed on the action's leading verb, not the whole string.
+ *
+ * The backend writes three conventions for the same verbs — `create`,
+ * `create_employee`, `create_claim_admin` — so an exact-match palette coloured
+ * 9 of the 31 real actions and left the rest grey. Matching the verb covers all
+ * three shapes with one entry each.
+ *
+ * Deliberately a partial map over `string` with a total default rather than an
+ * exhaustive `Record` over a union of known actions: the action vocabulary
+ * lives in the database, TypeScript cannot check a runtime list, and a union
+ * hand-written here would be one more copy with nothing to catch it drifting.
+ * An unrecognised verb renders grey, which is visibly plain rather than broken.
+ */
+const ACTION_VERB_COLORS: Record<string, string> = {
+  create: 'bg-green-50 text-green-700',
+  update: 'bg-blue-50 text-blue-700',
+  delete: 'bg-red-50 text-red-700',
+  revoke: 'bg-red-50 text-red-700',
+  approve: 'bg-emerald-50 text-emerald-700',
+  submit: 'bg-blue-50 text-blue-700',
+  return: 'bg-amber-50 text-amber-700',
+  lock: 'bg-gray-900 text-white',
+  reject: 'bg-orange-50 text-orange-700',
+  cancel: 'bg-yellow-50 text-yellow-700',
+  process: 'bg-indigo-50 text-indigo-700',
+  send: 'bg-purple-50 text-purple-700',
+  bulk: 'bg-teal-50 text-teal-700',
+};
+
+function actionBadgeClass(action: string): string {
+  const verb = action.split('_')[0];
+  return ACTION_VERB_COLORS[verb] ?? 'bg-gray-50 text-gray-700';
+}
+
+function ActionBadge({ action, label }: { action: string; label?: string }) {
   return (
-    <span className={`inline-flex px-2 py-0.5 text-xs font-medium rounded-full ${cls}`}>
-      {action}
+    <span
+      className={`inline-flex px-2 py-0.5 text-xs font-medium rounded-full ${actionBadgeClass(action)}`}
+    >
+      {label ?? action}
     </span>
   );
 }
 
-function AuditDetailModal({ log, onClose }: { log: AuditLog; onClose: () => void }) {
+function AuditDetailModal({
+  log,
+  entityLabel,
+  actionLabel,
+  onClose,
+}: {
+  log: AuditLog;
+  entityLabel?: string;
+  actionLabel?: string;
+  onClose: () => void;
+}) {
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div
@@ -330,11 +367,11 @@ function AuditDetailModal({ log, onClose }: { log: AuditLog; onClose: () => void
             </div>
             <div>
               <p className="text-gray-500">Entity Type</p>
-              <p className="font-medium">{formatEntityType(log.entity_type)}</p>
+              <p className="font-medium">{entityLabel ?? formatEntityType(log.entity_type)}</p>
             </div>
             <div>
               <p className="text-gray-500">Action</p>
-              <ActionBadge action={log.action} />
+              <ActionBadge action={log.action} label={actionLabel} />
             </div>
             <div className="col-span-2">
               <p className="text-gray-500">Entity ID</p>

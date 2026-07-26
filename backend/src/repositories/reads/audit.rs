@@ -62,6 +62,79 @@ pub async fn list_filtered(
     Ok(logs)
 }
 
+/// The distinct `entity_type` values a company has ever written.
+///
+/// Written as a recursive loose index scan ("skip scan") rather than
+/// `SELECT DISTINCT`, because the two have different growth curves and this
+/// runs on every load of the audit screen. `audit_logs` is append-only with no
+/// retention path, so a plain `DISTINCT` reads every row the company has
+/// accumulated — it is O(rows) forever, for an answer that is two dozen values.
+/// Skipping from one distinct value to the next is O(distinct × log n): the
+/// walk below does one index seek per value returned, regardless of how many
+/// rows sit behind each.
+///
+/// Requires `idx_audit_logs_company_entity_created` (migration 1008); without a
+/// `(company_id, entity_type, …)` index this degenerates into a seek per value
+/// against no usable index and is *worse* than the DISTINCT it replaces.
+pub async fn distinct_entity_types(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+) -> AppResult<Vec<String>> {
+    let values = sqlx::query_scalar!(
+        r#"WITH RECURSIVE walk AS (
+            (SELECT entity_type FROM audit_logs
+             WHERE company_id = $1
+             ORDER BY entity_type
+             LIMIT 1)
+            UNION ALL
+            SELECT (SELECT al.entity_type FROM audit_logs al
+                    WHERE al.company_id = $1 AND al.entity_type > walk.entity_type
+                    ORDER BY al.entity_type
+                    LIMIT 1)
+            FROM walk
+            WHERE walk.entity_type IS NOT NULL
+        )
+        SELECT entity_type AS "entity_type!" FROM walk
+        WHERE entity_type IS NOT NULL
+        ORDER BY entity_type"#,
+        company_id,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(values)
+}
+
+/// The distinct `action` values a company has ever written. Same shape and same
+/// reasoning as [`distinct_entity_types`]; requires
+/// `idx_audit_logs_company_action_created`.
+pub async fn distinct_actions(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+) -> AppResult<Vec<String>> {
+    let values = sqlx::query_scalar!(
+        r#"WITH RECURSIVE walk AS (
+            (SELECT action FROM audit_logs
+             WHERE company_id = $1
+             ORDER BY action
+             LIMIT 1)
+            UNION ALL
+            SELECT (SELECT al.action FROM audit_logs al
+                    WHERE al.company_id = $1 AND al.action > walk.action
+                    ORDER BY al.action
+                    LIMIT 1)
+            FROM walk
+            WHERE walk.action IS NOT NULL
+        )
+        SELECT action AS "action!" FROM walk
+        WHERE action IS NOT NULL
+        ORDER BY action"#,
+        company_id,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(values)
+}
+
 /// All audit rows (up to 100) attributable to one payroll run — the run itself
 /// plus item-level edits that reference it in their old/new values.
 pub async fn list_for_run(
