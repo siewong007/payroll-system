@@ -9,6 +9,7 @@ use webauthn_rs::Webauthn;
 use webauthn_rs::prelude::{PasskeyAuthentication, PublicKeyCredential};
 
 use crate::core::error::{AppError, AppResult};
+use crate::core::timezone;
 use crate::models::attendance::{
     AttendanceExportQuery, AttendanceListQuery, AttendanceMethodResponse, AttendanceRecord,
     AttendanceRecordWithEmployee, AttendanceSummaryItem, AttendanceSummaryQuery,
@@ -23,11 +24,10 @@ use crate::repositories::{
     platform_settings,
 };
 use crate::services::audit_service::{self, AuditRequestMeta};
-use crate::services::{geofence_service, passkey_service, settings_service};
+use crate::services::{csv_helpers, geofence_service, passkey_service, settings_service};
 
 // ─── QR Token TTL ───
 const QR_TOKEN_TTL_SECONDS: i64 = 300;
-const DEFAULT_TIMEZONE: &str = "Asia/Kuala_Lumpur";
 
 /// Asia/Kuala_Lumpur as a fixed offset. Malaysia has been UTC+8 with no DST
 /// since 1982, so this is exact for rendering local wall-clock time and avoids a
@@ -534,12 +534,18 @@ pub(crate) async fn determine_checkin_status(
     })
 }
 
-/// Get the timezone for a company from its work schedule (fallback to default)
+/// Get the timezone for a company from its work schedule (fallback to default).
+///
+/// Sanitized, not trusted: the column predates the write-side validator, so a
+/// value already stored that no longer parses degrades to the default here
+/// rather than reaching `AT TIME ZONE` and 500-ing every check-in, summary and
+/// export for that tenant until an operator edits the row by hand.
 async fn get_company_timezone(pool: &PgPool, company_id: Uuid) -> String {
-    company_work_schedules::find_default_timezone(pool, company_id)
-        .await
-        .unwrap_or(None)
-        .unwrap_or_else(|| DEFAULT_TIMEZONE.to_string())
+    timezone::sanitize(
+        company_work_schedules::find_default_timezone(pool, company_id)
+            .await
+            .unwrap_or(None),
+    )
 }
 
 // ─── Check In / Check Out ───
@@ -942,16 +948,13 @@ pub async fn update_attendance_record(
 
 // ─── Auto-Absent Marking ───
 
-/// Bookmark of the last local date the auto-absent job completed, so missed
-/// runs (deploys, downtime during the daily window) are backfilled instead of
-/// silently skipped forever.
-const AUTO_ABSENT_LAST_RUN_KEY: &str = "auto_absent_last_run_date";
 /// Never backfill further than this; on a first run (no bookmark) only the
-/// current day is considered.
+/// current day is considered. Per company, so one wedged tenant can no longer
+/// burn the window for everybody else.
 const AUTO_ABSENT_MAX_BACKFILL_DAYS: i64 = 14;
-/// Local time the daily job is scheduled at (12:30 MYT). The catch-up only
-/// treats *today* as due after this cutoff — marking absences at 09:00 would
-/// flag everyone who simply hasn't arrived yet.
+/// Daily cutoff, in each company's *own* local time. The catch-up only treats
+/// *today* as due after this — marking absences at 09:00 would flag everyone
+/// who simply hasn't arrived yet.
 const AUTO_ABSENT_CUTOFF: (u32, u32) = (12, 30);
 
 /// Bound on the correction reason. It is prefixed and stored in
@@ -1035,43 +1038,105 @@ fn auto_absent_due_range(
 }
 
 /// Run auto-absent marking for every local date that is due but not yet done:
-/// each date after the last successful run (bounded by the backfill cap) up
-/// to yesterday, plus today once past the daily cutoff. Called at startup and
-/// by the daily scheduler; safe to call repeatedly.
-pub async fn run_auto_absent_catchup(pool: &PgPool, tz: &str) -> AppResult<i64> {
-    let (today, now_local) = clock::date_and_time_in_tz(pool, tz).await?;
+/// each date after that company's last successful run (bounded by the backfill
+/// cap) up to yesterday, plus today once past the daily cutoff. Called at
+/// startup and by the daily scheduler; safe to call repeatedly.
+///
+/// Every tenant is evaluated on *its own* calendar and against *its own*
+/// bookmark. The scheduler's daily tick only paces the job: deciding "today"
+/// once, on one zone, marked a `Pacific/Honolulu` workforce absent for a date
+/// that had not started there yet — a future-dated placeholder the admin
+/// backfill endpoint explicitly refuses to create.
+///
+/// One tenant also can no longer stop the rest. A stored zone that does not
+/// parse, or a failed write, is logged against its company id and that company
+/// alone is left behind; previously the `?` aborted the whole catch-up before
+/// the shared bookmark was written, so the next tick re-failed on the same date
+/// for every tenant until the owed days aged past the backfill cap.
+pub async fn run_auto_absent_catchup(pool: &PgPool) -> AppResult<i64> {
+    // One clock read for the whole run; each company's local date is derived
+    // from this instant in Rust. Converting per company in SQL would put every
+    // tenant back in one failure domain — a single unparseable stored zone
+    // aborts the query for all of them.
+    let (utc_date, utc_time) = clock::date_and_time_in_tz(pool, "UTC").await?;
+    let now_utc =
+        chrono::DateTime::<Utc>::from_naive_utc_and_offset(utc_date.and_time(utc_time), Utc);
 
-    let last_run = platform_settings::get_value(pool, AUTO_ABSENT_LAST_RUN_KEY)
-        .await?
-        .and_then(|v| v.parse::<chrono::NaiveDate>().ok());
-
-    let Some((start, last_due)) = auto_absent_due_range(today, now_local, last_run) else {
-        return Ok(0);
-    };
-
-    // Each company is marked on its own calendar, so the placeholder lands on
-    // the same local date that delete_auto_absent_today and the reads layer
-    // bucket by. `tz` above only paces the schedule.
-    let companies = company_work_schedules::list_company_timezones(pool).await?;
-
-    let mut date = start;
+    let targets = attendance_reads::auto_absent_targets(pool).await?;
     let mut total = 0i64;
-    while date <= last_due {
-        let mut marked = 0i64;
-        for (company_id, company_tz) in &companies {
-            marked += attendance_records::mark_absent(pool, company_tz, date, Some(*company_id))
-                .await? as i64;
+
+    for target in &targets {
+        let Some(tz) = timezone::parse(&target.timezone) else {
+            tracing::error!(
+                company_id = %target.company_id,
+                timezone = %target.timezone,
+                "auto-absent: skipping company with an unrecognised IANA timezone"
+            );
+            continue;
+        };
+
+        let local = now_utc.with_timezone(&tz);
+        let Some((start, last_due)) =
+            auto_absent_due_range(local.date_naive(), local.time(), target.last_run_date)
+        else {
+            continue;
+        };
+
+        let mut date = start;
+        while date <= last_due {
+            // Pass the canonical zone name, not the raw column value.
+            let outcome =
+                attendance_records::mark_absent(pool, tz.name(), date, Some(target.company_id))
+                    .await;
+            let marked = match outcome {
+                Ok(marked) => marked as i64,
+                Err(e) => {
+                    tracing::error!(
+                        company_id = %target.company_id,
+                        timezone = %target.timezone,
+                        date = %date,
+                        error = %e,
+                        "auto-absent: company run failed; bookmark not advanced"
+                    );
+                    // This tenant only, and stop at the first failed date: the
+                    // bookmark means "everything up to here is done", so dates
+                    // must complete in order. Retried on the next tick.
+                    break;
+                }
+            };
+
+            // Advance the bookmark per date, so a failure part-way through does
+            // not re-run the dates already completed on the next attempt.
+            if let Err(e) =
+                companies::set_auto_absent_last_run_date(pool, target.company_id, date).await
+            {
+                tracing::error!(
+                    company_id = %target.company_id,
+                    date = %date,
+                    error = %e,
+                    "auto-absent: bookmark write failed; this date will be re-run"
+                );
+                break;
+            }
+
+            if marked > 0 {
+                tracing::info!(
+                    company_id = %target.company_id,
+                    date = %date,
+                    marked,
+                    "auto-absent: marked absentees"
+                );
+            }
+            total += marked;
+            date += chrono::Duration::days(1);
         }
-        if marked > 0 {
-            tracing::info!(date = %date, marked, "auto-absent: marked absentees");
-        }
-        // Advance the bookmark per date, so a failure part-way through does not
-        // re-run the dates already completed on the next attempt.
-        platform_settings::set_value(pool, AUTO_ABSENT_LAST_RUN_KEY, &date.to_string(), None)
-            .await?;
-        total += marked;
-        date += chrono::Duration::days(1);
     }
+
+    tracing::info!(
+        companies = targets.len(),
+        marked = total,
+        "auto-absent: catch-up complete"
+    );
     Ok(total)
 }
 
@@ -1090,17 +1155,11 @@ pub async fn get_attendance_summary(
 // ─── CSV Export ───
 
 fn csv_field(s: &str) -> String {
-    // Spreadsheet applications may execute cells beginning with these bytes as
-    // formulas. Prefixing with an apostrophe forces the value to remain text.
-    let formula_like = s
-        .as_bytes()
-        .first()
-        .is_some_and(|first| matches!(*first, b'=' | b'+' | b'-' | b'@' | b'\t' | b'\r'));
-    let value = if formula_like {
-        format!("'{s}")
-    } else {
-        s.to_string()
-    };
+    // Formula neutralisation is shared with the statutory exports — the same
+    // vector reaches a spreadsheet from either file. Quoting is this writer's
+    // own concern and composes on top.
+    let value = csv_helpers::neutralize_formula(s);
+    let formula_like = value != s;
 
     if formula_like
         || value.contains(',')

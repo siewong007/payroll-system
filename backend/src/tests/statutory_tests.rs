@@ -233,9 +233,9 @@ async fn eis_foreigner_exempt() {
 // re-derive these expected values rather than editing them to match.
 // ---------------------------------------------------------------------------
 
-fn pcb_input_defaults(monthly_gross: i64) -> PcbInput {
+fn pcb_input_defaults(monthly_normal_remuneration: i64) -> PcbInput {
     PcbInput {
-        monthly_gross,
+        monthly_normal_remuneration,
         epf_employee_monthly: 0,
         socso_employee_monthly: 0,
         eis_employee_monthly: 0,
@@ -250,7 +250,6 @@ fn pcb_input_defaults(monthly_gross: i64) -> PcbInput {
         ytd_socso: 0,
         ytd_eis: 0,
         ytd_zakat: 0,
-        is_bonus_month: false,
         bonus_amount: 0,
     }
 }
@@ -412,3 +411,114 @@ async fn pcb_ytd_pcb_reduces_remaining_liability() {
     // current seed — keeps this test honest if the seed ever changes.
     assert!(pcb_without_ytd >= 0);
 }
+
+// ---------------------------------------------------------------------------
+// PCB — additional remuneration (bonus / commission).
+//
+// The calculator annualised the *whole* month's gross, and bonus and commission
+// were inside it, so a one-off RM5,000 January bonus was multiplied by the
+// twelve remaining months and taxed as if it recurred. These pin the split.
+// Still behind `statutory_rules::require_supported_calculator` in production;
+// reachable here because that gate is `#[cfg(not(test))]`.
+// ---------------------------------------------------------------------------
+
+/// A one-off bonus raises PCB by the Schedule 2 differential, not by twelve
+/// months of itself.
+///
+/// The third input below reproduces the old arithmetic exactly — the bonus
+/// folded into the annualised base, which is what `monthly_gross: gross` did —
+/// so the comparison is against the defect itself rather than against a second
+/// golden value that would have to be kept in step.
+///
+/// Note that the bonused figure is still several times the ordinary month: under
+/// Schedule 2 the whole year's tax on additional remuneration falls due in the
+/// month it is paid. That is correct, and is not what was wrong.
+#[tokio::test]
+async fn a_bonus_is_taxed_as_additional_remuneration_not_annualised() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+
+    let mut without_bonus = pcb_input_defaults(500_000);
+    without_bonus.epf_employee_monthly = 53_000;
+    without_bonus.socso_employee_monthly = 1_825;
+    without_bonus.eis_employee_monthly = 990;
+
+    let mut with_bonus = without_bonus.clone();
+    with_bonus.bonus_amount = 500_000; // RM5,000 one-off
+
+    // What the engine used to pass: bonus inside the base that gets multiplied
+    // by the remaining months.
+    let mut annualised = without_bonus.clone();
+    annualised.monthly_normal_remuneration = 500_000 + 500_000;
+
+    // Same effective date as `pcb_canonical_rm5000_single_january`, so the
+    // no-bonus leg is that test's derived-and-pinned figure rather than a second
+    // golden value to keep in step.
+    let effective = NaiveDate::from_ymd_opt(2024, 1, 31).unwrap();
+    let base = pcb_calculator::calculate_pcb(&pool, &without_bonus, effective)
+        .await
+        .unwrap();
+    let bonused = pcb_calculator::calculate_pcb(&pool, &with_bonus, effective)
+        .await
+        .unwrap();
+    let old_behaviour = pcb_calculator::calculate_pcb(&pool, &annualised, effective)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        base, 11_400,
+        "the no-bonus case is the pinned canonical run"
+    );
+    assert!(
+        bonused > base,
+        "a bonus is taxable, so PCB must rise: {bonused} vs {base}"
+    );
+    assert!(
+        bonused < old_behaviour,
+        "treating the bonus as recurring income over-deducted: {bonused} vs {old_behaviour}"
+    );
+}
+
+/// The bonus contributes exactly the bracket differential — it is not also
+/// sitting inside the annualised base it is differenced against.
+#[tokio::test]
+async fn bonus_pcb_is_only_the_schedule_2_differential() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+
+    let mut without_bonus = pcb_input_defaults(400_000);
+    without_bonus.epf_employee_monthly = 43_000;
+    without_bonus.socso_employee_monthly = 1_475;
+    without_bonus.eis_employee_monthly = 790;
+
+    let mut with_bonus = without_bonus.clone();
+    with_bonus.bonus_amount = 300_000;
+
+    let base = pcb_calculator::calculate_pcb(&pool, &without_bonus, test_date())
+        .await
+        .unwrap();
+    let bonused = pcb_calculator::calculate_pcb(&pool, &with_bonus, test_date())
+        .await
+        .unwrap();
+
+    // The differential is rounded up to the nearest ringgit on its own, so the
+    // gap is a whole number of ringgit. It is also strictly less than the bonus:
+    // a Schedule 2 charge is tax *on* the additional remuneration, whereas
+    // annualising it charged tax on twelve copies of it.
+    let differential = bonused - base;
+    assert!(differential > 0, "a RM3,000 bonus must attract some tax");
+    assert!(
+        differential % 100 == 0,
+        "the Schedule 2 differential is rounded to whole ringgit: {differential}"
+    );
+    assert!(
+        differential < 300_000,
+        "the charge cannot exceed the bonus itself: {differential}"
+    );
+}
+
+// Whether the engine actually routes `total_bonus + total_commission` into
+// `bonus_amount` is an engine question, not a calculator one — it is pinned
+// end-to-end by `payroll_tests::bonus_and_commission_are_taxed_as_additional_remuneration`.

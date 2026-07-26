@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Users, Trash2, UserPlus, ChevronRight, Search, Tag } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
@@ -28,6 +28,7 @@ export function TeamsPage() {
   const [showAddMemberModal, setShowAddMemberModal] = useState(false);
   const [editingTeam, setEditingTeam] = useState<TeamWithCount | null>(null);
   const [memberSearch, setMemberSearch] = useState('');
+  const [debouncedMemberSearch, setDebouncedMemberSearch] = useState('');
 
   // Form state
   const [teamName, setTeamName] = useState('');
@@ -46,9 +47,21 @@ export function TeamsPage() {
     enabled: !!selectedTeamId,
   });
 
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedMemberSearch(memberSearch), 250);
+    return () => clearTimeout(timer);
+  }, [memberSearch]);
+
+  // The search runs server-side. `per_page: 500` was clamped to 100 by
+  // `handlers/employee.rs`, so filtering client-side searched only the
+  // alphabetically-first 100 employee numbers — silently.
   const { data: employeesData } = useQuery({
-    queryKey: ['employees', 'all'],
-    queryFn: () => getEmployees({ per_page: 500, is_active: true }),
+    queryKey: ['team-employee-search', selectedTeamId, debouncedMemberSearch],
+    queryFn: () => getEmployees({
+      search: debouncedMemberSearch || undefined,
+      is_active: true,
+      per_page: 50,
+    }),
     enabled: showAddMemberModal,
   });
 
@@ -151,11 +164,11 @@ export function TeamsPage() {
   // Unique tags from existing teams for suggestions
   const existingTags = [...new Set(teams.map((t) => t.tag))].sort();
 
-  // Filter employees not already in the team
+  // Membership is the one thing the server cannot filter on, so it stays here.
   const memberIds = new Set(members.map((m) => m.employee_id));
-  const availableEmployees = (employeesData?.data || []).filter(
-    (e) => !memberIds.has(e.id) && (!memberSearch || e.full_name.toLowerCase().includes(memberSearch.toLowerCase()) || e.employee_number.toLowerCase().includes(memberSearch.toLowerCase()))
-  );
+  const availableEmployees = (employeesData?.data || []).filter((e) => !memberIds.has(e.id));
+  const employeeTotal = employeesData?.total ?? 0;
+  const searchTruncated = employeeTotal > (employeesData?.data.length ?? 0);
 
   return (
     <div className="space-y-6">
@@ -482,6 +495,11 @@ export function TeamsPage() {
               placeholder="Search employees..."
             />
           </div>
+          {searchTruncated && (
+            <p className="text-xs text-gray-400">
+              Showing {employeesData?.data.length} of {employeeTotal} — keep typing to narrow
+            </p>
+          )}
           <div className="max-h-80 overflow-y-auto divide-y divide-gray-100 border border-gray-200 rounded-lg">
             {availableEmployees.length === 0 ? (
               <div className="p-6 text-center text-sm text-gray-400">

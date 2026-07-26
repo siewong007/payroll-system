@@ -11,7 +11,7 @@
 #   sudo ./migrate-database.sh restore
 #   sudo ./migrate-database.sh verify
 #   sudo ./migrate-database.sh cutover
-#   sudo ./migrate-database.sh rollback   # only if something goes wrong after cutover
+#   sudo ./migrate-database.sh rollback [--force] [--skip-dump]
 #
 # Data safety rules this script follows:
 #   - The native Postgres cluster is NEVER stopped, altered, or written to.
@@ -22,9 +22,26 @@
 #     0600) so they can be safely reported on without ever appearing in a
 #     terminal scrollback or being pasted into chat.
 #   - `verify` is a hard gate: `cutover` refuses to run unless verify's last
-#     result was PASS.
+#     result was PASS *for the dump file that is still on disk*, and unless that
+#     verdict is recent.
 #   - `cutover` only stops the native BACKEND process. The native Postgres
-#     cluster is left running, untouched, as an instant rollback target.
+#     cluster is left running, untouched.
+#
+# What `verify` does and does NOT prove:
+#   It proves the dump restored faithfully — the two sides hold the same tables,
+#   the same row counts, and the same created_at/updated_at high-water marks as
+#   of the instant `backup` ran. It cannot see anything the native backend
+#   committed AFTER that instant, because the native backend is still serving.
+#   That window is the real data-loss risk in this migration, so backup ->
+#   restore -> verify -> cutover must be run back to back; the gate in `cutover`
+#   enforces a 60-minute bound on the verdict's age for exactly that reason.
+#
+# Rollback after cutover is NOT free:
+#   The native cluster is a rollback target for the SCHEMA, not for the data.
+#   Once the dockerized stack is serving, every row it commits lives only in the
+#   payroll_postgres_data volume; the native cluster has none of them. `rollback`
+#   therefore dumps the dockerized database first and refuses without --force
+#   when that database holds rows written after the cutover.
 set -Eeuo pipefail
 umask 077
 
@@ -36,6 +53,10 @@ readonly VERIFY_RESULT_FILE="$APP_DIR/.migration-verify-result"
 readonly DUMP_FILE="$BACKUP_DIR/native-cutover.dump"
 readonly COMPOSE_FILE="$APP_DIR/docker-compose.prod.yml"
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# How stale a PASS may be and still open the cutover gate. The staged workflow
+# is one click per stage, so a verdict from days ago certified a dump the native
+# backend has long since diverged from.
+readonly MAX_VERIFY_AGE_SECONDS=3600
 
 log()  { printf '[migrate] %s\n' "$*"; }
 die()  { printf '[migrate] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -50,6 +71,21 @@ compose() {
   else
     docker-compose --project-name payroll --file "$COMPOSE_FILE" "$@"
   fi
+}
+
+# docker-compose.prod.yml interpolates ${POSTGRES_PASSWORD:?} and ${IMAGE_TAG:?}
+# as MANDATORY variables, and Compose resolves them when it LOADS the file — for
+# every subcommand, `stop` included. A stage that forgets to export them fails
+# before it touches a container, which is how `compose stop backend` could
+# "succeed" while payroll-backend kept holding 127.0.0.1:8080.
+load_compose_env() {
+  [[ -f "$COMPOSE_FILE" ]] || die "$COMPOSE_FILE is missing — cannot address the dockerized stack"
+  [[ -f "$SECRETS_FILE" ]] || die "$SECRETS_FILE is missing — cannot address the dockerized stack"
+  set -a
+  # shellcheck disable=SC1090
+  . "$SECRETS_FILE"
+  set +a
+  export IMAGE_TAG="${IMAGE_TAG:-$(cat "$APP_DIR/current-tag" 2>/dev/null || printf 'compose-noop')}"
 }
 
 # ---------------------------------------------------------------------------
@@ -182,11 +218,10 @@ stage_restore() {
     die "a payroll-db container already exists — this looks like restore already ran. Inspect manually before re-running (it will not overwrite an existing volume)."
   fi
 
-  set -a
-  # shellcheck disable=SC1090
-  source "$SECRETS_FILE"
-  set +a
+  # Only postgres is started here, so any resolvable value satisfies compose's
+  # mandatory ${IMAGE_TAG:?} interpolation.
   export IMAGE_TAG="restore-placeholder"
+  load_compose_env
 
   log "Starting an empty dockerized Postgres 19beta2..."
   compose up --detach postgres
@@ -211,38 +246,118 @@ stage_restore() {
 # ---------------------------------------------------------------------------
 # verify: hard gate. Compares native vs restored copy. Writes PASS/FAIL.
 # ---------------------------------------------------------------------------
+
+# The projection compared on both sides for one table.
+#
+# A bare count(*) cannot see an UPDATE, and this schema is full of them: a leave
+# approval flips leave_requests.status, an attendance correction rewrites
+# check_out_at, a payroll run transitions status. Folding in whichever of
+# created_at/updated_at the table actually has makes an edit-only divergence
+# visible. _sqlx_migrations is compared by applied ceiling instead — its row
+# count changes legitimately whenever the chain is rebaselined.
+table_snapshot_sql() {
+  local table=$1 timestamp_columns=$2 projection
+
+  if [[ "$table" == "_sqlx_migrations" ]]; then
+    printf "SELECT coalesce(max(version)::text, '') FROM public.\"%s\"" "$table"
+    return 0
+  fi
+
+  projection="count(*)::text"
+  case ",$timestamp_columns," in
+    *,created_at,*) projection="$projection || '|' || coalesce(max(created_at)::text, '')" ;;
+    *)              projection="$projection || '|'" ;;
+  esac
+  case ",$timestamp_columns," in
+    *,updated_at,*) projection="$projection || '|' || coalesce(max(updated_at)::text, '')" ;;
+    *)              projection="$projection || '|'" ;;
+  esac
+  printf 'SELECT %s FROM public."%s"' "$projection" "$table"
+}
+
 stage_verify() {
   [[ -f "$DISCOVERY_FILE" ]] || die "run 'discover' first"
+  [[ -f "$DUMP_FILE" ]] || die "run 'backup' first — the verdict is bound to the dump it certifies"
   local native_db
   native_db=$(grep -oP '(?<=^native_database_url_dbname=).*' "$DISCOVERY_FILE")
 
-  local tables=(companies employees users payroll_runs _sqlx_migrations)
-  local mismatches=0 table native_count docker_count
+  # Enumerate from the source rather than listing tables by hand. The previous
+  # hardcoded five omitted every high-write table in the schema — attendance,
+  # leave, claims, payroll items, audit logs — so a PASS certified almost
+  # nothing, and any table a later migration adds was silently excluded too.
+  local table_list_sql="SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename"
+  local native_tables=() docker_tables=()
+  mapfile -t native_tables < <(sudo -u postgres psql -d "$native_db" -tAc "$table_list_sql")
+  mapfile -t docker_tables < <(docker exec payroll-db psql -U payroll -d payroll_db -tAc "$table_list_sql")
+  (( ${#native_tables[@]} > 0 )) || die "could not enumerate tables on the native cluster"
+  (( ${#docker_tables[@]} > 0 )) || die "could not enumerate tables in the restored container database"
 
-  for table in "${tables[@]}"; do
-    native_count=$(sudo -u postgres psql -d "$native_db" -tAc "SELECT count(*) FROM $table" 2>/dev/null || echo "ERR")
-    docker_count=$(docker exec payroll-db psql -U payroll -d payroll_db -tAc "SELECT count(*) FROM $table" 2>/dev/null || echo "ERR")
-    if [[ "$native_count" == "ERR" || "$docker_count" == "ERR" ]]; then
-      warn "$table: could not read count from one side (native=$native_count docker=$docker_count) — table may not exist, check manually"
+  local mismatches=0 missing extra
+  missing=$(comm -23 \
+    <(printf '%s\n' "${native_tables[@]}" | sort) \
+    <(printf '%s\n' "${docker_tables[@]}" | sort))
+  extra=$(comm -13 \
+    <(printf '%s\n' "${native_tables[@]}" | sort) \
+    <(printf '%s\n' "${docker_tables[@]}" | sort))
+  if [[ -n "$missing" ]]; then
+    warn "tables present natively but MISSING from the restored copy: $(tr '\n' ' ' <<< "$missing")"
+    mismatches=$((mismatches + 1))
+  fi
+  if [[ -n "$extra" ]]; then
+    warn "tables present in the restored copy but not natively: $(tr '\n' ' ' <<< "$extra")"
+    mismatches=$((mismatches + 1))
+  fi
+
+  # One catalogue query for every table, so the per-table loop stays two round
+  # trips rather than four.
+  local -A timestamp_columns=()
+  local catalogue_table catalogue_columns
+  while IFS='|' read -r catalogue_table catalogue_columns; do
+    [[ -n "$catalogue_table" ]] || continue
+    timestamp_columns["$catalogue_table"]=$catalogue_columns
+  done < <(sudo -u postgres psql -d "$native_db" -tAc "
+    SELECT table_name || '|' || string_agg(column_name, ',' ORDER BY column_name)
+    FROM information_schema.columns
+    WHERE table_schema = 'public' AND column_name IN ('created_at', 'updated_at')
+    GROUP BY table_name")
+
+  local table snapshot_sql native_snapshot docker_snapshot
+  for table in "${native_tables[@]}"; do
+    [[ -n "$table" ]] || continue
+    snapshot_sql=$(table_snapshot_sql "$table" "${timestamp_columns[$table]:-}")
+    native_snapshot=$(sudo -u postgres psql -d "$native_db" -tAc "$snapshot_sql" 2>/dev/null || echo "ERR")
+    docker_snapshot=$(docker exec payroll-db psql -U payroll -d payroll_db -tAc "$snapshot_sql" 2>/dev/null || echo "ERR")
+    if [[ "$native_snapshot" == "ERR" || "$docker_snapshot" == "ERR" ]]; then
+      warn "$table: could not read the comparison snapshot from one side (native=$native_snapshot docker=$docker_snapshot) — check manually"
       mismatches=$((mismatches + 1))
       continue
     fi
-    if [[ "$native_count" != "$docker_count" ]]; then
-      warn "$table: MISMATCH native=$native_count docker=$docker_count"
+    if [[ "$native_snapshot" != "$docker_snapshot" ]]; then
+      warn "$table: MISMATCH native=[$native_snapshot] docker=[$docker_snapshot] (count|max created_at|max updated_at)"
       mismatches=$((mismatches + 1))
     else
-      log "$table: OK ($native_count rows both sides)"
+      log "$table: OK [$native_snapshot]"
     fi
   done
 
+  # Bind the verdict to the artefact and to the clock. Without the checksum a
+  # re-run of `backup` after a PASS still opened the gate, certifying a file
+  # nobody compared; without the timestamp a verdict from last week did.
+  local checksum
+  checksum=$(sha256sum "$DUMP_FILE" | awk '{print $1}')
   if (( mismatches == 0 )); then
-    printf 'PASS %s\n' "$(date -u +%FT%TZ)" > "$VERIFY_RESULT_FILE"
-    log "VERIFY PASSED — all checked tables match. Safe to run: sudo $0 cutover"
+    printf 'PASS %s sha256=%s tables=%s\n' \
+      "$(date -u +%FT%TZ)" "$checksum" "${#native_tables[@]}" > "$VERIFY_RESULT_FILE"
+    chmod 0600 "$VERIFY_RESULT_FILE"
+    log "VERIFY PASSED — ${#native_tables[@]} table(s) match on row count and timestamp watermarks."
+    log "This verdict covers the native cluster as of the 'backup' snapshot only."
+    log "Run the cutover now (the gate expires in $((MAX_VERIFY_AGE_SECONDS / 60)) minutes): sudo $0 cutover"
   else
-    printf 'FAIL %s\n' "$(date -u +%FT%TZ)" > "$VERIFY_RESULT_FILE"
+    printf 'FAIL %s sha256=%s tables=%s\n' \
+      "$(date -u +%FT%TZ)" "$checksum" "${#native_tables[@]}" > "$VERIFY_RESULT_FILE"
+    chmod 0600 "$VERIFY_RESULT_FILE"
     die "VERIFY FAILED ($mismatches mismatch(es)) — do NOT cut over. The native cluster is untouched; investigate the restored copy."
   fi
-  chmod 0600 "$VERIFY_RESULT_FILE"
 }
 
 # ---------------------------------------------------------------------------
@@ -257,9 +372,47 @@ stage_verify() {
 # work for this stage.
 # ---------------------------------------------------------------------------
 stage_cutover() {
-  [[ -f "$VERIFY_RESULT_FILE" ]] && grep -q '^PASS' "$VERIFY_RESULT_FILE" \
-    || die "verify has not passed — refusing to cut over. Run 'verify' first."
+  local force=0 argument
+  for argument in "$@"; do
+    case "$argument" in
+      --force) force=1 ;;
+      *) die "unknown cutover option: $argument (expected --force)" ;;
+    esac
+  done
+
+  # This is a ONE-TIME native->docker cutover and production has already been
+  # through it. Re-running it points Caddy at a stack whose database came from a
+  # native dump that is now months stale. `restore` legitimately creates
+  # payroll-db, so the signal that the cutover ALREADY happened is a backend
+  # container or the release marker deploy.sh writes on success — not the
+  # database container.
+  if docker inspect payroll-backend >/dev/null 2>&1 || [[ -s "$APP_DIR/current-tag" ]]; then
+    die "the dockerized backend has already been deployed on this host — the cutover is a one-time stage and has run. Use deploy/deploy.sh for ordinary releases, and 'rollback' only if you intend to hand service back to the native stack."
+  fi
+
   [[ -f "$DISCOVERY_FILE" ]] || die "run 'discover' first"
+  [[ -f "$DUMP_FILE" ]] || die "$DUMP_FILE is missing — run 'backup' first"
+  [[ -f "$VERIFY_RESULT_FILE" ]] || die "verify has not run — refusing to cut over. Run 'verify' first."
+
+  # The gate used to be `grep -q '^PASS'`, which a verdict from days ago passed,
+  # and which was never tied to the dump it certified — re-running `backup`
+  # after a PASS left the stale verdict authorising a file nobody compared.
+  local verdict verdict_time verdict_sha dump_sha verdict_epoch age
+  read -r verdict verdict_time verdict_sha _ < "$VERIFY_RESULT_FILE" || true
+  [[ "$verdict" == "PASS" ]] \
+    || die "verify's last result was '${verdict:-empty}', not PASS — refusing to cut over."
+
+  verdict_sha=${verdict_sha#sha256=}
+  dump_sha=$(sha256sum "$DUMP_FILE" | awk '{print $1}')
+  [[ -n "$verdict_sha" && "$verdict_sha" == "$dump_sha" ]] \
+    || die "the PASS on record does not match the dump now on disk (verified sha256=${verdict_sha:-none}, actual $dump_sha) — re-run 'verify'."
+
+  verdict_epoch=$(date -u -d "$verdict_time" +%s 2>/dev/null || echo "")
+  [[ -n "$verdict_epoch" ]] || die "could not parse the verify timestamp '$verdict_time' — re-run 'verify'."
+  age=$(( $(date -u +%s) - verdict_epoch ))
+  if (( age > MAX_VERIFY_AGE_SECONDS )) && (( ! force )); then
+    die "the PASS is $((age / 60)) minutes old (limit $((MAX_VERIFY_AGE_SECONDS / 60))). The native backend has been committing since that snapshot and those rows are NOT in the dump. Re-run backup/restore/verify, or accept the loss with: sudo $0 cutover --force"
+  fi
 
   # Locate the newest CI-produced release dir ourselves. This stage runs as
   # root, so it can read the 0750 /opt/payroll/releases tree (an unprivileged
@@ -291,7 +444,12 @@ stage_cutover() {
   bash "$release/deploy.sh" "$tag" "$release" \
     || die "deploy.sh failed — the native backend service was already stopped; run 'sudo $0 rollback' to restore the native stack while you investigate"
 
+  # From here on the two databases diverge. Recording the instant is what lets
+  # `rollback` answer "what exists only in the container?" instead of guessing.
+  printf 'cutover_at=%s\n' "$(date -u +%FT%TZ)" >> "$DISCOVERY_FILE"
+
   log "Cutover complete. Verify https://api.payrollmy.com/api/health and a real login before considering this done."
+  log "The dockerized database is now authoritative. Every row committed from now on exists ONLY in the payroll_postgres_data volume — a rollback strands them (see 'rollback' below)."
 }
 
 # ---------------------------------------------------------------------------
@@ -331,26 +489,129 @@ stage_inspect() {
 }
 
 # ---------------------------------------------------------------------------
-# rollback: stop the dockerized stack, restart the native backend. Native
-# Postgres was never touched, so this is just restarting one service.
+# rollback: stop the dockerized backend, hand service back to the native one.
+#
+# This is NOT a free operation and never was. The native Postgres cluster was
+# never stopped, but it also never received anything written after the cutover:
+# every check-in, leave decision, claim approval and audit row since then lives
+# only in the payroll_postgres_data volume. So this stage dumps the dockerized
+# database first, counts what it is about to strand, and refuses without
+# --force. It never removes the container or its volume.
+#
+#   --force      proceed even though post-cutover rows exist
+#   --skip-dump  skip the pg_dump (only for a database confirmed to hold nothing)
 # ---------------------------------------------------------------------------
 stage_rollback() {
+  local force=0 skip_dump=0 argument
+  for argument in "$@"; do
+    case "$argument" in
+      --force) force=1 ;;
+      --skip-dump) skip_dump=1 ;;
+      *) die "unknown rollback option: $argument (expected --force and/or --skip-dump)" ;;
+    esac
+  done
+
   [[ -f "$DISCOVERY_FILE" ]] || die "no discovery record found — nothing to roll back to"
-  local unit
+  local unit cutover_at
   unit=$(grep -oP '(?<=^unit=).*' "$DISCOVERY_FILE")
+  # A discovery file written before cutover timestamping exists has no bookmark.
+  # Degrade to "unknown", which the acknowledgement below treats as "assume rows
+  # are stranded" rather than as "nothing to lose".
+  cutover_at=$(grep -oP '(?<=^cutover_at=).*' "$DISCOVERY_FILE" | tail -n1 || true)
+  [[ -n "$unit" && "$unit" != "unknown" ]] \
+    || die "no native unit recorded — restart the native backend manually; nothing was changed"
 
-  log "Stopping the dockerized stack..."
-  compose stop backend 2>/dev/null || true
+  # Fatal, not best-effort. payroll-backend publishes 127.0.0.1:8080, so leaving
+  # it up means the native unit cannot bind and the rollback silently achieves
+  # nothing. Only `backend` is stopped: payroll-db holds the only copy of the
+  # post-cutover data.
+  log "Stopping the dockerized backend (payroll-db and its volume are left intact)..."
+  load_compose_env
+  compose stop backend \
+    || die "could not stop the dockerized backend; it still publishes 127.0.0.1:8080 — do NOT start the native unit until it is stopped"
 
-  if [[ -n "$unit" && "$unit" != "unknown" ]]; then
-    log "Restarting native backend service: $unit"
-    systemctl enable "$unit" || true
-    systemctl start "$unit"
-    systemctl status "$unit" --no-pager || true
-  else
-    die "no native unit recorded — restart the native backend manually"
+  local db_running=false
+  if [[ "$(docker inspect --format '{{.State.Running}}' payroll-db 2>/dev/null || true)" == "true" ]]; then
+    db_running=true
   fi
-  log "Rollback complete. Native Postgres was never stopped, so no database action was needed."
+
+  # Dump while the writer is stopped, so the archive is quiescent.
+  local dump="" stamp
+  if (( skip_dump )); then
+    warn "--skip-dump: the post-cutover database will NOT be dumped before it is abandoned."
+  elif [[ "$db_running" != "true" ]]; then
+    die "payroll-db is not running, so its contents cannot be dumped. Start it ('compose up -d postgres') and re-run, or pass --skip-dump if you have already confirmed it holds nothing."
+  else
+    stamp=$(date -u +%Y%m%dT%H%M%SZ)
+    dump="$BACKUP_DIR/post-cutover-$stamp.dump"
+    log "Dumping the post-cutover database before abandoning it..."
+    if ! docker exec payroll-db \
+      pg_dump --format=custom --no-owner --no-acl -U payroll payroll_db > "$dump.tmp"; then
+      rm -f "$dump.tmp"
+      die "could not dump the post-cutover database; refusing to roll back and strand it"
+    fi
+    chmod 0600 "$dump.tmp"
+    mv "$dump.tmp" "$dump"
+    log "Post-cutover dump: $dump"
+  fi
+
+  # Count what rolling back would strand. audit_logs alone makes this near
+  # certain to trip after any real usage — which is the point: the operator has
+  # to acknowledge the loss rather than read "no database action was needed".
+  local stranded="unknown" probe_failures=0 candidate rows
+  if [[ -n "$cutover_at" && "$db_running" == "true" ]]; then
+    stranded=0
+    for candidate in attendance_records leave_requests claims overtime_applications payroll_runs audit_logs; do
+      rows=$(docker exec payroll-db psql -U payroll -d payroll_db -tAc \
+        "SELECT count(*) FROM public.$candidate WHERE created_at > '$cutover_at'::timestamptz" 2>/dev/null || echo "")
+      # A probe that cannot run must not read as a zero — that is the same
+      # false reassurance this stage used to end on.
+      if [[ ! "$rows" =~ ^[0-9]+$ ]]; then
+        warn "  $candidate: could not be counted"
+        probe_failures=$((probe_failures + 1))
+        continue
+      fi
+      if (( rows > 0 )); then
+        log "  $candidate: $rows row(s) written after the cutover"
+      fi
+      stranded=$((stranded + rows))
+    done
+  fi
+
+  local must_acknowledge=0
+  if [[ "$stranded" == "unknown" ]]; then
+    warn "This discovery record predates cutover timestamping (or payroll-db is down), so what would be stranded cannot be counted. Assuming there is something."
+    must_acknowledge=1
+  elif (( probe_failures > 0 )); then
+    warn "$probe_failures table(s) could not be counted, so $stranded is a floor and not a total."
+    must_acknowledge=1
+  elif (( stranded > 0 )); then
+    must_acknowledge=1
+  fi
+
+  if (( must_acknowledge )) && (( ! force )); then
+    log "The dockerized database holds $stranded row(s) written after ${cutover_at:-the cutover}."
+    log "Rolling back hands service to the native cluster, which has none of them."
+    if [[ -n "$dump" ]]; then
+      log "They are preserved in: $dump"
+    fi
+    log "Re-run deliberately with: sudo $0 rollback --force"
+    die "refusing to strand post-cutover data without an explicit --force. The dockerized backend is stopped; nothing else was changed."
+  fi
+
+  log "Restarting native backend service: $unit"
+  systemctl enable "$unit" || true
+  systemctl start "$unit"
+  systemctl status "$unit" --no-pager || true
+
+  log "Rollback complete. The native backend is serving again against the PRE-cutover native cluster."
+  log "The dockerized database is NOT reconciled: $stranded row(s) written after ${cutover_at:-the cutover} exist ONLY in the payroll-db volume."
+  if [[ -n "$dump" ]]; then
+    log "A dump of that database is at: $dump"
+  else
+    log "No dump of it was taken (--skip-dump)."
+  fi
+  log "payroll-db and its volume were left intact. Replay or reconcile before calling this finished."
 }
 
 case "${1:-}" in
@@ -359,7 +620,7 @@ case "${1:-}" in
   restore)  stage_restore ;;
   verify)   stage_verify ;;
   inspect)  stage_inspect ;;
-  cutover)  stage_cutover ;;
-  rollback) stage_rollback ;;
-  *) die "usage: $0 {discover|backup|restore|verify|inspect|cutover|rollback}" ;;
+  cutover)  shift; stage_cutover "$@" ;;
+  rollback) shift; stage_rollback "$@" ;;
+  *) die "usage: $0 {discover|backup|restore|verify|inspect|cutover [--force]|rollback [--force] [--skip-dump]}" ;;
 esac

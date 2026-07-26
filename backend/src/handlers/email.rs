@@ -8,9 +8,9 @@ use crate::core::app_state::AppState;
 use crate::core::auth::{AuthUser, Permission};
 use crate::core::error::{AppError, AppResult};
 use crate::models::email::{
-    CreateEmailTemplateRequest, EmailLog, EmailLogQuery, EmailTemplate, PreviewLetterRequest,
-    PreviewLetterResponse, SendLetterRequest, TemplateQuery, UpdateEmailTemplateRequest,
-    is_valid_letter_type,
+    CreateEmailTemplateRequest, EmailLogQuery, EmailLogSummary, EmailTemplate,
+    PreviewLetterRequest, PreviewLetterResponse, SendLetterRequest, TemplateQuery,
+    UpdateEmailTemplateRequest, is_valid_letter_type,
 };
 use crate::models::pagination::PaginatedResponse;
 use crate::services::{
@@ -30,7 +30,7 @@ async fn audit_letter_sent(
     pool: &sqlx::PgPool,
     company_id: Uuid,
     actor_id: Uuid,
-    log: &EmailLog,
+    log: &EmailLogSummary,
     audit_meta: &AuditRequestMeta,
 ) {
     let _ = audit_service::log_action_with_metadata(
@@ -229,12 +229,15 @@ pub async fn preview_letter(
     }
 }
 
+/// Answers with the log summary rather than the log row: the composer already
+/// holds the body it just submitted, so returning it again would be the one
+/// remaining route by which a stored body reaches the wire.
 pub async fn send_letter(
     State(state): State<AppState>,
     auth: AuthUser,
     audit_meta: AuditRequestMeta,
     Json(req): Json<SendLetterRequest>,
-) -> AppResult<Json<EmailLog>> {
+) -> AppResult<Json<EmailLogSummary>> {
     auth.require_permission(Permission::SendLetters)?;
     let company_id = auth
         .0
@@ -295,6 +298,7 @@ pub async fn send_letter(
             auth.0.sub,
         )
         .await?;
+        let log = EmailLogSummary::from(log);
 
         audit_letter_sent(&state.pool, company_id, auth.0.sub, &log, &audit_meta).await;
         Ok(Json(log))
@@ -343,6 +347,7 @@ pub async fn send_letter(
             auth.0.sub,
         )
         .await?;
+        let log = EmailLogSummary::from(log);
 
         audit_letter_sent(&state.pool, company_id, auth.0.sub, &log, &audit_meta).await;
         Ok(Json(log))
@@ -355,7 +360,7 @@ pub async fn list_email_logs(
     State(state): State<AppState>,
     auth: AuthUser,
     Query(query): Query<EmailLogQuery>,
-) -> AppResult<Json<PaginatedResponse<EmailLog>>> {
+) -> AppResult<Json<PaginatedResponse<EmailLogSummary>>> {
     auth.require_permission(Permission::ViewEmailLogs)?;
     let company_id = auth
         .0

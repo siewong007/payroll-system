@@ -21,6 +21,12 @@ import * as settings from '@/api/settings';
 import * as calendar from '@/api/calendar';
 import * as teams from '@/api/teams';
 import * as admin from '@/api/admin';
+import {
+  OT_DEFAULT_END,
+  OT_DEFAULT_HOURS,
+  OT_DEFAULT_START,
+  calculateOvertimeHours,
+} from '@/lib/overtime';
 
 /** Captures the synthetic <a download> the browser-download helpers create. */
 function captureDownload() {
@@ -543,5 +549,38 @@ describe('admin API', () => {
 
     await admin.deleteUser('user-1');
     expect(apiMocks.delete).toHaveBeenLastCalledWith('/admin/users/user-1');
+  });
+});
+
+describe('overtime hours helper', () => {
+  it('measures an ordinary evening window', () => {
+    expect(calculateOvertimeHours('18:00', '19:00')).toBe(1);
+    expect(calculateOvertimeHours('18:00', '22:30')).toBe(4.5);
+  });
+
+  it('wraps past midnight for a night shift', () => {
+    expect(calculateOvertimeHours('22:00', '02:00')).toBe(4);
+    expect(calculateOvertimeHours('23:30', '00:00')).toBe(0.5);
+  });
+
+  /**
+   * THE REGRESSION. The old `diff <= 0` treated equal times as a wrap and
+   * submitted 24 hours — a fabricated full day that the `hours <= 24` CHECK
+   * accepts because it is in range, not because it happened.
+   */
+  it('reports a zero-length window as zero, not a fabricated 24 hours', () => {
+    expect(calculateOvertimeHours('18:00', '18:00')).toBe(0);
+  });
+
+  it('returns zero when either end is missing', () => {
+    expect(calculateOvertimeHours('', '19:00')).toBe(0);
+    expect(calculateOvertimeHours('18:00', '')).toBe(0);
+  });
+
+  it('keeps the seeded defaults well-formed and self-consistent', () => {
+    expect(OT_DEFAULT_START).toMatch(/^\d{2}:\d{2}$/);
+    expect(OT_DEFAULT_END).toMatch(/^\d{2}:\d{2}$/);
+    expect(OT_DEFAULT_HOURS).toBe(1);
+    expect(calculateOvertimeHours(OT_DEFAULT_START, OT_DEFAULT_END)).toBe(OT_DEFAULT_HOURS);
   });
 });

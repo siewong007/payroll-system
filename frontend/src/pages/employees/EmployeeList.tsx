@@ -4,7 +4,8 @@ import { Plus, Search, Edit, DollarSign, Shield, MapPin, TrendingUp, TrendingDow
 import { useNavigate } from 'react-router';
 import { getEmployees, createEmployee, updateEmployee, deleteEmployee, getEmployee, getSalaryHistory } from '@/api/employees';
 import { getPayrollGroups } from '@/api/payroll';
-import { formatMYR, formatDate, todayLocalDate } from '@/lib/utils';
+import { formatMYR, formatDate, getErrorMessage, todayLocalDate } from '@/lib/utils';
+import { stripPayrollFields } from '@/lib/employeeFields';
 import { DataTable, type Column } from '@/components/ui/DataTable';
 import { Modal } from '@/components/ui/Modal';
 import type { Employee, CreateEmployeeRequest, UpdateEmployeeRequest } from '@/types';
@@ -458,31 +459,6 @@ function employeeToForm(emp: Employee): EmployeeFormState & { salaryDisplay: str
   };
 }
 
-// Neither lifecycle field is a payroll figure, so the HR-only path keeps them.
-function stripPayrollFields(form: EmployeeFormState): Partial<EmployeeFormState> {
-  const safeFields: Partial<EmployeeFormState> = { ...form };
-  const payrollFields: (keyof CreateEmployeeRequest)[] = [
-    'basic_salary',
-    'tax_identification_number',
-    'epf_number',
-    'socso_number',
-    'eis_number',
-    'working_spouse',
-    'epf_category',
-    'is_muslim',
-    'zakat_eligible',
-    'zakat_monthly_amount',
-    'ptptn_monthly_amount',
-    'payroll_group_id',
-  ];
-
-  payrollFields.forEach((field) => {
-    delete safeFields[field];
-  });
-
-  return safeFields;
-}
-
 function EmployeeFormModal({ mode, employeeId, onClose }: {
   mode: 'create' | 'edit';
   employeeId?: string;
@@ -614,7 +590,7 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
     <form onSubmit={handleSubmit} className="space-y-8">
       {mutation.isError && (
         <div className="bg-red-50 text-red-600 text-sm px-4 py-3 rounded-xl border border-red-100">
-          {(mutation.error as Error)?.message || `Failed to ${mode} employee`}
+          {getErrorMessage(mutation.error, `Failed to ${mode} employee`)}
         </div>
       )}
 
@@ -924,34 +900,38 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
         </div>
       </section>
 
-      {/* Banking Details */}
-      <section className="bg-gray-50 rounded-xl border border-gray-100 p-6">
-        <h3 className={sectionTitleClass}>Banking Details</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-5">
-          <div>
-            <label className={labelClass}>Bank Name</label>
-            <select
-              value={form.bank_name || ''}
-              onChange={(e) => updateField('bank_name', e.target.value || undefined)}
-              className={inputClass}
-            >
-              <option value="">Select Bank</option>
-              {BANKS.map((b) => (
-                <option key={b} value={b}>{b}</option>
-              ))}
-            </select>
+      {/* Banking Details — gated like Statutory & Tax: the API classifies both
+          bank fields as payroll-sensitive, so offering the editor to a role
+          that cannot save them only produces a 403 on the whole request. */}
+      {canViewPayroll && (
+        <section className="bg-gray-50 rounded-xl border border-gray-100 p-6">
+          <h3 className={sectionTitleClass}>Banking Details</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-5">
+            <div>
+              <label className={labelClass}>Bank Name</label>
+              <select
+                value={form.bank_name || ''}
+                onChange={(e) => updateField('bank_name', e.target.value || undefined)}
+                className={inputClass}
+              >
+                <option value="">Select Bank</option>
+                {BANKS.map((b) => (
+                  <option key={b} value={b}>{b}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className={labelClass}>Account Number</label>
+              <input
+                type="text"
+                value={form.bank_account_number || ''}
+                onChange={(e) => updateField('bank_account_number', e.target.value)}
+                className={inputClass}
+              />
+            </div>
           </div>
-          <div>
-            <label className={labelClass}>Account Number</label>
-            <input
-              type="text"
-              value={form.bank_account_number || ''}
-              onChange={(e) => updateField('bank_account_number', e.target.value)}
-              className={inputClass}
-            />
-          </div>
-        </div>
-      </section>
+        </section>
+      )}
 
       {canViewPayroll && (
         <section className="bg-gray-50 rounded-xl border border-gray-100 p-6">

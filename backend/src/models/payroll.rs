@@ -413,9 +413,10 @@ pub(crate) type YtdTotals = (i64, i64, i64, i64, i64, i64, i64);
 pub(crate) type Tp3Totals = (i64, i64, i64, i64, i64);
 
 pub(crate) struct BulkPayrollData {
-    pub(crate) recurring_allowances: HashMap<Uuid, i64>,
-    pub(crate) recurring_deductions: HashMap<Uuid, i64>,
-    /// Individual lines behind the two totals above, for the payslip breakdown.
+    /// Every configured recurring allowance/deduction line overlapping the
+    /// period. There is deliberately no pre-summed total beside them: each line
+    /// is prorated against its own effective window, so the engine derives the
+    /// totals from these rather than from a second query that could disagree.
     pub(crate) recurring_lines: HashMap<Uuid, Vec<PayslipSourceLine>>,
     /// Individual staged entries behind `variable_earnings`/`variable_deductions`.
     pub(crate) entry_lines: HashMap<Uuid, Vec<PayslipSourceLine>>,
@@ -521,6 +522,10 @@ impl PayslipLine {
 
 /// One contributing line behind an employee's payslip figures, as read from its
 /// source table (a recurring allowance or a staged payroll entry).
+///
+/// The effective window is the allowance's own, and is what lets the engine
+/// prorate a line that only covers part of the period. Both are `None` for a
+/// staged entry, which is keyed by period and never prorated.
 #[derive(Debug, Clone)]
 pub struct PayslipSourceLine {
     pub employee_id: Uuid,
@@ -528,6 +533,8 @@ pub struct PayslipSourceLine {
     pub description: String,
     pub amount: i64,
     pub is_taxable: bool,
+    pub effective_from: Option<NaiveDate>,
+    pub effective_to: Option<NaiveDate>,
 }
 
 #[derive(Debug)]
@@ -584,6 +591,10 @@ pub struct RunStatusRow {
 
 #[derive(Debug)]
 pub struct PcbFields {
+    /// The `payroll_items` row id. Carried so a PCB edit can also replace the
+    /// stored `payroll_item_details` PCB line, which is keyed by item rather
+    /// than by `(run, employee)`.
+    pub id: Uuid,
     pub pcb_amount: i64,
     pub total_deductions: i64,
     pub net_salary: i64,

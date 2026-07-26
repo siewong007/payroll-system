@@ -822,6 +822,71 @@ async fn document_create_accepts_an_uploaded_file_and_an_external_link() {
     }
 }
 
+/// Deactivating an employee has to end the session they are already holding.
+/// `/auth/refresh` is what keeps a portal session alive indefinitely, so a gate
+/// that only covers fresh logins leaves a terminated employee signed in for as
+/// long as they keep refreshing — and the whole token family has to die, not
+/// just the one token presented.
+#[tokio::test]
+async fn a_deactivated_employee_cannot_refresh_their_session() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let employee_id = seed_employee(&pool, company_id, None, 500_000).await;
+
+    let user_id = uuid::Uuid::new_v4();
+    sqlx::query(
+        r#"INSERT INTO users (id, email, password_hash, full_name, roles, company_id, employee_id)
+           VALUES ($1, $2, 'x', 'Portal User', ARRAY['employee']::VARCHAR(50)[], $3, $4)"#,
+    )
+    .bind(user_id)
+    .bind(format!(
+        "portal-{}@example.invalid",
+        &user_id.to_string()[..8]
+    ))
+    .bind(company_id)
+    .bind(employee_id)
+    .execute(&pool)
+    .await
+    .expect("insert portal user");
+
+    let (session_id, refresh) = session_service::create_session(&pool, user_id, None)
+        .await
+        .expect("create test session");
+
+    sqlx::query("UPDATE employees SET is_active = FALSE WHERE id = $1")
+        .bind(employee_id)
+        .execute(&pool)
+        .await
+        .expect("deactivate employee");
+
+    let response = app_for(pool.clone())
+        .await
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/auth/refresh")
+                .header(header::COOKIE, format!("refresh_token={refresh}"))
+                .header("x-forwarded-for", "203.0.113.40")
+                .body(Body::empty())
+                .expect("build request"),
+        )
+        .await
+        .expect("route response");
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    let live: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM refresh_tokens WHERE session_id = $1 AND revoked = FALSE",
+    )
+    .bind(session_id)
+    .fetch_one(&pool)
+    .await
+    .expect("count live refresh tokens");
+    assert_eq!(live, 0, "the whole token family must be revoked");
+}
+
 /// `ValidatedJson` rejects a malformed email before the handler runs, so junk
 /// never reaches the service or the database.
 #[tokio::test]

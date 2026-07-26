@@ -6,6 +6,7 @@ import { createEmployee } from '@/api/employees';
 import type { EmployeeAccountInfo } from '@/api/employees';
 import { getPayrollGroups } from '@/api/payroll';
 import { getErrorMessage, todayLocalDate } from '@/lib/utils';
+import { stripPayrollFields } from '@/lib/employeeFields';
 import type { CreateEmployeeRequest } from '@/types';
 import { useAuth } from '@/context/AuthContext';
 import { canAccessPayrollData } from '@/lib/roles';
@@ -63,7 +64,15 @@ export function EmployeeCreate() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    mutation.mutate(form);
+    // Without `view_payroll` the server rejects the whole create if a single
+    // payroll-sensitive field is present, so an hr_manager sends none of them.
+    // `basic_salary` is required by the request type and `0` is what the
+    // backend reads as "not supplied".
+    mutation.mutate(
+      canViewPayroll
+        ? form
+        : { ...stripPayrollFields(form), basic_salary: 0 } as CreateEmployeeRequest,
+    );
   };
 
   return (
@@ -274,34 +283,37 @@ export function EmployeeCreate() {
           </div>
         </section>
 
-        {/* Banking */}
-        <section className="bg-white rounded-2xl shadow p-6">
-          <h2 className="text-lg font-semibold mb-4">Banking Details</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Bank Name</label>
-              <select
-                value={form.bank_name || ''}
-                onChange={(e) => updateField('bank_name', e.target.value || undefined)}
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
-              >
-                <option value="">Select Bank</option>
-                {BANKS.map((b) => (
-                  <option key={b} value={b}>{b}</option>
-                ))}
-              </select>
+        {/* Banking — payroll-sensitive server-side ("banking decides where
+            salary lands"), so it is offered only to a role that can save it. */}
+        {canViewPayroll && (
+          <section className="bg-white rounded-2xl shadow p-6">
+            <h2 className="text-lg font-semibold mb-4">Banking Details</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Bank Name</label>
+                <select
+                  value={form.bank_name || ''}
+                  onChange={(e) => updateField('bank_name', e.target.value || undefined)}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
+                >
+                  <option value="">Select Bank</option>
+                  {BANKS.map((b) => (
+                    <option key={b} value={b}>{b}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Account Number</label>
+                <input
+                  type="text"
+                  value={form.bank_account_number || ''}
+                  onChange={(e) => updateField('bank_account_number', e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
+                />
+              </div>
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Account Number</label>
-              <input
-                type="text"
-                value={form.bank_account_number || ''}
-                onChange={(e) => updateField('bank_account_number', e.target.value)}
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
-              />
-            </div>
-          </div>
-        </section>
+          </section>
+        )}
 
         {canViewPayroll && (
           <section className="bg-white rounded-2xl shadow p-6">

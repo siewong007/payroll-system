@@ -1,12 +1,16 @@
-use chrono::NaiveDate;
+use chrono::{Duration, NaiveDate, NaiveTime};
 use rust_decimal::Decimal;
 
 use crate::core::error::AppError;
 use crate::models::attendance::{
     AttendanceSummaryQuery, ManualAttendanceRequest, UpdateAttendanceRecordRequest,
 };
-use crate::services::attendance_service;
-use crate::tests::support::{seed_company_and_employee, seed_employee, seed_user, skip_if_no_db};
+use crate::models::work_schedule::{CreateWorkScheduleRequest, UpdateWorkScheduleRequest};
+use crate::repositories::reads::attendance as attendance_reads;
+use crate::services::{attendance_service, work_schedule_service};
+use crate::tests::support::{
+    seed_company, seed_company_and_employee, seed_employee, seed_user, skip_if_no_db,
+};
 
 const KL: &str = "Asia/Kuala_Lumpur";
 
@@ -774,4 +778,395 @@ async fn an_hr_correction_can_still_record_long_overtime() {
     .await
     .expect("count audit rows");
     assert_eq!(audit_rows, 1, "the correction must leave an audit trail");
+}
+
+// ─── Per-tenant timezones ───
+
+/// Give the company a default work schedule on `tz` (times keep their defaults).
+async fn seed_default_schedule(pool: &sqlx::PgPool, company_id: uuid::Uuid, tz: &str) {
+    sqlx::query(
+        "INSERT INTO company_work_schedules (company_id, name, timezone, is_default)
+         VALUES ($1, 'Default', $2, TRUE)",
+    )
+    .bind(company_id)
+    .bind(tz)
+    .execute(pool)
+    .await
+    .expect("insert default work schedule");
+}
+
+/// `(local date, local time-of-day)` in `tz` per the database clock.
+async fn local_now(pool: &sqlx::PgPool, tz: &str) -> (NaiveDate, NaiveTime) {
+    sqlx::query_as("SELECT (NOW() AT TIME ZONE $1)::date, (NOW() AT TIME ZONE $1)::time")
+        .bind(tz)
+        .fetch_one(pool)
+        .await
+        .expect("read the database clock")
+}
+
+/// Mirrors the service's cutoff rule: today is only owed once 12:30 local has
+/// passed, otherwise the last owed date is yesterday.
+fn expected_last_due(today: NaiveDate, now_local: NaiveTime) -> NaiveDate {
+    if now_local >= NaiveTime::from_hms_opt(12, 30, 0).expect("valid cutoff") {
+        today
+    } else {
+        today - Duration::days(1)
+    }
+}
+
+async fn set_absent_bookmark(pool: &sqlx::PgPool, company_id: uuid::Uuid, date: NaiveDate) {
+    sqlx::query("UPDATE companies SET auto_absent_last_run_date = $2 WHERE id = $1")
+        .bind(company_id)
+        .bind(date)
+        .execute(pool)
+        .await
+        .expect("set the auto-absent bookmark");
+}
+
+async fn absent_bookmark(pool: &sqlx::PgPool, company_id: uuid::Uuid) -> Option<NaiveDate> {
+    sqlx::query_scalar("SELECT auto_absent_last_run_date FROM companies WHERE id = $1")
+        .bind(company_id)
+        .fetch_one(pool)
+        .await
+        .expect("read the auto-absent bookmark")
+}
+
+/// Reproduce a row written before migration 1015 existed. The trigger is the
+/// point of that migration, so planting a value it rejects means stepping
+/// around it deliberately — re-enabled even if the write fails, or every later
+/// test would run without the guard.
+async fn plant_corrupt_timezone(pool: &sqlx::PgPool, company_id: uuid::Uuid, bad: &str) {
+    sqlx::query(
+        "ALTER TABLE company_work_schedules \
+         DISABLE TRIGGER company_work_schedules_timezone_valid",
+    )
+    .execute(pool)
+    .await
+    .expect("disable the timezone trigger");
+
+    let planted = sqlx::query(
+        "UPDATE company_work_schedules SET timezone = $2
+         WHERE company_id = $1 AND is_default = TRUE",
+    )
+    .bind(company_id)
+    .bind(bad)
+    .execute(pool)
+    .await;
+
+    sqlx::query(
+        "ALTER TABLE company_work_schedules \
+         ENABLE TRIGGER company_work_schedules_timezone_valid",
+    )
+    .execute(pool)
+    .await
+    .expect("re-enable the timezone trigger");
+
+    planted.expect("plant the corrupt timezone");
+}
+
+/// The stored zone is interpolated into `AT TIME ZONE` by every attendance
+/// read and write, so an unrecognised one is not a cosmetic setting error —
+/// it is a 500 on every check-in for that tenant. Reject it at the service,
+/// where the other schedule fields are already validated.
+#[tokio::test]
+async fn work_schedule_writes_reject_an_unrecognised_timezone() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let admin = seed_user(&pool, company_id, "hr_manager").await;
+
+    let create = |tz: &str| CreateWorkScheduleRequest {
+        name: None,
+        start_time: "09:00".into(),
+        end_time: "18:00".into(),
+        grace_minutes: None,
+        half_day_hours: None,
+        timezone: Some(tz.to_string()),
+    };
+
+    let err = work_schedule_service::upsert_default_schedule(
+        &pool,
+        company_id,
+        &create("Asia/Kuala_Lumpr"),
+        admin,
+        None,
+    )
+    .await
+    .expect_err("a typo'd zone must not reach the column");
+    assert!(
+        matches!(err, AppError::BadRequest(_)),
+        "expected an actionable 400, got: {err:?}"
+    );
+    assert!(
+        work_schedule_service::get_default_schedule(&pool, company_id)
+            .await
+            .expect("read schedule")
+            .is_none(),
+        "a rejected request must leave the tenant unconfigured, not half-configured"
+    );
+
+    // A non-MYT zone is perfectly legitimate and round-trips.
+    let created = work_schedule_service::upsert_default_schedule(
+        &pool,
+        company_id,
+        &create("Asia/Jakarta"),
+        admin,
+        None,
+    )
+    .await
+    .expect("a real IANA zone must be accepted");
+    assert_eq!(created.timezone, "Asia/Jakarta");
+
+    let bad_update = UpdateWorkScheduleRequest {
+        name: None,
+        start_time: None,
+        end_time: None,
+        grace_minutes: None,
+        half_day_hours: None,
+        timezone: Some("Asia/Kuala_Lumpr".into()),
+    };
+    let err = work_schedule_service::update_schedule(
+        &pool,
+        company_id,
+        created.id,
+        &bad_update,
+        admin,
+        None,
+    )
+    .await
+    .expect_err("the update path must be guarded too");
+    assert!(matches!(err, AppError::BadRequest(_)), "got: {err:?}");
+
+    let stored = work_schedule_service::get_default_schedule(&pool, company_id)
+        .await
+        .expect("read schedule")
+        .expect("schedule still exists");
+    assert_eq!(
+        stored.timezone, "Asia/Jakarta",
+        "a rejected update must not disturb the stored zone"
+    );
+}
+
+/// The platform-wide wedge: one tenant with an unusable stored zone used to
+/// abort the whole catch-up before the shared bookmark was written, so every
+/// other tenant's absences stopped being marked until an operator fixed the
+/// row by hand — and the owed dates aged out of the backfill window meanwhile.
+#[tokio::test]
+async fn a_wedged_tenant_no_longer_halts_the_absent_run_and_heals_itself() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+
+    let (wedged, _wedged_employee) = seed_company_and_employee(&pool).await;
+    let (healthy, _healthy_employee) = seed_company_and_employee(&pool).await;
+    for company_id in [wedged, healthy] {
+        seed_all_working_days(&pool, company_id).await;
+        seed_default_schedule(&pool, company_id, KL).await;
+    }
+
+    // Defence in depth: any write path that skips the service validator is
+    // still refused by the migration-1015 trigger.
+    let rejected = sqlx::query(
+        "UPDATE company_work_schedules SET timezone = 'Asia/Kuala_Lumpr'
+         WHERE company_id = $1 AND is_default = TRUE",
+    )
+    .bind(wedged)
+    .execute(&pool)
+    .await;
+    assert!(
+        rejected.is_err(),
+        "the database guard must refuse an unknown zone"
+    );
+
+    plant_corrupt_timezone(&pool, wedged, "Asia/Kuala_Lumpr").await;
+
+    let (today, now_local) = local_now(&pool, KL).await;
+    let last_due = expected_last_due(today, now_local);
+    let seeded_bookmark = last_due - Duration::days(3);
+    set_absent_bookmark(&pool, wedged, seeded_bookmark).await;
+    set_absent_bookmark(&pool, healthy, seeded_bookmark).await;
+
+    attendance_service::run_auto_absent_catchup(&pool)
+        .await
+        .expect("one bad tenant must not fail the run");
+
+    assert_eq!(
+        absent_bookmark(&pool, healthy).await,
+        Some(last_due),
+        "the healthy tenant must be marked and bookmarked as usual"
+    );
+    assert_eq!(
+        absent_bookmark(&pool, wedged).await,
+        Some(seeded_bookmark),
+        "the skipped tenant's bookmark must not advance over dates it never ran"
+    );
+
+    let healthy_rows: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM attendance_records
+         WHERE company_id = $1 AND status = 'absent' AND created_by IS NULL",
+    )
+    .bind(healthy)
+    .fetch_one(&pool)
+    .await
+    .expect("count absent rows");
+    assert!(
+        healthy_rows > 0,
+        "the healthy tenant's owed dates must actually have been marked"
+    );
+
+    // Recovery needs no operator SQL: correcting the zone through the ordinary
+    // settings endpoint is enough, and the next tick backfills what was owed.
+    let schedule = work_schedule_service::get_default_schedule(&pool, wedged)
+        .await
+        .expect("read schedule")
+        .expect("schedule exists");
+    work_schedule_service::update_schedule(
+        &pool,
+        wedged,
+        schedule.id,
+        &UpdateWorkScheduleRequest {
+            name: None,
+            start_time: None,
+            end_time: None,
+            grace_minutes: None,
+            half_day_hours: None,
+            timezone: Some(KL.to_string()),
+        },
+        seed_user(&pool, wedged, "hr_manager").await,
+        None,
+    )
+    .await
+    .expect("an admin can repair the zone");
+
+    attendance_service::run_auto_absent_catchup(&pool)
+        .await
+        .expect("catch-up should succeed");
+
+    assert_eq!(
+        absent_bookmark(&pool, wedged).await,
+        Some(last_due),
+        "the repaired tenant must catch up on its own, from its own bookmark"
+    );
+}
+
+/// R1-H13: the daily tick fires once, on one UTC instant. Deciding "today"
+/// from a single shared zone marked a tenant west of MYT absent for a date
+/// that had not started there yet — a row `mark_absent_for_company_date`
+/// refuses to create, and one the dashboard, summary and export all show.
+#[tokio::test]
+async fn auto_absent_uses_each_tenant_own_calendar_and_bookmark() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    const HNL: &str = "Pacific/Honolulu"; // UTC-10: 18 hours behind MYT.
+
+    let (west, _west_employee) = seed_company_and_employee(&pool).await;
+    let (east, _east_employee) = seed_company_and_employee(&pool).await;
+    seed_all_working_days(&pool, west).await;
+    seed_all_working_days(&pool, east).await;
+    seed_default_schedule(&pool, west, HNL).await;
+    seed_default_schedule(&pool, east, KL).await;
+
+    for (company_id, tz) in [(west, HNL), (east, KL)] {
+        let (today, now_local) = local_now(&pool, tz).await;
+        let bookmark = expected_last_due(today, now_local) - Duration::days(2);
+        set_absent_bookmark(&pool, company_id, bookmark).await;
+    }
+
+    attendance_service::run_auto_absent_catchup(&pool)
+        .await
+        .expect("catch-up should succeed");
+
+    // The defect itself: a placeholder dated after the tenant's own today.
+    let future_dated: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM attendance_records
+         WHERE company_id = $1
+           AND (check_in_at AT TIME ZONE $2)::date > (NOW() AT TIME ZONE $2)::date",
+    )
+    .bind(west)
+    .bind(HNL)
+    .fetch_one(&pool)
+    .await
+    .expect("count future-dated rows");
+    assert_eq!(
+        future_dated, 0,
+        "no tenant may be marked absent for a date that has not started there"
+    );
+
+    // Each bookmark tracks its own calendar, so the two may legitimately sit a
+    // day apart. (Read after the run: the two clock reads straddle the same
+    // instant, so a local 12:30 or midnight crossing in between would show up
+    // here as an off-by-one.)
+    for (company_id, tz) in [(west, HNL), (east, KL)] {
+        let (today, now_local) = local_now(&pool, tz).await;
+        assert_eq!(
+            absent_bookmark(&pool, company_id).await,
+            Some(expected_last_due(today, now_local)),
+            "{tz} must be bookmarked on its own local due date"
+        );
+    }
+
+    // Re-running owes nothing: the bookmarks stay put and no rows are added.
+    let before: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM attendance_records
+         WHERE company_id = ANY($1) AND status = 'absent'",
+    )
+    .bind(vec![west, east])
+    .fetch_one(&pool)
+    .await
+    .expect("count absent rows");
+    let west_bookmark = absent_bookmark(&pool, west).await;
+    let east_bookmark = absent_bookmark(&pool, east).await;
+
+    attendance_service::run_auto_absent_catchup(&pool)
+        .await
+        .expect("catch-up should succeed");
+
+    let after: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM attendance_records
+         WHERE company_id = ANY($1) AND status = 'absent'",
+    )
+    .bind(vec![west, east])
+    .fetch_one(&pool)
+    .await
+    .expect("count absent rows");
+    assert_eq!(after, before, "a second run must be a no-op");
+    assert_eq!(absent_bookmark(&pool, west).await, west_bookmark);
+    assert_eq!(absent_bookmark(&pool, east).await, east_bookmark);
+}
+
+/// Without an explicit order the tenant sequence varied run to run, so which
+/// companies had been reached when a run aborted was nondeterministic — and
+/// the log stream could not be compared between ticks.
+#[tokio::test]
+async fn auto_absent_targets_are_ordered_by_company_id() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let mut seeded = Vec::new();
+    for _ in 0..3 {
+        seeded.push(seed_company(&pool).await);
+    }
+    seeded.sort();
+
+    // Twice: the order must be a property of the query, not of whatever the
+    // planner happened to do. (Other tests seed companies concurrently, so the
+    // two result sets need not be identical — only individually ordered.)
+    for _ in 0..2 {
+        let targets = attendance_reads::auto_absent_targets(&pool)
+            .await
+            .expect("read auto-absent targets");
+        let ids: Vec<uuid::Uuid> = targets.iter().map(|t| t.company_id).collect();
+
+        let mut sorted = ids.clone();
+        sorted.sort();
+        assert_eq!(ids, sorted, "targets must come back ordered by company id");
+
+        let mine: Vec<uuid::Uuid> = ids.into_iter().filter(|id| seeded.contains(id)).collect();
+        assert_eq!(
+            mine, seeded,
+            "every seeded company must appear, in id order"
+        );
+    }
 }

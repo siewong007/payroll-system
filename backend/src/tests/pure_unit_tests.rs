@@ -20,7 +20,7 @@ use crate::services::oauth2_service::{
     generate_code_verifier, google_authorize_url,
 };
 use crate::services::pcb_calculator::round_up_to_ringgit;
-use crate::services::pdf_helpers::sen_to_rm;
+use crate::services::pdf_helpers::{sen_to_rm, unclassified_earnings};
 use crate::services::portal_service::calculate_prorated_days;
 
 const TEST_SECRET: &str = "test-secret-that-is-long-enough-for-tests";
@@ -527,6 +527,34 @@ fn money_formatting_handles_signs_and_grouping() {
     assert_eq!(sen_to_rm(1), "0.01");
     assert_eq!(sen_to_rm(123_456), "1,234.56");
     assert_eq!(sen_to_rm(-123_456), "-1,234.56");
+}
+
+/// A fully classified payslip has no residual, so no extra line is printed.
+#[test]
+fn a_fully_classified_payslip_has_no_unclassified_earnings() {
+    // basic 300_000 + allowances 30_000 + overtime 5_000 + bonus 100_000
+    // + commission 20_000 = gross 455_000.
+    assert_eq!(
+        unclassified_earnings(455_000, 300_000, 30_000, 5_000, 100_000, 20_000),
+        0
+    );
+    assert_eq!(unclassified_earnings(0, 0, 0, 0, 0, 0), 0);
+}
+
+/// An earning staged under an `item_type` outside the four allow-lists reaches
+/// gross without reaching any of the five printed categories. This is the gap
+/// that made the payslip and EA form disagree with their own totals.
+#[test]
+fn earnings_outside_the_named_categories_surface_as_the_residual() {
+    assert_eq!(
+        unclassified_earnings(350_000, 300_000, 0, 0, 0, 0),
+        50_000,
+        "RM500 staged as 'manual_adjustment' must be named, not silently absorbed"
+    );
+
+    // Only reachable from hand-edited data, but reported rather than hidden:
+    // the total is authoritative and a visible negative line is legible.
+    assert_eq!(unclassified_earnings(300_000, 350_000, 0, 0, 0, 0), -50_000);
 }
 
 fn peer(value: &str) -> Option<std::net::IpAddr> {

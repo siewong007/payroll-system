@@ -4,7 +4,8 @@ import { Plus, Clock, X, Trash2 } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
 import { TimeSelector } from '@/components/ui/TimeSelector';
 import { getOvertimeApplications, createOvertimeApplication, cancelOvertimeApplication, deleteOvertimeApplication } from '@/api/portal';
-import { formatDate } from '@/lib/utils';
+import { formatDate, getErrorMessage } from '@/lib/utils';
+import { OT_DEFAULT_END, OT_DEFAULT_HOURS, OT_DEFAULT_START, calculateOvertimeHours } from '@/lib/overtime';
 import type { OvertimeApplication, CreateOvertimeRequest } from '@/types';
 
 const statusBadge = (status: string) => {
@@ -36,11 +37,15 @@ export function Overtime() {
   const selectAllRef = useRef<HTMLInputElement>(null);
   const [showModal, setShowModal] = useState(false);
   const [selectedOvertimeIds, setSelectedOvertimeIds] = useState<string[]>([]);
+  const [formError, setFormError] = useState('');
+  // Seeded with the times the fields display. TimeSelector has no empty option,
+  // so state that holds '' behind a rendered 18:00 is a form fighting its own
+  // screen — that is what left Submit permanently greyed with no explanation.
   const [form, setForm] = useState<CreateOvertimeRequest>({
     ot_date: '',
-    start_time: '',
-    end_time: '',
-    hours: 0,
+    start_time: OT_DEFAULT_START,
+    end_time: OT_DEFAULT_END,
+    hours: OT_DEFAULT_HOURS,
     ot_type: 'normal',
     reason: '',
   });
@@ -89,22 +94,23 @@ export function Overtime() {
     },
   });
 
+  // The OT date stays empty on purpose: with the times defaulted, it is the one
+  // deliberate input standing between an open modal and a submitted record.
   const resetForm = () => {
-    setForm({ ot_date: '', start_time: '', end_time: '', hours: 0, ot_type: 'normal', reason: '' });
-  };
-
-  const calculateHours = (start: string, end: string) => {
-    if (!start || !end) return 0;
-    const [sh, sm] = start.split(':').map(Number);
-    const [eh, em] = end.split(':').map(Number);
-    let diff = (eh * 60 + em) - (sh * 60 + sm);
-    if (diff <= 0) diff += 24 * 60; // overnight
-    return Math.round(diff / 30) * 0.5; // round to nearest 0.5
+    setFormError('');
+    setForm({
+      ot_date: '',
+      start_time: OT_DEFAULT_START,
+      end_time: OT_DEFAULT_END,
+      hours: OT_DEFAULT_HOURS,
+      ot_type: 'normal',
+      reason: '',
+    });
   };
 
   const updateTime = (field: 'start_time' | 'end_time', value: string) => {
     const updated = { ...form, [field]: value };
-    updated.hours = calculateHours(
+    updated.hours = calculateOvertimeHours(
       field === 'start_time' ? value : form.start_time,
       field === 'end_time' ? value : form.end_time,
     );
@@ -112,7 +118,15 @@ export function Overtime() {
   };
 
   const handleSubmit = () => {
-    if (!form.ot_date || !form.start_time || !form.end_time || form.hours <= 0) return;
+    setFormError('');
+    if (!form.ot_date) {
+      setFormError('Pick an OT date.');
+      return;
+    }
+    if (!form.start_time || !form.end_time || form.hours <= 0) {
+      setFormError('Start and end time must differ.');
+      return;
+    }
     createMutation.mutate({
       ...form,
       reason: form.reason || undefined,
@@ -307,7 +321,7 @@ export function Overtime() {
             <button onClick={() => setShowModal(false)} className="btn-secondary">Cancel</button>
             <button
               onClick={handleSubmit}
-              disabled={!form.ot_date || !form.start_time || !form.end_time || form.hours <= 0 || createMutation.isPending}
+              disabled={createMutation.isPending}
               className="btn-primary"
             >
               {createMutation.isPending ? 'Submitting...' : 'Submit Application'}
@@ -356,12 +370,12 @@ export function Overtime() {
           <div className="grid grid-cols-2 gap-4">
             <TimeSelector
               label="Start Time *"
-              value={form.start_time || '18:00'}
+              value={form.start_time}
               onChange={(value) => updateTime('start_time', value)}
             />
             <TimeSelector
               label="End Time *"
-              value={form.end_time || '19:00'}
+              value={form.end_time}
               onChange={(value) => updateTime('end_time', value)}
             />
           </div>
@@ -384,8 +398,10 @@ export function Overtime() {
             />
           </div>
 
+          {formError && <p className="text-sm text-red-600">{formError}</p>}
+
           {createMutation.isError && (
-            <p className="text-sm text-red-600">{(createMutation.error as Error).message || 'Failed to submit'}</p>
+            <p className="text-sm text-red-600">{getErrorMessage(createMutation.error, 'Failed to submit')}</p>
           )}
         </div>
       </Modal>

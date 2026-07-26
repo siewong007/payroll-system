@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH removed AS (\n            DELETE FROM payroll_item_details\n            WHERE payroll_item_id = $1 AND item_type = 'pcb'\n        )\n        INSERT INTO payroll_item_details\n            (payroll_item_id, category, item_type, description, amount, is_taxable, is_statutory)\n        SELECT $1, 'deduction', 'pcb', 'PCB (monthly tax deduction)', $2::bigint, FALSE, TRUE\n        WHERE $2::bigint <> 0",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5aa3873a36d538b0f9b67aa5c049e68250280998f0de01c688b27f8faac4f695"
+}

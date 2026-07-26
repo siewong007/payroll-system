@@ -258,3 +258,23 @@ pub async fn delete_cascade(conn: &mut sqlx::PgConnection, company_id: Uuid) -> 
 
     Ok(result.rows_affected())
 }
+
+/// Advance this company's auto-absent bookmark to `date`.
+///
+/// Per company, not platform-wide: one shared key could not express "A is done
+/// through the 9th, B through the 10th", so a tenant on another calendar — or
+/// one whose run failed — dragged every other tenant's backfill window with it.
+pub async fn set_auto_absent_last_run_date(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    date: chrono::NaiveDate,
+) -> AppResult<()> {
+    sqlx::query!(
+        "UPDATE companies SET auto_absent_last_run_date = $2 WHERE id = $1",
+        company_id,
+        date,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}

@@ -15,49 +15,39 @@ use crate::models::payroll::{
     PayrollEntryWithEmployee, PayrollItemSummary, PayrollYtd, PayslipSourceLine,
 };
 
-/// Recurring allowances/deductions per employee, summed by category.
-pub async fn recurring_allowance_totals(
-    executor: impl Executor<'_, Database = Postgres>,
-    employee_ids: &[Uuid],
-    effective_date: NaiveDate,
-) -> AppResult<Vec<EmployeeCategoryTotal>> {
-    let rows = sqlx::query_as!(
-        EmployeeCategoryTotal,
-        r#"SELECT employee_id, category, SUM(amount)::BIGINT AS "total!"
-           FROM employee_allowances
-           WHERE employee_id = ANY($1) AND is_active = TRUE AND is_recurring = TRUE
-             AND effective_from <= $2 AND (effective_to IS NULL OR effective_to >= $2)
-           GROUP BY employee_id, category"#,
-        employee_ids,
-        effective_date,
-    )
-    .fetch_all(executor)
-    .await?;
-    Ok(rows)
-}
-
 /// Recurring allowances/deductions per employee, one row per configured line.
 ///
-/// `recurring_allowance_totals` gives the engine the figure it needs for gross;
-/// this gives it the lines it needs for the payslip breakdown, which used to be
-/// discarded — `payroll_item_details` was never written, so a payslip could show
-/// `total_allowances` without saying what the allowances were. Both reads apply
-/// the same filters, so the lines always sum to the total.
+/// Selection is an interval **overlap** with the period, not a point test at the
+/// period end. The old predicate asked whether a single instant — the last day of
+/// the month — fell inside the allowance's window, so a leaver whose allowance
+/// was correctly ended on the 15th failed `effective_to >= period_end` and was
+/// paid nothing while their basic was prorated to 15/31, and an allowance granted
+/// on the 25th passed `effective_from <= period_end` and was paid in full. Both
+/// errors flow into gross, so EPF/SOCSO/EIS/PCB moved with them.
+///
+/// Rows rather than a `SUM`: the engine prorates each line against its own
+/// window, so the per-line amounts and the total have to be the same arithmetic.
+/// The totals used to be a second query carrying a duplicate copy of these
+/// filters, with a comment promising the two agreed.
 pub async fn recurring_allowance_lines(
     executor: impl Executor<'_, Database = Postgres>,
     employee_ids: &[Uuid],
-    effective_date: NaiveDate,
+    period_start: NaiveDate,
+    period_end: NaiveDate,
 ) -> AppResult<Vec<PayslipSourceLine>> {
     let rows = sqlx::query_as!(
         PayslipSourceLine,
         r#"SELECT employee_id, category, name AS "description!", amount,
-                  COALESCE(is_taxable, TRUE) AS "is_taxable!"
+                  COALESCE(is_taxable, TRUE) AS "is_taxable!",
+                  effective_from AS "effective_from?", effective_to AS "effective_to?"
            FROM employee_allowances
            WHERE employee_id = ANY($1) AND is_active = TRUE AND is_recurring = TRUE
-             AND effective_from <= $2 AND (effective_to IS NULL OR effective_to >= $2)
+             AND effective_from <= $3
+             AND (effective_to IS NULL OR effective_to >= $2)
            ORDER BY employee_id, category, name"#,
         employee_ids,
-        effective_date,
+        period_start,
+        period_end,
     )
     .fetch_all(executor)
     .await?;
@@ -78,7 +68,10 @@ pub async fn entry_lines(
     let rows = sqlx::query_as!(
         PayslipSourceLine,
         r#"SELECT employee_id, category, description AS "description!", amount,
-                  COALESCE(is_taxable, TRUE) AS "is_taxable!"
+                  COALESCE(is_taxable, TRUE) AS "is_taxable!",
+                  -- Staged entries are keyed by (period_year, period_month) and
+                  -- carry no window of their own, so they are never prorated.
+                  NULL::date AS "effective_from?", NULL::date AS "effective_to?"
            FROM payroll_entries
            WHERE employee_id = ANY($1) AND period_year = $2 AND period_month = $3
              AND is_processed = FALSE

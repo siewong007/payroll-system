@@ -195,25 +195,18 @@ async fn gather_run_inputs(
         .await?
         .unwrap_or_else(|| DEFAULT_TIMEZONE.to_string());
 
-    // 1. Batch fetch recurring allowances and deductions
-    let mut recurring_allowances_map = HashMap::new();
-    let mut recurring_deductions_map = HashMap::new();
-    for row in
-        payroll_reads::recurring_allowance_totals(&mut *conn, &employee_ids, effective_date).await?
-    {
-        if row.category == "earning" {
-            recurring_allowances_map.insert(row.employee_id, row.total);
-        } else {
-            recurring_deductions_map.insert(row.employee_id, row.total);
-        }
-    }
-
-    // 1b. The individual lines behind those totals, for the stored payslip
-    // breakdown. Same filters as the totals above, so the two reconcile.
+    // 1. Batch fetch every recurring allowance/deduction line overlapping the
+    // period. `compute_payslip` prorates each against its own effective window
+    // and sums the results, so there is no separate totals query to drift from.
     let mut recurring_lines_map: HashMap<Uuid, Vec<_>> = HashMap::new();
-    for line in
-        payroll_reads::recurring_allowance_lines(&mut *conn, &employee_ids, effective_date).await?
-    {
+    let recurring_lines = payroll_reads::recurring_allowance_lines(
+        &mut *conn,
+        &employee_ids,
+        period_start,
+        period_end,
+    )
+    .await?;
+    for line in recurring_lines {
         recurring_lines_map
             .entry(line.employee_id)
             .or_default()
@@ -331,8 +324,6 @@ async fn gather_run_inputs(
     Ok(RunInputs {
         employees,
         bulk: BulkPayrollData {
-            recurring_allowances: recurring_allowances_map,
-            recurring_deductions: recurring_deductions_map,
             recurring_lines: recurring_lines_map,
             entry_lines: entry_lines_map,
             variable_earnings: variable_earnings_map,
@@ -1032,12 +1023,10 @@ fn compute_payslip(
         emp.basic_salary
     };
 
-    let allowances_total = *bulk.recurring_allowances.get(&emp.id).unwrap_or(&0);
     let monthly_allowances = *bulk.monthly_allowances.get(&emp.id).unwrap_or(&0);
     let variable_earnings = *bulk.variable_earnings.get(&emp.id).unwrap_or(&0);
     let (total_bonus, total_commission) = *bulk.bonus_commission.get(&emp.id).unwrap_or(&(0, 0));
     let variable_deductions = *bulk.variable_deductions.get(&emp.id).unwrap_or(&0);
-    let recurring_deductions = *bulk.recurring_deductions.get(&emp.id).unwrap_or(&0);
     let attendance_ot_hours = *bulk.attendance_ot_hours.get(&emp.id).unwrap_or(&0.0);
 
     // Hourly rate in Decimal, from company settings rather than hardcoded 26/8.
@@ -1059,6 +1048,62 @@ fn compute_payslip(
             .unwrap_or(0)
     };
 
+    // Recurring allowances and deductions, prorated per line.
+    //
+    // The read selects every line whose effective window *overlaps* the period,
+    // which is what stops a leaver's correctly-ended allowance from being dropped
+    // outright. An overlapping line still need not cover the whole period, and
+    // EA1955 s.18B prorates an incomplete month on CALENDAR days — basic above is
+    // already prorated that way, and an allowance whose own window closes
+    // mid-month is incomplete for exactly the same reason. The window is
+    // intersected with the employment window so a mid-month joiner's allowance is
+    // not paid for days they were not employed.
+    //
+    // A full-month employee with an open-ended allowance gets
+    // `covered_days == period_days` and the untouched configured amount, so the
+    // common case is byte-identical to before.
+    //
+    // Deliberately not implemented: a per-allowance opt-out for fixed
+    // non-prorated allowances. That needs a schema column and a UI neither of
+    // which exists.
+    let mut allowances_total = 0i64;
+    let mut recurring_deductions = 0i64;
+    let mut recurring_lines: Vec<PayslipLine> = Vec::new();
+    for line in bulk.recurring_lines.get(&emp.id).into_iter().flatten() {
+        let covered_from = line.effective_from.unwrap_or(worked_from).max(worked_from);
+        let covered_to = line.effective_to.unwrap_or(worked_to).min(worked_to);
+        let covered_days = ((covered_to - covered_from).num_days() + 1).clamp(0, period_days);
+
+        let (amount, description) = if covered_days == period_days {
+            (line.amount, line.description.clone())
+        } else {
+            (
+                round_sen(
+                    Decimal::from(line.amount) * Decimal::from(covered_days)
+                        / Decimal::from(period_days),
+                ),
+                format!(
+                    "{} (prorated — {} of {} days)",
+                    line.description, covered_days, period_days
+                ),
+            )
+        };
+
+        if line.category == "earning" {
+            allowances_total += amount;
+            recurring_lines.push(
+                PayslipLine::earning("allowance", description, amount).taxable(line.is_taxable),
+            );
+        } else {
+            recurring_deductions += amount;
+            recurring_lines.push(PayslipLine::deduction(
+                "other_deduction",
+                description,
+                amount,
+            ));
+        }
+    }
+
     // Overtime lines are built alongside the figures: an OT amount is a product
     // of hours, an hourly rate derived from company settings, and a type
     // multiplier, none of which survive in `total_overtime` alone.
@@ -1071,7 +1116,7 @@ fn compute_payslip(
         overtime_lines.push(PayslipLine::earning(
             "overtime",
             format!(
-                "Overtime (attendance) â€” {} h @ {}x",
+                "Overtime (attendance) — {} h @ {}x",
                 trim_decimal(hours),
                 trim_decimal(ot.multiplier_normal)
             ),
@@ -1092,7 +1137,7 @@ fn compute_payslip(
             overtime_lines.push(PayslipLine::earning(
                 "overtime",
                 format!(
-                    "Overtime ({}) â€” {} h @ {}x",
+                    "Overtime ({}) — {} h @ {}x",
                     ot_type.replace('_', " "),
                     trim_decimal(hours),
                     trim_decimal(multiplier)
@@ -1150,8 +1195,20 @@ fn compute_payslip(
     };
 
     // PCB
+    //
+    // LHDN MTD treats bonus and commission as *additional remuneration*, taxed
+    // by the Schedule 2 differential rather than annualised as recurring income.
+    // They stay inside `gross` because EPF (s.2), SOCSO and EIS all levy on them
+    // — only the PCB base is narrowed.
+    //
+    // Caveat worth stating rather than hiding: LHDN's "additional remuneration"
+    // covers commission paid at *irregular* intervals, and a genuinely monthly
+    // commission is normal remuneration. `item_type = 'commission'` is all the
+    // data model has to tell them apart, and treating it as additional is the
+    // conservative direction — it under-annualises rather than over-deducting.
+    let normal_remuneration = gross - total_bonus - total_commission;
     let pcb_input = PcbInput {
-        monthly_gross: gross,
+        monthly_normal_remuneration: normal_remuneration,
         epf_employee_monthly: epf.employee,
         socso_employee_monthly: socso.employee,
         eis_employee_monthly: eis.employee,
@@ -1169,8 +1226,7 @@ fn compute_payslip(
         ytd_socso: ytd_socso + tp3_socso,
         ytd_eis,
         ytd_zakat: ytd_zakat + tp3_zakat,
-        is_bonus_month: false,
-        bonus_amount: 0,
+        bonus_amount: total_bonus + total_commission,
     };
 
     let pcb = pcb_calculator::calculate_pcb_with(statutory, &pcb_input)?;
@@ -1224,6 +1280,7 @@ fn compute_payslip(
         is_prorated,
         days_worked,
         period_days,
+        recurring_lines,
         overtime_lines,
         payable_claims,
         &epf,
@@ -1354,6 +1411,9 @@ fn build_payslip_lines(
     is_prorated: bool,
     days_worked: i64,
     period_days: i64,
+    // Recurring allowance/deduction lines, already prorated by the caller — the
+    // paid figure, not the configured one, so the stored breakdown reconciles.
+    recurring_lines: Vec<PayslipLine>,
     overtime_lines: Vec<PayslipLine>,
     payable_claims: &[PayableClaim],
     epf: &EpfContribution,
@@ -1368,7 +1428,7 @@ fn build_payslip_lines(
 
     let basic_description = if is_prorated {
         format!(
-            "Basic salary (prorated â€” {} of {} days)",
+            "Basic salary (prorated — {} of {} days)",
             days_worked, period_days
         )
     } else {
@@ -1380,15 +1440,15 @@ fn build_payslip_lines(
         basic,
     ));
 
-    let source_lines = bulk
-        .recurring_lines
-        .get(&emp.id)
-        .into_iter()
-        .flatten()
-        .chain(bulk.entry_lines.get(&emp.id).into_iter().flatten());
-
     let (mut earnings, mut deductions) = (Vec::new(), Vec::new());
-    for line in source_lines {
+    for line in recurring_lines {
+        if line.category == "earning" {
+            earnings.push(line);
+        } else {
+            deductions.push(line);
+        }
+    }
+    for line in bulk.entry_lines.get(&emp.id).into_iter().flatten() {
         if line.category == "earning" {
             earnings.push(
                 PayslipLine::earning("allowance", line.description.clone(), line.amount)

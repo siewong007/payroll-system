@@ -63,6 +63,50 @@ pub struct EmailLog {
     pub created_by: Option<Uuid>,
 }
 
+/// An `email_logs` row without `body_html` — the shape every API response uses.
+///
+/// Letter bodies carry salary figures, disciplinary language and, for the
+/// welcome letter, the account's initial credential, while the History table
+/// renders six columns and none of them is the body. `SELECT *` is what let
+/// `body_html` join the response silently when the column was added, so the
+/// list query projects to this struct explicitly instead.
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct EmailLogSummary {
+    pub id: Uuid,
+    pub company_id: Uuid,
+    pub employee_id: Option<Uuid>,
+    pub template_id: Option<Uuid>,
+    pub letter_type: String,
+    pub recipient_email: String,
+    pub recipient_name: Option<String>,
+    pub subject: String,
+    pub status: String,
+    pub error_message: Option<String>,
+    pub sent_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub created_by: Option<Uuid>,
+}
+
+impl From<EmailLog> for EmailLogSummary {
+    fn from(log: EmailLog) -> Self {
+        Self {
+            id: log.id,
+            company_id: log.company_id,
+            employee_id: log.employee_id,
+            template_id: log.template_id,
+            letter_type: log.letter_type,
+            recipient_email: log.recipient_email,
+            recipient_name: log.recipient_name,
+            subject: log.subject,
+            status: log.status,
+            error_message: log.error_message,
+            sent_at: log.sent_at,
+            created_at: log.created_at,
+            created_by: log.created_by,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct SendLetterRequest {
     pub employee_id: Option<Uuid>,

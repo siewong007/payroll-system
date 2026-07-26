@@ -158,7 +158,7 @@ pub async fn get_pcb_fields_locked(
 ) -> AppResult<Option<PcbFields>> {
     let row = sqlx::query_as!(
         PcbFields,
-        r#"SELECT pcb_amount, total_deductions, net_salary, ytd_pcb
+        r#"SELECT id, pcb_amount, total_deductions, net_salary, ytd_pcb
         FROM payroll_items
         WHERE payroll_run_id = $1 AND employee_id = $2
         FOR UPDATE"#,

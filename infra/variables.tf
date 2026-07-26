@@ -1,7 +1,12 @@
+# There are no workspaces and exactly one state key (see main.tf's backend
+# block), so these two variables are not preferences — they select which live
+# resources this configuration claims to describe. Both are deliberately
+# defaultless: an operator who omits one gets an error, where before they got a
+# plan. Copy terraform.tfvars.example to terraform.tfvars.
+
 variable "environment" {
-  description = "Deployment environment (dev, staging, prod)"
+  description = "Deployment environment (dev, staging, prod). REQUIRED: it is half of local.name_prefix, so a wrong value renames every prefixed resource in the one shared state."
   type        = string
-  default     = "dev"
 
   validation {
     condition     = contains(["dev", "staging", "prod"], var.environment)
@@ -28,9 +33,13 @@ variable "github_repository" {
 }
 
 variable "domain_name" {
-  description = "Root domain name (e.g., payroll.example.com). Leave empty to skip DNS/ACM."
+  description = "Root domain name (e.g. payrollmy.com). REQUIRED: local.has_domain gates the ACM certificate and both Route53 A records, so an empty value does not 'skip DNS/ACM' against the live state — it plans their DESTRUCTION, including api.payrollmy.com, which is how the backend VPS is reached by name."
   type        = string
-  default     = ""
+
+  validation {
+    condition     = length(trimspace(var.domain_name)) > 0
+    error_message = "domain_name must be set — copy terraform.tfvars.example to terraform.tfvars."
+  }
 }
 
 variable "api_subdomain" {

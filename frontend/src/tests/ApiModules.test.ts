@@ -1,3 +1,6 @@
+import { readFileSync, readdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const apiMocks = vi.hoisted(() => ({
@@ -33,6 +36,8 @@ import {
   getStatutoryReport,
 } from '@/api/reports';
 import { getEmployee, getEmployees, updateEmployee } from '@/api/employees';
+import { PAYROLL_SENSITIVE_EMPLOYEE_FIELDS, stripPayrollFields } from '@/lib/employeeFields';
+import type { UpdateEmployeeRequest } from '@/types';
 import { createKioskCredential, fetchKioskQr, revokeKioskCredential } from '@/api/kiosk';
 
 /** Captures the synthetic <a download> the browser-download helpers create. */
@@ -340,5 +345,117 @@ describe('kiosk API', () => {
 
     await expect(revokeKioskCredential('cred-1')).resolves.toBeUndefined();
     expect(apiMocks.delete).toHaveBeenCalledWith('/attendance/kiosks/cred-1');
+  });
+});
+
+describe('payroll-sensitive employee fields', () => {
+  /**
+   * The literal expectation is the point: the backend rejects the WHOLE request
+   * when any of these arrive without `view_payroll`, so a field added there and
+   * forgotten here has to fail in CI rather than as a 403 an hr_manager cannot
+   * interpret. Keep in step with `update_request_touches_payroll_fields` in
+   * `backend/src/handlers/employee.rs`.
+   */
+  it('covers every field the API classifies as payroll-sensitive', () => {
+    expect([...PAYROLL_SENSITIVE_EMPLOYEE_FIELDS].sort()).toEqual([
+      'bank_account_number',
+      'bank_name',
+      'basic_salary',
+      'eis_number',
+      'epf_category',
+      'epf_number',
+      'is_muslim',
+      'payroll_group_id',
+      'ptptn_monthly_amount',
+      'socso_number',
+      'tax_identification_number',
+      'working_spouse',
+      'zakat_eligible',
+      'zakat_monthly_amount',
+    ]);
+  });
+
+  it('strips the banking pair that used to 403 every hr_manager edit', () => {
+    const form: UpdateEmployeeRequest = {
+      full_name: 'Siti Nurhaliza',
+      bank_name: 'Maybank',
+      bank_account_number: '1234567890',
+      basic_salary: 500000,
+      epf_number: 'A1234',
+    };
+
+    const safe = stripPayrollFields(form);
+
+    expect(safe).not.toHaveProperty('bank_name');
+    expect(safe).not.toHaveProperty('bank_account_number');
+    expect(safe).not.toHaveProperty('basic_salary');
+    expect(safe).not.toHaveProperty('epf_number');
+    expect(safe.full_name).toBe('Siti Nurhaliza');
+  });
+
+  it('keeps the non-payroll fields an HR edit depends on', () => {
+    const form: UpdateEmployeeRequest = {
+      full_name: 'Ahmad bin Ali',
+      phone: '0123456789',
+      department: 'Operations',
+      date_resigned: '2026-06-30',
+      resignation_reason: 'New role',
+      clear_date_resigned: true,
+      is_active: false,
+    };
+
+    expect(stripPayrollFields(form)).toEqual(form);
+  });
+
+  /** Deleted, not set to `undefined`: an explicit `null` on the wire still
+   *  reads as `is_some()` server-side and trips the same 403. */
+  it('emits no payroll key at all once serialized', () => {
+    const payload = JSON.stringify(stripPayrollFields({
+      full_name: 'Lim Wei',
+      bank_name: 'CIMB Bank',
+      zakat_monthly_amount: 0,
+      payroll_group_id: 'group-1',
+    }));
+
+    for (const field of PAYROLL_SENSITIVE_EMPLOYEE_FIELDS) {
+      expect(payload).not.toContain(field);
+    }
+  });
+});
+
+describe('pagination limits honoured by callers', () => {
+  const srcRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+
+  function tsFilesUnder(dir: string): string[] {
+    return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) return tsFilesUnder(full);
+      return /\.tsx?$/.test(entry.name) ? [full] : [];
+    });
+  }
+
+  /**
+   * `handlers/employee.rs` and `handlers/document.rs` both clamp `per_page` to
+   * 100, and neither says so in the response. A caller asking for 200 or 500
+   * gets the alphabetically-first 100 rows and no hint that anyone is missing,
+   * which is how employees past the first page became unreachable from five
+   * different screens. Raising the clamp is not the fix — honouring it is.
+   */
+  it('never requests a per_page the API silently clamps', () => {
+    const offenders: string[] = [];
+
+    // Comments in these files quote the old `per_page: 500` to explain why it was
+    // wrong, so scanning raw text reports the explanation as the offence. Strip
+    // comments first and the check sees only what is actually sent.
+    const stripComments = (src: string) =>
+      src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+
+    for (const file of [...tsFilesUnder(join(srcRoot, 'pages')), ...tsFilesUnder(join(srcRoot, 'components'))]) {
+      for (const [, size] of stripComments(readFileSync(file, 'utf8')).matchAll(/per_page:\s*(\d+)/g)) {
+        if (Number(size) > 100) offenders.push(`${file.slice(srcRoot.length + 1)} → per_page: ${size}`);
+      }
+    }
+
+    expect(offenders).toEqual([]);
   });
 });

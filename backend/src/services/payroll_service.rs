@@ -223,6 +223,22 @@ pub async fn update_item_pcb(
     let new_net_salary = current.net_salary - delta;
     let new_ytd_pcb = current.ytd_pcb + delta;
 
+    // Mirrors `compute_payslip`, which fails the whole run rather than create a
+    // negative net; an edit must not be able to reach one either. An operator
+    // typing sen where they meant ringgit otherwise wrote a negative net that
+    // survived submit, approve and pay, because the lifecycle transitions never
+    // re-validate the figures. `net - (new - old) >= 0` is exactly
+    // `new <= net + old`, so the message quotes that ceiling rather than making
+    // the operator derive it. Nothing has been written at this point, so the
+    // transaction rolls back untouched.
+    if new_net_salary < 0 {
+        return Err(AppError::BadRequest(format!(
+            "PCB of {} sen would leave a negative net salary. The most this payslip can carry is {} sen.",
+            pcb_amount,
+            current.net_salary + current.pcb_amount
+        )));
+    }
+
     payroll_items::update_pcb(
         &mut *tx,
         run_id,
@@ -233,6 +249,12 @@ pub async fn update_item_pcb(
         new_ytd_pcb,
     )
     .await?;
+
+    // The stored breakdown is what the payslip PDF and the admin drawer render
+    // from, so leaving it on the old PCB would make the lines stop summing to
+    // `total_deductions` on a statutory-adjacent document. Same transaction and
+    // the same `FOR UPDATE` lock the figures were read under.
+    payroll_item_details::replace_pcb_line(&mut *tx, current.id, pcb_amount).await?;
 
     payroll_runs::bump_pcb_totals(&mut *tx, run_id, company_id, delta, actor_id).await?;
 

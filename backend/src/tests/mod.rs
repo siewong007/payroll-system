@@ -1,14 +1,17 @@
 mod approval_flow_tests;
 mod attendance_tests;
 mod audit_tests;
+mod email_privacy_tests;
 mod employee_lifecycle_tests;
 mod extractor_tests;
 mod import_atomicity_tests;
+mod oauth2_state_binding_tests;
 mod payroll_lifecycle_tests;
 mod payroll_tests;
 mod pure_unit_tests;
 mod route_auth_tests;
 mod schema_invariant_tests;
+mod session_rotation_tests;
 mod statutory_tests;
 pub(crate) mod support;
 mod team_tests;

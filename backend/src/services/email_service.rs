@@ -7,7 +7,8 @@ use uuid::Uuid;
 use crate::core::config::AppConfig;
 use crate::core::error::{AppError, AppResult};
 use crate::models::email::{
-    CreateEmailTemplateRequest, EmailLog, EmailTemplate, UpdateEmailTemplateRequest,
+    CreateEmailTemplateRequest, EmailLog, EmailLogSummary, EmailTemplate,
+    UpdateEmailTemplateRequest,
 };
 use crate::repositories::{email_logs, email_templates};
 
@@ -63,7 +64,7 @@ pub async fn list_email_logs(
     employee_id: Option<Uuid>,
     limit: i64,
     offset: i64,
-) -> AppResult<(Vec<EmailLog>, i64)> {
+) -> AppResult<(Vec<EmailLogSummary>, i64)> {
     let total = email_logs::count(pool, company_id, employee_id).await?;
     let logs = email_logs::list(pool, company_id, employee_id, limit, offset).await?;
     Ok((logs, total))
@@ -95,6 +96,7 @@ pub fn substitute_variables(
 
 // ── Send Email via SMTP ────────────────────────────────────────────────
 
+/// Send a letter and record it, storing the message verbatim.
 #[allow(clippy::too_many_arguments)]
 pub async fn send_email(
     config: &AppConfig,
@@ -109,6 +111,45 @@ pub async fn send_email(
     body_html: &str,
     created_by: Uuid,
 ) -> AppResult<EmailLog> {
+    send_email_with_stored_body(
+        config,
+        pool,
+        company_id,
+        employee_id,
+        template_id,
+        letter_type,
+        recipient_email,
+        recipient_name,
+        subject,
+        body_html,
+        body_html,
+        created_by,
+    )
+    .await
+}
+
+/// Send a letter while recording a *different* body in `email_logs`.
+///
+/// Needed because the log row is written before the SMTP attempt and survives
+/// it — on a deployment with SMTP disabled it is the only thing that happens —
+/// so anything in the message that must not be retained has to be replaced
+/// before the insert, not after. Today the welcome letter is the only caller:
+/// its body carries the account's initial password.
+#[allow(clippy::too_many_arguments)]
+pub async fn send_email_with_stored_body(
+    config: &AppConfig,
+    pool: &PgPool,
+    company_id: Uuid,
+    employee_id: Option<Uuid>,
+    template_id: Option<Uuid>,
+    letter_type: &str,
+    recipient_email: &str,
+    recipient_name: &str,
+    subject: &str,
+    body_html: &str,
+    stored_body_html: &str,
+    created_by: Uuid,
+) -> AppResult<EmailLog> {
     // Create log entry first as pending
     let log = email_logs::insert_pending(
         pool,
@@ -119,7 +160,7 @@ pub async fn send_email(
         recipient_email,
         recipient_name,
         subject,
-        body_html,
+        stored_body_html,
         created_by,
     )
     .await?;
@@ -331,12 +372,104 @@ pub fn approval_email_html(
     )
 }
 
+/// What the stored copy of a welcome letter shows where the password was.
+pub const WELCOME_LOG_PASSWORD_PLACEHOLDER: &str =
+    "(initial password sent to the employee — not recorded)";
+
+/// The welcome letter as the employee receives it, credential included.
 pub fn default_welcome_html(
     employee_name: &str,
     company_name: &str,
     frontend_url: &str,
     login_email: &str,
     default_password: &str,
+) -> String {
+    welcome_html(
+        employee_name,
+        company_name,
+        frontend_url,
+        login_email,
+        default_password,
+    )
+}
+
+/// The copy of the welcome letter kept in `email_logs`.
+///
+/// Identical to the sent message except for the password cell. The initial
+/// password *is* the employee's IC number, and `email_logs` is readable by
+/// every role holding `ViewEmailLogs` — including `exec`, whose view of the
+/// employee record has `ic_number` stripped for exactly this reason. The log
+/// still proves what was sent, to whom, and when; only the credential is
+/// withheld.
+pub fn welcome_log_html(
+    employee_name: &str,
+    company_name: &str,
+    frontend_url: &str,
+    login_email: &str,
+) -> String {
+    welcome_html(
+        employee_name,
+        company_name,
+        frontend_url,
+        login_email,
+        WELCOME_LOG_PASSWORD_PLACEHOLDER,
+    )
+}
+
+/// Compose and send the welcome letter for a freshly provisioned portal account.
+///
+/// It lives in the service because it decides *what is retained*, not merely
+/// what is rendered — the handler has no business making that call.
+#[allow(clippy::too_many_arguments)]
+pub async fn send_welcome_email(
+    config: &AppConfig,
+    pool: &PgPool,
+    company_id: Uuid,
+    company_name: &str,
+    employee_id: Uuid,
+    employee_name: &str,
+    login_email: &str,
+    default_password: &str,
+    created_by: Uuid,
+) -> AppResult<EmailLog> {
+    let subject = format!("Welcome to {} - PayrollMY", company_name);
+    let body_html = default_welcome_html(
+        employee_name,
+        company_name,
+        &config.frontend_url,
+        login_email,
+        default_password,
+    );
+    let stored_body_html = welcome_log_html(
+        employee_name,
+        company_name,
+        &config.frontend_url,
+        login_email,
+    );
+
+    send_email_with_stored_body(
+        config,
+        pool,
+        company_id,
+        Some(employee_id),
+        None,
+        "welcome",
+        login_email,
+        employee_name,
+        &subject,
+        &body_html,
+        &stored_body_html,
+        created_by,
+    )
+    .await
+}
+
+fn welcome_html(
+    employee_name: &str,
+    company_name: &str,
+    frontend_url: &str,
+    login_email: &str,
+    password_cell: &str,
 ) -> String {
     format!(
         r#"<!DOCTYPE html>
@@ -358,7 +491,7 @@ pub fn default_welcome_html(
         </tr>
         <tr>
           <td style="padding: 4px 8px; color: #6b7280; font-size: 14px;">Password</td>
-          <td style="padding: 4px 8px; font-weight: 600; font-family: monospace; font-size: 14px;">{default_password}</td>
+          <td style="padding: 4px 8px; font-weight: 600; font-family: monospace; font-size: 14px;">{password_cell}</td>
         </tr>
       </table>
     </div>
@@ -381,6 +514,6 @@ pub fn default_welcome_html(
         employee_name = employee_name,
         frontend_url = frontend_url,
         login_email = login_email,
-        default_password = default_password,
+        password_cell = password_cell,
     )
 }

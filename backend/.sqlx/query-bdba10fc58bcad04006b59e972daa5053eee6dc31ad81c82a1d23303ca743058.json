@@ -1,0 +1,32 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT c.id AS \"company_id!\",\n                  ws.timezone AS \"timezone?\",\n                  c.auto_absent_last_run_date AS \"last_run_date?\"\n           FROM companies c\n           LEFT JOIN company_work_schedules ws\n               ON ws.company_id = c.id AND ws.is_default = TRUE\n           WHERE c.is_active = TRUE\n           ORDER BY c.id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "company_id!",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "timezone?",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "last_run_date?",
+        "type_info": "Date"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "bdba10fc58bcad04006b59e972daa5053eee6dc31ad81c82a1d23303ca743058"
+}

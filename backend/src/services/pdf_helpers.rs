@@ -25,6 +25,30 @@ pub fn sen_to_rm(sen: i64) -> String {
     }
 }
 
+/// Employment income the named EA / payslip categories do not account for.
+///
+/// Gross is the sum of every staged earning whose `item_type` is not `overtime`
+/// or `claim_reimbursement`, while the five printed categories are narrow
+/// allow-lists (`allowance`/`monthly_allowance`, `bonus`, `commission`). Anything
+/// staged under another `item_type` — `manual_adjustment`, or whatever free text
+/// the operator typed — reaches gross without reaching a printed line, so items
+/// 1..5 sat under a total taken from a different number.
+///
+/// Zero for a payslip whose earnings are all classified. Printed even when
+/// negative (only reachable from hand-edited data): the total is authoritative,
+/// and a visible negative line is a legible defect report where silent
+/// disagreement on a statutory document is not.
+pub fn unclassified_earnings(
+    gross: i64,
+    basic: i64,
+    allowances: i64,
+    overtime: i64,
+    bonus: i64,
+    commission: i64,
+) -> i64 {
+    gross - basic - allowances - overtime - bonus - commission
+}
+
 /// Push ops to write text at a position (x, y in mm, from bottom-left)
 pub fn add_text(ops: &mut Vec<Op>, font: &PdfFontHandle, size: f32, x: f32, y: f32, text: &str) {
     ops.push(Op::StartTextSection);

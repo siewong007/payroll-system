@@ -908,6 +908,9 @@ export interface CreateEmailTemplateRequest {
   body_html: string;
 }
 
+// Mirrors the backend `EmailLogSummary`. `body_html` is deliberately absent:
+// the welcome letter's body contains the account's initial password, and
+// nothing in the app renders a stored body.
 export interface EmailLog {
   id: string;
   company_id: string;
@@ -917,11 +920,11 @@ export interface EmailLog {
   recipient_email: string;
   recipient_name: string | null;
   subject: string;
-  body_html: string;
   status: 'pending' | 'sent' | 'failed';
   error_message: string | null;
   sent_at: string | null;
   created_at: string;
+  created_by: string | null;
 }
 
 export interface SendLetterRequest {

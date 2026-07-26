@@ -41,19 +41,20 @@ import {
   type LeaveRequestWithEmployee,
   type OvertimeWithEmployee,
 } from '@/api/approvals';
-import { getEmployees } from '@/api/employees';
 import { getLeaveTypes, uploadFile } from '@/api/portal';
+import { EmployeePicker } from '@/components/employees/EmployeePicker';
 import { Modal } from '@/components/ui/Modal';
 import { DataTable, type Column } from '@/components/ui/DataTable';
 import { TimeSelector } from '@/components/ui/TimeSelector';
 import { useAuth } from '@/context/AuthContext';
+import { formatEmployeeLabel } from '@/lib/employeeFields';
 import { formatDate, getErrorMessage, todayLocalDate } from '@/lib/utils';
+import { OT_DEFAULT_END, OT_DEFAULT_HOURS, OT_DEFAULT_START, calculateOvertimeHours } from '@/lib/overtime';
 import type {
   AdminCreateClaimRequest,
   AdminCreateLeaveRequest,
   AdminCreateOvertimeRequest,
   CreateOvertimeRequest,
-  Employee,
   LeaveType,
   UpdateClaimRequest,
   UpdateLeaveRequest,
@@ -220,7 +221,6 @@ export function Approvals() {
   const [showClaimModal, setShowClaimModal] = useState(false);
   const [showOvertimeModal, setShowOvertimeModal] = useState(false);
   const queryClient = useQueryClient();
-  const activeCompanyId = user?.company_id ?? null;
 
   // Maker-checker. The server is the gate — `approve_claim` / `approve_leave` /
   // `approve_overtime` return 403 when the reviewer is the subject, resolving
@@ -232,22 +232,11 @@ export function Approvals() {
     user?.employee_id === employeeId &&
     !(user?.roles ?? []).includes('super_admin');
 
-  const { data: employeeResp } = useQuery({
-    queryKey: ['approval-employees', activeCompanyId],
-    queryFn: () => getEmployees({ is_active: true, page: 1, per_page: 100 }),
-    enabled: Boolean(activeCompanyId),
-  });
-
   const { data: leaveTypes = [] } = useQuery({
     queryKey: ['approval-leave-types'],
     queryFn: getLeaveTypes,
     enabled: tab === 'leave' || showLeaveModal,
   });
-
-  const employees = useMemo(
-    () => (employeeResp?.data ?? []).filter((employee) => employee.company_id === activeCompanyId),
-    [activeCompanyId, employeeResp?.data],
-  );
 
   const leaveQuery = useQuery({
     queryKey: ['approvals-leave', statusFilter],
@@ -996,7 +985,6 @@ export function Approvals() {
           setLeaveEditor(null);
         }}
         item={leaveEditor}
-        employees={employees}
         leaveTypes={leaveTypes}
         onSaved={() => {
           setShowLeaveModal(false);
@@ -1012,7 +1000,6 @@ export function Approvals() {
           setClaimEditor(null);
         }}
         item={claimEditor}
-        employees={employees}
         onSaved={() => {
           setShowClaimModal(false);
           setClaimEditor(null);
@@ -1027,7 +1014,6 @@ export function Approvals() {
           setOvertimeEditor(null);
         }}
         item={overtimeEditor}
-        employees={employees}
         onSaved={() => {
           setShowOvertimeModal(false);
           setOvertimeEditor(null);
@@ -1042,14 +1028,12 @@ function LeaveCrudModal({
   open,
   onClose,
   item,
-  employees,
   leaveTypes,
   onSaved,
 }: {
   open: boolean;
   onClose: () => void;
   item: LeaveRequestWithEmployee | null;
-  employees: Employee[];
   leaveTypes: LeaveType[];
   onSaved: () => void;
 }) {
@@ -1066,9 +1050,8 @@ function LeaveCrudModal({
   });
   const [error, setError] = useState('');
   const [uploading, setUploading] = useState(false);
-  const selectedEmployee = employees.find((employee) => employee.id === form.employee_id);
   const modalTitle = item
-    ? `Edit Leave Request${selectedEmployee ? ` - ${selectedEmployee.full_name}` : ''}`
+    ? `Edit Leave Request${item.employee_name ? ` - ${item.employee_name}` : ''}`
     : 'Create Leave Request';
 
   useEffect(() => {
@@ -1091,8 +1074,10 @@ function LeaveCrudModal({
       return;
     }
 
+    // No default employee: whoever sorts first is exactly the wrong person to
+    // file a request against, and the submit guard already demands a choice.
     setForm({
-      employee_id: employees[0]?.id || '',
+      employee_id: '',
       leave_type_id: leaveTypes[0]?.id || '',
       start_date: '',
       end_date: '',
@@ -1102,7 +1087,7 @@ function LeaveCrudModal({
       attachment_name: '',
     });
     setError('');
-  }, [employees, item, leaveTypes, open]);
+  }, [item, leaveTypes, open]);
 
   const createMutation = useMutation({
     mutationFn: createLeaveRequest,
@@ -1187,18 +1172,14 @@ function LeaveCrudModal({
 
         <div>
           <label className="form-label">Employee *</label>
-          <select
+          {/* Keyed on the record so reopening the modal for a different request
+              inside the exit animation cannot leave the previous name on screen. */}
+          <EmployeePicker
+            key={item?.id ?? 'new'}
             value={form.employee_id}
-            onChange={(event) => setForm((prev) => ({ ...prev, employee_id: event.target.value }))}
-            className="form-input"
-          >
-            <option value="">Select employee</option>
-            {employees.map((employee) => (
-              <option key={employee.id} value={employee.id}>
-                {employee.full_name} ({employee.employee_number})
-              </option>
-            ))}
-          </select>
+            onChange={(id) => setForm((prev) => ({ ...prev, employee_id: id }))}
+            initialLabel={item ? formatEmployeeLabel(item.employee_name, item.employee_number) : undefined}
+          />
         </div>
 
         <div>
@@ -1301,13 +1282,11 @@ function ClaimCrudModal({
   open,
   onClose,
   item,
-  employees,
   onSaved,
 }: {
   open: boolean;
   onClose: () => void;
   item: ClaimWithEmployee | null;
-  employees: Employee[];
   onSaved: () => void;
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1324,9 +1303,8 @@ function ClaimCrudModal({
   });
   const [error, setError] = useState('');
   const [uploading, setUploading] = useState(false);
-  const selectedEmployee = employees.find((employee) => employee.id === form.employee_id);
   const modalTitle = item
-    ? `Edit Claim${selectedEmployee ? ` - ${selectedEmployee.full_name}` : ''}`
+    ? `Edit Claim${item.employee_name ? ` - ${item.employee_name}` : ''}`
     : 'Create Claim';
 
   useEffect(() => {
@@ -1350,7 +1328,7 @@ function ClaimCrudModal({
     }
 
     setForm({
-      employee_id: employees[0]?.id || '',
+      employee_id: '',
       title: '',
       description: '',
       amount: 0,
@@ -1360,7 +1338,7 @@ function ClaimCrudModal({
       expense_date: todayLocalDate(),
     });
     setError('');
-  }, [employees, item, open]);
+  }, [item, open]);
 
   const createMutation = useMutation({
     mutationFn: createClaim,
@@ -1460,18 +1438,12 @@ function ClaimCrudModal({
 
         <div>
           <label className="form-label">Employee *</label>
-          <select
+          <EmployeePicker
+            key={item?.id ?? 'new'}
             value={form.employee_id}
-            onChange={(event) => setForm((prev) => ({ ...prev, employee_id: event.target.value }))}
-            className="form-input"
-          >
-            <option value="">Select employee</option>
-            {employees.map((employee) => (
-              <option key={employee.id} value={employee.id}>
-                {employee.full_name} ({employee.employee_number})
-              </option>
-            ))}
-          </select>
+            onChange={(id) => setForm((prev) => ({ ...prev, employee_id: id }))}
+            initialLabel={item ? formatEmployeeLabel(item.employee_name, item.employee_number) : undefined}
+          />
         </div>
 
         <div>
@@ -1570,29 +1542,26 @@ function OvertimeCrudModal({
   open,
   onClose,
   item,
-  employees,
   onSaved,
 }: {
   open: boolean;
   onClose: () => void;
   item: OvertimeWithEmployee | null;
-  employees: Employee[];
   onSaved: () => void;
 }) {
   const queryClient = useQueryClient();
   const [form, setForm] = useState<AdminCreateOvertimeRequest>({
     employee_id: '',
     ot_date: '',
-    start_time: '',
-    end_time: '',
-    hours: 0,
+    start_time: OT_DEFAULT_START,
+    end_time: OT_DEFAULT_END,
+    hours: OT_DEFAULT_HOURS,
     ot_type: 'normal',
     reason: '',
   });
   const [error, setError] = useState('');
-  const selectedEmployee = employees.find((employee) => employee.id === form.employee_id);
   const modalTitle = item
-    ? `Edit Overtime Request${selectedEmployee ? ` - ${selectedEmployee.full_name}` : ''}`
+    ? `Edit Overtime Request${item.employee_name ? ` - ${item.employee_name}` : ''}`
     : 'Create Overtime Request';
 
   useEffect(() => {
@@ -1614,17 +1583,20 @@ function OvertimeCrudModal({
       return;
     }
 
+    // The times are seeded with what the fields display. Holding '' behind a
+    // rendered 18:00 is what made Submit refuse a form that looked complete.
+    // The OT *date* stays empty on purpose: one deliberate input is required.
     setForm({
-      employee_id: employees[0]?.id || '',
+      employee_id: '',
       ot_date: '',
-      start_time: '',
-      end_time: '',
-      hours: 0,
+      start_time: OT_DEFAULT_START,
+      end_time: OT_DEFAULT_END,
+      hours: OT_DEFAULT_HOURS,
       ot_type: 'normal',
       reason: '',
     });
     setError('');
-  }, [employees, item, open]);
+  }, [item, open]);
 
   const createMutation = useMutation({
     mutationFn: createOvertimeRequest,
@@ -1651,19 +1623,10 @@ function OvertimeCrudModal({
     onError: (err: unknown) => setError(getErrorMessage(err, 'Failed to update overtime request')),
   });
 
-  const calculateHours = (start: string, end: string) => {
-    if (!start || !end) return 0;
-    const [startHour, startMinute] = start.split(':').map(Number);
-    const [endHour, endMinute] = end.split(':').map(Number);
-    let diff = (endHour * 60 + endMinute) - (startHour * 60 + startMinute);
-    if (diff <= 0) diff += 24 * 60;
-    return Math.round(diff / 30) * 0.5;
-  };
-
   const updateTime = (field: 'start_time' | 'end_time', value: string) => {
     setForm((prev) => {
       const next = { ...prev, [field]: value };
-      next.hours = calculateHours(
+      next.hours = calculateOvertimeHours(
         field === 'start_time' ? value : prev.start_time,
         field === 'end_time' ? value : prev.end_time,
       );
@@ -1672,8 +1635,12 @@ function OvertimeCrudModal({
   };
 
   const submit = () => {
-    if (!form.employee_id || !form.ot_date || !form.start_time || !form.end_time || form.hours <= 0) {
-      setError('Employee, OT date, time range, and hours are required.');
+    if (!form.employee_id || !form.ot_date) {
+      setError('Employee and OT date are required.');
+      return;
+    }
+    if (!form.start_time || !form.end_time || form.hours <= 0) {
+      setError('Start and end time must differ.');
       return;
     }
 
@@ -1722,18 +1689,12 @@ function OvertimeCrudModal({
 
         <div>
           <label className="form-label">Employee *</label>
-          <select
+          <EmployeePicker
+            key={item?.id ?? 'new'}
             value={form.employee_id}
-            onChange={(event) => setForm((prev) => ({ ...prev, employee_id: event.target.value }))}
-            className="form-input"
-          >
-            <option value="">Select employee</option>
-            {employees.map((employee) => (
-              <option key={employee.id} value={employee.id}>
-                {employee.full_name} ({employee.employee_number})
-              </option>
-            ))}
-          </select>
+            onChange={(id) => setForm((prev) => ({ ...prev, employee_id: id }))}
+            initialLabel={item ? formatEmployeeLabel(item.employee_name, item.employee_number) : undefined}
+          />
         </div>
 
         <div>
@@ -1778,12 +1739,12 @@ function OvertimeCrudModal({
         <div className="grid grid-cols-2 gap-4">
           <TimeSelector
             label="Start Time *"
-            value={form.start_time || '18:00'}
+            value={form.start_time}
             onChange={(value) => updateTime('start_time', value)}
           />
           <TimeSelector
             label="End Time *"
-            value={form.end_time || '19:00'}
+            value={form.end_time}
             onChange={(value) => updateTime('end_time', value)}
           />
         </div>

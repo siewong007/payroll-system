@@ -13,14 +13,15 @@ use crate::services::statutory_tables::StatutoryTables;
 /// This is intentionally gated by independently verified rule metadata. It is
 /// not an assertion of LHDN conformance; see `docs/database.md`.
 ///
-/// 1. Annualise monthly remuneration: Y = (monthly_gross × remaining_months) + YTD_gross
+/// 1. Annualise normal remuneration: Y = (monthly_normal_remuneration × remaining_months) + YTD_gross
 /// 2. Compute annual reliefs (individual RM9,000, EPF up to RM4,000, SOCSO RM350, etc.)
 /// 3. Chargeable income = Y - total_reliefs
 /// 4. Apply tax brackets to get annual tax
 /// 5. Apply rebate (RM400 if chargeable income ≤ RM35,000)
-/// 6. Monthly PCB = (annual_tax - YTD_pcb_paid) / remaining_months
-/// 7. Deduct zakat (ringgit-for-ringgit)
+/// 6. Deduct zakat (ringgit-for-ringgit)
+/// 7. Monthly PCB = (annual_tax_payable - YTD_pcb_paid) / remaining_months
 /// 8. Round up to nearest RM
+/// 9. Add the Schedule 2 differential for any additional remuneration
 pub async fn calculate_pcb(
     pool: &PgPool,
     input: &PcbInput,
@@ -43,34 +44,28 @@ pub(crate) fn calculate_pcb_with(tables: &StatutoryTables, input: &PcbInput) -> 
     let remaining_months = 12 - current_month + 1; // including current month
 
     // Step 1: Annualise income
-    // Total annual income = YTD gross + (current month gross × remaining months)
-    let annual_income = input.ytd_gross + (input.monthly_gross * remaining_months as i64);
+    // Total annual income = YTD gross + (this month's NORMAL remuneration ×
+    // remaining months). Additional remuneration is excluded here by contract —
+    // multiplying a one-off January bonus by the twelve remaining months
+    // inflated projected annual income, and with it every month's deduction.
+    // It comes back in at step 9 as the Schedule 2 differential.
+    debug_assert!(
+        input.bonus_amount >= 0,
+        "additional remuneration is never negative"
+    );
+    let annual_income =
+        input.ytd_gross + (input.monthly_normal_remuneration * remaining_months as i64);
 
     // Step 2: Calculate annual reliefs
     let reliefs = calculate_reliefs(tables, input, remaining_months, tax_year)?;
 
-    // Step 3: Chargeable income
-    let chargeable_income = (annual_income - reliefs).max(0);
-
-    // Step 4: Calculate annual tax from brackets
-    let annual_tax = calculate_tax_from_brackets(tables, chargeable_income, tax_year)?;
-
-    // Step 5: Apply tax rebate
-    let rebate = if chargeable_income <= 3500000 {
-        // RM35,000 = 3500000 sen
-        get_rebate(tables, tax_year)?
-    } else {
-        0
-    };
-    let annual_tax_after_rebate = (annual_tax - rebate).max(0);
-
-    // Step 6: Deduct zakat (ringgit-for-ringgit offset from tax)
+    // Steps 3-6: chargeable income, brackets, rebate, zakat.
     let total_zakat = input.ytd_zakat + (input.zakat_monthly * remaining_months as i64);
-    let annual_tax_after_zakat = (annual_tax_after_rebate - total_zakat).max(0);
+    let annual_tax = annual_tax_payable(tables, annual_income, reliefs, total_zakat)?;
 
     // Step 7: Monthly PCB = (annual_tax - YTD_pcb) / remaining_months
     let monthly_pcb = if remaining_months > 0 {
-        (annual_tax_after_zakat - input.ytd_pcb) / remaining_months as i64
+        (annual_tax - input.ytd_pcb) / remaining_months as i64
     } else {
         0
     };
@@ -78,20 +73,60 @@ pub(crate) fn calculate_pcb_with(tables: &StatutoryTables, input: &PcbInput) -> 
     // Step 8: Round up to nearest RM (100 sen)
     let pcb = round_up_to_ringgit(monthly_pcb.max(0));
 
-    // If bonus month, add Schedule 2 computation
-    if input.is_bonus_month && input.bonus_amount > 0 {
+    // Step 9: additional remuneration, by the Schedule 2 differential.
+    if input.bonus_amount > 0 {
         let bonus_pcb = calculate_bonus_pcb(
             tables,
-            input,
+            input.bonus_amount,
             annual_income,
             reliefs,
-            chargeable_income,
-            tax_year,
+            total_zakat,
+            annual_tax,
         )?;
         Ok(pcb + bonus_pcb)
     } else {
         Ok(pcb)
     }
+}
+
+/// Chargeable income at or below which the individual rebate applies (RM35,000).
+const REBATE_CHARGEABLE_CEILING_SEN: i64 = 3_500_000;
+
+/// The tax actually payable on an annualised income: brackets, then the
+/// individual rebate, then zakat. Neither offset can drive the figure negative.
+///
+/// Both the normal-remuneration leg and the Schedule 2 differential resolve
+/// through here, and they have to. The differential is *the increase in the
+/// year's tax* caused by the additional remuneration; taking one side after the
+/// rebate and the other straight off the brackets does not measure that. It went
+/// wrong in both directions. An employee whose entire annual tax sits inside the
+/// RM400 rebate owes nothing, yet a RM1,000 bonus still attracted a raw-bracket
+/// differential — a deduction from someone with no liability at all. At the
+/// other edge, where the additional remuneration is itself what pushes
+/// chargeable income past the rebate ceiling, the rebate was granted to the
+/// normal leg anyway and the year under-collected by RM400.
+///
+/// Differencing two figures computed the same way makes the year's total MTD —
+/// the remaining months' deductions plus the differential — come to the year's
+/// tax.
+fn annual_tax_payable(
+    tables: &StatutoryTables,
+    annual_income: i64,
+    reliefs: i64,
+    total_zakat: i64,
+) -> AppResult<i64> {
+    let tax_year = tables.tax_year;
+    let chargeable_income = (annual_income - reliefs).max(0);
+    let tax = calculate_tax_from_brackets(tables, chargeable_income, tax_year)?;
+
+    let rebate = if chargeable_income <= REBATE_CHARGEABLE_CEILING_SEN {
+        get_rebate(tables, tax_year)?
+    } else {
+        0
+    };
+
+    // Zakat offsets tax ringgit-for-ringgit.
+    Ok(((tax - rebate).max(0) - total_zakat).max(0))
 }
 
 /// Calculate annual reliefs
@@ -176,23 +211,30 @@ fn calculate_tax_from_brackets(
 
 /// Calculate bonus PCB using Schedule 2.
 ///
-/// Schedule 2: Tax on (annual_income + bonus) minus tax on (annual_income without bonus)
+/// Schedule 2: tax payable on (annual_income + bonus) minus tax payable on
+/// (annual_income without bonus) — both *payable* figures, so the rebate and
+/// zakat are applied to each side rather than to only one of them. See
+/// `annual_tax_payable`.
+///
+/// `annual_income_without_bonus` MUST exclude the current month's additional
+/// remuneration — the name was a lie while the caller annualised a gross that
+/// already contained the bonus, so the differential was added on top of an
+/// amount that had been counted twelve times. It still contains *prior* months'
+/// bonuses through `ytd_gross`, which is correct: Schedule 2 works off YTD
+/// actuals.
 fn calculate_bonus_pcb(
     tables: &StatutoryTables,
-    input: &PcbInput,
+    bonus_amount: i64,
     annual_income_without_bonus: i64,
     reliefs: i64,
-    _chargeable_without_bonus: i64,
-    tax_year: i32,
+    total_zakat: i64,
+    tax_without_bonus: i64,
 ) -> AppResult<i64> {
-    let annual_income_with_bonus = annual_income_without_bonus + input.bonus_amount;
-    let chargeable_with_bonus = (annual_income_with_bonus - reliefs).max(0);
-
-    let tax_with_bonus = calculate_tax_from_brackets(tables, chargeable_with_bonus, tax_year)?;
-    let tax_without_bonus = calculate_tax_from_brackets(
+    let tax_with_bonus = annual_tax_payable(
         tables,
-        (annual_income_without_bonus - reliefs).max(0),
-        tax_year,
+        annual_income_without_bonus + bonus_amount,
+        reliefs,
+        total_zakat,
     )?;
 
     let bonus_tax = (tax_with_bonus - tax_without_bonus).max(0);

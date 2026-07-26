@@ -119,6 +119,14 @@ const SummaryRow = ({ label, value, highlight }: { label: string; value: string;
 );
 
 function PayslipDetail({ payslip, profile }: { payslip: MyPayslip; profile: Employee | undefined }) {
+  // The four named earning rows are narrow allow-lists over the entry item_type,
+  // but Total Earnings is gross — every earning that reached the payslip. An
+  // entry staged under any other item type landed in the total without a row of
+  // its own, so the listed rows did not add up to the total printed under them.
+  const otherEarnings = payslip.gross_salary - payslip.basic_salary
+    - payslip.total_allowances - payslip.total_overtime
+    - payslip.total_bonus - payslip.total_commission;
+
   const periodStart = new Date(payslip.period_start).toLocaleDateString('en-MY', { day: '2-digit', month: 'long', year: 'numeric' });
   const periodEnd = new Date(payslip.period_end).toLocaleDateString('en-MY', { day: '2-digit', month: 'long', year: 'numeric' });
   const payDate = new Date(payslip.pay_date).toLocaleDateString('en-MY', { day: '2-digit', month: 'long', year: 'numeric' });
@@ -172,6 +180,7 @@ function PayslipDetail({ payslip, profile }: { payslip: MyPayslip; profile: Empl
         {payslip.total_overtime > 0 && <Row label="Overtime (TOTAL)" amount={payslip.total_overtime} />}
         {payslip.total_commission > 0 && <Row label="Commissions (TOTAL)" amount={payslip.total_commission} />}
         {payslip.total_bonus > 0 && <Row label="Bonus (TOTAL)" amount={payslip.total_bonus} />}
+        {otherEarnings !== 0 && <Row label="Other Earnings (TOTAL)" amount={otherEarnings} negative={otherEarnings < 0} />}
         <Row label="Total Earnings" amount={payslip.gross_salary} bold />
 
         {payslip.total_claims > 0 && (
@@ -189,6 +198,11 @@ function PayslipDetail({ payslip, profile }: { payslip: MyPayslip; profile: Empl
         {payslip.pcb_amount > 0 && <Row label="PCB MTD" amount={payslip.pcb_amount} negative />}
         {payslip.zakat_amount > 0 && <Row label="Zakat" amount={payslip.zakat_amount} negative />}
         {payslip.ptptn_amount > 0 && <Row label="PTPTN" amount={payslip.ptptn_amount} negative />}
+        {/* Already on the wire and already inside Total Deductions; omitting the
+            rows just made the deduction side disagree with its own total too. */}
+        {payslip.tabung_haji_amount > 0 && <Row label="Tabung Haji" amount={payslip.tabung_haji_amount} negative />}
+        {payslip.total_loan_deductions > 0 && <Row label="Loan Deductions" amount={payslip.total_loan_deductions} negative />}
+        {payslip.total_other_deductions > 0 && <Row label="Other Deductions" amount={payslip.total_other_deductions} negative />}
         {payslip.unpaid_leave_deduction > 0 && <Row label="Unpaid Leave" amount={payslip.unpaid_leave_deduction} negative />}
         <Row label="Total Deductions" amount={payslip.total_deductions} bold negative />
 

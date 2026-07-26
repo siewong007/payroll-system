@@ -1,4 +1,4 @@
-use sqlx::PgPool;
+use sqlx::{Executor, PgPool, Postgres};
 use uuid::Uuid;
 
 use crate::core::auth::{create_mfa_pending_token, create_token};
@@ -41,10 +41,16 @@ pub async fn hash_password(password: &str) -> AppResult<String> {
 
 /// True if the user's linked employee (if any) is still active. Users with no linked
 /// employee are always considered active.
-async fn linked_employee_active(pool: &PgPool, employee_id: Option<Uuid>) -> AppResult<bool> {
+///
+/// Generic over the executor so `refresh_session` can run it against its own
+/// transaction and revoke the token family in the same unit of work.
+async fn linked_employee_active(
+    executor: impl Executor<'_, Database = Postgres>,
+    employee_id: Option<Uuid>,
+) -> AppResult<bool> {
     match employee_id {
         Some(eid) => Ok(matches!(
-            employees::get_active_status(pool, eid).await?,
+            employees::get_active_status(executor, eid).await?,
             Some(true)
         )),
         None => Ok(true),
@@ -69,11 +75,9 @@ pub async fn login(
         return Err(AppError::Unauthorized("Invalid email or password".into()));
     }
 
-    // Check if linked employee has been deleted
-    if !linked_employee_active(pool, user.employee_id).await? {
-        return Err(AppError::Unauthorized(EMPLOYEE_DELETED_MSG.into()));
-    }
-
+    // The terminated-employee check lives in `get_active_user`, which
+    // `complete_login` loads through — one gate covering every minting path
+    // rather than one copy per caller.
     complete_login(pool, user.id, jwt_secret, jwt_expiry, user_agent).await
 }
 
@@ -141,33 +145,51 @@ pub async fn refresh_session(
     jwt_secret: &str,
     jwt_expiry: i64,
 ) -> AppResult<LoginResponseWithRefresh> {
-    let (user_id, session_id) = session_service::verify_refresh_token(pool, raw_token).await?;
+    // The retire, the checks and the successor share one transaction. As three
+    // autocommit statements, two concurrent refreshes both passed the read and
+    // both inserted, leaving a second live credential on the session that
+    // `/auth/sessions` can neither show nor revoke.
+    let mut tx = pool.begin().await?;
 
-    let user = get_active_user(pool, user_id).await?;
+    let Some(token) = session_service::consume_for_rotation(&mut tx, raw_token).await? else {
+        // Nothing was written; roll back before classifying, because the
+        // classification may itself need to revoke the family.
+        tx.rollback().await?;
+        return Err(session_service::classify_rotation_miss(pool, raw_token).await);
+    };
 
-    // Check if linked employee has been deleted
-    if !linked_employee_active(pool, user.employee_id).await? {
-        session_service::revoke_refresh_token(pool, raw_token).await?;
+    let user = users::get_active_by_id(&mut *tx, token.user_id)
+        .await?
+        .ok_or_else(|| AppError::Unauthorized("User not found or inactive".into()))?;
+
+    // Checked inline rather than via `get_active_user` so a terminated employee
+    // loses the entire token family, not just the one token they presented —
+    // the old code revoked that single token and left the rest of the family
+    // able to keep refreshing.
+    if !linked_employee_active(&mut *tx, user.employee_id).await? {
+        user_sessions::revoke(&mut *tx, user.id, token.session_id).await?;
+        refresh_tokens::revoke_for_session(&mut *tx, token.session_id).await?;
+        // Committed, not rolled back: the revocation is the point of this path.
+        tx.commit().await?;
         return Err(AppError::Unauthorized(EMPLOYEE_DELETED_MSG.into()));
     }
 
-    // Revoke old refresh token and issue new one (rotation)
-    let new_refresh =
-        session_service::rotate_refresh_token(pool, user.id, session_id, raw_token).await?;
+    let new_refresh = session_service::issue_rotated(&mut tx, user.id, token.session_id).await?;
+    tx.commit().await?;
 
-    let token = create_token(
+    let jwt = create_token(
         user.id,
         &user.email,
         &user.roles,
         user.company_id,
         user.employee_id,
-        session_id,
+        token.session_id,
         jwt_secret,
         jwt_expiry,
     )?;
 
     Ok(LoginResponseWithRefresh {
-        token,
+        token: jwt,
         refresh_token: new_refresh,
         user: UserResponse::from(user),
     })
@@ -181,12 +203,32 @@ pub async fn get_user_by_id(pool: &PgPool, user_id: Uuid) -> AppResult<User> {
         .ok_or_else(|| AppError::Internal("User not found".into()))
 }
 
-/// Fetch an active user by id, or `Unauthorized` if missing/inactive. Shared by the
-/// refresh and passkey login flows.
+/// Fetch a user who is allowed to *hold a session*: the account must be active
+/// and, if it is a portal account, its linked employee must still be active too.
+///
+/// The employee gate lives in the loader rather than in `complete_login`
+/// because `complete_login` is not the only minter. `handlers/totp.rs`
+/// completes the second half of a 2FA login by calling this function and
+/// `issue_session` directly, so a gate one level up would still let a
+/// terminated employee holding a valid `mfa_token` mint a full session.
+/// Password, passkey and Google all reach it through `complete_login`;
+/// `refresh_session` keeps its own copy inside its transaction so it can revoke
+/// the whole token family rather than merely refuse.
+///
+/// Deliberately keyed on `employees.is_active` and not on the employment
+/// window: a resigned employee still needs to collect their final payslip and
+/// EA form, so locking out on `date_resigned` is a product decision, not a
+/// security fix.
 pub async fn get_active_user(pool: &PgPool, user_id: Uuid) -> AppResult<User> {
-    users::get_active_by_id(pool, user_id)
+    let user = users::get_active_by_id(pool, user_id)
         .await?
-        .ok_or_else(|| AppError::Unauthorized("User not found or inactive".into()))
+        .ok_or_else(|| AppError::Unauthorized("User not found or inactive".into()))?;
+
+    if !linked_employee_active(pool, user.employee_id).await? {
+        return Err(AppError::Unauthorized(EMPLOYEE_DELETED_MSG.into()));
+    }
+
+    Ok(user)
 }
 
 pub async fn change_password(

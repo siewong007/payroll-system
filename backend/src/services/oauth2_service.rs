@@ -23,9 +23,9 @@ fn hash_token(token: &str) -> String {
     result.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
-/// Generate a cryptographically random PKCE code verifier (43-128 chars, base64url).
-pub fn generate_code_verifier() -> String {
-    // Use 32 random bytes → 43 base64url chars
+/// 32 random bytes rendered as 43 base64url chars — the shape both the PKCE
+/// code verifier and the OAuth2 state binder need.
+fn random_secret() -> String {
     let bytes: [u8; 32] = {
         let u1 = Uuid::new_v4();
         let u2 = Uuid::new_v4();
@@ -35,6 +35,28 @@ pub fn generate_code_verifier() -> String {
         buf
     };
     base64url_encode(&bytes)
+}
+
+/// Generate a cryptographically random PKCE code verifier (43-128 chars, base64url).
+pub fn generate_code_verifier() -> String {
+    random_secret()
+}
+
+/// Generate the secret that ties an authorization request to one browser. It is
+/// set as an httpOnly cookie at `/authorize` and never appears in a URL.
+pub fn generate_state_binder() -> String {
+    random_secret()
+}
+
+/// The `state` value to publish for a binder.
+///
+/// `state` travels in the authorization URL, in Google's redirect, in server
+/// access logs and in `Referer`; treating it as the whole secret is what made
+/// the callback replayable in any browser. Publishing sha256(binder) makes the
+/// wire value a *commitment*: it proves nothing on its own, and the callback is
+/// only accepted from a browser that can still produce the binder itself.
+pub fn state_for_binder(binder: &str) -> String {
+    hash_token(binder)
 }
 
 /// Compute S256 code challenge from a code verifier.
@@ -93,10 +115,33 @@ pub async fn store_oauth2_state(pool: &PgPool, state: &str, code_verifier: &str)
 
 /// Consume and validate an OAuth2 state, returning the code verifier.
 /// The state is deleted after retrieval (single-use).
-pub async fn consume_oauth2_state(pool: &PgPool, state: &str) -> AppResult<String> {
-    oauth2_states::consume(pool, state).await?.ok_or_else(|| {
+///
+/// `binder` is the value of the httpOnly cookie set at `/authorize`. It must
+/// hash to `state`, which is what makes the callback usable only by the browser
+/// that started the flow: without it, anyone who could observe or mint a state
+/// could load the callback in a victim's browser and have the victim's session
+/// replaced by the attacker's account.
+pub async fn consume_oauth2_state(
+    pool: &PgPool,
+    state: &str,
+    binder: Option<&str>,
+) -> AppResult<String> {
+    let invalid = || {
         AppError::BadRequest("Invalid or expired OAuth2 state. Please try signing in again.".into())
-    })
+    };
+
+    // Checked before the row is touched: a probe carrying a guessed state must
+    // not burn the legitimate user's single-use verifier as a side effect.
+    if !binder
+        .map(state_for_binder)
+        .is_some_and(|expected| expected == state)
+    {
+        return Err(invalid());
+    }
+
+    oauth2_states::consume(pool, state)
+        .await?
+        .ok_or_else(invalid)
 }
 
 /// Build the Google OAuth2 authorization URL with PKCE.

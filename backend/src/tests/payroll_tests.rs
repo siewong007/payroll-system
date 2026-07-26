@@ -1,6 +1,7 @@
 use chrono::NaiveDate;
 
-use crate::services::payroll_engine;
+use crate::services::pdf_helpers::unclassified_earnings;
+use crate::services::{payroll_engine, payroll_service};
 use crate::tests::support::{
     seed_company, seed_employee, seed_payroll_group, seed_user, skip_if_no_db,
 };
@@ -1165,5 +1166,696 @@ async fn preview_warns_about_unrated_overtime() {
         preview.can_process,
         "unrated hours are already excluded from pay, so this is advisory: {:?}",
         preview.blocking
+    );
+}
+
+// ─── Recurring allowance / deduction windows ───
+
+/// Seed one recurring allowance or deduction with an explicit effective window.
+#[allow(clippy::too_many_arguments)]
+async fn seed_recurring_line(
+    pool: &sqlx::PgPool,
+    company_id: uuid::Uuid,
+    employee_id: uuid::Uuid,
+    category: &str,
+    name: &str,
+    amount: i64,
+    effective_from: NaiveDate,
+    effective_to: Option<NaiveDate>,
+) {
+    sqlx::query(
+        r#"INSERT INTO employee_allowances
+              (employee_id, company_id, category, name, amount, is_taxable,
+               is_recurring, effective_from, effective_to, is_active)
+           VALUES ($1, $2, $3, $4, $5, TRUE, TRUE, $6, $7, TRUE)"#,
+    )
+    .bind(employee_id)
+    .bind(company_id)
+    .bind(category)
+    .bind(name)
+    .bind(amount)
+    .bind(effective_from)
+    .bind(effective_to)
+    .execute(pool)
+    .await
+    .expect("seed recurring line");
+}
+
+/// A leaver's allowance, correctly ended on their last day, is prorated rather
+/// than dropped.
+///
+/// Selection used to be a point test at the period end, so `effective_to` on the
+/// 15th failed `effective_to >= period_end` and the allowance paid RM0 while the
+/// basic was prorated to 15/31. The allowance reaches gross, so every statutory
+/// contribution was understated with it.
+#[tokio::test]
+async fn leaver_allowance_ending_mid_month_is_prorated_not_dropped() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+
+    let company_id = seed_company(&pool).await;
+    let group_id = seed_payroll_group(&pool, company_id).await;
+    let employee_id = seed_employee(&pool, company_id, Some(group_id), 500_000).await;
+    let user_id = seed_user(&pool, company_id, "payroll_admin").await;
+
+    let last_day = NaiveDate::from_ymd_opt(2024, 7, 15).unwrap();
+    sqlx::query("UPDATE employees SET date_resigned = $2 WHERE id = $1")
+        .bind(employee_id)
+        .bind(last_day)
+        .execute(&pool)
+        .await
+        .expect("set date_resigned");
+
+    // RM310 a month, so 15 of 31 days is exactly RM150 with no rounding to
+    // argue about.
+    seed_recurring_line(
+        &pool,
+        company_id,
+        employee_id,
+        "earning",
+        "Travel allowance",
+        31_000,
+        NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(),
+        Some(last_day),
+    )
+    .await;
+
+    let run = payroll_engine::process_payroll(
+        &pool,
+        company_id,
+        group_id,
+        2024,
+        7,
+        NaiveDate::from_ymd_opt(2024, 8, 5).unwrap(),
+        user_id,
+        None,
+        None,
+    )
+    .await
+    .expect("process_payroll");
+
+    let (basic, total_allowances, gross): (i64, i64, i64) = sqlx::query_as(
+        r#"SELECT basic_salary, total_allowances, gross_salary
+           FROM payroll_items WHERE payroll_run_id = $1 AND employee_id = $2"#,
+    )
+    .bind(run.id)
+    .bind(employee_id)
+    .fetch_one(&pool)
+    .await
+    .expect("item should exist");
+
+    assert_eq!(
+        total_allowances, 15_000,
+        "15 of 31 days of a RM310 allowance, not RM0"
+    );
+    assert_eq!(basic, 241_935, "500_000 x 15 / 31");
+    assert_eq!(
+        gross,
+        basic + 15_000,
+        "the prorated allowance moves the statutory bases with it"
+    );
+
+    let description: String = sqlx::query_scalar(
+        r#"SELECT pid.description FROM payroll_item_details pid
+           JOIN payroll_items pi ON pi.id = pid.payroll_item_id
+           WHERE pi.payroll_run_id = $1 AND pi.employee_id = $2
+             AND pid.description LIKE 'Travel allowance%'"#,
+    )
+    .bind(run.id)
+    .bind(employee_id)
+    .fetch_one(&pool)
+    .await
+    .expect("the allowance line is stored");
+    assert!(
+        description.contains("prorated") && description.contains("15 of 31"),
+        "the stored line must say why it is not the configured amount: {description}"
+    );
+}
+
+/// An allowance granted part-way through the month is not paid for the whole of
+/// it. The mirror of the leaver case: `effective_from <= period_end` passed, so
+/// a grant dated the 25th paid all 31 days.
+#[tokio::test]
+async fn allowance_granted_mid_month_is_not_paid_in_full() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+
+    let company_id = seed_company(&pool).await;
+    let group_id = seed_payroll_group(&pool, company_id).await;
+    let employee_id = seed_employee(&pool, company_id, Some(group_id), 500_000).await;
+    let user_id = seed_user(&pool, company_id, "payroll_admin").await;
+
+    seed_recurring_line(
+        &pool,
+        company_id,
+        employee_id,
+        "earning",
+        "Site allowance",
+        31_000,
+        NaiveDate::from_ymd_opt(2024, 7, 25).unwrap(),
+        None,
+    )
+    .await;
+
+    let run = payroll_engine::process_payroll(
+        &pool,
+        company_id,
+        group_id,
+        2024,
+        7,
+        NaiveDate::from_ymd_opt(2024, 8, 5).unwrap(),
+        user_id,
+        None,
+        None,
+    )
+    .await
+    .expect("process_payroll");
+
+    let (basic, total_allowances, is_prorated): (i64, i64, Option<bool>) = sqlx::query_as(
+        r#"SELECT basic_salary, total_allowances, is_prorated
+           FROM payroll_items WHERE payroll_run_id = $1 AND employee_id = $2"#,
+    )
+    .bind(run.id)
+    .bind(employee_id)
+    .fetch_one(&pool)
+    .await
+    .expect("item should exist");
+
+    assert_eq!(
+        total_allowances, 7_000,
+        "the 25th to the 31st is 7 of 31 days"
+    );
+    assert_eq!(
+        basic, 500_000,
+        "the employee themselves worked the full month"
+    );
+    assert_eq!(
+        is_prorated,
+        Some(false),
+        "`is_prorated` describes the employment window, not an allowance window"
+    );
+}
+
+/// A recurring *deduction* window prorates identically — it flows through the
+/// same read and the same branch, so a mid-month end used to drop the whole
+/// deduction and a mid-month start used to charge a full one.
+#[tokio::test]
+async fn recurring_deduction_window_prorates_the_same_way() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+
+    let company_id = seed_company(&pool).await;
+    let group_id = seed_payroll_group(&pool, company_id).await;
+    let employee_id = seed_employee(&pool, company_id, Some(group_id), 500_000).await;
+    let user_id = seed_user(&pool, company_id, "payroll_admin").await;
+
+    seed_recurring_line(
+        &pool,
+        company_id,
+        employee_id,
+        "deduction",
+        "Staff loan",
+        31_000,
+        NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(),
+        Some(NaiveDate::from_ymd_opt(2024, 7, 15).unwrap()),
+    )
+    .await;
+
+    let run = payroll_engine::process_payroll(
+        &pool,
+        company_id,
+        group_id,
+        2024,
+        7,
+        NaiveDate::from_ymd_opt(2024, 8, 5).unwrap(),
+        user_id,
+        None,
+        None,
+    )
+    .await
+    .expect("process_payroll");
+
+    let other_deductions: i64 = sqlx::query_scalar(
+        r#"SELECT total_other_deductions FROM payroll_items
+           WHERE payroll_run_id = $1 AND employee_id = $2"#,
+    )
+    .bind(run.id)
+    .bind(employee_id)
+    .fetch_one(&pool)
+    .await
+    .expect("item should exist");
+
+    assert_eq!(
+        other_deductions, 15_000,
+        "the loan is charged for the 15 days it was in force, not 0 and not 31"
+    );
+}
+
+/// An earning staged under an `item_type` outside the four printed allow-lists
+/// still reconciles: the stored breakdown carries it by name, and the residual
+/// the EA form prints closes the same gap for a document that cannot.
+///
+/// This is the reported scenario — items 1..5 summing to less than the total
+/// printed above them on a statutory form.
+#[tokio::test]
+async fn an_unclassified_earning_reconciles_in_the_breakdown_and_as_a_residual() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+
+    let company_id = seed_company(&pool).await;
+    let group_id = seed_payroll_group(&pool, company_id).await;
+    let employee_id = seed_employee(&pool, company_id, Some(group_id), 300_000).await;
+    let user_id = seed_user(&pool, company_id, "payroll_admin").await;
+
+    // Exactly what the payroll-entry UI writes for its "Other Earning" option.
+    sqlx::query(
+        r#"INSERT INTO payroll_entries
+              (employee_id, company_id, period_year, period_month, category,
+               item_type, description, amount, is_processed)
+           VALUES ($1, $2, 2024, 3, 'earning', 'manual_adjustment',
+                   'Retention bonus', 50_000, FALSE)"#,
+    )
+    .bind(employee_id)
+    .bind(company_id)
+    .execute(&pool)
+    .await
+    .expect("seed unclassified earning");
+
+    let run = payroll_engine::process_payroll(
+        &pool,
+        company_id,
+        group_id,
+        2024,
+        3,
+        NaiveDate::from_ymd_opt(2024, 4, 5).unwrap(),
+        user_id,
+        None,
+        None,
+    )
+    .await
+    .expect("process_payroll");
+
+    let (basic, allowances, overtime, bonus, commission, gross): (i64, i64, i64, i64, i64, i64) =
+        sqlx::query_as(
+            r#"SELECT basic_salary, total_allowances, total_overtime,
+                      total_bonus, total_commission, gross_salary
+               FROM payroll_items WHERE payroll_run_id = $1 AND employee_id = $2"#,
+        )
+        .bind(run.id)
+        .bind(employee_id)
+        .fetch_one(&pool)
+        .await
+        .expect("item should exist");
+
+    assert_eq!(gross, 350_000, "the staged earning reached gross");
+    assert_eq!(
+        unclassified_earnings(gross, basic, allowances, overtime, bonus, commission),
+        50_000,
+        "and none of the five named categories accounts for it"
+    );
+
+    // The payslip PDF renders from these lines, so the same money is named
+    // rather than left as a gap between the rows and the total.
+    let lines: Vec<(String, String, i64)> = sqlx::query_as(
+        r#"SELECT pid.category, pid.description, pid.amount
+           FROM payroll_item_details pid
+           JOIN payroll_items pi ON pi.id = pid.payroll_item_id
+           WHERE pi.payroll_run_id = $1 AND pi.employee_id = $2"#,
+    )
+    .bind(run.id)
+    .bind(employee_id)
+    .fetch_all(&pool)
+    .await
+    .expect("breakdown lines");
+
+    let earnings: i64 = lines
+        .iter()
+        .filter(|(category, ..)| category == "earning")
+        .map(|(.., amount)| amount)
+        .sum();
+    assert_eq!(earnings, gross, "the printed rows must add up to the total");
+    assert!(
+        lines
+            .iter()
+            .any(|(_, description, amount)| description == "Retention bonus" && *amount == 50_000),
+        "the employee sees the real description, not an anonymous residual: {lines:?}"
+    );
+}
+
+// ─── PCB edits ───
+
+/// Process a one-employee run; returns `(company_id, run_id, employee_id, actor_id)`.
+async fn processed_run_for_pcb_edit(
+    pool: &sqlx::PgPool,
+    month: i32,
+) -> (uuid::Uuid, uuid::Uuid, uuid::Uuid, uuid::Uuid) {
+    let company_id = seed_company(pool).await;
+    let group_id = seed_payroll_group(pool, company_id).await;
+    let employee_id = seed_employee(pool, company_id, Some(group_id), 500_000).await;
+    let user_id = seed_user(pool, company_id, "payroll_admin").await;
+
+    let run = payroll_engine::process_payroll(
+        pool,
+        company_id,
+        group_id,
+        2024,
+        month,
+        NaiveDate::from_ymd_opt(2024, 12, 5).unwrap(),
+        user_id,
+        None,
+        None,
+    )
+    .await
+    .expect("process_payroll");
+
+    (company_id, run.id, employee_id, user_id)
+}
+
+/// `(pcb_amount, total_deductions, net_salary)` for one payslip.
+async fn pcb_figures(
+    pool: &sqlx::PgPool,
+    run_id: uuid::Uuid,
+    employee_id: uuid::Uuid,
+) -> (i64, i64, i64) {
+    sqlx::query_as(
+        r#"SELECT pcb_amount, total_deductions, net_salary FROM payroll_items
+           WHERE payroll_run_id = $1 AND employee_id = $2"#,
+    )
+    .bind(run_id)
+    .bind(employee_id)
+    .fetch_one(pool)
+    .await
+    .expect("item should exist")
+}
+
+/// `(sum of deduction lines, number of PCB lines)` in the stored breakdown.
+async fn stored_deduction_lines(
+    pool: &sqlx::PgPool,
+    run_id: uuid::Uuid,
+    employee_id: uuid::Uuid,
+) -> (i64, i64) {
+    sqlx::query_as(
+        r#"SELECT COALESCE(SUM(pid.amount), 0)::BIGINT,
+                  COUNT(*) FILTER (WHERE pid.item_type = 'pcb')
+           FROM payroll_item_details pid
+           JOIN payroll_items pi ON pi.id = pid.payroll_item_id
+           WHERE pi.payroll_run_id = $1 AND pi.employee_id = $2
+             AND pid.category = 'deduction'"#,
+    )
+    .bind(run_id)
+    .bind(employee_id)
+    .fetch_one(pool)
+    .await
+    .expect("deduction lines")
+}
+
+/// A PCB edit cannot drive the payslip's net salary below zero.
+///
+/// `compute_payslip` fails the whole run rather than create a negative net, but
+/// the edit path had only a `pcb_amount < 0` guard — an operator typing sen for
+/// ringgit wrote a negative net that survived submit, approve and pay, because
+/// the lifecycle transitions never re-validate the figures.
+#[tokio::test]
+async fn pcb_edit_cannot_drive_net_salary_negative() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+
+    let (company_id, run_id, employee_id, actor_id) = processed_run_for_pcb_edit(&pool, 1).await;
+    let (pcb_before, deductions_before, net_before) = pcb_figures(&pool, run_id, employee_id).await;
+    let run_net_before: i64 =
+        sqlx::query_scalar("SELECT total_net FROM payroll_runs WHERE id = $1")
+            .bind(run_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+    let err = payroll_service::update_item_pcb(
+        &pool,
+        company_id,
+        run_id,
+        employee_id,
+        net_before + pcb_before + 1,
+        actor_id,
+        None,
+    )
+    .await
+    .expect_err("an edit past the ceiling must be refused");
+
+    let message = format!("{err:?}");
+    assert!(
+        message.contains("negative net salary"),
+        "the error must say what is wrong, got: {message}"
+    );
+    assert!(
+        message.contains(&(net_before + pcb_before).to_string()),
+        "and quote the ceiling so the operator can act on it, got: {message}"
+    );
+
+    // The guard runs before any write, so the transaction rolls back untouched.
+    assert_eq!(
+        pcb_figures(&pool, run_id, employee_id).await,
+        (pcb_before, deductions_before, net_before)
+    );
+    let run_net_after: i64 = sqlx::query_scalar("SELECT total_net FROM payroll_runs WHERE id = $1")
+        .bind(run_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(run_net_after, run_net_before, "the run total is untouched");
+}
+
+/// The boundary itself is legal: the whole of net may go to PCB, leaving zero.
+#[tokio::test]
+async fn pcb_edit_at_the_exact_ceiling_is_allowed() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+
+    let (company_id, run_id, employee_id, actor_id) = processed_run_for_pcb_edit(&pool, 2).await;
+    let (pcb_before, _, net_before) = pcb_figures(&pool, run_id, employee_id).await;
+
+    payroll_service::update_item_pcb(
+        &pool,
+        company_id,
+        run_id,
+        employee_id,
+        net_before + pcb_before,
+        actor_id,
+        None,
+    )
+    .await
+    .expect("the exact ceiling is a legal edit");
+
+    let (pcb_after, _, net_after) = pcb_figures(&pool, run_id, employee_id).await;
+    assert_eq!(pcb_after, net_before + pcb_before);
+    assert_eq!(net_after, 0);
+}
+
+/// A PCB edit keeps the stored breakdown in step, including when the line has to
+/// be created or removed.
+///
+/// The engine drops zero-valued lines, so a payslip whose PCB was 0 has no row
+/// to update and an edit back to 0 must remove one. Leaving the table stale made
+/// the deduction lines stop summing to `total_deductions` — on the very table
+/// the payslip PDF renders from.
+#[tokio::test]
+async fn pcb_edit_keeps_the_stored_breakdown_reconciling() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+
+    let (company_id, run_id, employee_id, actor_id) = processed_run_for_pcb_edit(&pool, 3).await;
+
+    for target in [50_000_i64, 0, 30_000] {
+        payroll_service::update_item_pcb(
+            &pool,
+            company_id,
+            run_id,
+            employee_id,
+            target,
+            actor_id,
+            None,
+        )
+        .await
+        .unwrap_or_else(|e| panic!("PCB edit to {target} should succeed: {e:?}"));
+
+        let (_, total_deductions, _) = pcb_figures(&pool, run_id, employee_id).await;
+        let (line_total, pcb_lines) = stored_deduction_lines(&pool, run_id, employee_id).await;
+
+        assert_eq!(
+            line_total, total_deductions,
+            "deduction lines must still reconcile after editing PCB to {target}"
+        );
+        assert_eq!(
+            pcb_lines,
+            i64::from(target != 0),
+            "a zero PCB has no line and a non-zero PCB has exactly one, at {target}"
+        );
+    }
+}
+
+// ─── PCB base: additional remuneration ───
+
+/// RM6,000/month, with a one-off payment of one month's pay.
+///
+/// The income level is load-bearing. On the RM3,000 salary and RM1,000 payment
+/// this used to seed, the year's tax came to RM108 with the payment taxed once
+/// and RM264 with it annualised — both inside the RM400 individual rebate, so
+/// the correct deduction was zero either way and the comparison below had
+/// nothing to observe. At RM6,000 every leg's chargeable income is far above the
+/// RM35,000 rebate ceiling, so the rebate is out of the picture and the only
+/// thing separating the legs is whether the payment was annualised.
+const ADDITIONAL_REMUNERATION_SALARY: i64 = 600_000;
+const ADDITIONAL_REMUNERATION_PAYMENT: i64 = 600_000;
+
+/// Process a one-employee run, optionally staging one earning first; returns the
+/// payslip's `(gross, epf_employee, socso_employee, eis_employee, pcb)`.
+///
+/// Each call gets its own company, so every leg can use the same period — the
+/// month drives `months_worked` and therefore the annualisation, and comparing
+/// legs across different months would compare two different calculations.
+async fn run_with_staged_earning(
+    pool: &sqlx::PgPool,
+    month: i32,
+    staged: Option<(&str, i64)>,
+) -> (i64, i64, i64, i64, i64) {
+    let company_id = seed_company(pool).await;
+    let group_id = seed_payroll_group(pool, company_id).await;
+    let employee_id = seed_employee(
+        pool,
+        company_id,
+        Some(group_id),
+        ADDITIONAL_REMUNERATION_SALARY,
+    )
+    .await;
+    let user_id = seed_user(pool, company_id, "payroll_admin").await;
+
+    if let Some((item_type, amount)) = staged {
+        sqlx::query(
+            r#"INSERT INTO payroll_entries
+                  (employee_id, company_id, period_year, period_month, category,
+                   item_type, description, amount, is_processed)
+               VALUES ($1, $2, 2024, $3, 'earning', $4, 'Staged earning', $5, FALSE)"#,
+        )
+        .bind(employee_id)
+        .bind(company_id)
+        .bind(month)
+        .bind(item_type)
+        .bind(amount)
+        .execute(pool)
+        .await
+        .expect("seed staged earning");
+    }
+
+    let run = payroll_engine::process_payroll(
+        pool,
+        company_id,
+        group_id,
+        2024,
+        month,
+        NaiveDate::from_ymd_opt(2024, 12, 5).unwrap(),
+        user_id,
+        None,
+        None,
+    )
+    .await
+    .expect("process_payroll");
+
+    sqlx::query_as(
+        r#"SELECT gross_salary, epf_employee, socso_employee, eis_employee, pcb_amount
+           FROM payroll_items WHERE payroll_run_id = $1 AND employee_id = $2"#,
+    )
+    .bind(run.id)
+    .bind(employee_id)
+    .fetch_one(pool)
+    .await
+    .expect("item should exist")
+}
+
+/// Bonus and commission are wages for EPF/SOCSO/EIS but *additional
+/// remuneration* for MTD, and the engine must route them accordingly.
+///
+/// The same RM6,000 is staged three ways on a RM6,000 salary, against a fourth
+/// run that stages nothing. All three produce identical gross and identical
+/// statutory contributions, because all three are wages. Only the PCB differs,
+/// and the salary-only run is what isolates the difference: its normal
+/// remuneration is the same RM6,000 the bonus legs annualise, so subtracting it
+/// leaves exactly what each treatment charged for the payment itself —
+///
+///   * as bonus or commission: the Schedule 2 differential, the year's tax on
+///     the payment, charged in the month it is paid;
+///   * as `manual_adjustment`: normal remuneration, so the payment is multiplied
+///     by the nine remaining months and taxed as if it recurred — which is
+///     exactly what bonus and commission used to do.
+///
+/// Derived against the seed rules in `migrations/1001_data.sql` for April 2024,
+/// nine remaining months, no YTD. Reliefs are identical in all four legs (RM9,000
+/// individual, EPF at its RM3,000 cap either way, SOCSO and EIS at their schedule
+/// ceilings), so the legs differ only in the base they annualise:
+///
+///   salary only    9 × RM6,000  = RM54,000  chargeable RM41,715 → PCB RM112
+///   as bonus       same base, plus the differential on RM6,000   → PCB RM472
+///   as recurring   9 × RM12,000 = RM108,000 chargeable RM95,715 → PCB RM954
+///
+/// RM360 charged for the payment against RM842 — the annualised leg deducts more
+/// than twice as much, in a month where nothing recurs.
+#[tokio::test]
+async fn bonus_and_commission_are_taxed_as_additional_remuneration() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+
+    let month = 4;
+    let salary = ADDITIONAL_REMUNERATION_SALARY;
+    let payment = ADDITIONAL_REMUNERATION_PAYMENT;
+    let gross = salary + payment;
+
+    let salary_only = run_with_staged_earning(&pool, month, None).await;
+    let as_bonus = run_with_staged_earning(&pool, month, Some(("bonus", payment))).await;
+    let as_commission = run_with_staged_earning(&pool, month, Some(("commission", payment))).await;
+    let as_recurring =
+        run_with_staged_earning(&pool, month, Some(("manual_adjustment", payment))).await;
+
+    // Gross and every statutory contribution include the payment however it is
+    // labelled — narrowing the PCB base must not narrow the others.
+    assert_eq!(salary_only.0, salary, "the baseline run stages nothing");
+    assert_eq!(as_bonus.0, gross, "the bonus is inside gross");
+    assert_eq!(
+        (as_bonus.0, as_bonus.1, as_bonus.2, as_bonus.3),
+        (
+            as_recurring.0,
+            as_recurring.1,
+            as_recurring.2,
+            as_recurring.3
+        ),
+        "EPF, SOCSO and EIS levy on additional remuneration too"
+    );
+
+    // Commission is summed into the same base as bonus, so the two are
+    // indistinguishable. If the engine dropped either term these would diverge.
+    assert_eq!(
+        as_bonus, as_commission,
+        "bonus and commission follow the same path"
+    );
+
+    // What each treatment charged for the payment, over and above the month the
+    // employee would have had without it.
+    let charged_as_additional = as_bonus.4 - salary_only.4;
+    let charged_as_recurring = as_recurring.4 - salary_only.4;
+
+    assert!(
+        charged_as_additional > 0,
+        "additional remuneration is still taxed — the whole year's tax on it falls due in the \
+         month it is paid, got {charged_as_additional} sen"
+    );
+    assert!(
+        charged_as_additional < charged_as_recurring,
+        "annualising a one-off payment over-deducts: {charged_as_additional} sen charged as \
+         additional remuneration vs {charged_as_recurring} sen annualised"
     );
 }
