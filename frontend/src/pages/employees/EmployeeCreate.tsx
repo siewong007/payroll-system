@@ -5,7 +5,7 @@ import { ArrowLeft, UserCheck, AlertTriangle, X } from 'lucide-react';
 import { createEmployee } from '@/api/employees';
 import type { EmployeeAccountInfo } from '@/api/employees';
 import { getPayrollGroups } from '@/api/payroll';
-import { getErrorMessage } from '@/lib/utils';
+import { getErrorMessage, todayLocalDate } from '@/lib/utils';
 import type { CreateEmployeeRequest } from '@/types';
 import { useAuth } from '@/context/AuthContext';
 import { canAccessPayrollData } from '@/lib/roles';
@@ -32,7 +32,7 @@ export function EmployeeCreate() {
   const [form, setForm] = useState<CreateEmployeeRequest>({
     employee_number: '',
     full_name: '',
-    date_joined: new Date().toISOString().split('T')[0],
+    date_joined: todayLocalDate(),
     basic_salary: 0,
   });
 

@@ -330,7 +330,10 @@ pub async fn approve_overtime(
         let period_year = ot.ot_date.year();
         let period_month = ot.ot_date.month0() as i32 + 1;
 
-        let _ = payroll_entries::insert_overtime(
+        // Propagate rather than swallow: this staged row is the marker
+        // portal_service::exists_processed_overtime gates cancellation on, so a
+        // dropped insert let an employee cancel already-paid overtime.
+        payroll_entries::insert_overtime(
             pool,
             Uuid::now_v7(),
             ot.employee_id,
@@ -350,7 +353,7 @@ pub async fn approve_overtime(
             ot_rate,
             reviewer_id,
         )
-        .await;
+        .await?;
     }
 
     // Replacement leave: if OT was on a public holiday, grant 1 day replacement leave

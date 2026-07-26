@@ -17,10 +17,39 @@
   --destructive-foreground: #ffffff;
   --border: #e5e7eb;
   --input: #f3f4f6;
-  --ring: #000000;
+  --ring: #111827;
   --radius: 0.75rem;
   --success: #16a34a;
   --warning: #d97706;
+
+  /* Theme accent system — neutral by default; overridden per shell */
+  --accent-1: #111827;
+  --accent-2: #374151;
+  --accent-soft: rgba(17, 24, 39, 0.06);
+  --glow: rgba(17, 24, 39, 0.28);
+}
+
+/* ── Role themes ──────────────────────────────────────────────
+   .theme-admin  — indigo/violet "command center" (AppLayout)
+   .theme-portal — teal/emerald "self-service"    (PortalLayout)
+   Shared classes (.card, .btn-primary, .form-input, …) consume
+   the variables, so each shell is themed automatically. */
+.theme-admin {
+  --background: #eef0f8;
+  --accent-1: #6366f1;
+  --accent-2: #8b5cf6;
+  --accent-soft: rgba(99, 102, 241, 0.1);
+  --glow: rgba(99, 102, 241, 0.45);
+  --ring: #6366f1;
+}
+
+.theme-portal {
+  --background: #eff8f5;
+  --accent-1: #0d9488;
+  --accent-2: #10b981;
+  --accent-soft: rgba(13, 148, 136, 0.1);
+  --glow: rgba(13, 148, 136, 0.4);
+  --ring: #0d9488;
 }
 
 body {
@@ -45,8 +74,8 @@ body {
 
 .form-input:focus {
   outline: none;
-  border-color: #000000;
-  box-shadow: 0 0 0 1px #000000;
+  border-color: var(--ring);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 18%, transparent);
 }
 
 .form-input::placeholder {
@@ -81,7 +110,7 @@ body {
   width: 1.75rem;
   height: 1.75rem;
   border-radius: 9999px;
-  background-color: #000000;
+  background-image: linear-gradient(135deg, var(--accent-1), var(--accent-2));
   color: white;
   display: flex;
   align-items: center;
@@ -89,6 +118,7 @@ body {
   font-size: 0.75rem;
   font-weight: 700;
   flex-shrink: 0;
+  box-shadow: 0 4px 10px -4px var(--glow);
 }
 
 .section-title {
@@ -97,12 +127,18 @@ body {
   color: #111827;
 }
 
-/* Card style */
+/* Card style — frosted glass panel that picks up the ambient tint */
 .card {
-  background: white;
+  background: color-mix(in srgb, #ffffff 80%, transparent);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.65);
   border-radius: 1rem;
-  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.05), 0 1px 2px -1px rgb(0 0 0 / 0.05);
+  box-shadow:
+    0 1px 2px rgb(15 23 42 / 0.04),
+    0 10px 30px -14px rgb(15 23 42 / 0.14);
   padding: 1rem;
+  transition: box-shadow 0.25s ease, transform 0.25s ease;
 }
 
 @media (min-width: 640px) {
@@ -111,7 +147,15 @@ body {
   }
 }
 
-/* Primary button - black */
+/* Opt-in hover elevation for interactive cards */
+.hover-lift:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 2px 4px rgb(15 23 42 / 0.05),
+    0 18px 40px -16px var(--glow);
+}
+
+/* Primary button — themed gradient with glow on hover */
 .btn-primary {
   display: inline-flex;
   align-items: center;
@@ -119,23 +163,31 @@ body {
   gap: 0.5rem;
   padding: 0.625rem 1.25rem;
   min-height: 2.75rem;
-  background-color: #000000;
+  background-image: linear-gradient(135deg, var(--accent-1), var(--accent-2));
   color: white;
   font-size: 0.875rem;
   font-weight: 600;
   border-radius: 0.75rem;
   border: none;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all 0.2s ease;
 }
 
 .btn-primary:hover {
-  background-color: #1f2937;
+  box-shadow: 0 10px 26px -8px var(--glow);
+  transform: translateY(-1px);
+  filter: brightness(1.05);
+}
+
+.btn-primary:active {
+  transform: translateY(0) scale(0.98);
 }
 
 .btn-primary:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
 }
 
 /* Secondary button - border */
@@ -146,19 +198,25 @@ body {
   gap: 0.5rem;
   padding: 0.625rem 1.25rem;
   min-height: 2.75rem;
-  background-color: white;
+  background-color: rgba(255, 255, 255, 0.85);
   color: #374151;
   font-size: 0.875rem;
   font-weight: 500;
   border-radius: 0.75rem;
   border: 1px solid #e5e7eb;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all 0.2s ease;
 }
 
 .btn-secondary:hover {
-  background-color: #f9fafb;
-  border-color: #d1d5db;
+  background-color: #ffffff;
+  border-color: color-mix(in srgb, var(--ring) 35%, #e5e7eb);
+  box-shadow: 0 6px 18px -10px var(--glow);
+  transform: translateY(-1px);
+}
+
+.btn-secondary:active {
+  transform: translateY(0);
 }
 
 /* Page header */
@@ -213,11 +271,11 @@ body {
 
 .data-table tbody tr {
   border-bottom: 1px solid #f3f4f6;
-  transition: background-color 0.1s ease;
+  transition: background-color 0.15s ease;
 }
 
 .data-table tbody tr:hover {
-  background-color: #f9fafb;
+  background-color: var(--accent-soft);
 }
 
 .data-table tbody tr:last-child {
@@ -250,4 +308,154 @@ body {
 /* Safe area for iOS bottom bar */
 .safe-area-bottom {
   padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* ── Glass surfaces ─────────────────────────────────────────── */
+.glass-nav {
+  background: rgba(255, 255, 255, 0.72);
+  -webkit-backdrop-filter: blur(18px) saturate(1.5);
+  backdrop-filter: blur(18px) saturate(1.5);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.55);
+  box-shadow: 0 1px 24px -12px var(--glow);
+}
+
+.glass-menu {
+  background: rgba(255, 255, 255, 0.85);
+  -webkit-backdrop-filter: blur(20px) saturate(1.5);
+  backdrop-filter: blur(20px) saturate(1.5);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  box-shadow:
+    0 4px 6px -4px rgb(15 23 42 / 0.08),
+    0 20px 40px -16px rgb(15 23 42 / 0.22);
+}
+
+.glass-dark {
+  background: rgba(15, 23, 42, 0.72);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  backdrop-filter: blur(20px) saturate(1.4);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 20px 40px -16px rgb(0 0 0 / 0.5);
+}
+
+/* Ambient background blobs (decorative, behind content) */
+.ambient-blob {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(90px);
+  pointer-events: none;
+  will-change: transform;
+}
+
+/* Themed loading spinner */
+.spinner {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 9999px;
+  border: 3px solid var(--accent-soft);
+  border-top-color: var(--accent-1);
+  animation: spinner-spin 0.7s linear infinite;
+}
+
+@keyframes spinner-spin {
+  to { transform: rotate(1turn); }
+}
+
+/* Accent gradient text */
+.text-gradient {
+  background-image: linear-gradient(120deg, var(--accent-1), var(--accent-2));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Pulsing glow dot (status indicator) */
+.glow-dot {
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: 9999px;
+  background-image: linear-gradient(135deg, var(--accent-1), var(--accent-2));
+  animation: pulse-glow 2.4s ease-in-out infinite;
+}
+
+/* ── Keyframe animations ────────────────────────────────────── */
+@keyframes float-a {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to { transform: translate3d(2.5rem, -2rem, 0) scale(1.12); }
+}
+
+@keyframes float-b {
+  from { transform: translate3d(0, 0, 0) scale(1.08); }
+  to { transform: translate3d(-2.5rem, 1.5rem, 0) scale(0.94); }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 0 0 var(--glow); opacity: 1; }
+  50% { box-shadow: 0 0 0 5px transparent; opacity: 0.7; }
+}
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes shimmer {
+  from { background-position: -200% 0; }
+  to { background-position: 200% 0; }
+}
+
+.animate-float-a { animation: float-a 16s ease-in-out infinite alternate; }
+.animate-float-b { animation: float-b 20s ease-in-out infinite alternate; }
+.animate-fade-up { animation: fade-up 0.4s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+.shimmer {
+  background-image: linear-gradient(
+    100deg,
+    transparent 30%,
+    rgba(255, 255, 255, 0.5) 50%,
+    transparent 70%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 2.2s linear infinite;
+}
+
+/* Thin themed scrollbar (sidebar nav, dropdowns) */
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.35) transparent;
+}
+
+.scrollbar-thin::-webkit-scrollbar {
+  width: 6px;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.35);
+  border-radius: 9999px;
+}
+
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Respect reduced-motion preferences for decorative animation */
+@media (prefers-reduced-motion: reduce) {
+  .animate-float-a,
+  .animate-float-b,
+  .animate-fade-up,
+  .glow-dot,
+  .shimmer {
+    animation: none;
+  }
+
+  .card,
+  .btn-primary,
+  .btn-secondary,
+  .hover-lift {
+    transition: none;
+  }
+
+  .hover-lift:hover,
+  .btn-primary:hover {
+    transform: none;
+  }
 }

@@ -196,6 +196,9 @@ pub struct AttendanceExportQuery {
     pub date_to: Option<NaiveDate>,
     pub employee_id: Option<Uuid>,
     pub status: Option<String>,
+    /// Mirrors the table's method filter; without it an export taken while the
+    /// filter was active silently contained every method.
+    pub method: Option<String>,
 }
 
 /// Response for the effective attendance method of a company

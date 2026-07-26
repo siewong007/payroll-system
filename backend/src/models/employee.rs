@@ -255,6 +255,10 @@ pub struct Tp3Ytd {
     pub previous_income_ytd: i64,
     pub previous_epf_ytd: i64,
     pub previous_pcb_ytd: i64,
+    /// Prior-employer SOCSO. Stored since the TP3 form was added but never read,
+    /// so a mid-year hire lost their prior SOCSO relief (capped at RM350) and PCB
+    /// came out slightly overstated.
+    pub previous_socso_ytd: i64,
     pub previous_zakat_ytd: i64,
 }
 

@@ -1,7 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
-import { Building2, ChevronDown } from 'lucide-react';
+import { Building2, Check, ChevronDown } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { AnimatePresence, motion } from 'framer-motion';
 import { useAuth } from '@/context/AuthContext';
 import { getMyCompanies } from '@/api/admin';
 
@@ -49,36 +50,50 @@ export function CompanySwitcher() {
   };
 
   return (
-    <div ref={ref} className="relative px-3 mb-2">
+    <div ref={ref} className="relative px-3 mt-3 mb-1">
       <button
         onClick={() => setOpen(!open)}
         disabled={switching}
-        className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 transition-colors text-left"
+        className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 transition-all-fast text-left"
       >
-        <Building2 className="w-4 h-4 text-gray-400 shrink-0" />
-        <span className="text-sm font-medium text-gray-700 truncate flex-1">
+        <Building2 className="w-4 h-4 text-indigo-300 shrink-0" />
+        <span className="text-sm font-medium text-slate-200 truncate flex-1">
           {switching ? 'Switching...' : current?.name || 'Select Company'}
         </span>
-        <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${open ? 'rotate-180' : ''}`} />
+        <ChevronDown
+          className={`w-4 h-4 text-slate-400 transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
+        />
       </button>
 
-      {open && (
-        <div className="absolute left-3 right-3 top-full mt-1 bg-white rounded-xl border border-gray-200 shadow-lg z-50 py-1 max-h-48 overflow-y-auto">
-          {companies.map((c) => (
-            <button
-              key={c.id}
-              onClick={() => handleSwitch(c.id)}
-              className={`w-full text-left px-3 py-2.5 text-sm transition-colors ${
-                c.id === user?.company_id
-                  ? 'bg-gray-50 text-gray-900 font-medium'
-                  : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
-              }`}
-            >
-              {c.name}
-            </button>
-          ))}
-        </div>
-      )}
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: -6, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -6, scale: 0.98 }}
+            transition={{ duration: 0.16, ease: 'easeOut' }}
+            className="glass-dark absolute left-3 right-3 top-full mt-1.5 rounded-xl z-50 py-1 max-h-48 overflow-y-auto scrollbar-thin"
+          >
+            {companies.map((c) => {
+              const isCurrent = c.id === user?.company_id;
+              return (
+                <button
+                  key={c.id}
+                  onClick={() => handleSwitch(c.id)}
+                  className={`w-full flex items-center gap-2 text-left px-3 py-2.5 text-sm transition-colors ${
+                    isCurrent
+                      ? 'bg-indigo-500/15 text-indigo-200 font-medium'
+                      : 'text-slate-300 hover:bg-white/5 hover:text-white'
+                  }`}
+                >
+                  <span className="truncate flex-1">{c.name}</span>
+                  {isCurrent && <Check className="w-3.5 h-3.5 text-indigo-300 shrink-0" />}
+                </button>
+              );
+            })}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

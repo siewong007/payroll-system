@@ -177,16 +177,18 @@ migration. It uses native UUIDv7 identifiers, targeted partial/covering/trigram
 indexes, relational constraints, and multicolumn optimizer statistics. See
 [database.md](database.md) for exact compatibility and verification rules.
 
-Docker Compose and CI pin PostgreSQL 19 Beta 2. The repository also contains
-AWS Terraform for networking, EC2/ECR, CloudFront/S3, Secrets Manager, and an
-RDS deployment. Standard RDS does not yet offer a production PostgreSQL 19
-engine, so that module deliberately remains on 18.4 as a documented provider
-exception. The Lightsail deployment record is in
+Docker Compose and CI pin PostgreSQL 19 Beta 2. The Terraform in `infra/`
+provisions only the frontend delivery path and the deploy identity: an S3
+bucket (private, versioned, public access blocked), a CloudFront distribution
+with an origin access control and response-headers policy, an ACM certificate,
+Route53 records, and an IAM OIDC provider plus deploy role. There is no VPC,
+EC2, ECR, Secrets Manager or RDS module in this repository — the API and
+database run as containers on the Lightsail host, whose deployment record is in
 [lightsail-pg19-beta2-upgrade-record.md](lightsail-pg19-beta2-upgrade-record.md).
 
-Uploads are still written to the API container's local `uploads/` directory;
-the provisioned S3 upload bucket is not wired into the backend. SMTP, OAuth2,
-WebAuthn origins, and cloud services require environment-specific configuration.
+Uploads are written to the API container's local `uploads/` directory; there is
+no S3 upload bucket. SMTP, OAuth2, WebAuthn origins, and cloud services require
+environment-specific configuration.
 
 ## Architectural invariants
 

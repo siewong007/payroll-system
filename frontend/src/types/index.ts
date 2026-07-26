@@ -281,7 +281,7 @@ export interface PayrollEntry {
   item_type: string;
   description: string;
   amount: number;
-  quantity: number | null;
+  quantity: string | null;
   rate: number | null;
   is_taxable: boolean | null;
   is_processed: boolean | null;
@@ -491,10 +491,10 @@ export interface LeaveType {
   company_id: string;
   name: string;
   description: string | null;
-  default_days: number;
+  default_days: string;
   is_paid: boolean;
   is_active: boolean;
-  max_carry_forward: number;
+  max_carry_forward: string;
   carry_forward_expiry_months: number;
   is_system: boolean;
 }
@@ -505,10 +505,10 @@ export interface LeaveBalance {
   leave_type_name: string;
   is_paid: boolean;
   year: number;
-  entitled_days: number;
-  taken_days: number;
-  pending_days: number;
-  carried_forward: number;
+  entitled_days: string;
+  taken_days: string;
+  pending_days: string;
+  carried_forward: string;
 }
 
 export interface LeaveRequest {
@@ -518,7 +518,7 @@ export interface LeaveRequest {
   leave_type_id: string;
   start_date: string;
   end_date: string;
-  days: number;
+  days: string;
   reason: string | null;
   status: 'pending' | 'approved' | 'rejected' | 'cancelled';
   reviewed_by: string | null;
@@ -748,7 +748,7 @@ export interface OvertimeApplication {
   ot_date: string;
   start_time: string;
   end_time: string;
-  hours: number;
+  hours: string;
   ot_type: 'normal' | 'rest_day' | 'public_holiday';
   reason: string | null;
   status: string;
@@ -795,7 +795,7 @@ export interface TeamLeaveEntry {
   leave_type_name: string;
   start_date: string;
   end_date: string;
-  days: number;
+  days: string;
   status: string;
 }
 

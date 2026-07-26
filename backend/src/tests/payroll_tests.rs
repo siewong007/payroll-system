@@ -184,3 +184,101 @@ async fn process_payroll_rejects_empty_group() {
         "expected 'No active employees' error, got: {err:?}"
     );
 }
+
+/// An employee who joins mid-period is paid only for the days they were employed.
+/// Employment Act 1955 s.18B prorates an incomplete month by CALENDAR days:
+/// monthly wages ÷ days in the month × days eligible.
+#[tokio::test]
+async fn mid_period_joiner_basic_salary_is_prorated() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+
+    let company_id = seed_company(&pool).await;
+    let group_id = seed_payroll_group(&pool, company_id).await;
+    let employee_id = seed_employee(&pool, company_id, Some(group_id), 500_000).await;
+    let user_id = seed_user(&pool, company_id, "payroll_admin").await;
+
+    // Joined on the last day of a 31-day month → 1 of 31 days.
+    sqlx::query("UPDATE employees SET date_joined = $2 WHERE id = $1")
+        .bind(employee_id)
+        .bind(NaiveDate::from_ymd_opt(2024, 5, 31).unwrap())
+        .execute(&pool)
+        .await
+        .expect("set date_joined");
+
+    let run = payroll_engine::process_payroll(
+        &pool,
+        company_id,
+        group_id,
+        2024,
+        5,
+        NaiveDate::from_ymd_opt(2024, 6, 5).unwrap(),
+        user_id,
+        None,
+        None,
+    )
+    .await
+    .expect("process_payroll");
+
+    let (basic_salary, working_days, days_worked, is_prorated): (
+        i64,
+        Option<i32>,
+        Option<rust_decimal::Decimal>,
+        Option<bool>,
+    ) = sqlx::query_as(
+        r#"SELECT basic_salary, working_days, days_worked, is_prorated
+           FROM payroll_items WHERE payroll_run_id = $1 AND employee_id = $2"#,
+    )
+    .bind(run.id)
+    .bind(employee_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // 500_000 × 1 / 31 = 16_129.03 → 16_129 sen.
+    assert_eq!(basic_salary, 16_129, "one day of a 31-day month");
+    assert_eq!(working_days, Some(31), "calendar days in the period");
+    assert_eq!(days_worked, Some(rust_decimal::Decimal::from(1)));
+    assert_eq!(is_prorated, Some(true));
+}
+
+/// A full-month employee is not prorated — guards the proration branch itself.
+#[tokio::test]
+async fn full_month_employee_is_not_prorated() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+
+    let company_id = seed_company(&pool).await;
+    let group_id = seed_payroll_group(&pool, company_id).await;
+    let employee_id = seed_employee(&pool, company_id, Some(group_id), 500_000).await;
+    let user_id = seed_user(&pool, company_id, "payroll_admin").await;
+
+    let run = payroll_engine::process_payroll(
+        &pool,
+        company_id,
+        group_id,
+        2024,
+        5,
+        NaiveDate::from_ymd_opt(2024, 6, 5).unwrap(),
+        user_id,
+        None,
+        None,
+    )
+    .await
+    .expect("process_payroll");
+
+    let (basic_salary, is_prorated): (i64, Option<bool>) = sqlx::query_as(
+        r#"SELECT basic_salary, is_prorated
+           FROM payroll_items WHERE payroll_run_id = $1 AND employee_id = $2"#,
+    )
+    .bind(run.id)
+    .bind(employee_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(basic_salary, 500_000, "full month pays the full basic");
+    assert_eq!(is_prorated, Some(false));
+}

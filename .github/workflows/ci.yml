@@ -80,10 +80,23 @@ jobs:
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           workspaces: backend
+      - name: Install sqlx-cli
+        # `cargo sqlx` is not a built-in subcommand; without this the check step
+        # below dies with "no such command: sqlx". Version tracks the `sqlx`
+        # dependency in backend/Cargo.toml. rust-cache restores this binary on
+        # later runs, so the build cost is paid once.
+        run: cargo install sqlx-cli --version ^0.8 --no-default-features --features rustls,postgres --locked
+      - name: Apply migrations
+        # `prepare --check` expands every query!/query_as! macro against a live
+        # schema, so the service container must be migrated first — otherwise it
+        # fails with "relation ... does not exist". `cargo test` re-runs these
+        # via sqlx::migrate!, which is a no-op once _sqlx_migrations is stamped.
+        run: cargo sqlx migrate run
       - name: Check sqlx offline cache is up to date
-        # Runs live against DATABASE_URL regardless of SQLX_OFFLINE, so a query
-        # added/changed without `cargo sqlx prepare` fails here with one clear
-        # message instead of cascading "no cached data for this query" errors.
+        # Runs live against DATABASE_URL regardless of SQLX_OFFLINE (verified:
+        # it still connects with SQLX_OFFLINE=true), so a query added/changed
+        # without `cargo sqlx prepare` fails here with one clear message
+        # instead of cascading "no cached data for this query" errors.
         run: cargo sqlx prepare --check
       - run: cargo test
 

@@ -55,6 +55,38 @@ pub async fn insert_with_type(
 }
 
 /// A pending request (with its type name), or `None` if missing/not editable.
+/// Whether the employee already has a live request covering any of these dates.
+///
+/// `exclude_request_id` lets an edit ignore the row being edited. Only pending and
+/// approved requests count — cancelled and rejected ones free their dates up.
+/// Without this an employee could submit the same dates twice and have both
+/// approved, deducting the balance twice for one absence.
+pub async fn overlaps_existing(
+    executor: impl Executor<'_, Database = Postgres>,
+    employee_id: Uuid,
+    start_date: NaiveDate,
+    end_date: NaiveDate,
+    exclude_request_id: Option<Uuid>,
+) -> AppResult<bool> {
+    let exists = sqlx::query_scalar!(
+        r#"SELECT EXISTS(
+            SELECT 1 FROM leave_requests
+            WHERE employee_id = $1
+              AND status IN ('pending', 'approved')
+              AND start_date <= $3
+              AND end_date >= $2
+              AND ($4::uuid IS NULL OR id <> $4)
+        ) AS "exists!""#,
+        employee_id,
+        start_date,
+        end_date,
+        exclude_request_id,
+    )
+    .fetch_one(executor)
+    .await?;
+    Ok(exists)
+}
+
 pub async fn get_pending_with_type(
     executor: impl Executor<'_, Database = Postgres>,
     request_id: Uuid,
@@ -191,21 +223,25 @@ pub async fn delete(
     Ok(())
 }
 
+/// Cancels a request, returning `None` if it was already cancelled.
+///
+/// Same serialization point as `mark_cancelled`: the caller refunds days based on
+/// a status it read earlier, so a concurrent cancel must not be able to refund twice.
 pub async fn set_cancelled(
     executor: impl Executor<'_, Database = Postgres>,
     request_id: Uuid,
     company_id: Uuid,
-) -> AppResult<LeaveRequest> {
+) -> AppResult<Option<LeaveRequest>> {
     let cancelled = sqlx::query_as!(
         LeaveRequest,
         r#"UPDATE leave_requests
         SET status = 'cancelled', updated_at = NOW()
-        WHERE id = $1 AND company_id = $2
+        WHERE id = $1 AND company_id = $2 AND status <> 'cancelled'
         RETURNING *, (SELECT name FROM leave_types WHERE id = leave_type_id) AS "leave_type_name?""#,
         request_id,
         company_id,
     )
-    .fetch_one(executor)
+    .fetch_optional(executor)
     .await?;
     Ok(cancelled)
 }
@@ -358,17 +394,23 @@ pub async fn get_cancellable_for_employee(
 }
 
 /// Set a request to `cancelled` by id (the caller already authorized ownership).
+/// Cancels a request, returning false if it was already cancelled.
+///
+/// The `status <> 'cancelled'` predicate makes this the serialization point for
+/// cancellation: callers refund the days based on the status they read earlier,
+/// so without it two concurrent cancels of one approved request would both take
+/// the refund branch and credit the days twice.
 pub async fn mark_cancelled(
     executor: impl Executor<'_, Database = Postgres>,
     request_id: Uuid,
-) -> AppResult<()> {
-    sqlx::query!(
-        "UPDATE leave_requests SET status = 'cancelled', updated_at = NOW() WHERE id = $1",
+) -> AppResult<bool> {
+    let result = sqlx::query!(
+        "UPDATE leave_requests SET status = 'cancelled', updated_at = NOW() WHERE id = $1 AND status <> 'cancelled'",
         request_id,
     )
     .execute(executor)
     .await?;
-    Ok(())
+    Ok(result.rows_affected() > 0)
 }
 
 /// Delete an employee's own cancelled request; returns rows removed (0 = not deletable).

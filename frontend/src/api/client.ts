@@ -39,6 +39,23 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+/**
+ * Endpoints that establish a session rather than consume one. A 401 from any of
+ * them is a credential rejection the caller must be able to display, so they are
+ * exempt from both the refresh attempt and the redirect to /login.
+ */
+const PRIMARY_AUTH_ENDPOINTS = [
+  '/auth/login',
+  '/auth/refresh',
+  '/auth/2fa/verify',
+  '/auth/oauth2/providers',
+  '/auth/passkey/check',
+  '/auth/passkey/authenticate/begin',
+  '/auth/passkey/authenticate/complete',
+  '/auth/passkey/discoverable/begin',
+  '/auth/passkey/discoverable/complete',
+];
+
 let isRefreshing = false;
 let failedQueue: { resolve: (token: string) => void; reject: (err: unknown) => void }[] = [];
 
@@ -64,23 +81,23 @@ api.interceptors.response.use(
     // verbatim, never refresh or redirect.
     const isKioskEndpoint = originalRequest.url === '/attendance/kiosk/qr';
 
-    // Don't retry refresh, login, or 2FA verification requests — a 401 there
-    // means "wrong credentials/code", not "session expired".
+    // Primary-authentication endpoints: a 401 here means "wrong credentials or
+    // code", not "session expired". Refreshing is pointless and the redirect
+    // reloads the page, destroying the error the user needs to read — a failed
+    // passkey assertion returns 401, so omitting the passkey routes wiped
+    // "Passkey authentication failed" before it could render.
+    const isPrimaryAuthEndpoint = PRIMARY_AUTH_ENDPOINTS.includes(originalRequest.url ?? '');
+
     if (
       error.response?.status !== 401 ||
       originalRequest._retry ||
-      originalRequest.url === '/auth/login' ||
-      originalRequest.url === '/auth/refresh' ||
-      originalRequest.url === '/auth/2fa/verify' ||
+      isPrimaryAuthEndpoint ||
       isKioskEndpoint
     ) {
       // Only redirect for 401 on regular API calls, not auth endpoints
       if (
         error.response?.status === 401 &&
-        originalRequest.url !== '/auth/login' &&
-        originalRequest.url !== '/auth/refresh' &&
-        originalRequest.url !== '/auth/oauth2/providers' &&
-        originalRequest.url !== '/auth/2fa/verify' &&
+        !isPrimaryAuthEndpoint &&
         !isKioskEndpoint
       ) {
         accessToken = null;

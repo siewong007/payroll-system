@@ -3,6 +3,12 @@
 set -eu
 
 if ! command -v graphify >/dev/null 2>&1; then
+  # hook-check is wired as a PreToolUse hook (.codex/hooks.json) and the runtime
+  # defines it as an always-exit-0 no-op so hooks never break Bash tool calls.
+  # A missing optional runtime must keep that guarantee.
+  case "${1:-}" in
+    hook-check) exit 0 ;;
+  esac
   echo "CodeGraph requires the backing runtime ('graphify') on PATH." >&2
   exit 127
 fi

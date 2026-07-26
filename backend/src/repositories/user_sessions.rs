@@ -66,6 +66,21 @@ pub async fn revoke_others(
     Ok(result.rows_affected())
 }
 
+/// Revokes every live session for a user. Used when the credential itself
+/// changes (password change/reset), where no existing session may survive.
+pub async fn revoke_all_for_user(
+    executor: impl Executor<'_, Database = Postgres>,
+    user_id: Uuid,
+) -> AppResult<u64> {
+    let result = sqlx::query(
+        "UPDATE user_sessions SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL",
+    )
+    .bind(user_id)
+    .execute(executor)
+    .await?;
+    Ok(result.rows_affected())
+}
+
 pub async fn touch(
     executor: impl Executor<'_, Database = Postgres>,
     session_id: Uuid,

@@ -78,7 +78,7 @@ export function Modal({ open, onClose, title, children, footer, maxWidth = 'max-
         <>
           {/* Overlay — covers viewport via w-screen h-screen */}
           <motion.div
-            className="fixed top-0 left-0 z-50 w-screen h-screen bg-black/40 backdrop-blur-sm"
+            className="fixed top-0 left-0 z-50 w-screen h-screen bg-slate-950/50 backdrop-blur-md"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -104,7 +104,7 @@ export function Modal({ open, onClose, title, children, footer, maxWidth = 'max-
               aria-labelledby={title ? titleId : undefined}
               tabIndex={-1}
               className={`
-                relative bg-white w-full ${maxWidth} outline-none flex flex-col
+                relative bg-white/95 backdrop-blur-2xl ring-1 ring-black/5 w-full ${maxWidth} outline-none flex flex-col
                 shadow-2xl pointer-events-auto
                 rounded-t-2xl sm:rounded-2xl
                 max-h-[95dvh] sm:max-h-[85vh]
@@ -112,7 +112,7 @@ export function Modal({ open, onClose, title, children, footer, maxWidth = 'max-
               initial={{ scale: 0.95, opacity: 0, y: 20 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.95, opacity: 0, y: 20 }}
-              transition={{ duration: 0.2, ease: 'easeOut' }}
+              transition={{ type: 'spring', stiffness: 380, damping: 30 }}
               onClick={(e) => e.stopPropagation()}
               onAnimationComplete={handleAnimationComplete}
             >
@@ -139,7 +139,7 @@ export function Modal({ open, onClose, title, children, footer, maxWidth = 'max-
 
               {/* Sticky footer */}
               {footer && (
-                <div className="px-6 py-4 border-t border-gray-200 shrink-0 bg-gray-50 rounded-b-2xl">
+                <div className="px-6 py-4 border-t border-gray-200/70 shrink-0 bg-gray-50/80 rounded-b-2xl">
                   {footer}
                 </div>
               )}

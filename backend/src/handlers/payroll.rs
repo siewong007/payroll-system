@@ -393,7 +393,8 @@ pub async fn get_items(
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<Vec<PayrollItem>>> {
     auth.require_permission(Permission::ViewPayroll)?;
-    let items = payroll_service::list_items(&state.pool, id).await?;
+    let company_id = auth.company_id()?;
+    let items = payroll_service::list_items(&state.pool, company_id, id).await?;
 
     Ok(Json(items))
 }

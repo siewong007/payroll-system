@@ -4,7 +4,7 @@ import { Plus, Search, Edit, DollarSign, Shield, MapPin, TrendingUp, TrendingDow
 import { useNavigate } from 'react-router-dom';
 import { getEmployees, createEmployee, updateEmployee, deleteEmployee, getEmployee, getSalaryHistory } from '@/api/employees';
 import { getPayrollGroups } from '@/api/payroll';
-import { formatMYR, formatDate } from '@/lib/utils';
+import { formatMYR, formatDate, todayLocalDate } from '@/lib/utils';
 import { DataTable, type Column } from '@/components/ui/DataTable';
 import { Modal } from '@/components/ui/Modal';
 import type { Employee, CreateEmployeeRequest } from '@/types';
@@ -531,7 +531,7 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
   const [form, setForm] = useState<CreateEmployeeRequest>(defaults ?? {
     employee_number: '',
     full_name: '',
-    date_joined: new Date().toISOString().split('T')[0],
+    date_joined: todayLocalDate(),
     basic_salary: 0,
   });
 

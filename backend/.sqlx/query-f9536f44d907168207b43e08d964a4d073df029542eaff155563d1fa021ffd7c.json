@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM payroll_runs\n        WHERE id = $1 AND company_id = $2\n          AND locked_at IS NULL\n          AND status::text NOT IN ('processing', 'pending_approval', 'approved', 'paid')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f9536f44d907168207b43e08d964a4d073df029542eaff155563d1fa021ffd7c"
+}

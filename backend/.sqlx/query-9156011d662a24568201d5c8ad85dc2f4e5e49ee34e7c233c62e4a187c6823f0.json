@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS(\n            SELECT 1 FROM leave_requests\n            WHERE employee_id = $1\n              AND status IN ('pending', 'approved')\n              AND start_date <= $3\n              AND end_date >= $2\n              AND ($4::uuid IS NULL OR id <> $4)\n        ) AS \"exists!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "exists!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Date",
+        "Date",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "9156011d662a24568201d5c8ad85dc2f4e5e49ee34e7c233c62e4a187c6823f0"
+}

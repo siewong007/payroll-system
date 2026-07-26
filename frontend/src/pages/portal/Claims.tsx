@@ -2,7 +2,7 @@ import { useEffect, useState, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, ArrowLeft, Send, Trash2, Receipt, Upload, X, FileText, Image, Paperclip, ExternalLink } from 'lucide-react';
 import { listMyClaims, createClaim, cancelClaim, deleteClaim, submitClaim, uploadFile } from '@/api/claims';
-import { formatMYR, formatDate, getErrorMessage } from '@/lib/utils';
+import { formatMYR, formatDate, getErrorMessage, todayLocalDate } from '@/lib/utils';
 
 const STATUS_TABS = [
   { key: null, label: 'All' },
@@ -305,7 +305,7 @@ function CreateClaimForm({ onClose }: { onClose: () => void }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [form, setForm] = useState({
     title: '', description: '', amount: '', category: '',
-    expense_date: new Date().toISOString().split('T')[0],
+    expense_date: todayLocalDate(),
     receipt_url: '', receipt_file_name: '',
   });
   const [error, setError] = useState('');

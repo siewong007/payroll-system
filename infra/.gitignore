@@ -3,6 +3,5 @@
 *.tfstate.backup
 *.tfvars
 !*.tfvars.example
-.terraform.lock.hcl
 tfplan
 update_password.sh

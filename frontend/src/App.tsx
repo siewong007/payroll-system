@@ -68,7 +68,7 @@ const MyAttendance = lazyNamed(() => import('@/pages/portal/MyAttendance'), 'MyA
 function RouteFallback() {
   return (
     <div className="flex min-h-40 items-center justify-center">
-      <div className="h-7 w-7 animate-spin rounded-full border-b-2 border-gray-900" />
+      <div className="spinner" />
     </div>
   );
 }
@@ -76,7 +76,14 @@ function RouteFallback() {
 function RoleGuard({ allowedRoles, children }: { allowedRoles: AppRole[]; children: ReactNode }) {
   const { user } = useAuth();
   const location = useLocation();
-  if (user && !hasAnyRole(user, allowedRoles)) {
+  // `roles` is an array and hasAnyRole passes on a single match, so a user with
+  // ['exec','employee'] would reach /reports via the permitted `employee`.
+  // `exec` is read-mostly and must never see payroll figures or reports, so when
+  // a route does not list it, holding it denies access outright. Other roles
+  // keep additive semantics — ['payroll_admin','hr_manager'] still reaches
+  // /payroll on the strength of payroll_admin.
+  const execBlocked = !allowedRoles.includes('exec') && hasAnyRole(user, ['exec']);
+  if (user && (!hasAnyRole(user, allowedRoles) || execBlocked)) {
     return <Navigate to="/403" replace state={{ from: location.pathname }} />;
   }
   return <>{children}</>;

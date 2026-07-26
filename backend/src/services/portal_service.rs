@@ -50,15 +50,39 @@ pub async fn create_leave_request(
     company_id: Uuid,
     req: CreateLeaveRequest,
 ) -> AppResult<LeaveRequest> {
-    crate::services::leave_rules::validate_period(req.start_date, req.end_date, req.days)?;
+    let working_days = crate::services::calendar_service::count_working_days_between(
+        pool,
+        company_id,
+        req.start_date,
+        req.end_date,
+    )
+    .await?;
+    crate::services::leave_rules::validate_period(
+        req.start_date,
+        req.end_date,
+        req.days,
+        working_days,
+    )?;
 
     // Verify leave type exists
     if !leave_types::exists_active(pool, req.leave_type_id, company_id).await? {
         return Err(AppError::NotFound("Leave type not found".into()));
     }
 
+    if leave_requests::overlaps_existing(pool, employee_id, req.start_date, req.end_date, None)
+        .await?
+    {
+        return Err(AppError::BadRequest(
+            "You already have a leave request covering some of these dates".into(),
+        ));
+    }
+
+    // One transaction: the balance reservation below can legitimately fail
+    // (insufficient entitlement, uninitialized balance), and a rejected request
+    // must not leave a leave_requests row behind.
+    let mut tx = pool.begin().await?;
     let leave = leave_requests::insert_self_service(
-        pool,
+        &mut *tx,
         employee_id,
         company_id,
         req.leave_type_id,
@@ -73,7 +97,15 @@ pub async fn create_leave_request(
 
     // Update pending days in balance
     let year = req.start_date.year();
-    leave_balances::add_pending(pool, employee_id, req.leave_type_id, req.days, year).await?;
+    crate::services::leave_rules::reserve_pending_days(
+        &mut tx,
+        employee_id,
+        req.leave_type_id,
+        req.days,
+        year,
+    )
+    .await?;
+    tx.commit().await?;
 
     // Notify admins about new leave request
     let name = employee_repo::full_name(pool, employee_id)
@@ -140,7 +172,13 @@ pub async fn cancel_leave_request(
         }
     }
 
-    leave_requests::mark_cancelled(&mut *tx, request_id).await?;
+    // Guards the refund below: the status was read above, so a concurrent cancel
+    // that already refunded must not refund a second time.
+    if !leave_requests::mark_cancelled(&mut *tx, request_id).await? {
+        return Err(AppError::BadRequest(
+            "Leave request has already been cancelled".into(),
+        ));
+    }
 
     let year = lr.start_date.year();
     if lr.status == "pending" {
@@ -315,6 +353,31 @@ pub async fn create_overtime_application(
     let ot_type = req.ot_type.as_deref().unwrap_or("normal");
     if !["normal", "rest_day", "public_holiday"].contains(&ot_type) {
         return Err(AppError::BadRequest("Invalid ot_type".into()));
+    }
+
+    // `hours` is multiplied by the hourly rate to stage a payroll earning on
+    // approval, and neither the schema nor the approval path bounds it. A
+    // negative value would stage a negative earning; an inflated one pays out
+    // arbitrary money. Cap against the window the applicant declared, allowing
+    // the wrap past midnight that a night shift needs.
+    let declared_minutes = (end_time - start_time).num_minutes();
+    let declared_minutes = if declared_minutes <= 0 {
+        declared_minutes + 24 * 60
+    } else {
+        declared_minutes
+    };
+    let declared_hours =
+        rust_decimal::Decimal::from(declared_minutes) / rust_decimal::Decimal::from(60);
+    if req.hours <= rust_decimal::Decimal::ZERO {
+        return Err(AppError::BadRequest(
+            "Overtime hours must be greater than zero".into(),
+        ));
+    }
+    if req.hours > declared_hours {
+        return Err(AppError::BadRequest(format!(
+            "Overtime hours ({}) cannot exceed the {} hour(s) between start_time and end_time",
+            req.hours, declared_hours
+        )));
     }
 
     let app = overtime_applications::insert(

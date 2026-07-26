@@ -70,6 +70,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.DEPLOY_SHA }}
+          # `bun ci` below runs third-party postinstall scripts in this job, so
+          # the token must not be left behind in .git/config. Matches
+          # deploy-backend.yml.
+          persist-credentials: false
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -91,16 +95,28 @@ jobs:
           bun run build
 
       - name: Sync to S3
+        # Only `assets/` is content-hashed by Vite, so only it may be immutable.
+        # Everything else in dist/ is copied verbatim from frontend/public/ and
+        # keeps a stable URL (e.g. /branding/payrollmy-icon-primary.svg, which
+        # index.html references) — marking those immutable made a logo or favicon
+        # change unreachable for a year.
         run: |
+          aws s3 sync frontend/dist/assets/ s3://$FRONTEND_BUCKET/assets/ \
+            --delete \
+            --cache-control "public, max-age=31536000, immutable"
           aws s3 sync frontend/dist/ s3://$FRONTEND_BUCKET \
             --delete \
-            --cache-control "public, max-age=31536000, immutable" \
-            --exclude "index.html"
+            --exclude "assets/*" \
+            --exclude "index.html" \
+            --cache-control "public, max-age=300, must-revalidate"
           aws s3 cp frontend/dist/index.html s3://$FRONTEND_BUCKET/index.html \
             --cache-control "no-cache, no-store, must-revalidate"
 
       - name: Invalidate CloudFront
+        # Covers index.html and every stable-URL public asset. Hashed assets get
+        # a new path per build, so a wildcard costs nothing extra there and one
+        # "/*" counts as a single invalidation path.
         run: |
           aws cloudfront create-invalidation \
             --distribution-id $CLOUDFRONT_DISTRIBUTION_ID \
-            --paths "/index.html"
+            --paths "/*"

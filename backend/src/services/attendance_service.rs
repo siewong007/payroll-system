@@ -24,6 +24,14 @@ use crate::services::geofence_service;
 const QR_TOKEN_TTL_SECONDS: i64 = 300;
 const DEFAULT_TIMEZONE: &str = "Asia/Kuala_Lumpur";
 
+/// Asia/Kuala_Lumpur as a fixed offset. Malaysia has been UTC+8 with no DST
+/// since 1982, so this is exact for rendering local wall-clock time and avoids a
+/// tz-database dependency. SQL date bucketing uses `AT TIME ZONE` instead, which
+/// consults the server's tz database directly.
+fn local_offset() -> chrono::FixedOffset {
+    chrono::FixedOffset::east_opt(8 * 3600).expect("UTC+8 is a valid offset")
+}
+
 fn normalize_absent_check_out(
     status: &str,
     check_in_at: chrono::DateTime<Utc>,
@@ -170,18 +178,22 @@ pub async fn set_company_attendance_method(
 
 // ─── QR Token Management ───
 
+/// Issues a fresh QR token, retiring the previous one from the same display
+/// surface. `kiosk_credential_id` is `None` for the admin console; each kiosk
+/// retires only its own tokens, so kiosks on staggered refresh cycles no longer
+/// revoke each other's still-displayed codes.
 pub async fn generate_qr_token(
     pool: &PgPool,
     company_id: Uuid,
     frontend_url: &str,
+    kiosk_credential_id: Option<Uuid>,
 ) -> AppResult<QrTokenResponse> {
-    // Expire any existing unused tokens for this company
-    attendance_qr_tokens::revoke_unused(pool, company_id).await?;
+    attendance_qr_tokens::revoke_unused_for_issuer(pool, company_id, kiosk_credential_id).await?;
 
     let token = Uuid::new_v4().to_string().replace('-', "");
     let expires_at = Utc::now() + chrono::Duration::seconds(QR_TOKEN_TTL_SECONDS);
 
-    attendance_qr_tokens::insert(pool, company_id, &token, expires_at).await?;
+    attendance_qr_tokens::insert(pool, company_id, &token, expires_at, kiosk_credential_id).await?;
 
     let scan_url = format!("{}/attendance/scan?token={}", frontend_url, token);
 
@@ -361,7 +373,7 @@ pub async fn generate_qr_via_kiosk(
         }
     };
 
-    let resp = generate_qr_token(pool, cred.company_id, frontend_url).await?;
+    let resp = generate_qr_token(pool, cred.company_id, frontend_url, Some(cred.id)).await?;
 
     // Best-effort heartbeat; failure to record this should not block the kiosk.
     if let Err(e) = attendance_kiosk_credentials::mark_used(pool, cred.id, client_ip).await {
@@ -456,13 +468,10 @@ pub async fn check_in_qr(
     .await
     {
         Ok(record) => Ok(record),
-        // Race condition: if already checked in, return the existing open record
         Err(AppError::Database(sqlx::Error::Database(db_err)))
             if db_err.code().as_deref() == Some("23505") =>
         {
-            attendance_records::find_open_by_employee(pool, employee_id)
-                .await?
-                .ok_or_else(|| AppError::BadRequest("You already have an active check-in.".into()))
+            resolve_open_checkin_conflict(pool, employee_id, &tz).await
         }
         Err(e) => Err(e),
     }
@@ -496,13 +505,10 @@ pub async fn check_in_face_id(
     .await
     {
         Ok(record) => Ok(record),
-        // Race condition: if already checked in, return the existing open record
         Err(AppError::Database(sqlx::Error::Database(db_err)))
             if db_err.code().as_deref() == Some("23505") =>
         {
-            attendance_records::find_open_by_employee(pool, employee_id)
-                .await?
-                .ok_or_else(|| AppError::BadRequest("You already have an active check-in.".into()))
+            resolve_open_checkin_conflict(pool, employee_id, &tz).await
         }
         Err(e) => Err(e),
     }
@@ -526,6 +532,34 @@ pub async fn check_out(
 }
 
 /// Prevent double check-in on the same calendar day (using company timezone)
+/// Resolves a unique-index violation on `attendance_one_open_per_employee`.
+///
+/// A same-day double-tap is a genuine race, so returning the existing record is
+/// right. An open record left over from an earlier day is not: the pre-check
+/// `ensure_no_active_checkin` only looks at *today*, so that stale row silently
+/// blocks today's INSERT. Returning it would report success while no record
+/// exists for today — the auto-absent cron then marks the employee absent, and
+/// check-out fails too once the row is more than 24 hours old. Surface it
+/// instead so it can be closed or corrected.
+async fn resolve_open_checkin_conflict(
+    pool: &PgPool,
+    employee_id: Uuid,
+    tz: &str,
+) -> AppResult<AttendanceRecord> {
+    let (record, local_date, is_today) =
+        attendance_records::find_open_with_local_date(pool, employee_id, tz)
+            .await?
+            .ok_or_else(|| AppError::BadRequest("You already have an active check-in.".into()))?;
+
+    if is_today {
+        return Ok(record);
+    }
+
+    Err(AppError::BadRequest(format!(
+        "You have a check-in from {local_date} that was never checked out. Check out from that session, or ask an administrator to correct it, before checking in today."
+    )))
+}
+
 async fn ensure_no_active_checkin(pool: &PgPool, employee_id: Uuid, tz: &str) -> AppResult<()> {
     if attendance_records::exists_active_checkin_today(pool, employee_id, tz).await? {
         return Err(AppError::BadRequest(
@@ -742,11 +776,19 @@ pub async fn export_attendance_csv(
     );
 
     for r in &records {
-        let date = r.check_in_at.format("%Y-%m-%d");
-        let check_in = r.check_in_at.format("%H:%M:%S");
+        // Render in the company's local zone. Formatting the UTC instant put an
+        // 07:30 MYT check-in on the previous calendar day, so the exported date
+        // disagreed with both the filter range and the on-screen table.
+        let local_in = r.check_in_at.with_timezone(&local_offset());
+        let date = local_in.format("%Y-%m-%d");
+        let check_in = local_in.format("%H:%M:%S");
         let check_out = r
             .check_out_at
-            .map(|t| t.format("%H:%M:%S").to_string())
+            .map(|t| {
+                t.with_timezone(&local_offset())
+                    .format("%H:%M:%S")
+                    .to_string()
+            })
             .unwrap_or_default();
         let hours = r.hours_worked.map(|h| h.to_string()).unwrap_or_default();
         let ot = r.overtime_hours.map(|h| h.to_string()).unwrap_or_default();

@@ -37,12 +37,15 @@ pub async fn list_with_employee(
         param_idx += 1;
     }
     if q.date_from.is_some() {
-        where_clause.push_str(&format!(" AND ar.check_in_at >= ${}::date", param_idx));
+        where_clause.push_str(&format!(
+            " AND (ar.check_in_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date >= ${}",
+            param_idx
+        ));
         param_idx += 1;
     }
     if q.date_to.is_some() {
         where_clause.push_str(&format!(
-            " AND ar.check_in_at < (${}::date + INTERVAL '1 day')",
+            " AND (ar.check_in_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date <= ${}",
             param_idx
         ));
         param_idx += 1;
@@ -147,12 +150,15 @@ pub async fn list_for_employee(
     let mut param_idx = 2usize;
 
     if q.date_from.is_some() {
-        where_clause.push_str(&format!(" AND check_in_at >= ${}::date", param_idx));
+        where_clause.push_str(&format!(
+            " AND (check_in_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date >= ${}",
+            param_idx
+        ));
         param_idx += 1;
     }
     if q.date_to.is_some() {
         where_clause.push_str(&format!(
-            " AND check_in_at < (${}::date + INTERVAL '1 day')",
+            " AND (check_in_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date <= ${}",
             param_idx
         ));
         param_idx += 1;
@@ -240,8 +246,8 @@ pub async fn summary(
            FROM employees e
            LEFT JOIN attendance_records ar
                ON  ar.employee_id = e.id
-               AND ar.check_in_at >= $2::date
-               AND ar.check_in_at <  ($3::date + INTERVAL '1 day')
+               AND (ar.check_in_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date >= $2
+               AND (ar.check_in_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date <= $3
            WHERE e.company_id   = $1
              AND e.is_active    = TRUE
              AND e.deleted_at   IS NULL
@@ -279,19 +285,30 @@ pub async fn export_rows(
         where_clause.push_str(&format!(" AND ar.employee_id = ${}", param_idx));
         param_idx += 1;
     }
+    // Bucket by Malaysian local date, not the UTC instant: a 07:30 MYT check-in is
+    // 23:30 UTC the previous day, so a UTC-aligned comparison put early-morning
+    // records outside a range that should include them — and disagreed with
+    // get_today/mark_absent, which already bucket by company timezone.
     if q.date_from.is_some() {
-        where_clause.push_str(&format!(" AND ar.check_in_at >= ${}::date", param_idx));
+        where_clause.push_str(&format!(
+            " AND (ar.check_in_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date >= ${}",
+            param_idx
+        ));
         param_idx += 1;
     }
     if q.date_to.is_some() {
         where_clause.push_str(&format!(
-            " AND ar.check_in_at < (${}::date + INTERVAL '1 day')",
+            " AND (ar.check_in_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date <= ${}",
             param_idx
         ));
         param_idx += 1;
     }
     if q.status.is_some() {
         where_clause.push_str(&format!(" AND ar.status = ${}", param_idx));
+        param_idx += 1;
+    }
+    if q.method.is_some() {
+        where_clause.push_str(&format!(" AND ar.method = ${}", param_idx));
         param_idx += 1;
     }
     let _ = param_idx;
@@ -325,6 +342,10 @@ pub async fn export_rows(
     }
     if let Some(ref s) = q.status {
         dq = dq.bind(s);
+    }
+    // Bind order must match the predicate order above.
+    if let Some(ref m) = q.method {
+        dq = dq.bind(m);
     }
 
     Ok(dq.fetch_all(pool).await?)

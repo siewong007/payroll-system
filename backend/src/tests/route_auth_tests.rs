@@ -387,3 +387,115 @@ async fn finance_can_approve_but_not_prepare_payroll_routes() {
         .expect("finance approve response");
     assert_eq!(finance_approve_response.status(), StatusCode::OK);
 }
+
+/// A self-service employee must not be able to read the company employee
+/// directory — it exposes every colleague's IC, address and bank account.
+#[tokio::test]
+async fn self_service_employee_cannot_list_employees() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let token = token_for(&pool, company_id, "employee").await;
+
+    let response = app_for(pool)
+        .await
+        .oneshot(request("GET", "/api/employees", &token, ""))
+        .await
+        .expect("route response");
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+/// A self-service employee must not be able to delete an employee record.
+/// `soft_delete_employee` also hard-deletes the linked user account.
+#[tokio::test]
+async fn self_service_employee_cannot_delete_employee() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let victim = seed_employee(&pool, company_id, None, 500_000).await;
+    let token = token_for(&pool, company_id, "employee").await;
+
+    let response = app_for(pool)
+        .await
+        .oneshot(request(
+            "DELETE",
+            &format!("/api/employees/{}", victim),
+            &token,
+            "",
+        ))
+        .await
+        .expect("route response");
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+/// A self-service employee must not be able to rewrite an employee's bank
+/// account, which would redirect that employee's salary payment.
+#[tokio::test]
+async fn self_service_employee_cannot_change_bank_account() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let victim = seed_employee(&pool, company_id, None, 500_000).await;
+    let token = token_for(&pool, company_id, "employee").await;
+
+    let response = app_for(pool)
+        .await
+        .oneshot(request(
+            "PUT",
+            &format!("/api/employees/{}", victim),
+            &token,
+            r#"{"bank_account_number":"999999999999"}"#,
+        ))
+        .await
+        .expect("route response");
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+/// `exec` is read-mostly and must not create employees.
+#[tokio::test]
+async fn exec_cannot_create_employee() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let token = token_for(&pool, company_id, "exec").await;
+
+    let response = app_for(pool)
+        .await
+        .oneshot(request(
+            "POST",
+            "/api/employees",
+            &token,
+            r#"{"employee_number":"E999","full_name":"Mallory","date_joined":"2024-01-01","basic_salary":0}"#,
+        ))
+        .await
+        .expect("route response");
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+/// A company `admin` is deliberately excluded from `ViewPayroll`, so it must not
+/// be able to export a backup — the archive carries payroll_items, salary_history
+/// and raw employee rows (bank account, IC, TIN).
+#[tokio::test]
+async fn company_admin_cannot_export_payroll_backup() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let token = token_for(&pool, company_id, "admin").await;
+
+    let response = app_for(pool)
+        .await
+        .oneshot(request("GET", "/api/admin/backup/export", &token, ""))
+        .await
+        .expect("route response");
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}

@@ -13,6 +13,8 @@ import {
   checkInFaceId,
   type AttendanceRecord,
 } from '@/api/attendance';
+import { passkeyDiscoverableBegin } from '@/api/passkey';
+import { getPasskeyCredential } from '@/lib/webauthn';
 import { getErrorMessage } from '@/lib/utils';
 
 function formatTime(iso: string | null) {
@@ -366,31 +368,15 @@ export function MyAttendance() {
 
   const faceIdCheckInMut = useMutation({
     mutationFn: async () => {
-      // Use the existing passkey authentication flow (discoverable)
-      const beginResp = await fetch('/api/auth/passkey/discoverable/begin', {
-        method: 'POST',
-        credentials: 'include',
-      });
-      if (!beginResp.ok) throw new Error('Face ID not available');
-      const { challenge, allowCredentials } = await beginResp.json();
-
-      // WebAuthn get
-      const cred = await navigator.credentials.get({
-        publicKey: {
-          challenge: Uint8Array.from(atob(challenge.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0)),
-          allowCredentials: allowCredentials || [],
-          timeout: 60000,
-          userVerification: 'required',
-        },
-      }) as PublicKeyCredential;
+      // Same discoverable-passkey ceremony the login page runs. The endpoint
+      // responds with { challenge_id, options }, so the previous hand-rolled
+      // fetch — which destructured a non-existent top-level `challenge` and then
+      // called .replace() on it — always threw before reaching the browser.
+      const { options } = await passkeyDiscoverableBegin();
+      const cred = await getPasskeyCredential(options);
 
       const coords = await getGeolocation();
-      return checkInFaceId(
-        cred.id,
-        { id: cred.id },
-        coords?.latitude,
-        coords?.longitude
-      );
+      return checkInFaceId(cred.id, cred, coords?.latitude, coords?.longitude);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['attendance-today'] });

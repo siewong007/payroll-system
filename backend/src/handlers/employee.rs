@@ -36,6 +36,24 @@ fn redact_payroll_fields(employee: &mut Employee) {
     employee.salary_group = None;
 }
 
+/// Identity, contact and banking details. Separate from payroll figures because
+/// HR roles legitimately need these while read-only roles (e.g. `exec`) do not,
+/// and a leaked bank account is what lets salary payment be redirected.
+fn redact_personal_fields(employee: &mut Employee) {
+    employee.ic_number = None;
+    employee.passport_number = None;
+    employee.date_of_birth = None;
+    employee.phone = None;
+    employee.address_line1 = None;
+    employee.address_line2 = None;
+    employee.city = None;
+    employee.state = None;
+    employee.postcode = None;
+    employee.bank_name = None;
+    employee.bank_account_number = None;
+    employee.bank_account_type = None;
+}
+
 fn create_request_touches_payroll_fields(req: &CreateEmployeeRequest) -> bool {
     req.basic_salary != 0
         || req.hourly_rate.is_some()
@@ -53,6 +71,9 @@ fn create_request_touches_payroll_fields(req: &CreateEmployeeRequest) -> bool {
         || req.tabung_haji_amount.is_some()
         || req.payroll_group_id.is_some()
         || req.salary_group.is_some()
+        // Banking decides where salary lands, so it is payroll-sensitive.
+        || req.bank_name.is_some()
+        || req.bank_account_number.is_some()
 }
 
 fn update_request_touches_payroll_fields(req: &UpdateEmployeeRequest) -> bool {
@@ -73,6 +94,9 @@ fn update_request_touches_payroll_fields(req: &UpdateEmployeeRequest) -> bool {
         || req.hrdf_contribution.is_some()
         || req.payroll_group_id.is_some()
         || req.salary_group.is_some()
+        // Banking decides where salary lands, so it is payroll-sensitive.
+        || req.bank_name.is_some()
+        || req.bank_account_number.is_some()
 }
 
 pub async fn list(
@@ -80,6 +104,7 @@ pub async fn list(
     auth: AuthUser,
     Query(query): Query<ListQuery>,
 ) -> AppResult<Json<PaginatedResponse<Employee>>> {
+    auth.require_non_employee()?;
     let company_id = auth
         .0
         .company_id
@@ -100,9 +125,14 @@ pub async fn list(
     )
     .await?;
 
-    if !auth.is_payroll_privileged() {
-        for emp in &mut employees {
+    let hide_payroll = !auth.is_payroll_privileged();
+    let hide_personal = hide_payroll && !auth.can_manage_employees();
+    for emp in &mut employees {
+        if hide_payroll {
             redact_payroll_fields(emp);
+        }
+        if hide_personal {
+            redact_personal_fields(emp);
         }
     }
 
@@ -119,6 +149,7 @@ pub async fn get(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<Employee>> {
+    auth.require_non_employee()?;
     let company_id = auth
         .0
         .company_id
@@ -127,6 +158,9 @@ pub async fn get(
     let mut emp = employee_service::get_employee(&state.pool, id, company_id).await?;
     if !auth.is_payroll_privileged() {
         redact_payroll_fields(&mut emp);
+        if !auth.can_manage_employees() {
+            redact_personal_fields(&mut emp);
+        }
     }
     Ok(Json(emp))
 }
@@ -137,6 +171,7 @@ pub async fn create(
     headers: HeaderMap,
     Json(req): Json<CreateEmployeeRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
+    auth.require_employee_manager()?;
     if !auth.is_payroll_privileged() && create_request_touches_payroll_fields(&req) {
         return Err(AppError::Forbidden(
             "Payroll fields are not available for this role".into(),
@@ -220,6 +255,7 @@ pub async fn update(
     Path(id): Path<Uuid>,
     Json(req): Json<UpdateEmployeeRequest>,
 ) -> AppResult<Json<Employee>> {
+    auth.require_employee_manager()?;
     if !auth.is_payroll_privileged() && update_request_touches_payroll_fields(&req) {
         return Err(AppError::Forbidden(
             "Payroll fields are not available for this role".into(),
@@ -248,6 +284,7 @@ pub async fn delete(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<serde_json::Value>> {
+    auth.require_employee_manager()?;
     let company_id = auth
         .0
         .company_id
@@ -293,6 +330,7 @@ pub async fn initialize_balances(
     Path(id): Path<Uuid>,
     Query(q): Query<InitBalancesQuery>,
 ) -> AppResult<Json<serde_json::Value>> {
+    auth.require_employee_manager()?;
     let company_id = auth
         .0
         .company_id
@@ -320,6 +358,7 @@ pub async fn process_carry_forward(
     auth: AuthUser,
     Json(req): Json<CarryForwardRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
+    auth.require_employee_manager()?;
     let company_id = auth
         .0
         .company_id

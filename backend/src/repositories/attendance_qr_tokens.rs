@@ -7,15 +7,21 @@ use uuid::Uuid;
 use crate::core::error::AppResult;
 use crate::models::attendance::AttendanceQrToken;
 
-/// Revoke (mark used) all currently-active tokens for a company.
-pub async fn revoke_unused(
+/// Revoke (mark used) the currently-active tokens issued by one display surface.
+///
+/// Scoped to `kiosk_credential_id` (NULL = the admin console) so that several
+/// kiosks in one company do not revoke each other's still-displayed codes.
+pub async fn revoke_unused_for_issuer(
     executor: impl Executor<'_, Database = Postgres>,
     company_id: Uuid,
+    kiosk_credential_id: Option<Uuid>,
 ) -> AppResult<()> {
     sqlx::query!(
         "UPDATE attendance_qr_tokens SET used = TRUE
-         WHERE company_id = $1 AND used = FALSE",
+         WHERE company_id = $1 AND used = FALSE
+           AND kiosk_credential_id IS NOT DISTINCT FROM $2",
         company_id,
+        kiosk_credential_id,
     )
     .execute(executor)
     .await?;
@@ -27,13 +33,15 @@ pub async fn insert(
     company_id: Uuid,
     token: &str,
     expires_at: DateTime<Utc>,
+    kiosk_credential_id: Option<Uuid>,
 ) -> AppResult<()> {
     sqlx::query!(
-        "INSERT INTO attendance_qr_tokens (company_id, token, expires_at)
-         VALUES ($1, $2, $3)",
+        "INSERT INTO attendance_qr_tokens (company_id, token, expires_at, kiosk_credential_id)
+         VALUES ($1, $2, $3, $4)",
         company_id,
         token,
         expires_at,
+        kiosk_credential_id,
     )
     .execute(executor)
     .await?;

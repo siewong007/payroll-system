@@ -31,6 +31,36 @@ pub async fn add_pending(
 }
 
 /// Remove `days` from the pending bucket (floored at zero).
+/// `add_pending`, but only while the request still fits the employee's
+/// entitlement. Returns 0 rows when the balance row is missing OR when the
+/// request would push `taken + pending` past `entitled + carried_forward`.
+///
+/// The bound lives in the UPDATE predicate rather than a prior read so two
+/// concurrent submissions cannot both pass a check and jointly overdraw. Only
+/// meaningful for paid leave types — unpaid leave is not drawn from an
+/// entitlement, so callers use plain `add_pending` for those.
+pub async fn add_pending_within_entitlement(
+    executor: impl Executor<'_, Database = Postgres>,
+    employee_id: Uuid,
+    leave_type_id: Uuid,
+    days: Decimal,
+    year: i32,
+) -> AppResult<u64> {
+    let rows = sqlx::query!(
+        r#"UPDATE leave_balances
+        SET pending_days = pending_days + $3, updated_at = NOW()
+        WHERE employee_id = $1 AND leave_type_id = $2 AND year = $4
+          AND taken_days + pending_days + $3 <= entitled_days + carried_forward"#,
+        employee_id,
+        leave_type_id,
+        days,
+        year,
+    )
+    .execute(executor)
+    .await?;
+    Ok(rows.rows_affected())
+}
+
 pub async fn subtract_pending(
     executor: impl Executor<'_, Database = Postgres>,
     employee_id: Uuid,

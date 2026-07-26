@@ -10,8 +10,8 @@ use uuid::Uuid;
 
 use crate::core::error::AppResult;
 use crate::models::payroll::{
-    EmployeeCategoryTotal, EmployeeHours, EmployeeOtTypeHours, EmployeeTotal,
-    PayrollEntryWithEmployee, PayrollItemSummary, PayrollYtd,
+    EmployeeBonusCommission, EmployeeCategoryTotal, EmployeeHours, EmployeeOtTypeHours,
+    EmployeeTotal, PayrollEntryWithEmployee, PayrollItemSummary, PayrollYtd,
 };
 
 /// Recurring allowances/deductions per employee, summed by category.
@@ -36,6 +36,14 @@ pub async fn recurring_allowance_totals(
 }
 
 /// Staged payroll entries per employee, summed by category.
+///
+/// Excludes the item types the engine recomputes from their own authoritative
+/// source: `overtime` comes from `approved_ot_totals`/`attendance_ot_hours` and
+/// `claim_reimbursement` from `approved_claim_totals`. Approving an OT
+/// application or a claim also stages a `payroll_entries` row, so counting
+/// those rows here would add the same money a second time — and, for claims,
+/// would pull a reimbursement into gross where it becomes EPF/SOCSO/EIS/PCB
+/// liable despite not being wages.
 pub async fn entry_category_totals(
     executor: impl Executor<'_, Database = Postgres>,
     employee_ids: &[Uuid],
@@ -48,7 +56,41 @@ pub async fn entry_category_totals(
            FROM payroll_entries
            WHERE employee_id = ANY($1) AND period_year = $2 AND period_month = $3
              AND is_processed = FALSE
+             AND item_type NOT IN ('overtime', 'claim_reimbursement')
            GROUP BY employee_id, category"#,
+        employee_ids,
+        year,
+        month,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(rows)
+}
+
+/// Staged bonus and commission entries per employee.
+///
+/// These already reach gross through `entry_category_totals`; this read exists so
+/// the amounts can also be stored in their own `payroll_items` columns. Those
+/// columns defaulted to 0, so the payslip printed "Bonus 0" while the figure sat
+/// inside TOTAL EARNINGS, and the statutory EA form's income lines — which sum
+/// these columns — did not add up to the reported YTD gross.
+pub async fn bonus_commission_totals(
+    executor: impl Executor<'_, Database = Postgres>,
+    employee_ids: &[Uuid],
+    year: i32,
+    month: i32,
+) -> AppResult<Vec<EmployeeBonusCommission>> {
+    let rows = sqlx::query_as!(
+        EmployeeBonusCommission,
+        r#"SELECT employee_id,
+                  COALESCE(SUM(amount) FILTER (WHERE item_type = 'bonus'), 0)::BIGINT AS "bonus!",
+                  COALESCE(SUM(amount) FILTER (WHERE item_type = 'commission'), 0)::BIGINT AS "commission!"
+           FROM payroll_entries
+           WHERE employee_id = ANY($1) AND period_year = $2 AND period_month = $3
+             AND is_processed = FALSE
+             AND category = 'earning'
+             AND item_type IN ('bonus', 'commission')
+           GROUP BY employee_id"#,
         employee_ids,
         year,
         month,
@@ -97,10 +139,15 @@ pub async fn attendance_ot_hours(
            FROM attendance_records ar
            LEFT JOIN overtime_applications oa
                ON ar.employee_id = oa.employee_id
-               AND DATE(ar.check_in_at) = oa.ot_date
+               AND (ar.check_in_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date = oa.ot_date
                AND oa.status = 'approved'
            WHERE ar.employee_id = ANY($1)
-             AND ar.check_in_at >= $2::date AND ar.check_in_at <= $3::date + INTERVAL '1 day'
+             -- Bucket by Malaysian local date. The old window compared the UTC
+             -- instant against ::date, so a 00:00-08:00 MYT check-in on the 1st
+             -- was paid in the previous month; and its upper bound was closed at
+             -- period_end + 1 day, so a check-in at exactly that midnight fell in
+             -- two consecutive runs.
+             AND (ar.check_in_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date BETWEEN $2 AND $3
              AND oa.id IS NULL
            GROUP BY ar.employee_id"#,
         employee_ids,
@@ -271,6 +318,41 @@ pub async fn item_summaries_for_run(
             pcb_amount: row.pcb_amount,
         })
         .collect())
+}
+
+/// Whether any employee paid by `run_id` already appears in a later committed run.
+///
+/// Deleting a run that a later run's stored `ytd_*` and PCB annualisation were
+/// computed from would leave those figures describing a run that no longer
+/// exists. `payroll_ytd` sums exactly these statuses, so the guard matches what
+/// the YTD chain actually depends on — the same rule `employee_has_later_run`
+/// applies to PCB edits, lifted to the whole run.
+pub async fn run_has_later_committed_run(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    run_id: Uuid,
+) -> AppResult<bool> {
+    let exists = sqlx::query_scalar!(
+        r#"SELECT EXISTS(
+            SELECT 1
+            FROM payroll_items pi
+            JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
+            WHERE pr.company_id = $1
+              AND pr.id <> $2
+              AND pr.status::text IN ('processed', 'pending_approval', 'approved', 'paid')
+              AND pi.employee_id IN (
+                  SELECT employee_id FROM payroll_items WHERE payroll_run_id = $2
+              )
+              AND (pr.period_year, pr.period_month) > (
+                  SELECT period_year, period_month FROM payroll_runs WHERE id = $2
+              )
+        ) AS "exists!""#,
+        company_id,
+        run_id,
+    )
+    .fetch_one(executor)
+    .await?;
+    Ok(exists)
 }
 
 /// Whether a later committed run already exists for an employee — blocks PCB edits.

@@ -28,8 +28,8 @@ export interface AttendanceRecord {
   checkout_longitude: number | null;
   notes: string | null;
   qr_token_id: string | null;
-  hours_worked: number | null;
-  overtime_hours: number | null;
+  hours_worked: string | null;
+  overtime_hours: string | null;
   is_outside_geofence: boolean | null;
   created_at: string;
   updated_at: string;
@@ -143,8 +143,8 @@ export interface AttendanceSummaryItem {
   late_days: number;
   absent_days: number;
   half_days: number;
-  total_hours: number;
-  overtime_hours: number;
+  total_hours: string;
+  overtime_hours: string;
   unchecked_out_days: number;
 }
 
@@ -164,6 +164,7 @@ export async function downloadAttendanceCsv(params: {
   date_to?: string;
   employee_id?: string;
   status?: string;
+  method?: string;
 }): Promise<void> {
   const response = await api.get('/attendance/export', {
     params,

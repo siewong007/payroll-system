@@ -52,7 +52,8 @@ pub async fn list_ytd_for_employees(
 ) -> AppResult<Vec<Tp3Ytd>> {
     let rows = sqlx::query_as!(
         Tp3Ytd,
-        r#"SELECT employee_id, previous_income_ytd, previous_epf_ytd, previous_pcb_ytd, previous_zakat_ytd
+        r#"SELECT employee_id, previous_income_ytd, previous_epf_ytd, previous_pcb_ytd,
+                  previous_socso_ytd, previous_zakat_ytd
            FROM tp3_records WHERE employee_id = ANY($1) AND tax_year = $2"#,
         employee_ids,
         tax_year,

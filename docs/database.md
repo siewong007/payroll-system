@@ -7,7 +7,11 @@
 | Docker Compose | PostgreSQL 19 Beta 2 | Pinned by image tag |
 | GitHub Actions database tests | PostgreSQL 19 Beta 2 | Pinned by image tag |
 | Lightsail deployment | PostgreSQL 19 Beta 2 | Explicit beta deployment; see the sanitized upgrade record |
-| AWS RDS Terraform | PostgreSQL 18.4 | Intentional provider exception until standard RDS offers production PostgreSQL 19 |
+
+There is no RDS module in `infra/` — the Terraform covers only S3/CloudFront,
+ACM, Route53 and the IAM OIDC deploy role. The PostgreSQL 18 allowance in
+`1000_schema.sql` remains documented for a managed-Postgres target that does not
+yet offer a production PostgreSQL 19 engine, should one be adopted later.
 
 PostgreSQL 19 Beta 2 is a pre-release build. The
 [official announcement](https://www.postgresql.org/about/news/postgresql-19-beta-2-released-3350/)

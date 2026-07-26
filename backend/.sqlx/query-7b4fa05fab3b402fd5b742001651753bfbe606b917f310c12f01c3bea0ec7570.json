@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE leave_requests\n        SET status = 'cancelled', updated_at = NOW()\n        WHERE id = $1 AND company_id = $2\n        RETURNING *, (SELECT name FROM leave_types WHERE id = leave_type_id) AS \"leave_type_name?\"",
+  "query": "UPDATE leave_requests\n        SET status = 'cancelled', updated_at = NOW()\n        WHERE id = $1 AND company_id = $2 AND status <> 'cancelled'\n        RETURNING *, (SELECT name FROM leave_types WHERE id = leave_type_id) AS \"leave_type_name?\"",
   "describe": {
     "columns": [
       {
@@ -115,5 +115,5 @@
       null
     ]
   },
-  "hash": "2a4cfd1d30ecf2d4c289af60031d55f175422e4b44dff2ebc98dc13325fd72d3"
+  "hash": "7b4fa05fab3b402fd5b742001651753bfbe606b917f310c12f01c3bea0ec7570"
 }

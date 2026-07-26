@@ -6,7 +6,7 @@ use crate::models::user_company::{
     CompanySummary, CreateUserRequest, UpdateUserRequest, UserWithCompanies,
 };
 use crate::repositories::reads::user_management;
-use crate::repositories::{refresh_tokens, user_companies, users};
+use crate::repositories::{refresh_tokens, user_companies, user_sessions, users};
 
 const VALID_ROLES: &[&str] = &[
     "super_admin",
@@ -101,6 +101,18 @@ pub async fn list_users(
     Ok(result)
 }
 
+/// Ends every live session for a user after their roles or company access
+/// changed. JWT claims carry `roles` and `company_id` and `AuthUser` never
+/// re-reads either, so without this a demoted or removed user keeps the old
+/// authority — including cross-tenant reads — until the token expires.
+async fn revoke_sessions_after_access_change(pool: &PgPool, user_id: Uuid) -> AppResult<()> {
+    let mut tx = pool.begin().await?;
+    user_sessions::revoke_all_for_user(&mut *tx, user_id).await?;
+    refresh_tokens::revoke_all_for_user(&mut *tx, user_id).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
 pub async fn update_user_companies(
     pool: &PgPool,
     user_id: Uuid,
@@ -137,6 +149,8 @@ pub async fn update_user_companies(
     if needs_update {
         users::update_active_company(pool, user_id, company_ids[0]).await?;
     }
+
+    revoke_sessions_after_access_change(pool, user_id).await?;
 
     // Fetch updated user
     let mut updated = users::get_projection_by_id(pool, user_id)
@@ -207,6 +221,9 @@ pub async fn update_user(
     )
     .await?;
 
+    let roles_changed = roles != existing.roles;
+    let companies_changed = req.company_ids.is_some();
+
     // Update companies if provided
     if let Some(company_ids) = req.company_ids {
         if roles
@@ -229,6 +246,10 @@ pub async fn update_user(
                 users::update_active_company(pool, user_id, company_ids[0]).await?;
             }
         }
+    }
+
+    if roles_changed || companies_changed {
+        revoke_sessions_after_access_change(pool, user_id).await?;
     }
 
     let mut updated = users::get_projection_by_id(pool, user_id)

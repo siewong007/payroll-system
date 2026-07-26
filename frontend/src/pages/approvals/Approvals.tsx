@@ -47,7 +47,7 @@ import { Modal } from '@/components/ui/Modal';
 import { DataTable, type Column } from '@/components/ui/DataTable';
 import { TimeSelector } from '@/components/ui/TimeSelector';
 import { useAuth } from '@/context/AuthContext';
-import { formatDate, getErrorMessage } from '@/lib/utils';
+import { formatDate, getErrorMessage, todayLocalDate } from '@/lib/utils';
 import type {
   AdminCreateClaimRequest,
   AdminCreateLeaveRequest,
@@ -421,7 +421,7 @@ export function Approvals() {
     },
     { key: 'type', header: 'Leave Type', render: (request) => request.leave_type_name || '\u2014', primary: true },
     { key: 'period', header: 'Period', render: (request) => <span className="text-gray-500">{request.start_date} → {request.end_date}</span> },
-    { key: 'days', header: 'Days', render: (request) => request.days },
+    { key: 'days', header: 'Days', render: (request) => Number(request.days) },
     { key: 'reason', header: 'Reason', render: (request) => <span className="text-gray-400 max-w-[180px] truncate block">{request.reason || '\u2014'}</span> },
     {
       key: 'attachment',
@@ -522,7 +522,7 @@ export function Approvals() {
       header: 'Time',
       render: (overtime) => <span className="text-gray-500">{overtime.start_time?.slice(0, 5)} — {overtime.end_time?.slice(0, 5)}</span>,
     },
-    { key: 'hours', header: 'Hours', align: 'right', render: (overtime) => <span className="font-semibold">{overtime.hours}h</span> },
+    { key: 'hours', header: 'Hours', align: 'right', render: (overtime) => <span className="font-semibold">{Number(overtime.hours)}h</span> },
     { key: 'reason', header: 'Reason', render: (overtime) => <span className="text-gray-400 max-w-[180px] truncate block">{overtime.reason || '\u2014'}</span> },
     { key: 'status', header: 'Status', render: (overtime) => statusBadge(overtime.status) },
   ];
@@ -666,7 +666,7 @@ export function Approvals() {
 
                 <div className="grid grid-cols-2 gap-4 bg-gray-50 rounded-lg p-4">
                   <SummaryField label="Leave Type" value={request.leave_type_name || '\u2014'} />
-                  <SummaryField label="Duration" value={`${request.days} day(s)`} />
+                  <SummaryField label="Duration" value={`${Number(request.days)} day(s)`} />
                   <SummaryField label="Start Date" value={formatDate(request.start_date)} />
                   <SummaryField label="End Date" value={formatDate(request.end_date)} />
                 </div>
@@ -909,7 +909,7 @@ export function Approvals() {
                     </span>
                   </SummaryField>
                   <SummaryField label="Time" value={`${overtime.start_time?.slice(0, 5)} — ${overtime.end_time?.slice(0, 5)}`} />
-                  <SummaryField label="Duration" value={`${overtime.hours} hours`} />
+                  <SummaryField label="Duration" value={`${Number(overtime.hours)} hours`} />
                 </div>
 
                 {overtime.reason && <SummaryField label="Reason" value={overtime.reason} />}
@@ -1292,7 +1292,7 @@ function ClaimCrudModal({
     category: '',
     receipt_url: '',
     receipt_file_name: '',
-    expense_date: new Date().toISOString().slice(0, 10),
+    expense_date: todayLocalDate(),
   });
   const [error, setError] = useState('');
   const [uploading, setUploading] = useState(false);
@@ -1329,7 +1329,7 @@ function ClaimCrudModal({
       category: '',
       receipt_url: '',
       receipt_file_name: '',
-      expense_date: new Date().toISOString().slice(0, 10),
+      expense_date: todayLocalDate(),
     });
     setError('');
   }, [employees, item, open]);

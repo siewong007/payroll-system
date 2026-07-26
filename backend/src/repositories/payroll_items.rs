@@ -6,8 +6,9 @@ use uuid::Uuid;
 use crate::core::error::AppResult;
 use crate::models::payroll::{PayrollItem, PcbFields};
 
-/// Insert a computed payslip row. Arguments are in the exact column order of the
-/// INSERT; the engine computes every value and passes it positionally.
+/// Insert a computed payslip row. The engine computes every value and passes it
+/// positionally. New columns are appended to the end of both the column list and
+/// the signature so existing placeholders keep their numbering.
 #[allow(clippy::too_many_arguments)]
 pub async fn insert(
     executor: impl Executor<'_, Database = Postgres>,
@@ -40,6 +41,11 @@ pub async fn insert(
     ytd_eis_employee: i64,
     ytd_zakat: i64,
     ytd_net: i64,
+    total_bonus: i64,
+    total_commission: i64,
+    working_days: Option<i32>,
+    days_worked: Option<rust_decimal::Decimal>,
+    is_prorated: bool,
 ) -> AppResult<PayrollItem> {
     let item = sqlx::query_as!(
         PayrollItem,
@@ -51,11 +57,14 @@ pub async fn insert(
             ptptn_amount, tabung_haji_amount,
             total_other_deductions, total_deductions, net_salary, employer_cost,
             ytd_gross, ytd_epf_employee, ytd_pcb, ytd_socso_employee,
-            ytd_eis_employee, ytd_zakat, ytd_net
+            ytd_eis_employee, ytd_zakat, ytd_net,
+            total_bonus, total_commission,
+            working_days, days_worked, is_prorated
         ) VALUES (
             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
             $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
-            $21, $22, $23, $24, $25, $26, $27, $28, $29
+            $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31,
+            $32, $33, $34
         ) RETURNING *"#,
         id,
         payroll_run_id,
@@ -86,6 +95,11 @@ pub async fn insert(
         ytd_eis_employee,
         ytd_zakat,
         ytd_net,
+        total_bonus,
+        total_commission,
+        working_days,
+        days_worked,
+        is_prorated,
     )
     .fetch_one(executor)
     .await?;

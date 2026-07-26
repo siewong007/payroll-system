@@ -13,7 +13,13 @@ use crate::core::error::{AppError, AppResult};
 use crate::models::backup::{CompanyBackup, ExportQuery, ImportResult};
 use crate::services::backup_service;
 
+/// A company backup carries payroll_runs/items/entries, salary_history and raw
+/// employee rows (bank account, IC, TIN). Admin roles are deliberately excluded
+/// from `Permission::ViewPayroll`, so requiring only the admin role here would
+/// hand them, via export, exactly the figures every payroll endpoint denies
+/// them — and let import overwrite those tables. Both checks must pass.
 fn require_admin(auth: &AuthUser) -> AppResult<(Option<Uuid>, Uuid)> {
+    auth.require_payroll_privileged()?;
     if auth.has_any_role(&["super_admin"]) {
         return Ok((auth.0.company_id, auth.0.sub));
     }

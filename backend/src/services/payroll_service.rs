@@ -34,7 +34,16 @@ pub async fn list_groups(pool: &PgPool, company_id: Uuid) -> AppResult<Vec<Payro
     payroll_groups::list_active(pool, company_id).await
 }
 
-pub async fn list_items(pool: &PgPool, run_id: Uuid) -> AppResult<Vec<PayrollItem>> {
+/// Payslip figures for a run. `NotFound` if the run is not in the company —
+/// without this the run id alone would expose another tenant's payroll.
+pub async fn list_items(
+    pool: &PgPool,
+    company_id: Uuid,
+    run_id: Uuid,
+) -> AppResult<Vec<PayrollItem>> {
+    if !payroll_runs::exists(pool, run_id, company_id).await? {
+        return Err(AppError::NotFound("Payroll run not found".into()));
+    }
     payroll_items::list_for_run(pool, run_id).await
 }
 
@@ -79,13 +88,28 @@ pub async fn delete_run(
         ));
     }
 
+    // A later committed run's stored ytd_* and PCB annualisation were computed
+    // from this run's figures; deleting it would leave those describing a run
+    // that no longer exists.
+    if payroll_reads::run_has_later_committed_run(pool, company_id, id).await? {
+        return Err(AppError::BadRequest(
+            "A later payroll run already includes these employees; delete that run first".into(),
+        ));
+    }
+
     let mut tx = pool.begin().await?;
     payroll_entries::revert_for_run(&mut *tx, id, company_id, actor_id).await?;
-    claims::revert_processed_for_period(&mut *tx, company_id, run.period_start, run.period_end)
+    claims::revert_processed_for_run(&mut *tx, company_id, id, run.period_start, run.period_end)
         .await?;
     payroll_item_details::delete_for_run(&mut *tx, id).await?;
     payroll_items::delete_for_run(&mut *tx, id).await?;
-    payroll_runs::delete(&mut *tx, id, company_id).await?;
+    // Re-checks status/lock atomically: the guard above ran outside this
+    // transaction, so a concurrent submit or approve could have locked the run.
+    if !payroll_runs::delete_if_unlocked(&mut *tx, id, company_id).await? {
+        return Err(AppError::BadRequest(
+            "Payroll run was submitted or locked while being deleted".into(),
+        ));
+    }
     tx.commit().await?;
 
     let _ = audit_service::log_action_with_metadata(

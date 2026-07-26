@@ -16,6 +16,10 @@ After every `git commit`, the hook detects which code files changed (via `git di
 
 If a post-commit hook already exists, CodeGraph appends to it rather than replacing it.
 
+## PreToolUse hook-check (already wired in this repo)
+
+`.codex/hooks.json` runs `./scripts/codegraph hook-check` before every Bash tool call. The runtime defines `hook-check` as an always-exit-0 no-op (graph guidance reaches the agent via AGENTS.md instead), and the wrapper preserves that no-op even when the `graphify` runtime is not installed — a missing optional tool must never break Bash calls. Do not add logic to `hook-check` that can exit non-zero.
+
 ---
 
 ## For native CLAUDE.md integration

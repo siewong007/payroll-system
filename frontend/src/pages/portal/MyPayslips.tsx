@@ -9,7 +9,7 @@ const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'];
 
 export function MyPayslips() {
-  const [year, setYear] = useState(2026);
+  const [year, setYear] = useState(() => new Date().getFullYear());
   const [month, setMonth] = useState(new Date().getMonth() + 1);
 
   const { data: payslips, isLoading } = useQuery({
@@ -81,7 +81,8 @@ export function MyPayslips() {
           onChange={(e) => setYear(Number(e.target.value))}
           className="form-input !w-auto"
         >
-          {[2024, 2025, 2026, 2027].map((y) => <option key={y} value={y}>{y}</option>)}
+          {Array.from({ length: 6 }, (_, i) => new Date().getFullYear() - 3 + i)
+            .map((y) => <option key={y} value={y}>{y}</option>)}
         </select>
         <button onClick={goForward} className="p-2 rounded-lg hover:bg-gray-100 transition-all-fast">
           <ChevronRight className="w-5 h-5 text-gray-500" />

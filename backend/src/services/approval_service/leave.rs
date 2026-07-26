@@ -31,9 +31,29 @@ pub async fn create_leave_request_admin(
     actor_id: Uuid,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<LeaveRequest> {
-    crate::services::leave_rules::validate_period(req.start_date, req.end_date, req.days)?;
+    let working_days = calendar_service::count_working_days_between(
+        pool,
+        company_id,
+        req.start_date,
+        req.end_date,
+    )
+    .await?;
+    crate::services::leave_rules::validate_period(
+        req.start_date,
+        req.end_date,
+        req.days,
+        working_days,
+    )?;
     ensure_employee_in_company(pool, company_id, employee_id).await?;
     ensure_leave_type_in_company(pool, company_id, req.leave_type_id).await?;
+
+    if leave_requests::overlaps_existing(pool, employee_id, req.start_date, req.end_date, None)
+        .await?
+    {
+        return Err(AppError::BadRequest(
+            "This employee already has a leave request covering some of these dates".into(),
+        ));
+    }
 
     let mut tx = pool.begin().await?;
 
@@ -52,15 +72,14 @@ pub async fn create_leave_request_admin(
     .await?;
 
     let year = req.start_date.year();
-    let rows =
-        leave_balances::add_pending(&mut *tx, employee_id, req.leave_type_id, req.days, year)
-            .await?;
-
-    if rows == 0 {
-        return Err(AppError::BadRequest(
-            "Leave balance not initialized for the selected employee/year".into(),
-        ));
-    }
+    crate::services::leave_rules::reserve_pending_days(
+        &mut tx,
+        employee_id,
+        req.leave_type_id,
+        req.days,
+        year,
+    )
+    .await?;
 
     tx.commit().await?;
 
@@ -107,7 +126,24 @@ pub async fn update_leave_request_admin(
     let start_date = req.start_date.unwrap_or(current.start_date);
     let end_date = req.end_date.unwrap_or(current.end_date);
     let days = req.days.unwrap_or(current.days);
-    crate::services::leave_rules::validate_period(start_date, end_date, days)?;
+    let working_days =
+        calendar_service::count_working_days_between(pool, company_id, start_date, end_date)
+            .await?;
+    crate::services::leave_rules::validate_period(start_date, end_date, days, working_days)?;
+
+    if leave_requests::overlaps_existing(
+        &mut *tx,
+        employee_id,
+        start_date,
+        end_date,
+        Some(request_id),
+    )
+    .await?
+    {
+        return Err(AppError::BadRequest(
+            "This employee already has another leave request covering some of these dates".into(),
+        ));
+    }
 
     let old_year = current.start_date.year();
     let new_year = start_date.year();
@@ -121,14 +157,14 @@ pub async fn update_leave_request_admin(
     )
     .await?;
 
-    let add_rows =
-        leave_balances::add_pending(&mut *tx, employee_id, leave_type_id, days, new_year).await?;
-
-    if add_rows == 0 {
-        return Err(AppError::BadRequest(
-            "Leave balance not initialized for the selected employee/year".into(),
-        ));
-    }
+    crate::services::leave_rules::reserve_pending_days(
+        &mut tx,
+        employee_id,
+        leave_type_id,
+        days,
+        new_year,
+    )
+    .await?;
 
     let updated = leave_requests::update_full(
         &mut *tx,
@@ -270,7 +306,10 @@ pub async fn cancel_leave_request_admin(
         .await?;
     }
 
-    let cancelled = leave_requests::set_cancelled(&mut *tx, request_id, company_id).await?;
+    // Guards the refunds above against a concurrent cancel that already refunded.
+    let cancelled = leave_requests::set_cancelled(&mut *tx, request_id, company_id)
+        .await?
+        .ok_or_else(|| AppError::BadRequest("Leave request has already been cancelled".into()))?;
 
     tx.commit().await?;
 
@@ -313,14 +352,26 @@ pub async fn approve_leave(
     notes: Option<&str>,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<LeaveRequest> {
-    let lr = leave_requests::set_approved(pool, request_id, company_id, reviewer_id, notes)
+    // Approval and the pending->taken move must commit together. Separately, a
+    // failure between them left the request approved with the days stuck in
+    // pending_days and never in taken_days; a later cancel then subtracted from
+    // taken_days (floored by GREATEST), permanently corrupting the balance.
+    let mut tx = pool.begin().await?;
+    let lr = leave_requests::set_approved(&mut *tx, request_id, company_id, reviewer_id, notes)
         .await?
         .ok_or_else(|| AppError::BadRequest("Leave request not found or not pending".into()))?;
 
     // Move from pending to taken
     let year = lr.start_date.year();
-    leave_balances::move_pending_to_taken(pool, lr.employee_id, lr.leave_type_id, lr.days, year)
-        .await?;
+    leave_balances::move_pending_to_taken(
+        &mut *tx,
+        lr.employee_id,
+        lr.leave_type_id,
+        lr.days,
+        year,
+    )
+    .await?;
+    tx.commit().await?;
 
     // Check if this is unpaid leave — if so, auto-create payroll deduction
     let is_paid = leave_types::get_is_paid(pool, lr.leave_type_id).await?;
@@ -338,11 +389,14 @@ pub async fn approve_leave(
                 lr.end_date,
             )
             .await
-            .unwrap_or(
-                rust_decimal::Decimal::to_string(&lr.days)
-                    .parse::<i32>()
-                    .unwrap_or(0),
-            );
+            .unwrap_or_else(|_| {
+                // Fallback when the calendar lookup fails. Rounding the Decimal
+                // directly matters: formatting it and calling parse::<i32>() fails
+                // for any fractional value like "1.5", yielding 0 working days and
+                // silently staging no deduction at all.
+                use rust_decimal::prelude::ToPrimitive;
+                lr.days.round().to_i32().unwrap_or(0)
+            });
 
             if unpaid_working_days > 0 {
                 // Get working days in the leave month for daily rate calculation
@@ -365,12 +419,18 @@ pub async fn approve_leave(
                 let deduction_amount = daily_rate * unpaid_working_days as i64;
 
                 if deduction_amount > 0 {
-                    // Determine which payroll period to stage the deduction
-                    let now = chrono::Utc::now();
-                    let period_year = now.year();
-                    let period_month = now.month() as i32;
+                    // Stage against the month the leave was taken, not the month it
+                    // happened to be approved in. Using the approval date deducted
+                    // December leave from July payroll when approval lagged, and
+                    // matches how approved overtime is staged (by ot_date).
+                    let period_year = leave_year;
+                    let period_month = leave_month as i32;
 
-                    let _ = payroll_entries::insert_unpaid_leave_deduction(
+                    // Propagate rather than swallow: 'unpaid_leave' is NOT in the
+                    // item_type exclusion in reads/payroll.rs, so this staged row is
+                    // what actually applies the deduction. A dropped insert silently
+                    // overpaid the employee by the full amount.
+                    payroll_entries::insert_unpaid_leave_deduction(
                         pool,
                         Uuid::now_v7(),
                         lr.employee_id,
@@ -384,7 +444,7 @@ pub async fn approve_leave(
                         deduction_amount,
                         reviewer_id,
                     )
-                    .await;
+                    .await?;
                 }
             }
         }

@@ -256,7 +256,9 @@ pub async fn approve_claim(
     let period_year = now.year();
     let period_month = now.month() as i32;
 
-    let _ = payroll_entries::insert_claim_reimbursement(
+    // Propagate rather than swallow: this staged row is the marker the cancel
+    // path checks to decide whether a claim has already been paid.
+    payroll_entries::insert_claim_reimbursement(
         pool,
         Uuid::now_v7(),
         claim.employee_id,
@@ -267,7 +269,7 @@ pub async fn approve_claim(
         claim.amount,
         reviewer_id,
     )
-    .await;
+    .await?;
 
     // Notify employee
     let employee_user = user_repo::active_id_for_employee(pool, claim.employee_id).await?;

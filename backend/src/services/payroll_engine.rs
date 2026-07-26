@@ -1,4 +1,7 @@
 use chrono::{Datelike, NaiveDate};
+use rust_decimal::Decimal;
+use rust_decimal::RoundingStrategy;
+use rust_decimal::prelude::ToPrimitive;
 use sqlx::PgPool;
 use std::collections::HashMap;
 use tracing::{Instrument, info, info_span};
@@ -6,7 +9,7 @@ use uuid::Uuid;
 
 use crate::core::error::{AppError, AppResult};
 use crate::models::employee::Employee;
-use crate::models::payroll::{BulkPayrollData, PayrollItem, PayrollRun};
+use crate::models::payroll::{BulkPayrollData, OvertimeSettings, PayrollItem, PayrollRun};
 use crate::models::statutory::PcbInput;
 use crate::repositories::reads::payroll as payroll_reads;
 use crate::repositories::{
@@ -16,6 +19,7 @@ use crate::services::audit_service::AuditRequestMeta;
 use crate::services::eis_service;
 use crate::services::epf_service;
 use crate::services::pcb_calculator;
+use crate::services::settings_service;
 use crate::services::socso_service;
 use crate::services::statutory_rules;
 
@@ -175,6 +179,15 @@ pub async fn process_payroll(
         monthly_allowances_map.insert(row.employee_id, row.total);
     }
 
+    // Bonus/commission are already inside variable_earnings (and therefore gross);
+    // this is purely so they can also be stored as their own payslip line items.
+    let bonus_commission =
+        payroll_reads::bonus_commission_totals(&mut *tx, &employee_ids, year, month).await?;
+    let bonus_commission_map: HashMap<Uuid, (i64, i64)> = bonus_commission
+        .into_iter()
+        .map(|r| (r.employee_id, (r.bonus, r.commission)))
+        .collect();
+
     // 3. Batch fetch attendance OT hours
     let ot_hours =
         payroll_reads::attendance_ot_hours(&mut *tx, &employee_ids, period_start, period_end)
@@ -212,7 +225,7 @@ pub async fn process_payroll(
 
     // 4. Batch fetch TP3 data
     let tp3_data = tp3_records::list_ytd_for_employees(&mut *tx, &employee_ids, year).await?;
-    let tp3_map: HashMap<Uuid, (i64, i64, i64, i64)> = tp3_data
+    let tp3_map: HashMap<Uuid, (i64, i64, i64, i64, i64)> = tp3_data
         .into_iter()
         .map(|r| {
             (
@@ -221,6 +234,7 @@ pub async fn process_payroll(
                     r.previous_income_ytd,
                     r.previous_epf_ytd,
                     r.previous_pcb_ytd,
+                    r.previous_socso_ytd,
                     r.previous_zakat_ytd,
                 ),
             )
@@ -250,6 +264,8 @@ pub async fn process_payroll(
         tp3: tp3_map,
         ytd: ytd_map,
         monthly_allowances: monthly_allowances_map,
+        bonus_commission: bonus_commission_map,
+        ot_settings: load_overtime_settings(pool, company_id).await,
     };
 
     let mut total_gross: i64 = 0;
@@ -349,6 +365,69 @@ pub async fn process_payroll(
     Ok(run)
 }
 
+/// Reads the company's overtime configuration once per run.
+///
+/// Same keys the approval path uses, so attendance-based overtime and approved
+/// overtime are rated identically. A missing or unparsable setting falls back to
+/// the statutory defaults (Employment Act multipliers, 26-day month, 8-hour day).
+async fn load_overtime_settings(pool: &PgPool, company_id: Uuid) -> OvertimeSettings {
+    async fn decimal_setting(
+        pool: &PgPool,
+        company_id: Uuid,
+        key: &str,
+        default: Decimal,
+    ) -> Decimal {
+        settings_service::get_setting(pool, company_id, "payroll", key)
+            .await
+            .ok()
+            .and_then(|s| {
+                s.value
+                    .as_str()
+                    .and_then(|v| Decimal::from_str_exact(v).ok())
+            })
+            .filter(|v| !v.is_zero())
+            .unwrap_or(default)
+    }
+
+    OvertimeSettings {
+        effective_hours_per_day: decimal_setting(
+            pool,
+            company_id,
+            "effective_hours_per_day",
+            Decimal::from(8),
+        )
+        .await,
+        working_days_per_month: decimal_setting(
+            pool,
+            company_id,
+            "unpaid_leave_divisor",
+            Decimal::from(26),
+        )
+        .await,
+        multiplier_normal: decimal_setting(
+            pool,
+            company_id,
+            "overtime_multiplier_normal",
+            Decimal::new(15, 1),
+        )
+        .await,
+        multiplier_rest_day: decimal_setting(
+            pool,
+            company_id,
+            "overtime_multiplier_rest",
+            Decimal::from(2),
+        )
+        .await,
+        multiplier_public_holiday: decimal_setting(
+            pool,
+            company_id,
+            "overtime_multiplier_public",
+            Decimal::from(3),
+        )
+        .await,
+    }
+}
+
 /// Process a single employee's payroll
 #[allow(clippy::too_many_arguments)]
 async fn process_employee(
@@ -369,24 +448,60 @@ async fn process_employee(
     let epf_category = emp.epf_category.clone().unwrap_or_else(|| "A".to_string());
 
     // Gross salary = basic + recurring allowances + overtime
-    let basic = emp.basic_salary;
+    // Prorate an incomplete month. Employment Act 1955 s.18B uses CALENDAR days
+    // for an incomplete month (monthly wages ÷ days in the month × days eligible),
+    // not working days — so `working_days` below is deliberately the calendar-day
+    // count of the period. Employees selected for the run may have joined after
+    // period_start or resigned before period_end; paying the full basic in those
+    // months also over-stated every statutory contribution derived from gross.
+    let period_days = (_period_end - _period_start).num_days() + 1;
+    let worked_from = emp.date_joined.max(_period_start);
+    let worked_to = emp
+        .date_resigned
+        .map_or(_period_end, |resigned| resigned.min(_period_end));
+    let days_worked = ((worked_to - worked_from).num_days() + 1).clamp(0, period_days);
+    let is_prorated = days_worked < period_days;
+
+    let basic = if is_prorated {
+        (Decimal::from(emp.basic_salary) * Decimal::from(days_worked) / Decimal::from(period_days))
+            .round_dp_with_strategy(0, RoundingStrategy::MidpointAwayFromZero)
+            .to_i64()
+            .unwrap_or(emp.basic_salary)
+    } else {
+        emp.basic_salary
+    };
 
     let allowances_total = *bulk.recurring_allowances.get(&emp.id).unwrap_or(&0);
     let monthly_allowances = *bulk.monthly_allowances.get(&emp.id).unwrap_or(&0);
     let variable_earnings = *bulk.variable_earnings.get(&emp.id).unwrap_or(&0);
+    let (total_bonus, total_commission) = *bulk.bonus_commission.get(&emp.id).unwrap_or(&(0, 0));
     let variable_deductions = *bulk.variable_deductions.get(&emp.id).unwrap_or(&0);
     let recurring_deductions = *bulk.recurring_deductions.get(&emp.id).unwrap_or(&0);
     let attendance_ot_hours = *bulk.attendance_ot_hours.get(&emp.id).unwrap_or(&0.0);
 
-    // Calculate hourly rate once for OT computations
-    let hourly_rate = emp.hourly_rate.unwrap_or({
-        // Default calculation: basic / 26 days / 8 hours
-        emp.basic_salary / 26 / 8
-    });
+    // Hourly rate in Decimal, from company settings rather than hardcoded 26/8.
+    // The old `basic / 26 / 8` truncated twice (RM5,000 gave 2403 sen instead of
+    // 2403.85), and the f64 multiply below truncated again — always against the
+    // employee. Keep the rate unrounded and round only the final amount.
+    let ot = &bulk.ot_settings;
+    let hourly_rate = match emp.hourly_rate {
+        Some(rate) => Decimal::from(rate),
+        None => {
+            Decimal::from(emp.basic_salary) / ot.working_days_per_month / ot.effective_hours_per_day
+        }
+    };
+
+    let round_sen = |amount: Decimal| -> i64 {
+        amount
+            .round_dp_with_strategy(0, RoundingStrategy::MidpointAwayFromZero)
+            .to_i64()
+            .unwrap_or(0)
+    };
 
     // Attendance-based OT (records without approved OT applications)
     let attendance_ot_pay = if attendance_ot_hours > 0.0 {
-        (hourly_rate as f64 * 1.5 * attendance_ot_hours) as i64
+        let hours = Decimal::try_from(attendance_ot_hours).unwrap_or_default();
+        round_sen(hourly_rate * ot.multiplier_normal * hours)
     } else {
         0
     };
@@ -395,12 +510,8 @@ async fn process_employee(
     let approved_ot_pay = if let Some(ot_entries) = bulk.approved_ot.get(&emp.id) {
         let mut total = 0i64;
         for (ot_type, hours) in ot_entries {
-            let multiplier = match ot_type.as_str() {
-                "rest_day" => 2.0,
-                "public_holiday" => 3.0,
-                _ => 1.5, // normal
-            };
-            total += (hourly_rate as f64 * multiplier * hours) as i64;
+            let hours = Decimal::try_from(*hours).unwrap_or_default();
+            total += round_sen(hourly_rate * ot.multiplier_for(ot_type) * hours);
         }
         total
     } else {
@@ -440,7 +551,8 @@ async fn process_employee(
         *bulk.ytd.get(&emp.id).unwrap_or(&(0, 0, 0, 0, 0, 0, 0));
 
     // Get TP3 data if exists
-    let (tp3_income, tp3_epf, tp3_pcb, tp3_zakat) = *bulk.tp3.get(&emp.id).unwrap_or(&(0, 0, 0, 0));
+    let (tp3_income, tp3_epf, tp3_pcb, tp3_socso, tp3_zakat) =
+        *bulk.tp3.get(&emp.id).unwrap_or(&(0, 0, 0, 0, 0));
 
     // Zakat
     let zakat = if emp.zakat_eligible.unwrap_or(false) {
@@ -466,7 +578,7 @@ async fn process_employee(
         ytd_gross: ytd_gross + tp3_income,
         ytd_pcb: ytd_pcb + tp3_pcb,
         ytd_epf: ytd_epf + tp3_epf,
-        ytd_socso,
+        ytd_socso: ytd_socso + tp3_socso,
         ytd_eis,
         ytd_zakat: ytd_zakat + tp3_zakat,
         is_bonus_month: false,
@@ -492,6 +604,18 @@ async fn process_employee(
         + variable_deductions;
 
     let net = gross - total_deductions + total_claims;
+    // Deductions are not bounded by gross (an over-staged unpaid-leave or loan
+    // entry is enough), and a negative net silently becomes a negative payslip
+    // and a negative run total. Payroll fails closed so the operator fixes the
+    // entry rather than shipping the figure.
+    if net < 0 {
+        return Err(AppError::BadRequest(format!(
+            "Employee {} has deductions ({}) exceeding gross plus claims ({}), which would produce a negative net salary. Review the staged deductions for this period.",
+            emp.employee_number,
+            total_deductions,
+            gross + total_claims
+        )));
+    }
     let employer_cost = gross + epf.employer + socso.employer + eis.employer;
 
     // New YTD
@@ -536,6 +660,11 @@ async fn process_employee(
         new_ytd_eis,
         new_ytd_zakat,
         new_ytd_net,
+        total_bonus,
+        total_commission,
+        Some(period_days as i32),
+        Some(Decimal::from(days_worked)),
+        is_prorated,
     )
     .await?;
 

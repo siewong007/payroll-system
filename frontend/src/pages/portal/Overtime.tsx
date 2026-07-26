@@ -260,7 +260,7 @@ export function Overtime() {
                     </div>
                     <p className="text-sm text-gray-500">
                       {app.start_time?.slice(0, 5)} — {app.end_time?.slice(0, 5)}
-                      <span className="ml-2 font-medium text-gray-700">{app.hours}h</span>
+                      <span className="ml-2 font-medium text-gray-700">{Number(app.hours)}h</span>
                     </p>
                     {app.reason && <p className="text-sm text-gray-400">{app.reason}</p>}
                     {app.review_notes && (

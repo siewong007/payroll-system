@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react';
-import { useNavigate, Navigate, Link } from 'react-router-dom';
+import { useNavigate, Navigate, Link, useSearchParams } from 'react-router-dom';
 import type { User } from '@/types';
 import { motion } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
 import { Fingerprint } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
-import { getErrorMessage } from '@/lib/utils';
+import { getErrorMessage, safeRedirectPath } from '@/lib/utils';
 import api from '@/api/client';
 import { hasOnlyEmployeeRole } from '@/lib/roles';
 import { checkPasskey, passkeyAuthBegin, passkeyAuthComplete, passkeyDiscoverableBegin, passkeyDiscoverableComplete } from '@/api/passkey';
@@ -52,6 +52,11 @@ export function Login() {
   const [mfaToken, setMfaToken] = useState<string | null>(null);
   const { login, setSession, user, isAuthenticated } = useAuth();
   const navigate = useNavigate();
+  // The kiosk scan page sends unauthenticated scanners here with the scan URL
+  // (including its QR token) in `?redirect=`; without honouring it they landed on
+  // /portal and had to rescan within the token's 300s TTL.
+  const [searchParams] = useSearchParams();
+  const redirectTo = safeRedirectPath(searchParams.get('redirect'));
 
   const { data: providers } = useQuery({
     queryKey: ['oauth2-providers'],
@@ -80,14 +85,14 @@ export function Login() {
   }, [email, webauthnSupported]);
 
   if (isAuthenticated && user) {
-    return <Navigate to={hasOnlyEmployeeRole(user) ? '/portal' : '/'} replace />;
+    return <Navigate to={redirectTo ?? (hasOnlyEmployeeRole(user) ? '/portal' : '/')} replace />;
   }
 
   const goPostLogin = (loggedInUser: User) => {
     if (loggedInUser.must_change_password) {
       navigate('/change-password');
     } else {
-      navigate(hasOnlyEmployeeRole(loggedInUser) ? '/portal' : '/');
+      navigate(redirectTo ?? (hasOnlyEmployeeRole(loggedInUser) ? '/portal' : '/'));
     }
   };
 
@@ -131,7 +136,7 @@ export function Login() {
         setMfaToken(response.mfa_token);
       } else {
         setSession(response.token, response.user);
-        navigate(hasOnlyEmployeeRole(response.user) ? '/portal' : '/');
+        navigate(redirectTo ?? (hasOnlyEmployeeRole(response.user) ? '/portal' : '/'));
       }
     } catch (err: unknown) {
       setError(getErrorMessage(err, 'Passkey authentication failed'));
@@ -150,18 +155,26 @@ export function Login() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100">
+    <div className="relative isolate min-h-screen flex items-center justify-center overflow-hidden bg-slate-950">
+      {/* Aurora backdrop — indigo hints at the admin console, teal at the portal */}
+      <div aria-hidden className="pointer-events-none absolute inset-0 -z-10">
+        <div className="ambient-blob animate-float-a -top-32 -left-24 h-[30rem] w-[30rem] bg-indigo-600/30" />
+        <div className="ambient-blob animate-float-b -bottom-40 -right-24 h-[32rem] w-[32rem] bg-teal-500/25" />
+        <div className="ambient-blob animate-float-a top-1/3 left-1/2 h-72 w-72 bg-violet-600/20" />
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_35%,rgba(2,6,23,0.55)_100%)]" />
+      </div>
+
       <motion.div
         className="w-full max-w-md px-4"
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.3 }}
+        initial={{ opacity: 0, y: 24, scale: 0.98 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
       >
-        <div className="bg-white rounded-2xl shadow p-6 sm:p-8">
+        <div className="bg-white/90 backdrop-blur-2xl ring-1 ring-white/40 rounded-3xl shadow-2xl p-6 sm:p-8">
           {/* Logo */}
           <div className="text-center mb-8">
             <BrandLogo variant="lockup-dark" className="h-12 w-auto mx-auto mb-4" />
-            <p className="text-sm text-gray-400 mt-1">Malaysian Payroll System</p>
+            <p className="text-sm text-gray-500 mt-1">Malaysian Payroll System</p>
           </div>
 
           {mfaToken ? (
@@ -180,7 +193,7 @@ export function Login() {
                       <button
                         type="button"
                         onClick={handleGoogleLogin}
-                        className="w-full flex items-center justify-center gap-3 py-2.5 px-4 border border-gray-300 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all"
+                        className="w-full flex items-center justify-center gap-3 py-2.5 px-4 bg-white border border-gray-200 rounded-xl text-sm font-medium text-gray-700 hover:border-gray-300 hover:shadow-md hover:-translate-y-px transition-all"
                       >
                         <GoogleIcon />
                         Continue with Google
@@ -191,7 +204,7 @@ export function Login() {
                         type="button"
                         onClick={handlePasskeyLogin}
                         disabled={passkeyLoading}
-                        className="w-full flex items-center justify-center gap-3 py-2.5 px-4 border border-gray-300 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 transition-all"
+                        className="w-full flex items-center justify-center gap-3 py-2.5 px-4 bg-white border border-gray-200 rounded-xl text-sm font-medium text-gray-700 hover:border-gray-300 hover:shadow-md hover:-translate-y-px disabled:opacity-50 transition-all"
                       >
                         <Fingerprint className="w-5 h-5" />
                         {passkeyLoading ? 'Verifying...' : 'Sign in with Passkey'}
@@ -199,20 +212,17 @@ export function Login() {
                     )}
                   </div>
 
-                  <div className="relative my-6">
-                    <div className="absolute inset-0 flex items-center">
-                      <div className="w-full border-t border-gray-200" />
-                    </div>
-                    <div className="relative flex justify-center text-xs">
-                      <span className="bg-white px-3 text-gray-400">or sign in with email</span>
-                    </div>
+                  <div className="flex items-center gap-3 my-6">
+                    <div className="h-px flex-1 bg-gray-200" />
+                    <span className="text-xs text-gray-400">or sign in with email</span>
+                    <div className="h-px flex-1 bg-gray-200" />
                   </div>
                 </>
               )}
 
               <form onSubmit={handleSubmit} className="space-y-5">
                 {error && (
-                  <div className="bg-red-50 text-red-600 text-sm px-4 py-3 rounded-xl">
+                  <div className="animate-fade-up bg-red-50 border border-red-100 text-red-600 text-sm px-4 py-3 rounded-xl">
                     {error}
                   </div>
                 )}
@@ -223,7 +233,7 @@ export function Login() {
                     type="email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    className="border p-2.5 rounded-lg w-full text-sm outline-none focus:border-black transition-colors"
+                    className="form-input"
                     placeholder="Enter your email"
                     required
                   />
@@ -235,7 +245,7 @@ export function Login() {
                     type="password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="border p-2.5 rounded-lg w-full text-sm outline-none focus:border-black transition-colors"
+                    className="form-input"
                     placeholder="Enter your password"
                     required
                   />
@@ -244,7 +254,7 @@ export function Login() {
                 <button
                   type="submit"
                   disabled={loading}
-                  className="w-full bg-black text-white py-2.5 rounded-xl font-semibold hover:bg-gray-800 disabled:opacity-50 transition-all"
+                  className="w-full bg-gradient-to-r from-slate-900 to-slate-700 text-white py-2.5 rounded-xl font-semibold shadow-lg hover:shadow-[0_10px_30px_-8px_rgba(99,102,241,0.5),0_10px_30px_-8px_rgba(20,184,166,0.4)] hover:-translate-y-px active:translate-y-0 disabled:opacity-50 disabled:shadow-none transition-all"
                 >
                   {loading ? 'Signing in...' : 'Sign In'}
                 </button>
@@ -258,6 +268,10 @@ export function Login() {
             </>
           )}
         </div>
+
+        <p className="mt-6 text-center text-xs text-slate-500">
+          Secure payroll for Malaysian teams
+        </p>
       </motion.div>
     </div>
   );

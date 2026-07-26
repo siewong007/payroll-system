@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use chrono::{DateTime, NaiveDate, Utc};
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -259,9 +260,37 @@ pub(crate) struct BulkPayrollData {
     pub(crate) attendance_ot_hours: HashMap<Uuid, f64>,
     pub(crate) approved_ot: HashMap<Uuid, Vec<(String, f64)>>,
     pub(crate) approved_claims: HashMap<Uuid, i64>,
-    pub(crate) tp3: HashMap<Uuid, (i64, i64, i64, i64)>,
+    pub(crate) tp3: HashMap<Uuid, (i64, i64, i64, i64, i64)>,
     pub(crate) ytd: HashMap<Uuid, (i64, i64, i64, i64, i64, i64, i64)>,
     pub(crate) monthly_allowances: HashMap<Uuid, i64>,
+    pub(crate) bonus_commission: HashMap<Uuid, (i64, i64)>,
+    pub(crate) ot_settings: OvertimeSettings,
+}
+
+/// Company overtime configuration, read once per run.
+///
+/// The engine previously hardcoded 1.5/2.0/3.0 and `basic / 26 / 8` while the
+/// approval path read these same settings, so a company configured for (say) a
+/// 9-hour day or a 2.5x holiday rate had its attendance overtime paid at the
+/// wrong rate. Decimal throughout, per the repo's money rule — the old `f64`
+/// cast and double integer division truncated, always against the employee.
+#[derive(Debug, Clone)]
+pub(crate) struct OvertimeSettings {
+    pub(crate) effective_hours_per_day: Decimal,
+    pub(crate) working_days_per_month: Decimal,
+    pub(crate) multiplier_normal: Decimal,
+    pub(crate) multiplier_rest_day: Decimal,
+    pub(crate) multiplier_public_holiday: Decimal,
+}
+
+impl OvertimeSettings {
+    pub(crate) fn multiplier_for(&self, ot_type: &str) -> Decimal {
+        match ot_type {
+            "rest_day" => self.multiplier_rest_day,
+            "public_holiday" => self.multiplier_public_holiday,
+            _ => self.multiplier_normal,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -269,6 +298,13 @@ pub struct EmployeeCategoryTotal {
     pub employee_id: Uuid,
     pub category: String,
     pub total: i64,
+}
+
+#[derive(Debug)]
+pub struct EmployeeBonusCommission {
+    pub employee_id: Uuid,
+    pub bonus: i64,
+    pub commission: i64,
 }
 
 #[derive(Debug)]

@@ -15,6 +15,7 @@ import {
   createManualAttendance,
   updateAttendanceRecord,
   downloadAttendanceCsv,
+  getAttendanceSummary,
   type AttendanceRecordWithEmployee,
 } from '@/api/attendance';
 import {
@@ -25,6 +26,7 @@ import {
 } from '@/api/kiosk';
 import { useAuth } from '@/context/AuthContext';
 import { hasAnyRole } from '@/lib/roles';
+import { toDateTimeLocalValue, todayLocalDate } from '@/lib/utils';
 import { WorkScheduleCard } from '@/components/attendance/WorkScheduleCard';
 import { GeofenceCard } from '@/components/attendance/GeofenceCard';
 
@@ -405,12 +407,25 @@ function QrPanel() {
 
 // ─── Stats Bar ────────────────────────────────────────────────────────────────
 
-function StatsBar({ records }: { records: AttendanceRecordWithEmployee[] }) {
-  const today = new Date().toDateString();
-  const todayRecords = records.filter(r => new Date(r.check_in_at).toDateString() === today);
-  const present = todayRecords.filter(r => r.status === 'present').length;
-  const late    = todayRecords.filter(r => r.status === 'late').length;
-  const checkedOut = todayRecords.filter(r => r.check_out_at).length;
+function StatsBar() {
+  // These tiles report today across the whole company, so they must not be
+  // derived from `records` — that is one 50-row page of the *currently filtered*
+  // query, so a date filter or a second page made the numbers undercount or
+  // collapse to zero while still being labelled "today".
+  const today = todayLocalDate();
+  // Key is prefixed with 'attendance-records' so the existing invalidation after
+  // a manual entry or edit refreshes these tiles too.
+  const { data } = useQuery({
+    queryKey: ['attendance-records', 'today-stats', today],
+    queryFn: () => getAttendanceSummary({ date_from: today, date_to: today }),
+  });
+  const items = data ?? [];
+  const present = items.reduce((sum, i) => sum + i.present_days, 0);
+  const late = items.reduce((sum, i) => sum + i.late_days, 0);
+  const checkedOut = items.reduce(
+    (sum, i) => sum + (i.present_days + i.late_days + i.half_days - i.unchecked_out_days),
+    0,
+  );
 
   return (
     <div className="grid grid-cols-3 gap-4 mb-6">
@@ -439,7 +454,7 @@ function ManualEntryModal({ onClose }: { onClose: () => void }) {
   const queryClient = useQueryClient();
   const [form, setForm] = useState({
     employee_id: '',
-    check_in_at: new Date().toISOString().slice(0, 16),
+    check_in_at: toDateTimeLocalValue(new Date()),
     check_out_at: '',
     status: 'present',
     notes: '',
@@ -537,8 +552,8 @@ function ManualEntryModal({ onClose }: { onClose: () => void }) {
 function EditAttendanceModal({ record, onClose }: { record: AttendanceRecordWithEmployee; onClose: () => void }) {
   const queryClient = useQueryClient();
   const [form, setForm] = useState({
-    check_in_at: new Date(record.check_in_at).toISOString().slice(0, 16),
-    check_out_at: record.check_out_at ? new Date(record.check_out_at).toISOString().slice(0, 16) : '',
+    check_in_at: toDateTimeLocalValue(record.check_in_at),
+    check_out_at: record.check_out_at ? toDateTimeLocalValue(record.check_out_at) : '',
     status: record.status,
     notes: record.notes ?? '',
   });
@@ -682,6 +697,7 @@ export function AttendancePage() {
                       date_from: filters.date_from || undefined,
                       date_to:   filters.date_to   || undefined,
                       status:    filters.status    || undefined,
+                      method:    filters.method    || undefined,
                     });
                   } finally {
                     setExporting(false);
@@ -705,7 +721,7 @@ export function AttendancePage() {
         </div>
       </div>
 
-      <StatsBar records={records} />
+      <StatsBar />
 
       {/* Work Schedule & Geofence (admin only) */}
       {isAdmin && (

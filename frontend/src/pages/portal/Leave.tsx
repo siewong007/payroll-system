@@ -134,9 +134,10 @@ export function Leave() {
     queryFn: getMyProfile,
   });
 
+  const currentYear = new Date().getFullYear();
   const { data: balances, isLoading: loadingBalances } = useQuery({
-    queryKey: ['leave-balances', 2026],
-    queryFn: () => getLeaveBalances(2026),
+    queryKey: ['leave-balances', currentYear],
+    queryFn: () => getLeaveBalances(currentYear),
   });
 
   const { data: requests } = useQuery({

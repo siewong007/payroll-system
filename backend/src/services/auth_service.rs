@@ -5,7 +5,7 @@ use crate::core::auth::{create_mfa_pending_token, create_token};
 use crate::core::error::{AppError, AppResult};
 use crate::models::session::{LoginOutcome, LoginResponseWithRefresh};
 use crate::models::user::{LoginRequest, User, UserResponse};
-use crate::repositories::{employees, users};
+use crate::repositories::{employees, refresh_tokens, user_sessions, users};
 use crate::services::{session_service, totp_service};
 
 const EMPLOYEE_DELETED_MSG: &str =
@@ -198,7 +198,15 @@ pub async fn change_password(
     let new_hash = bcrypt::hash(new_password, 12)
         .map_err(|_| AppError::Internal("Password hashing failed".into()))?;
 
-    users::update_password(pool, user_id, &new_hash).await
+    let mut tx = pool.begin().await?;
+    users::update_password(&mut *tx, user_id, &new_hash).await?;
+    // Changing the password must end every existing session, otherwise a stolen
+    // refresh cookie outlives the change: refresh rotates it and `touch` keeps
+    // extending the 30-day window, so the thief never loses access.
+    user_sessions::revoke_all_for_user(&mut *tx, user_id).await?;
+    refresh_tokens::revoke_all_for_user(&mut *tx, user_id).await?;
+    tx.commit().await?;
+    Ok(())
 }
 
 pub async fn skip_change_password(pool: &PgPool, user_id: Uuid) -> AppResult<()> {

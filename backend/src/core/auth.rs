@@ -309,6 +309,22 @@ impl AuthUser {
         self.require_permission(Permission::ViewPayroll)
     }
 
+    /// Returns true for roles that may create, edit or remove employee records.
+    /// Mirrors the roles allowed to bulk-import employees and manage kiosks.
+    pub fn can_manage_employees(&self) -> bool {
+        self.has_any_role(&["super_admin", "admin", "hr_manager", "payroll_admin"])
+    }
+
+    /// Rejects the request unless the role may modify employee records.
+    pub fn require_employee_manager(&self) -> AppResult<()> {
+        if !self.can_manage_employees() {
+            return Err(AppError::Forbidden(
+                "Authorized role required to manage employees".into(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Rejects employee self-service users from admin attendance views.
     pub fn require_non_employee(&self) -> AppResult<()> {
         if self.has_any_role(&["employee"]) && self.roles().len() == 1 {

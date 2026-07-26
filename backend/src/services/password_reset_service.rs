@@ -4,7 +4,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::core::error::{AppError, AppResult};
-use crate::repositories::{password_reset_requests, refresh_tokens, users};
+use crate::repositories::{password_reset_requests, refresh_tokens, user_sessions, users};
 
 fn hash_token(token: &str) -> String {
     let mut hasher = Sha256::new();
@@ -63,10 +63,16 @@ pub async fn reset_password(pool: &PgPool, raw_token: &str, new_password: &str) 
     let password_hash = bcrypt::hash(new_password, 12)
         .map_err(|e| AppError::Internal(format!("Failed to hash password: {}", e)))?;
 
-    // Update password, complete the request, and revoke active sessions
-    users::set_password(pool, request.user_id, &password_hash).await?;
-    password_reset_requests::mark_completed(pool, request.id).await?;
-    refresh_tokens::revoke_all_for_user(pool, request.user_id).await?;
+    // Update password, complete the request, and revoke active sessions.
+    // user_sessions must be revoked too: `AuthUser` admits a bearer token while
+    // its session row is unrevoked, so revoking only refresh_tokens would leave
+    // a stolen access JWT usable until it expires.
+    let mut tx = pool.begin().await?;
+    users::set_password(&mut *tx, request.user_id, &password_hash).await?;
+    password_reset_requests::mark_completed(&mut *tx, request.id).await?;
+    user_sessions::revoke_all_for_user(&mut *tx, request.user_id).await?;
+    refresh_tokens::revoke_all_for_user(&mut *tx, request.user_id).await?;
+    tx.commit().await?;
 
     Ok(())
 }

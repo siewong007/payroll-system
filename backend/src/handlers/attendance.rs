@@ -107,9 +107,15 @@ pub async fn generate_qr_token(
     auth.require_attendance_qr_generator()?;
 
     // Also works for super_admin when managing a company
-    let resp =
-        attendance_service::generate_qr_token(&state.pool, company_id, &state.config.frontend_url)
-            .await?;
+    // None: the admin console is its own display surface, so regenerating here
+    // does not retire tokens shown on the physical kiosks.
+    let resp = attendance_service::generate_qr_token(
+        &state.pool,
+        company_id,
+        &state.config.frontend_url,
+        None,
+    )
+    .await?;
 
     let audit_meta = AuditRequestMeta::from_headers(&headers);
     let _ = crate::services::audit_service::log_action_with_metadata(

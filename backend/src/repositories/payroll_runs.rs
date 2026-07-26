@@ -340,19 +340,28 @@ pub async fn get_status_locked(
     Ok(row)
 }
 
-pub async fn delete(
+/// Deletes a run only while it is still deletable, returning false if it is not.
+///
+/// The status/lock predicate is repeated here on purpose: the caller's check runs
+/// outside the transaction, so a concurrent submit or approve between that read
+/// and this statement would otherwise delete a locked run. Returning false lets
+/// the caller roll the whole transaction back.
+pub async fn delete_if_unlocked(
     executor: impl Executor<'_, Database = Postgres>,
     run_id: Uuid,
     company_id: Uuid,
-) -> AppResult<()> {
-    sqlx::query!(
-        "DELETE FROM payroll_runs WHERE id = $1 AND company_id = $2",
+) -> AppResult<bool> {
+    let result = sqlx::query!(
+        r#"DELETE FROM payroll_runs
+        WHERE id = $1 AND company_id = $2
+          AND locked_at IS NULL
+          AND status::text NOT IN ('processing', 'pending_approval', 'approved', 'paid')"#,
         run_id,
         company_id,
     )
     .execute(executor)
     .await?;
-    Ok(())
+    Ok(result.rows_affected() > 0)
 }
 
 /// Adjust a run's PCB/net totals by `delta` after a single item's PCB is edited.

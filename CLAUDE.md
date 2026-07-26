@@ -58,7 +58,7 @@ Browser → Vite dev proxy (or CloudFront in prod) → Axum at `/api/*` → hand
 
 Errors: every fallible path returns `AppResult<T>` (`Result<T, AppError>`). `AppError::Database` wraps `sqlx::Error` via `#[from]`, so use `?` freely. `AppError::Internal` is logged and returned as a generic 500; all other variants surface their message to the client.
 
-Auth: JWT in `Authorization: Bearer`, refresh token in httpOnly cookie. `AuthUser` is an Axum extractor; use `auth_user.deny_exec()?` on any payroll-sensitive handler — the `exec` role is read-mostly and must not see payroll figures. Role strings in claims: `super_admin`, `admin`, `payroll_admin`, `hr_manager`, `finance`, `exec`, `employee`. Multi-company users switch active company via `PUT /api/auth/switch-company`, which re-issues the JWT with a new `company_id`.
+Auth: JWT in `Authorization: Bearer`, refresh token in httpOnly cookie. `AuthUser` is an Axum extractor. The `exec` role is read-mostly and must not see payroll figures; that is enforced by the permission model rather than by an explicit call — `exec` is in no branch of `AuthUser::can()`, so `require_permission(Permission::ViewPayroll)` / `require_payroll_privileged()` / `is_payroll_privileged()` all deny it. `auth_user.deny_exec()?` exists for handlers that are not permission-gated. Every handler must carry an explicit gate: the operation itself needs a role check (`require_employee_manager`, `require_hr_admin`, `require_non_employee`, …), not just a `company_id` lookup. Role strings in claims: `super_admin`, `admin`, `payroll_admin`, `hr_manager`, `finance`, `exec`, `employee`. Multi-company users switch active company via `PUT /api/auth/switch-company`, which re-issues the JWT with a new `company_id`.
 
 Rate limiting is applied per-route group in `routes/mod.rs` via `tower_governor` — tighter limits on `/auth/login`, `/auth/forgot-password`, and OAuth2 endpoints.
 
@@ -78,14 +78,14 @@ Key design decisions to be aware of:
 `services/payroll_engine.rs` is the entry point. It enforces one active run per `(company, payroll_group, year, month)`, preflights source-linked verified statutory rule sets, then composes `epf_service` + `socso_service` + `eis_service` + `pcb_calculator` inside a transaction. The rows shipped in `1001_data.sql` are unverified academic fixtures; production payroll fails closed, and automatic PCB remains disabled until the calculator passes LHDN computerised-MTD conformance. PDFs are produced by `payslip_pdf_service` / `pdf_helpers` (printpdf), and statutory exports (EPF/SOCSO/EIS/PCB files + EA form) by `statutory_export_service` / `ea_form_service`.
 
 ### Frontend layout
-- `App.tsx` is the router. Two shells: `AppLayout` for admin/HR, `PortalLayout` for employee self-service. `RoleGuard` wraps routes that a role must not see (e.g. `exec` is blocked from `/payroll/*` and `/reports`). `/attendance/kiosk` and `/attendance/scan` are unauthenticated public routes used by the check-in kiosk.
+- `App.tsx` is the router. Two shells: `AppLayout` for admin/HR, `PortalLayout` for employee self-service. `RoleGuard` wraps routes that a role must not see (e.g. `exec` is blocked from `/payroll/*` and `/reports`); because `roles` is an array, a route that omits `exec` denies anyone holding it even if another of their roles is listed. `/attendance/kiosk` (admin QR display) and `/attendance/scan` (employee scan target) sit outside the two shells but still require a session — the genuinely unauthenticated kiosk surface is `/kiosk/:kioskKey`, which authenticates with a kiosk secret instead of a user.
 - `api/client.ts` — single axios instance. Access token is kept in-memory only (never in `localStorage`); refresh uses the httpOnly cookie. A 401 on any non-auth endpoint triggers a single refresh attempt with a queue for concurrent requests, then redirects to `/login` if refresh fails. When adding API modules, always import from `@/api/client` — do not create a second axios instance.
 - `context/AuthContext.tsx` — on mount, calls `/auth/refresh` to restore the session from the cookie; `user` is mirrored to `localStorage` for fast paint only, never for auth.
 - `pages/` mirrors feature areas; `api/*.ts` has one file per backend module.
 - React Query defaults: `retry: 1`, `staleTime: 30s`, no refetch-on-focus.
 
 ### Infra
-`infra/` holds Terraform for AWS (RDS + EC2 + ECR + CloudFront + ACM + Route53 + S3 uploads). Production builds the backend from the repository root with `infra/Dockerfile`; the frontend build is served from S3/CloudFront.
+`infra/` holds Terraform for the frontend delivery path and deploy identity only: S3 + CloudFront + ACM + Route53 + an IAM OIDC provider/deploy role. There is no RDS, EC2, ECR, Secrets Manager or VPC module, and no S3 uploads bucket (uploads go to the API container's local `uploads/`). Production runs the backend and database as containers on the Lightsail host, built from the repository root with `infra/Dockerfile`; the frontend build is served from S3/CloudFront.
 
 ## Conventions specific to this repo
 

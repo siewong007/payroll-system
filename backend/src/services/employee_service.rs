@@ -99,13 +99,36 @@ pub async fn create_user_for_employee(
     // Check if email already exists
     if let Some(existing) = users::find_by_email(pool, email).await? {
         let existing_id = existing.id;
+
+        // Never touch a soft-deleted account: hard-deleting and recreating it
+        // would resurrect a tombstone under a caller-chosen password, and
+        // linking it would revive an account that must not authenticate.
+        if existing.is_deleted {
+            tracing::warn!(
+                employee_id = %emp.id,
+                "employee email matches a deleted user account; skipping portal account creation"
+            );
+            return Ok(None);
+        }
+
+        // Never touch an account belonging to another company. Both branches
+        // below rewrite the account's company/employee binding, so without this
+        // any caller could pull a foreign tenant's user into their own company.
+        if existing.company_id != Some(emp.company_id) {
+            tracing::warn!(
+                employee_id = %emp.id,
+                "employee email belongs to a user in another company; skipping portal account creation"
+            );
+            return Ok(None);
+        }
+
         if existing.roles.as_slice() == ["employee"] {
-            // Stale employee account — clean up and recreate below
+            // Stale employee account in this same company — clean up and recreate below
             user_companies::delete_by_user(pool, existing_id).await?;
             refresh_tokens::delete_by_user(pool, existing_id).await?;
             users::delete(pool, existing_id).await?;
         } else {
-            // Non-employee user (admin, etc.) — link to this employee silently
+            // Non-employee user (admin, etc.) in this company — link to this employee
             users::link_to_employee(pool, emp.id, emp.company_id, existing_id).await?;
             user_companies::insert(pool, existing_id, emp.company_id).await?;
             return Ok(None);

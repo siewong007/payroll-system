@@ -32,20 +32,32 @@ pub async fn mark_processed(
     Ok(())
 }
 
-/// Revert a period's processed claims back to approved (used when deleting a run).
-pub async fn revert_processed_for_period(
+/// Revert a run's processed claims back to approved (used when deleting a run).
+///
+/// Scoped to the employees that the run actually paid. `mark_processed` marks
+/// per employee, so reverting by company+period alone would also un-process
+/// claims belonging to a *different* payroll group whose run for the same month
+/// is still live — the next run touching those employees would pay them again.
+/// Must be called before `payroll_items::delete_for_run`, which is where the
+/// run's employee set is read from.
+pub async fn revert_processed_for_run(
     executor: impl Executor<'_, Database = Postgres>,
     company_id: Uuid,
+    run_id: Uuid,
     period_start: NaiveDate,
     period_end: NaiveDate,
 ) -> AppResult<()> {
     sqlx::query!(
         r#"UPDATE claims SET status = 'approved', updated_at = NOW()
         WHERE company_id = $1 AND status = 'processed'
-          AND expense_date >= $2 AND expense_date <= $3"#,
+          AND expense_date >= $2 AND expense_date <= $3
+          AND employee_id IN (
+              SELECT employee_id FROM payroll_items WHERE payroll_run_id = $4
+          )"#,
         company_id,
         period_start,
         period_end,
+        run_id,
     )
     .execute(executor)
     .await?;
