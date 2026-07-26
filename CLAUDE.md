@@ -127,3 +127,11 @@ It is registered as the `codegraph` MCP server in `.mcp.json` and exposes:
 - CLI equivalents when the MCP is not connected: `./scripts/codegraph query|path|explain|affected|god-nodes`.
 
 Runtime deps (once per machine): `pip install "graphifyy[sql,terraform,mcp]"`. Without the `sql` and `terraform` extras the migrations and `infra/` are silently dropped from the index.
+
+### Regenerating `graph.html`
+
+The HTML viz is capped at 5000 nodes and this graph is past that, so the cap has to be raised or the build skips the file. `GRAPHIFY_VIZ_NODE_LIMIT` is set to `8000` in the Windows user environment; raise it again when the graph outgrows that.
+
+**Only `update` produces full node-level HTML — `export html` does not.** `exporters/html.py` resolves the cap as `limit = node_limit if node_limit is not None else _viz_node_limit()`, and `export html` passes `node_limit` explicitly, so the env var is ignored on that path and the output silently degrades to an aggregated community meta-graph (a few hundred community nodes instead of every symbol). Both write the same `graphify-out/graph.html`, so the aggregated one overwrites the detailed one with no warning.
+
+Use `./scripts/codegraph update .` to rebuild the viz. Reach for `export html` only when the aggregated community view is what you actually want. To tell them apart, count `"id":` in `graph.html`: it matches the node count for the detailed build, and the community count for the aggregated one.
