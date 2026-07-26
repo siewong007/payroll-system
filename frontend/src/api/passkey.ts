@@ -20,10 +20,26 @@ export async function checkPasskey(email: string): Promise<{ has_passkey: boolea
   return data;
 }
 
+/**
+ * webauthn-rs serializes `RequestChallengeResponse` / `CreationChallengeResponse`
+ * as `{ publicKey: { ... } }` (plus an optional sibling `mediation`), so the wire
+ * shape is a wrapper — not the bare options object the browser API and our
+ * `createPasskeyCredential`/`getPasskeyCredential` helpers take. Callers must
+ * unwrap `.publicKey`; typing these as the bare options let a caller pass the
+ * wrapper straight through and still typecheck.
+ */
+export interface PasskeyRequestOptionsEnvelope {
+  publicKey: PublicKeyCredentialRequestOptionsJSON;
+}
+
+export interface PasskeyCreationOptionsEnvelope {
+  publicKey: PublicKeyCredentialCreationOptionsJSON;
+}
+
 // Authentication (login) flow
 export async function passkeyAuthBegin(email: string) {
   const { data } = await api.post('/auth/passkey/authenticate/begin', { email });
-  return data as { challenge_id: string; options: PublicKeyCredentialRequestOptionsJSON };
+  return data as { challenge_id: string; options: PasskeyRequestOptionsEnvelope };
 }
 
 export async function passkeyAuthComplete(
@@ -40,7 +56,7 @@ export async function passkeyAuthComplete(
 // Discoverable authentication (no email required)
 export async function passkeyDiscoverableBegin() {
   const { data } = await api.post('/auth/passkey/discoverable/begin');
-  return data as { challenge_id: string; options: PublicKeyCredentialRequestOptionsJSON };
+  return data as { challenge_id: string; options: PasskeyRequestOptionsEnvelope };
 }
 
 export async function passkeyDiscoverableComplete(
@@ -57,7 +73,7 @@ export async function passkeyDiscoverableComplete(
 // Registration flow (authenticated)
 export async function passkeyRegisterBegin() {
   const { data } = await api.post('/auth/passkey/register/begin');
-  return data as { challenge_id: string; options: PublicKeyCredentialCreationOptionsJSON };
+  return data as { challenge_id: string; options: PasskeyCreationOptionsEnvelope };
 }
 
 export async function passkeyRegisterComplete(challengeId: string, credential: RegistrationResponseJSON, name?: string) {
