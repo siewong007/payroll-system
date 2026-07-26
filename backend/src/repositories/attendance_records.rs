@@ -45,6 +45,7 @@ pub async fn insert_qr(
     Ok(record)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn insert_face(
     executor: impl Executor<'_, Database = Postgres>,
     company_id: Uuid,
@@ -84,6 +85,7 @@ pub async fn insert_face(
 ///
 /// `max_overtime_hours` is the company's per-day ceiling, decided by the service
 /// — the repository does not read settings.
+#[allow(clippy::too_many_arguments)]
 pub async fn check_out(
     executor: impl Executor<'_, Database = Postgres>,
     employee_id: Uuid,

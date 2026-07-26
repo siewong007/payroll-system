@@ -43,8 +43,7 @@ use uuid::Uuid;
 use crate::core::error::{AppError, AppResult};
 use crate::core::ip_prefix::{IpPrefix, is_identifying};
 use crate::models::company_network::{
-    CompanyNetwork, CreateNetworkRequest, NetworkCheckResult, ScoredCandidate,
-    UpdateNetworkRequest,
+    CompanyNetwork, CreateNetworkRequest, NetworkCheckResult, ScoredCandidate, UpdateNetworkRequest,
 };
 use crate::repositories::reads::attendance_networks as network_reads;
 use crate::repositories::{attendance_network_observations, companies, company_networks};
@@ -159,7 +158,10 @@ pub async fn create_network(
     // floor. Every path that writes to the allow-list goes through it.
     let prefix = IpPrefix::parse_approvable(&req.cidr)?;
 
-    insert_approved(pool, company_id, &label, prefix, actor_id, false, audit_meta).await
+    insert_approved(
+        pool, company_id, &label, prefix, actor_id, false, audit_meta,
+    )
+    .await
 }
 
 pub async fn update_network(
@@ -286,13 +288,7 @@ async fn insert_approved(
     }
 
     let created = company_networks::insert(
-        pool,
-        company_id,
-        label,
-        &network,
-        prefix_len,
-        actor_id,
-        learned,
+        pool, company_id, label, &network, prefix_len, actor_id, learned,
     )
     .await?;
 
@@ -359,8 +355,10 @@ pub async fn approve_candidate(
         .await?
         .is_some();
 
-    let created =
-        insert_approved(pool, company_id, &label, prefix, actor_id, observed, audit_meta).await?;
+    let created = insert_approved(
+        pool, company_id, &label, prefix, actor_id, observed, audit_meta,
+    )
+    .await?;
 
     attendance_network_observations::delete_for_network(pool, company_id, &network, prefix_len)
         .await?;
@@ -579,8 +577,8 @@ pub(crate) fn candidate_prefix(addr: IpAddr) -> AppResult<IpPrefix> {
 pub(crate) fn score_candidate(
     candidate: crate::models::company_network::NetworkCandidate,
 ) -> ScoredCandidate {
-    let is_anchored = candidate.anchored_count >= ANCHORED_MIN_OBSERVATIONS
-        && anchored_employees_met(&candidate);
+    let is_anchored =
+        candidate.anchored_count >= ANCHORED_MIN_OBSERVATIONS && anchored_employees_met(&candidate);
 
     let is_proposable = is_anchored
         || (candidate.distinct_employees >= UNANCHORED_MIN_EMPLOYEES

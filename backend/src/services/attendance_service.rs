@@ -605,8 +605,7 @@ pub async fn check_in_qr(
     let kiosk_minted = attendance_qr_tokens::is_kiosk_minted(pool, token_id)
         .await
         .unwrap_or(false);
-    let anchored =
-        kiosk_minted || geofence_corroborates(pool, company_id, outside_geofence).await;
+    let anchored = kiosk_minted || geofence_corroborates(pool, company_id, outside_geofence).await;
     observe_network(pool, company_id, employee_id, client_ip, anchored).await;
 
     Ok(record)

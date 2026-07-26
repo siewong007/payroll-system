@@ -336,9 +336,10 @@ async fn checkin_supersedes_todays_auto_absent_row() {
     }
 
     // A real (service-level) check-in afterwards must remove the placeholder.
-    let record = attendance_service::check_in_face_id(&pool, employee_id, company_id, None, None, None)
-        .await
-        .expect("check-in should succeed after auto-absent");
+    let record =
+        attendance_service::check_in_face_id(&pool, employee_id, company_id, None, None, None)
+            .await
+            .expect("check-in should succeed after auto-absent");
     assert_ne!(record.status, "absent");
 
     let absent_left: i64 = sqlx::query_scalar(
@@ -646,7 +647,7 @@ async fn forgotten_check_out_leaves_overtime_unrated() {
 
     insert_open_record(&pool, company_id, employee_id, 23).await;
 
-    let record = attendance_service::check_out(&pool, employee_id, company_id, None, None)
+    let record = attendance_service::check_out(&pool, employee_id, company_id, None, None, None)
         .await
         .expect("check_out must still close the session");
 
@@ -673,7 +674,7 @@ async fn a_normal_overtime_check_out_is_still_rated() {
     // 11 h against the 9 h default shift → 2 h, comfortably under the ceiling.
     insert_open_record(&pool, company_id, employee_id, 11).await;
 
-    let record = attendance_service::check_out(&pool, employee_id, company_id, None, None)
+    let record = attendance_service::check_out(&pool, employee_id, company_id, None, None, None)
         .await
         .expect("check_out should succeed");
 
@@ -706,7 +707,7 @@ async fn the_overtime_ceiling_is_read_from_company_settings() {
     // The same 2 h that the previous test rates is now above the ceiling.
     insert_open_record(&pool, company_id, employee_id, 11).await;
 
-    let record = attendance_service::check_out(&pool, employee_id, company_id, None, None)
+    let record = attendance_service::check_out(&pool, employee_id, company_id, None, None, None)
         .await
         .expect("check_out should succeed");
 

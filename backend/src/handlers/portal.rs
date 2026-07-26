@@ -9,7 +9,7 @@ use chrono::Datelike;
 use crate::core::app_state::AppState;
 use crate::core::auth::{AuthUser, Permission};
 use crate::core::error::{AppError, AppResult};
-use crate::core::upload_path::{self, ALLOWED_UPLOAD_EXTENSIONS};
+use crate::core::upload_path;
 use crate::models::employee::Employee;
 use crate::models::portal::*;
 use crate::models::upload::UploadAccess;
