@@ -1,4 +1,4 @@
-import { Outlet, Link, useLocation, Navigate } from 'react-router-dom';
+import { Outlet, Link, useLocation, Navigate } from 'react-router';
 import { User, FileText, Calendar, Receipt, LogOut, ChevronDown, Bell, Users, Clock, MoreHorizontal, ScanLine, Sparkles } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useEffect, useRef, useState } from 'react';

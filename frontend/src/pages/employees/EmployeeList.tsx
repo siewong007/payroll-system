@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Search, Edit, DollarSign, Shield, MapPin, TrendingUp, TrendingDown, Pencil, Trash2, AlertTriangle, Upload, UserCheck, X } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { getEmployees, createEmployee, updateEmployee, deleteEmployee, getEmployee, getSalaryHistory } from '@/api/employees';
 import { getPayrollGroups } from '@/api/payroll';
 import { formatMYR, formatDate, todayLocalDate } from '@/lib/utils';

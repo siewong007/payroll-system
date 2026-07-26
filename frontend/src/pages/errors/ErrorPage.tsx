@@ -1,5 +1,5 @@
 import { ArrowLeft, Home, LockKeyhole, SearchX } from 'lucide-react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router';
 import { BrandLogo } from '@/components/ui/BrandLogo';
 import { useAuth } from '@/context/AuthContext';
 import { hasOnlyEmployeeRole, hasAnyRole, SUPER_ADMIN_ROLES } from '@/lib/roles';

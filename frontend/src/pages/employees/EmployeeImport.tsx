@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { Upload, Download, CheckCircle, XCircle, AlertTriangle, ArrowLeft, FileSpreadsheet, Loader2 } from 'lucide-react';
 import { downloadImportTemplate, validateImport, confirmImport } from '@/api/employees';
 import type { ImportValidationResponse, ImportConfirmResponse } from '@/types';

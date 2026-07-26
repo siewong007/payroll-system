@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useAuth } from '@/context/AuthContext';
 import api from '@/api/client';
 import { hasOnlyEmployeeRole } from '@/lib/roles';

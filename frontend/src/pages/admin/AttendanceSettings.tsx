@@ -4,7 +4,7 @@ import { QrCode, Fingerprint, Shield, CheckCircle2, AlertCircle, Info, Building2
 import { getPlatformAttendanceMethod, setPlatformAttendanceMethod } from '@/api/attendance';
 import { useAuth } from '@/context/AuthContext';
 import { hasAnyRole } from '@/lib/roles';
-import { Navigate } from 'react-router-dom';
+import { Navigate } from 'react-router';
 
 export function AttendanceSettings() {
   const { user } = useAuth();

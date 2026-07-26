@@ -189,4 +189,15 @@ jobs:
         with:
           bun-version-file: frontend/package.json
       - run: bun ci
-      - run: bun audit --audit-level=high
+        # GHSA-mh99-v99m-4gvg (brace-expansion DoS) is patched only in 5.0.8,
+        # whose CJS build exports `{ expand }` rather than `module.exports =
+        # expand`. The single path to it here is eslint 9 -> minimatch@3.1.5,
+        # which does `require('brace-expansion')` and calls the module object,
+        # so forcing 5.0.8 through `overrides` breaks `bun run lint` outright.
+        # It is dev-only and expands developer-authored config globs, never
+        # untrusted input. Drop the ignore once eslint stops pulling
+        # minimatch@3. Re-review at least quarterly (next: 2026-10).
+        #
+        # bun matches an ignore against the advisory URL, so the GHSA id is
+        # required — `--ignore CVE-2026-14257` would silently match nothing.
+      - run: bun audit --audit-level=high --ignore GHSA-mh99-v99m-4gvg

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams } from 'react-router';
 import { RefreshCw, Wifi, Clock, ShieldAlert } from 'lucide-react';
 import QRCode from 'qrcode';
 import { fetchKioskQr } from '@/api/kiosk';

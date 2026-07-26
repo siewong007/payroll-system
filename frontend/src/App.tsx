@@ -1,5 +1,5 @@
 import { Suspense, lazy, type ComponentType, type ReactNode } from 'react';
-import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from '@/context/AuthProvider';
 import { useAuth } from '@/context/AuthContext';

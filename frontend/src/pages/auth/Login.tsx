@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate, Navigate, Link, useSearchParams } from 'react-router-dom';
+import { useNavigate, Navigate, Link, useSearchParams } from 'react-router';
 import type { User } from '@/types';
 import { motion } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router';
 import { CheckCircle2, XCircle, Loader2, MapPin, QrCode, Info, RefreshCw } from 'lucide-react';
 import { checkInQr, getAttendanceMethod } from '@/api/attendance';
 import { useAuth } from '@/context/AuthContext';

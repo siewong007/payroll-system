@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Building2, Check, ChevronDown } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useAuth } from '@/context/AuthContext';
 import { getMyCompanies } from '@/api/admin';

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useAuth } from '@/context/AuthContext';
 import { hasOnlyEmployeeRole } from '@/lib/roles';
 import { TwoFactorPrompt } from '@/components/TwoFactorPrompt';

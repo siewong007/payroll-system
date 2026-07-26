@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router';
 import { motion } from 'framer-motion';
 import { resetPassword, validateResetToken } from '@/api/admin';
 
