@@ -348,3 +348,359 @@ pub async fn validate_file(
         rows: validated_rows,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{HashMap, HashSet};
+
+    use serde_json::json;
+
+    use super::{check_duplicates, validate_row};
+    use crate::models::employee_import::{ExistingEmployees, FieldError, ImportRowRaw};
+
+    /// Builds a row from a JSON object. Every column is `Option<String>`, so
+    /// serde fills the unlisted ones with `None` and each test states only the
+    /// columns it cares about.
+    fn row(overrides: serde_json::Value) -> ImportRowRaw {
+        let mut base = json!({
+            "row_number": 2,
+            "employee_number": "E001",
+            "full_name": "Nurul Huda",
+            "date_joined": "2026-01-15",
+            "basic_salary": "3500.00",
+        });
+        let serde_json::Value::Object(extra) = overrides else {
+            panic!("row overrides must be a JSON object");
+        };
+        let base_map = base.as_object_mut().expect("base fixture is an object");
+        for (key, value) in extra {
+            base_map.insert(key, value);
+        }
+        serde_json::from_value(base).expect("row fixture should deserialize")
+    }
+
+    fn fields(errors: &[FieldError]) -> Vec<&str> {
+        errors.iter().map(|e| e.field.as_str()).collect()
+    }
+
+    fn existing(employee_numbers: &[&str], ic_numbers: &[&str]) -> ExistingEmployees {
+        ExistingEmployees {
+            employee_numbers: employee_numbers.iter().map(|s| s.to_string()).collect(),
+            ic_numbers: ic_numbers.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn a_minimal_complete_row_has_no_errors() {
+        assert!(validate_row(&row(json!({}))).is_empty());
+    }
+
+    #[test]
+    fn every_mandatory_field_is_reported_when_missing() {
+        let bare: ImportRowRaw =
+            serde_json::from_value(json!({ "row_number": 2 })).expect("bare row");
+        let errors = validate_row(&bare);
+
+        // All four are reported together so the operator fixes the sheet once
+        // rather than re-uploading once per missing column.
+        assert_eq!(
+            fields(&errors),
+            [
+                "employee_number",
+                "full_name",
+                "date_joined",
+                "basic_salary"
+            ]
+        );
+    }
+
+    #[test]
+    fn empty_strings_count_as_missing_not_present() {
+        let errors = validate_row(&row(json!({ "employee_number": "", "full_name": "" })));
+
+        assert!(fields(&errors).contains(&"employee_number"));
+        assert!(fields(&errors).contains(&"full_name"));
+    }
+
+    #[test]
+    fn accepts_every_supported_date_format_for_date_joined() {
+        for value in [
+            "2026-01-15",
+            "15/01/2026",
+            "15-01-2026",
+            "2026/01/15",
+            "15.01.2026",
+        ] {
+            assert!(
+                validate_row(&row(json!({ "date_joined": value }))).is_empty(),
+                "should accept date {value}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_an_unparseable_or_impossible_date() {
+        for value in ["15 Jan 2026", "2026-02-30", "not a date"] {
+            let errors = validate_row(&row(json!({ "date_joined": value })));
+            assert!(
+                fields(&errors).contains(&"date_joined"),
+                "should reject date {value}"
+            );
+        }
+    }
+
+    #[test]
+    fn validates_every_optional_date_column() {
+        let errors = validate_row(&row(json!({
+            "date_of_birth": "bad",
+            "probation_start": "bad",
+            "probation_end": "bad",
+        })));
+
+        assert_eq!(
+            fields(&errors),
+            ["date_of_birth", "probation_start", "probation_end"]
+        );
+    }
+
+    #[test]
+    fn accepts_formatted_currency_and_rejects_negatives() {
+        assert!(validate_row(&row(json!({ "basic_salary": "RM 3,500.00" }))).is_empty());
+
+        let errors = validate_row(&row(json!({ "basic_salary": "-1" })));
+        assert!(fields(&errors).contains(&"basic_salary"));
+    }
+
+    #[test]
+    fn validates_every_optional_money_column() {
+        let errors = validate_row(&row(json!({
+            "hourly_rate": "abc",
+            "daily_rate": "abc",
+            "zakat_monthly_amount": "abc",
+            "ptptn_monthly_amount": "abc",
+            "tabung_haji_amount": "abc",
+        })));
+
+        assert_eq!(
+            fields(&errors),
+            [
+                "hourly_rate",
+                "daily_rate",
+                "zakat_monthly_amount",
+                "ptptn_monthly_amount",
+                "tabung_haji_amount"
+            ]
+        );
+    }
+
+    #[test]
+    fn enumerated_columns_accept_their_domain_case_insensitively() {
+        let cases: [(&str, &[&str]); 5] = [
+            ("gender", &["male", "FEMALE"]),
+            (
+                "employment_type",
+                &["permanent", "Contract", "part_time", "INTERN"],
+            ),
+            ("residency_status", &["citizen", "PR", "foreigner"]),
+            (
+                "marital_status",
+                &["single", "Married", "divorced", "WIDOWED"],
+            ),
+            ("race", &["malay", "Chinese", "indian", "OTHER"]),
+        ];
+
+        for (field, values) in cases {
+            for value in values {
+                assert!(
+                    validate_row(&row(json!({ field: value }))).is_empty(),
+                    "{field} should accept {value}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn enumerated_columns_reject_values_outside_their_domain() {
+        for field in [
+            "gender",
+            "employment_type",
+            "residency_status",
+            "marital_status",
+            "race",
+        ] {
+            let errors = validate_row(&row(json!({ field: "unspecified" })));
+            assert!(
+                fields(&errors).contains(&field),
+                "{field} should reject an out-of-domain value"
+            );
+        }
+    }
+
+    #[test]
+    fn boolean_columns_accept_aliases_and_reject_prose() {
+        assert!(
+            validate_row(&row(json!({
+                "working_spouse": "yes",
+                "is_muslim": "TRUE",
+                "zakat_eligible": "0",
+            })))
+            .is_empty()
+        );
+
+        let errors = validate_row(&row(json!({
+            "working_spouse": "maybe",
+            "is_muslim": "maybe",
+            "zakat_eligible": "maybe",
+        })));
+        assert_eq!(
+            fields(&errors),
+            ["working_spouse", "is_muslim", "zakat_eligible"]
+        );
+    }
+
+    #[test]
+    fn children_count_must_be_a_whole_number() {
+        assert!(validate_row(&row(json!({ "num_children": "3" }))).is_empty());
+        assert!(validate_row(&row(json!({ "num_children": "0" }))).is_empty());
+
+        for value in ["2.5", "two", ""] {
+            let errors = validate_row(&row(json!({ "num_children": value })));
+            assert!(
+                fields(&errors).contains(&"num_children"),
+                "should reject num_children {value:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn email_needs_both_an_at_sign_and_a_dot() {
+        assert!(validate_row(&row(json!({ "email": "nurul@example.com" }))).is_empty());
+
+        for value in ["nurul-at-example.com", "nurul@example", "plain"] {
+            let errors = validate_row(&row(json!({ "email": value })));
+            assert!(
+                fields(&errors).contains(&"email"),
+                "should reject email {value}"
+            );
+        }
+    }
+
+    #[test]
+    fn payroll_group_must_be_a_uuid() {
+        assert!(
+            validate_row(&row(
+                json!({ "payroll_group_id": "0193f0a0-0000-7000-8000-000000000000" })
+            ))
+            .is_empty()
+        );
+
+        let errors = validate_row(&row(json!({ "payroll_group_id": "monthly" })));
+        assert!(fields(&errors).contains(&"payroll_group_id"));
+    }
+
+    #[test]
+    fn a_row_reports_all_of_its_problems_at_once() {
+        let errors = validate_row(&row(json!({
+            "full_name": "",
+            "gender": "unknown",
+            "email": "broken",
+            "basic_salary": "abc",
+        })));
+
+        assert_eq!(
+            fields(&errors),
+            ["full_name", "basic_salary", "gender", "email"]
+        );
+    }
+
+    #[test]
+    fn flags_an_employee_number_that_already_exists_in_the_tenant() {
+        // Existing keys are stored lowercased, so the file's casing must not
+        // let a duplicate slip past.
+        let errors = check_duplicates(
+            &row(json!({ "employee_number": "E001" })),
+            &existing(&["e001"], &[]),
+            &HashMap::new(),
+            &HashMap::new(),
+        );
+
+        assert_eq!(fields(&errors), ["employee_number"]);
+        assert!(errors[0].message.contains("already exists"));
+    }
+
+    #[test]
+    fn flags_an_ic_number_that_already_exists_in_the_tenant() {
+        let errors = check_duplicates(
+            &row(json!({ "ic_number": "900101-14-5566" })),
+            &existing(&[], &["900101-14-5566"]),
+            &HashMap::new(),
+            &HashMap::new(),
+        );
+
+        assert_eq!(fields(&errors), ["ic_number"]);
+    }
+
+    #[test]
+    fn flags_a_duplicate_within_the_uploaded_file_and_names_the_other_row() {
+        let mut seen = HashMap::new();
+        seen.insert("e001".to_string(), 4usize);
+
+        let errors = check_duplicates(
+            &row(json!({ "employee_number": "E001" })),
+            &existing(&[], &[]),
+            &seen,
+            &HashMap::new(),
+        );
+
+        assert_eq!(fields(&errors), ["employee_number"]);
+        assert!(
+            errors[0].message.contains("row 4"),
+            "message should point at the other row: {}",
+            errors[0].message
+        );
+    }
+
+    #[test]
+    fn reports_both_the_tenant_and_in_file_duplicate_when_both_apply() {
+        let mut seen = HashMap::new();
+        seen.insert("e001".to_string(), 4usize);
+
+        let errors = check_duplicates(
+            &row(json!({ "employee_number": "E001" })),
+            &existing(&["e001"], &[]),
+            &seen,
+            &HashMap::new(),
+        );
+
+        assert_eq!(fields(&errors), ["employee_number", "employee_number"]);
+    }
+
+    #[test]
+    fn a_clean_row_produces_no_duplicate_errors() {
+        let errors = check_duplicates(
+            &row(json!({ "employee_number": "E999", "ic_number": "880202-10-1234" })),
+            &existing(&["e001"], &["900101-14-5566"]),
+            &HashMap::new(),
+            &HashMap::new(),
+        );
+
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn a_row_without_an_ic_is_never_treated_as_an_ic_duplicate() {
+        let existing = ExistingEmployees {
+            employee_numbers: HashSet::new(),
+            ic_numbers: HashSet::from([String::new()]),
+        };
+
+        let errors = check_duplicates(
+            &row(json!({ "employee_number": "E999" })),
+            &existing,
+            &HashMap::new(),
+            &HashMap::new(),
+        );
+
+        assert!(errors.is_empty());
+    }
+}

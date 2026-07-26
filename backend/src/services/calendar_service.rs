@@ -335,3 +335,156 @@ pub async fn get_working_days_in_month(
 
     count_working_days_between(pool, company_id, first_day, last_day).await
 }
+
+#[cfg(test)]
+mod tests {
+    use chrono::{NaiveDate, Utc};
+    use uuid::Uuid;
+
+    use super::count_working_days_in_month;
+    use crate::models::calendar::{Holiday, WorkingDayConfig};
+
+    fn day(day_of_week: i16, is_working_day: bool) -> WorkingDayConfig {
+        WorkingDayConfig {
+            id: Uuid::nil(),
+            company_id: Uuid::nil(),
+            day_of_week,
+            is_working_day,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    /// Sunday-indexed, matching `Weekday::num_days_from_sunday`.
+    fn week(working: &[i16]) -> Vec<WorkingDayConfig> {
+        (0..7).map(|dow| day(dow, working.contains(&dow))).collect()
+    }
+
+    fn holiday(year: i32, month: u32, day_of_month: u32) -> Holiday {
+        Holiday {
+            id: Uuid::nil(),
+            company_id: Uuid::nil(),
+            name: "Test Holiday".to_string(),
+            date: NaiveDate::from_ymd_opt(year, month, day_of_month).expect("valid holiday date"),
+            holiday_type: "public_holiday".to_string(),
+            description: None,
+            is_recurring: false,
+            state: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            created_by: None,
+            updated_by: None,
+        }
+    }
+
+    #[test]
+    fn empty_config_defaults_to_a_monday_to_friday_week() {
+        // July 2026 starts on a Wednesday and has 23 weekdays.
+        assert_eq!(count_working_days_in_month(2026, 7, &[], &[]), 23);
+    }
+
+    #[test]
+    fn an_explicit_monday_to_friday_config_matches_the_default() {
+        assert_eq!(
+            count_working_days_in_month(2026, 7, &week(&[1, 2, 3, 4, 5]), &[]),
+            count_working_days_in_month(2026, 7, &[], &[])
+        );
+    }
+
+    #[test]
+    fn a_six_day_week_adds_every_saturday() {
+        // July 2026 has four Saturdays.
+        assert_eq!(
+            count_working_days_in_month(2026, 7, &week(&[1, 2, 3, 4, 5, 6]), &[]),
+            27
+        );
+    }
+
+    #[test]
+    fn a_seven_day_week_counts_the_whole_month() {
+        assert_eq!(
+            count_working_days_in_month(2026, 7, &week(&[0, 1, 2, 3, 4, 5, 6]), &[]),
+            31
+        );
+    }
+
+    #[test]
+    fn a_week_with_no_working_days_counts_nothing() {
+        assert_eq!(count_working_days_in_month(2026, 7, &week(&[]), &[]), 0);
+    }
+
+    #[test]
+    fn holidays_falling_on_working_days_are_deducted() {
+        // 2026-07-01 is a Wednesday.
+        assert_eq!(
+            count_working_days_in_month(2026, 7, &[], &[holiday(2026, 7, 1)]),
+            22
+        );
+    }
+
+    #[test]
+    fn a_holiday_on_a_non_working_day_changes_nothing() {
+        // 2026-07-04 is a Saturday, already excluded by a Mon–Fri week.
+        assert_eq!(
+            count_working_days_in_month(2026, 7, &[], &[holiday(2026, 7, 4)]),
+            23
+        );
+    }
+
+    #[test]
+    fn a_holiday_is_never_deducted_twice() {
+        let duplicated = vec![holiday(2026, 7, 1), holiday(2026, 7, 1)];
+        assert_eq!(count_working_days_in_month(2026, 7, &[], &duplicated), 22);
+    }
+
+    #[test]
+    fn holidays_outside_the_month_are_ignored() {
+        let others = vec![holiday(2026, 6, 15), holiday(2026, 8, 3)];
+        assert_eq!(count_working_days_in_month(2026, 7, &[], &others), 23);
+    }
+
+    #[test]
+    fn february_respects_leap_years() {
+        // 2028 is a leap year: 29 February falls on a Tuesday.
+        assert_eq!(count_working_days_in_month(2028, 2, &[], &[]), 21);
+        assert_eq!(count_working_days_in_month(2026, 2, &[], &[]), 20);
+    }
+
+    #[test]
+    fn december_rolls_over_the_year_to_find_its_last_day() {
+        // The month-end calculation crosses into January of the next year; a
+        // wrong roll-over would silently truncate December.
+        assert_eq!(
+            count_working_days_in_month(2026, 12, &week(&[0, 1, 2, 3, 4, 5, 6]), &[]),
+            31
+        );
+    }
+
+    #[test]
+    fn every_month_of_a_full_year_is_counted_under_an_all_days_week() {
+        let all_days = week(&[0, 1, 2, 3, 4, 5, 6]);
+        let expected = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+        for (index, days) in expected.into_iter().enumerate() {
+            let month = index as u32 + 1;
+            assert_eq!(
+                count_working_days_in_month(2026, month, &all_days, &[]),
+                days,
+                "month {month} should have {days} days"
+            );
+        }
+    }
+
+    #[test]
+    fn an_invalid_month_yields_zero_rather_than_panicking() {
+        assert_eq!(count_working_days_in_month(2026, 13, &[], &[]), 0);
+        assert_eq!(count_working_days_in_month(2026, 0, &[], &[]), 0);
+    }
+
+    #[test]
+    fn out_of_range_day_of_week_entries_are_ignored() {
+        // A malformed config row must not panic on an array index.
+        let config = vec![day(1, true), day(9, true), day(-1, true)];
+        assert_eq!(count_working_days_in_month(2026, 7, &config, &[]), 4);
+    }
+}

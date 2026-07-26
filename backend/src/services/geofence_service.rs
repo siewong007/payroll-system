@@ -8,6 +8,9 @@ use crate::models::company_location::{
 use crate::repositories::{companies, company_locations};
 use crate::services::audit_service::{self, AuditRequestMeta};
 
+/// Radius applied when a location is created without an explicit one.
+const DEFAULT_RADIUS_METERS: i32 = 200;
+
 /// Haversine distance in meters between two lat/lng points
 fn haversine_meters(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
     const R: f64 = 6_371_000.0; // Earth radius in meters
@@ -60,12 +63,8 @@ pub async fn create_location(
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<CompanyLocation> {
     validate_coordinates(req.latitude, req.longitude)?;
-    let radius = req.radius_meters.unwrap_or(200);
-    if !(10..=10_000).contains(&radius) {
-        return Err(AppError::BadRequest(
-            "Radius must be between 10 and 10,000 meters".into(),
-        ));
-    }
+    let radius = req.radius_meters.unwrap_or(DEFAULT_RADIUS_METERS);
+    validate_radius(radius)?;
 
     let loc = company_locations::insert(
         pool,
@@ -113,11 +112,7 @@ pub async fn update_location(
     let active = req.is_active.unwrap_or(existing.is_active);
 
     validate_coordinates(lat, lng)?;
-    if !(10..=10_000).contains(&radius) {
-        return Err(AppError::BadRequest(
-            "Radius must be between 10 and 10,000 meters".into(),
-        ));
-    }
+    validate_radius(radius)?;
 
     let loc = company_locations::update(
         pool,
@@ -289,6 +284,17 @@ pub async fn flag_geofence_for_checkout(
     Ok(!result.is_within)
 }
 
+/// Radius bounds shared by create and update. Extracted so both paths — and
+/// their tests — cannot drift apart.
+pub(crate) fn validate_radius(radius_meters: i32) -> AppResult<()> {
+    if !(10..=10_000).contains(&radius_meters) {
+        return Err(AppError::BadRequest(
+            "Radius must be between 10 and 10,000 meters".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Validate geofence and return whether the record should be flagged.
 /// Returns Err if enforce mode and outside fence.
 /// Returns Ok(true) if outside fence (warn mode), Ok(false) if inside or no check.
@@ -335,4 +341,148 @@ pub async fn validate_geofence(
     }
 
     Ok(false) // within fence, not flagged
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        DEFAULT_RADIUS_METERS, haversine_meters, validate_coordinates,
+        validate_optional_coordinates, validate_radius,
+    };
+    use crate::core::error::AppError;
+
+    // Kuala Lumpur landmarks, used as a real-world distance fixture.
+    const KLCC: (f64, f64) = (3.157_64, 101.711_86);
+    const KL_TOWER: (f64, f64) = (3.152_78, 101.703_33);
+
+    #[test]
+    fn haversine_is_zero_for_identical_points() {
+        assert_eq!(haversine_meters(KLCC.0, KLCC.1, KLCC.0, KLCC.1), 0.0);
+    }
+
+    #[test]
+    fn haversine_matches_a_known_city_distance() {
+        // KLCC to KL Tower is roughly 1.1 km on the ground.
+        let d = haversine_meters(KLCC.0, KLCC.1, KL_TOWER.0, KL_TOWER.1);
+        assert!(
+            (1_000.0..1_250.0).contains(&d),
+            "expected ~1.1km between KLCC and KL Tower, got {d}"
+        );
+    }
+
+    #[test]
+    fn haversine_is_symmetric() {
+        let forward = haversine_meters(KLCC.0, KLCC.1, KL_TOWER.0, KL_TOWER.1);
+        let backward = haversine_meters(KL_TOWER.0, KL_TOWER.1, KLCC.0, KLCC.1);
+        assert!((forward - backward).abs() < 1e-6);
+    }
+
+    #[test]
+    fn haversine_resolves_office_scale_offsets() {
+        // ~0.0001 degrees of latitude is ~11 m — smaller than the minimum
+        // geofence radius, so the formula must not collapse it to zero.
+        let d = haversine_meters(KLCC.0, KLCC.1, KLCC.0 + 0.000_1, KLCC.1);
+        assert!((9.0..14.0).contains(&d), "expected ~11m, got {d}");
+    }
+
+    #[test]
+    fn haversine_spans_the_antimeridian_without_wrapping_the_long_way() {
+        // Two points 0.02 degrees apart either side of the 180th meridian are
+        // ~2 km apart, not most of the way around the planet.
+        let d = haversine_meters(0.0, 179.99, 0.0, -179.99);
+        assert!(
+            d < 3_000.0,
+            "antimeridian distance should be short, got {d}"
+        );
+    }
+
+    #[test]
+    fn haversine_handles_antipodal_points() {
+        // Half the Earth's circumference, ~20,015 km.
+        let d = haversine_meters(0.0, 0.0, 0.0, 180.0);
+        assert!(
+            (20_000_000.0..20_040_000.0).contains(&d),
+            "expected a half-circumference, got {d}"
+        );
+    }
+
+    #[test]
+    fn coordinates_accept_the_full_valid_range_including_the_poles() {
+        for (lat, lng) in [
+            (0.0, 0.0),
+            (90.0, 180.0),
+            (-90.0, -180.0),
+            (3.157_64, 101.711_86),
+        ] {
+            assert!(
+                validate_coordinates(lat, lng).is_ok(),
+                "should accept {lat},{lng}"
+            );
+        }
+    }
+
+    #[test]
+    fn coordinates_reject_out_of_range_and_non_finite_values() {
+        for (lat, lng) in [
+            (90.1, 0.0),
+            (-90.1, 0.0),
+            (0.0, 180.1),
+            (0.0, -180.1),
+            (f64::NAN, 0.0),
+            (0.0, f64::NAN),
+            (f64::INFINITY, 0.0),
+            (0.0, f64::NEG_INFINITY),
+        ] {
+            assert!(
+                matches!(validate_coordinates(lat, lng), Err(AppError::BadRequest(_))),
+                "should reject {lat},{lng}"
+            );
+        }
+    }
+
+    #[test]
+    fn optional_coordinates_allow_both_absent_but_not_one_of_two() {
+        assert!(validate_optional_coordinates(None, None).is_ok());
+        assert!(validate_optional_coordinates(Some(3.15), Some(101.71)).is_ok());
+
+        // A half-supplied pair is a client bug: silently treating it as "no
+        // location" would let a broken GPS read bypass the fence.
+        assert!(matches!(
+            validate_optional_coordinates(Some(3.15), None),
+            Err(AppError::BadRequest(_))
+        ));
+        assert!(matches!(
+            validate_optional_coordinates(None, Some(101.71)),
+            Err(AppError::BadRequest(_))
+        ));
+    }
+
+    #[test]
+    fn optional_coordinates_still_range_check_a_supplied_pair() {
+        assert!(matches!(
+            validate_optional_coordinates(Some(91.0), Some(0.0)),
+            Err(AppError::BadRequest(_))
+        ));
+    }
+
+    #[test]
+    fn radius_accepts_its_inclusive_bounds_and_rejects_just_outside() {
+        assert!(validate_radius(10).is_ok());
+        assert!(validate_radius(10_000).is_ok());
+        assert!(validate_radius(DEFAULT_RADIUS_METERS).is_ok());
+
+        for radius in [9, 10_001, 0, -1] {
+            assert!(
+                matches!(validate_radius(radius), Err(AppError::BadRequest(_))),
+                "should reject radius {radius}"
+            );
+        }
+    }
+
+    #[test]
+    fn default_radius_sits_inside_the_permitted_range() {
+        // A default outside the bounds would make every unspecified-radius
+        // create fail its own validation.
+        assert!(validate_radius(DEFAULT_RADIUS_METERS).is_ok());
+    }
 }

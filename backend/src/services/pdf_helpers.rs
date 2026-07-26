@@ -99,3 +99,61 @@ pub fn draw_row(
     add_text(ops, f, size, left_x, y, label);
     add_text_right(ops, f, size, right_x, y, value);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::sen_to_rm;
+
+    #[test]
+    fn groups_thousands_at_every_magnitude() {
+        assert_eq!(sen_to_rm(99_999), "999.99");
+        assert_eq!(sen_to_rm(100_000), "1,000.00");
+        assert_eq!(sen_to_rm(99_999_999), "999,999.99");
+        assert_eq!(sen_to_rm(100_000_000), "1,000,000.00");
+        assert_eq!(sen_to_rm(123_456_789_012), "1,234,567,890.12");
+    }
+
+    #[test]
+    fn never_emits_a_leading_separator() {
+        // A boundary-length integer part (3, 6, 9 digits) is where an
+        // off-by-one in the grouping loop shows up as ",100.00".
+        // RM 100.00, RM 100,000.00 and RM 100,000,000.00 — integer parts of
+        // exactly 3, 6 and 9 digits.
+        for sen in [10_000, 10_000_000, 10_000_000_000] {
+            let formatted = sen_to_rm(sen);
+            assert!(
+                !formatted.starts_with(','),
+                "unexpected leading separator in {formatted}"
+            );
+        }
+    }
+
+    #[test]
+    fn always_keeps_exactly_two_decimal_places() {
+        for sen in [0, 5, 50, 500, 5_000, 100_000] {
+            let formatted = sen_to_rm(sen);
+            let decimals = formatted.split('.').nth(1).expect("a decimal part");
+            assert_eq!(decimals.len(), 2, "{formatted} should have 2 decimals");
+        }
+    }
+
+    #[test]
+    fn negatives_keep_the_sign_outside_the_grouped_digits() {
+        assert_eq!(sen_to_rm(-1), "-0.01");
+        assert_eq!(sen_to_rm(-100_000), "-1,000.00");
+        assert_eq!(sen_to_rm(-123_456_789), "-1,234,567.89");
+    }
+
+    #[test]
+    fn a_negative_and_positive_amount_differ_only_by_the_sign() {
+        for sen in [1_i64, 12_345, 100_000, 987_654_321] {
+            assert_eq!(sen_to_rm(-sen), format!("-{}", sen_to_rm(sen)));
+        }
+    }
+
+    #[test]
+    fn formats_zero_without_a_sign() {
+        assert_eq!(sen_to_rm(0), "0.00");
+        assert!(!sen_to_rm(0).starts_with('-'));
+    }
+}

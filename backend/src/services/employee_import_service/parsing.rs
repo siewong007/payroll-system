@@ -444,3 +444,171 @@ mod tests {
         assert_eq!(mapped[1].employee_number.as_deref(), Some("E002"));
     }
 }
+
+/// Edge cases around the spreadsheet-shape handling, kept separate from the
+/// happy-path mapping tests above.
+#[cfg(test)]
+mod shape_tests {
+    use super::{parse_csv, parse_xlsx, resolve_headers, rows_to_import_rows};
+
+    fn to_rows(rows: Vec<Vec<&str>>) -> Vec<Vec<String>> {
+        rows.into_iter()
+            .map(|row| row.into_iter().map(str::to_string).collect())
+            .collect()
+    }
+
+    fn headers(values: &[&str]) -> Vec<String> {
+        values.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn every_alias_of_a_field_resolves_to_the_same_canonical_name() {
+        let aliases = headers(&[
+            "employee_number",
+            "employee number",
+            "emp no",
+            "emp number",
+            "employee no",
+        ]);
+
+        let resolved = resolve_headers(&aliases);
+        assert!(
+            resolved.iter().all(|r| *r == Some("employee_number")),
+            "all employee-number aliases should resolve identically: {resolved:?}"
+        );
+    }
+
+    #[test]
+    fn identity_aliases_resolve_for_the_common_fields() {
+        let canonical = headers(&[
+            "full_name",
+            "ic_number",
+            "date_of_birth",
+            "gender",
+            "email",
+            "basic_salary",
+            "date_joined",
+        ]);
+
+        let resolved = resolve_headers(&canonical);
+        assert!(
+            resolved.iter().all(Option::is_some),
+            "a canonical name must always resolve to itself: {resolved:?}"
+        );
+    }
+
+    #[test]
+    fn an_unknown_header_resolves_to_none_rather_than_erroring() {
+        let resolved = resolve_headers(&headers(&["favourite colour", ""]));
+        assert_eq!(resolved, vec![None, None]);
+    }
+
+    #[test]
+    fn a_blank_cell_becomes_none_not_an_empty_string() {
+        let mapped = rows_to_import_rows(
+            &headers(&["emp no", "name", "email"]),
+            to_rows(vec![vec!["E001", "Jane Doe", "   "]]),
+        )
+        .expect("rows should map");
+
+        // Validation treats None as "absent"; an empty string would slip past
+        // the required-field check and then fail deeper in the pipeline.
+        assert_eq!(mapped[0].email, None);
+        assert_eq!(mapped[0].full_name.as_deref(), Some("Jane Doe"));
+    }
+
+    #[test]
+    fn a_short_row_leaves_the_trailing_fields_absent() {
+        // Spreadsheet exports frequently omit trailing empty cells.
+        let mapped = rows_to_import_rows(
+            &headers(&["emp no", "name", "basic salary"]),
+            to_rows(vec![vec!["E001", "Jane Doe"]]),
+        )
+        .expect("a short row should still map");
+
+        assert_eq!(mapped[0].employee_number.as_deref(), Some("E001"));
+        assert_eq!(mapped[0].basic_salary, None);
+    }
+
+    #[test]
+    fn extra_cells_beyond_the_header_row_are_discarded() {
+        let mapped = rows_to_import_rows(
+            &headers(&["emp no", "name"]),
+            to_rows(vec![vec!["E001", "Jane Doe", "stray", "more stray"]]),
+        )
+        .expect("a long row should still map");
+
+        assert_eq!(mapped.len(), 1);
+        assert_eq!(mapped[0].full_name.as_deref(), Some("Jane Doe"));
+    }
+
+    #[test]
+    fn row_numbers_are_one_based_and_contiguous() {
+        let mapped = rows_to_import_rows(
+            &headers(&["emp no"]),
+            to_rows(vec![vec!["E001"], vec!["E002"], vec!["E003"]]),
+        )
+        .expect("rows should map");
+
+        assert_eq!(
+            mapped.iter().map(|r| r.row_number).collect::<Vec<_>>(),
+            [1, 2, 3]
+        );
+    }
+
+    #[test]
+    fn a_header_only_file_yields_no_rows() {
+        let (headers, rows) = parse_csv(b"Employee Number,Name\n").expect("CSV should parse");
+
+        assert_eq!(headers, ["Employee Number", "Name"]);
+        assert!(rows.is_empty());
+        assert!(
+            rows_to_import_rows(&headers, rows)
+                .expect("no rows should map")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn quoted_cells_keep_their_embedded_commas() {
+        let csv = b"Name,Address\nJane Doe,\"12 Jalan Ampang, Kuala Lumpur\"\n";
+        let (_, rows) = parse_csv(csv).expect("CSV should parse");
+
+        assert_eq!(rows[0][1], "12 Jalan Ampang, Kuala Lumpur");
+    }
+
+    #[test]
+    fn rows_of_differing_widths_are_accepted() {
+        // The reader is built with `flexible(true)`; a ragged export must not
+        // abort the whole import.
+        let csv = b"A,B,C\n1,2,3\n4,5\n6,7,8,9\n";
+        let (_, rows) = parse_csv(csv).expect("ragged CSV should parse");
+
+        assert_eq!(rows.len(), 3);
+    }
+
+    #[test]
+    fn whitespace_only_rows_are_skipped_anywhere_in_the_file() {
+        let csv = b"A,B\n1,2\n , \n3,4\n";
+        let (_, rows) = parse_csv(csv).expect("CSV should parse");
+
+        assert_eq!(rows, vec![vec!["1", "2"], vec!["3", "4"]]);
+    }
+
+    #[test]
+    fn an_empty_upload_does_not_panic() {
+        // Headers come back empty rather than the parser unwrapping a None.
+        let parsed = parse_csv(b"");
+        assert!(parsed.is_err() || parsed.expect("parsed").1.is_empty());
+    }
+
+    #[test]
+    fn a_non_spreadsheet_upload_is_rejected_as_a_bad_request() {
+        use crate::core::error::AppError;
+
+        assert!(matches!(
+            parse_xlsx(b"this is not a workbook"),
+            Err(AppError::BadRequest(_))
+        ));
+    }
+}

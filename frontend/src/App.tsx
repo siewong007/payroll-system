@@ -73,7 +73,7 @@ function RouteFallback() {
   );
 }
 
-function RoleGuard({ allowedRoles, children }: { allowedRoles: AppRole[]; children: ReactNode }) {
+export function RoleGuard({ allowedRoles, children }: { allowedRoles: AppRole[]; children: ReactNode }) {
   const { user } = useAuth();
   const location = useLocation();
   // `roles` is an array and hasAnyRole passes on a single match, so a user with

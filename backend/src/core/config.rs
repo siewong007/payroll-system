@@ -69,3 +69,75 @@ impl AppConfig {
         self.smtp_host.is_some() && self.smtp_from_email.is_some()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::AppConfig;
+
+    fn config() -> AppConfig {
+        AppConfig {
+            database_url: "postgres://localhost/test".into(),
+            jwt_secret: "test-secret".into(),
+            jwt_expiry_hours: 1,
+            server_host: "0.0.0.0".into(),
+            server_port: 8080,
+            frontend_url: "http://localhost:5173".into(),
+            google_client_id: None,
+            google_client_secret: None,
+            webauthn_rp_id: "localhost".into(),
+            webauthn_rp_origin: "http://localhost:5173".into(),
+            smtp_host: None,
+            smtp_port: None,
+            smtp_username: None,
+            smtp_password: None,
+            smtp_from_email: None,
+            smtp_from_name: None,
+            trust_proxy_headers: false,
+        }
+    }
+
+    #[test]
+    fn google_oauth_needs_both_halves_of_the_credential() {
+        let mut cfg = config();
+        assert!(!cfg.google_oauth_enabled());
+
+        cfg.google_client_id = Some("client-id".into());
+        // A client id with no secret cannot complete the code exchange, so the
+        // feature must stay off rather than half-advertise itself.
+        assert!(!cfg.google_oauth_enabled());
+
+        cfg.google_client_secret = Some("client-secret".into());
+        assert!(cfg.google_oauth_enabled());
+
+        cfg.google_client_id = None;
+        assert!(!cfg.google_oauth_enabled());
+    }
+
+    #[test]
+    fn smtp_needs_both_a_host_and_a_from_address() {
+        let mut cfg = config();
+        assert!(!cfg.smtp_enabled());
+
+        cfg.smtp_host = Some("smtp.example.test".into());
+        assert!(!cfg.smtp_enabled());
+
+        cfg.smtp_from_email = Some("payroll@example.test".into());
+        assert!(cfg.smtp_enabled());
+
+        cfg.smtp_host = None;
+        assert!(!cfg.smtp_enabled());
+    }
+
+    #[test]
+    fn optional_credentials_do_not_gate_the_features() {
+        // Username/password are optional (an open relay or IP-allowlisted MTA),
+        // so they must not decide whether SMTP is considered configured.
+        let mut cfg = config();
+        cfg.smtp_host = Some("smtp.example.test".into());
+        cfg.smtp_from_email = Some("payroll@example.test".into());
+
+        assert!(cfg.smtp_enabled());
+        assert!(cfg.smtp_username.is_none());
+        assert!(cfg.smtp_password.is_none());
+    }
+}
