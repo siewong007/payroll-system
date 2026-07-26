@@ -95,15 +95,15 @@ Key design decisions to be aware of:
 - Keep handlers thin; if you find yourself writing SQL or composing services in a handler, move it into a `service` module.
 - Do not introduce a second HTTP client on the frontend — extend `api/client.ts` or add a new `api/<module>.ts` that uses it.
 
-## CodeGraph
+## codegraph
 
-This project has a CodeGraph knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships. The output directory retains this name for runtime compatibility with the backing tool.
+This project has a codegraph knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships. The output directory retains this name for runtime compatibility with the backing tool.
 
-When the user types `/codegraph`, use the local CodeGraph skill or instructions before doing anything else.
+When the user types `/codegraph`, use the local codegraph skill or instructions before doing anything else.
 
 Rules:
 - For codebase questions, first run `./scripts/codegraph query "<question>"` when graphify-out/graph.json exists. Use `./scripts/codegraph path "<A>" "<B>"` for relationships and `./scripts/codegraph explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
-- Dirty graphify-out/ files are expected after hooks or incremental updates; dirty graph files are not a reason to skip CodeGraph. Only skip CodeGraph if the task is about stale or incorrect graph output, or the user explicitly says not to use it.
+- Dirty graphify-out/ files are expected after hooks or incremental updates; dirty graph files are not a reason to skip codegraph. Only skip codegraph if the task is about stale or incorrect graph output, or the user explicitly says not to use it.
 - If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
 - Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
 - After modifying code, run `./scripts/codegraph update .` to keep the graph current (AST-only, no API cost).
