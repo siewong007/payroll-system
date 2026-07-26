@@ -7,3 +7,4 @@ pub mod db;
 pub mod error;
 pub mod extract;
 pub mod redact;
+pub mod schedule;

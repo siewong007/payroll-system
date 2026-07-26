@@ -64,7 +64,7 @@ Rate limiting is applied per-route group in `routes/mod.rs` via `tower_governor`
 
 Two background tasks spawn from `main.rs`:
 1. Daily cleanup of stale `refresh_tokens` (>30 days old and expired/revoked).
-2. Hourly tick that auto-marks absent employees at ~12:30 PM Asia/Kuala_Lumpur (04:30 UTC). This cron skips employees who have an approved `leave_requests` row covering that date, and skips public holidays.
+2. Daily auto-absent run at 12:30 PM Asia/Kuala_Lumpur (04:30 UTC), scheduled by sleeping until the next occurrence computed by `core::schedule::next_daily_run_utc` (pure, unit-tested; the returned delay is strictly positive so the loop can never arm a zero-length sleep). This cron skips employees who have an approved `leave_requests` row covering that date, and skips public holidays. Both background tasks log a heartbeat line on every tick so a silent log stream indicates wedged runtime timers, not an idle task.
 
 ### Attendance subsystem (`services/attendance_service.rs`)
 Key design decisions to be aware of:

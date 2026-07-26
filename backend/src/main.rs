@@ -3,7 +3,6 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use anyhow::Context;
-use chrono::Timelike;
 use tokio::net::TcpListener;
 
 use axum::http::{HeaderValue, Method};
@@ -89,12 +88,18 @@ async fn main() -> anyhow::Result<()> {
         // Outermost so it wraps the final response body.
         .layer(tower_http::compression::CompressionLayer::new());
 
-    // Background task: clean up stale refresh tokens every 24 hours
+    // Background task: clean up stale refresh tokens every 24 hours.
+    // Every tick logs, even when nothing is deleted, so a silent log means the
+    // runtime's timers are wedged — not that the task had nothing to do.
     let cleanup_pool = pool.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(24 * 60 * 60));
+        // After an OS sleep/wake gap, fire one delayed tick instead of a
+        // catch-up burst of every tick missed while suspended.
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             interval.tick().await;
+            tracing::info!("refresh-token cleanup: tick");
             match sqlx::query(
                 "DELETE FROM refresh_tokens \
                  WHERE (revoked = TRUE OR expires_at < NOW()) \
@@ -104,45 +109,53 @@ async fn main() -> anyhow::Result<()> {
             .await
             {
                 Ok(result) => {
-                    if result.rows_affected() > 0 {
-                        tracing::info!(
-                            "Cleaned up {} stale refresh tokens",
-                            result.rows_affected()
-                        );
-                    }
+                    tracing::info!(
+                        rows = result.rows_affected(),
+                        "refresh-token cleanup: completed"
+                    );
                 }
                 Err(e) => tracing::error!("Failed to clean up refresh tokens: {}", e),
             }
         }
     });
 
-    // Background task: auto-mark absent employees daily at 12:30 PM MYT (04:30 UTC)
+    // Background task: auto-mark absent employees daily at 12:30 PM MYT
+    // (04:30 UTC). Sleeps directly until the next occurrence instead of
+    // polling hourly and gating on the wall-clock hour; the next-run
+    // computation is pure and unit-tested (core::schedule) with the invariant
+    // that the delay is strictly positive, so this loop cannot arm a
+    // zero-length sleep and spin.
     let absent_pool = pool.clone();
     tokio::spawn(async move {
+        use payroll_system::core::schedule::next_daily_run_utc;
         use payroll_system::services::attendance_service;
 
-        // Wait until the next 04:30 UTC, then run daily
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60 * 60)); // check hourly
-        loop {
-            interval.tick().await;
-            // Only run between 04:00-05:00 UTC (12:00-13:00 MYT)
-            let now = chrono::Utc::now();
-            if now.hour() != 4 {
-                continue;
-            }
+        const RUN_HOUR_UTC: u32 = 4;
+        const RUN_MINUTE_UTC: u32 = 30;
 
-            tracing::info!("Running auto-absent marking...");
+        loop {
+            let now = chrono::Utc::now();
+            let next = next_daily_run_utc(now, RUN_HOUR_UTC, RUN_MINUTE_UTC);
+            // Floor at 60s: even if the schedule arithmetic ever regresses to
+            // a non-positive delay, the worst case is one wakeup per minute —
+            // visible in logs — never a hot loop.
+            let delay = (next - now)
+                .to_std()
+                .unwrap_or(std::time::Duration::from_secs(60))
+                .max(std::time::Duration::from_secs(60));
+            tracing::info!(
+                next_run_utc = %next,
+                sleep_secs = delay.as_secs(),
+                "auto-absent: scheduled next run"
+            );
+            tokio::time::sleep(delay).await;
+
+            tracing::info!("auto-absent: tick fired; marking absentees");
             match attendance_service::mark_absent_for_date(&absent_pool, "Asia/Kuala_Lumpur").await
             {
-                Ok(count) => {
-                    if count > 0 {
-                        tracing::info!("Auto-marked {} employees as absent", count);
-                    }
-                }
+                Ok(count) => tracing::info!(marked = count, "auto-absent: completed"),
                 Err(e) => tracing::error!("Auto-absent marking failed: {}", e),
             }
-            // Sleep past this hour to avoid re-running
-            tokio::time::sleep(std::time::Duration::from_secs(60 * 60)).await;
         }
     });
 
