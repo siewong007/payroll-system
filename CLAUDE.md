@@ -107,3 +107,23 @@ Key structure to preserve when changing the engine:
 - Treat deployed migrations as immutable. Add a new numbered file for later schema/data changes; only an explicit rebaseline may squash history. Update `frontend/src/types/` to match any API contract change (per CONTRIBUTING.md).
 - Keep handlers thin; if you find yourself composing services or business logic in a handler, move it into a `service` module. SQL belongs in a `repositories/` module (per-table) or `repositories/reads/` (joins/aggregations) — never in a handler or service.
 - Do not introduce a second HTTP client on the frontend — extend `api/client.ts` or add a new `api/<module>.ts` that uses it.
+
+## codegraph
+
+This project has a codegraph **graph index** at `graphify-out/graph.json` — every symbol, call, import and reference across the Rust backend, the React frontend, the SQL migrations and the Terraform, plus community structure and god nodes. `graphify-out/` and the `graphify` / `graphify-mcp` binaries are the backing runtime's names; the tool itself is called codegraph.
+
+It is registered as the `codegraph` MCP server in `.mcp.json` and exposes:
+- `query_graph` — BFS/DFS traversal; the default entry point for "how does X work", "what touches Y"
+- `get_node` / `get_neighbors` — full detail and direct edges for one symbol
+- `shortest_path` — how two concepts connect
+- `god_nodes` / `graph_stats` / `get_community` — architecture overview
+
+**Reach for codegraph before grep/glob.** Rules:
+- Start codebase questions with `query_graph`. It returns a scoped subgraph, far smaller than raw search output. Narrow with `--budget` / context filters rather than dumping the whole traversal.
+- Fall back to Grep/Read when the graph does not resolve a symbol, or when you need exact current file contents in order to edit.
+- Cite `src=` / `loc=` from graph results as `file:line`, and re-read the file before editing — the graph is a snapshot, not live.
+- After changing code, re-sync: `./scripts/codegraph update .` (AST-only, no LLM, no API key, ~15s). Add `--force` when a refactor legitimately shrinks the graph, or the shrink-guard refuses the write.
+- A dirty `graphify-out/` is expected and is never a reason to skip codegraph. The directory is gitignored.
+- CLI equivalents when the MCP is not connected: `./scripts/codegraph query|path|explain|affected|god-nodes`.
+
+Runtime deps (once per machine): `pip install "graphifyy[sql,terraform,mcp]"`. Without the `sql` and `terraform` extras the migrations and `infra/` are silently dropped from the index.
