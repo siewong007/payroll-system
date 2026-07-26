@@ -246,7 +246,13 @@ pub async fn approve_claim(
     notes: Option<&str>,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<Claim> {
-    let claim = claims::set_approved(pool, claim_id, company_id, reviewer_id, notes)
+    // Approval and the staged reimbursement commit together. `claims::mark_processed`
+    // is the real lock on double payment, so this is defence in depth rather than
+    // a money bug — but the staged row is what the cancel path inspects, and
+    // `set_approved` is a compare-and-swap on `status = 'pending'`, so losing it
+    // left a state no retry could reach.
+    let mut tx = pool.begin().await?;
+    let claim = claims::set_approved(&mut *tx, claim_id, company_id, reviewer_id, notes)
         .await?
         .ok_or_else(|| AppError::BadRequest("Claim not found or not pending".into()))?;
 
@@ -256,10 +262,8 @@ pub async fn approve_claim(
     let period_year = now.year();
     let period_month = now.month() as i32;
 
-    // Propagate rather than swallow: this staged row is the marker the cancel
-    // path checks to decide whether a claim has already been paid.
     payroll_entries::insert_claim_reimbursement(
-        pool,
+        &mut *tx,
         Uuid::now_v7(),
         claim.employee_id,
         company_id,
@@ -270,6 +274,7 @@ pub async fn approve_claim(
         reviewer_id,
     )
     .await?;
+    tx.commit().await?;
 
     // Notify employee
     let employee_user = user_repo::active_id_for_employee(pool, claim.employee_id).await?;
