@@ -1,99 +1,127 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Users, Search, X, Building2, Plus, Pencil, Trash2 } from 'lucide-react';
-import { listUsers, listCompanies, createUser, updateUser, deleteUser } from '@/api/admin';
+import { Users, Search, Plus, Pencil, Trash2 } from 'lucide-react';
+import { listUsers, listCompanies, deleteUser } from '@/api/admin';
+import { useAuth } from '@/context/AuthContext';
+import { DataTable, type Column } from '@/components/ui/DataTable';
+import { Modal } from '@/components/ui/Modal';
+import { UserFormModal } from './UserFormModal';
+import { ALL_ROLES, roleBadgeClass, roleLabel } from '@/lib/roles';
 import { getErrorMessage } from '@/lib/utils';
-import type { AppRole, CreateUserRequest, UpdateUserRequest, UserWithCompanies } from '@/types';
+import type { AppRole, UserWithCompanies } from '@/types';
 
-const ALL_ROLES = [
-  { value: 'super_admin', label: 'Super Admin' },
-  { value: 'admin', label: 'Admin' },
-  { value: 'payroll_admin', label: 'Payroll Admin' },
-  { value: 'hr_manager', label: 'HR Manager' },
-  { value: 'finance', label: 'Finance' },
-  { value: 'exec', label: 'Executive' },
-  { value: 'employee', label: 'Employee' },
-] as const;
+const PER_PAGE = 20;
 
-const userRoles = (user: Pick<UserWithCompanies, 'roles'>): AppRole[] => user.roles ?? [];
-
-const isSingleCompanyRoleSet = (roles: AppRole[]) => roles.includes('exec') || roles.includes('employee');
-
-const toggleRole = (roles: AppRole[], role: AppRole): AppRole[] => {
-  if (roles.includes(role)) {
-    return roles.length === 1 ? roles : roles.filter((existing) => existing !== role);
-  }
-  if (role === 'exec' || role === 'employee') {
-    return [role];
-  }
-  return [...roles.filter((existing) => existing !== 'exec' && existing !== 'employee'), role];
-};
-
-const roleBadge = (role: string) => {
-  const cls: Record<string, string> = {
-    super_admin: 'bg-purple-100 text-purple-700',
-    admin: 'bg-indigo-100 text-indigo-700',
-    payroll_admin: 'bg-blue-100 text-blue-700',
-    hr_manager: 'bg-green-100 text-green-700',
-    finance: 'bg-amber-100 text-amber-700',
-    exec: 'bg-gray-100 text-gray-700',
-    employee: 'bg-sky-100 text-sky-700',
-  };
-  const label: Record<string, string> = Object.fromEntries(ALL_ROLES.map((r) => [r.value, r.label]));
-  return (
-    <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${cls[role] || 'bg-gray-100 text-gray-600'}`}>
-      {label[role] || role}
-    </span>
-  );
-};
-
-const roleBadges = (roles: AppRole[]) => (
-  <div className="flex flex-wrap gap-1.5">{roles.map((role) => <div key={role}>{roleBadge(role)}</div>)}</div>
+const roleBadge = (role: string) => (
+  <span
+    key={role}
+    className={`text-xs px-2.5 py-1 rounded-full font-medium ${roleBadgeClass(role)}`}
+  >
+    {roleLabel(role)}
+  </span>
 );
 
 export function UserManagement() {
   const queryClient = useQueryClient();
+  const { user: currentUser } = useAuth();
+
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
   const [companyFilter, setCompanyFilter] = useState('all');
+  const [page, setPage] = useState(1);
   const [showCreate, setShowCreate] = useState(false);
   const [editUser, setEditUser] = useState<UserWithCompanies | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<UserWithCompanies | null>(null);
+  const [deleteError, setDeleteError] = useState('');
 
-  const { data: users, isLoading } = useQuery({
-    queryKey: ['admin-users', companyFilter],
-    queryFn: () => listUsers(companyFilter === 'all' ? undefined : companyFilter),
+  const { data: usersPage, isLoading } = useQuery({
+    queryKey: ['admin-users', companyFilter, search, page],
+    queryFn: () =>
+      listUsers({
+        companyId: companyFilter === 'all' ? undefined : companyFilter,
+        search: search || undefined,
+        page,
+        perPage: PER_PAGE,
+      }),
   });
 
-  const { data: companies } = useQuery({
+  const {
+    data: companies,
+    isLoading: companiesLoading,
+    isError: companiesError,
+    refetch: refetchCompanies,
+  } = useQuery({
     queryKey: ['admin-companies'],
     queryFn: listCompanies,
   });
 
+  const refreshUsers = () => queryClient.invalidateQueries({ queryKey: ['admin-users'] });
+
+  const closeDelete = () => {
+    setDeleteTarget(null);
+    setDeleteError('');
+  };
+
   const deleteMutation = useMutation({
     mutationFn: (userId: string) => deleteUser(userId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin-users'] });
-      setDeleteTarget(null);
+      refreshUsers();
+      closeDelete();
     },
+    onError: (err: unknown) => setDeleteError(getErrorMessage(err, 'Failed to delete user')),
   });
 
-  const filtered = (users ?? []).filter((u) => {
-    if (search) {
-      const q = search.toLowerCase();
-      if (!u.full_name.toLowerCase().includes(q) && !u.email.toLowerCase().includes(q)) return false;
-    }
-    if (roleFilter !== 'all' && !userRoles(u).includes(roleFilter as AppRole)) return false;
-    return true;
-  });
+  // Search, company filter and pagination are resolved by the server; the role
+  // filter narrows within the fetched page, which is bounded to PER_PAGE.
+  const rows = (usersPage?.data ?? []).filter(
+    (u) => roleFilter === 'all' || (u.roles ?? []).includes(roleFilter as AppRole),
+  );
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900" />
-      </div>
-    );
-  }
+  const resetToFirstPage = <T,>(setter: (value: T) => void) => (value: T) => {
+    setter(value);
+    setPage(1);
+  };
+
+  const columns: Column<UserWithCompanies>[] = [
+    {
+      key: 'full_name',
+      header: 'Name',
+      primary: true,
+      render: (u) => <span className="font-semibold text-gray-900">{u.full_name}</span>,
+    },
+    { key: 'email', header: 'Email', primary: true, render: (u) => <span className="text-gray-500">{u.email}</span> },
+    {
+      key: 'roles',
+      header: 'Role',
+      render: (u) => <div className="flex flex-wrap gap-1.5">{(u.roles ?? []).map(roleBadge)}</div>,
+    },
+    {
+      key: 'companies',
+      header: 'Company',
+      render: (u) =>
+        u.companies.length === 0 ? (
+          <span className="text-gray-300">&mdash;</span>
+        ) : (
+          <div className="flex flex-wrap gap-1">
+            {u.companies.map((c) => (
+              <span key={c.id} className="text-xs px-2 py-0.5 bg-gray-100 rounded-full text-gray-600">
+                {c.name}
+              </span>
+            ))}
+          </div>
+        ),
+    },
+    {
+      key: 'is_active',
+      header: 'Status',
+      align: 'center',
+      render: (u) => (
+        <span className={`badge ${u.is_active !== false ? 'badge-approved' : 'badge-rejected'}`}>
+          {u.is_active !== false ? 'Active' : 'Inactive'}
+        </span>
+      ),
+    },
+  ];
 
   return (
     <div className="space-y-6">
@@ -103,467 +131,157 @@ export function UserManagement() {
           <p className="page-subtitle">All registered accounts across companies</p>
         </div>
         <button onClick={() => setShowCreate(true)} className="btn-primary w-full sm:w-auto">
-          <Plus className="w-4 h-4" /> Add User
+          <Plus className="w-4 h-4" aria-hidden="true" /> Add User
         </button>
       </div>
 
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative flex-1 min-w-[200px] max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+          <Search
+            className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400"
+            aria-hidden="true"
+          />
           <input
+            type="search"
+            aria-label="Search users by name or email"
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => resetToFirstPage(setSearch)(e.target.value)}
             className="form-input pl-9"
             placeholder="Search by name or email..."
           />
         </div>
-        <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)} className="form-input w-auto">
+        <select
+          aria-label="Filter by role"
+          value={roleFilter}
+          onChange={(e) => setRoleFilter(e.target.value)}
+          className="form-input w-auto"
+        >
           <option value="all">All Roles</option>
-          {ALL_ROLES.map((r) => (
-            <option key={r.value} value={r.value}>{r.label}</option>
+          {ALL_ROLES.map((role) => (
+            <option key={role} value={role}>
+              {roleLabel(role)}
+            </option>
           ))}
         </select>
         {companies && companies.length > 1 && (
-          <select value={companyFilter} onChange={(e) => setCompanyFilter(e.target.value)} className="form-input w-auto">
+          <select
+            aria-label="Filter by company"
+            value={companyFilter}
+            onChange={(e) => resetToFirstPage(setCompanyFilter)(e.target.value)}
+            className="form-input w-auto"
+          >
             <option value="all">All Companies</option>
             {companies.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
             ))}
           </select>
         )}
-        <span className="text-sm text-gray-400">{filtered.length} users</span>
       </div>
 
-      {/* Users Table */}
-      <div className="card p-0 overflow-hidden">
-        {filtered.length === 0 ? (
-          <div className="text-center py-16 text-gray-400">
-            <Users className="w-10 h-10 mx-auto mb-3 opacity-40" />
-            <p>No users found</p>
+      <DataTable
+        columns={columns}
+        data={rows}
+        total={usersPage?.total ?? 0}
+        page={page}
+        onPageChange={setPage}
+        perPage={PER_PAGE}
+        isLoading={isLoading}
+        emptyMessage="No users found"
+        emptyIcon={<Users className="w-10 h-10 opacity-40" aria-hidden="true" />}
+        disableRowClick
+        renderActions={(u) => (
+          <div className="flex items-center justify-center gap-1">
+            <button
+              onClick={() => setEditUser(u)}
+              aria-label={`Edit ${u.full_name}`}
+              className="text-sm text-gray-500 hover:text-gray-900 px-2 py-1 rounded hover:bg-gray-100 transition-colors inline-flex items-center gap-1"
+            >
+              <Pencil className="w-3.5 h-3.5" aria-hidden="true" /> Edit
+            </button>
+            {/* The backend refuses self-deletion; hiding it keeps that 400 unreachable. */}
+            {u.id !== currentUser?.id && (
+              <button
+                onClick={() => {
+                  setDeleteError('');
+                  setDeleteTarget(u);
+                }}
+                aria-label={`Delete ${u.full_name}`}
+                className="text-sm text-gray-500 hover:text-red-600 px-2 py-1 rounded hover:bg-red-50 transition-colors inline-flex items-center gap-1"
+              >
+                <Trash2 className="w-3.5 h-3.5" aria-hidden="true" /> Delete
+              </button>
+            )}
           </div>
-        ) : (
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Email</th>
-                <th>Role</th>
-                <th>Company</th>
-                <th className="text-center">Status</th>
-                <th className="text-center">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((u) => (
-                <tr key={u.id}>
-                  <td><span className="font-semibold text-gray-900">{u.full_name}</span></td>
-                  <td className="text-gray-500">{u.email}</td>
-                  <td>{roleBadges(userRoles(u))}</td>
-                  <td>
-                    <div className="flex flex-wrap gap-1">
-                      {u.companies.length === 0 ? (
-                        <span className="text-gray-300">&mdash;</span>
-                      ) : (
-                        u.companies.map((c) => (
-                          <span key={c.id} className="text-xs px-2 py-0.5 bg-gray-100 rounded-full text-gray-600">
-                            {c.name}
-                          </span>
-                        ))
-                      )}
-                    </div>
-                  </td>
-                  <td className="text-center">
-                    <span className={`badge ${u.is_active !== false ? 'badge-approved' : 'badge-rejected'}`}>
-                      {u.is_active !== false ? 'Active' : 'Inactive'}
-                    </span>
-                  </td>
-                  <td className="text-center">
-                    <div className="flex items-center justify-center gap-1">
-                      <button
-                        onClick={() => setEditUser(u)}
-                        className="text-sm text-gray-500 hover:text-gray-900 px-2 py-1 rounded hover:bg-gray-100 transition-colors inline-flex items-center gap-1"
-                      >
-                        <Pencil className="w-3.5 h-3.5" /> Edit
-                      </button>
-                      <button
-                        onClick={() => setDeleteTarget(u)}
-                        className="text-sm text-gray-500 hover:text-red-600 px-2 py-1 rounded hover:bg-red-50 transition-colors inline-flex items-center gap-1"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" /> Delete
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
         )}
-      </div>
+      />
 
-      {/* Create User Modal */}
-      {showCreate && (
-        <CreateUserModal
-          companies={companies ?? []}
-          onClose={() => setShowCreate(false)}
-          onCreated={() => {
-            queryClient.invalidateQueries({ queryKey: ['admin-users'] });
-            setShowCreate(false);
-          }}
-        />
-      )}
+      <UserFormModal
+        mode="create"
+        open={showCreate}
+        companies={companies ?? []}
+        companiesLoading={companiesLoading}
+        companiesError={companiesError}
+        onRetryCompanies={() => void refetchCompanies()}
+        onClose={() => setShowCreate(false)}
+        onSaved={() => {
+          refreshUsers();
+          setShowCreate(false);
+        }}
+      />
 
-      {/* Edit User Modal */}
       {editUser && (
-        <EditUserModal
+        <UserFormModal
+          mode="edit"
+          open
           user={editUser}
           companies={companies ?? []}
+          companiesLoading={companiesLoading}
+          companiesError={companiesError}
+          onRetryCompanies={() => void refetchCompanies()}
           onClose={() => setEditUser(null)}
-          onUpdated={() => {
-            queryClient.invalidateQueries({ queryKey: ['admin-users'] });
+          onSaved={() => {
+            refreshUsers();
             setEditUser(null);
           }}
         />
       )}
 
-      {/* Delete Confirmation */}
-      {deleteTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm mx-4 p-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-2">Delete User</h2>
-            <p className="text-sm text-gray-500 mb-5">
-              Delete <span className="font-medium text-gray-900">{deleteTarget.full_name}</span>? Their access is revoked immediately and this account will not be restored by an employee backup.
-            </p>
-            <div className="flex justify-end gap-3">
-              <button onClick={() => setDeleteTarget(null)} className="btn-secondary">Cancel</button>
-              <button
-                onClick={() => deleteMutation.mutate(deleteTarget.id)}
-                disabled={deleteMutation.isPending}
-                className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-xl transition-colors disabled:opacity-50"
-              >
-                {deleteMutation.isPending ? 'Deleting...' : 'Delete'}
-              </button>
-            </div>
+      <Modal
+        open={deleteTarget !== null}
+        onClose={closeDelete}
+        title="Delete User"
+        maxWidth="max-w-sm"
+        footer={
+          <div className="flex justify-end gap-3">
+            <button onClick={closeDelete} className="btn-secondary">
+              Cancel
+            </button>
+            <button
+              onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
+              disabled={deleteMutation.isPending}
+              className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-xl transition-colors disabled:opacity-50"
+            >
+              {deleteMutation.isPending ? 'Deleting...' : 'Delete'}
+            </button>
           </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* ─── Create User Modal ─── */
-function CreateUserModal({
-  companies,
-  onClose,
-  onCreated,
-}: {
-  companies: { id: string; name: string }[];
-  onClose: () => void;
-  onCreated: () => void;
-}) {
-  const [form, setForm] = useState<CreateUserRequest>({
-    email: '',
-    password: '',
-    full_name: '',
-    roles: ['payroll_admin'],
-    company_ids: [],
-  });
-  const [error, setError] = useState('');
-
-  const mutation = useMutation({
-    mutationFn: createUser,
-    onSuccess: onCreated,
-    onError: (err: unknown) => setError(getErrorMessage(err, 'Failed to create user')),
-  });
-
-  const selectedRoles = form.roles;
-  const isSingleCompany = isSingleCompanyRoleSet(selectedRoles);
-
-  const toggleCompany = (id: string) => {
-    if (isSingleCompany) {
-      setForm((p) => ({ ...p, company_ids: [id] }));
-    } else {
-      setForm((p) => ({
-        ...p,
-        company_ids: p.company_ids.includes(id)
-          ? p.company_ids.filter((c) => c !== id)
-          : [...p.company_ids, id],
-      }));
-    }
-  };
-
-  const handleSubmit = () => {
-    if (!form.email || !form.password || !form.full_name) {
-      setError('All fields are required');
-      return;
-    }
-    if (form.company_ids.length === 0) {
-      setError('Select at least one company');
-      return;
-    }
-    mutation.mutate({ ...form, roles: selectedRoles });
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between p-6 border-b border-gray-100">
-          <h2 className="text-lg font-semibold text-gray-900">Add User</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-700">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-        <div className="p-6 space-y-4">
-          {error && <div className="p-3 bg-red-50 text-red-700 text-sm rounded-lg border border-red-100">{error}</div>}
-          <div>
-            <label className="form-label">Full Name *</label>
-            <input
-              value={form.full_name}
-              onChange={(e) => setForm((p) => ({ ...p, full_name: e.target.value }))}
-              className="form-input"
-              placeholder="John Doe"
-            />
+        }
+      >
+        {deleteError && (
+          <div
+            role="alert"
+            className="mb-4 p-3 bg-red-50 text-red-700 text-sm rounded-lg border border-red-100"
+          >
+            {deleteError}
           </div>
-          <div>
-            <label className="form-label">Email *</label>
-            <input
-              type="email"
-              value={form.email}
-              onChange={(e) => setForm((p) => ({ ...p, email: e.target.value }))}
-              className="form-input"
-              placeholder="john@example.com"
-            />
-          </div>
-          <div>
-            <label className="form-label">Password *</label>
-            <input
-              type="password"
-              value={form.password}
-              onChange={(e) => setForm((p) => ({ ...p, password: e.target.value }))}
-              className="form-input"
-              placeholder="Minimum 6 characters"
-            />
-          </div>
-          <div>
-            <label className="form-label">Roles *</label>
-            <div className="grid grid-cols-2 gap-2">
-              {ALL_ROLES.map((r) => (
-                <label key={r.value} className="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={selectedRoles.includes(r.value)}
-                    onChange={() => {
-                      const roles = toggleRole(selectedRoles, r.value);
-                      setForm((p) => ({
-                        ...p,
-                        roles,
-                        company_ids: isSingleCompanyRoleSet(roles) ? p.company_ids.slice(0, 1) : p.company_ids,
-                      }));
-                    }}
-                    className="accent-black"
-                  />
-                  {r.label}
-                </label>
-              ))}
-            </div>
-          </div>
-          <div>
-            <label className="form-label">
-              Assign Companies * {isSingleCompany && <span className="text-gray-400 font-normal">(max 1)</span>}
-            </label>
-            <div className="space-y-2 mt-2 max-h-48 overflow-y-auto">
-              {companies.length === 0 ? (
-                <p className="text-sm text-gray-400">No companies available. Create a company first.</p>
-              ) : (
-                companies.map((c) => (
-                  <label
-                    key={c.id}
-                    className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
-                      form.company_ids.includes(c.id)
-                        ? 'border-black bg-gray-50'
-                        : 'border-gray-200 hover:border-gray-300'
-                    }`}
-                  >
-                    <input
-                      type={isSingleCompany ? 'radio' : 'checkbox'}
-                      name="company"
-                      checked={form.company_ids.includes(c.id)}
-                      onChange={() => toggleCompany(c.id)}
-                      className="accent-black"
-                    />
-                    <Building2 className="w-4 h-4 text-gray-400" />
-                    <span className="text-sm font-medium text-gray-700">{c.name}</span>
-                  </label>
-                ))
-              )}
-            </div>
-          </div>
-        </div>
-        <div className="flex justify-end gap-3 p-6 border-t border-gray-100">
-          <button onClick={onClose} className="btn-secondary">Cancel</button>
-          <button onClick={handleSubmit} disabled={mutation.isPending} className="btn-primary">
-            {mutation.isPending ? 'Creating...' : 'Create User'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* ─── Edit User Modal ─── */
-function EditUserModal({
-  user,
-  companies,
-  onClose,
-  onUpdated,
-}: {
-  user: UserWithCompanies;
-  companies: { id: string; name: string }[];
-  onClose: () => void;
-  onUpdated: () => void;
-}) {
-  const [form, setForm] = useState<UpdateUserRequest>({
-    full_name: user.full_name,
-    email: user.email,
-    roles: userRoles(user),
-    is_active: user.is_active !== false,
-    company_ids: user.companies.map((c) => c.id),
-  });
-  const [error, setError] = useState('');
-
-  const mutation = useMutation({
-    mutationFn: () => updateUser(user.id, form),
-    onSuccess: onUpdated,
-    onError: (err: unknown) => setError(getErrorMessage(err, 'Failed to update user')),
-  });
-
-  const selectedRoles = form.roles?.length ? form.roles : userRoles(user);
-  const isSingleCompany = isSingleCompanyRoleSet(selectedRoles);
-
-  const toggleCompany = (id: string) => {
-    if (isSingleCompany) {
-      setForm((p) => ({ ...p, company_ids: [id] }));
-    } else {
-      setForm((p) => ({
-        ...p,
-        company_ids: (p.company_ids ?? []).includes(id)
-          ? (p.company_ids ?? []).filter((c) => c !== id)
-          : [...(p.company_ids ?? []), id],
-      }));
-    }
-  };
-
-  const handleSubmit = () => {
-    if (!form.full_name || !form.email) {
-      setError('Name and email are required');
-      return;
-    }
-    if (!form.company_ids || form.company_ids.length === 0) {
-      setError('Select at least one company');
-      return;
-    }
-    mutation.mutate();
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between p-6 border-b border-gray-100">
-          <h2 className="text-lg font-semibold text-gray-900">Edit User</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-700">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-        <div className="p-6 space-y-4">
-          {error && <div className="p-3 bg-red-50 text-red-700 text-sm rounded-lg border border-red-100">{error}</div>}
-          <div>
-            <label className="form-label">Full Name *</label>
-            <input
-              value={form.full_name || ''}
-              onChange={(e) => setForm((p) => ({ ...p, full_name: e.target.value }))}
-              className="form-input"
-            />
-          </div>
-          <div>
-            <label className="form-label">Email *</label>
-            <input
-              type="email"
-              value={form.email || ''}
-              onChange={(e) => setForm((p) => ({ ...p, email: e.target.value }))}
-              className="form-input"
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="form-label">Roles</label>
-              <div className="grid gap-2">
-                {ALL_ROLES.map((r) => (
-                  <label key={r.value} className="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={selectedRoles.includes(r.value)}
-                      onChange={() => {
-                        const roles = toggleRole(selectedRoles, r.value);
-                        setForm((p) => ({
-                          ...p,
-                          roles,
-                          company_ids: isSingleCompanyRoleSet(roles) ? (p.company_ids ?? []).slice(0, 1) : p.company_ids,
-                        }));
-                      }}
-                      className="accent-black"
-                    />
-                    {r.label}
-                  </label>
-                ))}
-              </div>
-            </div>
-            <div>
-              <label className="form-label">Status</label>
-              <select
-                value={form.is_active === false ? 'inactive' : 'active'}
-                onChange={(e) => setForm((p) => ({ ...p, is_active: e.target.value === 'active' }))}
-                className="form-input"
-              >
-                <option value="active">Active</option>
-                <option value="inactive">Inactive</option>
-              </select>
-            </div>
-          </div>
-          <div>
-            <label className="form-label">
-              Assign Companies * {isSingleCompany && <span className="text-gray-400 font-normal">(max 1)</span>}
-            </label>
-            <div className="space-y-2 mt-2 max-h-48 overflow-y-auto">
-              {companies.map((c) => (
-                <label
-                  key={c.id}
-                  className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
-                    (form.company_ids ?? []).includes(c.id)
-                      ? 'border-black bg-gray-50'
-                      : 'border-gray-200 hover:border-gray-300'
-                  }`}
-                >
-                  <input
-                    type={isSingleCompany ? 'radio' : 'checkbox'}
-                    name="company"
-                    checked={(form.company_ids ?? []).includes(c.id)}
-                    onChange={() => toggleCompany(c.id)}
-                    className="accent-black"
-                  />
-                  <Building2 className="w-4 h-4 text-gray-400" />
-                  <span className="text-sm font-medium text-gray-700">{c.name}</span>
-                </label>
-              ))}
-            </div>
-          </div>
-        </div>
-        <div className="flex justify-end gap-3 p-6 border-t border-gray-100">
-          <button onClick={onClose} className="btn-secondary">Cancel</button>
-          <button onClick={handleSubmit} disabled={mutation.isPending} className="btn-primary">
-            {mutation.isPending ? 'Saving...' : 'Save Changes'}
-          </button>
-        </div>
-      </div>
+        )}
+        <p className="text-sm text-gray-500">
+          Delete <span className="font-medium text-gray-900">{deleteTarget?.full_name}</span>? Their
+          access is revoked immediately and this account will not be restored by an employee backup.
+        </p>
+      </Modal>
     </div>
   );
 }

@@ -506,12 +506,57 @@ describe('admin API', () => {
   });
 
   it('scopes a user list to one company when asked', async () => {
-    apiMocks.get.mockResolvedValue({ data: [] });
+    apiMocks.get.mockResolvedValue({ data: { data: [], total: 0, page: 1, per_page: 20 } });
 
-    await admin.listUsers('company-2');
+    await admin.listUsers({ companyId: 'company-2', page: 2, perPage: 20 });
 
     const [path, config] = apiMocks.get.mock.calls[0];
     expect(path).toBe('/admin/users');
-    expect(config).toEqual({ params: { company_id: 'company-2' } });
+    expect(config).toEqual({
+      params: { company_id: 'company-2', search: undefined, page: 2, per_page: 20 },
+    });
+  });
+
+  it('omits every filter when listing users unfiltered', async () => {
+    apiMocks.get.mockResolvedValue({ data: { data: [], total: 0, page: 1, per_page: 20 } });
+
+    await admin.listUsers();
+
+    const [, config] = apiMocks.get.mock.calls[0];
+    expect(config).toEqual({
+      params: { company_id: undefined, search: undefined, page: undefined, per_page: undefined },
+    });
+  });
+
+  it('drops a whitespace-only search term rather than sending it', async () => {
+    apiMocks.get.mockResolvedValue({ data: { data: [], total: 0, page: 1, per_page: 20 } });
+
+    await admin.listUsers({ search: '   ' });
+
+    const [, config] = apiMocks.get.mock.calls[0];
+    expect((config as { params: { search?: string } }).params.search).toBeUndefined();
+  });
+
+  it('creates, updates and deletes users against the admin routes', async () => {
+    apiMocks.post.mockResolvedValue({ data: {} });
+    apiMocks.put.mockResolvedValue({ data: {} });
+    apiMocks.delete.mockResolvedValue({ data: {} });
+
+    await admin.createUser({
+      email: 'new@example.com',
+      password: 'Str0ngPassword',
+      full_name: 'New Person',
+      roles: ['finance'],
+      company_ids: ['company-1'],
+    });
+    expect(apiMocks.post).toHaveBeenLastCalledWith('/admin/users', expect.objectContaining({
+      email: 'new@example.com',
+    }));
+
+    await admin.updateUser('user-1', { full_name: 'Renamed' });
+    expect(apiMocks.put).toHaveBeenLastCalledWith('/admin/users/user-1', { full_name: 'Renamed' });
+
+    await admin.deleteUser('user-1');
+    expect(apiMocks.delete).toHaveBeenLastCalledWith('/admin/users/user-1');
   });
 });

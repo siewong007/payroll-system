@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM users\n        WHERE employee_id = $1 AND roles <@ ARRAY['employee']::VARCHAR(50)[]",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b384ba34dc28bf760cf600f8e12299b33a29a7419b45cc77aa471c649f625cfb"
+}

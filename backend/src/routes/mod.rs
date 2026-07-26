@@ -172,10 +172,6 @@ pub fn create_router(state: AppState) -> Router {
             "/admin/users/{id}",
             put(admin::update_user).delete(admin::delete_user),
         )
-        .route(
-            "/admin/users/{id}/companies",
-            put(admin::update_user_companies),
-        )
         // Backup / Data Migration
         .route("/admin/backup/export", get(backup::export_company))
         .route("/admin/backup/import", post(backup::import_company))

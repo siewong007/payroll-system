@@ -364,6 +364,17 @@ impl AuthUser {
         Ok(())
     }
 
+    /// Rejects users that may not read the platform user directory (names,
+    /// emails, roles and company memberships of every colleague).
+    /// Explicit allow-list: unlike a deny-list, a role added later does not gain
+    /// this access by default.
+    pub fn require_user_directory_reader(&self) -> AppResult<()> {
+        if !self.has_any_role(&["super_admin", "admin"]) {
+            return Err(AppError::Forbidden("Admin access required".into()));
+        }
+        Ok(())
+    }
+
     /// Rejects users that cannot manage kiosk credentials.
     pub fn require_kiosk_admin(&self) -> AppResult<()> {
         if !self.has_any_role(&["admin", "super_admin", "hr_manager", "payroll_admin"]) {

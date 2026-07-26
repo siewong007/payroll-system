@@ -28,6 +28,17 @@ pub fn validate_password_strength(password: &str) -> AppResult<()> {
     Ok(())
 }
 
+/// Bcrypt cost 12 is ~250-400 ms of solid CPU. Run it on the blocking pool so it
+/// cannot stall a Tokio worker thread — on the 1-2 vCPU production host, hashing
+/// inline stalls every other in-flight request for the duration.
+pub async fn hash_password(password: &str) -> AppResult<String> {
+    let password = password.to_string();
+    tokio::task::spawn_blocking(move || bcrypt::hash(&password, 12))
+        .await
+        .map_err(|e| AppError::Internal(format!("Password hashing task failed: {}", e)))?
+        .map_err(|e| AppError::Internal(format!("Failed to hash password: {}", e)))
+}
+
 /// True if the user's linked employee (if any) is still active. Users with no linked
 /// employee are always considered active.
 async fn linked_employee_active(pool: &PgPool, employee_id: Option<Uuid>) -> AppResult<bool> {

@@ -11,6 +11,14 @@ import {
   hasAnyRole,
   hasOnlyEmployeeRole,
   roleList,
+  ROLE_META,
+  CREATABLE_ROLES,
+  roleLabel,
+  roleBadgeClass,
+  toggleRole,
+  isSingleCompanyRoleSet,
+  normalizeCompanySelection,
+  sameIdSet,
 } from '@/lib/roles';
 
 const multiRoleUser: User = {
@@ -61,5 +69,61 @@ describe('role helpers', () => {
     expect(REPORT_ROLES).not.toContain('exec');
     expect(REPORT_ROLES).toContain('employee');
     expect(ADMIN_DATA_ROLES).toEqual(['super_admin', 'admin']);
+  });
+});
+
+describe('role selection rules (mirrors backend user_service)', () => {
+  it('covers every AppRole with display metadata', () => {
+    expect(Object.keys(ROLE_META).sort()).toEqual([...ALL_ROLES].sort());
+    for (const role of ALL_ROLES) {
+      expect(roleLabel(role)).not.toBe(role);
+      expect(roleBadgeClass(role)).toContain('bg-');
+    }
+  });
+
+  it('falls back to the raw value for an unknown role', () => {
+    expect(roleLabel('mystery')).toBe('mystery');
+    expect(roleBadgeClass('mystery')).toBe('bg-gray-100 text-gray-600');
+  });
+
+  it('excludes employee from the roles an admin may create', () => {
+    expect(CREATABLE_ROLES).not.toContain('employee');
+    expect(CREATABLE_ROLES).toContain('super_admin');
+  });
+
+  it('never removes the last remaining role', () => {
+    expect(toggleRole(['admin'], 'admin')).toEqual(['admin']);
+  });
+
+  it('removes a role when others remain', () => {
+    expect(toggleRole(['admin', 'finance'], 'admin')).toEqual(['finance']);
+  });
+
+  it('replaces the whole selection when exec or employee is chosen', () => {
+    expect(toggleRole(['admin', 'finance'], 'exec')).toEqual(['exec']);
+    expect(toggleRole(['admin', 'finance'], 'employee')).toEqual(['employee']);
+  });
+
+  it('clears exec and employee when a normal role is added', () => {
+    expect(toggleRole(['exec'], 'admin')).toEqual(['admin']);
+    expect(toggleRole(['employee'], 'finance')).toEqual(['finance']);
+  });
+
+  it('flags only exec and employee as single-company role sets', () => {
+    expect(isSingleCompanyRoleSet(['exec'])).toBe(true);
+    expect(isSingleCompanyRoleSet(['employee'])).toBe(true);
+    expect(isSingleCompanyRoleSet(['admin', 'finance'])).toBe(false);
+  });
+
+  it('truncates a company selection to one for single-company roles only', () => {
+    expect(normalizeCompanySelection(['exec'], ['a', 'b', 'c'])).toEqual(['a']);
+    expect(normalizeCompanySelection(['admin'], ['a', 'b', 'c'])).toEqual(['a', 'b', 'c']);
+  });
+
+  it('compares id sets without regard to order', () => {
+    expect(sameIdSet(['a', 'b'], ['b', 'a'])).toBe(true);
+    expect(sameIdSet([], [])).toBe(true);
+    expect(sameIdSet(['a'], ['a', 'b'])).toBe(false);
+    expect(sameIdSet(['a'], ['b'])).toBe(false);
   });
 });

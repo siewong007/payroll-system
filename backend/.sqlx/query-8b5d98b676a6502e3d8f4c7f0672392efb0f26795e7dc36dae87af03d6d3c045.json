@@ -1,0 +1,35 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT uc.user_id, c.id AS company_id, c.name AS company_name\n        FROM user_companies uc\n        JOIN companies c ON c.id = uc.company_id\n        WHERE uc.user_id = ANY($1::uuid[])\n          AND ($2::uuid IS NULL OR uc.company_id IN (\n                SELECT company_id FROM user_companies WHERE user_id = $2))\n        ORDER BY uc.user_id, c.name ASC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "user_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "company_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "company_name",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "UuidArray",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "8b5d98b676a6502e3d8f4c7f0672392efb0f26795e7dc36dae87af03d6d3c045"
+}

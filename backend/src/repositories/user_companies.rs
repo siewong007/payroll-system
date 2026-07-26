@@ -24,17 +24,20 @@ pub async fn insert(
     Ok(())
 }
 
-/// Strict link insert (no `ON CONFLICT`); errors on a duplicate. Callers use this
-/// after clearing the user's existing links, where a conflict shouldn't occur.
-pub async fn add(
+/// Idempotent set-based link insert: one round trip regardless of how many
+/// companies are assigned. Replaces the per-company `insert` loops, which cost
+/// one statement each and could not be made atomic without a transaction.
+pub async fn insert_many(
     executor: impl Executor<'_, Database = Postgres>,
     user_id: Uuid,
-    company_id: Uuid,
+    company_ids: &[Uuid],
 ) -> AppResult<()> {
     sqlx::query!(
-        "INSERT INTO user_companies (user_id, company_id) VALUES ($1, $2)",
+        r#"INSERT INTO user_companies (user_id, company_id)
+        SELECT $1, cid FROM UNNEST($2::uuid[]) AS cid
+        ON CONFLICT DO NOTHING"#,
         user_id,
-        company_id,
+        company_ids,
     )
     .execute(executor)
     .await?;

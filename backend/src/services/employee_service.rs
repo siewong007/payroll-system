@@ -128,9 +128,17 @@ pub async fn create_user_for_employee(
             refresh_tokens::delete_by_user(pool, existing_id).await?;
             users::delete(pool, existing_id).await?;
         } else {
-            // Non-employee user (admin, etc.) in this company — link to this employee
-            users::link_to_employee(pool, emp.id, emp.company_id, existing_id).await?;
-            user_companies::insert(pool, existing_id, emp.company_id).await?;
+            // Never adopt a privileged account into an employee record. Linking
+            // it would hand this employee's lifecycle control over that account:
+            // `soft_delete_employee` hard-deletes whatever `employee_id` points
+            // at, so an employee-manager could capture and permanently destroy a
+            // super_admin whose active company happens to be this one —
+            // bypassing `require_super_admin`, the self-delete guard and the
+            // tombstone that stops the account being recreated.
+            tracing::warn!(
+                employee_id = %emp.id,
+                "employee email belongs to a privileged account; skipping portal account creation"
+            );
             return Ok(None);
         }
     }

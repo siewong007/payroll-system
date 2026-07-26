@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE users SET company_id = $2, updated_at = NOW()\n        WHERE id = $1 AND deleted_at IS NULL\n          AND EXISTS (\n            SELECT 1 FROM user_companies\n            WHERE user_id = $1 AND company_id = $2)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d5d4004439c3975082ecf5b2d74fce85f1f13dd7408f32d0d5bf793d6df450a5"
+}

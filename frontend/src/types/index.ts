@@ -84,6 +84,9 @@ export interface CreateUserRequest {
   company_ids: string[];
 }
 
+/** Every field is optional and only sent when it actually changed. In
+ *  particular `company_ids` is omitted when the selection is unchanged: the
+ *  backend revokes every live session whenever company access is rewritten. */
 export interface UpdateUserRequest {
   full_name?: string;
   email?: string;
@@ -92,8 +95,11 @@ export interface UpdateUserRequest {
   company_ids?: string[];
 }
 
-export interface UpdateUserCompaniesRequest {
-  company_ids: string[];
+export interface ListUsersParams {
+  companyId?: string;
+  search?: string;
+  page?: number;
+  perPage?: number;
 }
 
 export interface Employee {

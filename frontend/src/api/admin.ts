@@ -6,7 +6,8 @@ import type {
   UserWithCompanies,
   CreateUserRequest,
   UpdateUserRequest,
-  UpdateUserCompaniesRequest,
+  ListUsersParams,
+  PaginatedResponse,
   CompanySummary,
   LoginResponse,
 } from '@/types';
@@ -25,9 +26,14 @@ export const deleteCompany = (id: string) =>
   api.delete(`/admin/companies/${id}`).then((r) => r.data);
 
 // User management
-export const listUsers = (companyId?: string) =>
-  api.get<UserWithCompanies[]>('/admin/users', {
-    params: companyId ? { company_id: companyId } : undefined,
+export const listUsers = (params: ListUsersParams = {}) =>
+  api.get<PaginatedResponse<UserWithCompanies>>('/admin/users', {
+    params: {
+      company_id: params.companyId,
+      search: params.search?.trim() || undefined,
+      page: params.page,
+      per_page: params.perPage,
+    },
   }).then((r) => r.data);
 
 export const createUser = (req: CreateUserRequest) =>
@@ -38,9 +44,6 @@ export const updateUser = (userId: string, req: UpdateUserRequest) =>
 
 export const deleteUser = (userId: string) =>
   api.delete(`/admin/users/${userId}`).then((r) => r.data);
-
-export const updateUserCompanies = (userId: string, req: UpdateUserCompaniesRequest) =>
-  api.put<UserWithCompanies>(`/admin/users/${userId}/companies`, req).then((r) => r.data);
 
 // Company switching
 export const getMyCompanies = () =>

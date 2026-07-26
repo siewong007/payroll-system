@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO users (email, password_hash, full_name, roles, company_id)\n        VALUES ($1, $2, $3, $4, $5)\n        RETURNING id, email, full_name, roles, company_id, employee_id, is_active, created_at",
+  "query": "SELECT u.id, u.email, u.full_name, u.roles, u.company_id,\n                u.employee_id, u.is_active, u.created_at\n            FROM users u\n            WHERE u.deleted_at IS NULL\n              AND ($1::uuid IS NULL OR EXISTS (\n                    SELECT 1 FROM user_companies uc\n                    WHERE uc.user_id = u.id AND uc.company_id = $1))\n              AND ($2::text IS NULL\n                    OR u.full_name ILIKE '%' || $2 || '%'\n                    OR u.email ILIKE '%' || $2 || '%')\n            ORDER BY u.created_at DESC\n            LIMIT $3 OFFSET $4",
   "describe": {
     "columns": [
       {
@@ -46,11 +46,10 @@
     ],
     "parameters": {
       "Left": [
-        "Varchar",
-        "Varchar",
-        "Varchar",
-        "VarcharArray",
-        "Uuid"
+        "Uuid",
+        "Text",
+        "Int8",
+        "Int8"
       ]
     },
     "nullable": [
@@ -64,5 +63,5 @@
       false
     ]
   },
-  "hash": "380b303da09b73f8cbef65db23a73d10b73b242f1fa48adf4fb9b045f55b3b5c"
+  "hash": "140a62549ef5714dde1430f878e51aa1abf3290345504963c6b836cf649ccbf7"
 }

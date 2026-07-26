@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO user_companies (user_id, company_id)\n        SELECT $1, cid FROM UNNEST($2::uuid[]) AS cid\n        ON CONFLICT DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "UuidArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1cce5fc5499ec098ddb86eeeea09931deeb7902099d7e45585b9fa9440e01d71"
+}

@@ -657,3 +657,108 @@ async fn company_admin_cannot_export_payroll_backup() {
 
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
 }
+
+/// User administration is `super_admin`-only. A company `admin` may read the
+/// directory (to see who has access to their tenant) but must not create,
+/// modify or remove accounts — those grant and revoke authority platform-wide.
+#[tokio::test]
+async fn company_admin_cannot_create_update_or_delete_users() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let token = token_for(&pool, company_id, "admin").await;
+    let target_id = seed_user(&pool, company_id, "finance").await;
+    let app = app_for(pool).await;
+
+    let create_body = format!(
+        r#"{{"email":"blocked-{}@example.invalid","password":"Str0ngPassword","full_name":"Blocked","roles":["finance"],"company_ids":["{company_id}"]}}"#,
+        uuid::Uuid::new_v4()
+    );
+
+    for (method, uri, body) in [
+        ("POST", "/api/admin/users".to_string(), create_body.as_str()),
+        (
+            "PUT",
+            format!("/api/admin/users/{target_id}"),
+            r#"{"roles":["super_admin"]}"#,
+        ),
+        ("DELETE", format!("/api/admin/users/{target_id}"), ""),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(request(method, &uri, &token, body))
+            .await
+            .expect("route response");
+        assert_eq!(
+            response.status(),
+            StatusCode::FORBIDDEN,
+            "{method} {uri} must be refused for a company admin"
+        );
+    }
+}
+
+/// The directory carries every colleague's name, email and role, so the gate is
+/// an explicit allow-list rather than "anyone who is not an employee".
+#[tokio::test]
+async fn user_directory_is_readable_by_admins_and_closed_to_everyone_else() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let app = app_for(pool.clone()).await;
+
+    for allowed in ["super_admin", "admin"] {
+        let token = token_for(&pool, company_id, allowed).await;
+        let response = app
+            .clone()
+            .oneshot(request("GET", "/api/admin/users", &token, ""))
+            .await
+            .expect("route response");
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "{allowed} must keep directory access"
+        );
+    }
+
+    for denied in ["employee", "finance", "hr_manager", "payroll_admin", "exec"] {
+        let token = token_for(&pool, company_id, denied).await;
+        let response = app
+            .clone()
+            .oneshot(request("GET", "/api/admin/users", &token, ""))
+            .await
+            .expect("route response");
+        assert_eq!(
+            response.status(),
+            StatusCode::FORBIDDEN,
+            "{denied} must not read the user directory"
+        );
+    }
+}
+
+/// `ValidatedJson` rejects a malformed email before the handler runs, so junk
+/// never reaches the service or the database.
+#[tokio::test]
+async fn create_user_rejects_a_malformed_email_with_422() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let token = token_for(&pool, company_id, "super_admin").await;
+
+    let response = app_for(pool)
+        .await
+        .oneshot(request(
+            "POST",
+            "/api/admin/users",
+            &token,
+            &format!(
+                r#"{{"email":"not-an-email","password":"Str0ngPassword","full_name":"Junk","roles":["finance"],"company_ids":["{company_id}"]}}"#
+            ),
+        ))
+        .await
+        .expect("route response");
+
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
