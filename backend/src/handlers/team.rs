@@ -10,7 +10,7 @@ use crate::core::error::AppResult;
 use crate::models::team::{
     AddTeamMemberRequest, CreateTeamRequest, Team, TeamMember, TeamWithCount, UpdateTeamRequest,
 };
-use crate::services::team_service;
+use crate::services::{audit_service::AuditRequestMeta, team_service};
 
 // ─── Teams CRUD ───
 
@@ -36,6 +36,7 @@ pub async fn get_team(
 pub async fn create_team(
     State(state): State<AppState>,
     auth: AuthUser,
+    audit_meta: AuditRequestMeta,
     Json(req): Json<CreateTeamRequest>,
 ) -> AppResult<Json<Team>> {
     let (user_id, company_id) = auth.authorize_actor(Permission::ManageTeams)?;
@@ -46,6 +47,7 @@ pub async fn create_team(
         req.description.as_deref(),
         req.tag.as_deref().unwrap_or("general"),
         user_id,
+        Some(&audit_meta),
     )
     .await?;
     Ok(Json(team))
@@ -55,6 +57,7 @@ pub async fn update_team(
     State(state): State<AppState>,
     auth: AuthUser,
     Path(id): Path<Uuid>,
+    audit_meta: AuditRequestMeta,
     Json(req): Json<UpdateTeamRequest>,
 ) -> AppResult<Json<Team>> {
     let (user_id, company_id) = auth.authorize_actor(Permission::ManageTeams)?;
@@ -67,6 +70,7 @@ pub async fn update_team(
         req.tag.as_deref(),
         req.is_active,
         user_id,
+        Some(&audit_meta),
     )
     .await?;
     Ok(Json(team))
@@ -76,9 +80,10 @@ pub async fn delete_team(
     State(state): State<AppState>,
     auth: AuthUser,
     Path(id): Path<Uuid>,
+    audit_meta: AuditRequestMeta,
 ) -> AppResult<Json<()>> {
-    let company_id = auth.authorize(Permission::ManageTeams)?;
-    team_service::delete_team(&state.pool, company_id, id).await?;
+    let (user_id, company_id) = auth.authorize_actor(Permission::ManageTeams)?;
+    team_service::delete_team(&state.pool, company_id, id, user_id, Some(&audit_meta)).await?;
     Ok(Json(()))
 }
 
@@ -98,12 +103,21 @@ pub async fn add_member(
     State(state): State<AppState>,
     auth: AuthUser,
     Path(team_id): Path<Uuid>,
+    audit_meta: AuditRequestMeta,
     Json(req): Json<AddTeamMemberRequest>,
 ) -> AppResult<Json<TeamMember>> {
-    let company_id = auth.authorize(Permission::ManageTeams)?;
+    let (user_id, company_id) = auth.authorize_actor(Permission::ManageTeams)?;
     let role = req.role.as_deref().unwrap_or("member");
-    let member =
-        team_service::add_member(&state.pool, company_id, team_id, req.employee_id, role).await?;
+    let member = team_service::add_member(
+        &state.pool,
+        company_id,
+        team_id,
+        req.employee_id,
+        role,
+        user_id,
+        Some(&audit_meta),
+    )
+    .await?;
     Ok(Json(member))
 }
 
@@ -111,8 +125,17 @@ pub async fn remove_member(
     State(state): State<AppState>,
     auth: AuthUser,
     Path((team_id, employee_id)): Path<(Uuid, Uuid)>,
+    audit_meta: AuditRequestMeta,
 ) -> AppResult<Json<()>> {
-    let company_id = auth.authorize(Permission::ManageTeams)?;
-    team_service::remove_member(&state.pool, company_id, team_id, employee_id).await?;
+    let (user_id, company_id) = auth.authorize_actor(Permission::ManageTeams)?;
+    team_service::remove_member(
+        &state.pool,
+        company_id,
+        team_id,
+        employee_id,
+        user_id,
+        Some(&audit_meta),
+    )
+    .await?;
     Ok(Json(()))
 }

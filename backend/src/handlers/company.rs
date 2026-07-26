@@ -4,7 +4,7 @@ use crate::core::app_state::AppState;
 use crate::core::auth::{AuthUser, Permission};
 use crate::core::error::{AppError, AppResult};
 use crate::models::company::{Company, CompanyStats, UpdateCompanyRequest};
-use crate::services::company_service;
+use crate::services::{audit_service::AuditRequestMeta, company_service};
 
 fn request_touches_payroll_fields(req: &UpdateCompanyRequest) -> bool {
     req.epf_number.is_some()
@@ -40,6 +40,7 @@ pub async fn get(State(state): State<AppState>, auth: AuthUser) -> AppResult<Jso
 pub async fn update(
     State(state): State<AppState>,
     auth: AuthUser,
+    audit_meta: AuditRequestMeta,
     Json(req): Json<UpdateCompanyRequest>,
 ) -> AppResult<Json<Company>> {
     auth.require_permission(Permission::ManageCompanySettings)?;
@@ -53,8 +54,14 @@ pub async fn update(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    let mut company =
-        company_service::update_company(&state.pool, company_id, req, auth.0.sub).await?;
+    let mut company = company_service::update_company(
+        &state.pool,
+        company_id,
+        req,
+        auth.0.sub,
+        Some(&audit_meta),
+    )
+    .await?;
     if !auth.is_payroll_privileged() {
         redact_payroll_fields(&mut company);
     }

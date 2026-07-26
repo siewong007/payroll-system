@@ -9,7 +9,7 @@ use crate::core::error::{AppError, AppResult};
 use crate::models::setting::{
     BulkUpdateSettingsRequest, CompanySetting, SettingsQuery, UpdateSettingRequest,
 };
-use crate::services::settings_service;
+use crate::services::{audit_service::AuditRequestMeta, settings_service};
 
 fn is_payroll_category(category: &str) -> bool {
     category == "payroll" || category == "statutory"
@@ -59,6 +59,7 @@ pub async fn update(
     State(state): State<AppState>,
     auth: AuthUser,
     Path((category, key)): Path<(String, String)>,
+    audit_meta: AuditRequestMeta,
     Json(req): Json<UpdateSettingRequest>,
 ) -> AppResult<Json<CompanySetting>> {
     auth.require_permission(Permission::ManageCompanySettings)?;
@@ -79,6 +80,7 @@ pub async fn update(
         &key,
         req.value,
         auth.0.sub,
+        Some(&audit_meta),
     )
     .await?;
     Ok(Json(setting))
@@ -87,6 +89,7 @@ pub async fn update(
 pub async fn bulk_update(
     State(state): State<AppState>,
     auth: AuthUser,
+    audit_meta: AuditRequestMeta,
     Json(req): Json<BulkUpdateSettingsRequest>,
 ) -> AppResult<Json<Vec<CompanySetting>>> {
     auth.require_permission(Permission::ManageCompanySettings)?;
@@ -105,8 +108,13 @@ pub async fn bulk_update(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    let settings =
-        settings_service::bulk_update_settings(&state.pool, company_id, req.settings, auth.0.sub)
-            .await?;
+    let settings = settings_service::bulk_update_settings(
+        &state.pool,
+        company_id,
+        req.settings,
+        auth.0.sub,
+        Some(&audit_meta),
+    )
+    .await?;
     Ok(Json(settings))
 }

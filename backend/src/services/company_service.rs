@@ -4,6 +4,7 @@ use uuid::Uuid;
 use crate::core::error::{AppError, AppResult};
 use crate::models::company::{Company, CompanyStats, CreateCompanyRequest, UpdateCompanyRequest};
 use crate::repositories::{companies, documents, employees, payroll_groups};
+use crate::services::audit_service::{self, AuditRequestMeta};
 
 pub async fn get_company(pool: &PgPool, company_id: Uuid) -> AppResult<Company> {
     companies::get(pool, company_id)
@@ -32,15 +33,40 @@ pub async fn update_company(
     company_id: Uuid,
     req: UpdateCompanyRequest,
     updated_by: Uuid,
+    audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<Company> {
     if req.unpaid_leave_divisor.is_some_and(|divisor| divisor <= 0) {
         return Err(AppError::BadRequest(
             "Unpaid leave divisor must be greater than zero".into(),
         ));
     }
-    companies::update(pool, company_id, &req, updated_by)
+
+    // The company profile carries the EPF/SOCSO/EIS employer numbers and the
+    // unpaid-leave divisor that every payroll run reads, so a change here moves
+    // money. Capture the prior state for the before/after pair.
+    let existing = companies::get(pool, company_id)
         .await?
-        .ok_or_else(|| AppError::NotFound("Company not found".into()))
+        .ok_or_else(|| AppError::NotFound("Company not found".into()))?;
+
+    let company = companies::update(pool, company_id, &req, updated_by)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Company not found".into()))?;
+
+    let _ = audit_service::log_action_with_metadata(
+        pool,
+        Some(company_id),
+        Some(updated_by),
+        "update",
+        "company",
+        Some(company_id),
+        Some(serde_json::to_value(&existing).unwrap_or_default()),
+        Some(serde_json::to_value(&company).unwrap_or_default()),
+        Some("Company profile updated"),
+        audit_meta,
+    )
+    .await;
+
+    Ok(company)
 }
 
 pub async fn get_company_stats(pool: &PgPool, company_id: Uuid) -> AppResult<CompanyStats> {

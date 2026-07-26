@@ -50,7 +50,8 @@ pub async fn update_company(
     Json(req): Json<UpdateCompanyRequest>,
 ) -> AppResult<Json<Company>> {
     auth.require_permission(Permission::ManageCompanies)?;
-    let company = company_service::update_company(&state.pool, company_id, req, auth.0.sub).await?;
+    let company =
+        company_service::update_company(&state.pool, company_id, req, auth.0.sub, None).await?;
     Ok(Json(company))
 }
 
