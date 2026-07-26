@@ -6,6 +6,7 @@ use crate::repositories::audit_logs;
 use crate::repositories::reads::audit as audit_reads;
 
 pub use crate::models::audit::{AuditLogQuery, AuditLogWithUser, AuditRequestMeta};
+pub use crate::models::audit_filter::{AuditFilterOptions, FilterOption};
 
 pub async fn list_audit_logs(
     pool: &PgPool,
@@ -90,4 +91,22 @@ pub async fn log_action_with_metadata(
 
     result?;
     Ok(())
+}
+
+/// The filter vocabulary for one company's audit trail.
+///
+/// Both facets are read from the company's own rows, so the dropdowns offer
+/// exactly what exists — no option that matches nothing, and nothing written
+/// that the UI cannot reach. The two walks are independent and could run
+/// concurrently, but they are sub-millisecond against the 1008 indexes and
+/// sharing one `&PgPool` connection sequentially keeps the pool pressure of an
+/// admin screen at one connection.
+pub async fn list_filter_options(pool: &PgPool, company_id: Uuid) -> AppResult<AuditFilterOptions> {
+    let entity_types = audit_reads::distinct_entity_types(pool, company_id).await?;
+    let actions = audit_reads::distinct_actions(pool, company_id).await?;
+
+    Ok(AuditFilterOptions {
+        entity_types: entity_types.into_iter().map(FilterOption::new).collect(),
+        actions: actions.into_iter().map(FilterOption::new).collect(),
+    })
 }

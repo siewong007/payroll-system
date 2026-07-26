@@ -2,6 +2,7 @@ pub mod approval;
 pub mod attendance;
 pub mod attendance_kiosk;
 pub mod audit;
+pub mod audit_filter;
 pub mod backup;
 pub mod calendar;
 pub mod company;
