@@ -260,6 +260,46 @@ pub async fn check_geofence(
     })
 }
 
+/// Whether the geofence can *positively* corroborate that someone was on site.
+///
+/// Deliberately not `!validate_geofence(..)`. That function's `Ok(false)`
+/// conflates three unrelated states — the mode is off, no locations are
+/// configured, or the point really is inside a fence — because for *enforcement*
+/// all three must permit the check-in. Only the third is evidence.
+///
+/// The distinction matters because this is the anchor the attendance network
+/// learner trusts. Reading `Ok(false)` as corroboration meant a company with the
+/// mode on but no locations configured — `check_geofence` returns `is_within:
+/// true` for an empty list, by design — anchored *every* check-in, including
+/// every one from an employee's living room. That is precisely the poisoning the
+/// anchor exists to prevent, so this asks the narrower question directly.
+pub async fn geofence_anchor(
+    pool: &PgPool,
+    company_id: Uuid,
+    latitude: Option<f64>,
+    longitude: Option<f64>,
+) -> AppResult<bool> {
+    let mode = get_geofence_mode(pool, company_id).await?;
+    if !matches!(mode.as_str(), "warn" | "enforce") {
+        return Ok(false);
+    }
+
+    let (Some(lat), Some(lng)) = (latitude, longitude) else {
+        return Ok(false);
+    };
+
+    // An empty location list cannot vouch for anything, whatever
+    // `check_geofence` reports for enforcement purposes.
+    let locations = company_locations::list_active(pool, company_id).await?;
+    if locations.is_empty() {
+        return Ok(false);
+    }
+
+    Ok(locations.iter().any(|loc| {
+        haversine_meters(lat, lng, loc.latitude, loc.longitude) <= loc.radius_meters as f64
+    }))
+}
+
 /// Evaluate the geofence for a check-out without ever rejecting: returns
 /// whether the record should be flagged as outside. A blocked check-out
 /// becomes a stale open session only an admin can fix, so even in 'enforce'

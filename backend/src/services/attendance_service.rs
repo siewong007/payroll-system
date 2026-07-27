@@ -605,29 +605,13 @@ pub async fn check_in_qr(
     let kiosk_minted = attendance_qr_tokens::is_kiosk_minted(pool, token_id)
         .await
         .unwrap_or(false);
-    let anchored = kiosk_minted || geofence_corroborates(pool, company_id, outside_geofence).await;
+    let anchored = kiosk_minted
+        || geofence_service::geofence_anchor(pool, company_id, latitude, longitude)
+            .await
+            .unwrap_or(false);
     observe_network(pool, company_id, employee_id, client_ip, anchored).await;
 
     Ok(record)
-}
-
-/// Whether "inside the geofence" is worth anything as corroboration here.
-///
-/// Only when the fence is actually being evaluated: with the mode off, every
-/// check-in reports `outside_geofence = false` because nothing was checked, and
-/// treating that as corroboration would anchor every observation — including
-/// the ones from employees' living rooms, which is precisely the poisoning the
-/// anchor exists to prevent.
-async fn geofence_corroborates(pool: &PgPool, company_id: Uuid, outside: bool) -> bool {
-    if outside {
-        return false;
-    }
-    matches!(
-        geofence_service::get_geofence_mode(pool, company_id)
-            .await
-            .as_deref(),
-        Ok("warn") | Ok("enforce")
-    )
 }
 
 /// Record the observation, swallowing failures — learning is evidence
@@ -690,7 +674,9 @@ pub async fn check_in_face_id(
     // available. A face-id company with the fence off learns nothing anchored,
     // which is the correct outcome: there is genuinely nothing vouching for
     // where the employee was.
-    let anchored = geofence_corroborates(pool, company_id, outside_geofence).await;
+    let anchored = geofence_service::geofence_anchor(pool, company_id, latitude, longitude)
+        .await
+        .unwrap_or(false);
     observe_network(pool, company_id, employee_id, client_ip, anchored).await;
 
     Ok(record)
