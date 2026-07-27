@@ -2,7 +2,7 @@
 //!
 //! Both directions resolve a filename that ultimately came from outside the
 //! process — a database column on export, an uploaded JSON key on import — so
-//! neither joins it onto `uploads/` directly. `upload_service::safe_upload_path`
+//! neither joins it onto `uploads/` directly. `core::upload_path::stored_path`
 //! is the single containment check; restore additionally re-applies the content
 //! gate from the upload endpoint, because an archive must not be able to plant a
 //! file that would have been refused at the door.
@@ -12,10 +12,9 @@ use std::path::Path;
 
 use base64::Engine;
 
+use crate::core::upload_path::{UPLOAD_DIR, UPLOAD_URL_PREFIX, stored_path};
 use crate::models::backup::{ClaimExport, DocumentExport, LeaveRequestExport};
-use crate::services::upload_service::{
-    UPLOAD_DIR, UPLOAD_URL_PREFIX, safe_upload_path, validate_upload_bytes,
-};
+use crate::services::upload_service::validate_upload_bytes;
 
 pub fn collect_backup_files(
     documents: &[DocumentExport],
@@ -30,7 +29,7 @@ pub fn collect_backup_files(
             && let Some(filename) = u.strip_prefix(UPLOAD_URL_PREFIX)
             // `documents.file_url` is free text an administrator types, so this
             // side is not trustworthy either.
-            && let Ok(path) = safe_upload_path(filename)
+            && let Ok(path) = stored_path(filename)
             && let Ok(data) = std::fs::read(&path)
         {
             files.insert(u.clone(), b64.encode(&data));
@@ -73,7 +72,7 @@ pub async fn restore_backup_files(files: &HashMap<String, String>) -> Vec<String
             rejected += 1;
             continue;
         };
-        let Ok(path) = safe_upload_path(filename) else {
+        let Ok(path) = stored_path(filename) else {
             rejected += 1;
             continue;
         };

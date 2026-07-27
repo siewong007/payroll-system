@@ -230,11 +230,11 @@ pub async fn upload_file(
 
     // Reject an unusable type before pulling the whole body off the wire; the
     // full gate below re-checks it alongside the size cap and the magic bytes.
-    if !upload_service::ALLOWED_EXTENSIONS.contains(&ext.as_str()) {
+    if !upload_path::ALLOWED_UPLOAD_EXTENSIONS.contains(&ext.as_str()) {
         return Err(AppError::BadRequest(format!(
             "File type .{} is not allowed. Allowed: {}",
             ext,
-            upload_service::ALLOWED_EXTENSIONS.join(", ")
+            upload_path::ALLOWED_UPLOAD_EXTENSIONS.join(", ")
         )));
     }
 
