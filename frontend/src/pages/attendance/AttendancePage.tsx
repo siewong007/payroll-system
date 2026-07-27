@@ -331,7 +331,7 @@ function QrPanel({ canGenerate }: { canGenerate: boolean }) {
   const [showQr, setShowQr] = useState(false);
   const queryClient = useQueryClient();
 
-  const { data: token, refetch: generateNew, isError } = useQuery({
+  const { data: token, dataUpdatedAt, refetch: generateNew, isError } = useQuery({
     queryKey: ['attendance-qr'],
     queryFn: generateQrToken,
     enabled: showQr && canGenerate,
@@ -352,18 +352,24 @@ function QrPanel({ canGenerate }: { canGenerate: boolean }) {
     });
   }, [token, showQr]);
 
-  // Countdown timer
+  // Countdown timer, measured from the TTL against the moment the response
+  // arrived here. `expires_at` is a *server* instant, so comparing it with
+  // Date.now() folded the device's clock offset into the countdown: a machine a
+  // few minutes fast read every fresh token as already expired and re-minted
+  // immediately. `dataUpdatedAt` is stamped locally, so both terms share a clock
+  // and the offset cancels.
   useEffect(() => {
-    if (!token) return;
+    if (!token || !dataUpdatedAt) return;
+    const ttl = token.ttl_seconds > 0 ? token.ttl_seconds : 300;
     const tick = () => {
-      const left = Math.max(0, Math.floor((new Date(token.expires_at).getTime() - Date.now()) / 1000));
+      const left = Math.max(0, Math.ceil(ttl - (Date.now() - dataUpdatedAt) / 1000));
       setTimeLeft(left);
       setIsExpired(left === 0);
     };
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
-  }, [token]);
+  }, [token, dataUpdatedAt]);
 
   const handleRefresh = useCallback(async () => {
     await queryClient.removeQueries({ queryKey: ['attendance-qr'] });

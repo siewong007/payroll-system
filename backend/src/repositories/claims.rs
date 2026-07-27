@@ -286,6 +286,8 @@ pub async fn set_rejected(
 }
 
 /// An employee's own claims, optionally filtered by status, newest first (max 100).
+///
+/// `id` breaks ties on `created_at`, which a restored batch shares.
 pub async fn list_for_employee(
     executor: impl Executor<'_, Database = Postgres>,
     employee_id: Uuid,
@@ -296,7 +298,7 @@ pub async fn list_for_employee(
         r#"SELECT * FROM claims
         WHERE employee_id = $1
         AND ($2::text IS NULL OR status = $2)
-        ORDER BY created_at DESC
+        ORDER BY created_at DESC, id DESC
         LIMIT 100"#,
         employee_id,
         status,

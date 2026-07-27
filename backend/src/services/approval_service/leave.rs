@@ -1,17 +1,19 @@
 //! Leave admin CRUD + approval/reject workflow.
 
 use chrono::Datelike;
+use rust_decimal::Decimal;
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::core::config::AppConfig;
 use crate::core::error::{AppError, AppResult};
 use crate::core::upload_path::validate_optional_file_url;
+use crate::models::payroll::round_sen;
 use crate::models::portal::{CreateLeaveRequest, LeaveRequest, UpdateLeaveRequest};
 use crate::repositories::reads::approvals as approval_reads;
 use crate::repositories::{
-    employees as employee_repo, leave_balances, leave_requests, leave_types, payroll_entries,
-    users as user_repo,
+    companies, employees as employee_repo, leave_balances, leave_requests, leave_types,
+    payroll_entries, users as user_repo,
 };
 use crate::services::audit_service::AuditRequestMeta;
 use crate::services::calendar_service;
@@ -360,10 +362,26 @@ struct UnpaidLeaveDeduction {
     period_month: i32,
     description: String,
     amount: i64,
+    /// Working days of unpaid leave, stored on the entry's `quantity` so the
+    /// payslip's day count is a number rather than a substring of the
+    /// description.
+    working_days: Decimal,
 }
 
-/// Compute the deduction for an unpaid leave request: (basic_salary /
-/// working_days_in_month) * unpaid_leave_working_days.
+/// Compute the deduction for an unpaid leave request:
+/// `basic_salary × unpaid_working_days ÷ divisor`.
+///
+/// The divisor is the company's contractual paid days per month
+/// (`companies.unpaid_leave_divisor`), falling back to the calendar's working-day
+/// count for the leave month when it is unset. The numerator stays the calendar's
+/// count of working days actually taken.
+///
+/// One Decimal expression, rounded once. It used to compute an integer daily rate
+/// first — `basic_salary / total_working_days` in i64 — and only then multiply,
+/// so a RM3,000 basic over a 21-day month lost 2 sen on *every* day taken. The
+/// bare `.unwrap_or(22)` behind the calendar lookup is gone with it: a silent 22
+/// in a 21-working-day month is itself a wrong figure, and the error is now
+/// propagated so approval fails rather than quietly deducting the wrong amount.
 ///
 /// Pure reads, so it runs before the approval transaction opens. Returns `None`
 /// when there is nothing to stage (unknown employee, no working days in range,
@@ -399,20 +417,33 @@ async fn compute_unpaid_leave_deduction(
         return Ok(None);
     }
 
-    // Working days in the leave month, for the daily rate.
+    // The divisor: the company's contractual paid days per month if HR has set
+    // one, otherwise the calendar's working days in the leave month.
     let leave_month = lr.start_date.month();
     let leave_year = lr.start_date.year();
-    let total_working_days =
-        calendar_service::get_working_days_in_month(pool, emp_company_id, leave_year, leave_month)
-            .await
-            .unwrap_or(22); // fallback to 22 days
-
-    let daily_rate = if total_working_days > 0 {
-        basic_salary / total_working_days as i64
-    } else {
-        0
+    let configured_divisor = companies::get_unpaid_leave_divisor(pool, emp_company_id)
+        .await?
+        .filter(|divisor| *divisor > 0);
+    let divisor = match configured_divisor {
+        Some(divisor) => divisor,
+        None => {
+            calendar_service::get_working_days_in_month(
+                pool,
+                emp_company_id,
+                leave_year,
+                leave_month,
+            )
+            .await?
+        }
     };
-    let amount = daily_rate * unpaid_working_days as i64;
+
+    if divisor <= 0 {
+        return Ok(None);
+    }
+
+    let amount = round_sen(
+        Decimal::from(basic_salary) * Decimal::from(unpaid_working_days) / Decimal::from(divisor),
+    );
     if amount <= 0 {
         return Ok(None);
     }
@@ -429,6 +460,7 @@ async fn compute_unpaid_leave_deduction(
             lr.start_date, lr.end_date, unpaid_working_days
         ),
         amount,
+        working_days: Decimal::from(unpaid_working_days),
     }))
 }
 
@@ -527,6 +559,7 @@ pub async fn approve_leave(
             d.period_month,
             &d.description,
             d.amount,
+            d.working_days,
             reviewer_id,
         )
         .await?;

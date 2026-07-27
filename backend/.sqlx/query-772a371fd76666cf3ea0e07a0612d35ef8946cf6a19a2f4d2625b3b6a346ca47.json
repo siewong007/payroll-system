@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO company_work_schedules (id, company_id, name, start_time, end_time,\n               grace_minutes, half_day_hours, timezone, is_default, created_at, updated_at)\n               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Varchar",
+        "Time",
+        "Time",
+        "Int4",
+        "Numeric",
+        "Varchar",
+        "Bool",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "772a371fd76666cf3ea0e07a0612d35ef8946cf6a19a2f4d2625b3b6a346ca47"
+}

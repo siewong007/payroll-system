@@ -1,7 +1,5 @@
 use chrono::{Datelike, NaiveDate};
 use rust_decimal::Decimal;
-use rust_decimal::RoundingStrategy;
-use rust_decimal::prelude::ToPrimitive;
 use sqlx::PgPool;
 use std::collections::HashMap;
 use tracing::{Instrument, info, info_span};
@@ -12,6 +10,7 @@ use crate::models::employee::Employee;
 use crate::models::payroll::{
     BulkPayrollData, OvertimeSettings, PayableClaim, PayrollDiagnostic, PayrollItem,
     PayrollPreview, PayrollPreviewEmployee, PayrollRun, PayslipLine, Tp3Totals, YtdTotals,
+    round_sen,
 };
 use crate::models::statutory::{EisContribution, EpfContribution, PcbInput, SocsoContribution};
 use crate::repositories::reads::payroll as payroll_reads;
@@ -81,7 +80,12 @@ struct ComputedPayslip {
     zakat: i64,
     ptptn: i64,
     tabung_haji: i64,
+    /// Recurring + variable deductions EXCLUDING unpaid leave, which has its own
+    /// column below. The two partition rather than overlap: the portal renders
+    /// both rows plus Total Deductions, so anything else double-counts on screen.
     other_deductions: i64,
+    unpaid_leave_deduction: i64,
+    unpaid_leave_days: Decimal,
     total_deductions: i64,
     net: i64,
     employer_cost: i64,
@@ -148,12 +152,16 @@ fn compute_all(
 
 /// Read the employees and every prefetched input a run needs.
 ///
-/// Executor-generic over a connection so `process_payroll` can gather inside its
-/// transaction (unchanged from before) while `preview_payroll` gathers on a
-/// pooled connection without opening one.
+/// Everything is read on the ONE connection the caller supplies —
+/// `process_payroll` passes the connection its write transaction is using, and
+/// `preview_payroll` a pooled one. It used to take the pool as well and load the
+/// statutory snapshot and the overtime settings through it, which meant every
+/// in-flight run pinned two of the pool's ten connections while holding a
+/// transaction: ten overlapping runs each waited the full acquire timeout for an
+/// eleventh, rolled back after computing every payslip, and starved every
+/// unrelated request in the window.
 async fn gather_run_inputs(
     conn: &mut sqlx::PgConnection,
-    pool: &PgPool,
     company_id: Uuid,
     payroll_group_id: Uuid,
     period: &RunPeriod,
@@ -215,14 +223,26 @@ async fn gather_run_inputs(
 
     // 2. Batch fetch staged payroll entries
     let mut variable_earnings_map = HashMap::new();
+    let mut taxable_variable_earnings_map = HashMap::new();
     let mut variable_deductions_map = HashMap::new();
     for row in payroll_reads::entry_category_totals(&mut *conn, &employee_ids, year, month).await? {
         if row.category == "earning" {
             variable_earnings_map.insert(row.employee_id, row.total);
+            taxable_variable_earnings_map.insert(row.employee_id, row.taxable);
         } else {
             variable_deductions_map.insert(row.employee_id, row.total);
         }
     }
+
+    // Already counted inside `variable_deductions` above. Read separately so the
+    // payslip can store the figure in its own column and label its own line,
+    // rather than leaving it anonymous inside `total_other_deductions`.
+    let unpaid_leave_map: HashMap<Uuid, (i64, Decimal)> =
+        payroll_reads::unpaid_leave_totals(&mut *conn, &employee_ids, year, month)
+            .await?
+            .into_iter()
+            .map(|r| (r.employee_id, (r.amount, r.days)))
+            .collect();
 
     let mut entry_lines_map: HashMap<Uuid, Vec<_>> = HashMap::new();
     for line in payroll_reads::entry_lines(&mut *conn, &employee_ids, year, month).await? {
@@ -318,8 +338,8 @@ async fn gather_run_inputs(
     // Read every rule table once. The per-employee calculators are pure over
     // this snapshot, so a run is not held open across ~15 statutory round trips
     // per employee.
-    let statutory = StatutoryTables::load(pool, effective_date).await?;
-    let ot_settings = settings_service::overtime_settings(pool, company_id).await;
+    let statutory = StatutoryTables::load_on(&mut *conn, effective_date).await?;
+    let ot_settings = settings_service::overtime_settings_on(&mut *conn, company_id).await;
 
     Ok(RunInputs {
         employees,
@@ -327,7 +347,9 @@ async fn gather_run_inputs(
             recurring_lines: recurring_lines_map,
             entry_lines: entry_lines_map,
             variable_earnings: variable_earnings_map,
+            taxable_variable_earnings: taxable_variable_earnings_map,
             variable_deductions: variable_deductions_map,
+            unpaid_leave: unpaid_leave_map,
             attendance_ot_hours: attendance_ot_map,
             approved_ot: approved_ot_map,
             approved_claims: claims_map,
@@ -374,6 +396,37 @@ impl RunTotals {
         self.total_pcb += item.pcb_amount;
         self.total_zakat += item.zakat_amount;
     }
+}
+
+/// Render a `YYYYMM` period key as `MM/YYYY`.
+fn format_period(period_key: i32) -> String {
+    format!("{:02}/{}", period_key % 100, period_key / 100)
+}
+
+/// Whole-schedule problems that would otherwise fail every employee identically.
+///
+/// The bracket contiguity rule and the relief inventory are both properties of
+/// the set, which no per-row database constraint can express — the GiST exclusion
+/// on `pcb_brackets` forbids overlaps and is blind to gaps.
+fn statutory_schedule_problems(statutory: &StatutoryTables) -> Vec<String> {
+    let mut problems = Vec::new();
+
+    if let Err(problem) = statutory.validate_pcb_brackets() {
+        problems.push(format!(
+            "The verified PCB tax brackets are not usable: {problem}. Load a corrected PCB rule set before processing."
+        ));
+    }
+
+    let missing = statutory.missing_required_reliefs();
+    if !missing.is_empty() {
+        problems.push(format!(
+            "The verified PCB rule set is missing {} the calculator reads: {}. Every employee would fail identically.",
+            if missing.len() == 1 { "a relief" } else { "reliefs" },
+            missing.join(", ")
+        ));
+    }
+
+    problems
 }
 
 /// Render collected per-employee failures as one message.
@@ -461,7 +514,38 @@ pub async fn preview_payroll(
     }
 
     let mut conn = pool.acquire().await?;
-    let inputs = gather_run_inputs(&mut conn, pool, company_id, payroll_group_id, &period).await?;
+    let inputs = gather_run_inputs(&mut conn, company_id, payroll_group_id, &period).await?;
+
+    // Schedule-shaped problems, reported once for the run instead of once per
+    // employee. Both would otherwise surface as N identical per-employee
+    // validation failures with nothing saying what to fix.
+    for problem in statutory_schedule_problems(&inputs.statutory) {
+        blocking.push(PayrollDiagnostic::run("statutory_schedule", problem));
+    }
+
+    // A run that predates a committed one corrupts that run's frozen YTD.
+    // Reported here so the operator never reaches the error in `process_payroll`.
+    let employee_ids: Vec<Uuid> = inputs.employees.iter().map(|emp| emp.id).collect();
+    for row in payroll_reads::employees_with_later_committed_run(
+        &mut *conn,
+        &employee_ids,
+        company_id,
+        year,
+        month,
+    )
+    .await?
+    {
+        blocking.push(PayrollDiagnostic::for_employee(
+            "later_run_exists",
+            format!(
+                "Already paid by a run for {}. That run's year-to-date figures and PCB annualisation assumed this period was already included, and nothing recomputes them, so this period cannot be inserted behind it. Delete the later run first if it must be re-created.",
+                format_period(row.earliest_later_period)
+            ),
+            row.employee_id,
+            row.employee_number,
+            row.employee_name,
+        ));
+    }
 
     if inputs.employees.is_empty() {
         blocking.push(PayrollDiagnostic::run(
@@ -494,6 +578,41 @@ pub async fn preview_payroll(
         .collect();
 
     let mut warnings = Vec::new();
+
+    // A month this group never ran leaves a hole in every later payslip's
+    // year-to-date, and PCB's `remaining_months` over-counts against it — so the
+    // year under-withholds. No ordering rule can repair that after the fact,
+    // which is why it is advisory: a mid-year adopter's first run legitimately
+    // has no prior months, and only the operator knows which case this is.
+    let committed_months =
+        payroll_reads::committed_months_for_group(&mut *conn, company_id, payroll_group_id, year)
+            .await?;
+    for emp in &inputs.employees {
+        let first_owed = if emp.date_joined.year() == year {
+            emp.date_joined.month() as i32
+        } else if emp.date_joined.year() < year {
+            1
+        } else {
+            month
+        };
+        let skipped: Vec<String> = (first_owed..month)
+            .filter(|m| !committed_months.contains(m))
+            .map(|m| format!("{m:02}/{year}"))
+            .collect();
+        if !skipped.is_empty() {
+            warnings.push(PayrollDiagnostic::for_employee(
+                "missing_earlier_period",
+                format!(
+                    "No committed payroll run for {} in this group. This period's PCB annualises over the remaining months as if those were already paid, so the year will under-withhold unless they are run or the employee genuinely was not owed them.",
+                    skipped.join(", ")
+                ),
+                emp.id,
+                emp.employee_number.clone(),
+                emp.full_name.clone(),
+            ));
+        }
+    }
+
     for emp in &inputs.employees {
         // Blocking, not advisory: SOCSO category and the EIS 57-59 / 60+
         // branches are all age-based, and there is no defensible age to assume.
@@ -507,6 +626,29 @@ pub async fn preview_payroll(
                 emp.employee_number.clone(),
                 emp.full_name.clone(),
             ));
+        }
+        // `compute_payslip` is pure and cannot emit diagnostics, so the
+        // comparison between the stored EPF category and the one derived from age
+        // and residency belongs here. The column is honoured — HR knows about
+        // pre-1998 elections the derivation cannot see — but a disagreement is
+        // worth a look, because the usual cause is a default of 'A' left on an
+        // employee who has since turned 60 and is exempt from the employee share.
+        if let (Some(dob), Some(stored)) = (emp.date_of_birth, emp.epf_category.as_deref()) {
+            let derived = epf_service::derive_category(
+                calculate_age(dob, period.effective_date),
+                emp.residency_status == "foreigner",
+            );
+            if stored.trim() != derived && !stored.trim().is_empty() {
+                warnings.push(PayrollDiagnostic::for_employee(
+                    "epf_category_override",
+                    format!(
+                        "EPF category {stored} is set on the employee record, but their age and residency resolve to Part {derived}. The record wins; clear it to use Part {derived}."
+                    ),
+                    emp.id,
+                    emp.employee_number.clone(),
+                    emp.full_name.clone(),
+                ));
+            }
         }
         if emp
             .bank_account_number
@@ -615,7 +757,6 @@ pub async fn preview_payroll(
     // rather than a blocker: nothing unworked is being paid, so the run is safe
     // to commit; what is owed is an HR correction to the affected records.
     let ceiling = inputs.ot_settings.max_overtime_hours_per_day;
-    let employee_ids: Vec<Uuid> = inputs.employees.iter().map(|emp| emp.id).collect();
     for row in payroll_reads::unrated_overtime_records(
         &mut *conn,
         &employee_ids,
@@ -813,7 +954,7 @@ pub async fn process_payroll(
         return Err(err);
     }
 
-    let inputs = gather_run_inputs(&mut tx, pool, company_id, payroll_group_id, &period).await?;
+    let inputs = gather_run_inputs(&mut tx, company_id, payroll_group_id, &period).await?;
     let RunInputs {
         employees,
         bulk: bulk_data,
@@ -845,6 +986,55 @@ pub async fn process_payroll(
         return Err(AppError::BadRequest(
             "No active employees found in this payroll group for the selected period".into(),
         ));
+    }
+
+    // Same run-level statutory gate the preview reports, so a misconfigured
+    // schedule stops the run once rather than failing every employee.
+    let schedule_problems = statutory_schedule_problems(&statutory);
+    if !schedule_problems.is_empty() {
+        return Err(AppError::BadRequest(format!(
+            "Payroll cannot be processed. Nothing has been saved.\n• {}",
+            schedule_problems.join("\n• ")
+        )));
+    }
+
+    // Refuse to insert a period behind a run that already committed. That run's
+    // `payroll_items.ytd_*` are frozen and printed, and its PCB annualisation
+    // already assumed these months were in them — nothing recomputes either. A
+    // GAP is legitimate (a group may simply not have been owed February), so the
+    // guard is on the later run, not on the gap. Scoped to the employees in this
+    // run, so a group whose membership changed does not block on someone who has
+    // left it. The transaction is open; returning drops `tx` un-committed and the
+    // `payroll_runs` row inserted above goes with it.
+    let employee_ids: Vec<Uuid> = employees.iter().map(|emp| emp.id).collect();
+    let later_runs = payroll_reads::employees_with_later_committed_run(
+        &mut *tx,
+        &employee_ids,
+        company_id,
+        year,
+        month,
+    )
+    .await?;
+    if !later_runs.is_empty() {
+        let named: String = later_runs
+            .iter()
+            .take(10)
+            .map(|row| {
+                format!(
+                    "\n• {} {} — already paid by the run for {}",
+                    row.employee_number,
+                    row.employee_name,
+                    format_period(row.earliest_later_period)
+                )
+            })
+            .collect();
+        return Err(AppError::Conflict(format!(
+            "Payroll for {:02}/{} cannot be processed: {} employee(s) already appear in a LATER committed run, whose year-to-date figures and PCB were computed as if this period were already paid. Delete the later run first, then process this one and re-create it. Nothing has been saved.{}",
+            month,
+            year,
+            later_runs.len(),
+            named
+        )));
     }
 
     tracing::Span::current().record("employee_count", employees.len());
@@ -914,7 +1104,17 @@ pub async fn process_payroll(
 
     // Record what produced these figures. The statutory tables and the company
     // overtime settings are both mutable, so without this a later rule import or
-    // settings change leaves the run's numbers unreproducible.
+    // settings change leaves the run's numbers unreproducible. The EPF parts are
+    // in here because they are now DERIVED from age and residency rather than
+    // read from a column, so "which parts did this run need" is not recoverable
+    // from the employee records alone once someone has a birthday.
+    let mut epf_parts: Vec<String> = computed
+        .iter()
+        .map(|payslip| payslip.epf.category.clone())
+        .collect();
+    epf_parts.sort();
+    epf_parts.dedup();
+
     payroll_runs::set_calculation_snapshot(
         &mut *tx,
         run_id,
@@ -922,6 +1122,7 @@ pub async fn process_payroll(
             "effective_date": effective_date,
             "statutory_rule_sets": statutory.rule_sets(),
             "overtime_settings": ot_settings,
+            "epf_categories": epf_parts,
         }),
     )
     .await?;
@@ -997,7 +1198,6 @@ fn compute_payslip(
         }
     };
     let is_foreigner = emp.residency_status == "foreigner";
-    let epf_category = emp.epf_category.clone().unwrap_or_else(|| "A".to_string());
 
     // Gross salary = basic + recurring allowances + overtime
     // Prorate an incomplete month. Employment Act 1955 s.18B uses CALENDAR days
@@ -1015,38 +1215,29 @@ fn compute_payslip(
     let is_prorated = days_worked < period_days;
 
     let basic = if is_prorated {
-        (Decimal::from(emp.basic_salary) * Decimal::from(days_worked) / Decimal::from(period_days))
-            .round_dp_with_strategy(0, RoundingStrategy::MidpointAwayFromZero)
-            .to_i64()
-            .unwrap_or(emp.basic_salary)
+        round_sen(
+            Decimal::from(emp.basic_salary) * Decimal::from(days_worked)
+                / Decimal::from(period_days),
+        )
     } else {
         emp.basic_salary
     };
 
     let monthly_allowances = *bulk.monthly_allowances.get(&emp.id).unwrap_or(&0);
     let variable_earnings = *bulk.variable_earnings.get(&emp.id).unwrap_or(&0);
+    let taxable_variable_earnings = *bulk.taxable_variable_earnings.get(&emp.id).unwrap_or(&0);
     let (total_bonus, total_commission) = *bulk.bonus_commission.get(&emp.id).unwrap_or(&(0, 0));
     let variable_deductions = *bulk.variable_deductions.get(&emp.id).unwrap_or(&0);
+    let (unpaid_leave_deduction, unpaid_leave_days) = *bulk
+        .unpaid_leave
+        .get(&emp.id)
+        .unwrap_or(&(0, Decimal::ZERO));
     let attendance_ot_hours = *bulk.attendance_ot_hours.get(&emp.id).unwrap_or(&0.0);
 
-    // Hourly rate in Decimal, from company settings rather than hardcoded 26/8.
-    // The old `basic / 26 / 8` truncated twice (RM5,000 gave 2403 sen instead of
-    // 2403.85), and the f64 multiply below truncated again â€” always against the
-    // employee. Keep the rate unrounded and round only the final amount.
+    // Overtime is rated through `OvertimeSettings::rate_overtime`, which the
+    // approval path calls too — the hourly rate stays unrounded and only the
+    // final amount is rounded, once.
     let ot = &bulk.ot_settings;
-    let hourly_rate = match emp.hourly_rate {
-        Some(rate) => Decimal::from(rate),
-        None => {
-            Decimal::from(emp.basic_salary) / ot.working_days_per_month / ot.effective_hours_per_day
-        }
-    };
-
-    let round_sen = |amount: Decimal| -> i64 {
-        amount
-            .round_dp_with_strategy(0, RoundingStrategy::MidpointAwayFromZero)
-            .to_i64()
-            .unwrap_or(0)
-    };
 
     // Recurring allowances and deductions, prorated per line.
     //
@@ -1067,6 +1258,7 @@ fn compute_payslip(
     // non-prorated allowances. That needs a schema column and a UI neither of
     // which exists.
     let mut allowances_total = 0i64;
+    let mut taxable_allowances = 0i64;
     let mut recurring_deductions = 0i64;
     let mut recurring_lines: Vec<PayslipLine> = Vec::new();
     for line in bulk.recurring_lines.get(&emp.id).into_iter().flatten() {
@@ -1091,16 +1283,14 @@ fn compute_payslip(
 
         if line.category == "earning" {
             allowances_total += amount;
-            recurring_lines.push(
-                PayslipLine::earning("allowance", description, amount).taxable(line.is_taxable),
-            );
+            if line.is_taxable {
+                taxable_allowances += amount;
+            }
+            let earning = PayslipLine::earning(&line.item_type, description, amount);
+            recurring_lines.push(earning.taxable(line.is_taxable));
         } else {
             recurring_deductions += amount;
-            recurring_lines.push(PayslipLine::deduction(
-                "other_deduction",
-                description,
-                amount,
-            ));
+            recurring_lines.push(PayslipLine::deduction(&line.item_type, description, amount));
         }
     }
 
@@ -1112,7 +1302,8 @@ fn compute_payslip(
     // Attendance-based OT (records without approved OT applications)
     let attendance_ot_pay = if attendance_ot_hours > 0.0 {
         let hours = Decimal::try_from(attendance_ot_hours).unwrap_or_default();
-        let amount = round_sen(hourly_rate * ot.multiplier_normal * hours);
+        let rating = ot.rate_overtime(emp.hourly_rate, emp.basic_salary, "normal", hours);
+        let amount = rating.amount_sen;
         overtime_lines.push(PayslipLine::earning(
             "overtime",
             format!(
@@ -1133,7 +1324,8 @@ fn compute_payslip(
         for (ot_type, hours) in ot_entries {
             let hours = Decimal::try_from(*hours).unwrap_or_default();
             let multiplier = ot.multiplier_for(ot_type);
-            let amount = round_sen(hourly_rate * multiplier * hours);
+            let rating = ot.rate_overtime(emp.hourly_rate, emp.basic_salary, ot_type, hours);
+            let amount = rating.amount_sen;
             overtime_lines.push(PayslipLine::earning(
                 "overtime",
                 format!(
@@ -1174,8 +1366,23 @@ fn compute_payslip(
     let gross = epf_wage + total_overtime;
     let total_allowances = allowances_total + monthly_allowances;
 
+    // `is_taxable` narrows the PCB base and NOTHING else, deliberately. It is an
+    // income-tax flag — the payslip drawer badges the line as not taxed — and
+    // EPF Act 1991 s.2, ESSA 1969 s.2 and the EIS Act have their own, different
+    // exclusion lists (travelling allowance, gratuity, service charge, payment in
+    // lieu of notice) that no column in this schema expresses. Narrowing three
+    // more bases off a flag that does not mean that would be a larger error than
+    // the one being fixed. Overtime is always taxable.
+    let taxable_gross = basic + taxable_allowances + taxable_variable_earnings + total_overtime;
+
     // EPF / SOCSO / EIS â€” resolved from the run's rule snapshot, no I/O.
-    let epf = epf_service::calculate_epf_with(statutory, epf_wage, &epf_category)?;
+    let epf = epf_service::calculate_epf_with(
+        statutory,
+        epf_wage,
+        age,
+        is_foreigner,
+        emp.epf_category.as_deref(),
+    )?;
     let socso = socso_service::calculate_socso_with(statutory, gross, age, is_foreigner)?;
     let eis = eis_service::calculate_eis_with(statutory, gross, age, is_foreigner)?;
 
@@ -1206,7 +1413,12 @@ fn compute_payslip(
     // commission is normal remuneration. `item_type = 'commission'` is all the
     // data model has to tell them apart, and treating it as additional is the
     // conservative direction — it under-annualises rather than over-deducting.
-    let normal_remuneration = gross - total_bonus - total_commission;
+    //
+    // Derived from `taxable_gross`, not `gross`: an earning staged as
+    // non-taxable was badged "Non-taxable" on the payslip and taxed anyway.
+    // Clamped at zero because a bonus row staged as non-taxable is already
+    // outside `taxable_gross`, so subtracting it again would go negative.
+    let normal_remuneration = (taxable_gross - total_bonus - total_commission).max(0);
     let pcb_input = PcbInput {
         monthly_normal_remuneration: normal_remuneration,
         epf_employee_monthly: epf.employee,
@@ -1307,7 +1519,14 @@ fn compute_payslip(
         zakat,
         ptptn,
         tabung_haji,
-        other_deductions: recurring_deductions + variable_deductions,
+        // Unpaid leave stays inside `total_deductions` (it is already summed into
+        // `variable_deductions`) but comes back out of the other-deductions
+        // bucket, so the two partition. The invariant the portal depends on:
+        // `total_other_deductions + unpaid_leave_deduction` equals what
+        // `total_other_deductions` alone used to be.
+        other_deductions: recurring_deductions + variable_deductions - unpaid_leave_deduction,
+        unpaid_leave_deduction,
+        unpaid_leave_days,
         total_deductions,
         net,
         employer_cost,
@@ -1372,6 +1591,8 @@ async fn persist_payslip(
         Some(computed.period_days as i32),
         Some(Decimal::from(computed.days_worked)),
         computed.is_prorated,
+        computed.unpaid_leave_deduction,
+        computed.unpaid_leave_days,
     )
     .await?;
 
@@ -1448,15 +1669,19 @@ fn build_payslip_lines(
             deductions.push(line);
         }
     }
+    // Labelled with the entry's own `item_type`, so an unpaid-leave deduction
+    // reads as one in the drawer and on the PDF instead of being flattened into
+    // "other deduction" alongside loans and advances. `payroll_item_details` has
+    // a CHECK on `category` only, so the type is free to be the real one.
     for line in bulk.entry_lines.get(&emp.id).into_iter().flatten() {
         if line.category == "earning" {
             earnings.push(
-                PayslipLine::earning("allowance", line.description.clone(), line.amount)
+                PayslipLine::earning(&line.item_type, line.description.clone(), line.amount)
                     .taxable(line.is_taxable),
             );
         } else {
             deductions.push(PayslipLine::deduction(
-                "other_deduction",
+                &line.item_type,
                 line.description.clone(),
                 line.amount,
             ));

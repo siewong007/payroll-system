@@ -47,6 +47,7 @@ import { Modal } from '@/components/ui/Modal';
 import { DataTable, type Column } from '@/components/ui/DataTable';
 import { TimeSelector } from '@/components/ui/TimeSelector';
 import { useAuth } from '@/context/AuthContext';
+import { runBulk, summarizeBulkFailure } from '@/lib/bulk';
 import { formatEmployeeLabel } from '@/lib/employeeFields';
 import { formatDate, getErrorMessage, todayLocalDate } from '@/lib/utils';
 import { OT_DEFAULT_END, OT_DEFAULT_HOURS, OT_DEFAULT_START, calculateOvertimeHours } from '@/lib/overtime';
@@ -217,6 +218,7 @@ export function Approvals() {
   const [claimEditor, setClaimEditor] = useState<ClaimWithEmployee | null>(null);
   const [overtimeEditor, setOvertimeEditor] = useState<OvertimeWithEmployee | null>(null);
   const [selectedApprovalIds, setSelectedApprovalIds] = useState<string[]>([]);
+  const [bulkError, setBulkError] = useState('');
   const [showLeaveModal, setShowLeaveModal] = useState(false);
   const [showClaimModal, setShowClaimModal] = useState(false);
   const [showOvertimeModal, setShowOvertimeModal] = useState(false);
@@ -320,44 +322,43 @@ export function Approvals() {
     onSuccess: () => refreshOvertime(),
   });
 
+  const refreshAll = () => {
+    refreshLeave();
+    refreshClaims();
+    refreshOvertime();
+  };
+
+  const cancelActionFor = (target: typeof tab) =>
+    target === 'leave' ? cancelLeaveRequest : target === 'claims' ? cancelClaim : cancelOvertimeRequest;
+
+  const deleteActionFor = (target: typeof tab) =>
+    target === 'leave' ? deleteLeaveRequest : target === 'claims' ? deleteClaim : deleteOvertimeRequest;
+
+  // `runBulk` reports a partial failure as a value, so the refetch below runs on
+  // every outcome and the rows that failed stay selected — a retry then hits
+  // exactly those. Under the old `Promise.all` a single rejection skipped
+  // `onSuccess` entirely: nothing invalidated, nothing was deselected, and the
+  // rows that had succeeded went on showing their stale status.
   const bulkCancelM = useMutation({
-    mutationFn: async ({ ids, target }: { ids: string[]; target: typeof tab }) => {
-      if (target === 'leave') {
-        await Promise.all(ids.map((id) => cancelLeaveRequest(id)));
-        return;
-      }
-      if (target === 'claims') {
-        await Promise.all(ids.map((id) => cancelClaim(id)));
-        return;
-      }
-      await Promise.all(ids.map((id) => cancelOvertimeRequest(id)));
+    mutationFn: ({ ids, target }: { ids: string[]; target: typeof tab }) =>
+      runBulk(ids, cancelActionFor(target)),
+    onSuccess: (outcome) => {
+      setSelectedApprovalIds(outcome.failed.map((failure) => failure.id));
+      setBulkError(summarizeBulkFailure(outcome, 'cancelled'));
     },
-    onSuccess: () => {
-      setSelectedApprovalIds([]);
-      refreshLeave();
-      refreshClaims();
-      refreshOvertime();
-    },
+    onError: (err: unknown) => setBulkError(getErrorMessage(err, 'Failed to cancel the selected items')),
+    onSettled: refreshAll,
   });
 
   const bulkDeleteM = useMutation({
-    mutationFn: async ({ ids, target }: { ids: string[]; target: typeof tab }) => {
-      if (target === 'leave') {
-        await Promise.all(ids.map((id) => deleteLeaveRequest(id)));
-        return;
-      }
-      if (target === 'claims') {
-        await Promise.all(ids.map((id) => deleteClaim(id)));
-        return;
-      }
-      await Promise.all(ids.map((id) => deleteOvertimeRequest(id)));
+    mutationFn: ({ ids, target }: { ids: string[]; target: typeof tab }) =>
+      runBulk(ids, deleteActionFor(target)),
+    onSuccess: (outcome) => {
+      setSelectedApprovalIds(outcome.failed.map((failure) => failure.id));
+      setBulkError(summarizeBulkFailure(outcome, 'deleted'));
     },
-    onSuccess: () => {
-      setSelectedApprovalIds([]);
-      refreshLeave();
-      refreshClaims();
-      refreshOvertime();
-    },
+    onError: (err: unknown) => setBulkError(getErrorMessage(err, 'Failed to delete the selected items')),
+    onSettled: refreshAll,
   });
 
   const otTypeLabel = (type: string) => {
@@ -553,6 +554,7 @@ export function Approvals() {
                 setTab(itemTab);
                 setStatusFilter('pending');
                 setSelectedApprovalIds([]);
+                setBulkError('');
               }}
               className={`px-5 py-2.5 text-sm font-medium border-b-2 transition-all-fast ${
                 tab === itemTab ? 'border-black text-gray-900' : 'border-transparent text-gray-400 hover:text-gray-700'
@@ -570,6 +572,7 @@ export function Approvals() {
               key={status}
               onClick={() => {
                 setSelectedApprovalIds([]);
+                setBulkError('');
                 setStatusFilter(status);
               }}
               className={`px-3.5 py-1.5 text-xs font-medium rounded-full transition-all-fast ${
@@ -584,36 +587,47 @@ export function Approvals() {
         </div>
 
         {selectedApprovalIds.length > 0 && (
-          <div className="flex flex-col gap-2 rounded-xl border border-gray-200 bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-            <span className="text-sm font-medium text-gray-700">{selectedApprovalIds.length} selected</span>
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  if (confirm(`Cancel ${selectedCancelableIds.length} selected item(s)?`)) {
-                    bulkCancelM.mutate({ ids: selectedCancelableIds, target: tab });
-                  }
-                }}
-                disabled={selectedCancelableIds.length === 0 || bulkCancelM.isPending}
-                className="btn-secondary !py-2 text-sm disabled:opacity-50"
-              >
-                <X className="w-4 h-4" />
-                {bulkCancelM.isPending ? 'Cancelling...' : 'Cancel Selected'}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  if (confirm(`Permanently delete ${selectedDeletableIds.length} selected item(s)?`)) {
-                    bulkDeleteM.mutate({ ids: selectedDeletableIds, target: tab });
-                  }
-                }}
-                disabled={selectedDeletableIds.length === 0 || bulkDeleteM.isPending}
-                className="btn-secondary !py-2 text-sm text-red-600 hover:!bg-red-50 disabled:opacity-50"
-              >
-                <Trash2 className="w-4 h-4" />
-                {bulkDeleteM.isPending ? 'Deleting...' : 'Delete Selected'}
-              </button>
+          <div className="space-y-2">
+            <div className="flex flex-col gap-2 rounded-xl border border-gray-200 bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <span className="text-sm font-medium text-gray-700">{selectedApprovalIds.length} selected</span>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (confirm(`Cancel ${selectedCancelableIds.length} selected item(s)?`)) {
+                      setBulkError('');
+                      bulkCancelM.mutate({ ids: selectedCancelableIds, target: tab });
+                    }
+                  }}
+                  disabled={selectedCancelableIds.length === 0 || bulkCancelM.isPending}
+                  className="btn-secondary !py-2 text-sm disabled:opacity-50"
+                >
+                  <X className="w-4 h-4" />
+                  {bulkCancelM.isPending ? 'Cancelling...' : 'Cancel Selected'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (confirm(`Permanently delete ${selectedDeletableIds.length} selected item(s)?`)) {
+                      setBulkError('');
+                      bulkDeleteM.mutate({ ids: selectedDeletableIds, target: tab });
+                    }
+                  }}
+                  disabled={selectedDeletableIds.length === 0 || bulkDeleteM.isPending}
+                  className="btn-secondary !py-2 text-sm text-red-600 hover:!bg-red-50 disabled:opacity-50"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  {bulkDeleteM.isPending ? 'Deleting...' : 'Delete Selected'}
+                </button>
+              </div>
             </div>
+            {/* The rows still selected are precisely the ones that failed, so
+                the banner and the selection describe the same set. */}
+            {bulkError && (
+              <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                {bulkError}
+              </div>
+            )}
           </div>
         )}
 

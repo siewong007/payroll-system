@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE users SET is_active = FALSE, updated_at = NOW()\n        WHERE id = ANY($1)\n          AND employee_id IS NULL\n          AND is_active = TRUE\n          AND deleted_at IS NULL\n        RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "UuidArray"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "f9b0d6beb05b822facdb2d6d9f07736ad9e51f3702a57ff50ca94b8dae2d1c5b"
+}

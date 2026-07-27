@@ -43,7 +43,7 @@ vi.mock('axios', () => ({
   },
 }));
 
-import { getAccessToken, setAccessToken } from '../api/client';
+import { getAccessToken, isSessionInvalid, setAccessToken } from '../api/client';
 
 const requestHandler = axiosMocks.requestUse.mock.calls[0][0] as RequestHandler;
 const responseHandler = axiosMocks.responseUse.mock.calls[0][0] as ResponseHandler;
@@ -166,5 +166,53 @@ describe('API client', () => {
     expect(axiosMocks.apiInstance).not.toHaveBeenCalled();
     expect(getAccessToken()).toBe('existing-token');
     expect(JSON.parse(localStorage.getItem('user') ?? 'null')).toEqual(refreshedUser);
+  });
+
+  // A 401 whose subject is the *body* of the request — a mistyped 2FA digit, a
+  // rejected assertion — is not a session problem. Refreshing achieves nothing,
+  // and replaying a WebAuthn assertion is worse than nothing: the challenge was
+  // consumed, so the retry returns "challenge expired" and the user is told the
+  // wrong thing.
+  it.each([
+    '/auth/2fa/setup/confirm',
+    '/auth/2fa/disable',
+    '/auth/2fa/backup-codes/regenerate',
+    '/attendance/check-in/face-id',
+  ])('rejects a content-level 401 from %s without refreshing or replaying', async (url) => {
+    setAccessToken('existing-token');
+    localStorage.setItem('user', JSON.stringify(refreshedUser));
+    const error = unauthorized(url);
+
+    await expect(responseErrorHandler(error)).rejects.toBe(error);
+
+    expect(axiosMocks.post).not.toHaveBeenCalled();
+    expect(axiosMocks.apiInstance).not.toHaveBeenCalled();
+    expect(getAccessToken()).toBe('existing-token');
+    expect(JSON.parse(localStorage.getItem('user') ?? 'null')).toEqual(refreshedUser);
+  });
+
+  it('keeps the session when a replayed request still returns 401', async () => {
+    setAccessToken('fresh-token');
+    localStorage.setItem('user', JSON.stringify(refreshedUser));
+    const error = unauthorized('/employees');
+    error.config._retry = true;
+
+    await expect(responseErrorHandler(error)).rejects.toBe(error);
+
+    // The refresh already succeeded, so this is the endpoint rejecting the
+    // request, not the session expiring. Clearing the token and navigating here
+    // is what unloaded the page before the error could be rendered.
+    expect(axiosMocks.post).not.toHaveBeenCalled();
+    expect(getAccessToken()).toBe('fresh-token');
+    expect(JSON.parse(localStorage.getItem('user') ?? 'null')).toEqual(refreshedUser);
+  });
+
+  it('recognises the session-invalid marker the backend will start sending', () => {
+    // Inert for now — nothing emits it yet — but this is the allow-list the
+    // refresh branch collapses onto once AppError::SessionInvalid ships.
+    expect(isSessionInvalid({ response: { data: { code: 'session_invalid' } } })).toBe(true);
+    expect(isSessionInvalid({ response: { data: { error: 'Invalid code' } } })).toBe(false);
+    expect(isSessionInvalid(new Error('nope'))).toBe(false);
+    expect(isSessionInvalid(null)).toBe(false);
   });
 });

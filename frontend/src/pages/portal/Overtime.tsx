@@ -4,6 +4,7 @@ import { Plus, Clock, X, Trash2 } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
 import { TimeSelector } from '@/components/ui/TimeSelector';
 import { getOvertimeApplications, createOvertimeApplication, cancelOvertimeApplication, deleteOvertimeApplication } from '@/api/portal';
+import { runBulk, summarizeBulkFailure } from '@/lib/bulk';
 import { formatDate, getErrorMessage } from '@/lib/utils';
 import { OT_DEFAULT_END, OT_DEFAULT_HOURS, OT_DEFAULT_START, calculateOvertimeHours } from '@/lib/overtime';
 import type { OvertimeApplication, CreateOvertimeRequest } from '@/types';
@@ -38,6 +39,7 @@ export function Overtime() {
   const [showModal, setShowModal] = useState(false);
   const [selectedOvertimeIds, setSelectedOvertimeIds] = useState<string[]>([]);
   const [formError, setFormError] = useState('');
+  const [bulkError, setBulkError] = useState('');
   // Seeded with the times the fields display. TimeSelector has no empty option,
   // so state that holds '' behind a rendered 18:00 is a form fighting its own
   // screen — that is what left Submit permanently greyed with no explanation.
@@ -74,24 +76,28 @@ export function Overtime() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['my-overtime'] }),
   });
 
+  // Partial failure is an outcome, not an exception: the refetch runs whatever
+  // happens and only the applications that failed stay selected, so a retry hits
+  // exactly those. `Promise.all` used to short-circuit on the first rejection
+  // and leave the successful rows showing a stale status with no error anywhere.
   const bulkCancelMutation = useMutation({
-    mutationFn: async (ids: string[]) => {
-      await Promise.all(ids.map((id) => cancelOvertimeApplication(id)));
+    mutationFn: (ids: string[]) => runBulk(ids, cancelOvertimeApplication),
+    onSuccess: (outcome) => {
+      setSelectedOvertimeIds(outcome.failed.map((failure) => failure.id));
+      setBulkError(summarizeBulkFailure(outcome, 'cancelled'));
     },
-    onSuccess: () => {
-      setSelectedOvertimeIds([]);
-      queryClient.invalidateQueries({ queryKey: ['my-overtime'] });
-    },
+    onError: (err: unknown) => setBulkError(getErrorMessage(err, 'Failed to cancel the selected applications')),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['my-overtime'] }),
   });
 
   const bulkDeleteMutation = useMutation({
-    mutationFn: async (ids: string[]) => {
-      await Promise.all(ids.map((id) => deleteOvertimeApplication(id)));
+    mutationFn: (ids: string[]) => runBulk(ids, deleteOvertimeApplication),
+    onSuccess: (outcome) => {
+      setSelectedOvertimeIds(outcome.failed.map((failure) => failure.id));
+      setBulkError(summarizeBulkFailure(outcome, 'deleted'));
     },
-    onSuccess: () => {
-      setSelectedOvertimeIds([]);
-      queryClient.invalidateQueries({ queryKey: ['my-overtime'] });
-    },
+    onError: (err: unknown) => setBulkError(getErrorMessage(err, 'Failed to delete the selected applications')),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['my-overtime'] }),
   });
 
   // The OT date stays empty on purpose: with the times defaulted, it is the one
@@ -208,36 +214,43 @@ export function Overtime() {
           )}
         </div>
         {selectedOvertimeIds.length > 0 && (
-          <div className="flex flex-col gap-2 border-b border-gray-100 bg-gray-50 px-6 py-3 sm:flex-row sm:items-center sm:justify-between">
-            <span className="text-sm font-medium text-gray-700">{selectedOvertimeIds.length} selected</span>
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  if (confirm(`Cancel ${selectedCancelableIds.length} selected overtime application(s)?`)) {
-                    bulkCancelMutation.mutate(selectedCancelableIds);
-                  }
-                }}
-                disabled={selectedCancelableIds.length === 0 || bulkCancelMutation.isPending}
-                className="btn-secondary !py-2 text-sm disabled:opacity-50"
-              >
-                <X className="w-4 h-4" />
-                {bulkCancelMutation.isPending ? 'Cancelling...' : 'Cancel Selected'}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  if (confirm(`Permanently delete ${selectedDeletableIds.length} cancelled overtime application(s)?`)) {
-                    bulkDeleteMutation.mutate(selectedDeletableIds);
-                  }
-                }}
-                disabled={selectedDeletableIds.length === 0 || bulkDeleteMutation.isPending}
-                className="btn-secondary !py-2 text-sm text-red-600 hover:!bg-red-50 disabled:opacity-50"
-              >
-                <Trash2 className="w-4 h-4" />
-                {bulkDeleteMutation.isPending ? 'Deleting...' : 'Delete Selected'}
-              </button>
+          <div className="border-b border-gray-100 bg-gray-50">
+            <div className="flex flex-col gap-2 px-6 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <span className="text-sm font-medium text-gray-700">{selectedOvertimeIds.length} selected</span>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (confirm(`Cancel ${selectedCancelableIds.length} selected overtime application(s)?`)) {
+                      setBulkError('');
+                      bulkCancelMutation.mutate(selectedCancelableIds);
+                    }
+                  }}
+                  disabled={selectedCancelableIds.length === 0 || bulkCancelMutation.isPending}
+                  className="btn-secondary !py-2 text-sm disabled:opacity-50"
+                >
+                  <X className="w-4 h-4" />
+                  {bulkCancelMutation.isPending ? 'Cancelling...' : 'Cancel Selected'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (confirm(`Permanently delete ${selectedDeletableIds.length} cancelled overtime application(s)?`)) {
+                      setBulkError('');
+                      bulkDeleteMutation.mutate(selectedDeletableIds);
+                    }
+                  }}
+                  disabled={selectedDeletableIds.length === 0 || bulkDeleteMutation.isPending}
+                  className="btn-secondary !py-2 text-sm text-red-600 hover:!bg-red-50 disabled:opacity-50"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  {bulkDeleteMutation.isPending ? 'Deleting...' : 'Delete Selected'}
+                </button>
+              </div>
             </div>
+            {bulkError && (
+              <div role="alert" className="px-6 pb-3 text-sm text-red-700">{bulkError}</div>
+            )}
           </div>
         )}
         {isLoading ? (

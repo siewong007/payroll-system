@@ -12,6 +12,10 @@ use crate::models::approval::{
 
 /// Up to 100 most-recent leave requests for the admin inbox, optionally filtered
 /// by status.
+///
+/// `id` breaks ties on `created_at`. Rows restored from a backup used to share
+/// one instant, and a fully tied `ORDER BY … LIMIT 100` returns whichever 100
+/// the planner reached first — a different set on each call.
 pub async fn list_pending_leave(
     executor: impl Executor<'_, Database = Postgres>,
     company_id: Uuid,
@@ -32,7 +36,7 @@ pub async fn list_pending_leave(
         JOIN employees e ON lr.employee_id = e.id
         WHERE lr.company_id = $1
         AND ($2::text IS NULL OR lr.status = $2)
-        ORDER BY lr.created_at DESC
+        ORDER BY lr.created_at DESC, lr.id DESC
         LIMIT 100"#,
         company_id,
         status,
@@ -98,7 +102,7 @@ pub async fn list_pending_overtime(
         JOIN employees e ON oa.employee_id = e.id
         WHERE oa.company_id = $1
         AND ($2::text IS NULL OR oa.status = $2)
-        ORDER BY oa.created_at DESC
+        ORDER BY oa.created_at DESC, oa.id DESC
         LIMIT 100"#,
         company_id,
         status,
@@ -145,7 +149,7 @@ pub async fn list_pending_claims(
         JOIN employees e ON c.employee_id = e.id
         WHERE c.company_id = $1
         AND ($2::text IS NULL OR c.status = $2)
-        ORDER BY c.created_at DESC
+        ORDER BY c.created_at DESC, c.id DESC
         LIMIT 100"#,
         company_id,
         status,

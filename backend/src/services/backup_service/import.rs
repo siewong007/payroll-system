@@ -6,11 +6,34 @@ use uuid::Uuid;
 
 use super::files;
 use crate::core::error::{AppError, AppResult};
+use crate::core::timezone;
 use crate::core::upload_path;
 use crate::models::backup::{CompanyBackup, ImportResult};
-use crate::repositories::{backup as backup_repo, companies, user_companies, users};
+use crate::repositories::{
+    backup as backup_repo, companies, refresh_tokens, user_companies, user_sessions, users,
+};
 
 const MAX_EMPLOYEE_NUMBER_CHARS: usize = 50;
+
+/// Archive format versions this importer understands. `1.1` added the
+/// attendance configuration; `1.0` archives are still restorable and are simply
+/// unable to speak to it.
+const SUPPORTED_FORMAT_VERSIONS: [&str; 2] = ["1.0", "1.1"];
+
+/// `companies.geofence_mode` values permitted by `companies_geofence_mode_check`.
+const GEOFENCE_MODES: [&str; 3] = ["none", "warn", "enforce"];
+
+/// `companies.attendance_method` values permitted by
+/// `companies_attendance_method_check`. NULL is also legal (nothing configured).
+const ATTENDANCE_METHODS: [&str; 2] = ["qr_code", "face_id"];
+
+/// The canonical spelling of `value` if it is one of `allowed`, else `None`.
+///
+/// Both columns are CHECK-constrained, so an archive carrying anything else
+/// would abort the restore with a bare 23514 — a 500 the admin cannot act on.
+fn sanitize_choice(value: &str, allowed: &[&'static str]) -> Option<&'static str> {
+    allowed.iter().copied().find(|choice| *choice == value)
+}
 
 #[derive(Debug, PartialEq, Eq)]
 enum AccountImportOutcome {
@@ -227,18 +250,78 @@ fn normalize_employee_number_for_import(
     Ok(normalized.to_owned())
 }
 
+/// Bring the archive's attendance configuration inside what the database will
+/// accept, naming every value that had to be replaced.
+///
+/// Three guards stand between an archive and these columns: migration 1015's
+/// `assert_valid_timezone` trigger on both `companies` and
+/// `company_work_schedules`, and the two CHECK constraints on `companies`. A
+/// hand-edited archive — or an honest one written before a zone was retired from
+/// tzdata — would otherwise surface as a bare 500 mid-restore. Falling back is
+/// the right failure mode for a restore, but it must not be silent: the tenant
+/// would be quietly relocated to MYT and would have no way to know.
+///
+/// `None` is left as `None` throughout. It means "this archive predates capture",
+/// which the caller treats quite differently from a value it rejected.
+fn sanitize_attendance_config(backup: &mut CompanyBackup, warnings: &mut Vec<String>) {
+    let company = &mut backup.company;
+
+    if let Some(stored) = company.timezone.as_deref()
+        && timezone::parse(stored).is_none()
+    {
+        warnings.push(format!(
+            "Backup timezone \"{stored}\" is not a recognised IANA zone; the restored company uses {} instead.",
+            timezone::DEFAULT_TIMEZONE
+        ));
+        company.timezone = Some(timezone::DEFAULT_TIMEZONE.to_owned());
+    }
+
+    if let Some(stored) = company.geofence_mode.as_deref()
+        && sanitize_choice(stored, &GEOFENCE_MODES).is_none()
+    {
+        warnings.push(format!(
+            "Backup geofence mode \"{stored}\" is not one of none/warn/enforce; geofencing is left off on the restored company."
+        ));
+        company.geofence_mode = Some("none".to_owned());
+    }
+
+    if let Some(stored) = company.attendance_method.as_deref()
+        && sanitize_choice(stored, &ATTENDANCE_METHODS).is_none()
+    {
+        warnings.push(format!(
+            "Backup attendance method \"{stored}\" is not one of qr_code/face_id; the restored company has no attendance method set."
+        ));
+        company.attendance_method = None;
+    }
+
+    for schedule in &mut backup.company_work_schedules {
+        if timezone::parse(&schedule.timezone).is_none() {
+            warnings.push(format!(
+                "Work schedule \"{}\" carries timezone \"{}\", which is not a recognised IANA zone; it is restored on {} instead.",
+                files::short_label(&schedule.name),
+                schedule.timezone,
+                timezone::DEFAULT_TIMEZONE
+            ));
+            schedule.timezone = timezone::DEFAULT_TIMEZONE.to_owned();
+        }
+    }
+}
+
 pub async fn import_company(
     pool: &PgPool,
     mut backup: CompanyBackup,
     target_company_id: Option<Uuid>,
     importing_user_id: Uuid,
 ) -> AppResult<ImportResult> {
-    if backup.metadata.format_version != "1.0" {
+    if !SUPPORTED_FORMAT_VERSIONS.contains(&backup.metadata.format_version.as_str()) {
         return Err(AppError::BadRequest(format!(
-            "Unsupported backup format version: {}. Expected 1.0",
-            backup.metadata.format_version
+            "Unsupported backup format version: {}. Expected one of {}",
+            backup.metadata.format_version,
+            SUPPORTED_FORMAT_VERSIONS.join(", ")
         )));
     }
+
+    let mut warnings = Vec::new();
 
     // Nothing the archive claims about where a file lives is trusted or stored:
     // every blob is written under a server-generated name and the rows are
@@ -246,6 +329,11 @@ pub async fn import_company(
     // out of the restore transaction and clear of the fail-closed id remaps.
     let file_plan = files::plan_restore(&backup.files);
     let broken_links = rewrite_attachment_urls(&mut backup, &file_plan);
+
+    // Also above `pool.begin()`: every value the archive supplies for a
+    // CHECK-constrained or trigger-guarded column is brought inside what the
+    // database accepts before the transaction that would otherwise abort on it.
+    sanitize_attendance_config(&mut backup, &mut warnings);
 
     for (index, employee) in backup.employees.iter_mut().enumerate() {
         employee.employee_number = normalize_employee_number_for_import(
@@ -342,6 +430,12 @@ pub async fn import_company(
     for cs in &backup.company_settings {
         remap.insert(cs.id, Uuid::now_v7());
     }
+    for ws in &backup.company_work_schedules {
+        remap.insert(ws.id, Uuid::now_v7());
+    }
+    for loc in &backup.company_locations {
+        remap.insert(loc.id, Uuid::now_v7());
+    }
 
     // `remap` is complete from here on; every id the importer writes is either
     // minted above or `new_company_id`. The field label is what makes a
@@ -354,12 +448,20 @@ pub async fn import_company(
     };
 
     let mut tx = pool.begin().await?;
-    let mut warnings = Vec::new();
     let mut accounts_created = 0usize;
     let mut accounts_linked = 0usize;
     let mut deleted_accounts_skipped = 0usize;
     let mut conflicting_accounts_skipped = 0usize;
     let now = Utc::now();
+
+    // Captured before the wipe destroys the employee rows these point at, and
+    // swept once the employee loop has had its chance to re-link them. Empty on
+    // a restore-as-new: a company minted moments ago owns no logins.
+    let orphan_candidates = if is_overwrite {
+        backup_repo::employee_linked_login_ids(&mut *tx, new_company_id).await?
+    } else {
+        Vec::new()
+    };
 
     if is_overwrite {
         warnings.push(format!(
@@ -376,7 +478,7 @@ pub async fn import_company(
         companies::delete_company_data(&mut tx, new_company_id).await?;
         backup_repo::update_company(&mut *tx, new_company_id, &backup.company, now).await?;
     } else {
-        backup_repo::insert_company(&mut *tx, new_company_id, &backup.company, now).await?;
+        backup_repo::insert_company(&mut *tx, new_company_id, &backup.company).await?;
     }
 
     for pg in &backup.payroll_groups {
@@ -385,7 +487,6 @@ pub async fn import_company(
             r(pg.id, "payroll_groups.id")?,
             new_company_id,
             pg,
-            now,
         )
         .await?;
     }
@@ -397,7 +498,6 @@ pub async fn import_company(
             new_company_id,
             ro(e.payroll_group_id, "employees.payroll_group_id")?,
             e,
-            now,
         )
         .await?;
 
@@ -420,6 +520,18 @@ pub async fn import_company(
             }
         }
     }
+
+    // The employee loop above is where surviving accounts get re-attached, so
+    // the sweep runs after it: anything still unlinked belonged to an employee
+    // this restore destroyed and did not bring back. Their live sessions and
+    // refresh tokens are user-scoped and survive the wipe untouched, so an
+    // already-signed-in orphan would otherwise keep refreshing indefinitely.
+    let deactivated = backup_repo::deactivate_unlinked_logins(&mut *tx, &orphan_candidates).await?;
+    for user_id in &deactivated {
+        user_sessions::revoke_all_for_user(&mut *tx, *user_id).await?;
+        refresh_tokens::revoke_all_for_user(&mut *tx, *user_id).await?;
+    }
+
     for a in &backup.employee_allowances {
         backup_repo::insert_employee_allowance(
             &mut *tx,
@@ -427,7 +539,6 @@ pub async fn import_company(
             r(a.employee_id, "employee_allowances.employee_id")?,
             new_company_id,
             a,
-            now,
         )
         .await?;
     }
@@ -438,7 +549,6 @@ pub async fn import_company(
             r(s.employee_id, "salary_history.employee_id")?,
             new_company_id,
             s,
-            now,
         )
         .await?;
     }
@@ -449,19 +559,12 @@ pub async fn import_company(
             r(t.employee_id, "tp3_records.employee_id")?,
             new_company_id,
             t,
-            now,
         )
         .await?;
     }
     for lt in &backup.leave_types {
-        backup_repo::insert_leave_type(
-            &mut *tx,
-            r(lt.id, "leave_types.id")?,
-            new_company_id,
-            lt,
-            now,
-        )
-        .await?;
+        backup_repo::insert_leave_type(&mut *tx, r(lt.id, "leave_types.id")?, new_company_id, lt)
+            .await?;
     }
     for lb in &backup.leave_balances {
         backup_repo::insert_leave_balance(
@@ -470,7 +573,6 @@ pub async fn import_company(
             r(lb.employee_id, "leave_balances.employee_id")?,
             r(lb.leave_type_id, "leave_balances.leave_type_id")?,
             lb,
-            now,
         )
         .await?;
     }
@@ -482,7 +584,6 @@ pub async fn import_company(
             new_company_id,
             r(lr.leave_type_id, "leave_requests.leave_type_id")?,
             lr,
-            now,
         )
         .await?;
     }
@@ -493,7 +594,6 @@ pub async fn import_company(
             r(cl.employee_id, "claims.employee_id")?,
             new_company_id,
             cl,
-            now,
         )
         .await?;
     }
@@ -504,7 +604,6 @@ pub async fn import_company(
             r(ot.employee_id, "overtime_applications.employee_id")?,
             new_company_id,
             ot,
-            now,
         )
         .await?;
     }
@@ -515,7 +614,6 @@ pub async fn import_company(
             new_company_id,
             r(pr.payroll_group_id, "payroll_runs.payroll_group_id")?,
             pr,
-            now,
         )
         .await?;
     }
@@ -526,7 +624,6 @@ pub async fn import_company(
             r(pi.payroll_run_id, "payroll_items.payroll_run_id")?,
             r(pi.employee_id, "payroll_items.employee_id")?,
             pi,
-            now,
         )
         .await?;
     }
@@ -536,7 +633,6 @@ pub async fn import_company(
             r(pid.id, "payroll_item_details.id")?,
             r(pid.payroll_item_id, "payroll_item_details.payroll_item_id")?,
             pid,
-            now,
         )
         .await?;
     }
@@ -548,7 +644,6 @@ pub async fn import_company(
             new_company_id,
             ro(pe.payroll_run_id, "payroll_entries.payroll_run_id")?,
             pe,
-            now,
         )
         .await?;
     }
@@ -558,7 +653,6 @@ pub async fn import_company(
             r(dc.id, "document_categories.id")?,
             new_company_id,
             dc,
-            now,
         )
         .await?;
     }
@@ -570,12 +664,11 @@ pub async fn import_company(
             ro(d.employee_id, "documents.employee_id")?,
             ro(d.category_id, "documents.category_id")?,
             d,
-            now,
         )
         .await?;
     }
     for t in &backup.teams {
-        backup_repo::insert_team(&mut *tx, r(t.id, "teams.id")?, new_company_id, t, now).await?;
+        backup_repo::insert_team(&mut *tx, r(t.id, "teams.id")?, new_company_id, t).await?;
     }
     for tm in &backup.team_members {
         backup_repo::insert_team_member(
@@ -584,13 +677,11 @@ pub async fn import_company(
             r(tm.team_id, "team_members.team_id")?,
             r(tm.employee_id, "team_members.employee_id")?,
             tm,
-            now,
         )
         .await?;
     }
     for h in &backup.holidays {
-        backup_repo::insert_holiday(&mut *tx, r(h.id, "holidays.id")?, new_company_id, h, now)
-            .await?;
+        backup_repo::insert_holiday(&mut *tx, r(h.id, "holidays.id")?, new_company_id, h).await?;
     }
     for w in &backup.working_day_config {
         backup_repo::insert_working_day_config(
@@ -598,7 +689,6 @@ pub async fn import_company(
             r(w.id, "working_day_config.id")?,
             new_company_id,
             w,
-            now,
         )
         .await?;
     }
@@ -608,7 +698,6 @@ pub async fn import_company(
             r(et.id, "email_templates.id")?,
             new_company_id,
             et,
-            now,
         )
         .await?;
     }
@@ -618,13 +707,75 @@ pub async fn import_company(
             r(cs.id, "company_settings.id")?,
             new_company_id,
             cs,
-            now,
         )
         .await?;
     }
 
+    // Attendance configuration. `company_work_schedules` and `company_locations`
+    // are ON DELETE CASCADE from `companies`, and an overwrite keeps the
+    // `companies` row, so `delete_company_data` never reaches them — the
+    // target's own rows are still standing here and are replaced or not at all.
+    //
+    // Replace only when the archive actually carries rows. An empty vector is
+    // ambiguous (a format-1.0 archive that could not capture them, or a tenant
+    // that genuinely had none), and deleting on that ambiguity is the worse
+    // error: restoring an old archive over a live Jakarta tenant would drop
+    // their schedule and `provision_defaults` would hand them MYT back.
+    if backup.company_work_schedules.is_empty() {
+        warnings.push(format!(
+            "This backup carries no work schedule, so the restored company keeps or receives the default 09:00-18:00 shift, 15-minute grace, 4.0 half-day hours and {}. Attendance day bucketing, lateness and half-day classification all follow it, so check Settings before the first attendance day. A backup does not carry per-employee shift overrides.",
+            timezone::DEFAULT_TIMEZONE
+        ));
+    } else {
+        backup_repo::delete_company_work_schedules(&mut *tx, new_company_id).await?;
+        for ws in &backup.company_work_schedules {
+            backup_repo::insert_company_work_schedule(
+                &mut *tx,
+                r(ws.id, "company_work_schedules.id")?,
+                new_company_id,
+                ws,
+            )
+            .await?;
+        }
+    }
+
+    if backup.company_locations.is_empty() {
+        // Only worth saying on an overwrite, where the target's own anchors
+        // survive and now disagree with the archive. On a restore-as-new "no
+        // locations in, no locations out" is exactly what was asked for.
+        if is_overwrite {
+            warnings.push(format!(
+                "This backup carries no geofence locations, so \"{new_company_name}\" keeps the ones it already had."
+            ));
+        }
+    } else {
+        backup_repo::delete_company_locations(&mut *tx, new_company_id).await?;
+        for loc in &backup.company_locations {
+            backup_repo::insert_company_location(
+                &mut *tx,
+                r(loc.id, "company_locations.id")?,
+                new_company_id,
+                loc,
+            )
+            .await?;
+        }
+    }
+
+    // An armed geofence with nothing to measure against blocks nobody, which
+    // looks like protection and is not.
+    if let Some(mode) = backup.company.geofence_mode.as_deref()
+        && matches!(mode, "warn" | "enforce")
+        && backup.company_locations.is_empty()
+    {
+        warnings.push(format!(
+            "Geofencing is set to \"{mode}\" but this backup contains no locations, so nothing will be enforced until one is added."
+        ));
+    }
+
     // Older backup formats may omit one or more setup domains. Fill only
-    // missing defaults before exposing the restored company.
+    // missing defaults before exposing the restored company. The partial unique
+    // index on `(company_id) WHERE is_default` makes this ON CONFLICT DO NOTHING,
+    // so a default schedule restored above is not clobbered.
     companies::provision_defaults(&mut *tx, new_company_id, Some(importing_user_id)).await?;
 
     tx.commit().await?;
@@ -647,6 +798,16 @@ pub async fn import_company(
     if conflicting_accounts_skipped > 0 {
         warnings.push(format!(
             "Skipped {conflicting_accounts_skipped} employee account(s) because their email belongs to an account outside this company or with a privileged role."
+        ));
+    }
+    if !deactivated.is_empty() {
+        // Linking an account back to an employee does not re-activate it, so
+        // restoring an older backup and then a newer one leaves a swept account
+        // relinked but inactive. That is deliberate: silently re-activating on
+        // link would override an administrator's own decision to disable someone.
+        warnings.push(format!(
+            "Deactivated {} employee login(s) whose employee record is not in this backup. Re-activate them from Users if any should keep access.",
+            deactivated.len()
         ));
     }
 
@@ -688,6 +849,12 @@ pub async fn import_company(
     records_imported.insert("working_day_config".into(), backup.working_day_config.len());
     records_imported.insert("email_templates".into(), backup.email_templates.len());
     records_imported.insert("company_settings".into(), backup.company_settings.len());
+    records_imported.insert(
+        "company_work_schedules".into(),
+        backup.company_work_schedules.len(),
+    );
+    records_imported.insert("company_locations".into(), backup.company_locations.len());
+    records_imported.insert("employee_logins_deactivated".into(), deactivated.len());
 
     Ok(ImportResult {
         new_company_id,
@@ -828,6 +995,26 @@ mod tests {
         );
         assert_eq!(importable_employee_email(Some("  "), None, false), None);
         assert_eq!(importable_employee_email(None, None, false), None);
+    }
+
+    /// The two CHECK-constrained columns the archive can name. Anything outside
+    /// these lists reaches the database as a 23514 the admin cannot act on, so
+    /// the importer has to recognise the whole permitted set and nothing else.
+    #[test]
+    fn only_the_documented_geofence_modes_and_attendance_methods_are_accepted() {
+        for mode in ["none", "warn", "enforce"] {
+            assert_eq!(sanitize_choice(mode, &GEOFENCE_MODES), Some(mode));
+        }
+        for rejected in ["lockdown", "None", "enforce ", "", "warn,enforce"] {
+            assert_eq!(sanitize_choice(rejected, &GEOFENCE_MODES), None);
+        }
+
+        for method in ["qr_code", "face_id"] {
+            assert_eq!(sanitize_choice(method, &ATTENDANCE_METHODS), Some(method));
+        }
+        for rejected in ["qr", "faceid", "FACE_ID", ""] {
+            assert_eq!(sanitize_choice(rejected, &ATTENDANCE_METHODS), None);
+        }
     }
 
     #[test]

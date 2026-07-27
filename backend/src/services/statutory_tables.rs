@@ -44,19 +44,34 @@ pub struct StatutoryTables {
 }
 
 impl StatutoryTables {
-    /// Read every rule table applicable on `effective_date` in one pass.
-    pub async fn load(pool: &PgPool, effective_date: NaiveDate) -> AppResult<Self> {
+    /// Read every rule table applicable on `effective_date`, on a connection of
+    /// the caller's choosing.
+    ///
+    /// A payroll run calls this with the connection its write transaction is
+    /// already using. The pool-taking `load` below acquires a *second* pooled
+    /// connection, and doing that while holding a transaction is how ten
+    /// overlapping runs deadlocked a ten-connection pool: each run pinned two,
+    /// and every one of them then blocked for the acquire timeout.
+    ///
+    /// Takes a reborrowable `&mut PgConnection` rather than `impl Executor`
+    /// because it issues six sequential queries and `Executor` is consumed by
+    /// value.
+    pub async fn load_on(
+        conn: &mut sqlx::PgConnection,
+        effective_date: NaiveDate,
+    ) -> AppResult<Self> {
         let tax_year = effective_date.year();
 
-        let epf = epf_rates::list_bands(pool, effective_date).await?;
-        let socso_all = socso_rates::list_bands(pool, effective_date).await?;
-        let eis_all = eis_rates::list_bands(pool, effective_date).await?;
-        let pcb_brackets = pcb_brackets::list_for_year(pool, tax_year, effective_date).await?;
-        let pcb_reliefs = pcb_reliefs::list_for_year(pool, tax_year, effective_date)
+        let epf = epf_rates::list_bands(&mut *conn, effective_date).await?;
+        let socso_all = socso_rates::list_bands(&mut *conn, effective_date).await?;
+        let eis_all = eis_rates::list_bands(&mut *conn, effective_date).await?;
+        let pcb_brackets =
+            pcb_brackets::list_for_year(&mut *conn, tax_year, effective_date).await?;
+        let pcb_reliefs = pcb_reliefs::list_for_year(&mut *conn, tax_year, effective_date)
             .await?
             .into_iter()
             .collect();
-        let rule_sets = statutory_rule_sets::verified_for_date(pool, effective_date).await?;
+        let rule_sets = statutory_rule_sets::verified_for_date(&mut *conn, effective_date).await?;
 
         let socso = newest_schedule(socso_all, |band| band.effective_from);
         let socso_ceiling = socso.iter().map(|band| band.wage_to).max();
@@ -75,6 +90,15 @@ impl StatutoryTables {
             pcb_reliefs,
             rule_sets,
         })
+    }
+
+    /// Read the schedule on a freshly acquired pooled connection.
+    ///
+    /// For the one-off calculator entry points, which hold no transaction. A
+    /// caller that *is* inside one must use `load_on` with its own connection.
+    pub async fn load(pool: &PgPool, effective_date: NaiveDate) -> AppResult<Self> {
+        let mut conn = pool.acquire().await?;
+        Self::load_on(&mut conn, effective_date).await
     }
 
     /// EPF Third-Schedule band for a category and wage.
@@ -121,6 +145,114 @@ impl StatutoryTables {
     /// Provenance of the rule sets these figures came from.
     pub fn rule_sets(&self) -> &[VerifiedRuleSet] {
         &self.rule_sets
+    }
+
+    /// The reliefs `pcb_calculator` actually reads that this schedule does not
+    /// carry.
+    ///
+    /// A miss turns into `AppError::Validation` inside the per-employee
+    /// calculation, so a schedule missing one relief produced N identical
+    /// failures with no run-level statement of what was wrong. Checked once at
+    /// load instead, so the preview says it once.
+    ///
+    /// The EPF cap is satisfied by either key — see `pcb_calculator`, where
+    /// `life_insurance` is a compatibility fallback for `epf_additional`.
+    pub fn missing_required_reliefs(&self) -> Vec<&'static str> {
+        use crate::services::pcb_calculator::{EPF_RELIEF_TYPE, EPF_RELIEF_TYPE_LEGACY};
+
+        let mut missing = Vec::new();
+        for relief in [
+            "individual",
+            "socso_relief",
+            "eis_relief",
+            "spouse",
+            "child_under_18",
+            "tax_rebate_individual",
+        ] {
+            if self.pcb_relief(relief).is_none() {
+                missing.push(relief);
+            }
+        }
+
+        let epf_cap = self
+            .pcb_relief(EPF_RELIEF_TYPE)
+            .or_else(|| self.pcb_relief(EPF_RELIEF_TYPE_LEGACY));
+        if epf_cap.is_none() {
+            missing.push(EPF_RELIEF_TYPE);
+        }
+        missing
+    }
+
+    /// Whether the PCB brackets cover every chargeable income without a gap.
+    ///
+    /// Contiguity is a whole-set property: neither a per-row CHECK nor the GiST
+    /// exclusion that forbids overlapping bands can express it, so it is
+    /// deliberately not a database constraint. Without this a gap between two
+    /// bands is taxed at 0% and everything above a finite top band is untaxed —
+    /// silently, and in the employee's favour until LHDN disagrees.
+    ///
+    /// The top band must be open-ended in practice. LHDN's is; the shipped
+    /// fixture expresses that as `9_999_999_999` sen (RM99,999,999.99), which is
+    /// the sentinel below.
+    pub fn validate_pcb_brackets(&self) -> Result<(), String> {
+        const OPEN_ENDED_CEILING_SEN: i64 = 9_999_999_999;
+
+        let Some(first) = self.pcb_brackets.first() else {
+            return Err(format!(
+                "no PCB tax brackets are configured for year {}",
+                self.tax_year
+            ));
+        };
+        if first.chargeable_income_from != 0 {
+            return Err(format!(
+                "the lowest PCB bracket for year {} starts at {} sen rather than 0, so incomes below it are uncovered",
+                self.tax_year, first.chargeable_income_from
+            ));
+        }
+
+        for pair in self.pcb_brackets.windows(2) {
+            let (previous, next) = (&pair[0], &pair[1]);
+            if next.chargeable_income_from != previous.chargeable_income_to + 1 {
+                return Err(format!(
+                    "PCB brackets for year {} leave {} sen to {} sen uncovered, which would be taxed at 0%",
+                    self.tax_year,
+                    previous.chargeable_income_to + 1,
+                    next.chargeable_income_from - 1
+                ));
+            }
+        }
+
+        let last = self.pcb_brackets.last().expect("non-empty checked above");
+        if last.chargeable_income_to < OPEN_ENDED_CEILING_SEN {
+            return Err(format!(
+                "the highest PCB bracket for year {} ends at {} sen; the top band must be open-ended (at least {} sen) or every ringgit above it goes untaxed",
+                self.tax_year, last.chargeable_income_to, OPEN_ENDED_CEILING_SEN
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Build a schedule in memory, for tests that exercise the pure calculators
+    /// without a database.
+    #[cfg(test)]
+    pub(crate) fn for_tests(
+        effective_date: NaiveDate,
+        pcb_brackets: Vec<PcbBracketLookup>,
+        pcb_reliefs: HashMap<String, i64>,
+    ) -> Self {
+        Self {
+            effective_date,
+            tax_year: effective_date.year(),
+            epf: Vec::new(),
+            socso: Vec::new(),
+            socso_ceiling: None,
+            eis: Vec::new(),
+            eis_ceiling: None,
+            pcb_brackets,
+            pcb_reliefs,
+            rule_sets: Vec::new(),
+        }
     }
 }
 

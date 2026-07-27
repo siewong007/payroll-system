@@ -7,16 +7,19 @@ use uuid::Uuid;
 use crate::core::app_state::AppState;
 use crate::core::auth::{AuthUser, Permission};
 use crate::core::error::{AppError, AppResult, multipart_error, payload_too_large};
+use crate::core::http_client;
 use crate::models::calendar::{
     CreateHolidayRequest, Holiday, ImportIcsRequest, MonthCalendar, MonthQuery,
     UpdateHolidayRequest, UpdateWorkingDaysRequest, WorkingDayConfig, YearQuery,
 };
 use crate::services::calendar_service;
 
-/// Largest ICS file this endpoint will accept. A national holiday calendar is a
-/// few kilobytes; two megabytes is generous for a decade of them and small
-/// enough that the whole thing is decoded to a `String` without concern.
-pub const ICS_FILE_MAX_BYTES: usize = 2 * 1024 * 1024;
+/// Largest ICS file this endpoint will accept.
+///
+/// An alias rather than a second literal: the URL import enforces the same
+/// ceiling while streaming the response, and two calendars arriving by two
+/// routes must not be measured against two different numbers.
+pub const ICS_FILE_MAX_BYTES: usize = http_client::MAX_ICS_BYTES;
 
 /// The request ceiling attached to `/calendar/import-ics-file` in
 /// `routes/mod.rs`: the file plus a megabyte for the multipart envelope.

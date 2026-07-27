@@ -19,6 +19,7 @@ import {
   type StatutoryReportRow,
 } from '@/api/reports';
 import { DataTable, type Column } from '@/components/ui/DataTable';
+import { downloadCsv, senToPlainRm } from '@/lib/csv';
 import { canAccessPayrollData } from '@/lib/roles';
 
 const fmt = (sen: number) => `RM ${(sen / 100).toLocaleString('en-MY', { minimumFractionDigits: 2 })}`;
@@ -238,16 +239,12 @@ export function Reports() {
     enabled: tab === 'ea_form',
   });
 
-  const exportCSV = (headers: string[], rows: string[][], filename: string) => {
-    const csv = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
+  // `@/lib/csv` is the single escaping authority — do not pre-quote a value on
+  // the way in, or the helper doubles it. It mirrors the backend's
+  // `csv_helpers`, so a report downloaded here and the same data pulled from the
+  // API escape identically.
+  const exportCSV = (headers: string[], rows: unknown[][], filename: string) =>
+    downloadCsv(filename, headers, rows);
 
   const tabs = useMemo(() => {
     const all: { key: ReportTab; label: string }[] = [
@@ -314,11 +311,11 @@ export function Reports() {
                   exportCSV(
                     ['Period', 'Employees', 'Gross', 'Net', 'EPF(EE)', 'EPF(ER)', 'SOCSO(EE)', 'SOCSO(ER)', 'EIS(EE)', 'EIS(ER)', 'PCB', 'Zakat', 'Employer Cost'],
                     payrollQuery.data!.map((r) => [
-                      r.period, String(r.employee_count), String(r.total_gross / 100), String(r.total_net / 100),
-                      String(r.total_epf_employee / 100), String(r.total_epf_employer / 100),
-                      String(r.total_socso_employee / 100), String(r.total_socso_employer / 100),
-                      String(r.total_eis_employee / 100), String(r.total_eis_employer / 100),
-                      String(r.total_pcb / 100), String(r.total_zakat / 100), String(r.total_employer_cost / 100),
+                      r.period, r.employee_count, senToPlainRm(r.total_gross), senToPlainRm(r.total_net),
+                      senToPlainRm(r.total_epf_employee), senToPlainRm(r.total_epf_employer),
+                      senToPlainRm(r.total_socso_employee), senToPlainRm(r.total_socso_employer),
+                      senToPlainRm(r.total_eis_employee), senToPlainRm(r.total_eis_employer),
+                      senToPlainRm(r.total_pcb), senToPlainRm(r.total_zakat), senToPlainRm(r.total_employer_cost),
                     ]),
                     `payroll-summary-${year}.csv`
                   )
@@ -406,11 +403,11 @@ export function Reports() {
                   exportCSV(
                     ['Employee', 'ID', 'IC', 'EPF No', 'Gross', 'EPF(EE)', 'EPF(ER)', 'SOCSO(EE)', 'SOCSO(ER)', 'EIS(EE)', 'EIS(ER)', 'PCB', 'Zakat'],
                     statutoryQuery.data!.map((r) => [
-                      `"${r.employee_name}"`, r.employee_number, r.ic_number || '', r.epf_number || '',
-                      String(r.gross_salary / 100), String(r.epf_employee / 100), String(r.epf_employer / 100),
-                      String(r.socso_employee / 100), String(r.socso_employer / 100),
-                      String(r.eis_employee / 100), String(r.eis_employer / 100),
-                      String(r.pcb_amount / 100), String(r.zakat_amount / 100),
+                      r.employee_name, r.employee_number, r.ic_number, r.epf_number,
+                      senToPlainRm(r.gross_salary), senToPlainRm(r.epf_employee), senToPlainRm(r.epf_employer),
+                      senToPlainRm(r.socso_employee), senToPlainRm(r.socso_employer),
+                      senToPlainRm(r.eis_employee), senToPlainRm(r.eis_employer),
+                      senToPlainRm(r.pcb_amount), senToPlainRm(r.zakat_amount),
                     ]),
                     `statutory-${year}-${String(month).padStart(2, '0')}.csv`
                   )
@@ -464,9 +461,9 @@ export function Reports() {
               leaveQuery.data.map((r) => {
                 const elig = getLeaveEligibility(r.leave_type_name, r.gender, r.marital_status, r.num_children);
                 return [
-                  `"${r.employee_name}"`, r.employee_number, r.department || '',
+                  r.employee_name, r.employee_number, r.department,
                   r.leave_type_name, elig.eligible ? 'Eligible' : elig.reason || 'Not eligible',
-                  String(r.entitled_days), String(r.taken_days), String(r.pending_days), String(r.balance),
+                  r.entitled_days, r.taken_days, r.pending_days, r.balance,
                 ];
               }),
               `leave-entitlement-${year}.csv`
@@ -491,11 +488,11 @@ export function Reports() {
             exportCSV(
               ['Employee', 'ID', 'Department', 'Total Claims', 'Total Amount', 'Approved', 'Approved Amount', 'Pending', 'Pending Amount', 'Rejected'],
               claimsQuery.data.map((r) => [
-                `"${r.employee_name}"`, r.employee_number, r.department || '',
-                String(r.total_claims), String(r.total_amount / 100),
-                String(r.approved_count), String(r.approved_amount / 100),
-                String(r.pending_count), String(r.pending_amount / 100),
-                String(r.rejected_count),
+                r.employee_name, r.employee_number, r.department,
+                r.total_claims, senToPlainRm(r.total_amount),
+                r.approved_count, senToPlainRm(r.approved_amount),
+                r.pending_count, senToPlainRm(r.pending_amount),
+                r.rejected_count,
               ]),
               `claims-report-${year}.csv`
             );

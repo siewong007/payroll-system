@@ -231,8 +231,11 @@ pub async fn delete_unprocessed_unpaid_leave(
 }
 
 /// Stage an unpaid-leave salary deduction.
-//
-// NOTE: indentation matches the byte-exact SQL in the offline `.sqlx` cache.
+///
+/// `quantity` is the number of working days the deduction covers. It is written
+/// so the payslip's `unpaid_leave_days` can be summed from a column rather than
+/// parsed back out of the description text, the way the overtime entry has always
+/// stored its hours.
 #[allow(clippy::too_many_arguments)]
 pub async fn insert_unpaid_leave_deduction(
     executor: impl Executor<'_, Database = Postgres>,
@@ -243,12 +246,14 @@ pub async fn insert_unpaid_leave_deduction(
     period_month: i32,
     description: &str,
     amount: i64,
+    quantity: Decimal,
     created_by: Uuid,
 ) -> AppResult<()> {
     sqlx::query!(
         r#"INSERT INTO payroll_entries
-                            (id, employee_id, company_id, period_year, period_month, category, item_type, description, amount, created_by)
-                        VALUES ($1, $2, $3, $4, $5, 'deduction', 'unpaid_leave', $6, $7, $8)"#,
+            (id, employee_id, company_id, period_year, period_month, category, item_type,
+             description, amount, quantity, created_by)
+        VALUES ($1, $2, $3, $4, $5, 'deduction', 'unpaid_leave', $6, $7, $8, $9)"#,
         id,
         employee_id,
         company_id,
@@ -256,6 +261,7 @@ pub async fn insert_unpaid_leave_deduction(
         period_month,
         description,
         amount,
+        quantity,
         created_by,
     )
     .execute(executor)

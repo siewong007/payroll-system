@@ -14,7 +14,8 @@ use crate::services::statutory_tables::StatutoryTables;
 /// not an assertion of LHDN conformance; see `docs/database.md`.
 ///
 /// 1. Annualise normal remuneration: Y = (monthly_normal_remuneration × remaining_months) + YTD_gross
-/// 2. Compute annual reliefs (individual RM9,000, EPF up to RM4,000, SOCSO RM350, etc.)
+/// 2. Compute annual reliefs (individual RM9,000, EPF capped at the `epf_additional`
+///    relief, SOCSO RM350, etc.)
 /// 3. Chargeable income = Y - total_reliefs
 /// 4. Apply tax brackets to get annual tax
 /// 5. Apply rebate (RM400 if chargeable income ≤ RM35,000)
@@ -92,6 +93,11 @@ pub(crate) fn calculate_pcb_with(tables: &StatutoryTables, input: &PcbInput) -> 
 /// Chargeable income at or below which the individual rebate applies (RM35,000).
 const REBATE_CHARGEABLE_CEILING_SEN: i64 = 3_500_000;
 
+/// Relief type carrying the EPF contribution cap, and the key an already-installed
+/// schedule may still carry it under.
+pub(crate) const EPF_RELIEF_TYPE: &str = "epf_additional";
+pub(crate) const EPF_RELIEF_TYPE_LEGACY: &str = "life_insurance";
+
 /// The tax actually payable on an annualised income: brackets, then the
 /// individual rebate, then zakat. Neither offset can drive the figure negative.
 ///
@@ -139,8 +145,22 @@ fn calculate_reliefs(
     // Individual relief
     let individual_relief = get_relief_amount(tables, "individual", tax_year)?;
 
-    // EPF relief (capped)
-    let epf_cap = get_relief_amount(tables, "life_insurance", tax_year)?; // RM3,000
+    // EPF relief, capped. Read under its OWN relief type: the cap used to be
+    // taken from `life_insurance`, which is a different, optional relief — so a
+    // rule set keyed the way LHDN actually splits them (EPF under
+    // `epf_additional`, `life_insurance` omitted because nobody claimed it)
+    // aborted every employee in the run with a message naming the wrong relief.
+    // `life_insurance` stays as a compatibility fallback for one release, for a
+    // schedule already installed the old way.
+    let epf_cap = tables
+        .pcb_relief(EPF_RELIEF_TYPE)
+        .or_else(|| tables.pcb_relief(EPF_RELIEF_TYPE_LEGACY))
+        .ok_or_else(|| {
+            AppError::Validation(format!(
+                "Verified PCB rules are missing the EPF relief cap for year {} — expected relief '{}' (or the legacy '{}')",
+                tax_year, EPF_RELIEF_TYPE, EPF_RELIEF_TYPE_LEGACY
+            ))
+        })?;
     let annual_epf = input.ytd_epf + (input.epf_employee_monthly * remaining_months as i64);
     let epf_relief = annual_epf.min(epf_cap);
 
@@ -175,7 +195,22 @@ fn calculate_reliefs(
     Ok(total_reliefs)
 }
 
-/// Look up tax from brackets
+/// Look up tax from brackets.
+///
+/// Fails closed when no band actually CONTAINS the income. The walk alone cannot
+/// tell: a gap between one band's `chargeable_income_to` and the next band's
+/// `chargeable_income_from` leaves the earlier band matching, taxing its whole
+/// width and never breaking, while the later band is skipped — so the gap was
+/// taxed at 0%. An income above the top band's finite ceiling exited the same
+/// way, holding the top band's tax with every ringgit above it untaxed.
+///
+/// Fail closed rather than clamp. SOCSO and EIS clamp because their ceilings ARE
+/// the statutory rule; PCB is progressive and clamping to the top band
+/// systematically under-withholds, leaving the employee a year-end bill. The
+/// database cannot catch either case — the GiST exclusion on `pcb_brackets`
+/// forbids overlaps and says nothing about gaps, and the per-row CHECKs cannot
+/// see a neighbour — so `StatutoryTables::validate_pcb_brackets` is what turns a
+/// bad schedule into one diagnostic instead of one error per employee.
 fn calculate_tax_from_brackets(
     tables: &StatutoryTables,
     chargeable_income: i64,
@@ -191,8 +226,15 @@ fn calculate_tax_from_brackets(
     }
 
     let mut tax: i64 = 0;
+    let mut matched = false;
 
     for b in brackets {
+        let covers = b.chargeable_income_from <= chargeable_income
+            && chargeable_income <= b.chargeable_income_to;
+        if covers {
+            matched = true;
+        }
+
         if chargeable_income > b.chargeable_income_from {
             let taxable_in_bracket =
                 chargeable_income.min(b.chargeable_income_to) - b.chargeable_income_from;
@@ -204,6 +246,18 @@ fn calculate_tax_from_brackets(
                 break;
             }
         }
+    }
+
+    if !matched {
+        let ceiling = brackets
+            .iter()
+            .map(|b| b.chargeable_income_to)
+            .max()
+            .unwrap_or(0);
+        return Err(AppError::Validation(format!(
+            "Verified PCB brackets for {} do not cover a chargeable income of {} sen (the highest band ends at {} sen).",
+            tax_year, chargeable_income, ceiling
+        )));
     }
 
     Ok(tax)

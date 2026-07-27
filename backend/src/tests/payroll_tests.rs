@@ -1859,3 +1859,374 @@ async fn bonus_and_commission_are_taxed_as_additional_remuneration() {
          additional remuneration vs {charged_as_recurring} sen annualised"
     );
 }
+
+// ─── Unpaid leave is its own figure on the payslip ───
+
+/// `payroll_items.unpaid_leave_deduction` and `unpaid_leave_days` existed from
+/// the first schema and were never written, so the payslip, the portal, the PDF
+/// fallback and the backup archive all shipped a constant zero while the money
+/// sat anonymously inside `total_other_deductions` next to loans and advances.
+#[tokio::test]
+async fn unpaid_leave_is_stored_and_split_out_of_other_deductions() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+
+    let company_id = seed_company(&pool).await;
+    let group_id = seed_payroll_group(&pool, company_id).await;
+    let employee_id = seed_employee(&pool, company_id, Some(group_id), 500_000).await;
+    let user_id = seed_user(&pool, company_id, "payroll_admin").await;
+
+    // What leave approval stages: 3 working days of unpaid leave.
+    sqlx::query(
+        r#"INSERT INTO payroll_entries
+              (employee_id, company_id, period_year, period_month, category,
+               item_type, description, amount, quantity, is_processed)
+           VALUES ($1, $2, 2024, 5, 'deduction', 'unpaid_leave',
+                   'Unpaid leave: 2024-05-06 to 2024-05-08 (3 working days)',
+                   57_692, 3, FALSE)"#,
+    )
+    .bind(employee_id)
+    .bind(company_id)
+    .execute(&pool)
+    .await
+    .expect("seed unpaid leave");
+
+    // An ordinary "other" deduction alongside it, so the split is observable
+    // rather than trivially true.
+    sqlx::query(
+        r#"INSERT INTO payroll_entries
+              (employee_id, company_id, period_year, period_month, category,
+               item_type, description, amount, is_processed)
+           VALUES ($1, $2, 2024, 5, 'deduction', 'loan', 'Staff loan', 20_000, FALSE)"#,
+    )
+    .bind(employee_id)
+    .bind(company_id)
+    .execute(&pool)
+    .await
+    .expect("seed loan deduction");
+
+    let run = payroll_engine::process_payroll(
+        &pool,
+        company_id,
+        group_id,
+        2024,
+        5,
+        NaiveDate::from_ymd_opt(2024, 6, 5).unwrap(),
+        user_id,
+        None,
+        None,
+    )
+    .await
+    .expect("process_payroll");
+
+    let (unpaid_amount, other, total_deductions): (i64, i64, i64) = sqlx::query_as(
+        r#"SELECT unpaid_leave_deduction, total_other_deductions, total_deductions
+           FROM payroll_items WHERE payroll_run_id = $1 AND employee_id = $2"#,
+    )
+    .bind(run.id)
+    .bind(employee_id)
+    .fetch_one(&pool)
+    .await
+    .expect("item should exist");
+
+    let unpaid_days: rust_decimal::Decimal = sqlx::query_scalar(
+        r#"SELECT unpaid_leave_days FROM payroll_items
+           WHERE payroll_run_id = $1 AND employee_id = $2"#,
+    )
+    .bind(run.id)
+    .bind(employee_id)
+    .fetch_one(&pool)
+    .await
+    .expect("day count");
+
+    assert_eq!(
+        unpaid_amount, 57_692,
+        "the staged amount reaches its column"
+    );
+    assert_eq!(unpaid_days, rust_decimal::Decimal::from(3));
+
+    // The partition invariant the portal depends on: it renders BOTH rows plus
+    // Total Deductions, so overlapping buckets would show the money twice.
+    assert_eq!(
+        other, 20_000,
+        "other deductions must exclude unpaid leave, not double it"
+    );
+    assert_eq!(
+        other + unpaid_amount,
+        77_692,
+        "the two together are what total_other_deductions alone used to be"
+    );
+
+    // The breakdown labels it rather than flattening it into "other deduction".
+    let lines: Vec<(String, String, i64)> = sqlx::query_as(
+        r#"SELECT pid.item_type, pid.description, pid.amount
+           FROM payroll_item_details pid
+           JOIN payroll_items pi ON pi.id = pid.payroll_item_id
+           WHERE pi.payroll_run_id = $1 AND pi.employee_id = $2"#,
+    )
+    .bind(run.id)
+    .bind(employee_id)
+    .fetch_all(&pool)
+    .await
+    .expect("breakdown lines");
+
+    assert!(
+        lines.iter().any(
+            |(item_type, description, amount)| item_type == "unpaid_leave"
+                && description.starts_with("Unpaid leave:")
+                && *amount == 57_692
+        ),
+        "unpaid leave must carry its own item type: {lines:?}"
+    );
+
+    // The existing breakdown invariant still holds.
+    let deduction_lines: i64 = sqlx::query_scalar(
+        r#"SELECT COALESCE(SUM(pid.amount), 0)::BIGINT
+           FROM payroll_item_details pid
+           JOIN payroll_items pi ON pi.id = pid.payroll_item_id
+           WHERE pi.payroll_run_id = $1 AND pi.employee_id = $2 AND pid.category = 'deduction'"#,
+    )
+    .bind(run.id)
+    .bind(employee_id)
+    .fetch_one(&pool)
+    .await
+    .expect("deduction total");
+    assert_eq!(deduction_lines, total_deductions);
+}
+
+// ─── is_taxable narrows the PCB base and nothing else ───
+
+/// The flag was honoured by the rendered breakdown line — which badges an
+/// earning as not taxed — and by no aggregate at all, so an admin could stage an
+/// exempt allowance and have it taxed anyway.
+///
+/// It narrows the PCB base ONLY. EPF Act 1991 s.2, ESSA 1969 s.2 and the EIS Act
+/// have their own, different exclusion lists that no column here expresses, so
+/// narrowing those three off an income-tax flag would be a larger error than the
+/// one being fixed.
+#[tokio::test]
+async fn a_non_taxable_earning_leaves_the_pcb_base_but_not_gross_or_the_contributions() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+
+    async fn run_with(pool: &sqlx::PgPool, is_taxable: bool) -> (i64, i64, i64, i64, i64) {
+        let company_id = seed_company(pool).await;
+        let group_id = seed_payroll_group(pool, company_id).await;
+        let employee_id = seed_employee(pool, company_id, Some(group_id), 600_000).await;
+        let user_id = seed_user(pool, company_id, "payroll_admin").await;
+
+        sqlx::query(
+            r#"INSERT INTO payroll_entries
+                  (employee_id, company_id, period_year, period_month, category,
+                   item_type, description, amount, is_taxable, is_processed)
+               VALUES ($1, $2, 2024, 4, 'earning', 'allowance',
+                       'Travelling allowance', 200_000, $3, FALSE)"#,
+        )
+        .bind(employee_id)
+        .bind(company_id)
+        .bind(is_taxable)
+        .execute(pool)
+        .await
+        .expect("seed staged earning");
+
+        let run = payroll_engine::process_payroll(
+            pool,
+            company_id,
+            group_id,
+            2024,
+            4,
+            NaiveDate::from_ymd_opt(2024, 5, 5).unwrap(),
+            user_id,
+            None,
+            None,
+        )
+        .await
+        .expect("process_payroll");
+
+        sqlx::query_as(
+            r#"SELECT gross_salary, epf_employee, socso_employee, eis_employee, pcb_amount
+               FROM payroll_items WHERE payroll_run_id = $1 AND employee_id = $2"#,
+        )
+        .bind(run.id)
+        .bind(employee_id)
+        .fetch_one(pool)
+        .await
+        .expect("item should exist")
+    }
+
+    let (taxable_gross, taxable_epf, taxable_socso, taxable_eis, taxable_pcb) =
+        run_with(&pool, true).await;
+    let (exempt_gross, exempt_epf, exempt_socso, exempt_eis, exempt_pcb) =
+        run_with(&pool, false).await;
+
+    assert_eq!(
+        exempt_gross, taxable_gross,
+        "the earning is still paid, so gross is unchanged"
+    );
+    assert_eq!(
+        (exempt_epf, exempt_socso, exempt_eis),
+        (taxable_epf, taxable_socso, taxable_eis),
+        "EPF/SOCSO/EIS carry their own statutory exclusions and stay untouched by this flag"
+    );
+    assert!(
+        exempt_pcb < taxable_pcb,
+        "only the PCB base narrows: {exempt_pcb} vs {taxable_pcb}"
+    );
+}
+
+// ─── Run ordering ───
+
+/// Processing February AFTER March corrupts March: its `payroll_items.ytd_*` are
+/// already frozen and printed, its PCB annualisation already assumed February
+/// was inside them, and nothing recomputes either. A gap is legitimate; running
+/// behind a committed run is not.
+#[tokio::test]
+async fn a_period_behind_a_committed_run_is_refused() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+
+    let company_id = seed_company(&pool).await;
+    let group_id = seed_payroll_group(&pool, company_id).await;
+    let employee_id = seed_employee(&pool, company_id, Some(group_id), 500_000).await;
+    let user_id = seed_user(&pool, company_id, "payroll_admin").await;
+
+    payroll_engine::process_payroll(
+        &pool,
+        company_id,
+        group_id,
+        2024,
+        3,
+        NaiveDate::from_ymd_opt(2024, 4, 5).unwrap(),
+        user_id,
+        None,
+        None,
+    )
+    .await
+    .expect("March should process");
+
+    let err = payroll_engine::process_payroll(
+        &pool,
+        company_id,
+        group_id,
+        2024,
+        2,
+        NaiveDate::from_ymd_opt(2024, 3, 5).unwrap(),
+        user_id,
+        None,
+        None,
+    )
+    .await
+    .expect_err("February must be refused once March is committed");
+    let rendered = format!("{err:?}");
+    assert!(
+        rendered.contains("03/2024"),
+        "name the later period: {rendered}"
+    );
+    assert!(
+        rendered.contains("Delete the later run"),
+        "the escape hatch must be stated or this reads as a wall: {rendered}"
+    );
+
+    // The guard fires after `insert_processing`, so the transaction must have
+    // rolled that row back rather than leaving a stray run behind.
+    let february_runs: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM payroll_runs WHERE payroll_group_id = $1 AND period_month = 2",
+    )
+    .bind(group_id)
+    .fetch_one(&pool)
+    .await
+    .expect("count runs");
+    assert_eq!(february_runs, 0, "nothing may be left behind");
+
+    // Preview says the same thing before the operator gets there.
+    let preview = payroll_engine::preview_payroll(
+        &pool,
+        company_id,
+        group_id,
+        2024,
+        2,
+        NaiveDate::from_ymd_opt(2024, 3, 5).unwrap(),
+    )
+    .await
+    .expect("preview");
+    assert!(!preview.can_process);
+    assert!(
+        preview
+            .blocking
+            .iter()
+            .any(|d| d.code == "later_run_exists" && d.employee_id == Some(employee_id)),
+        "preview must name the employee: {:?}",
+        preview.blocking
+    );
+}
+
+/// Going forward is unaffected — the guard is on a run that predates a committed
+/// one, not on any second run.
+#[tokio::test]
+async fn a_later_period_still_processes_normally() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+
+    let company_id = seed_company(&pool).await;
+    let group_id = seed_payroll_group(&pool, company_id).await;
+    seed_employee(&pool, company_id, Some(group_id), 500_000).await;
+    let user_id = seed_user(&pool, company_id, "payroll_admin").await;
+
+    for (month, pay_month) in [(3, 4), (4, 5)] {
+        payroll_engine::process_payroll(
+            &pool,
+            company_id,
+            group_id,
+            2024,
+            month,
+            NaiveDate::from_ymd_opt(2024, pay_month, 5).unwrap(),
+            user_id,
+            None,
+            None,
+        )
+        .await
+        .unwrap_or_else(|err| panic!("month {month} should process: {err:?}"));
+    }
+}
+
+/// A skipped month is a warning, not a blocker: it makes PCB's `remaining_months`
+/// over-count, but only the operator knows whether the month was genuinely owed.
+#[tokio::test]
+async fn a_skipped_earlier_period_is_a_warning_not_a_blocker() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+
+    let company_id = seed_company(&pool).await;
+    let group_id = seed_payroll_group(&pool, company_id).await;
+    seed_employee(&pool, company_id, Some(group_id), 500_000).await;
+
+    // The seeded employee joined in 2020, so January and February are both owed.
+    let preview = payroll_engine::preview_payroll(
+        &pool,
+        company_id,
+        group_id,
+        2024,
+        3,
+        NaiveDate::from_ymd_opt(2024, 4, 5).unwrap(),
+    )
+    .await
+    .expect("preview");
+
+    assert!(
+        preview.can_process,
+        "a gap must not block: {:?}",
+        preview.blocking
+    );
+    let skipped = preview
+        .warnings
+        .iter()
+        .find(|d| d.code == "missing_earlier_period")
+        .expect("the skipped months must be reported");
+    assert!(skipped.message.contains("01/2024"), "{}", skipped.message);
+    assert!(skipped.message.contains("02/2024"), "{}", skipped.message);
+}

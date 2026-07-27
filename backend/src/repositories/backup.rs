@@ -12,23 +12,65 @@ use crate::core::error::AppResult;
 use crate::models::backup::*;
 
 // ─── Export reads (one company-scoped projection per table) ───
+//
+// Every list read is ordered by primary key. `id` is uuidv7, so the order is
+// stable and time-correlated, which makes a re-export of an unchanged company
+// byte-comparable and makes the ids a restore mints reproducible. Without it the
+// row order — and hence the restore's id assignment — was whatever the planner
+// happened to return.
 
 pub async fn company(
     executor: impl Executor<'_, Database = Postgres>,
     company_id: Uuid,
 ) -> AppResult<Option<CompanyExport>> {
+    // `timezone` and `geofence_mode` are NOT NULL, but the export projects them
+    // as nullable: the importer reads `None` as "this archive predates capture"
+    // and must be able to express that for an archive it did not write.
     let company = sqlx::query_as!(
         CompanyExport,
         r#"SELECT id, name, registration_number, tax_number, epf_number, socso_code, eis_code,
                   hrdf_number, address_line1, address_line2, city, state, postcode, country,
                   phone, email, logo_url, hrdf_enabled, unpaid_leave_divisor, is_active,
-                  created_at, updated_at
+                  created_at, updated_at,
+                  attendance_method, timezone AS "timezone?", geofence_mode AS "geofence_mode?"
            FROM companies WHERE id = $1"#,
         company_id,
     )
     .fetch_optional(executor)
     .await?;
     Ok(company)
+}
+
+pub async fn company_work_schedules(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+) -> AppResult<Vec<CompanyWorkScheduleExport>> {
+    let rows = sqlx::query_as!(
+        CompanyWorkScheduleExport,
+        r#"SELECT id, company_id, name, start_time, end_time, grace_minutes, half_day_hours,
+                  timezone, is_default, created_at, updated_at
+           FROM company_work_schedules WHERE company_id = $1 ORDER BY id"#,
+        company_id,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(rows)
+}
+
+pub async fn company_locations(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+) -> AppResult<Vec<CompanyLocationExport>> {
+    let rows = sqlx::query_as!(
+        CompanyLocationExport,
+        r#"SELECT id, company_id, name, latitude, longitude, radius_meters, is_active,
+                  created_at, updated_at
+           FROM company_locations WHERE company_id = $1 ORDER BY id"#,
+        company_id,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(rows)
 }
 
 pub async fn payroll_groups(
@@ -39,7 +81,7 @@ pub async fn payroll_groups(
         PayrollGroupExport,
         r#"SELECT id, company_id, name, description, cutoff_day, payment_day, is_active,
                   created_at, updated_at
-           FROM payroll_groups WHERE company_id = $1"#,
+           FROM payroll_groups WHERE company_id = $1 ORDER BY id"#,
         company_id,
     )
     .fetch_all(executor)
@@ -66,7 +108,7 @@ pub async fn employees(
                   is_muslim, zakat_eligible, zakat_monthly_amount, ptptn_monthly_amount, tabung_haji_amount,
                   hrdf_contribution, payroll_group_id, salary_group,
                   is_active, deleted_at, created_at, updated_at
-           FROM employees WHERE company_id = $1"#,
+           FROM employees WHERE company_id = $1 ORDER BY id"#,
         company_id,
     )
     .fetch_all(executor)
@@ -85,7 +127,7 @@ pub async fn employee_allowances(
                   ea.is_active, ea.created_at, ea.updated_at
            FROM employee_allowances ea
            JOIN employees e ON ea.employee_id = e.id
-           WHERE e.company_id = $1"#,
+           WHERE e.company_id = $1 ORDER BY ea.id"#,
         company_id,
     )
     .fetch_all(executor)
@@ -103,7 +145,7 @@ pub async fn salary_history(
                   sh.effective_date, sh.reason, sh.created_at
            FROM salary_history sh
            JOIN employees e ON sh.employee_id = e.id
-           WHERE e.company_id = $1"#,
+           WHERE e.company_id = $1 ORDER BY sh.id"#,
         company_id,
     )
     .fetch_all(executor)
@@ -122,7 +164,7 @@ pub async fn tp3_records(
                   t.previous_socso_ytd, t.previous_zakat_ytd, t.created_at
            FROM tp3_records t
            JOIN employees e ON t.employee_id = e.id
-           WHERE e.company_id = $1"#,
+           WHERE e.company_id = $1 ORDER BY t.id"#,
         company_id,
     )
     .fetch_all(executor)
@@ -138,7 +180,7 @@ pub async fn leave_types(
         LeaveTypeExport,
         r#"SELECT id, company_id, name, description, default_days, is_paid, is_active,
                   created_at, updated_at
-           FROM leave_types WHERE company_id = $1"#,
+           FROM leave_types WHERE company_id = $1 ORDER BY id"#,
         company_id,
     )
     .fetch_all(executor)
@@ -157,7 +199,7 @@ pub async fn leave_balances(
                   lb.created_at, lb.updated_at
            FROM leave_balances lb
            JOIN employees e ON lb.employee_id = e.id
-           WHERE e.company_id = $1"#,
+           WHERE e.company_id = $1 ORDER BY lb.id"#,
         company_id,
     )
     .fetch_all(executor)
@@ -174,7 +216,7 @@ pub async fn leave_requests(
         r#"SELECT id, employee_id, company_id, leave_type_id, start_date, end_date, days,
                   reason, status, review_notes, attachment_url, attachment_name,
                   created_at, updated_at
-           FROM leave_requests WHERE company_id = $1"#,
+           FROM leave_requests WHERE company_id = $1 ORDER BY id"#,
         company_id,
     )
     .fetch_all(executor)
@@ -191,7 +233,7 @@ pub async fn claims(
         r#"SELECT id, employee_id, company_id, title, description, amount, category,
                   receipt_url, receipt_file_name, expense_date, status,
                   submitted_at, review_notes, created_at, updated_at
-           FROM claims WHERE company_id = $1"#,
+           FROM claims WHERE company_id = $1 ORDER BY id"#,
         company_id,
     )
     .fetch_all(executor)
@@ -207,7 +249,7 @@ pub async fn overtime_applications(
         OvertimeExport,
         r#"SELECT id, employee_id, company_id, ot_date, start_time, end_time, hours,
                   ot_type, reason, status, review_notes, created_at, updated_at
-           FROM overtime_applications WHERE company_id = $1"#,
+           FROM overtime_applications WHERE company_id = $1 ORDER BY id"#,
         company_id,
     )
     .fetch_all(executor)
@@ -229,7 +271,7 @@ pub async fn payroll_runs(
                   total_eis_employee, total_eis_employer,
                   total_pcb, total_zakat, employee_count, version, notes,
                   created_at, updated_at
-           FROM payroll_runs WHERE company_id = $1"#,
+           FROM payroll_runs WHERE company_id = $1 ORDER BY id"#,
         company_id,
     )
     .fetch_all(executor)
@@ -258,7 +300,7 @@ pub async fn payroll_items(
                   pi.created_at, pi.updated_at
            FROM payroll_items pi
            JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
-           WHERE pr.company_id = $1"#,
+           WHERE pr.company_id = $1 ORDER BY pi.id"#,
         company_id,
     )
     .fetch_all(executor)
@@ -277,7 +319,7 @@ pub async fn payroll_item_details(
            FROM payroll_item_details pid
            JOIN payroll_items pi ON pid.payroll_item_id = pi.id
            JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
-           WHERE pr.company_id = $1"#,
+           WHERE pr.company_id = $1 ORDER BY pid.id"#,
         company_id,
     )
     .fetch_all(executor)
@@ -294,7 +336,7 @@ pub async fn payroll_entries(
         r#"SELECT id, employee_id, company_id, period_year, period_month,
                   category, item_type, description AS "description?", amount, quantity, rate,
                   is_taxable, is_processed, payroll_run_id, created_at, updated_at
-           FROM payroll_entries WHERE company_id = $1"#,
+           FROM payroll_entries WHERE company_id = $1 ORDER BY id"#,
         company_id,
     )
     .fetch_all(executor)
@@ -309,7 +351,7 @@ pub async fn document_categories(
     let rows = sqlx::query_as!(
         DocumentCategoryExport,
         r#"SELECT id, company_id, name, description, is_active, created_at
-           FROM document_categories WHERE company_id = $1"#,
+           FROM document_categories WHERE company_id = $1 ORDER BY id"#,
         company_id,
     )
     .fetch_all(executor)
@@ -327,7 +369,7 @@ pub async fn documents(
                   file_name, file_url, file_size, mime_type, status::text AS "status!",
                   issue_date, expiry_date, is_confidential, tags,
                   deleted_at, created_at, updated_at
-           FROM documents WHERE company_id = $1"#,
+           FROM documents WHERE company_id = $1 ORDER BY id"#,
         company_id,
     )
     .fetch_all(executor)
@@ -342,7 +384,7 @@ pub async fn teams(
     let rows = sqlx::query_as!(
         TeamExport,
         r#"SELECT id, company_id, name, description, tag, is_active, created_at, updated_at
-           FROM teams WHERE company_id = $1"#,
+           FROM teams WHERE company_id = $1 ORDER BY id"#,
         company_id,
     )
     .fetch_all(executor)
@@ -359,7 +401,7 @@ pub async fn team_members(
         r#"SELECT tm.id, tm.team_id, tm.employee_id, tm.role, tm.joined_at
            FROM team_members tm
            JOIN teams t ON tm.team_id = t.id
-           WHERE t.company_id = $1"#,
+           WHERE t.company_id = $1 ORDER BY tm.id"#,
         company_id,
     )
     .fetch_all(executor)
@@ -375,7 +417,7 @@ pub async fn holidays(
         HolidayExport,
         r#"SELECT id, company_id, name, date, holiday_type, description, is_recurring, state,
                   created_at, updated_at
-           FROM holidays WHERE company_id = $1"#,
+           FROM holidays WHERE company_id = $1 ORDER BY id"#,
         company_id,
     )
     .fetch_all(executor)
@@ -390,7 +432,7 @@ pub async fn working_day_config(
     let rows = sqlx::query_as!(
         WorkingDayConfigExport,
         r#"SELECT id, company_id, day_of_week, is_working_day, created_at, updated_at
-           FROM working_day_config WHERE company_id = $1"#,
+           FROM working_day_config WHERE company_id = $1 ORDER BY id"#,
         company_id,
     )
     .fetch_all(executor)
@@ -406,7 +448,7 @@ pub async fn email_templates(
         EmailTemplateExport,
         r#"SELECT id, company_id, name, letter_type, subject, body_html, is_active AS "is_active?",
                   created_at, updated_at
-           FROM email_templates WHERE company_id = $1"#,
+           FROM email_templates WHERE company_id = $1 ORDER BY id"#,
         company_id,
     )
     .fetch_all(executor)
@@ -421,7 +463,7 @@ pub async fn company_settings(
     let rows = sqlx::query_as!(
         CompanySettingExport,
         r#"SELECT id, company_id, category, key, value, label, description, updated_at
-           FROM company_settings WHERE company_id = $1"#,
+           FROM company_settings WHERE company_id = $1 ORDER BY id"#,
         company_id,
     )
     .fetch_all(executor)
@@ -431,9 +473,16 @@ pub async fn company_settings(
 
 // ─── Import writes ───
 //
-// NOTE: the INSERT/UPDATE bodies below keep their original (over-)indentation so
-// their text is byte-identical to the offline `.sqlx` cache. The service owns ID
-// remapping, the `now` timestamp, file restore, and the import transaction.
+// A restored row is a faithful copy of the archived row, so it carries the
+// archived row's own `created_at`/`updated_at` (and `joined_at`). Stamping the
+// restore instant on every row instead — which is what these used to do — made
+// each `ORDER BY created_at … LIMIT n` list return an arbitrary subset of a
+// fully tied set, and left every restored claim `submitted_at` years before its
+// own `created_at`. The one exception is the live `companies` row on an
+// overwrite: that row genuinely is being modified now, so `update_company`
+// still takes the restore instant.
+//
+// The service owns ID remapping, file restore, and the import transaction.
 
 /// Return the explicit import target's name. Restore callers must choose this
 /// target rather than deriving one from untrusted backup metadata.
@@ -463,6 +512,12 @@ pub async fn company_name_exists(
     Ok(exists)
 }
 
+/// Overwrite the target company's own row from the archive.
+///
+/// The three attendance columns are COALESCEd rather than assigned: `NULL` here
+/// means the archive predates their capture, and a restore that cannot speak to
+/// a setting must not overwrite it. Assigning them unconditionally would move a
+/// live Jakarta tenant onto MYT the moment an old archive was restored over it.
 pub async fn update_company(
     executor: impl Executor<'_, Database = Postgres>,
     id: Uuid,
@@ -473,7 +528,10 @@ pub async fn update_company(
         r#"UPDATE companies SET registration_number=$2, tax_number=$3, epf_number=$4, socso_code=$5,
                eis_code=$6, hrdf_number=$7, address_line1=$8, address_line2=$9, city=$10, state=$11,
                postcode=$12, country=$13, phone=$14, email=$15, logo_url=$16, hrdf_enabled=$17,
-               unpaid_leave_divisor=$18, is_active=$19, updated_at=$20
+               unpaid_leave_divisor=$18, is_active=$19, updated_at=$20,
+               attendance_method=COALESCE($21, attendance_method),
+               timezone=COALESCE($22, timezone),
+               geofence_mode=COALESCE($23, geofence_mode)
                WHERE id = $1"#,
         id,
         c.registration_number,
@@ -495,23 +553,30 @@ pub async fn update_company(
         c.unpaid_leave_divisor,
         c.is_active,
         now,
+        c.attendance_method,
+        c.timezone,
+        c.geofence_mode,
     )
     .execute(executor)
     .await?;
     Ok(())
 }
 
+/// Create the restored company. `timezone`/`geofence_mode` are NOT NULL, so an
+/// archive that predates their capture falls back to the same values
+/// `provision_company_defaults` would have used.
 pub async fn insert_company(
     executor: impl Executor<'_, Database = Postgres>,
     id: Uuid,
     c: &CompanyExport,
-    now: DateTime<Utc>,
 ) -> AppResult<()> {
     sqlx::query!(
         r#"INSERT INTO companies (id, name, registration_number, tax_number, epf_number, socso_code,
                eis_code, hrdf_number, address_line1, address_line2, city, state, postcode, country,
-               phone, email, logo_url, hrdf_enabled, unpaid_leave_divisor, is_active, created_at, updated_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)"#,
+               phone, email, logo_url, hrdf_enabled, unpaid_leave_divisor, is_active, created_at, updated_at,
+               attendance_method, timezone, geofence_mode)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,
+                       $23, COALESCE($24::varchar, 'Asia/Kuala_Lumpur'), COALESCE($25::varchar, 'none'))"#,
         id,
         c.name,
         c.registration_number,
@@ -532,12 +597,167 @@ pub async fn insert_company(
         c.hrdf_enabled,
         c.unpaid_leave_divisor,
         c.is_active,
-        now,
-        now,
+        c.created_at,
+        c.updated_at,
+        c.attendance_method,
+        c.timezone,
+        c.geofence_mode,
     )
     .execute(executor)
     .await?;
     Ok(())
+}
+
+// ─── Attendance configuration (restore-specific replace) ───
+//
+// `company_work_schedules` and `company_locations` are ON DELETE CASCADE from
+// `companies`, so an overwrite restore — which keeps the `companies` row — does
+// not reach them through `companies::delete_company_data`, and they are
+// deliberately absent from that list (adding every cascade table there would
+// also destroy the target's `audit_logs`). Replacing them is restore-specific
+// behaviour, so these two deletes live here with the rest of the restore SQL.
+
+pub async fn delete_company_work_schedules(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+) -> AppResult<()> {
+    sqlx::query!(
+        "DELETE FROM company_work_schedules WHERE company_id = $1",
+        company_id,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
+pub async fn delete_company_locations(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+) -> AppResult<()> {
+    sqlx::query!(
+        "DELETE FROM company_locations WHERE company_id = $1",
+        company_id,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
+pub async fn insert_company_work_schedule(
+    executor: impl Executor<'_, Database = Postgres>,
+    id: Uuid,
+    company_id: Uuid,
+    ws: &CompanyWorkScheduleExport,
+) -> AppResult<()> {
+    sqlx::query!(
+        r#"INSERT INTO company_work_schedules (id, company_id, name, start_time, end_time,
+               grace_minutes, half_day_hours, timezone, is_default, created_at, updated_at)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"#,
+        id,
+        company_id,
+        ws.name,
+        ws.start_time,
+        ws.end_time,
+        ws.grace_minutes,
+        ws.half_day_hours,
+        ws.timezone,
+        ws.is_default,
+        ws.created_at,
+        ws.updated_at,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
+pub async fn insert_company_location(
+    executor: impl Executor<'_, Database = Postgres>,
+    id: Uuid,
+    company_id: Uuid,
+    cl: &CompanyLocationExport,
+) -> AppResult<()> {
+    sqlx::query!(
+        r#"INSERT INTO company_locations (id, company_id, name, latitude, longitude,
+               radius_meters, is_active, created_at, updated_at)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)"#,
+        id,
+        company_id,
+        cl.name,
+        cl.latitude,
+        cl.longitude,
+        cl.radius_meters,
+        cl.is_active,
+        cl.created_at,
+        cl.updated_at,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
+// ─── Orphaned employee logins (overwrite restore) ───
+//
+// An overwrite hard-deletes `employees`, and `users_employee_tenant_fkey` is a
+// column-scoped ON DELETE SET NULL: it nulls `users.employee_id` and leaves
+// `company_id`, `roles` and `is_active` alone. `auth_service::linked_employee_active`
+// treats a NULL link as "no employee to check", so anyone hired after the backup
+// was taken keeps a working login with no employee record — and a leaver whose
+// only block was `employees.is_active = false` becomes *unblocked*, because the
+// row that made the guard fire is gone.
+//
+// The sweep is capture-then-deactivate rather than one blanket UPDATE:
+// `update_user` can legitimately demote an administrator to `roles=['employee']`
+// with no employee link at all, and a blanket sweep would lock that account out.
+// Capturing first means only rows that held a link when the restore began can
+// ever be named.
+
+/// Every `employee`-role login this company's employees are linked to, captured
+/// before the wipe.
+///
+/// `roles <@ ARRAY['employee']` is the same backstop `users::soft_delete_by_employee`
+/// uses: an account holding an administrative role is never retired by employee
+/// lifecycle, however its `employee_id` came to be set.
+pub async fn employee_linked_login_ids(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+) -> AppResult<Vec<Uuid>> {
+    let ids = sqlx::query_scalar!(
+        r#"SELECT id FROM users
+        WHERE company_id = $1
+          AND employee_id IS NOT NULL
+          AND deleted_at IS NULL
+          AND roles <@ ARRAY['employee']::VARCHAR(50)[]"#,
+        company_id,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(ids)
+}
+
+/// Deactivate the captured logins the restore did not re-link, returning the
+/// ids actually deactivated so the caller can revoke their live access.
+///
+/// `is_active = FALSE` and deliberately not `deleted_at`: a tombstone is what
+/// `provision_imported_employee_account` refuses to resurrect, so it would
+/// permanently block a later restore of a *newer* backup from handing the
+/// employee their account back. An inactive account is re-activatable from
+/// Users.
+pub async fn deactivate_unlinked_logins(
+    executor: impl Executor<'_, Database = Postgres>,
+    ids: &[Uuid],
+) -> AppResult<Vec<Uuid>> {
+    let deactivated = sqlx::query_scalar!(
+        r#"UPDATE users SET is_active = FALSE, updated_at = NOW()
+        WHERE id = ANY($1)
+          AND employee_id IS NULL
+          AND is_active = TRUE
+          AND deleted_at IS NULL
+        RETURNING id"#,
+        ids,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(deactivated)
 }
 
 pub async fn insert_payroll_group(
@@ -545,7 +765,6 @@ pub async fn insert_payroll_group(
     id: Uuid,
     company_id: Uuid,
     pg: &PayrollGroupExport,
-    now: DateTime<Utc>,
 ) -> AppResult<()> {
     sqlx::query!(
         r#"INSERT INTO payroll_groups (id, company_id, name, description, cutoff_day, payment_day,
@@ -558,8 +777,8 @@ pub async fn insert_payroll_group(
         pg.cutoff_day,
         pg.payment_day,
         pg.is_active,
-        now,
-        now,
+        pg.created_at,
+        pg.updated_at,
     )
     .execute(executor)
     .await?;
@@ -572,7 +791,6 @@ pub async fn insert_employee(
     company_id: Uuid,
     payroll_group_id: Option<Uuid>,
     e: &EmployeeExport,
-    now: DateTime<Utc>,
 ) -> AppResult<()> {
     sqlx::query!(
         r#"INSERT INTO employees (id, company_id, employee_number, full_name, ic_number, passport_number,
@@ -644,8 +862,8 @@ pub async fn insert_employee(
         e.salary_group,
         e.is_active,
         e.deleted_at,
-        now,
-        now,
+        e.created_at,
+        e.updated_at,
     )
     .execute(executor)
     .await?;
@@ -658,7 +876,6 @@ pub async fn insert_employee_allowance(
     employee_id: Uuid,
     company_id: Uuid,
     a: &EmployeeAllowanceExport,
-    now: DateTime<Utc>,
 ) -> AppResult<()> {
     sqlx::query!(
         r#"INSERT INTO employee_allowances (id, employee_id, company_id, category, name, description, amount,
@@ -676,8 +893,8 @@ pub async fn insert_employee_allowance(
         a.effective_from,
         a.effective_to,
         a.is_active,
-        now,
-        now,
+        a.created_at,
+        a.updated_at,
     )
     .execute(executor)
     .await?;
@@ -690,7 +907,6 @@ pub async fn insert_salary_history(
     employee_id: Uuid,
     company_id: Uuid,
     s: &SalaryHistoryExport,
-    now: DateTime<Utc>,
 ) -> AppResult<()> {
     sqlx::query!(
         r#"INSERT INTO salary_history (id, employee_id, company_id, old_salary, new_salary, effective_date, reason, created_at)
@@ -702,7 +918,7 @@ pub async fn insert_salary_history(
         s.new_salary,
         s.effective_date,
         s.reason,
-        now,
+        s.created_at,
     )
     .execute(executor)
     .await?;
@@ -715,7 +931,6 @@ pub async fn insert_tp3_record(
     employee_id: Uuid,
     company_id: Uuid,
     t: &Tp3RecordExport,
-    now: DateTime<Utc>,
 ) -> AppResult<()> {
     sqlx::query!(
         r#"INSERT INTO tp3_records (id, employee_id, company_id, tax_year, previous_employer_name,
@@ -732,7 +947,7 @@ pub async fn insert_tp3_record(
         t.previous_pcb_ytd,
         t.previous_socso_ytd,
         t.previous_zakat_ytd,
-        now,
+        t.created_at,
     )
     .execute(executor)
     .await?;
@@ -744,7 +959,6 @@ pub async fn insert_leave_type(
     id: Uuid,
     company_id: Uuid,
     lt: &LeaveTypeExport,
-    now: DateTime<Utc>,
 ) -> AppResult<()> {
     sqlx::query!(
         r#"INSERT INTO leave_types (id, company_id, name, description, default_days, is_paid, is_active,
@@ -757,8 +971,8 @@ pub async fn insert_leave_type(
         lt.default_days,
         lt.is_paid,
         lt.is_active,
-        now,
-        now,
+        lt.created_at,
+        lt.updated_at,
     )
     .execute(executor)
     .await?;
@@ -771,7 +985,6 @@ pub async fn insert_leave_balance(
     employee_id: Uuid,
     leave_type_id: Uuid,
     lb: &LeaveBalanceExport,
-    now: DateTime<Utc>,
 ) -> AppResult<()> {
     sqlx::query!(
         r#"INSERT INTO leave_balances (id, employee_id, leave_type_id, year,
@@ -785,8 +998,8 @@ pub async fn insert_leave_balance(
         lb.taken_days,
         lb.pending_days,
         lb.carried_forward,
-        now,
-        now,
+        lb.created_at,
+        lb.updated_at,
     )
     .execute(executor)
     .await?;
@@ -800,7 +1013,6 @@ pub async fn insert_leave_request(
     company_id: Uuid,
     leave_type_id: Uuid,
     lr: &LeaveRequestExport,
-    now: DateTime<Utc>,
 ) -> AppResult<()> {
     sqlx::query!(
         r#"INSERT INTO leave_requests (id, employee_id, company_id, leave_type_id,
@@ -819,8 +1031,8 @@ pub async fn insert_leave_request(
         lr.review_notes,
         lr.attachment_url,
         lr.attachment_name,
-        now,
-        now,
+        lr.created_at,
+        lr.updated_at,
     )
     .execute(executor)
     .await?;
@@ -833,7 +1045,6 @@ pub async fn insert_claim(
     employee_id: Uuid,
     company_id: Uuid,
     cl: &ClaimExport,
-    now: DateTime<Utc>,
 ) -> AppResult<()> {
     sqlx::query!(
         r#"INSERT INTO claims (id, employee_id, company_id, title, description, amount, category,
@@ -853,8 +1064,8 @@ pub async fn insert_claim(
         cl.status,
         cl.submitted_at,
         cl.review_notes,
-        now,
-        now,
+        cl.created_at,
+        cl.updated_at,
     )
     .execute(executor)
     .await?;
@@ -867,7 +1078,6 @@ pub async fn insert_overtime(
     employee_id: Uuid,
     company_id: Uuid,
     ot: &OvertimeExport,
-    now: DateTime<Utc>,
 ) -> AppResult<()> {
     sqlx::query!(
         r#"INSERT INTO overtime_applications (id, employee_id, company_id, ot_date, start_time,
@@ -884,8 +1094,8 @@ pub async fn insert_overtime(
         ot.reason,
         ot.status,
         ot.review_notes,
-        now,
-        now,
+        ot.created_at,
+        ot.updated_at,
     )
     .execute(executor)
     .await?;
@@ -898,7 +1108,6 @@ pub async fn insert_payroll_run(
     company_id: Uuid,
     payroll_group_id: Uuid,
     pr: &PayrollRunExport,
-    now: DateTime<Utc>,
 ) -> AppResult<()> {
     sqlx::query!(
         r#"INSERT INTO payroll_runs (id, company_id, payroll_group_id, period_year, period_month,
@@ -933,8 +1142,8 @@ pub async fn insert_payroll_run(
         pr.employee_count,
         pr.version,
         pr.notes,
-        now,
-        now,
+        pr.created_at,
+        pr.updated_at,
     )
     .execute(executor)
     .await?;
@@ -947,7 +1156,6 @@ pub async fn insert_payroll_item(
     payroll_run_id: Uuid,
     employee_id: Uuid,
     pi: &PayrollItemExport,
-    now: DateTime<Utc>,
 ) -> AppResult<()> {
     sqlx::query!(
         r#"INSERT INTO payroll_items (id, payroll_run_id, employee_id,
@@ -1002,8 +1210,8 @@ pub async fn insert_payroll_item(
         pi.working_days,
         pi.days_worked,
         pi.is_prorated,
-        now,
-        now,
+        pi.created_at,
+        pi.updated_at,
     )
     .execute(executor)
     .await?;
@@ -1015,7 +1223,6 @@ pub async fn insert_payroll_item_detail(
     id: Uuid,
     payroll_item_id: Uuid,
     pid: &PayrollItemDetailExport,
-    now: DateTime<Utc>,
 ) -> AppResult<()> {
     sqlx::query!(
         r#"INSERT INTO payroll_item_details (id, payroll_item_id, category, item_type,
@@ -1029,7 +1236,7 @@ pub async fn insert_payroll_item_detail(
         pid.amount,
         pid.is_taxable,
         pid.is_statutory,
-        now,
+        pid.created_at,
     )
     .execute(executor)
     .await?;
@@ -1043,7 +1250,6 @@ pub async fn insert_payroll_entry(
     company_id: Uuid,
     payroll_run_id: Option<Uuid>,
     pe: &PayrollEntryExport,
-    now: DateTime<Utc>,
 ) -> AppResult<()> {
     sqlx::query!(
         r#"INSERT INTO payroll_entries (id, employee_id, company_id, period_year, period_month,
@@ -1064,8 +1270,8 @@ pub async fn insert_payroll_entry(
         pe.is_taxable,
         pe.is_processed,
         payroll_run_id,
-        now,
-        now,
+        pe.created_at,
+        pe.updated_at,
     )
     .execute(executor)
     .await?;
@@ -1077,7 +1283,6 @@ pub async fn insert_document_category(
     id: Uuid,
     company_id: Uuid,
     dc: &DocumentCategoryExport,
-    now: DateTime<Utc>,
 ) -> AppResult<()> {
     sqlx::query!(
         r#"INSERT INTO document_categories (id, company_id, name, description, is_active, created_at)
@@ -1087,7 +1292,7 @@ pub async fn insert_document_category(
         dc.name,
         dc.description,
         dc.is_active,
-        now,
+        dc.created_at,
     )
     .execute(executor)
     .await?;
@@ -1101,7 +1306,6 @@ pub async fn insert_document(
     employee_id: Option<Uuid>,
     category_id: Option<Uuid>,
     d: &DocumentExport,
-    now: DateTime<Utc>,
 ) -> AppResult<()> {
     sqlx::query!(
         r#"INSERT INTO documents (id, company_id, employee_id, category_id, title, description,
@@ -1125,8 +1329,8 @@ pub async fn insert_document(
         d.is_confidential,
         d.tags,
         d.deleted_at,
-        now,
-        now,
+        d.created_at,
+        d.updated_at,
     )
     .execute(executor)
     .await?;
@@ -1138,7 +1342,6 @@ pub async fn insert_team(
     id: Uuid,
     company_id: Uuid,
     t: &TeamExport,
-    now: DateTime<Utc>,
 ) -> AppResult<()> {
     sqlx::query!(
         r#"INSERT INTO teams (id, company_id, name, description, tag, is_active, created_at, updated_at)
@@ -1149,8 +1352,8 @@ pub async fn insert_team(
         t.description,
         t.tag,
         t.is_active,
-        now,
-        now,
+        t.created_at,
+        t.updated_at,
     )
     .execute(executor)
     .await?;
@@ -1163,7 +1366,6 @@ pub async fn insert_team_member(
     team_id: Uuid,
     employee_id: Uuid,
     tm: &TeamMemberExport,
-    now: DateTime<Utc>,
 ) -> AppResult<()> {
     sqlx::query!(
         r#"INSERT INTO team_members (id, team_id, employee_id, role, joined_at)
@@ -1172,7 +1374,7 @@ pub async fn insert_team_member(
         team_id,
         employee_id,
         tm.role,
-        now,
+        tm.joined_at,
     )
     .execute(executor)
     .await?;
@@ -1184,7 +1386,6 @@ pub async fn insert_holiday(
     id: Uuid,
     company_id: Uuid,
     h: &HolidayExport,
-    now: DateTime<Utc>,
 ) -> AppResult<()> {
     sqlx::query!(
         r#"INSERT INTO holidays (id, company_id, name, date, holiday_type, description,
@@ -1198,8 +1399,8 @@ pub async fn insert_holiday(
         h.description,
         h.is_recurring,
         h.state,
-        now,
-        now,
+        h.created_at,
+        h.updated_at,
     )
     .execute(executor)
     .await?;
@@ -1211,7 +1412,6 @@ pub async fn insert_working_day_config(
     id: Uuid,
     company_id: Uuid,
     w: &WorkingDayConfigExport,
-    now: DateTime<Utc>,
 ) -> AppResult<()> {
     sqlx::query!(
         r#"INSERT INTO working_day_config (id, company_id, day_of_week, is_working_day, created_at, updated_at)
@@ -1220,8 +1420,8 @@ pub async fn insert_working_day_config(
         company_id,
         w.day_of_week,
         w.is_working_day,
-        now,
-        now,
+        w.created_at,
+        w.updated_at,
     )
     .execute(executor)
     .await?;
@@ -1233,7 +1433,6 @@ pub async fn insert_email_template(
     id: Uuid,
     company_id: Uuid,
     et: &EmailTemplateExport,
-    now: DateTime<Utc>,
 ) -> AppResult<()> {
     sqlx::query!(
         r#"INSERT INTO email_templates (id, company_id, name, letter_type, subject, body_html,
@@ -1246,8 +1445,8 @@ pub async fn insert_email_template(
         et.subject,
         et.body_html,
         et.is_active,
-        now,
-        now,
+        et.created_at,
+        et.updated_at,
     )
     .execute(executor)
     .await?;
@@ -1259,7 +1458,6 @@ pub async fn insert_company_setting(
     id: Uuid,
     company_id: Uuid,
     cs: &CompanySettingExport,
-    now: DateTime<Utc>,
 ) -> AppResult<()> {
     sqlx::query!(
         r#"INSERT INTO company_settings (id, company_id, category, key, value, label, description, updated_at)
@@ -1271,7 +1469,7 @@ pub async fn insert_company_setting(
         cs.value,
         cs.label,
         cs.description,
-        now,
+        cs.updated_at,
     )
     .execute(executor)
     .await?;

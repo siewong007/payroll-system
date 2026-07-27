@@ -1,0 +1,38 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO companies (id, name, registration_number, tax_number, epf_number, socso_code,\n               eis_code, hrdf_number, address_line1, address_line2, city, state, postcode, country,\n               phone, email, logo_url, hrdf_enabled, unpaid_leave_divisor, is_active, created_at, updated_at,\n               attendance_method, timezone, geofence_mode)\n               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,\n                       $23, COALESCE($24::varchar, 'Asia/Kuala_Lumpur'), COALESCE($25::varchar, 'none'))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Bool",
+        "Int4",
+        "Bool",
+        "Timestamptz",
+        "Timestamptz",
+        "Varchar",
+        "Varchar",
+        "Varchar"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "33a17751594891fd1daf810acf94f11548542a9b80876830fb7ebb3a3e2578e1"
+}

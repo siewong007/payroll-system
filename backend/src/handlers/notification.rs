@@ -19,7 +19,7 @@ pub async fn list(
         &state.pool,
         auth.0.sub,
         q.unread_only.unwrap_or(false),
-        q.limit.unwrap_or(50),
+        q.effective_limit(),
     )
     .await?;
     Ok(Json(notifications))

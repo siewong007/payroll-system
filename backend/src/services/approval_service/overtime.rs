@@ -338,63 +338,33 @@ pub async fn approve_overtime(
 
     let reviewer_employee = reviewer_employee_id(pool, &reviewer).await?;
 
-    // Get employee hourly rate
+    // Rated through the same `OvertimeSettings::rate_overtime` the payroll engine
+    // uses, so the amount quoted here is the amount the run pays. This used to
+    // parse the settings itself as `i64`/`f64` and truncate four times — an
+    // `effective_hours_per_day` of "7.5" failed `parse::<i64>()` and silently
+    // became 8, a saved "0" divided by zero, and the RM5,000/3 h case quoted
+    // RM108.12 against the run's RM108.17.
+    let ot_settings = settings_service::overtime_settings(pool, company_id).await;
     let staged = if let Some((hourly_rate, basic_salary)) =
         employee_repo::overtime_rate_basis(pool, preview.employee_id).await?
     {
         let ot = &preview;
-        // Use hourly_rate if set, otherwise calculate from basic: basic / working_days / effective_hours
-        // effective_hours_per_day excludes rest time (e.g. 8h for a 9h day with 1h lunch)
-        let effective_hours: i64 =
-            settings_service::get_setting(pool, company_id, "payroll", "effective_hours_per_day")
-                .await
-                .ok()
-                .and_then(|s| s.value.as_str().and_then(|v| v.parse::<i64>().ok()))
-                .unwrap_or(8);
-        let working_days: i64 =
-            settings_service::get_setting(pool, company_id, "payroll", "unpaid_leave_divisor")
-                .await
-                .ok()
-                .and_then(|s| s.value.as_str().and_then(|v| v.parse::<i64>().ok()))
-                .unwrap_or(26);
-        let base_hourly =
-            hourly_rate.unwrap_or_else(|| basic_salary / working_days / effective_hours);
-
-        // Get OT multiplier from company settings
-        let multiplier_key = match ot.ot_type.as_str() {
-            "rest_day" => "overtime_multiplier_rest",
-            "public_holiday" => "overtime_multiplier_public",
-            _ => "overtime_multiplier_normal",
-        };
-
-        let multiplier: f64 =
-            settings_service::get_setting(pool, company_id, "payroll", multiplier_key)
-                .await
-                .ok()
-                .and_then(|s| s.value.as_str().and_then(|v| v.parse::<f64>().ok()))
-                .unwrap_or(match ot.ot_type.as_str() {
-                    "rest_day" => 2.0,
-                    "public_holiday" => 3.0,
-                    _ => 1.5,
-                });
-
-        let ot_hours_f64 = rust_decimal::prelude::ToPrimitive::to_f64(&ot.hours).unwrap_or(0.0);
-        let ot_rate = (base_hourly as f64 * multiplier) as i64;
-        let ot_amount = (ot_rate as f64 * ot_hours_f64) as i64;
+        let multiplier = ot_settings.multiplier_for(&ot.ot_type);
+        let rating = ot_settings.rate_overtime(hourly_rate, basic_salary, &ot.ot_type, ot.hours);
 
         Some(StagedOvertime {
             period_year: ot.ot_date.year(),
             period_month: ot.ot_date.month0() as i32 + 1,
             description: format!(
-                "OT {} - {} ({} {}h @ {:.1}x)",
+                "OT {} - {} ({} {}h @ {}x)",
                 ot.ot_date,
                 ot.ot_type.replace('_', " "),
                 ot.start_time.format("%H:%M"),
                 ot.hours,
-                multiplier
+                multiplier.normalize()
             ),
-            amount: ot_amount,
-            rate: ot_rate,
+            amount: rating.amount_sen,
+            rate: rating.rate_sen,
         })
     } else {
         None

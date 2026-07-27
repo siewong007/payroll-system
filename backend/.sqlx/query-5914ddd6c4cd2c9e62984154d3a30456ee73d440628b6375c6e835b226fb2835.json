@@ -1,0 +1,43 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT e.id AS \"employee_id!\", e.employee_number AS \"employee_number!\",\n                  e.full_name AS \"employee_name!\",\n                  MIN(pr.period_year * 100 + pr.period_month)::INT AS \"earliest_later_period!\"\n           FROM payroll_items pi\n           JOIN payroll_runs pr ON pi.payroll_run_id = pr.id\n           JOIN employees e ON e.id = pi.employee_id\n           WHERE pi.employee_id = ANY($1)\n             AND pr.company_id = $2\n             AND pr.status::text IN ('processed', 'pending_approval', 'approved', 'paid')\n             AND (pr.period_year > $3 OR (pr.period_year = $3 AND pr.period_month > $4))\n           GROUP BY e.id, e.employee_number, e.full_name\n           ORDER BY e.employee_number",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "employee_id!",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "employee_number!",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "employee_name!",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "earliest_later_period!",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "UuidArray",
+        "Uuid",
+        "Int4",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "5914ddd6c4cd2c9e62984154d3a30456ee73d440628b6375c6e835b226fb2835"
+}

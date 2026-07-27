@@ -1,0 +1,82 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, company_id, name, start_time, end_time, grace_minutes, half_day_hours,\n                  timezone, is_default, created_at, updated_at\n           FROM company_work_schedules WHERE company_id = $1 ORDER BY id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "company_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "start_time",
+        "type_info": "Time"
+      },
+      {
+        "ordinal": 4,
+        "name": "end_time",
+        "type_info": "Time"
+      },
+      {
+        "ordinal": 5,
+        "name": "grace_minutes",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 6,
+        "name": "half_day_hours",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 7,
+        "name": "timezone",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 8,
+        "name": "is_default",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 9,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 10,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "b8e22f9521e558caf1003fb61b57f984e467d0e69bc4c1143e2227bdd0a19b68"
+}

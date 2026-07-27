@@ -421,7 +421,13 @@ pub(crate) struct BulkPayrollData {
     /// Individual staged entries behind `variable_earnings`/`variable_deductions`.
     pub(crate) entry_lines: HashMap<Uuid, Vec<PayslipSourceLine>>,
     pub(crate) variable_earnings: HashMap<Uuid, i64>,
+    /// `variable_earnings` narrowed to the rows flagged taxable, for the PCB base.
+    pub(crate) taxable_variable_earnings: HashMap<Uuid, i64>,
     pub(crate) variable_deductions: HashMap<Uuid, i64>,
+    /// Staged unpaid-leave deductions as `(amount, working_days)`. Already inside
+    /// `variable_deductions`; carried separately so the payslip can report them
+    /// under their own name instead of anonymously inside other deductions.
+    pub(crate) unpaid_leave: HashMap<Uuid, (i64, Decimal)>,
     pub(crate) attendance_ot_hours: HashMap<Uuid, f64>,
     pub(crate) approved_ot: HashMap<Uuid, Vec<(String, f64)>>,
     /// The individual claims this run will reimburse, not a per-employee sum.
@@ -437,13 +443,41 @@ pub(crate) struct BulkPayrollData {
     pub(crate) ot_settings: OvertimeSettings,
 }
 
+/// Round a money figure to whole sen, half away from zero.
+///
+/// The one rounding rule for every derived amount in the engine and in the
+/// approval paths that stage money for it. It was a closure inside
+/// `compute_payslip`, so the approval path rounded a different way (it did not
+/// round at all — it truncated, four times) and quoted an employee less than the
+/// run would pay them.
+pub(crate) fn round_sen(amount: Decimal) -> i64 {
+    use rust_decimal::RoundingStrategy;
+    use rust_decimal::prelude::ToPrimitive;
+
+    amount
+        .round_dp_with_strategy(0, RoundingStrategy::MidpointAwayFromZero)
+        .to_i64()
+        .unwrap_or(0)
+}
+
+/// One overtime figure: what it is paid at, and what it comes to.
+///
+/// `amount_sen` is derived from the UNROUNDED hourly rate. `rate_sen` exists
+/// only to be displayed and stored on `payroll_entries.rate`; deriving the
+/// amount from it instead is what made the approval quote diverge from the run.
+pub(crate) struct OvertimeRating {
+    pub(crate) rate_sen: i64,
+    pub(crate) amount_sen: i64,
+}
+
 /// Company overtime configuration, read once per run.
 ///
 /// The engine previously hardcoded 1.5/2.0/3.0 and `basic / 26 / 8` while the
-/// approval path read these same settings, so a company configured for (say) a
-/// 9-hour day or a 2.5x holiday rate had its attendance overtime paid at the
-/// wrong rate. Decimal throughout, per the repo's money rule — the old `f64`
-/// cast and double integer division truncated, always against the employee.
+/// approval path parsed the same settings as `i64`/`f64` and truncated at four
+/// separate points, so the amount quoted on approval was lower than the amount
+/// the run paid and an `effective_hours_per_day` of `"7.5"` was silently read as
+/// 8. Both paths now call `rate_overtime` below — that shared function, not a
+/// comment, is what makes the two agree.
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct OvertimeSettings {
     pub(crate) effective_hours_per_day: Decimal,
@@ -460,11 +494,62 @@ pub(crate) struct OvertimeSettings {
 }
 
 impl OvertimeSettings {
+    /// Employment Act multipliers, a 26-day month and an 8-hour day — what a
+    /// company that has configured nothing is rated on.
+    pub(crate) fn statutory_defaults() -> Self {
+        Self {
+            effective_hours_per_day: Decimal::from(8),
+            working_days_per_month: Decimal::from(26),
+            multiplier_normal: Decimal::new(15, 1),
+            multiplier_rest_day: Decimal::from(2),
+            multiplier_public_holiday: Decimal::from(3),
+            max_overtime_hours_per_day: Decimal::from(4),
+        }
+    }
+
     pub(crate) fn multiplier_for(&self, ot_type: &str) -> Decimal {
         match ot_type {
             "rest_day" => self.multiplier_rest_day,
             "public_holiday" => self.multiplier_public_holiday,
             _ => self.multiplier_normal,
+        }
+    }
+
+    /// The employee's ordinary hourly rate, unrounded.
+    ///
+    /// An explicit `hourly_rate` on the employee record wins; otherwise it is
+    /// derived from the basic salary and the company's divisors. Kept unrounded
+    /// so the multiplier and the hours apply to the exact figure and only the
+    /// final amount is rounded once.
+    ///
+    /// A zero divisor returns zero rather than dividing: `rust_decimal` panics on
+    /// division by zero, and while `settings_service` filters zeros out on read,
+    /// a guard here makes the panic unrepresentable instead of merely unreachable.
+    pub(crate) fn hourly_rate(&self, hourly_rate: Option<i64>, basic_salary: i64) -> Decimal {
+        if let Some(rate) = hourly_rate {
+            return Decimal::from(rate);
+        }
+        if self.working_days_per_month.is_zero() || self.effective_hours_per_day.is_zero() {
+            return Decimal::ZERO;
+        }
+        Decimal::from(basic_salary) / self.working_days_per_month / self.effective_hours_per_day
+    }
+
+    /// Rate one overtime claim. The single authority both the payroll engine and
+    /// overtime approval price from, so a quoted amount and a paid amount cannot
+    /// disagree.
+    pub(crate) fn rate_overtime(
+        &self,
+        hourly_rate: Option<i64>,
+        basic_salary: i64,
+        ot_type: &str,
+        hours: Decimal,
+    ) -> OvertimeRating {
+        let base = self.hourly_rate(hourly_rate, basic_salary);
+        let multiplier = self.multiplier_for(ot_type);
+        OvertimeRating {
+            rate_sen: round_sen(base * multiplier),
+            amount_sen: round_sen(base * multiplier * hours),
         }
     }
 }
@@ -530,6 +615,10 @@ impl PayslipLine {
 pub struct PayslipSourceLine {
     pub employee_id: Uuid,
     pub category: String,
+    /// What the stored breakdown line is labelled. Real for a staged entry;
+    /// derived from the category for a recurring allowance, which has no such
+    /// column of its own.
+    pub item_type: String,
     pub description: String,
     pub amount: i64,
     pub is_taxable: bool,
@@ -542,6 +631,28 @@ pub struct EmployeeCategoryTotal {
     pub employee_id: Uuid,
     pub category: String,
     pub total: i64,
+    /// `total` narrowed to the rows flagged taxable. Feeds the PCB base only —
+    /// `is_taxable` is an income-tax flag, and EPF/SOCSO/EIS have their own,
+    /// different statutory exclusion lists.
+    pub taxable: i64,
+}
+
+/// Staged unpaid-leave deduction for one employee: amount and working days.
+#[derive(Debug)]
+pub struct EmployeeUnpaidLeave {
+    pub employee_id: Uuid,
+    pub amount: i64,
+    pub days: Decimal,
+}
+
+/// An employee already paid by a run in a later period than the one being
+/// created, with the earliest such period as `YYYYMM`.
+#[derive(Debug)]
+pub struct LaterCommittedRun {
+    pub employee_id: Uuid,
+    pub employee_number: String,
+    pub employee_name: String,
+    pub earliest_later_period: i32,
 }
 
 #[derive(Debug)]

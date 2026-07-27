@@ -162,7 +162,120 @@ describe('DataTable client-side pagination', () => {
   });
 });
 
+describe('DataTable pagination after the data shrinks', () => {
+  it('shows the surviving rows instead of an empty page with no pager', async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<DataTable columns={columns} data={makeRows(30)} perPage={10} />);
+
+    await user.click(screen.getByRole('button', { name: '3' }));
+    expect(screen.getByText(/Showing 21–30 of 30/)).toBeInTheDocument();
+
+    // A status filter that leaves eight rows. Slicing [20,30) out of an
+    // eight-row array rendered "No data found" *and* unmounted the pager, so
+    // there was no control left to get back to the matching rows.
+    rerender(<DataTable columns={columns} data={makeRows(8)} perPage={10} />);
+
+    expect(bodyRows()).toHaveLength(8);
+    expect(screen.queryByText('No data found')).not.toBeInTheDocument();
+    // One page now, so the pager is legitimately gone — and the page state was
+    // reset, not merely clamped for the frame.
+    expect(screen.queryByText(/Showing/)).not.toBeInTheDocument();
+  });
+
+  it('clamps to the new last page rather than to the first', async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<DataTable columns={columns} data={makeRows(30)} perPage={10} />);
+
+    await user.click(screen.getByRole('button', { name: '3' }));
+
+    rerender(<DataTable columns={columns} data={makeRows(15)} perPage={10} />);
+
+    expect(screen.getByText(/Showing 11–15 of 15/)).toBeInTheDocument();
+    expect(bodyRows()).toHaveLength(5);
+    expect(within(table()).getByText('Employee 11')).toBeInTheDocument();
+  });
+
+  it('does not reset the page when only the array identity changes', async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<DataTable columns={columns} data={makeRows(30)} perPage={10} />);
+
+    await user.click(screen.getByRole('button', { name: '3' }));
+
+    // Every consumer passes an inline `data={query.data ?? []}`, so a refetch
+    // hands over a brand new array with the same contents. Keying the reset on
+    // the derived page count is what stops that pinning the table to page 1.
+    rerender(<DataTable columns={columns} data={makeRows(30)} perPage={10} />);
+
+    expect(screen.getByText(/Showing 21–30 of 30/)).toBeInTheDocument();
+  });
+});
+
 describe('DataTable server-side pagination', () => {
+  it('asks the parent for the last page once the server reports a smaller total', () => {
+    const onPageChange = vi.fn();
+    const { rerender } = render(
+      <DataTable
+        columns={columns}
+        data={makeRows(10)}
+        total={95}
+        page={10}
+        onPageChange={onPageChange}
+        perPage={10}
+      />,
+    );
+
+    expect(onPageChange).not.toHaveBeenCalled();
+
+    rerender(
+      <DataTable
+        columns={columns}
+        data={makeRows(5)}
+        total={25}
+        page={10}
+        onPageChange={onPageChange}
+        perPage={10}
+      />,
+    );
+
+    expect(onPageChange).toHaveBeenCalledTimes(1);
+    expect(onPageChange).toHaveBeenCalledWith(3);
+  });
+
+  it('leaves the parent alone while a page is still loading', () => {
+    const onPageChange = vi.fn();
+    render(
+      <DataTable
+        columns={columns}
+        data={[]}
+        total={25}
+        page={10}
+        onPageChange={onPageChange}
+        perPage={10}
+        isLoading
+      />,
+    );
+
+    expect(onPageChange).not.toHaveBeenCalled();
+  });
+
+  it('leaves the parent alone until the server has reported a total', () => {
+    const onPageChange = vi.fn();
+    render(
+      <DataTable
+        columns={columns}
+        data={makeRows(4)}
+        page={10}
+        onPageChange={onPageChange}
+        perPage={10}
+      />,
+    );
+
+    // `totalItems` falls back to `data.length` here, which would otherwise clamp
+    // the parent to page 1 on every in-flight refetch.
+    expect(onPageChange).not.toHaveBeenCalled();
+  });
+
+
   it('renders the supplied page verbatim and delegates page changes', async () => {
     const user = userEvent.setup();
     const onPageChange = vi.fn();

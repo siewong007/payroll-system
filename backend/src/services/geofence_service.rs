@@ -114,6 +114,12 @@ pub async fn update_location(
     validate_coordinates(lat, lng)?;
     validate_radius(radius)?;
 
+    // Only when the edit actually deactivates — renaming an already-inactive
+    // row must not trip the guard.
+    if existing.is_active && !active {
+        ensure_not_the_last_active_location(pool, company_id, location_id).await?;
+    }
+
     let loc = company_locations::update(
         pool,
         location_id,
@@ -154,6 +160,12 @@ pub async fn delete_location(
         .await?
         .ok_or_else(|| AppError::NotFound("Location not found".into()))?;
 
+    // Removing an already-inactive row cannot empty the active list, so it is
+    // never the operation that arms the fail-closed path.
+    if existing.is_active {
+        ensure_not_the_last_active_location(pool, company_id, location_id).await?;
+    }
+
     let rows = company_locations::delete(pool, location_id, company_id).await?;
     if rows == 0 {
         return Err(AppError::NotFound("Location not found".into()));
@@ -176,6 +188,35 @@ pub async fn delete_location(
     Ok(())
 }
 
+/// Refuse an edit that would leave an armed geofence with nothing to evaluate
+/// against. Conflict, not BadRequest: the request is well-formed, it is the
+/// current state that forbids it.
+///
+/// Note the asymmetry this creates, which is what keeps a fail-closed geofence
+/// from becoming a lockout incident: setting the mode back to 'none' is never
+/// blocked, so an admin can always get *out*; getting *in* requires having
+/// locations in the first place.
+///
+/// Only `enforce` is guarded. `warn` records the check-in either way and merely
+/// flags it, so an empty location list there is noisy rather than unsafe — and
+/// blocking a tidy-up an admin is entitled to make would be friction bought
+/// with nothing. The evaluation path still fails closed for both modes.
+async fn ensure_not_the_last_active_location(
+    pool: &PgPool,
+    company_id: Uuid,
+    location_id: Uuid,
+) -> AppResult<()> {
+    if get_geofence_mode(pool, company_id).await? != "enforce" {
+        return Ok(());
+    }
+    if company_locations::count_active_excluding(pool, company_id, Some(location_id)).await? == 0 {
+        return Err(AppError::Conflict(
+            "This is the only active office location and the geofence is enforcing check-ins against it. Add another location, or set the geofence mode to 'none' or 'warn', before removing this one.".into(),
+        ));
+    }
+    Ok(())
+}
+
 // ─── Geofence Mode ───
 
 pub async fn get_geofence_mode(pool: &PgPool, company_id: Uuid) -> AppResult<String> {
@@ -194,6 +235,19 @@ pub async fn set_geofence_mode(
         return Err(AppError::BadRequest(
             "Geofence mode must be 'none', 'warn', or 'enforce'".into(),
         ));
+    }
+
+    // This is the entry that used to let an admin arm enforcement against an
+    // empty location list in one click — after which every check-in with
+    // coordinates was accepted and recorded as inside a fence that did not
+    // exist, while every GPS-less one was refused.
+    if mode != "none" {
+        let active = company_locations::count_active_excluding(pool, company_id, None).await?;
+        if active == 0 {
+            return Err(AppError::Conflict(format!(
+                "Add at least one active office location before setting the geofence mode to '{mode}'."
+            )));
+        }
     }
 
     let old_mode = get_geofence_mode(pool, company_id).await?;
@@ -219,23 +273,35 @@ pub async fn set_geofence_mode(
 
 // ─── Geofence Check ───
 
+/// Outcome of evaluating a point against a company's active locations.
+///
+/// `Unconfigured` is deliberately distinct from an evaluated miss. With zero
+/// active locations there is no fence to be inside or outside of, and the two
+/// callers want different behaviour: check-in must refuse (or flag), check-out
+/// must never refuse. Collapsing both into `is_within: true` is what let an
+/// employee check in from anywhere on earth and have the row recorded as
+/// *inside* the fence, while an on-site employee whose browser denied GPS was
+/// hard-rejected by the same request handler.
+///
+/// Lives here rather than in `models/` because it is service control flow, not
+/// a wire shape — `GeofenceCheckResult` is internal too, with no client mirror.
+pub enum GeofenceEvaluation {
+    /// The company has no active locations; the fence could not be evaluated.
+    Unconfigured,
+    Evaluated(GeofenceCheckResult),
+}
+
 /// Check if a lat/lng point is within any of the company's active locations.
-/// Returns the check result with nearest location info.
 pub async fn check_geofence(
     pool: &PgPool,
     company_id: Uuid,
     lat: f64,
     lng: f64,
-) -> AppResult<GeofenceCheckResult> {
+) -> AppResult<GeofenceEvaluation> {
     let locations = company_locations::list_active(pool, company_id).await?;
 
     if locations.is_empty() {
-        // No locations configured → treat as within
-        return Ok(GeofenceCheckResult {
-            is_within: true,
-            nearest_location: None,
-            distance_meters: None,
-        });
+        return Ok(GeofenceEvaluation::Unconfigured);
     }
 
     let mut nearest_name = String::new();
@@ -253,11 +319,22 @@ pub async fn check_geofence(
         }
     }
 
-    Ok(GeofenceCheckResult {
+    Ok(GeofenceEvaluation::Evaluated(GeofenceCheckResult {
         is_within,
         nearest_location: Some(nearest_name),
         distance_meters: Some(nearest_dist.round()),
-    })
+    }))
+}
+
+/// A geofence mode is armed but the company has no active location to evaluate
+/// against. An operator must see this: it means every enforced check-in is now
+/// being refused for a configuration reason, not an employee one.
+fn warn_unconfigured(company_id: Uuid, mode: &str) {
+    tracing::error!(
+        company_id = %company_id,
+        mode,
+        "geofence is armed but no active company locations are configured"
+    );
 }
 
 /// Evaluate the geofence for a check-out without ever rejecting: returns
@@ -280,8 +357,16 @@ pub async fn flag_geofence_for_checkout(
         (Some(lat), Some(lng)) => (lat, lng),
         _ => return Ok(true),
     };
-    let result = check_geofence(pool, company_id, lat, lng).await?;
-    Ok(!result.is_within)
+    match check_geofence(pool, company_id, lat, lng).await? {
+        // Flagged for review, never refused — that is the whole contract of
+        // this function, and it is what keeps the fail-closed check-in change
+        // from ever stranding somebody in an open session.
+        GeofenceEvaluation::Unconfigured => {
+            warn_unconfigured(company_id, &mode);
+            Ok(true)
+        }
+        GeofenceEvaluation::Evaluated(result) => Ok(!result.is_within),
+    }
 }
 
 /// Radius bounds shared by create and update. Extracted so both paths — and
@@ -323,7 +408,22 @@ pub async fn validate_geofence(
         }
     };
 
-    let result = check_geofence(pool, company_id, lat, lng).await?;
+    let result = match check_geofence(pool, company_id, lat, lng).await? {
+        GeofenceEvaluation::Evaluated(result) => result,
+        // Fail closed: never record `is_outside_geofence = false` for a fence
+        // that was never evaluated. The message is deliberately *not* the
+        // "you are outside all approved office locations" one — that would send
+        // an employee hunting for an office they are already standing in.
+        GeofenceEvaluation::Unconfigured => {
+            warn_unconfigured(company_id, &mode);
+            if mode == "enforce" {
+                return Err(AppError::BadRequest(
+                    "Geofence enforcement is on but no approved office locations are configured. Ask an administrator.".into(),
+                ));
+            }
+            return Ok(true); // warn mode — flagged for review
+        }
+    };
 
     if !result.is_within {
         if mode == "enforce" {

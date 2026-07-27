@@ -311,12 +311,19 @@ pub async fn summary(
 }
 
 /// Rows for CSV export (joined with employee details), with optional filters.
-/// The service guarantees a bounded date range before calling this.
+///
+/// The service guarantees a bounded date range before calling this and passes
+/// its row ceiling as `limit`. Deliberately `LIMIT limit + 1`: the caller reads
+/// the extra row as "there was more" and fails the export, rather than handing
+/// an admin a truncated CSV indistinguishable from a complete one. `, ar.id`
+/// makes that truncation deterministic — `check_in_at` alone is not unique, so
+/// two identical exports could otherwise drop different rows.
 pub async fn export_rows(
     pool: &PgPool,
     company_id: Uuid,
     tz: &str,
     q: &AttendanceExportQuery,
+    limit: i64,
 ) -> AppResult<Vec<AttendanceRecordWithEmployee>> {
     let list_filters = AttendanceListQuery {
         employee_id: q.employee_id,
@@ -339,7 +346,8 @@ pub async fn export_rows(
     );
     qb.push_bind(company_id);
     push_list_filters(&mut qb, tz, &list_filters);
-    qb.push(" ORDER BY ar.check_in_at DESC");
+    qb.push(" ORDER BY ar.check_in_at DESC, ar.id LIMIT ");
+    qb.push_bind(limit.saturating_add(1));
 
     Ok(qb
         .build_query_as::<AttendanceRecordWithEmployee>()

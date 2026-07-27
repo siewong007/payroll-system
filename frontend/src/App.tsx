@@ -1,10 +1,11 @@
 import { Suspense, lazy, type ComponentType, type ReactNode } from 'react';
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MutationCache, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from '@/context/AuthProvider';
 import { useAuth } from '@/context/AuthContext';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { PortalLayout } from '@/components/layout/PortalLayout';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { ForbiddenPage, NotFoundPage } from '@/pages/errors/ErrorPage';
 import { SUPER_ADMIN_ROLES, hasAnyRole } from '@/lib/roles';
 import { userCanAny } from '@/lib/usePermissions';
@@ -111,223 +112,250 @@ const queryClient = new QueryClient({
       refetchOnWindowFocus: false,
     },
   },
+  // Safety net only. A mutation with no `onError` used to fail in complete
+  // silence at every level, so a rejected bulk action looked identical to a
+  // successful one. This deliberately renders nothing — there is no global
+  // notification surface in this app, and adding one is a separate change —
+  // but it guarantees the failure reaches the console. Every user-triggered
+  // mutation should still carry its own `onError`.
+  mutationCache: new MutationCache({
+    onError: (error, _variables, _context, mutation) => {
+      if (!mutation.options.onError) {
+        console.error('Unhandled mutation error', error);
+      }
+    },
+  }),
 });
+
+/**
+ * Page-level boundary, keyed on the path.
+ *
+ * Remounting on navigation is the whole point: without the key a single crashed
+ * route would leave the user staring at the fallback for the rest of the
+ * session, because the boundary has no reason to reset itself.
+ */
+function RouteErrorBoundary({ children }: { children: ReactNode }) {
+  const location = useLocation();
+  return <ErrorBoundary key={location.pathname}>{children}</ErrorBoundary>;
+}
 
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <AuthProvider>
-          <Suspense fallback={<RouteFallback />}>
-            <Routes>
-              <Route path="/login" element={<Login />} />
-              <Route path="/oauth2/callback" element={<OAuth2Callback />} />
-              <Route path="/forgot-password" element={<ForgotPassword />} />
-              <Route path="/reset-password" element={<ResetPassword />} />
-              <Route path="/change-password" element={<ChangePassword />} />
-              {/* The kiosk display is /kiosk/:kioskKey below — it needs no user
-                  session, so a wall-mounted tablet never falls back to a login
-                  screen. The old session-backed /attendance/kiosk is gone. */}
-              <Route path="/attendance/scan" element={<AttendanceScanPage />} />
-              <Route path="/kiosk/:kioskKey" element={<AttendanceKioskPublic />} />
-              <Route path="/403" element={<ForbiddenPage />} />
+          <RouteErrorBoundary>
+            <Suspense fallback={<RouteFallback />}>
+              <Routes>
+                <Route path="/login" element={<Login />} />
+                <Route path="/oauth2/callback" element={<OAuth2Callback />} />
+                <Route path="/forgot-password" element={<ForgotPassword />} />
+                <Route path="/reset-password" element={<ResetPassword />} />
+                <Route path="/change-password" element={<ChangePassword />} />
+                {/* The kiosk display is /kiosk/:kioskKey below — it needs no user
+                    session, so a wall-mounted tablet never falls back to a login
+                    screen. The old session-backed /attendance/kiosk is gone. */}
+                <Route path="/attendance/scan" element={<AttendanceScanPage />} />
+                <Route path="/kiosk/:kioskKey" element={<AttendanceKioskPublic />} />
+                <Route path="/403" element={<ForbiddenPage />} />
 
-              <Route element={<AppLayout />}>
-                <Route path="/" element={<HomeRedirect />} />
-                <Route path="/company" element={<CompanyProfile />} />
-                <Route
-                  path="/employees"
-                  element={(
-                    <PermissionGuard requires="view_employees">
-                      <EmployeeList />
-                    </PermissionGuard>
-                  )}
-                />
-                <Route
-                  path="/employees/new"
-                  element={(
-                    <PermissionGuard requires="manage_employees">
-                      <EmployeeCreate />
-                    </PermissionGuard>
-                  )}
-                />
-                <Route
-                  path="/employees/import"
-                  element={(
-                    <PermissionGuard requires="import_employees">
-                      <EmployeeImport />
-                    </PermissionGuard>
-                  )}
-                />
-                <Route
-                  path="/employees/:id"
-                  element={(
-                    <PermissionGuard requires="view_employees">
-                      <EmployeeDetail />
-                    </PermissionGuard>
-                  )}
-                />
-                <Route
-                  path="/payroll"
-                  element={(
-                    <PermissionGuard requires="view_payroll">
-                      <PayrollList />
-                    </PermissionGuard>
-                  )}
-                />
-                <Route
-                  path="/payroll/process"
-                  element={(
-                    <PermissionGuard requires="manage_payroll_draft">
-                      <PayrollProcess />
-                    </PermissionGuard>
-                  )}
-                />
-                <Route
-                  path="/payroll/:id"
-                  element={(
-                    <PermissionGuard requires="view_payroll">
-                      <PayrollDetail />
-                    </PermissionGuard>
-                  )}
-                />
-                <Route
-                  path="/documents"
-                  element={(
-                    <PermissionGuard requires="view_documents">
-                      <DocumentList />
-                    </PermissionGuard>
-                  )}
-                />
-                <Route
-                  path="/calendar"
-                  element={(
-                    <PermissionGuard requires="view_calendar">
-                      <CalendarPage />
-                    </PermissionGuard>
-                  )}
-                />
-                <Route
-                  path="/teams"
-                  element={(
-                    <PermissionGuard requires="view_teams">
-                      <TeamsPage />
-                    </PermissionGuard>
-                  )}
-                />
-                <Route
-                  path="/approvals"
-                  element={(
-                    <PermissionGuard requires="view_approvals">
-                      <Approvals />
-                    </PermissionGuard>
-                  )}
-                />
-                <Route
-                  path="/reports"
-                  element={(
-                    <PermissionGuard requires="view_reports">
-                      <Reports />
-                    </PermissionGuard>
-                  )}
-                />
-                <Route
-                  path="/letters"
-                  element={(
-                    <PermissionGuard requires="view_email_logs">
-                      <LettersPage />
-                    </PermissionGuard>
-                  )}
-                />
-                <Route
-                  path="/settings"
-                  element={(
-                    <PermissionGuard requires="manage_company_settings">
-                      <SettingsPage />
-                    </PermissionGuard>
-                  )}
-                />
-                <Route
-                  path="/companies"
-                  element={(
-                    <PermissionGuard requires="manage_companies">
-                      <CompanyManagement />
-                    </PermissionGuard>
-                  )}
-                />
-                <Route
-                  path="/users"
-                  element={(
-                    <PermissionGuard requires="manage_users">
-                      <UserManagement />
-                    </PermissionGuard>
-                  )}
-                />
-                <Route
-                  path="/roles"
-                  element={(
-                    <PermissionGuard requires="manage_users">
-                      <RoleManagement />
-                    </PermissionGuard>
-                  )}
-                />
-                <Route
-                  path="/user-groups"
-                  element={(
-                    <PermissionGuard requires="manage_users">
-                      <UserGroups />
-                    </PermissionGuard>
-                  )}
-                />
-                <Route
-                  path="/backup"
-                  element={(
-                    <PermissionGuard requires="manage_backups">
-                      <BackupPage />
-                    </PermissionGuard>
-                  )}
-                />
-                <Route
-                  path="/audit-trail"
-                  element={(
-                    <PermissionGuard requires="view_audit_log">
-                      <AuditTrailPage />
-                    </PermissionGuard>
-                  )}
-                />
-                <Route
-                  path="/attendance"
-                  element={(
-                    <PermissionGuard requires="view_attendance">
-                      <AttendancePage />
-                    </PermissionGuard>
-                  )}
-                />
-                <Route
-                  path="/admin/attendance-settings"
-                  element={(
-                    <PermissionGuard requires="manage_platform_settings">
-                      <AttendanceSettings />
-                    </PermissionGuard>
-                  )}
-                />
-              </Route>
+                <Route element={<AppLayout />}>
+                  <Route path="/" element={<HomeRedirect />} />
+                  <Route path="/company" element={<CompanyProfile />} />
+                  <Route
+                    path="/employees"
+                    element={(
+                      <PermissionGuard requires="view_employees">
+                        <EmployeeList />
+                      </PermissionGuard>
+                    )}
+                  />
+                  <Route
+                    path="/employees/new"
+                    element={(
+                      <PermissionGuard requires="manage_employees">
+                        <EmployeeCreate />
+                      </PermissionGuard>
+                    )}
+                  />
+                  <Route
+                    path="/employees/import"
+                    element={(
+                      <PermissionGuard requires="import_employees">
+                        <EmployeeImport />
+                      </PermissionGuard>
+                    )}
+                  />
+                  <Route
+                    path="/employees/:id"
+                    element={(
+                      <PermissionGuard requires="view_employees">
+                        <EmployeeDetail />
+                      </PermissionGuard>
+                    )}
+                  />
+                  <Route
+                    path="/payroll"
+                    element={(
+                      <PermissionGuard requires="view_payroll">
+                        <PayrollList />
+                      </PermissionGuard>
+                    )}
+                  />
+                  <Route
+                    path="/payroll/process"
+                    element={(
+                      <PermissionGuard requires="manage_payroll_draft">
+                        <PayrollProcess />
+                      </PermissionGuard>
+                    )}
+                  />
+                  <Route
+                    path="/payroll/:id"
+                    element={(
+                      <PermissionGuard requires="view_payroll">
+                        <PayrollDetail />
+                      </PermissionGuard>
+                    )}
+                  />
+                  <Route
+                    path="/documents"
+                    element={(
+                      <PermissionGuard requires="view_documents">
+                        <DocumentList />
+                      </PermissionGuard>
+                    )}
+                  />
+                  <Route
+                    path="/calendar"
+                    element={(
+                      <PermissionGuard requires="view_calendar">
+                        <CalendarPage />
+                      </PermissionGuard>
+                    )}
+                  />
+                  <Route
+                    path="/teams"
+                    element={(
+                      <PermissionGuard requires="view_teams">
+                        <TeamsPage />
+                      </PermissionGuard>
+                    )}
+                  />
+                  <Route
+                    path="/approvals"
+                    element={(
+                      <PermissionGuard requires="view_approvals">
+                        <Approvals />
+                      </PermissionGuard>
+                    )}
+                  />
+                  <Route
+                    path="/reports"
+                    element={(
+                      <PermissionGuard requires="view_reports">
+                        <Reports />
+                      </PermissionGuard>
+                    )}
+                  />
+                  <Route
+                    path="/letters"
+                    element={(
+                      <PermissionGuard requires="view_email_logs">
+                        <LettersPage />
+                      </PermissionGuard>
+                    )}
+                  />
+                  <Route
+                    path="/settings"
+                    element={(
+                      <PermissionGuard requires="manage_company_settings">
+                        <SettingsPage />
+                      </PermissionGuard>
+                    )}
+                  />
+                  <Route
+                    path="/companies"
+                    element={(
+                      <PermissionGuard requires="manage_companies">
+                        <CompanyManagement />
+                      </PermissionGuard>
+                    )}
+                  />
+                  <Route
+                    path="/users"
+                    element={(
+                      <PermissionGuard requires="manage_users">
+                        <UserManagement />
+                      </PermissionGuard>
+                    )}
+                  />
+                  <Route
+                    path="/roles"
+                    element={(
+                      <PermissionGuard requires="manage_users">
+                        <RoleManagement />
+                      </PermissionGuard>
+                    )}
+                  />
+                  <Route
+                    path="/user-groups"
+                    element={(
+                      <PermissionGuard requires="manage_users">
+                        <UserGroups />
+                      </PermissionGuard>
+                    )}
+                  />
+                  <Route
+                    path="/backup"
+                    element={(
+                      <PermissionGuard requires="manage_backups">
+                        <BackupPage />
+                      </PermissionGuard>
+                    )}
+                  />
+                  <Route
+                    path="/audit-trail"
+                    element={(
+                      <PermissionGuard requires="view_audit_log">
+                        <AuditTrailPage />
+                      </PermissionGuard>
+                    )}
+                  />
+                  <Route
+                    path="/attendance"
+                    element={(
+                      <PermissionGuard requires="view_attendance">
+                        <AttendancePage />
+                      </PermissionGuard>
+                    )}
+                  />
+                  <Route
+                    path="/admin/attendance-settings"
+                    element={(
+                      <PermissionGuard requires="manage_platform_settings">
+                        <AttendanceSettings />
+                      </PermissionGuard>
+                    )}
+                  />
+                </Route>
 
-              <Route element={<PortalLayout />}>
-                <Route path="/portal" element={<Navigate to="/portal/profile" replace />} />
-                <Route path="/portal/profile" element={<MyProfile />} />
-                <Route path="/portal/payslips" element={<MyPayslips />} />
-                <Route path="/portal/leave" element={<Leave />} />
-                <Route path="/portal/claims" element={<Claims />} />
-                <Route path="/portal/overtime" element={<Overtime />} />
-                <Route path="/portal/team-calendar" element={<TeamCalendar />} />
-                <Route path="/portal/notifications" element={<Notifications />} />
-                <Route path="/portal/attendance" element={<MyAttendance />} />
-              </Route>
+                <Route element={<PortalLayout />}>
+                  <Route path="/portal" element={<Navigate to="/portal/profile" replace />} />
+                  <Route path="/portal/profile" element={<MyProfile />} />
+                  <Route path="/portal/payslips" element={<MyPayslips />} />
+                  <Route path="/portal/leave" element={<Leave />} />
+                  <Route path="/portal/claims" element={<Claims />} />
+                  <Route path="/portal/overtime" element={<Overtime />} />
+                  <Route path="/portal/team-calendar" element={<TeamCalendar />} />
+                  <Route path="/portal/notifications" element={<Notifications />} />
+                  <Route path="/portal/attendance" element={<MyAttendance />} />
+                </Route>
 
-              <Route path="*" element={<NotFoundPage />} />
-            </Routes>
-          </Suspense>
+                <Route path="*" element={<NotFoundPage />} />
+              </Routes>
+            </Suspense>
+          </RouteErrorBoundary>
         </AuthProvider>
       </BrowserRouter>
     </QueryClientProvider>

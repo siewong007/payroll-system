@@ -1,6 +1,8 @@
+use lettre::address::AddressError;
+use lettre::message::Mailbox;
 use lettre::message::header::ContentType;
 use lettre::transport::smtp::authentication::Credentials;
-use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
+use lettre::{Address, AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -96,6 +98,52 @@ pub fn substitute_variables(
 
 // ── Send Email via SMTP ────────────────────────────────────────────────
 
+/// A `Mailbox` built from the display name and the address separately.
+///
+/// Deliberately not `format!("{name} <{email}>").parse()`, which made the
+/// display name part of the *address* grammar: an admin-entered recipient name
+/// of `Foo <bar>` — or one carrying a comma or a newline — failed to parse, and
+/// on the old ordering that failure orphaned an `email_logs` row at `pending`.
+/// `Mailbox` quotes the name itself, so the header-injection shape stops being
+/// expressible as a side effect.
+fn mailbox(name: &str, email: &str) -> Result<Mailbox, AddressError> {
+    let address: Address = email.parse()?;
+    let display_name = if name.trim().is_empty() {
+        None
+    } else {
+        Some(name.to_string())
+    };
+    Ok(Mailbox::new(display_name, address))
+}
+
+/// The configured SMTP relay.
+///
+/// Fallible, so it is built before anything is written to `email_logs` rather
+/// than between the insert and the send. Only called once `smtp_enabled()` has
+/// answered true, but it reads the config defensively so a half-configured
+/// deployment produces a 500 with a message rather than a panic.
+fn build_transport(config: &AppConfig) -> AppResult<AsyncSmtpTransport<Tokio1Executor>> {
+    let smtp_host = config.smtp_host.as_deref().unwrap_or_default();
+    let mut builder = AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(smtp_host)
+        .map_err(|e| AppError::Internal(format!("SMTP connection error: {}", e)))?
+        .port(config.smtp_port.unwrap_or(587));
+
+    if let (Some(user), Some(pass)) = (&config.smtp_username, &config.smtp_password) {
+        builder = builder.credentials(Credentials::new(user.clone(), pass.clone()));
+    }
+
+    Ok(builder.build())
+}
+
+/// The `From:` mailbox, from config. An error here is a deployment fault, not
+/// the caller's, hence `Internal` rather than `Validation`.
+fn from_mailbox(config: &AppConfig) -> AppResult<Mailbox> {
+    let from_name = config.smtp_from_name.as_deref().unwrap_or("PayrollMY");
+    let from_email = config.smtp_from_email.as_deref().unwrap_or_default();
+    mailbox(from_name, from_email)
+        .map_err(|e| AppError::Internal(format!("Invalid from address: {}", e)))
+}
+
 /// Send a letter and record it, storing the message verbatim.
 #[allow(clippy::too_many_arguments)]
 pub async fn send_email(
@@ -150,7 +198,33 @@ pub async fn send_email_with_stored_body(
     stored_body_html: &str,
     created_by: Uuid,
 ) -> AppResult<EmailLog> {
-    // Create log entry first as pending
+    // Validated before anything is written. A recipient address the mail
+    // library cannot parse used to be discovered *after* `insert_pending`, on
+    // an error path that never marked the row terminal — so the only trace a
+    // mistyped address left was a log row stuck at `pending` for ever. There is
+    // no backend validation anywhere else on the letter path: the frontend's
+    // `includes('@')` was it.
+    let to = mailbox(recipient_name, recipient_email).map_err(|_| {
+        AppError::Validation(format!("{recipient_email} is not a valid email address"))
+    })?;
+
+    // Every remaining fallible step happens before the insert, so that nothing
+    // between the row appearing and its terminal status can fail. That ordering
+    // is the fix: four `Err` paths used to sit inside that gap.
+    let prepared = if config.smtp_enabled() {
+        let email = Message::builder()
+            .from(from_mailbox(config)?)
+            .to(to)
+            .subject(subject)
+            .header(ContentType::TEXT_HTML)
+            .body(body_html.to_string())
+            .map_err(|e| AppError::Internal(format!("Failed to build email: {}", e)))?;
+
+        Some((email, build_transport(config)?))
+    } else {
+        None
+    };
+
     let log = email_logs::insert_pending(
         pool,
         company_id,
@@ -165,53 +239,14 @@ pub async fn send_email_with_stored_body(
     )
     .await?;
 
-    if !config.smtp_enabled() {
-        // Mark as failed if SMTP not configured
+    // SMTP disabled is the documented production default, and the letter is
+    // still recorded — it just never becomes `sent`.
+    let Some((email, transport)) = prepared else {
         let log = email_logs::mark_failed_not_configured(pool, log.id).await?;
         tracing::warn!("SMTP not configured, email logged but not sent: {}", log.id);
         return Ok(log);
-    }
-
-    let smtp_host = config.smtp_host.as_deref().unwrap();
-    let from_email = config.smtp_from_email.as_deref().unwrap();
-    let from_name = config.smtp_from_name.as_deref().unwrap_or("PayrollMY");
-
-    // Build email message
-    let from_addr = format!("{} <{}>", from_name, from_email);
-    let to_addr = if recipient_name.is_empty() {
-        recipient_email.to_string()
-    } else {
-        format!("{} <{}>", recipient_name, recipient_email)
     };
 
-    let email = Message::builder()
-        .from(
-            from_addr
-                .parse()
-                .map_err(|e| AppError::Internal(format!("Invalid from address: {}", e)))?,
-        )
-        .to(to_addr
-            .parse()
-            .map_err(|e| AppError::Internal(format!("Invalid to address: {}", e)))?)
-        .subject(subject)
-        .header(ContentType::TEXT_HTML)
-        .body(body_html.to_string())
-        .map_err(|e| AppError::Internal(format!("Failed to build email: {}", e)))?;
-
-    // Build SMTP transport
-    let port = config.smtp_port.unwrap_or(587);
-    let mut transport_builder = AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(smtp_host)
-        .map_err(|e| AppError::Internal(format!("SMTP connection error: {}", e)))?
-        .port(port);
-
-    if let (Some(user), Some(pass)) = (&config.smtp_username, &config.smtp_password) {
-        transport_builder =
-            transport_builder.credentials(Credentials::new(user.clone(), pass.clone()));
-    }
-
-    let transport = transport_builder.build();
-
-    // Send
     match transport.send(email).await {
         Ok(_) => {
             let log = email_logs::mark_sent(pool, log.id).await?;
@@ -244,42 +279,19 @@ pub async fn send_system_email(
         return Ok(());
     }
 
-    let smtp_host = config.smtp_host.as_deref().unwrap();
-    let from_email = config.smtp_from_email.as_deref().unwrap();
-    let from_name = config.smtp_from_name.as_deref().unwrap_or("PayrollMY");
-
-    let from_addr = format!("{} <{}>", from_name, from_email);
-    let to_addr = if recipient_name.is_empty() {
-        recipient_email.to_string()
-    } else {
-        format!("{} <{}>", recipient_name, recipient_email)
-    };
+    let to = mailbox(recipient_name, recipient_email).map_err(|_| {
+        AppError::Validation(format!("{recipient_email} is not a valid email address"))
+    })?;
 
     let email = Message::builder()
-        .from(
-            from_addr
-                .parse()
-                .map_err(|e| AppError::Internal(format!("Invalid from address: {}", e)))?,
-        )
-        .to(to_addr
-            .parse()
-            .map_err(|e| AppError::Internal(format!("Invalid to address: {}", e)))?)
+        .from(from_mailbox(config)?)
+        .to(to)
         .subject(subject)
         .header(ContentType::TEXT_HTML)
         .body(body_html.to_string())
         .map_err(|e| AppError::Internal(format!("Failed to build email: {}", e)))?;
 
-    let port = config.smtp_port.unwrap_or(587);
-    let mut transport_builder = AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(smtp_host)
-        .map_err(|e| AppError::Internal(format!("SMTP connection error: {}", e)))?
-        .port(port);
-
-    if let (Some(user), Some(pass)) = (&config.smtp_username, &config.smtp_password) {
-        transport_builder =
-            transport_builder.credentials(Credentials::new(user.clone(), pass.clone()));
-    }
-
-    let transport = transport_builder.build();
+    let transport = build_transport(config)?;
 
     transport
         .send(email)

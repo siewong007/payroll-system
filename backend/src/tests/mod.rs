@@ -1,6 +1,7 @@
 mod approval_flow_tests;
 mod attendance_tests;
 mod audit_tests;
+mod backup_tests;
 mod email_privacy_tests;
 mod employee_lifecycle_tests;
 mod extractor_tests;

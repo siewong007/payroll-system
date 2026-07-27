@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM company_work_schedules WHERE company_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5cb0e9d9b19ad2762a375ae2ce8cbdcc61fe5e888179e3271ee7bcd570043c64"
+}

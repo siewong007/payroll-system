@@ -62,6 +62,11 @@ pub struct PcbBracketLookup {
 pub struct EpfContribution {
     pub employee: i64,
     pub employer: i64,
+    /// The Third-Schedule part these figures came from — derived from age and
+    /// residency unless the employee record carries an explicit override.
+    /// Returned rather than assumed so a run can record what it actually applied
+    /// and the preview can flag an override that disagrees with the derivation.
+    pub category: String,
 }
 
 #[derive(Debug, Clone)]

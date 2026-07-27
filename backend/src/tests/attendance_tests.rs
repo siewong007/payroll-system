@@ -3,11 +3,14 @@ use rust_decimal::Decimal;
 
 use crate::core::error::AppError;
 use crate::models::attendance::{
-    AttendanceSummaryQuery, ManualAttendanceRequest, UpdateAttendanceRecordRequest,
+    AttendanceExportQuery, AttendanceSummaryQuery, ManualAttendanceRequest,
+    UpdateAttendanceRecordRequest,
 };
+use crate::models::company_location::{CreateLocationRequest, UpdateLocationRequest};
 use crate::models::work_schedule::{CreateWorkScheduleRequest, UpdateWorkScheduleRequest};
+use crate::repositories::attendance_records;
 use crate::repositories::reads::attendance as attendance_reads;
-use crate::services::{attendance_service, work_schedule_service};
+use crate::services::{attendance_service, geofence_service, work_schedule_service};
 use crate::tests::support::{
     seed_company, seed_company_and_employee, seed_employee, seed_user, skip_if_no_db,
 };
@@ -722,8 +725,10 @@ async fn the_overtime_ceiling_is_read_from_company_settings() {
 }
 
 /// The HR correction path is the designated remedy for an unrated record, so it
-/// is deliberately uncapped — capping it would leave an operator with no way to
-/// record a genuine long shift.
+/// is not subject to the per-day overtime ceiling — capping it there would leave
+/// an operator with no way to record a genuine long shift. The only bound is the
+/// 24-hour session span (see `a_sixty_day_correction_is_refused_before_the_write`),
+/// and this 23-hour shift is deliberately just inside it.
 #[tokio::test]
 async fn an_hr_correction_can_still_record_long_overtime() {
     let Some(pool) = skip_if_no_db().await else {
@@ -1169,4 +1174,713 @@ async fn auto_absent_targets_are_ordered_by_company_id() {
             "every seeded company must appear, in id order"
         );
     }
+}
+
+// ─── Auto-absent placeholder uniqueness (migration 1019) ───
+
+/// Insert one auto-absent-shaped row directly, bypassing `mark_absent`, so the
+/// index predicate itself can be probed. `notes` is the discriminator: only the
+/// exact marker string is covered by the partial unique index.
+async fn insert_placeholder_row(
+    pool: &sqlx::PgPool,
+    company_id: uuid::Uuid,
+    employee_id: uuid::Uuid,
+    at: chrono::DateTime<chrono::Utc>,
+    notes: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"INSERT INTO attendance_records
+           (company_id, employee_id, check_in_at, check_out_at, method, status, notes)
+           VALUES ($1, $2, $3, $3, 'manual', 'absent', $4)"#,
+    )
+    .bind(company_id)
+    .bind(employee_id)
+    .bind(at)
+    .bind(notes)
+    .execute(pool)
+    .await
+    .map(|_| ())
+}
+
+/// The defect: two simultaneous runs both passed the `NOT EXISTS` under READ
+/// COMMITTED and both inserted a full set of placeholders. The daily timer
+/// racing the startup pass, or a double-clicked admin backfill, is enough.
+#[tokio::test]
+async fn concurrent_absent_runs_insert_one_placeholder_not_two() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let (company_id, employee_id) = seed_company_and_employee(&pool).await;
+    seed_all_working_days(&pool, company_id).await;
+
+    let target = NaiveDate::from_ymd_opt(2026, 6, 17).unwrap();
+    let (first, second) = tokio::join!(
+        attendance_records::mark_absent(&pool, KL, target, Some(company_id)),
+        attendance_records::mark_absent(&pool, KL, target, Some(company_id)),
+    );
+    let inserted = first.expect("first run") + second.expect("second run");
+
+    let rows: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM attendance_records WHERE employee_id = $1 AND status = 'absent'",
+    )
+    .bind(employee_id)
+    .fetch_one(&pool)
+    .await
+    .expect("count placeholders");
+
+    assert_eq!(rows, 1, "the day must carry exactly one placeholder");
+    assert_eq!(
+        inserted, 1,
+        "the reported count must be genuine inserts, not double-counted"
+    );
+}
+
+/// The placeholder `mark_absent` writes must carry the marker note the index
+/// predicate (and `delete_auto_absent_today`) match on. If the Rust constant
+/// and the SQL literal drift, nothing errors — the writes simply stop matching
+/// and duplicates come back silently.
+#[tokio::test]
+async fn a_written_placeholder_carries_the_marker_note() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let (company_id, employee_id) = seed_company_and_employee(&pool).await;
+    seed_all_working_days(&pool, company_id).await;
+
+    let target = NaiveDate::from_ymd_opt(2026, 6, 18).unwrap();
+    attendance_records::mark_absent(&pool, KL, target, Some(company_id))
+        .await
+        .expect("mark absent");
+
+    let notes: Option<String> = sqlx::query_scalar(
+        "SELECT notes FROM attendance_records WHERE employee_id = $1 AND status = 'absent'",
+    )
+    .bind(employee_id)
+    .fetch_one(&pool)
+    .await
+    .expect("read the placeholder note");
+    let marker = attendance_records::AUTO_ABSENT_NOTE;
+    assert_eq!(notes.as_deref(), Some(marker));
+}
+
+/// The other half of the same coupling: 1019's index predicate has to spell the
+/// marker note out as a literal (index predicates cannot be parameterised), so
+/// the only thing keeping it in step with the Rust constant is this reflection.
+#[tokio::test]
+async fn the_auto_absent_index_predicate_matches_the_marker_note() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+
+    let indexdef: String = sqlx::query_scalar(
+        "SELECT indexdef FROM pg_indexes
+         WHERE schemaname = 'public'
+           AND indexname = 'attendance_auto_absent_one_per_employee_day'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("migration 1019 must have created the index");
+
+    assert!(
+        indexdef.contains(attendance_records::AUTO_ABSENT_NOTE),
+        "the index predicate no longer matches AUTO_ABSENT_NOTE: {indexdef}"
+    );
+    assert!(
+        indexdef.contains("UNIQUE"),
+        "the index must be unique to stop the race: {indexdef}"
+    );
+}
+
+/// The index is deliberately narrow: it constrains only cron-written rows. An
+/// HR-edited placeholder falls outside the predicate, so it neither collides
+/// with nor is deleted by anything the cron does. Pinning this makes the
+/// narrowness a decision rather than an accident.
+#[tokio::test]
+async fn the_placeholder_index_constrains_only_cron_written_rows() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let (company_id, employee_id) = seed_company_and_employee(&pool).await;
+    let at = chrono::Utc::now() - Duration::days(400);
+    let marker = attendance_records::AUTO_ABSENT_NOTE;
+
+    insert_placeholder_row(&pool, company_id, employee_id, at, marker)
+        .await
+        .expect("the first cron-shaped placeholder inserts");
+
+    let duplicate = insert_placeholder_row(&pool, company_id, employee_id, at, marker)
+        .await
+        .expect_err("a second cron-shaped placeholder must violate the index");
+    assert!(
+        matches!(&duplicate, sqlx::Error::Database(e) if e.code().as_deref() == Some("23505")),
+        "expected a unique violation, got: {duplicate:?}"
+    );
+
+    // Same (employee, instant), HR-edited note → outside the predicate, allowed.
+    let hr_note = "Reviewed with the supervisor; absence confirmed";
+    insert_placeholder_row(&pool, company_id, employee_id, at, hr_note)
+        .await
+        .expect("an HR-edited row must not be constrained by the cron index");
+}
+
+// ─── Correction span (24 h) ───
+
+/// The reported reproduction: correcting an open record with a check-out 60 days
+/// later drove `hours_worked` past `numeric(5,2)`, which surfaced as a bare 500
+/// and rolled the whole correction back. It must be a 400, before anything is
+/// written.
+#[tokio::test]
+async fn a_sixty_day_correction_is_refused_before_the_write() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let (company_id, employee_id) = seed_company_and_employee(&pool).await;
+    let admin = seed_user(&pool, company_id, "hr_manager").await;
+
+    let record_id = insert_open_record(&pool, company_id, employee_id, 2).await;
+
+    let req = UpdateAttendanceRecordRequest {
+        check_in_at: None,
+        check_out_at: Some(chrono::Utc::now() + Duration::days(60)),
+        status: None,
+        notes: None,
+        clear_check_out: None,
+        clear_notes: None,
+        reason: "Closing a very stale session".into(),
+    };
+    let err = attendance_service::update_attendance_record(
+        &pool, company_id, record_id, &req, admin, None,
+    )
+    .await
+    .expect_err("a 60-day session must not be writable");
+
+    match &err {
+        AppError::BadRequest(msg) => assert!(
+            msg.contains("24 hours"),
+            "the message must name the bound: {msg}"
+        ),
+        other => panic!("expected BadRequest, got: {other:?}"),
+    }
+
+    // Nothing may have been written: the transaction must never have opened.
+    let check_out: Option<chrono::DateTime<chrono::Utc>> =
+        sqlx::query_scalar("SELECT check_out_at FROM attendance_records WHERE id = $1")
+            .bind(record_id)
+            .fetch_one(&pool)
+            .await
+            .expect("read the record back");
+    assert!(check_out.is_none(), "the record is untouched");
+
+    let audit_rows: i64 = sqlx::query_scalar(
+        r#"SELECT COUNT(*) FROM audit_logs
+           WHERE entity_type = 'attendance_record' AND entity_id = $1"#,
+    )
+    .bind(record_id)
+    .fetch_one(&pool)
+    .await
+    .expect("count audit rows");
+    assert_eq!(audit_rows, 0, "no audit row for a refusal");
+}
+
+/// The intentional behaviour change, pinned so it stays deliberate: closing a
+/// days-old open session now requires correcting the check-in too. Recording
+/// ~72 payable hours for it was never right, and the error says what to do.
+#[tokio::test]
+async fn closing_a_stale_session_requires_correcting_both_timestamps() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let (company_id, employee_id) = seed_company_and_employee(&pool).await;
+    let admin = seed_user(&pool, company_id, "hr_manager").await;
+
+    let record_id = insert_open_record(&pool, company_id, employee_id, 72).await;
+    let now = chrono::Utc::now();
+
+    let stale = UpdateAttendanceRecordRequest {
+        check_in_at: None,
+        check_out_at: Some(now),
+        status: None,
+        notes: None,
+        clear_check_out: None,
+        clear_notes: None,
+        reason: "Employee forgot to check out".into(),
+    };
+    let err = attendance_service::update_attendance_record(
+        &pool, company_id, record_id, &stale, admin, None,
+    )
+    .await
+    .expect_err("a 3-day span is past the cap");
+    assert!(
+        matches!(&err, AppError::BadRequest(msg) if msg.contains("Correct the check-in time")),
+        "the message must name the remedy: {err:?}"
+    );
+
+    // The workflow is still completable — correct both ends.
+    let both = UpdateAttendanceRecordRequest {
+        check_in_at: Some(now - Duration::hours(8)),
+        check_out_at: Some(now),
+        status: None,
+        notes: None,
+        clear_check_out: None,
+        clear_notes: None,
+        reason: "Employee forgot to check out; times confirmed with the supervisor".into(),
+    };
+    let record = attendance_service::update_attendance_record(
+        &pool, company_id, record_id, &both, admin, None,
+    )
+    .await
+    .expect("an 8-hour correction must succeed");
+
+    assert_eq!(
+        record.hours_worked,
+        Some(Decimal::new(800, 2)),
+        "hours are recomputed from the corrected pair"
+    );
+
+    let audit_rows: i64 = sqlx::query_scalar(
+        r#"SELECT COUNT(*) FROM audit_logs
+           WHERE entity_type = 'attendance_record' AND entity_id = $1"#,
+    )
+    .bind(record_id)
+    .fetch_one(&pool)
+    .await
+    .expect("count audit rows");
+    assert_eq!(audit_rows, 1, "the completed correction is audited");
+}
+
+// ─── Geofence ───
+
+async fn set_geofence_mode_directly(pool: &sqlx::PgPool, company_id: uuid::Uuid, mode: &str) {
+    // Straight to the column: `set_geofence_mode` now refuses to arm an empty
+    // location list, and these tests need to *start* from the state a tenant
+    // configured before that guard existed.
+    sqlx::query("UPDATE companies SET geofence_mode = $2 WHERE id = $1")
+        .bind(company_id)
+        .bind(mode)
+        .execute(pool)
+        .await
+        .expect("set geofence mode");
+}
+
+async fn add_location(
+    pool: &sqlx::PgPool,
+    company_id: uuid::Uuid,
+    actor: uuid::Uuid,
+) -> uuid::Uuid {
+    let req = CreateLocationRequest {
+        name: "HQ".into(),
+        latitude: 3.157_64,
+        longitude: 101.711_86,
+        radius_meters: Some(200),
+    };
+    geofence_service::create_location(pool, company_id, &req, actor, None)
+        .await
+        .expect("create location")
+        .id
+}
+
+/// The fail-open half of the defect. With `enforce` and no active locations,
+/// coordinates from anywhere on earth were accepted *and recorded as inside the
+/// fence*, while an on-site employee whose browser denied GPS was rejected by
+/// the same handler.
+#[tokio::test]
+async fn an_enforced_geofence_with_no_locations_refuses_and_names_the_configuration() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    set_geofence_mode_directly(&pool, company_id, "enforce").await;
+
+    // Reykjavik: nowhere near any Malaysian office.
+    let err = geofence_service::validate_geofence(&pool, company_id, Some(64.14), Some(-21.94))
+        .await
+        .expect_err("an unevaluable enforced fence must fail closed");
+
+    match &err {
+        AppError::BadRequest(msg) => {
+            assert!(
+                msg.contains("no approved office locations are configured"),
+                "the message must name the missing configuration: {msg}"
+            );
+            assert!(
+                !msg.contains("You are outside"),
+                "it must not send the employee hunting for an office: {msg}"
+            );
+        }
+        other => panic!("expected BadRequest, got: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn a_warning_geofence_with_no_locations_flags_instead_of_recording_inside() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    set_geofence_mode_directly(&pool, company_id, "warn").await;
+
+    let flagged = geofence_service::validate_geofence(&pool, company_id, Some(64.14), Some(-21.94))
+        .await
+        .expect("warn mode never rejects");
+    assert!(
+        flagged,
+        "a fence that was never evaluated must not be recorded as 'inside'"
+    );
+}
+
+/// Regression guard for the majority of tenants: a company that never turns
+/// geofencing on must be completely unaffected by the fail-closed change.
+#[tokio::test]
+async fn a_geofence_set_to_none_is_untouched_by_the_fail_closed_change() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+
+    let flagged = geofence_service::validate_geofence(&pool, company_id, Some(64.14), Some(-21.94))
+        .await
+        .expect("mode 'none' never rejects");
+    assert!(!flagged, "mode 'none' must not flag anything");
+}
+
+/// The CLAUDE.md invariant: check-out never fails on geofence. Failing it here
+/// would strand the employee in an open session only an admin could close —
+/// which is exactly what fail-closed must not cause.
+#[tokio::test]
+async fn check_out_still_never_fails_on_an_unconfigured_geofence() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    set_geofence_mode_directly(&pool, company_id, "enforce").await;
+
+    let flagged =
+        geofence_service::flag_geofence_for_checkout(&pool, company_id, Some(64.14), Some(-21.94))
+            .await
+            .expect("check-out must never be refused on geofence");
+    assert!(flagged, "it is flagged for admin review instead");
+}
+
+/// The write-side guards are what keep the fail-closed rejection unreachable in
+/// normal operation. Note the asymmetry: getting back *out* (mode → 'none') is
+/// never blocked.
+#[tokio::test]
+async fn the_last_active_location_cannot_be_removed_while_the_geofence_is_armed() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let actor = seed_user(&pool, company_id, "admin").await;
+    let location_id = add_location(&pool, company_id, actor).await;
+    set_geofence_mode_directly(&pool, company_id, "enforce").await;
+
+    let err = geofence_service::delete_location(&pool, company_id, location_id, actor, None)
+        .await
+        .expect_err("removing the last location while enforcing must conflict");
+    assert!(
+        matches!(&err, AppError::Conflict(msg) if msg.contains("geofence mode to 'none'")),
+        "409 must name the fix: {err:?}"
+    );
+
+    geofence_service::set_geofence_mode(&pool, company_id, "none", actor, None)
+        .await
+        .expect("switching the geofence off is never blocked");
+    geofence_service::delete_location(&pool, company_id, location_id, actor, None)
+        .await
+        .expect("with the geofence off the same delete succeeds");
+}
+
+#[tokio::test]
+async fn deactivating_the_last_location_conflicts_but_renaming_an_inactive_one_does_not() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let actor = seed_user(&pool, company_id, "admin").await;
+    let location_id = add_location(&pool, company_id, actor).await;
+    let spare = add_location(&pool, company_id, actor).await;
+    set_geofence_mode_directly(&pool, company_id, "enforce").await;
+
+    let off = UpdateLocationRequest {
+        name: None,
+        latitude: None,
+        longitude: None,
+        radius_meters: None,
+        is_active: Some(false),
+    };
+
+    // Two active locations: deactivating one is fine.
+    geofence_service::update_location(&pool, company_id, spare, &off, actor, None)
+        .await
+        .expect("one of two may be deactivated");
+
+    // Now it is the last one.
+    let err = geofence_service::update_location(&pool, company_id, location_id, &off, actor, None)
+        .await
+        .expect_err("deactivating the last active location must conflict");
+    assert!(matches!(err, AppError::Conflict(_)), "got {err:?}");
+
+    // Renaming the already-inactive row is not a deactivation and must pass.
+    let rename = UpdateLocationRequest {
+        name: Some("Old Warehouse".into()),
+        latitude: None,
+        longitude: None,
+        radius_meters: None,
+        is_active: Some(false),
+    };
+    let row = geofence_service::update_location(&pool, company_id, spare, &rename, actor, None)
+        .await
+        .expect("renaming an inactive location must not trip the guard");
+    assert_eq!(row.name, "Old Warehouse");
+}
+
+/// This is the entry that used to let an admin arm enforcement against an empty
+/// list in a single click.
+#[tokio::test]
+async fn the_geofence_cannot_be_armed_without_an_active_location() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let actor = seed_user(&pool, company_id, "admin").await;
+
+    for mode in ["warn", "enforce"] {
+        let err = geofence_service::set_geofence_mode(&pool, company_id, mode, actor, None)
+            .await
+            .expect_err("arming an empty fence must conflict");
+        assert!(
+            matches!(&err, AppError::Conflict(msg) if msg.contains(mode)),
+            "409 must name the mode: {err:?}"
+        );
+    }
+
+    add_location(&pool, company_id, actor).await;
+    geofence_service::set_geofence_mode(&pool, company_id, "enforce", actor, None)
+        .await
+        .expect("with a location present, arming succeeds");
+}
+
+// ─── CSV export ───
+
+/// Insert one attendance row at a wall-clock local time in `tz`.
+async fn insert_record_at_local(
+    pool: &sqlx::PgPool,
+    company_id: uuid::Uuid,
+    employee_id: uuid::Uuid,
+    local: &str,
+    tz: &str,
+) {
+    sqlx::query(
+        r#"INSERT INTO attendance_records
+           (company_id, employee_id, check_in_at, check_out_at, method, status)
+           VALUES ($1, $2, ($3::text)::timestamp AT TIME ZONE $4,
+                   (($3::text)::timestamp + INTERVAL '30 minutes') AT TIME ZONE $4,
+                   'manual', 'present')"#,
+    )
+    .bind(company_id)
+    .bind(employee_id)
+    .bind(local)
+    .bind(tz)
+    .execute(pool)
+    .await
+    .expect("insert attendance record at a local time");
+}
+
+fn export_range(from: &str, to: &str) -> AttendanceExportQuery {
+    AttendanceExportQuery {
+        date_from: from.parse().ok(),
+        date_to: to.parse().ok(),
+        employee_id: None,
+        status: None,
+        method: None,
+    }
+}
+
+/// R1-M16 end to end: the SQL bounds were already threaded with the tenant's
+/// zone while the rendering used a hardcoded UTC+8, so a Jakarta tenant got rows
+/// selected on their calendar but printed on Malaysia's — some of them dated
+/// outside the range they asked for.
+#[tokio::test]
+async fn the_export_renders_dates_on_the_tenant_own_calendar() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let (company_id, employee_id) = seed_company_and_employee(&pool).await;
+    seed_default_schedule(&pool, company_id, "Asia/Jakarta").await;
+
+    // 23:30 on the 31st in Jakarta is 00:30 on the 1st in Kuala Lumpur.
+    let at = "2026-07-31 23:30";
+    insert_record_at_local(&pool, company_id, employee_id, at, "Asia/Jakarta").await;
+
+    let range = export_range("2026-07-31", "2026-07-31");
+    let csv = attendance_service::export_attendance_csv(&pool, company_id, &range)
+        .await
+        .expect("export should succeed");
+
+    assert!(
+        csv.contains("2026-07-31,") && csv.contains("23:30:00"),
+        "the row must print on the day the filter selected it for:\n{csv}"
+    );
+    assert!(
+        !csv.contains("2026-08-01"),
+        "no exported row may fall outside the requested range:\n{csv}"
+    );
+}
+
+/// R1-M17(a): one supplied bound used to skip the month default entirely, and
+/// the reads layer then emitted a single open-ended bound — the tenant's whole
+/// history, scanned and buffered.
+#[tokio::test]
+async fn each_export_date_bound_defaults_independently() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let (company_id, employee_id) = seed_company_and_employee(&pool).await;
+
+    // Anchored on the database clock: the lone-`date_from` case runs to *today*,
+    // so fixed calendar dates would drift out of the span cap over time.
+    let (today, _) = local_now(&pool, KL).await;
+    let recent = today - Duration::days(5);
+    let mid = today - Duration::days(40);
+    let old = today - Duration::days(200);
+    for day in [recent, mid, old] {
+        let at = format!("{day} 09:00");
+        insert_record_at_local(&pool, company_id, employee_id, &at, KL).await;
+    }
+
+    let only_to = AttendanceExportQuery {
+        date_from: None,
+        date_to: Some(recent),
+        employee_id: None,
+        status: None,
+        method: None,
+    };
+    let csv = attendance_service::export_attendance_csv(&pool, company_id, &only_to)
+        .await
+        .expect("a lone date_to must resolve to the month it names");
+    assert!(
+        csv.contains(&recent.to_string()),
+        "the row on the requested day is in range:\n{csv}"
+    );
+    assert!(
+        !csv.contains(&mid.to_string()),
+        "40 days back is a previous month, before the resolved start:\n{csv}"
+    );
+
+    let only_from = AttendanceExportQuery {
+        date_from: Some(mid),
+        date_to: None,
+        employee_id: None,
+        status: None,
+        method: None,
+    };
+    let csv = attendance_service::export_attendance_csv(&pool, company_id, &only_from)
+        .await
+        .expect("a lone date_from must run to today");
+    assert!(
+        csv.contains(&mid.to_string()),
+        "the start day itself is included:\n{csv}"
+    );
+    assert!(
+        csv.contains(&recent.to_string()),
+        "the range runs forward to today:\n{csv}"
+    );
+    assert!(
+        !csv.contains(&old.to_string()),
+        "the supplied start bound is still honoured:\n{csv}"
+    );
+}
+
+#[tokio::test]
+async fn the_export_rejects_an_inverted_or_over_long_range() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+
+    let inverted = export_range("2026-05-01", "2026-04-01");
+    let err = attendance_service::export_attendance_csv(&pool, company_id, &inverted)
+        .await
+        .expect_err("an inverted range must be a 400, not an empty 200");
+    assert!(matches!(err, AppError::BadRequest(_)), "got {err:?}");
+
+    let cap = attendance_service::MAX_EXPORT_RANGE_DAYS;
+    let start = NaiveDate::from_ymd_opt(2025, 1, 1).unwrap();
+
+    let at_cap = AttendanceExportQuery {
+        date_from: Some(start),
+        date_to: Some(start + Duration::days(cap)),
+        employee_id: None,
+        status: None,
+        method: None,
+    };
+    attendance_service::export_attendance_csv(&pool, company_id, &at_cap)
+        .await
+        .expect("exactly the cap must be allowed — a statutory year is a real need");
+
+    let past_cap = AttendanceExportQuery {
+        date_to: Some(start + Duration::days(cap + 1)),
+        ..at_cap
+    };
+    let err = attendance_service::export_attendance_csv(&pool, company_id, &past_cap)
+        .await
+        .expect_err("one day past the cap must be refused");
+    assert!(
+        matches!(&err, AppError::BadRequest(msg) if msg.contains(&cap.to_string())),
+        "the message must name the cap: {err:?}"
+    );
+}
+
+/// R1-M17(b): the row ceiling. Failing is deliberate — a silently truncated CSV
+/// is indistinguishable from a complete one, and an admin cannot tell.
+#[tokio::test]
+async fn the_export_fails_loudly_rather_than_truncating() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let (company_id, employee_id) = seed_company_and_employee(&pool).await;
+
+    for local in ["2026-02-02 09:00", "2026-02-03 09:00", "2026-02-04 09:00"] {
+        insert_record_at_local(&pool, company_id, employee_id, local, KL).await;
+    }
+    let range = export_range("2026-02-01", "2026-02-28");
+
+    let err = attendance_service::export_attendance_csv_bounded(&pool, company_id, &range, 2)
+        .await
+        .expect_err("three rows against a ceiling of two must fail");
+    assert!(
+        matches!(&err, AppError::PayloadTooLarge(msg) if msg.contains("Narrow the date range")),
+        "413 must tell the admin what to do: {err:?}"
+    );
+
+    let csv = attendance_service::export_attendance_csv_bounded(&pool, company_id, &range, 5)
+        .await
+        .expect("under the ceiling the export completes");
+    assert_eq!(csv.lines().count(), 4, "header plus three rows:\n{csv}");
+}
+
+/// `check_in_at` alone is not unique, so without the `, ar.id` tiebreak two
+/// identical exports could order (and, at the ceiling, drop) different rows.
+#[tokio::test]
+async fn identical_exports_are_byte_identical() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let (company_id, employee_id) = seed_company_and_employee(&pool).await;
+    let second = seed_employee(&pool, company_id, None, 500_000).await;
+    let third = seed_employee(&pool, company_id, None, 500_000).await;
+
+    // Same instant for all three — the case an unstable sort reorders.
+    for emp in [employee_id, second, third] {
+        insert_record_at_local(&pool, company_id, emp, "2026-01-15 09:00", KL).await;
+    }
+
+    let range = export_range("2026-01-01", "2026-01-31");
+    let first_run = attendance_service::export_attendance_csv(&pool, company_id, &range)
+        .await
+        .expect("export");
+    let second_run = attendance_service::export_attendance_csv(&pool, company_id, &range)
+        .await
+        .expect("export");
+    assert_eq!(first_run, second_run, "the row order must be deterministic");
 }

@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, ArrowLeft, Send, Trash2, Receipt, Upload, X, FileText, Image, Paperclip, ExternalLink } from 'lucide-react';
 import { listMyClaims, createClaim, cancelClaim, deleteClaim, submitClaim, uploadFile } from '@/api/claims';
+import { runBulk, summarizeBulkFailure } from '@/lib/bulk';
 import { formatMYR, formatDate, getErrorMessage, todayLocalDate } from '@/lib/utils';
 
 const STATUS_TABS = [
@@ -25,6 +26,7 @@ export function Claims() {
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [selectedClaimIds, setSelectedClaimIds] = useState<string[]>([]);
+  const [bulkError, setBulkError] = useState('');
 
   const { data: claims, isLoading } = useQuery({
     queryKey: ['my-claims', statusFilter],
@@ -46,24 +48,28 @@ export function Claims() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['my-claims'] }),
   });
 
+  // Partial failure is an outcome, not an exception: the refetch runs whatever
+  // happens and only the claims that failed stay selected, so a retry hits
+  // exactly those. `Promise.all` used to short-circuit on the first rejection
+  // and leave the successful rows showing a stale status with no error anywhere.
   const bulkCancelMutation = useMutation({
-    mutationFn: async (ids: string[]) => {
-      await Promise.all(ids.map((id) => cancelClaim(id)));
+    mutationFn: (ids: string[]) => runBulk(ids, cancelClaim),
+    onSuccess: (outcome) => {
+      setSelectedClaimIds(outcome.failed.map((failure) => failure.id));
+      setBulkError(summarizeBulkFailure(outcome, 'cancelled'));
     },
-    onSuccess: () => {
-      setSelectedClaimIds([]);
-      queryClient.invalidateQueries({ queryKey: ['my-claims'] });
-    },
+    onError: (err: unknown) => setBulkError(getErrorMessage(err, 'Failed to cancel the selected claims')),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['my-claims'] }),
   });
 
   const bulkDeleteMutation = useMutation({
-    mutationFn: async (ids: string[]) => {
-      await Promise.all(ids.map((id) => deleteClaim(id)));
+    mutationFn: (ids: string[]) => runBulk(ids, deleteClaim),
+    onSuccess: (outcome) => {
+      setSelectedClaimIds(outcome.failed.map((failure) => failure.id));
+      setBulkError(summarizeBulkFailure(outcome, 'deleted'));
     },
-    onSuccess: () => {
-      setSelectedClaimIds([]);
-      queryClient.invalidateQueries({ queryKey: ['my-claims'] });
-    },
+    onError: (err: unknown) => setBulkError(getErrorMessage(err, 'Failed to delete the selected claims')),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['my-claims'] }),
   });
 
   const statusBadge = (status: string) => {
@@ -141,6 +147,7 @@ export function Claims() {
               key={t.key ?? 'all'}
               onClick={() => {
                 setSelectedClaimIds([]);
+                setBulkError('');
                 setStatusFilter(t.key);
               }}
               className={`px-4 py-1.5 rounded-full text-sm font-medium transition-all-fast ${
@@ -165,36 +172,43 @@ export function Claims() {
         ) : (
           <>
             {selectedClaimIds.length > 0 && (
-              <div className="flex flex-col gap-2 border-b border-gray-100 bg-gray-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-                <span className="text-sm font-medium text-gray-700">{selectedClaimIds.length} selected</span>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (confirm(`Cancel ${selectedCancelableClaimIds.length} selected claim(s)?`)) {
-                        bulkCancelMutation.mutate(selectedCancelableClaimIds);
-                      }
-                    }}
-                    disabled={selectedCancelableClaimIds.length === 0 || bulkCancelMutation.isPending}
-                    className="btn-secondary !py-2 text-sm disabled:opacity-50"
-                  >
-                    <X className="w-4 h-4" />
-                    {bulkCancelMutation.isPending ? 'Cancelling...' : 'Cancel Selected'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (confirm(`Delete ${selectedDeletableClaimIds.length} selected draft/cancelled claim(s)?`)) {
-                        bulkDeleteMutation.mutate(selectedDeletableClaimIds);
-                      }
-                    }}
-                    disabled={selectedDeletableClaimIds.length === 0 || bulkDeleteMutation.isPending}
-                    className="btn-secondary !py-2 text-sm text-red-600 hover:!bg-red-50 disabled:opacity-50"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                    {bulkDeleteMutation.isPending ? 'Deleting...' : 'Delete Selected'}
-                  </button>
+              <div className="border-b border-gray-100 bg-gray-50">
+                <div className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                  <span className="text-sm font-medium text-gray-700">{selectedClaimIds.length} selected</span>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (confirm(`Cancel ${selectedCancelableClaimIds.length} selected claim(s)?`)) {
+                          setBulkError('');
+                          bulkCancelMutation.mutate(selectedCancelableClaimIds);
+                        }
+                      }}
+                      disabled={selectedCancelableClaimIds.length === 0 || bulkCancelMutation.isPending}
+                      className="btn-secondary !py-2 text-sm disabled:opacity-50"
+                    >
+                      <X className="w-4 h-4" />
+                      {bulkCancelMutation.isPending ? 'Cancelling...' : 'Cancel Selected'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (confirm(`Delete ${selectedDeletableClaimIds.length} selected draft/cancelled claim(s)?`)) {
+                          setBulkError('');
+                          bulkDeleteMutation.mutate(selectedDeletableClaimIds);
+                        }
+                      }}
+                      disabled={selectedDeletableClaimIds.length === 0 || bulkDeleteMutation.isPending}
+                      className="btn-secondary !py-2 text-sm text-red-600 hover:!bg-red-50 disabled:opacity-50"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      {bulkDeleteMutation.isPending ? 'Deleting...' : 'Delete Selected'}
+                    </button>
+                  </div>
                 </div>
+                {bulkError && (
+                  <div role="alert" className="px-4 pb-3 text-sm text-red-700">{bulkError}</div>
+                )}
               </div>
             )}
             <table className="data-table">

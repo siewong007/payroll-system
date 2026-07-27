@@ -54,6 +54,30 @@ async fn audit_letter_sent(
     .await;
 }
 
+/// Turn a recorded-but-unsent letter into a non-2xx answer.
+///
+/// `email_service::send_email` returns `Ok(log)` for both SMTP failures and the
+/// SMTP-not-configured default, so the handler used to answer 200 with
+/// `status: "failed"` in the body — and the composer, which branches on the HTTP
+/// status like every other mutation, cleared the form and told the operator the
+/// letter had gone. On a deployment without SMTP that is *every* letter.
+///
+/// Called after the audit row is written, deliberately: the `email_logs` row and
+/// the audit entry are the evidence of the attempt and must survive the failure.
+/// `BadGateway` (502) is the variant that surfaces its message to the client and
+/// says the fault is upstream rather than in the request.
+pub(crate) fn send_outcome(log: EmailLogSummary) -> AppResult<Json<EmailLogSummary>> {
+    if log.status == "sent" {
+        return Ok(Json(log));
+    }
+    Err(AppError::BadGateway(format!(
+        "The letter was not sent: {}",
+        log.error_message
+            .as_deref()
+            .unwrap_or("the mail server rejected it")
+    )))
+}
+
 // ── Templates ──────────────────────────────────────────────────────────
 
 pub async fn list_templates(
@@ -301,7 +325,7 @@ pub async fn send_letter(
         let log = EmailLogSummary::from(log);
 
         audit_letter_sent(&state.pool, company_id, auth.0.sub, &log, &audit_meta).await;
-        Ok(Json(log))
+        send_outcome(log)
     } else {
         // Direct email send
         let recipient_email = req
@@ -350,7 +374,7 @@ pub async fn send_letter(
         let log = EmailLogSummary::from(log);
 
         audit_letter_sent(&state.pool, company_id, auth.0.sub, &log, &audit_meta).await;
-        Ok(Json(log))
+        send_outcome(log)
     }
 }
 

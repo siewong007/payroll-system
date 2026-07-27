@@ -124,6 +124,27 @@ pub async fn update(
     Ok(company)
 }
 
+/// The contractual paid days per month an unpaid-leave deduction divides by.
+///
+/// `NULL` means the company has not set one, and the caller falls back to the
+/// calendar's working-day count for the leave month. The column carried a
+/// default of 26 and was read by nothing at all, so wiring it in without
+/// clearing it first would have silently changed every tenant's deduction;
+/// migration 1017 blanks it for that reason.
+pub async fn get_unpaid_leave_divisor(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+) -> AppResult<Option<i32>> {
+    let divisor = sqlx::query_scalar!(
+        "SELECT unpaid_leave_divisor FROM companies WHERE id = $1",
+        company_id,
+    )
+    .fetch_optional(executor)
+    .await?
+    .flatten();
+    Ok(divisor)
+}
+
 /// The company's attendance-method override, if any (flattened from the nullable column).
 pub async fn get_attendance_method(
     executor: impl Executor<'_, Database = Postgres>,

@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, company_id, day_of_week, is_working_day, created_at, updated_at\n           FROM working_day_config WHERE company_id = $1 ORDER BY id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "company_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "day_of_week",
+        "type_info": "Int2"
+      },
+      {
+        "ordinal": 3,
+        "name": "is_working_day",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 4,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 5,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "fdf5a09e964afdf926f35e8ff761d6f7cf4a4ceacc05749295ae72aaeb306cfa"
+}
