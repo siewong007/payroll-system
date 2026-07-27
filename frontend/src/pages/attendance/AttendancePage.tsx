@@ -33,6 +33,7 @@ import { hasAnyRole } from '@/lib/roles';
 import { toDateTimeLocalValue } from '@/lib/utils';
 import { WorkScheduleCard } from '@/components/attendance/WorkScheduleCard';
 import { GeofenceCard } from '@/components/attendance/GeofenceCard';
+import { NetworkCard } from '@/components/attendance/NetworkCard';
 
 /**
  * Today's date on the *company* calendar, not the viewer's. Attendance days
@@ -1387,11 +1388,12 @@ export function AttendancePage() {
 
       <StatsBar today={today} onShowOpen={showOpenSessions} />
 
-      {/* Work Schedule & Geofence */}
+      {/* Work Schedule, Geofence & Office Network */}
       {canConfigure && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
           <WorkScheduleCard />
           <GeofenceCard />
+          <NetworkCard />
         </div>
       )}
 

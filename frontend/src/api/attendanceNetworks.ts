@@ -26,6 +26,12 @@ export interface NetworkCandidate {
   observation_count: number;
   /** Observations corroborated by a kiosk-minted QR token or the geofence. */
   anchored_count: number;
+  /**
+   * Check-ins refused from this block. Never evidence for approving it — this
+   * is how the office's new address surfaces after an ISP change, when
+   * everyone is being turned away and nothing else is being recorded.
+   */
+  denied_count: number;
   first_seen_at: string;
   last_seen_at: string;
   is_anchored: boolean;

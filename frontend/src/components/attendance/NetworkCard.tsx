@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  AlertCircle, AlertTriangle, CheckCircle2, Plus, ShieldCheck, Sparkles, Trash2, Wifi,
+  AlertCircle, AlertTriangle, CheckCircle2, Info, Plus, ShieldCheck, Sparkles, Trash2, Wifi,
 } from 'lucide-react';
 import {
   approveCandidate, createNetwork, deleteNetwork, dismissCandidate, getNetworkMode,
@@ -381,6 +381,22 @@ export function NetworkCard() {
               Learning. Nobody is blocked or flagged — run this for a week or two, then approve
               what it finds below.
             </p>
+          )}
+          {/* Shown against Enforce specifically: this is the moment somebody
+              decides to rely on the control, and it is the moment they should
+              read what it does not prove. */}
+          {currentMode === 'enforce' && (
+            <div className="mt-2 flex items-start gap-1.5 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
+              <Info className="w-3.5 h-3.5 mt-0.5 shrink-0 text-gray-400" />
+              <span>
+                <strong className="font-medium text-gray-700">What this proves.</strong> That the
+                check-in reached us over your office&rsquo;s internet connection — not that the
+                person was in the building. Anyone running a VPN or SSH tunnel back to the office
+                will pass, and a company-wide VPN would let everyone pass from home. Treat it as
+                a deterrent against casual remote check-in and as evidence for review, not as
+                proof of attendance.
+              </span>
+            </div>
           )}
         </div>
 

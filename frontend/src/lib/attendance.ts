@@ -39,6 +39,7 @@ export type CheckInFailure =
   | 'already-checked-in'
   | 'stale-session'
   | 'outside-geofence'
+  | 'offsite-network'
   | 'location-permission'
   | 'expired-code'
   | 'no-passkey'
@@ -59,6 +60,7 @@ export function classifyCheckInError(message: string): CheckInFailure {
   if (/already checked in/.test(m)) return 'already-checked-in';
   if (/never checked out|active check-in|more than 24 hours old/.test(m)) return 'stale-session';
   if (/approved office location/.test(m)) return 'outside-geofence';
+  if (/approved office network/.test(m)) return 'offsite-network';
   if (/location is required|enable location services/.test(m)) return 'location-permission';
   if (/revoked|expired/.test(m)) return 'expired-code';
   if (/no passkeys registered/.test(m)) return 'no-passkey';

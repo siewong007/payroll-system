@@ -108,6 +108,15 @@ export function CheckInCard() {
         return { tone: 'error', text: message, href: '/portal/attendance', hrefLabel: 'View history' };
       case 'outside-geofence':
         return { tone: 'error', text: message };
+      case 'offsite-network':
+        // Nothing the employee can do beyond joining the office Wi-Fi, and the
+        // server's message already says so — but a phone that has silently
+        // fallen back to mobile data looks identical to one that is connected,
+        // so name that explicitly.
+        return {
+          tone: 'error',
+          text: `${message} Check you're on Wi-Fi and not mobile data.`,
+        };
       case 'location-permission':
         return { tone: 'error', text: 'Location is required to check in. Allow location for this site, then tap again.' };
       case 'no-passkey':
