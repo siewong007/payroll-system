@@ -14,6 +14,7 @@
 //! handlers and services without breaking the layering rule.
 
 use std::path::{Component, Path, PathBuf};
+use uuid::Uuid;
 
 use crate::core::error::{AppError, AppResult};
 
@@ -65,6 +66,18 @@ pub fn sanitize_stored_name(name: &str) -> AppResult<&str> {
 /// `uploads/<name>` — the only permitted way to build a path under [`UPLOAD_DIR`].
 pub fn stored_path(name: &str) -> AppResult<PathBuf> {
     Ok(Path::new(UPLOAD_DIR).join(sanitize_stored_name(name)?))
+}
+
+/// Mint a safe server-owned stored name while preserving only an allow-listed
+/// extension from an untrusted archive key.
+pub fn generated_stored_name(archive_key: &str) -> Option<String> {
+    let extension = Path::new(archive_key)
+        .extension()?
+        .to_str()?
+        .to_ascii_lowercase();
+    ALLOWED_UPLOAD_EXTENSIONS
+        .contains(&extension.as_str())
+        .then(|| format!("{}_restored.{extension}", Uuid::new_v4()))
 }
 
 /// On-disk path a stored URL names.

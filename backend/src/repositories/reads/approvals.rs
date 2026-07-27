@@ -24,8 +24,7 @@ pub async fn list_pending_leave(
     limit: i64,
     offset: i64,
 ) -> AppResult<Vec<LeaveRequestWithEmployee>> {
-    let requests = sqlx::query_as!(
-        LeaveRequestWithEmployee,
+    let requests = sqlx::query_as::<_, LeaveRequestWithEmployee>(
         r#"SELECT lr.id, lr.employee_id, lr.company_id, lr.leave_type_id,
             lr.start_date, lr.end_date, lr.days, lr.reason, lr.status,
             lr.reviewed_by, lr.reviewed_at, lr.review_notes,
@@ -39,13 +38,13 @@ pub async fn list_pending_leave(
         JOIN employees e ON lr.employee_id = e.id
         WHERE lr.company_id = $1
         AND ($2::text IS NULL OR lr.status = $2)
-        ORDER BY lr.created_at DESC, lr.id DESC
+        ORDER BY lr.created_at DESC
         LIMIT $3 OFFSET $4"#,
-        company_id,
-        status,
-        limit,
-        offset,
     )
+    .bind(company_id)
+    .bind(status)
+    .bind(limit)
+    .bind(offset)
     .fetch_all(executor)
     .await?;
     Ok(requests)
@@ -120,8 +119,7 @@ pub async fn list_pending_overtime(
     limit: i64,
     offset: i64,
 ) -> AppResult<Vec<OvertimeWithEmployee>> {
-    let apps = sqlx::query_as!(
-        OvertimeWithEmployee,
+    let apps = sqlx::query_as::<_, OvertimeWithEmployee>(
         r#"SELECT oa.*,
             e.full_name AS "employee_name?",
             e.employee_number AS "employee_number?"
@@ -129,13 +127,13 @@ pub async fn list_pending_overtime(
         JOIN employees e ON oa.employee_id = e.id
         WHERE oa.company_id = $1
         AND ($2::text IS NULL OR oa.status = $2)
-        ORDER BY oa.created_at DESC, oa.id DESC
+        ORDER BY oa.created_at DESC
         LIMIT $3 OFFSET $4"#,
-        company_id,
-        status,
-        limit,
-        offset,
     )
+    .bind(company_id)
+    .bind(status)
+    .bind(limit)
+    .bind(offset)
     .fetch_all(executor)
     .await?;
     Ok(apps)
@@ -191,8 +189,7 @@ pub async fn list_pending_claims(
     limit: i64,
     offset: i64,
 ) -> AppResult<Vec<ClaimWithEmployee>> {
-    let claims = sqlx::query_as!(
-        ClaimWithEmployee,
+    let claims = sqlx::query_as::<_, ClaimWithEmployee>(
         r#"SELECT c.*,
             e.full_name AS "employee_name?",
             e.employee_number AS "employee_number?"
@@ -200,13 +197,13 @@ pub async fn list_pending_claims(
         JOIN employees e ON c.employee_id = e.id
         WHERE c.company_id = $1
         AND ($2::text IS NULL OR c.status = $2)
-        ORDER BY c.created_at DESC, c.id DESC
+        ORDER BY c.created_at DESC
         LIMIT $3 OFFSET $4"#,
-        company_id,
-        status,
-        limit,
-        offset,
     )
+    .bind(company_id)
+    .bind(status)
+    .bind(limit)
+    .bind(offset)
     .fetch_all(executor)
     .await?;
     Ok(claims)

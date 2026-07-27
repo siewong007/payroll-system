@@ -1,10 +1,6 @@
 {
   "db_name": "PostgreSQL",
-<<<<<<<< HEAD:backend/.sqlx/query-77dd21828f2a6e3e374aab216ba28a49b5cecb7610da7cc3d4a5dc5824306a27.json
   "query": "SELECT c.*,\n            e.full_name AS \"employee_name?\",\n            e.employee_number AS \"employee_number?\"\n        FROM claims c\n        JOIN employees e ON c.employee_id = e.id\n        WHERE c.company_id = $1\n        AND ($2::text IS NULL OR c.status = $2)\n        ORDER BY c.created_at DESC\n        LIMIT $3 OFFSET $4",
-========
-  "query": "SELECT c.*,\n            e.full_name AS \"employee_name?\",\n            e.employee_number AS \"employee_number?\"\n        FROM claims c\n        JOIN employees e ON c.employee_id = e.id\n        WHERE c.company_id = $1\n        AND ($2::text IS NULL OR c.status = $2)\n        ORDER BY c.created_at DESC, c.id DESC\n        LIMIT 100",
->>>>>>>> worktree-fix-127-defects:backend/.sqlx/query-65c2d20311cf390435252fb3fb9be636684b2489b7018027125b67725fb0107d.json
   "describe": {
     "columns": [
       {
@@ -94,16 +90,11 @@
       },
       {
         "ordinal": 17,
-        "name": "payroll_run_id",
-        "type_info": "Uuid"
-      },
-      {
-        "ordinal": 18,
         "name": "employee_name?",
         "type_info": "Varchar"
       },
       {
-        "ordinal": 19,
+        "ordinal": 18,
         "name": "employee_number?",
         "type_info": "Varchar"
       }
@@ -134,14 +125,9 @@
       true,
       false,
       false,
-      true,
       false,
       false
     ]
   },
-<<<<<<<< HEAD:backend/.sqlx/query-77dd21828f2a6e3e374aab216ba28a49b5cecb7610da7cc3d4a5dc5824306a27.json
   "hash": "77dd21828f2a6e3e374aab216ba28a49b5cecb7610da7cc3d4a5dc5824306a27"
-========
-  "hash": "65c2d20311cf390435252fb3fb9be636684b2489b7018027125b67725fb0107d"
->>>>>>>> worktree-fix-127-defects:backend/.sqlx/query-65c2d20311cf390435252fb3fb9be636684b2489b7018027125b67725fb0107d.json
 }

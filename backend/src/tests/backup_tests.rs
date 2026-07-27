@@ -591,10 +591,10 @@ async fn tied_timestamps_still_order_deterministically() {
     .await
     .expect("seed 120 tied leave requests");
 
-    let first = approvals::list_pending_leave(&pool, company, None)
+    let first = approvals::list_pending_leave(&pool, company, None, 100, 0)
         .await
         .expect("first read of the approvals inbox");
-    let second = approvals::list_pending_leave(&pool, company, None)
+    let second = approvals::list_pending_leave(&pool, company, None, 100, 0)
         .await
         .expect("second read of the approvals inbox");
 
