@@ -54,6 +54,10 @@ pub async fn create_leave_request(
     company_id: Uuid,
     req: CreateLeaveRequest,
 ) -> AppResult<LeaveRequest> {
+    // Before the calendar is read, not after: the count walks the range a day
+    // at a time, and this endpoint takes a bare `NaiveDate` pair from any
+    // employee token.
+    crate::services::leave_rules::validate_range(req.start_date, req.end_date)?;
     let working_days = crate::services::calendar_service::count_working_days_between(
         pool,
         company_id,

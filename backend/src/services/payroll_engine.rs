@@ -116,9 +116,6 @@ struct RunInputs {
     excluded_inactive: Vec<(Uuid, String, String)>,
 }
 
-/// Fallback when a company has no default work schedule to read a timezone from.
-const DEFAULT_TIMEZONE: &str = "Asia/Kuala_Lumpur";
-
 /// Compute every employee, collecting failures instead of stopping at the first.
 ///
 /// A run used to abort on the first employee whose figures could not be
@@ -191,9 +188,12 @@ async fn gather_run_inputs(
 
     let employee_ids: Vec<Uuid> = employees.iter().map(|e| e.id).collect();
 
-    let tz = company_work_schedules::find_default_timezone(&mut *conn, company_id)
-        .await?
-        .unwrap_or_else(|| DEFAULT_TIMEZONE.to_string());
+    // Read path: a stored zone Postgres would reject degrades to the platform
+    // default with a warning rather than aborting the run's `AT TIME ZONE`
+    // mid-transaction. The fallback itself is defined once, in `core::timezone`.
+    let tz = crate::core::timezone::sanitize(
+        company_work_schedules::find_default_timezone(&mut *conn, company_id).await?,
+    );
 
     // 1. Batch fetch every recurring allowance/deduction line overlapping the
     // period. `compute_payslip` prorates each against its own effective window

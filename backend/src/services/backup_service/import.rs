@@ -366,7 +366,14 @@ pub async fn import_company(
             "Target company \"{new_company_name}\" data was overwritten from backup \"{}\".",
             backup.company.name,
         ));
-        backup_repo::delete_company_cascade(&mut tx, new_company_id).await?;
+        // The shared wipe order, not a second hand-maintained copy. The copy
+        // this replaces deleted `email_templates` before `email_logs`, so an
+        // overwrite restore raised 23503 on its second statement for any tenant
+        // that had sent a templated letter. Routing through the shared helper
+        // also clears `notifications` and `bulk_import_sessions`, neither of
+        // which is in `CompanyBackup` and both of which point at entities being
+        // replaced wholesale.
+        companies::delete_company_data(&mut tx, new_company_id).await?;
         backup_repo::update_company(&mut *tx, new_company_id, &backup.company, now).await?;
     } else {
         backup_repo::insert_company(&mut *tx, new_company_id, &backup.company, now).await?;

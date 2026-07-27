@@ -8,11 +8,21 @@ use uuid::Uuid;
 
 use crate::core::app_state::AppState;
 use crate::core::auth::{AuthUser, Permission};
-use crate::core::error::{AppError, AppResult};
+use crate::core::error::{AppError, AppResult, multipart_error, payload_too_large};
 use crate::models::employee_import::{
     ImportConfirmRequest, ImportValidationResponse, TemplateQuery,
 };
 use crate::services::employee_import_service;
+
+/// Largest spreadsheet this endpoint will accept. Well above the row cap the
+/// validator enforces, so the size check is a guard rather than the policy.
+pub const IMPORT_FILE_MAX_BYTES: usize = 20 * 1024 * 1024;
+
+/// The request ceiling attached to `/employees/import/validate` in
+/// `routes/mod.rs`: the file plus a megabyte for the multipart envelope. Until
+/// this existed the route inherited axum's 2 MiB default, so a 3 MB XLSX well
+/// inside the row cap failed as a malformed upload.
+pub const IMPORT_REQUEST_MAX_BYTES: usize = IMPORT_FILE_MAX_BYTES + 1024 * 1024;
 
 fn require_payroll_admin(auth: &AuthUser) -> AppResult<(Uuid, Uuid)> {
     auth.require_permission(Permission::ImportEmployees)?;
@@ -77,19 +87,18 @@ pub async fn validate_import(
     while let Some(field) = multipart
         .next_field()
         .await
-        .map_err(|e| AppError::BadRequest(format!("Failed to read upload: {}", e)))?
+        .map_err(|e| multipart_error(&e, "the upload", IMPORT_REQUEST_MAX_BYTES))?
     {
         if field.name() == Some("file") {
             let file_name = field.file_name().unwrap_or("upload").to_string();
             let data = field
                 .bytes()
                 .await
-                .map_err(|e| AppError::BadRequest(format!("Failed to read file data: {}", e)))?;
+                .map_err(|e| multipart_error(&e, "the file data", IMPORT_REQUEST_MAX_BYTES))?;
 
-            if data.len() > 20 * 1024 * 1024 {
-                return Err(AppError::BadRequest(
-                    "File too large. Maximum size is 20MB.".into(),
-                ));
+            // Bounds the one part; the route layer bounds the whole request.
+            if data.len() > IMPORT_FILE_MAX_BYTES {
+                return Err(payload_too_large("The import file", IMPORT_FILE_MAX_BYTES));
             }
 
             file_data = Some((file_name, data.to_vec()));

@@ -912,3 +912,167 @@ async fn create_user_rejects_a_malformed_email_with_422() {
 
     assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }
+
+// ─── Upload body limits ───
+
+const MULTIPART_BOUNDARY: &str = "payrollroutetestboundary";
+
+/// Build a single-part `multipart/form-data` request carrying `payload` as the
+/// `file` field. Body size is what these tests are about, so the envelope is
+/// written by hand rather than by a builder that might buffer or chunk it.
+fn upload_request(uri: &str, token: &str, file_name: &str, payload: &[u8]) -> Request<Body> {
+    let part_header = format!(
+        "--{MULTIPART_BOUNDARY}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{file_name}\"\r\n\r\n"
+    );
+    let trailer = format!("\r\n--{MULTIPART_BOUNDARY}--\r\n");
+
+    let mut body = Vec::with_capacity(part_header.len() + payload.len() + trailer.len());
+    body.extend_from_slice(part_header.as_bytes());
+    body.extend_from_slice(payload);
+    body.extend_from_slice(trailer.as_bytes());
+
+    Request::builder()
+        .method("POST")
+        .uri(uri)
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .header(
+            header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={MULTIPART_BOUNDARY}"),
+        )
+        .header("x-forwarded-for", "198.51.100.99, 203.0.113.10")
+        .header(header::USER_AGENT, "PayrollRouteTest/1.0")
+        .body(Body::from(body))
+        .expect("build request")
+}
+
+async fn error_message(response: axum::response::Response) -> String {
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("read response body");
+    serde_json::from_slice::<serde_json::Value>(&bytes)
+        .ok()
+        .and_then(|v| v["error"].as_str().map(str::to_string))
+        .unwrap_or_default()
+}
+
+/// The reported defect, from the client's side: exactly one `DefaultBodyLimit`
+/// existed in the backend, so every other multipart route inherited axum's
+/// 2 MiB default and a 3 MB spreadsheet — well inside the documented 20 MB
+/// ceiling and inside the validator's row cap — died as a malformed upload.
+/// Reaching the file-format check is the proof the whole body was read.
+#[tokio::test]
+async fn employee_import_reads_a_body_above_the_two_megabyte_default() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let token = token_for(&pool, company_id, "payroll_admin").await;
+
+    let payload = vec![b'a'; 3 * 1024 * 1024];
+    let response = app_for(pool)
+        .await
+        .oneshot(upload_request(
+            "/api/employees/import/validate",
+            &token,
+            "headcount.bin",
+            &payload,
+        ))
+        .await
+        .expect("route response");
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert!(
+        error_message(response).await.contains("Unsupported file"),
+        "a 3 MB body must reach the format check, not fail as a stream error"
+    );
+}
+
+/// Same for the backup route, which is the acceptance criterion for the whole
+/// defect: an export this system produced has to be restorable by it.
+#[tokio::test]
+async fn backup_import_reads_a_body_above_the_two_megabyte_default() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let token = token_for(&pool, company_id, "super_admin").await;
+
+    let payload = vec![b'a'; 3 * 1024 * 1024];
+    let response = app_for(pool)
+        .await
+        .oneshot(upload_request(
+            "/api/admin/backup/import",
+            &token,
+            "backup.json",
+            &payload,
+        ))
+        .await
+        .expect("route response");
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert!(
+        error_message(response)
+            .await
+            .contains("Invalid backup file"),
+        "a 3 MB body must reach the JSON parse, not fail as a stream error"
+    );
+}
+
+/// Over the ceiling the answer is a 413 naming the limit, not a 400 quoting the
+/// multipart decoder. The ICS route is the cheapest one to prove it on: its
+/// ceiling is 3 MiB, and it previously had no size check of its own at all.
+#[tokio::test]
+async fn an_upload_over_its_route_ceiling_is_a_413_naming_the_limit() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let token = token_for(&pool, company_id, "payroll_admin").await;
+
+    let payload = vec![b'a'; 4 * 1024 * 1024];
+    let response = app_for(pool)
+        .await
+        .oneshot(upload_request(
+            "/api/calendar/import-ics-file",
+            &token,
+            "holidays.ics",
+            &payload,
+        ))
+        .await
+        .expect("route response");
+
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    let message = error_message(response).await;
+    assert!(
+        message.contains("too large") && message.contains("MB"),
+        "the 413 must name the ceiling, not the parser: {message}"
+    );
+}
+
+/// The body limit belongs on the `MethodRouter`, not on the merged
+/// `rate_limited_heavy` sub-router — hung there it would silently raise
+/// `/payroll/run` and `/payroll/preview` to a 101 MiB body as well.
+#[tokio::test]
+async fn the_backup_ceiling_does_not_leak_onto_its_rate_limit_siblings() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let token = token_for(&pool, company_id, "payroll_admin").await;
+
+    // Comfortably over axum's 2 MiB default and over anything a payroll preview
+    // has cause to accept.
+    let junk = "x".repeat(3 * 1024 * 1024);
+    let body = format!(r#"{{"payroll_group_id":"{company_id}","junk":"{junk}"}}"#);
+    let response = app_for(pool)
+        .await
+        .oneshot(request("POST", "/api/payroll/preview", &token, &body))
+        .await
+        .expect("route response");
+
+    assert_eq!(
+        response.status(),
+        StatusCode::PAYLOAD_TOO_LARGE,
+        "a JSON route must keep the default limit"
+    );
+}

@@ -1,5 +1,6 @@
 use axum::{
     Json,
+    body::Bytes,
     extract::{Multipart, Query, State},
     http::header,
     response::IntoResponse,
@@ -9,9 +10,21 @@ use uuid::Uuid;
 
 use crate::core::app_state::AppState;
 use crate::core::auth::{AuthUser, Permission};
-use crate::core::error::{AppError, AppResult};
+use crate::core::error::{AppError, AppResult, multipart_error, payload_too_large};
 use crate::models::backup::{CompanyBackup, ExportQuery, ImportResult};
 use crate::services::backup_service;
+
+/// Largest backup document this endpoint will accept. A backup carries every
+/// payroll row a tenant has ever produced, so the export can genuinely reach
+/// tens of megabytes — the point of stating it here is that
+/// [`BACKUP_REQUEST_MAX_BYTES`] is derived from it and cannot drift.
+pub const BACKUP_FILE_MAX_BYTES: usize = 100 * 1024 * 1024;
+
+/// The request ceiling attached to `/admin/backup/import` in `routes/mod.rs`:
+/// the file plus a megabyte of slack for the multipart envelope and the
+/// `create_new` / `company_id` text fields. Without this the route inherited
+/// axum's 2 MiB default and rejected any real backup before the handler ran.
+pub const BACKUP_REQUEST_MAX_BYTES: usize = BACKUP_FILE_MAX_BYTES + 1024 * 1024;
 
 /// A company backup carries payroll_runs/items/entries, salary_history and raw
 /// employee rows (bank account, IC, TIN), and import overwrites those tables.
@@ -77,26 +90,26 @@ pub async fn import_company(
 ) -> AppResult<Json<ImportResult>> {
     let (admin_company_id, user_id) = require_backup_admin(&auth)?;
 
-    let mut file_data: Option<Vec<u8>> = None;
+    let mut file_data: Option<Bytes> = None;
     let mut requested_company_id: Option<Uuid> = None;
     let mut create_new = false;
 
     while let Some(field) = multipart
         .next_field()
         .await
-        .map_err(|e| AppError::BadRequest(format!("Failed to read upload: {}", e)))?
+        .map_err(|e| multipart_error(&e, "the upload", BACKUP_REQUEST_MAX_BYTES))?
     {
         if field.name() == Some("create_new") {
             let value = field
                 .text()
                 .await
-                .map_err(|e| AppError::BadRequest(format!("Failed to read create_new: {e}")))?;
+                .map_err(|e| multipart_error(&e, "create_new", BACKUP_REQUEST_MAX_BYTES))?;
             create_new = value.trim().eq_ignore_ascii_case("true");
         } else if field.name() == Some("company_id") {
             let value = field
                 .text()
                 .await
-                .map_err(|e| AppError::BadRequest(format!("Failed to read company_id: {e}")))?;
+                .map_err(|e| multipart_error(&e, "company_id", BACKUP_REQUEST_MAX_BYTES))?;
             requested_company_id = Some(
                 Uuid::parse_str(value.trim())
                     .map_err(|_| AppError::BadRequest("company_id must be a valid UUID".into()))?,
@@ -112,15 +125,19 @@ pub async fn import_company(
             let data = field
                 .bytes()
                 .await
-                .map_err(|e| AppError::BadRequest(format!("Failed to read file data: {}", e)))?;
+                .map_err(|e| multipart_error(&e, "the file data", BACKUP_REQUEST_MAX_BYTES))?;
 
-            if data.len() > 100 * 1024 * 1024 {
-                return Err(AppError::BadRequest(
-                    "File too large. Maximum size is 100MB.".into(),
-                ));
+            // Second line of defence: the layer bounds the whole request, this
+            // bounds the one part, so a caller cannot spend the envelope's
+            // slack on the file itself.
+            if data.len() > BACKUP_FILE_MAX_BYTES {
+                return Err(payload_too_large("The backup file", BACKUP_FILE_MAX_BYTES));
             }
 
-            file_data = Some(data.to_vec());
+            // Kept as `Bytes` rather than copied into a `Vec`: the parse below
+            // borrows it, and the copy put roughly three times the file in
+            // memory at once on a host that does not have it to spare.
+            file_data = Some(data);
         }
     }
 

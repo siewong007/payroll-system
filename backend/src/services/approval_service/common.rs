@@ -76,13 +76,19 @@ pub(super) fn parse_overtime_times(
 /// declared window at most 24 h by construction, so `hours <= declared_hours`
 /// already entails the `hours <= 24` database CHECK rather than contradicting
 /// it. Decimal throughout, per the repo's money rule.
+///
+/// Only a strictly negative difference wraps. `start == end` is a zero-length
+/// window, not a 24-hour one: wrapping it turned "09:00 to 09:00" — the shape a
+/// half-filled form produces — into a licence to declare a full day of
+/// overtime. With the window at zero, the positivity check below rejects it
+/// outright, matching migration 1011's `hours > 0` CHECK.
 pub fn ensure_overtime_hours_within_window(
     hours: Decimal,
     start: NaiveTime,
     end: NaiveTime,
 ) -> AppResult<()> {
     let declared_minutes = (end - start).num_minutes();
-    let declared_minutes = if declared_minutes <= 0 {
+    let declared_minutes = if declared_minutes < 0 {
         declared_minutes + 24 * 60
     } else {
         declared_minutes

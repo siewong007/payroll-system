@@ -662,7 +662,79 @@ fn overtime_window_boundary_is_inclusive() {
 /// contradicting it.
 #[test]
 fn overtime_window_never_admits_more_than_a_day() {
-    // Equal start and end wraps to a full 24 h — the widest window expressible.
-    assert!(ensure_overtime_hours_within_window(dec!(24), hhmm("09:00"), hhmm("09:00")).is_ok());
-    assert!(ensure_overtime_hours_within_window(dec!(24.5), hhmm("09:00"), hhmm("09:00")).is_err());
+    // One minute past midnight from one minute past is the widest wrapped
+    // window that is still a window: 23 h 59 m.
+    assert!(ensure_overtime_hours_within_window(dec!(23), hhmm("09:00"), hhmm("08:59")).is_ok());
+    assert!(ensure_overtime_hours_within_window(dec!(24), hhmm("09:00"), hhmm("08:59")).is_err());
+}
+
+/// A zero-length window is a half-filled form, not a night shift. Wrapping it
+/// past midnight turned "09:00 to 09:00" into 24 declared hours, which is the
+/// widest possible overtime claim reachable without declaring anything at all.
+#[test]
+fn overtime_window_of_zero_length_declares_nothing() {
+    for hours in [dec!(0.5), dec!(8), dec!(24)] {
+        assert!(
+            ensure_overtime_hours_within_window(hours, hhmm("09:00"), hhmm("09:00")).is_err(),
+            "{hours} hours over a zero-length window must be refused"
+        );
+    }
+}
+
+// ─── Upload ceilings ───
+
+/// Each route declares two numbers: what the file may weigh, and what the whole
+/// request may weigh. The second is the `DefaultBodyLimit` and has to leave room
+/// for the multipart envelope, or the layer rejects a file that the handler's
+/// own check would have accepted — which is the drift the paired constants exist
+/// to prevent.
+#[test]
+fn every_request_ceiling_leaves_room_above_its_file_ceiling() {
+    use crate::handlers::{backup, calendar, employee_import};
+
+    for (what, file_max, request_max) in [
+        (
+            "backup",
+            backup::BACKUP_FILE_MAX_BYTES,
+            backup::BACKUP_REQUEST_MAX_BYTES,
+        ),
+        (
+            "employee import",
+            employee_import::IMPORT_FILE_MAX_BYTES,
+            employee_import::IMPORT_REQUEST_MAX_BYTES,
+        ),
+        (
+            "ics import",
+            calendar::ICS_FILE_MAX_BYTES,
+            calendar::ICS_REQUEST_MAX_BYTES,
+        ),
+    ] {
+        assert!(
+            request_max > file_max,
+            "{what}: the request ceiling must exceed the file ceiling"
+        );
+        // Every message renders the limit as whole megabytes.
+        assert_eq!(file_max % (1024 * 1024), 0, "{what}: file ceiling");
+        assert_eq!(request_max % (1024 * 1024), 0, "{what}: request ceiling");
+        // axum's default is 2 MiB; a ceiling at or below it is not a ceiling.
+        assert!(
+            request_max > 2 * 1024 * 1024,
+            "{what}: below axum's default, so the layer would be a no-op"
+        );
+    }
+}
+
+/// A 413 is what an operator can act on; a 400 quoting the multipart decoder is
+/// not. The variant has to render as one and name the number.
+#[test]
+fn an_over_limit_upload_renders_as_a_413_naming_the_limit() {
+    use crate::core::error::payload_too_large;
+
+    let err = payload_too_large("The backup file", 100 * 1024 * 1024);
+    let (status, message) = err.client_response();
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert!(
+        message.contains("100 MB"),
+        "the message must name the ceiling: {message}"
+    );
 }

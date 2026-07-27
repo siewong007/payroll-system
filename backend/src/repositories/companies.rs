@@ -183,67 +183,203 @@ pub async fn set_geofence_mode(
     Ok(())
 }
 
-/// Hard-delete a company and all of its data, in dependency order. Runs many
-/// statements (including a runtime-query loop over the company-scoped tables), so
-/// it takes the caller's transaction connection. Returns the number of company
-/// rows removed (0 = the company did not exist).
-pub async fn delete_cascade(conn: &mut sqlx::PgConnection, company_id: Uuid) -> AppResult<u64> {
-    // Delete in dependency order (children before parents)
+/// Wipe every company-scoped row *except* the `companies` row itself and the
+/// user linkage, children before parents.
+///
+/// This is the single wipe order for the platform. It previously existed twice
+/// — here and in `repositories/backup.rs` — as two hand-maintained lists of the
+/// same graph, and neither was right: this copy omitted `payroll_item_details`
+/// and `tp3_records`, so deleting any tenant that had ever run payroll raised
+/// 23503; the other omitted `email_logs`, which has NO ACTION foreign keys into
+/// both `email_templates` and `employees`, so an overwrite restore failed on
+/// its second statement for any tenant that had sent a templated letter.
+///
+/// Tables whose foreign key to `companies(id)` is ON DELETE CASCADE are
+/// deliberately absent — `attendance_records`, `attendance_qr_tokens`,
+/// `attendance_kiosk_credentials`, `company_locations`,
+/// `company_work_schedules`, `employee_work_schedules`, `user_groups`,
+/// `user_companies`, and `audit_logs` since migration 1008. They follow the
+/// `companies` row. Everything listed here is a NO ACTION foreign key that has
+/// to be removed by hand, and 1010's `claims_run_tenant_fkey` is NO ACTION on
+/// purpose, so `claims` must precede `payroll_runs`.
+///
+/// Two consequences worth knowing before calling it. `DELETE FROM employees`
+/// cascades `attendance_records` and `employee_work_schedules`, so an overwrite
+/// restore destroys the target company's attendance history — pre-existing
+/// behaviour, stated here now that it is shared. And `email_logs` are destroyed
+/// and not restored: they are not part of `CompanyBackup`, and they reference
+/// the templates and employees being replaced wholesale.
+///
+/// Runs many statements, so it takes the caller's transaction connection. Never
+/// call it outside a transaction: a mis-ordered statement must roll the whole
+/// wipe back rather than half-delete a tenant.
+pub async fn delete_company_data(conn: &mut sqlx::PgConnection, company_id: Uuid) -> AppResult<()> {
+    // Payroll money rows. `payroll_item_details` carries no company_id of its
+    // own (1009 explains why it was left out of the tenant anchoring), so it is
+    // reached through its parent.
+    sqlx::query!(
+        "DELETE FROM payroll_item_details WHERE payroll_item_id IN (SELECT pi.id FROM payroll_items pi JOIN payroll_runs pr ON pi.payroll_run_id = pr.id WHERE pr.company_id = $1)",
+        company_id,
+    )
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query!(
+        "DELETE FROM payroll_items WHERE payroll_run_id IN (SELECT id FROM payroll_runs WHERE company_id = $1)",
+        company_id,
+    )
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query!(
+        "DELETE FROM payroll_entries WHERE company_id = $1",
+        company_id,
+    )
+    .execute(&mut *conn)
+    .await?;
 
-    // 1. Team members (via teams)
+    // Must precede both `email_templates` and `employees`.
+    sqlx::query!("DELETE FROM email_logs WHERE company_id = $1", company_id)
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query!(
+        "DELETE FROM notifications WHERE company_id = $1",
+        company_id,
+    )
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query!(
+        "DELETE FROM bulk_import_sessions WHERE company_id = $1",
+        company_id,
+    )
+    .execute(&mut *conn)
+    .await?;
+
     sqlx::query!(
         "DELETE FROM team_members WHERE team_id IN (SELECT id FROM teams WHERE company_id = $1)",
         company_id,
     )
     .execute(&mut *conn)
     .await?;
+    sqlx::query!("DELETE FROM teams WHERE company_id = $1", company_id)
+        .execute(&mut *conn)
+        .await?;
 
-    // 2. Leave balances (via employees)
-    sqlx::query!("DELETE FROM leave_balances WHERE employee_id IN (SELECT id FROM employees WHERE company_id = $1)", company_id)
-        .execute(&mut *conn).await?;
+    sqlx::query!(
+        "DELETE FROM leave_balances WHERE employee_id IN (SELECT id FROM employees WHERE company_id = $1)",
+        company_id,
+    )
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query!(
+        "DELETE FROM leave_requests WHERE company_id = $1",
+        company_id,
+    )
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query!("DELETE FROM leave_types WHERE company_id = $1", company_id)
+        .execute(&mut *conn)
+        .await?;
 
-    // 3. Payroll items (via payroll_runs)
-    sqlx::query!("DELETE FROM payroll_items WHERE payroll_run_id IN (SELECT id FROM payroll_runs WHERE company_id = $1)", company_id)
-        .execute(&mut *conn).await?;
+    // 1010 left `claims_run_tenant_fkey` NO ACTION on purpose so a forgotten
+    // revert fails loudly; that makes this line ordering-critical, not tidy.
+    sqlx::query!("DELETE FROM claims WHERE company_id = $1", company_id)
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query!(
+        "DELETE FROM overtime_applications WHERE company_id = $1",
+        company_id,
+    )
+    .execute(&mut *conn)
+    .await?;
 
-    // 4. Salary history & employee allowances (via employees)
-    sqlx::query!("DELETE FROM salary_history WHERE employee_id IN (SELECT id FROM employees WHERE company_id = $1)", company_id)
-        .execute(&mut *conn).await?;
-    sqlx::query!("DELETE FROM employee_allowances WHERE employee_id IN (SELECT id FROM employees WHERE company_id = $1)", company_id)
-        .execute(&mut *conn).await?;
+    sqlx::query!("DELETE FROM documents WHERE company_id = $1", company_id)
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query!(
+        "DELETE FROM document_categories WHERE company_id = $1",
+        company_id,
+    )
+    .execute(&mut *conn)
+    .await?;
 
-    // 5. Tables with direct company_id FK
-    let tables = [
-        "overtime_applications",
-        "claims",
-        "leave_requests",
-        "leave_types",
-        "notifications",
-        "email_logs",
-        "email_templates",
-        "bulk_import_sessions",
-        "documents",
-        "document_categories",
-        "company_settings",
-        "working_day_config",
-        "holidays",
-        "teams",
-        "payroll_entries",
-        "payroll_runs",
-        "payroll_groups",
-        "employees",
-        "user_companies",
-    ];
+    // Anchored to the tenant by 1009, each with its own index, so these are
+    // three indexed deletes rather than three subquery scans over `employees`.
+    sqlx::query!("DELETE FROM tp3_records WHERE company_id = $1", company_id)
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query!(
+        "DELETE FROM salary_history WHERE company_id = $1",
+        company_id,
+    )
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query!(
+        "DELETE FROM employee_allowances WHERE company_id = $1",
+        company_id,
+    )
+    .execute(&mut *conn)
+    .await?;
 
-    for table in tables {
-        let query = format!("DELETE FROM {} WHERE company_id = $1", table);
-        sqlx::query(&query)
-            .bind(company_id)
-            .execute(&mut *conn)
-            .await?;
-    }
+    sqlx::query!(
+        "DELETE FROM email_templates WHERE company_id = $1",
+        company_id,
+    )
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query!(
+        "DELETE FROM company_settings WHERE company_id = $1",
+        company_id,
+    )
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query!(
+        "DELETE FROM working_day_config WHERE company_id = $1",
+        company_id,
+    )
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query!("DELETE FROM holidays WHERE company_id = $1", company_id)
+        .execute(&mut *conn)
+        .await?;
 
-    // 6. Clear company_id on users (nullable FK)
+    sqlx::query!("DELETE FROM employees WHERE company_id = $1", company_id)
+        .execute(&mut *conn)
+        .await?;
+
+    sqlx::query!("DELETE FROM payroll_runs WHERE company_id = $1", company_id)
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query!(
+        "DELETE FROM payroll_groups WHERE company_id = $1",
+        company_id,
+    )
+    .execute(&mut *conn)
+    .await?;
+
+    Ok(())
+}
+
+/// Hard-delete a company and everything under it. Runs many statements, so it
+/// takes the caller's transaction connection. Returns the number of company
+/// rows removed (0 = the company did not exist).
+///
+/// The order lives in [`delete_company_data`]; this adds only what a tenant
+/// teardown does beyond a data wipe. It used to end in a runtime
+/// `format!("DELETE FROM {table} …")` loop — the one piece of dynamic SQL in the
+/// repository layer, and precisely what let two tables go missing from the list
+/// without the compiler noticing.
+pub async fn delete_cascade(conn: &mut sqlx::PgConnection, company_id: Uuid) -> AppResult<u64> {
+    delete_company_data(&mut *conn, company_id).await?;
+
+    // Redundant — the FK is ON DELETE CASCADE — but kept because it states that
+    // membership is company-scoped data rather than something the wipe forgot.
+    sqlx::query!(
+        "DELETE FROM user_companies WHERE company_id = $1",
+        company_id,
+    )
+    .execute(&mut *conn)
+    .await?;
+
+    // Clear company_id on users (nullable FK).
     sqlx::query!(
         "UPDATE users SET company_id = NULL WHERE company_id = $1",
         company_id,
@@ -251,7 +387,6 @@ pub async fn delete_cascade(conn: &mut sqlx::PgConnection, company_id: Uuid) -> 
     .execute(&mut *conn)
     .await?;
 
-    // 7. Delete the company itself
     let result = sqlx::query!("DELETE FROM companies WHERE id = $1", company_id)
         .execute(&mut *conn)
         .await?;

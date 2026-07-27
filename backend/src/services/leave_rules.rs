@@ -60,6 +60,37 @@ pub async fn reserve_pending_days(
     }
 }
 
+/// Longest period a single leave request may cover, inclusive of both ends.
+///
+/// A year plus a day accommodates a full-year sabbatical that crosses a leap
+/// year. Anything larger is a typo or an attack.
+pub const MAX_LEAVE_SPAN_DAYS: i64 = 366;
+
+/// Bounds a requested leave period before anything reads the calendar.
+///
+/// [`validate_period`] already rejects an inverted range, but it runs *after*
+/// `calendar_service::count_working_days_between`, which walks the range a day
+/// at a time and used to query holidays once per year in it. A request for
+/// `0001-01-01`..`9999-12-31` therefore issued thousands of sequential queries
+/// while holding one of the pool's ten connections — a bare `employee` token
+/// and a dozen concurrent requests stalled every tenant. This is the gate that
+/// has to come first, so it is deliberately pure and cheap; `validate_period`
+/// stays the balance-versus-calendar reconciliation it already is.
+pub fn validate_range(start_date: NaiveDate, end_date: NaiveDate) -> AppResult<()> {
+    if start_date > end_date {
+        return Err(AppError::BadRequest(
+            "Leave start date must not be after the end date".into(),
+        ));
+    }
+    let span = (end_date - start_date).num_days() + 1;
+    if span > MAX_LEAVE_SPAN_DAYS {
+        return Err(AppError::BadRequest(format!(
+            "A leave request may not span more than {MAX_LEAVE_SPAN_DAYS} days ({span} requested)"
+        )));
+    }
+    Ok(())
+}
+
 /// Validates a leave period against the company calendar.
 ///
 /// `days` is client-supplied and drives the balance deduction, while the date
@@ -153,5 +184,34 @@ mod tests {
     fn still_rejects_inverted_ranges_and_non_positive_days() {
         assert!(validate_period(d(2026, 7, 5), d(2026, 7, 1), Decimal::from(1), 1).is_err());
         assert!(validate_period(d(2026, 7, 1), d(2026, 7, 5), Decimal::ZERO, 5).is_err());
+    }
+
+    /// The reported defect: the widest range `NaiveDate` can express, submitted
+    /// by a bare `employee` token, used to reach the calendar loop.
+    #[test]
+    fn rejects_the_widest_expressible_range() {
+        let err = validate_range(d(1, 1, 1), d(9999, 12, 31));
+        assert!(matches!(err, Err(AppError::BadRequest(_))));
+    }
+
+    #[test]
+    fn the_span_bound_is_inclusive_of_both_ends() {
+        let start = d(2026, 1, 1);
+        // 366 days inclusive is the widest accepted request.
+        assert!(validate_range(start, start + chrono::Duration::days(365)).is_ok());
+        assert!(validate_range(start, start + chrono::Duration::days(366)).is_err());
+    }
+
+    #[test]
+    fn accepts_ordinary_ranges_and_a_single_day() {
+        assert!(validate_range(d(2026, 7, 1), d(2026, 7, 1)).is_ok());
+        assert!(validate_range(d(2026, 7, 1), d(2026, 7, 14)).is_ok());
+    }
+
+    /// The ordering check has to live here as well as in `validate_period`:
+    /// this is the one that runs before the calendar is read.
+    #[test]
+    fn rejects_an_inverted_range_before_the_calendar_is_touched() {
+        assert!(validate_range(d(2026, 7, 5), d(2026, 7, 1)).is_err());
     }
 }

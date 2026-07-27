@@ -35,6 +35,8 @@ pub async fn create_leave_request_admin(
     actor_id: Uuid,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<LeaveRequest> {
+    // Bound the span before the calendar walk, as the portal path does.
+    crate::services::leave_rules::validate_range(req.start_date, req.end_date)?;
     let working_days = calendar_service::count_working_days_between(
         pool,
         company_id,
@@ -133,6 +135,7 @@ pub async fn update_leave_request_admin(
     let start_date = req.start_date.unwrap_or(current.start_date);
     let end_date = req.end_date.unwrap_or(current.end_date);
     let days = req.days.unwrap_or(current.days);
+    crate::services::leave_rules::validate_range(start_date, end_date)?;
     let working_days =
         calendar_service::count_working_days_between(pool, company_id, start_date, end_date)
             .await?;
