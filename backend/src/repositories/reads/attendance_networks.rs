@@ -28,6 +28,7 @@ pub async fn list_candidates(
                   COUNT(DISTINCT o.employee_id)      AS "distinct_employees!",
                   SUM(o.observation_count)::bigint   AS "observation_count!",
                   SUM(o.anchored_count)::bigint      AS "anchored_count!",
+                  SUM(o.denied_count)::bigint        AS "denied_count!",
                   MIN(o.first_seen_at)               AS "first_seen_at!",
                   MAX(o.last_seen_at)                AS "last_seen_at!"
            FROM attendance_network_observations o
@@ -43,9 +44,14 @@ pub async fn list_candidates(
                  WHERE d.company_id = o.company_id
                    AND d.network = o.network
                    AND d.prefix_len = o.prefix_len
+                   AND d.expires_at > NOW()
              )
            GROUP BY o.network, o.prefix_len
-           ORDER BY SUM(o.anchored_count) DESC,
+           -- Denials first: a block turning people away is the one an
+           -- administrator needs to see today, ahead of any slow-burn
+           -- corroborated candidate.
+           ORDER BY SUM(o.denied_count) DESC,
+                    SUM(o.anchored_count) DESC,
                     COUNT(DISTINCT o.employee_id) DESC,
                     MAX(o.last_seen_at) DESC
            LIMIT 50"#,
@@ -71,6 +77,7 @@ pub async fn get_candidate(
                   COUNT(DISTINCT o.employee_id)      AS "distinct_employees!",
                   SUM(o.observation_count)::bigint   AS "observation_count!",
                   SUM(o.anchored_count)::bigint      AS "anchored_count!",
+                  SUM(o.denied_count)::bigint        AS "denied_count!",
                   MIN(o.first_seen_at)               AS "first_seen_at!",
                   MAX(o.last_seen_at)                AS "last_seen_at!"
            FROM attendance_network_observations o

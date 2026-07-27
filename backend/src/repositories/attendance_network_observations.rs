@@ -44,6 +44,50 @@ pub async fn record(
     Ok(())
 }
 
+/// Record that a check-in was *refused* from this address.
+///
+/// The only evidence produced on the morning the office egress address changes:
+/// every employee is denied, so the post-success learning path never runs. A
+/// denial never counts toward proposing a block — it exists so an administrator
+/// can be shown "47 people were turned away from 203.0.113.9 today; is that
+/// your new office address?" instead of a silent, unexplained outage.
+pub async fn record_denial(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    employee_id: Uuid,
+    network: &str,
+    prefix_len: i16,
+) -> AppResult<()> {
+    sqlx::query!(
+        r#"INSERT INTO attendance_network_observations
+               (company_id, employee_id, network, prefix_len, observation_count,
+                anchored_count, denied_count)
+           VALUES ($1, $2, $3, $4, 0, 0, 1)
+           ON CONFLICT (company_id, employee_id, network, prefix_len)
+           DO UPDATE SET
+               denied_count = attendance_network_observations.denied_count + 1,
+               last_seen_at = NOW()"#,
+        company_id,
+        employee_id,
+        network,
+        prefix_len,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
+/// Drop dismissals that have lapsed, so a block declined months ago can be
+/// proposed again if it starts being used.
+pub async fn purge_expired_dismissals(
+    executor: impl Executor<'_, Database = Postgres>,
+) -> AppResult<u64> {
+    let result = sqlx::query!("DELETE FROM attendance_network_dismissals WHERE expires_at < NOW()")
+        .execute(executor)
+        .await?;
+    Ok(result.rows_affected())
+}
+
 /// Forget everything learned about one block — used when it is approved (the
 /// evidence has served its purpose) or dismissed.
 pub async fn delete_for_network(

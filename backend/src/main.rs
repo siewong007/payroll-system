@@ -176,6 +176,13 @@ async fn main() -> anyhow::Result<()> {
                     tracing::error!("Failed to clean up network observations: {}", e)
                 }
             }
+
+            // A dismissal means "not right now". Letting them lapse is what
+            // makes a block proposable again after an office moves.
+            match attendance_network_observations::purge_expired_dismissals(&cleanup_pool).await {
+                Ok(rows) => tracing::info!(rows, "network-dismissal cleanup: completed"),
+                Err(e) => tracing::error!("Failed to clean up network dismissals: {}", e),
+            }
         }
     });
 

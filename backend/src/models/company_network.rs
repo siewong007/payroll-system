@@ -80,6 +80,10 @@ pub struct NetworkCandidate {
     /// Observations corroborated by a signal the employee does not control —
     /// inside the geofence, or a QR token minted by a kiosk in the building.
     pub anchored_count: i64,
+    /// Check-ins *refused* from this block. Never evidence for approving it;
+    /// this is how the office's new address surfaces after an ISP change, when
+    /// everyone is being turned away and nothing else is being recorded.
+    pub denied_count: i64,
     pub first_seen_at: DateTime<Utc>,
     pub last_seen_at: DateTime<Utc>,
 }

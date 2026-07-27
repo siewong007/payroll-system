@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM attendance_network_dismissals WHERE expires_at < NOW()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "0ef7be16f66f781ac63279d04954cd7631b43a0489101db25f7de56b3ee0e6d7"
+}

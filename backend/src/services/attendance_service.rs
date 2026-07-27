@@ -573,7 +573,8 @@ pub async fn check_in_qr(
     // an employee who is off-site for both reasons is told the more actionable
     // of the two first.
     let offsite_network =
-        attendance_network_service::validate_for_checkin(pool, company_id, client_ip).await?;
+        attendance_network_service::validate_for_checkin(pool, company_id, employee_id, client_ip)
+            .await?;
 
     let token_id = validate_qr_token(pool, token, company_id).await?;
     let status = determine_checkin_status(pool, employee_id, company_id, &tz).await?;
@@ -647,7 +648,8 @@ pub async fn check_in_face_id(
         geofence_service::validate_geofence(pool, company_id, latitude, longitude).await?;
 
     let offsite_network =
-        attendance_network_service::validate_for_checkin(pool, company_id, client_ip).await?;
+        attendance_network_service::validate_for_checkin(pool, company_id, employee_id, client_ip)
+            .await?;
 
     let status = determine_checkin_status(pool, employee_id, company_id, &tz).await?;
 

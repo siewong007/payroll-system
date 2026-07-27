@@ -413,6 +413,7 @@ pub async fn dismiss_candidate(
 pub async fn validate_for_checkin(
     pool: &PgPool,
     company_id: Uuid,
+    employee_id: Uuid,
     client_ip: Option<IpAddr>,
 ) -> AppResult<Option<bool>> {
     let mode = get_mode(pool, company_id).await?;
@@ -433,7 +434,47 @@ pub async fn validate_for_checkin(
         return Ok(Some(false));
     }
 
+    // An address we cannot make sense of is a deployment fault, not an
+    // employee. Absent, private, loopback or carrier-NAT means the request did
+    // not arrive through the proxy the deployment assumes, or TRUST_PROXY_HEADERS
+    // disagrees with reality — in which case *every* client resolves the same
+    // way and denying would take the whole company's attendance down.
+    //
+    // Failing closed here would buy nothing anyway: the container is published
+    // on 127.0.0.1:8080 (deploy/docker-compose.prod.yml), so anyone able to
+    // present a stripped header has already reached it directly, and could just
+    // as easily present a matching one. Flag it for review instead.
+    let unverifiable = match client_ip {
+        None => true,
+        Some(addr) => !is_identifying(addr),
+    };
+    if unverifiable {
+        tracing::warn!(
+            company_id = %company_id,
+            "attendance network check could not resolve a usable client address; \
+             flagging instead of denying"
+        );
+        return Ok(Some(true));
+    }
+
     if mode == "enforce" {
+        // Record the refusal before returning it. On the morning the office
+        // address changes this is the only trace left anywhere — the success
+        // path that normally feeds learning never runs.
+        if let Some(addr) = client_ip
+            && let Ok(prefix) = candidate_prefix(addr)
+            && let Err(e) = attendance_network_observations::record_denial(
+                pool,
+                company_id,
+                employee_id,
+                &prefix.network().to_string(),
+                prefix.prefix_len() as i16,
+            )
+            .await
+        {
+            tracing::warn!("Failed to record attendance network denial: {}", e);
+        }
+
         return Err(AppError::BadRequest(
             "You're not on an approved office network. Connect to the office Wi-Fi \
              and try again — if you're already on it, ask an administrator to check \
@@ -629,6 +670,7 @@ mod tests {
             distinct_employees: employees,
             observation_count: observations,
             anchored_count: anchored,
+            denied_count: 0,
             first_seen_at: Utc::now(),
             last_seen_at: Utc::now(),
         }
@@ -715,6 +757,20 @@ mod tests {
     fn a_v4_mapped_v6_client_records_as_its_ipv4_candidate() {
         let prefix = candidate_prefix("::ffff:203.0.113.7".parse().unwrap()).unwrap();
         assert_eq!(prefix.to_string(), "203.0.113.7/32");
+    }
+
+    #[test]
+    fn denials_alone_never_make_a_block_proposable() {
+        // The recovery case: the office ISP changed, everyone is being turned
+        // away from the new address, and nothing else is being recorded. The
+        // administrator must be *shown* this block — but it must not qualify on
+        // denial volume, or an attacker hammering check-in from one address
+        // would nominate their own network.
+        let mut c = candidate(0, 0, 0);
+        c.denied_count = 500;
+        let scored = score_candidate(c);
+        assert!(!scored.is_proposable, "denials are not corroboration");
+        assert!(!scored.is_anchored);
     }
 
     #[test]

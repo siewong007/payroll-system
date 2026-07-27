@@ -1,0 +1,66 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT o.network                          AS \"network!\",\n                  o.prefix_len                       AS \"prefix_len!\",\n                  COUNT(DISTINCT o.employee_id)      AS \"distinct_employees!\",\n                  SUM(o.observation_count)::bigint   AS \"observation_count!\",\n                  SUM(o.anchored_count)::bigint      AS \"anchored_count!\",\n                  SUM(o.denied_count)::bigint        AS \"denied_count!\",\n                  MIN(o.first_seen_at)               AS \"first_seen_at!\",\n                  MAX(o.last_seen_at)                AS \"last_seen_at!\"\n           FROM attendance_network_observations o\n           WHERE o.company_id = $1 AND o.network = $2 AND o.prefix_len = $3\n           GROUP BY o.network, o.prefix_len",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "network!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "prefix_len!",
+        "type_info": "Int2"
+      },
+      {
+        "ordinal": 2,
+        "name": "distinct_employees!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "observation_count!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "anchored_count!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "denied_count!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 6,
+        "name": "first_seen_at!",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "last_seen_at!",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Int2"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "61b12132de196ad7290bb712f3b5dd63d27cdaa273e718f781a4d2b8146f5f53"
+}
