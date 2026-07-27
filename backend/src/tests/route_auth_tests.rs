@@ -1032,12 +1032,13 @@ async fn a_traversal_filename_is_rejected_before_any_lookup() {
         .await
         .expect("route response");
 
-    assert!(
-        matches!(
-            response.status(),
-            StatusCode::BAD_REQUEST | StatusCode::NOT_FOUND
-        ),
-        "traversal attempt returned {}",
-        response.status()
+    // Deliberately strict. Accepting NOT_FOUND here too would make the test
+    // unfailable: removing the path validation entirely still yields a 404 from
+    // the reference lookup, so only BAD_REQUEST actually pins the claim that the
+    // name is rejected *before* any lookup happens.
+    assert_eq!(
+        response.status(),
+        StatusCode::BAD_REQUEST,
+        "traversal attempt must be refused by path validation, not by lookup"
     );
 }

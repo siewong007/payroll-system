@@ -406,7 +406,13 @@ fn sanitize_filename(name: &str) -> String {
         .join(".");
     stem.chars()
         .map(|c| {
-            if c.is_alphanumeric() || c == '-' || c == '_' {
+            // ASCII-only on purpose: `take(50)` counts characters, but the
+            // stored-name length bound counts bytes. Admitting multi-byte
+            // alphanumerics let a 50-character stem reach 200 bytes and push the
+            // whole name past that bound, so a legitimate upload could be
+            // rejected by its own generated name. The caller's original filename
+            // is preserved separately, so nothing user-visible is lost.
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
                 c
             } else {
                 '_'

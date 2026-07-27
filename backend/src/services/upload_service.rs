@@ -147,8 +147,40 @@ mod tests {
 
     // Path-shape cases (traversal, separators, absolute, NUL, UNC, length) are
     // owned by `core::upload_path`, which this module now delegates to. The
-    // tests below cover what is unique here: who may read a file once its path
-    // has been resolved.
+    // tests below cover what is unique here: the content gate, and who may read
+    // a file once its path has been resolved.
+
+    #[test]
+    fn the_content_gate_requires_an_allow_listed_extension() {
+        assert!(validate_upload_bytes("payload.sh", b"#!/bin/sh\n").is_err());
+        assert!(validate_upload_bytes("noextension", b"%PDF-1.4").is_err());
+        assert!(validate_upload_bytes("doc.pdf", b"%PDF-1.4").is_ok());
+    }
+
+    /// The check that looks at content rather than at what the caller asserted:
+    /// a script renamed to `.png` must not enter the store.
+    #[test]
+    fn the_content_gate_rejects_bytes_that_contradict_the_extension() {
+        assert!(validate_upload_bytes("x.png", b"<?php echo 1; ?>").is_err());
+        assert!(validate_upload_bytes("x.pdf", b"GIF89a").is_err());
+        assert!(validate_upload_bytes("x.png", &[0x89, 0x50, 0x4E, 0x47, 0x0D]).is_ok());
+    }
+
+    /// `webp` is the only arm that indexes rather than matching a prefix, so a
+    /// short file must not panic it.
+    #[test]
+    fn a_truncated_webp_is_rejected_without_panicking() {
+        assert!(!validate_magic_bytes(b"RIFF", "webp"));
+        assert!(!validate_magic_bytes(b"", "webp"));
+        assert!(validate_magic_bytes(b"RIFF\0\0\0\0WEBPVP8 ", "webp"));
+    }
+
+    #[test]
+    fn the_content_gate_enforces_the_size_cap() {
+        let mut oversized = vec![0x25, 0x50, 0x44, 0x46]; // "%PDF"
+        oversized.resize(MAX_UPLOAD_SIZE + 1, 0);
+        assert!(validate_upload_bytes("big.pdf", &oversized).is_err());
+    }
 
     #[test]
     fn an_employee_reads_their_own_attachment() {
