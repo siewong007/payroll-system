@@ -8,9 +8,9 @@ use crate::core::app_state::AppState;
 use crate::core::auth::{AuthUser, Permission};
 use crate::core::error::{AppError, AppResult};
 use crate::models::email::{
-    CreateEmailTemplateRequest, EmailLog, EmailLogQuery, EmailTemplate, PreviewLetterRequest,
-    PreviewLetterResponse, SendLetterRequest, TemplateQuery, UpdateEmailTemplateRequest,
-    is_valid_letter_type,
+    CreateEmailTemplateRequest, EmailLogQuery, EmailLogSummary, EmailTemplate,
+    PreviewLetterRequest, PreviewLetterResponse, SendLetterRequest, TemplateQuery,
+    UpdateEmailTemplateRequest, is_valid_letter_type,
 };
 use crate::models::pagination::PaginatedResponse;
 use crate::services::{
@@ -30,7 +30,7 @@ async fn audit_letter_sent(
     pool: &sqlx::PgPool,
     company_id: Uuid,
     actor_id: Uuid,
-    log: &EmailLog,
+    log: &EmailLogSummary,
     audit_meta: &AuditRequestMeta,
 ) {
     let _ = audit_service::log_action_with_metadata(
@@ -52,6 +52,30 @@ async fn audit_letter_sent(
         Some(audit_meta),
     )
     .await;
+}
+
+/// Turn a recorded-but-unsent letter into a non-2xx answer.
+///
+/// `email_service::send_email` returns `Ok(log)` for both SMTP failures and the
+/// SMTP-not-configured default, so the handler used to answer 200 with
+/// `status: "failed"` in the body — and the composer, which branches on the HTTP
+/// status like every other mutation, cleared the form and told the operator the
+/// letter had gone. On a deployment without SMTP that is *every* letter.
+///
+/// Called after the audit row is written, deliberately: the `email_logs` row and
+/// the audit entry are the evidence of the attempt and must survive the failure.
+/// `BadGateway` (502) is the variant that surfaces its message to the client and
+/// says the fault is upstream rather than in the request.
+pub(crate) fn send_outcome(log: EmailLogSummary) -> AppResult<Json<EmailLogSummary>> {
+    if log.status == "sent" {
+        return Ok(Json(log));
+    }
+    Err(AppError::BadGateway(format!(
+        "The letter was not sent: {}",
+        log.error_message
+            .as_deref()
+            .unwrap_or("the mail server rejected it")
+    )))
 }
 
 // ── Templates ──────────────────────────────────────────────────────────
@@ -229,12 +253,15 @@ pub async fn preview_letter(
     }
 }
 
+/// Answers with the log summary rather than the log row: the composer already
+/// holds the body it just submitted, so returning it again would be the one
+/// remaining route by which a stored body reaches the wire.
 pub async fn send_letter(
     State(state): State<AppState>,
     auth: AuthUser,
     audit_meta: AuditRequestMeta,
     Json(req): Json<SendLetterRequest>,
-) -> AppResult<Json<EmailLog>> {
+) -> AppResult<Json<EmailLogSummary>> {
     auth.require_permission(Permission::SendLetters)?;
     let company_id = auth
         .0
@@ -295,9 +322,10 @@ pub async fn send_letter(
             auth.0.sub,
         )
         .await?;
+        let log = EmailLogSummary::from(log);
 
         audit_letter_sent(&state.pool, company_id, auth.0.sub, &log, &audit_meta).await;
-        Ok(Json(log))
+        send_outcome(log)
     } else {
         // Direct email send
         let recipient_email = req
@@ -343,9 +371,10 @@ pub async fn send_letter(
             auth.0.sub,
         )
         .await?;
+        let log = EmailLogSummary::from(log);
 
         audit_letter_sent(&state.pool, company_id, auth.0.sub, &log, &audit_meta).await;
-        Ok(Json(log))
+        send_outcome(log)
     }
 }
 
@@ -355,7 +384,7 @@ pub async fn list_email_logs(
     State(state): State<AppState>,
     auth: AuthUser,
     Query(query): Query<EmailLogQuery>,
-) -> AppResult<Json<PaginatedResponse<EmailLog>>> {
+) -> AppResult<Json<PaginatedResponse<EmailLogSummary>>> {
     auth.require_permission(Permission::ViewEmailLogs)?;
     let company_id = auth
         .0

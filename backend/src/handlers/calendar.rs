@@ -6,12 +6,24 @@ use uuid::Uuid;
 
 use crate::core::app_state::AppState;
 use crate::core::auth::{AuthUser, Permission};
-use crate::core::error::{AppError, AppResult};
+use crate::core::error::{AppError, AppResult, multipart_error, payload_too_large};
+use crate::core::http_client;
 use crate::models::calendar::{
     CreateHolidayRequest, Holiday, ImportIcsRequest, MonthCalendar, MonthQuery,
     UpdateHolidayRequest, UpdateWorkingDaysRequest, WorkingDayConfig, YearQuery,
 };
 use crate::services::calendar_service;
+
+/// Largest ICS file this endpoint will accept.
+///
+/// An alias rather than a second literal: the URL import enforces the same
+/// ceiling while streaming the response, and two calendars arriving by two
+/// routes must not be measured against two different numbers.
+pub const ICS_FILE_MAX_BYTES: usize = http_client::MAX_ICS_BYTES;
+
+/// The request ceiling attached to `/calendar/import-ics-file` in
+/// `routes/mod.rs`: the file plus a megabyte for the multipart envelope.
+pub const ICS_REQUEST_MAX_BYTES: usize = ICS_FILE_MAX_BYTES + 1024 * 1024;
 
 // ─── Holidays ───
 
@@ -156,7 +168,7 @@ pub async fn import_ics_file(
     let field = multipart
         .next_field()
         .await
-        .map_err(|e| AppError::BadRequest(format!("Invalid multipart data: {}", e)))?
+        .map_err(|e| multipart_error(&e, "the upload", ICS_REQUEST_MAX_BYTES))?
         .ok_or_else(|| AppError::BadRequest("No file provided".into()))?;
 
     let file_name = field.file_name().map(|s| s.to_string()).unwrap_or_default();
@@ -170,7 +182,13 @@ pub async fn import_ics_file(
     let data = field
         .bytes()
         .await
-        .map_err(|e| AppError::BadRequest(format!("Failed to read file: {}", e)))?;
+        .map_err(|e| multipart_error(&e, "the calendar file", ICS_REQUEST_MAX_BYTES))?;
+
+    // This handler had no size check at all; the ceiling above is the whole
+    // request, this one is the calendar itself.
+    if data.len() > ICS_FILE_MAX_BYTES {
+        return Err(payload_too_large("The calendar file", ICS_FILE_MAX_BYTES));
+    }
 
     let ics_text = String::from_utf8(data.to_vec())
         .map_err(|_| AppError::BadRequest("File is not valid UTF-8 text".into()))?;

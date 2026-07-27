@@ -3,6 +3,7 @@ use std::net::IpAddr;
 use std::time::Duration;
 
 use chrono::{Datelike, Utc};
+use chrono_tz::Tz;
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -10,6 +11,7 @@ use webauthn_rs::Webauthn;
 use webauthn_rs::prelude::{PasskeyAuthentication, PublicKeyCredential};
 
 use crate::core::error::{AppError, AppResult};
+use crate::core::timezone;
 use crate::models::attendance::{
     AttendanceExportQuery, AttendanceListQuery, AttendanceMethodResponse, AttendanceRecord,
     AttendanceRecordWithEmployee, AttendanceSummaryItem, AttendanceSummaryQuery,
@@ -25,20 +27,11 @@ use crate::repositories::{
 };
 use crate::services::audit_service::{self, AuditRequestMeta};
 use crate::services::{
-    attendance_network_service, geofence_service, passkey_service, settings_service,
+    attendance_network_service, csv_helpers, geofence_service, passkey_service, settings_service,
 };
 
 // ─── QR Token TTL ───
 const QR_TOKEN_TTL_SECONDS: i64 = 300;
-const DEFAULT_TIMEZONE: &str = "Asia/Kuala_Lumpur";
-
-/// Asia/Kuala_Lumpur as a fixed offset. Malaysia has been UTC+8 with no DST
-/// since 1982, so this is exact for rendering local wall-clock time and avoids a
-/// tz-database dependency. SQL date bucketing uses `AT TIME ZONE` instead, which
-/// consults the server's tz database directly.
-fn local_offset() -> chrono::FixedOffset {
-    chrono::FixedOffset::east_opt(8 * 3600).expect("UTC+8 is a valid offset")
-}
 
 fn normalize_absent_check_out(
     status: &str,
@@ -544,11 +537,16 @@ pub(crate) async fn determine_checkin_status(
 /// `pub(crate)` so the dashboard can bucket its exception window on the same
 /// calendar the attendance screens use — a "last 7 days" count that disagreed
 /// with the list it links to would be worse than no count.
+/// Sanitized, not trusted: the column predates the write-side validator, so a
+/// value already stored that no longer parses degrades to the default here
+/// rather than reaching `AT TIME ZONE` and 500-ing every check-in, summary and
+/// export for that tenant until an operator edits the row by hand.
 pub(crate) async fn get_company_timezone(pool: &PgPool, company_id: Uuid) -> String {
-    company_work_schedules::find_default_timezone(pool, company_id)
-        .await
-        .unwrap_or(None)
-        .unwrap_or_else(|| DEFAULT_TIMEZONE.to_string())
+    timezone::sanitize(
+        company_work_schedules::find_default_timezone(pool, company_id)
+            .await
+            .unwrap_or(None),
+    )
 }
 
 // ─── Check In / Check Out ───
@@ -896,6 +894,29 @@ pub async fn manual_attendance(
 
 // ─── Attendance Correction ───
 
+/// Reject a correction whose two timestamps describe a session longer than one
+/// day. Pure, so the boundary is testable without a database.
+///
+/// This does change one workflow: HR closing a three-week-old open session must
+/// now correct the check-in as well, rather than only supplying a check-out.
+/// That is the right outcome — recording 500 hours worked was never correct —
+/// so the message names both remedies.
+fn validate_correction_span(
+    check_in: chrono::DateTime<Utc>,
+    check_out: Option<chrono::DateTime<Utc>>,
+) -> AppResult<()> {
+    let Some(check_out) = check_out else {
+        return Ok(());
+    };
+    if check_out - check_in > chrono::Duration::hours(MAX_CORRECTION_SPAN_HOURS) {
+        return Err(AppError::BadRequest(format!(
+            "A single attendance session cannot span more than {MAX_CORRECTION_SPAN_HOURS} hours. \
+             Correct the check-in time as well, or clear the check-out to leave the session open."
+        )));
+    }
+    Ok(())
+}
+
 pub async fn update_attendance_record(
     pool: &PgPool,
     company_id: Uuid,
@@ -955,6 +976,8 @@ pub async fn update_attendance_record(
         ));
     }
 
+    validate_correction_span(check_in, check_out)?;
+
     // Update and audit atomically: a correction to a payroll-feeding record
     // must never exist without its audit row, and vice versa.
     let mut tx = pool.begin().await?;
@@ -965,15 +988,34 @@ pub async fn update_attendance_record(
     .await
     {
         Ok(record) => record,
-        // Reopening a session (clearing its check-out) collides with the
-        // one-open-session-per-employee index when the employee already has
-        // another open record. Say so, instead of surfacing a bare 500.
-        Err(AppError::Database(sqlx::Error::Database(db_err)))
-            if db_err.code().as_deref() == Some("23505") =>
-        {
-            return Err(AppError::Conflict(
-                "This employee already has another open session. Close that one before reopening this record.".into(),
-            ));
+        Err(AppError::Database(sqlx::Error::Database(db_err))) => {
+            // Owned, so the fall-through arm can still hand the original error
+            // back rather than borrowing it for the length of the match.
+            let code = db_err.code().map(|code| code.into_owned());
+            // The derived-hours expressions can only fail in ways an operator
+            // can act on, so none of them may surface as a bare 500 that also
+            // rolls the correction back with no explanation.
+            return Err(match code.as_deref() {
+                // Reopening a session (clearing its check-out) collides with
+                // the one-open-session-per-employee index when the employee
+                // already has another open record.
+                Some("23505") => AppError::Conflict(
+                    "This employee already has another open session. Close that one before reopening this record.".into(),
+                ),
+                // numeric_value_out_of_range: hours_worked/overtime_hours are
+                // numeric(5,2), so a span past ~41.7 days overflows. Unreachable
+                // behind the 24 h guard above; kept so no future arithmetic can
+                // reintroduce the 500.
+                Some("22003") => AppError::BadRequest(
+                    "The corrected times produce an implausible number of hours worked. Check the check-in and check-out dates.".into(),
+                ),
+                // check_violation: attendance_records_hours_check and the
+                // overtime-within-hours constraint added by 1012.
+                Some("23514") => AppError::BadRequest(
+                    "The corrected times fail an attendance consistency rule (hours worked and overtime must both be plausible). Check the check-in and check-out dates.".into(),
+                ),
+                _ => AppError::Database(sqlx::Error::Database(db_err)),
+            });
         }
         Err(e) => return Err(e),
     };
@@ -1014,22 +1056,32 @@ pub async fn update_attendance_record(
 
 // ─── Auto-Absent Marking ───
 
-/// Bookmark of the last local date the auto-absent job completed, so missed
-/// runs (deploys, downtime during the daily window) are backfilled instead of
-/// silently skipped forever.
-const AUTO_ABSENT_LAST_RUN_KEY: &str = "auto_absent_last_run_date";
 /// Never backfill further than this; on a first run (no bookmark) only the
-/// current day is considered.
+/// current day is considered. Per company, so one wedged tenant can no longer
+/// burn the window for everybody else.
 const AUTO_ABSENT_MAX_BACKFILL_DAYS: i64 = 14;
-/// Local time the daily job is scheduled at (12:30 MYT). The catch-up only
-/// treats *today* as due after this cutoff — marking absences at 09:00 would
-/// flag everyone who simply hasn't arrived yet.
+/// Daily cutoff, in each company's *own* local time. The catch-up only treats
+/// *today* as due after this — marking absences at 09:00 would flag everyone
+/// who simply hasn't arrived yet.
 const AUTO_ABSENT_CUTOFF: (u32, u32) = (12, 30);
 
 /// Bound on the correction reason. It is prefixed and stored in
 /// `audit_logs.description` (varchar(500)); leaving room for the prefix keeps
 /// a long reason a 400, not a failed transaction.
 const MAX_CORRECTION_REASON_CHARS: usize = 400;
+
+/// Longest span a single corrected session may cover.
+///
+/// Not an arbitrary number: it is the invariant the rest of the system already
+/// enforces. Check-out only matches an open record inside 24 hours, and an
+/// employee with an older open session is told to ask an administrator — "a
+/// session is at most one day" is the documented model, and the correction path
+/// was the one place that had escaped it. Unbounded, it wrote `hours_worked`
+/// straight past `numeric(5,2)` (a 500 that also rolled the correction back),
+/// and — worse, because it is silent — a 40-day "session" just under that
+/// ceiling committed cleanly with ~951 payable hours in `overtime_hours`, which
+/// feeds payroll.
+const MAX_CORRECTION_SPAN_HOURS: i64 = 24;
 
 /// How far back an admin may run the absence backfill. Bounds an accidental
 /// (or hostile) request for an arbitrary historical date.
@@ -1107,43 +1159,105 @@ fn auto_absent_due_range(
 }
 
 /// Run auto-absent marking for every local date that is due but not yet done:
-/// each date after the last successful run (bounded by the backfill cap) up
-/// to yesterday, plus today once past the daily cutoff. Called at startup and
-/// by the daily scheduler; safe to call repeatedly.
-pub async fn run_auto_absent_catchup(pool: &PgPool, tz: &str) -> AppResult<i64> {
-    let (today, now_local) = clock::date_and_time_in_tz(pool, tz).await?;
+/// each date after that company's last successful run (bounded by the backfill
+/// cap) up to yesterday, plus today once past the daily cutoff. Called at
+/// startup and by the daily scheduler; safe to call repeatedly.
+///
+/// Every tenant is evaluated on *its own* calendar and against *its own*
+/// bookmark. The scheduler's daily tick only paces the job: deciding "today"
+/// once, on one zone, marked a `Pacific/Honolulu` workforce absent for a date
+/// that had not started there yet — a future-dated placeholder the admin
+/// backfill endpoint explicitly refuses to create.
+///
+/// One tenant also can no longer stop the rest. A stored zone that does not
+/// parse, or a failed write, is logged against its company id and that company
+/// alone is left behind; previously the `?` aborted the whole catch-up before
+/// the shared bookmark was written, so the next tick re-failed on the same date
+/// for every tenant until the owed days aged past the backfill cap.
+pub async fn run_auto_absent_catchup(pool: &PgPool) -> AppResult<i64> {
+    // One clock read for the whole run; each company's local date is derived
+    // from this instant in Rust. Converting per company in SQL would put every
+    // tenant back in one failure domain — a single unparseable stored zone
+    // aborts the query for all of them.
+    let (utc_date, utc_time) = clock::date_and_time_in_tz(pool, "UTC").await?;
+    let now_utc =
+        chrono::DateTime::<Utc>::from_naive_utc_and_offset(utc_date.and_time(utc_time), Utc);
 
-    let last_run = platform_settings::get_value(pool, AUTO_ABSENT_LAST_RUN_KEY)
-        .await?
-        .and_then(|v| v.parse::<chrono::NaiveDate>().ok());
-
-    let Some((start, last_due)) = auto_absent_due_range(today, now_local, last_run) else {
-        return Ok(0);
-    };
-
-    // Each company is marked on its own calendar, so the placeholder lands on
-    // the same local date that delete_auto_absent_today and the reads layer
-    // bucket by. `tz` above only paces the schedule.
-    let companies = company_work_schedules::list_company_timezones(pool).await?;
-
-    let mut date = start;
+    let targets = attendance_reads::auto_absent_targets(pool).await?;
     let mut total = 0i64;
-    while date <= last_due {
-        let mut marked = 0i64;
-        for (company_id, company_tz) in &companies {
-            marked += attendance_records::mark_absent(pool, company_tz, date, Some(*company_id))
-                .await? as i64;
+
+    for target in &targets {
+        let Some(tz) = timezone::parse(&target.timezone) else {
+            tracing::error!(
+                company_id = %target.company_id,
+                timezone = %target.timezone,
+                "auto-absent: skipping company with an unrecognised IANA timezone"
+            );
+            continue;
+        };
+
+        let local = now_utc.with_timezone(&tz);
+        let Some((start, last_due)) =
+            auto_absent_due_range(local.date_naive(), local.time(), target.last_run_date)
+        else {
+            continue;
+        };
+
+        let mut date = start;
+        while date <= last_due {
+            // Pass the canonical zone name, not the raw column value.
+            let outcome =
+                attendance_records::mark_absent(pool, tz.name(), date, Some(target.company_id))
+                    .await;
+            let marked = match outcome {
+                Ok(marked) => marked as i64,
+                Err(e) => {
+                    tracing::error!(
+                        company_id = %target.company_id,
+                        timezone = %target.timezone,
+                        date = %date,
+                        error = %e,
+                        "auto-absent: company run failed; bookmark not advanced"
+                    );
+                    // This tenant only, and stop at the first failed date: the
+                    // bookmark means "everything up to here is done", so dates
+                    // must complete in order. Retried on the next tick.
+                    break;
+                }
+            };
+
+            // Advance the bookmark per date, so a failure part-way through does
+            // not re-run the dates already completed on the next attempt.
+            if let Err(e) =
+                companies::set_auto_absent_last_run_date(pool, target.company_id, date).await
+            {
+                tracing::error!(
+                    company_id = %target.company_id,
+                    date = %date,
+                    error = %e,
+                    "auto-absent: bookmark write failed; this date will be re-run"
+                );
+                break;
+            }
+
+            if marked > 0 {
+                tracing::info!(
+                    company_id = %target.company_id,
+                    date = %date,
+                    marked,
+                    "auto-absent: marked absentees"
+                );
+            }
+            total += marked;
+            date += chrono::Duration::days(1);
         }
-        if marked > 0 {
-            tracing::info!(date = %date, marked, "auto-absent: marked absentees");
-        }
-        // Advance the bookmark per date, so a failure part-way through does not
-        // re-run the dates already completed on the next attempt.
-        platform_settings::set_value(pool, AUTO_ABSENT_LAST_RUN_KEY, &date.to_string(), None)
-            .await?;
-        total += marked;
-        date += chrono::Duration::days(1);
     }
+
+    tracing::info!(
+        companies = targets.len(),
+        marked = total,
+        "auto-absent: catch-up complete"
+    );
     Ok(total)
 }
 
@@ -1162,17 +1276,11 @@ pub async fn get_attendance_summary(
 // ─── CSV Export ───
 
 fn csv_field(s: &str) -> String {
-    // Spreadsheet applications may execute cells beginning with these bytes as
-    // formulas. Prefixing with an apostrophe forces the value to remain text.
-    let formula_like = s
-        .as_bytes()
-        .first()
-        .is_some_and(|first| matches!(*first, b'=' | b'+' | b'-' | b'@' | b'\t' | b'\r'));
-    let value = if formula_like {
-        format!("'{s}")
-    } else {
-        s.to_string()
-    };
+    // Formula neutralisation is shared with the statutory exports — the same
+    // vector reaches a spreadsheet from either file. Quoting is this writer's
+    // own concern and composes on top.
+    let value = csv_helpers::neutralize_formula(s);
+    let formula_like = value != s;
 
     if formula_like
         || value.contains(',')
@@ -1186,29 +1294,121 @@ fn csv_field(s: &str) -> String {
     }
 }
 
+/// The zone the CSV renders in. `get_company_timezone` already sanitizes, so
+/// the fallback arm is unreachable in practice; it is here so the export cannot
+/// take a panic path on a value that somehow slipped past the sanitizer.
+/// `zone_default_matches_the_platform_fallback` pins the two to each other.
+fn render_zone(tz: &str) -> Tz {
+    timezone::parse(tz).unwrap_or(Tz::Asia__Kuala_Lumpur)
+}
+
+/// One record's local calendar date and wall-clock times, as `(date, check-in,
+/// check-out)`; the check-out is empty for an open session.
+///
+/// The invariant: the printed date must be the *same* local calendar day the
+/// SQL range filtered on. That holds only when both sides consult the tz
+/// database. A hardcoded UTC+8 offset put a Jakarta tenant's 23:30 check-in on
+/// the following day — a row dated outside the range they asked for. Resolving
+/// a `FixedOffset` once per export would fail the same way across a DST
+/// transition inside the range, and both Europe/London and Australia/Sydney
+/// ship in the settings picker; `with_timezone(&Tz)` resolves per instant.
+///
+/// Pure and zone-parameterised so the boundary cases are unit-testable without
+/// a database.
+fn render_local(
+    check_in: chrono::DateTime<Utc>,
+    check_out: Option<chrono::DateTime<Utc>>,
+    zone: Tz,
+) -> (String, String, String) {
+    let local_in = check_in.with_timezone(&zone);
+    (
+        local_in.format("%Y-%m-%d").to_string(),
+        local_in.format("%H:%M:%S").to_string(),
+        check_out
+            .map(|t| t.with_timezone(&zone).format("%H:%M:%S").to_string())
+            .unwrap_or_default(),
+    )
+}
+
+/// Longest span one export may cover. A full statutory year plus a leap day is
+/// a real year-end need; anything past that is a mistake or an attack.
+pub(crate) const MAX_EXPORT_RANGE_DAYS: i64 = 366;
+
+/// Hard row ceiling, as the backstop the span cap cannot provide: a
+/// 2,000-employee tenant exporting a legitimate year is ~700k rows, and the
+/// whole file is buffered before any of it ships. Failing is deliberate —
+/// silently truncating hands an admin a short CSV they cannot distinguish from
+/// a complete one.
+const MAX_EXPORT_ROWS: usize = 100_000;
+
 pub async fn export_attendance_csv(
     pool: &PgPool,
     company_id: Uuid,
     q: &AttendanceExportQuery,
 ) -> AppResult<String> {
+    export_attendance_csv_bounded(pool, company_id, q, MAX_EXPORT_ROWS).await
+}
+
+/// `export_attendance_csv` with the row ceiling as a parameter, so the
+/// truncation behaviour can be tested against three seeded rows instead of a
+/// hundred thousand.
+pub(crate) async fn export_attendance_csv_bounded(
+    pool: &PgPool,
+    company_id: Uuid,
+    q: &AttendanceExportQuery,
+    max_rows: usize,
+) -> AppResult<String> {
     let tz = get_company_timezone(pool, company_id).await;
 
-    // Bound the export: with no range at all it materialized the company's
-    // entire attendance history in memory. Default to the current local month.
-    let mut q = AttendanceExportQuery {
-        date_from: q.date_from,
-        date_to: q.date_to,
+    // Default each bound *independently*. Requiring both to be absent meant a
+    // lone `date_from` skipped the month default entirely and the reads layer
+    // emitted only the one bound it was given — an open-ended scan of the
+    // tenant's whole history.
+    let (date_from, date_to) = match (q.date_from, q.date_to) {
+        (Some(from), Some(to)) => (from, to),
+        _ => {
+            let (today, _) = clock::date_and_time_in_tz(pool, &tz).await?;
+            let to = q.date_to.unwrap_or(today);
+            // Anchored on the resolved `to`, not on today: a lone
+            // `date_to=2024-01-15` then means 2024-01-01..2024-01-15 — the
+            // month the admin actually asked about — rather than a range that
+            // ends before it starts.
+            let from = q.date_from.unwrap_or_else(|| to.with_day(1).unwrap_or(to));
+            (from, to)
+        }
+    };
+
+    // Both of these silently returned an empty (or enormous) 200 before.
+    if date_from > date_to {
+        return Err(AppError::BadRequest(format!(
+            "The start date ({date_from}) must not be after the end date ({date_to})"
+        )));
+    }
+    if (date_to - date_from).num_days() > MAX_EXPORT_RANGE_DAYS {
+        return Err(AppError::BadRequest(format!(
+            "An export may cover at most {MAX_EXPORT_RANGE_DAYS} days. Narrow the date range."
+        )));
+    }
+
+    let q = AttendanceExportQuery {
+        date_from: Some(date_from),
+        date_to: Some(date_to),
         employee_id: q.employee_id,
         status: q.status.clone(),
         method: q.method.clone(),
     };
-    if q.date_from.is_none() && q.date_to.is_none() {
-        let (today, _) = clock::date_and_time_in_tz(pool, &tz).await?;
-        q.date_from = today.with_day(1);
-        q.date_to = Some(today);
+
+    // The read asks for one row more than the ceiling; its presence is the
+    // "truncated" signal, with no second COUNT round trip.
+    let limit = i64::try_from(max_rows).unwrap_or(i64::MAX);
+    let records = attendance_reads::export_rows(pool, company_id, &tz, &q, limit).await?;
+    if records.len() > max_rows {
+        return Err(AppError::PayloadTooLarge(format!(
+            "This export covers more than {max_rows} records. Narrow the date range or filter by employee."
+        )));
     }
 
-    let records = attendance_reads::export_rows(pool, company_id, &tz, &q).await?;
+    let zone = render_zone(&tz);
 
     let mut csv = String::from(
         "Date,Employee Number,Name,Department,Check In,Check Out,\
@@ -1216,20 +1416,7 @@ pub async fn export_attendance_csv(
     );
 
     for r in &records {
-        // Render in the company's local zone. Formatting the UTC instant put an
-        // 07:30 MYT check-in on the previous calendar day, so the exported date
-        // disagreed with both the filter range and the on-screen table.
-        let local_in = r.check_in_at.with_timezone(&local_offset());
-        let date = local_in.format("%Y-%m-%d");
-        let check_in = local_in.format("%H:%M:%S");
-        let check_out = r
-            .check_out_at
-            .map(|t| {
-                t.with_timezone(&local_offset())
-                    .format("%H:%M:%S")
-                    .to_string()
-            })
-            .unwrap_or_default();
+        let (date, check_in, check_out) = render_local(r.check_in_at, r.check_out_at, zone);
         let hours = r.hours_worked.map(|h| h.to_string()).unwrap_or_default();
         let ot = r.overtime_hours.map(|h| h.to_string()).unwrap_or_default();
         let outside = r
@@ -1265,14 +1452,23 @@ pub async fn export_attendance_csv(
 
 #[cfg(test)]
 mod tests {
-    use super::{auto_absent_due_range, csv_field};
-    use chrono::{NaiveDate, NaiveTime};
+    use super::{
+        MAX_CORRECTION_SPAN_HOURS, auto_absent_due_range, csv_field, render_local, render_zone,
+        validate_correction_span,
+    };
+    use crate::core::error::AppError;
+    use crate::core::timezone::DEFAULT_TIMEZONE;
+    use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
+    use chrono_tz::Tz;
 
     fn date(y: i32, m: u32, d: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(y, m, d).expect("valid date")
     }
     fn time(h: u32, m: u32) -> NaiveTime {
         NaiveTime::from_hms_opt(h, m, 0).expect("valid time")
+    }
+    fn instant(s: &str) -> DateTime<Utc> {
+        s.parse().expect("valid RFC 3339 instant")
     }
 
     #[test]
@@ -1366,5 +1562,118 @@ mod tests {
             assert!(escaped.starts_with("\"'"), "not neutralized: {escaped}");
             assert!(escaped.ends_with('"'), "not quoted: {escaped}");
         }
+    }
+
+    // ─── CSV rendering zone ───
+
+    #[test]
+    fn zone_default_matches_the_platform_fallback() {
+        // `render_zone` names the fallback as a `Tz` variant because the
+        // constant is a string; if the two ever diverge, an unparseable stored
+        // zone would render on a different calendar than every SQL bucket.
+        let fallback = Tz::Asia__Kuala_Lumpur;
+        assert_eq!(fallback.name(), DEFAULT_TIMEZONE);
+        assert_eq!(render_zone("Asia/Jakarta"), Tz::Asia__Jakarta);
+        assert_eq!(render_zone("Asia/Kuala_Lumpr"), fallback, "a typo degrades");
+    }
+
+    #[test]
+    fn a_non_myt_tenant_renders_on_its_own_calendar() {
+        // The reported case. Jakarta is UTC+7: this instant is 23:30 on the
+        // 31st there, inside a `date_to=2026-07-31` export. Rendered at a fixed
+        // UTC+8 it came out as 2026-08-01 00:30:00 — a row dated outside the
+        // range the SQL had selected it for.
+        let at = instant("2026-07-31T16:30:00Z");
+        let (date, check_in, _) = render_local(at, None, render_zone("Asia/Jakarta"));
+        assert_eq!(date, "2026-07-31");
+        assert_eq!(check_in, "23:30:00");
+    }
+
+    #[test]
+    fn the_default_myt_tenant_is_unchanged() {
+        // Regression guard: the same instant is genuinely the 1st in Malaysia,
+        // so the fix must not move the calendar for the default tenant.
+        let at = instant("2026-07-31T16:30:00Z");
+        let (date, check_in, _) = render_local(at, None, render_zone(DEFAULT_TIMEZONE));
+        assert_eq!(date, "2026-08-01");
+        assert_eq!(check_in, "00:30:00");
+    }
+
+    #[test]
+    fn a_dst_transition_inside_the_range_is_resolved_per_instant() {
+        // London moves to BST at 01:00 UTC on 2026-03-29. No single offset
+        // resolved once per export can render both of these correctly, which is
+        // why the renderer takes a `Tz` and not a `FixedOffset`.
+        let zone = render_zone("Europe/London");
+        let gmt = render_local(instant("2026-03-29T00:30:00Z"), None, zone);
+        let bst = render_local(instant("2026-03-29T01:30:00Z"), None, zone);
+        assert_eq!(gmt.0, "2026-03-29");
+        assert_eq!(gmt.1, "00:30:00", "still GMT");
+        assert_eq!(bst.0, "2026-03-29");
+        assert_eq!(bst.1, "02:30:00", "the clocks have gone forward");
+    }
+
+    #[test]
+    fn a_western_tenant_lands_on_the_correct_local_date() {
+        // Los Angeles is 15-16 h from UTC+8, so a fixed offset was wrong on
+        // nearly every row: this 08:15 local check-in was printed as the next
+        // calendar day.
+        let zone = render_zone("America/Los_Angeles");
+        let out = Some(instant("2026-07-16T01:00:00Z"));
+        let (date, check_in, check_out) = render_local(instant("2026-07-15T15:15:00Z"), out, zone);
+        assert_eq!(date, "2026-07-15");
+        assert_eq!(check_in, "08:15:00");
+        assert_eq!(check_out, "18:00:00");
+    }
+
+    #[test]
+    fn an_open_session_renders_an_empty_check_out() {
+        let at = instant("2026-07-15T02:00:00Z");
+        let (_, _, check_out) = render_local(at, None, render_zone(DEFAULT_TIMEZONE));
+        assert_eq!(check_out, "");
+    }
+
+    // ─── Correction span ───
+
+    #[test]
+    fn a_correction_may_span_exactly_the_cap() {
+        // The bound is inclusive: a full MAX_CORRECTION_SPAN_HOURS session is a
+        // legitimate correction, not an error.
+        let start = instant("2026-07-15T00:00:00Z");
+        let end = instant("2026-07-16T00:00:00Z");
+        assert_eq!(MAX_CORRECTION_SPAN_HOURS, 24);
+        assert!(validate_correction_span(start, Some(end)).is_ok());
+    }
+
+    #[test]
+    fn a_correction_one_second_past_the_cap_is_rejected() {
+        let start = instant("2026-07-15T00:00:00Z");
+        let end = instant("2026-07-16T00:00:01Z");
+        let err = validate_correction_span(start, Some(end))
+            .expect_err("a session one second past the cap must be a 400");
+        match err {
+            AppError::BadRequest(msg) => assert!(
+                msg.contains("clear the check-out"),
+                "the message must name the remedy: {msg}"
+            ),
+            other => panic!("expected BadRequest, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_night_shift_is_well_inside_the_cap() {
+        // 16 h overnight — the cap must not be set so tight that real work
+        // becomes uncorrectable.
+        let start = instant("2026-07-15T14:00:00Z");
+        let end = instant("2026-07-16T06:00:00Z");
+        assert!(validate_correction_span(start, Some(end)).is_ok());
+    }
+
+    #[test]
+    fn the_absent_placeholder_shape_passes() {
+        // `normalize_absent_check_out` closes an absent row at its own check-in.
+        let at = instant("2026-07-15T00:00:00Z");
+        assert!(validate_correction_span(at, Some(at)).is_ok());
+        assert!(validate_correction_span(at, None).is_ok(), "open session");
     }
 }

@@ -1,10 +1,11 @@
 //! Dynamic / cross-table attendance reads (filtered list, my-attendance, summary,
 //! export rows).
 //!
-//! These build SQL at runtime from optional filters, so they use `sqlx::QueryBuilder`
+//! The filtered reads build SQL at runtime, so they use `sqlx::QueryBuilder`
 //! (not the compile-checked macros) and are not part of the offline cache.
 //! `push_bind` keeps each predicate and its bound value together, so there is no
-//! manual parameter-index bookkeeping to drift out of sync.
+//! manual parameter-index bookkeeping to drift out of sync. Fixed queries here
+//! (`auto_absent_targets`) still use the checked macros.
 //!
 //! Date-range filters are written as *sargable* ranges on the raw `timestamptz`
 //! (`check_in_at >= <local midnight of from> AND check_in_at < <local midnight
@@ -13,14 +14,61 @@
 //! The semantics are identical to bucketing by local calendar date.
 
 use chrono::NaiveDate;
-use sqlx::{PgPool, Postgres, QueryBuilder};
+use sqlx::{Executor, PgPool, Postgres, QueryBuilder};
 use uuid::Uuid;
 
 use crate::core::error::AppResult;
+use crate::core::timezone::DEFAULT_TIMEZONE;
 use crate::models::attendance::{
     AttendanceExportQuery, AttendanceListQuery, AttendanceRecord, AttendanceRecordWithEmployee,
     AttendanceSummaryItem, AttendanceSummaryQuery, PaginatedAttendance,
 };
+
+/// One tenant's inputs for the auto-absent catch-up.
+pub struct AutoAbsentTarget {
+    pub company_id: Uuid,
+    /// The company's own zone — the calendar its placeholders are written on,
+    /// and the one `delete_auto_absent_today` and the reads layer bucket by.
+    /// Deliberately raw: the caller parses it so a corrupt value skips that one
+    /// tenant instead of being silently marked on somebody else's calendar.
+    pub timezone: String,
+    /// Last local date the job completed for this company; `None` on a company
+    /// that has never been run.
+    pub last_run_date: Option<NaiveDate>,
+}
+
+/// Every active company with the zone and bookmark the auto-absent job needs.
+///
+/// `ORDER BY c.id` is load-bearing: without it the tenant order varied run to
+/// run, so which companies were reached before an abort was nondeterministic
+/// and the log stream could not be compared tick to tick.
+pub async fn auto_absent_targets(
+    executor: impl Executor<'_, Database = Postgres>,
+) -> AppResult<Vec<AutoAbsentTarget>> {
+    let rows = sqlx::query!(
+        r#"SELECT c.id AS "company_id!",
+                  ws.timezone AS "timezone?",
+                  c.auto_absent_last_run_date AS "last_run_date?"
+           FROM companies c
+           LEFT JOIN company_work_schedules ws
+               ON ws.company_id = c.id AND ws.is_default = TRUE
+           WHERE c.is_active = TRUE
+           ORDER BY c.id"#
+    )
+    .fetch_all(executor)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| AutoAbsentTarget {
+            company_id: r.company_id,
+            // No default schedule row is the ordinary case for a new tenant,
+            // not a corrupt value — fall back without the sanitizer's warning.
+            timezone: r.timezone.unwrap_or_else(|| DEFAULT_TIMEZONE.to_string()),
+            last_run_date: r.last_run_date,
+        })
+        .collect())
+}
 
 fn resolve_pagination(q: &AttendanceListQuery) -> (i64, i64, i64) {
     let per_page = q.per_page.unwrap_or(50).clamp(1, 200);
@@ -270,12 +318,19 @@ pub async fn summary(
 }
 
 /// Rows for CSV export (joined with employee details), with optional filters.
-/// The service guarantees a bounded date range before calling this.
+///
+/// The service guarantees a bounded date range before calling this and passes
+/// its row ceiling as `limit`. Deliberately `LIMIT limit + 1`: the caller reads
+/// the extra row as "there was more" and fails the export, rather than handing
+/// an admin a truncated CSV indistinguishable from a complete one. `, ar.id`
+/// makes that truncation deterministic — `check_in_at` alone is not unique, so
+/// two identical exports could otherwise drop different rows.
 pub async fn export_rows(
     pool: &PgPool,
     company_id: Uuid,
     tz: &str,
     q: &AttendanceExportQuery,
+    limit: i64,
 ) -> AppResult<Vec<AttendanceRecordWithEmployee>> {
     let list_filters = AttendanceListQuery {
         employee_id: q.employee_id,
@@ -300,7 +355,8 @@ pub async fn export_rows(
     );
     qb.push_bind(company_id);
     push_list_filters(&mut qb, tz, &list_filters);
-    qb.push(" ORDER BY ar.check_in_at DESC");
+    qb.push(" ORDER BY ar.check_in_at DESC, ar.id LIMIT ");
+    qb.push_bind(limit.saturating_add(1));
 
     Ok(qb
         .build_query_as::<AttendanceRecordWithEmployee>()

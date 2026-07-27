@@ -483,6 +483,26 @@ pub async fn soft_delete_by_employee(
     Ok(())
 }
 
+/// The employee a user account is linked to, if any.
+///
+/// Deliberately read from the database rather than taken from `Claims`. The JWT
+/// stamps `employee_id` at token issue, so a token minted before the user was
+/// linked carries `None` — and a maker-checker guard keyed on that would let the
+/// approver approve their own claim simply by not logging in again.
+pub async fn employee_id_for_user(
+    executor: impl Executor<'_, Database = Postgres>,
+    user_id: Uuid,
+) -> AppResult<Option<Uuid>> {
+    let employee_id = sqlx::query_scalar!(
+        "SELECT employee_id FROM users WHERE id = $1 AND is_active = TRUE AND deleted_at IS NULL",
+        user_id,
+    )
+    .fetch_optional(executor)
+    .await?
+    .flatten();
+    Ok(employee_id)
+}
+
 /// The id of the active user account linked to an employee, if any (used to
 /// target in-app notifications).
 pub async fn active_id_for_employee(

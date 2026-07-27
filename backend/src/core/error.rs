@@ -34,6 +34,13 @@ pub enum AppError {
 
     #[error("Validation error: {0}")]
     Validation(String),
+
+    /// The request body crossed the ceiling declared for the route. Distinct
+    /// from `BadRequest` because the two are fixed differently: a 400 says the
+    /// upload was malformed, a 413 says it was fine but too big, and only the
+    /// second one is answered by splitting the file or raising the limit.
+    #[error("Payload too large: {0}")]
+    PayloadTooLarge(String),
 }
 
 impl AppError {
@@ -53,6 +60,7 @@ impl AppError {
             AppError::Conflict(msg) => (StatusCode::CONFLICT, msg.clone()),
             AppError::Validation(msg) => (StatusCode::UNPROCESSABLE_ENTITY, msg.clone()),
             AppError::BadGateway(msg) => (StatusCode::BAD_GATEWAY, msg.clone()),
+            AppError::PayloadTooLarge(msg) => (StatusCode::PAYLOAD_TOO_LARGE, msg.clone()),
             AppError::Internal(msg) => {
                 tracing::error!("Internal error: {}", msg);
                 (
@@ -179,6 +187,47 @@ fn classify_db_error(err: &sqlx::Error) -> Option<(StatusCode, String)> {
         _ => return None,
     };
     Some((status, message.to_string()))
+}
+
+/// A 413 that names the ceiling instead of describing the symptom.
+///
+/// Every upload route declares its limit as a constant next to the handler and
+/// attaches the matching `DefaultBodyLimit` in `routes/mod.rs`; this renders the
+/// same number into the message so the operator does not have to guess whether
+/// the file, the envelope or the parser was the problem.
+pub fn payload_too_large(
+    // what was being uploaded, in the words the caller used ("Backup file", …)
+    what: &str,
+    // the ceiling that was crossed, in bytes; always a whole number of MiB
+    limit_bytes: usize,
+) -> AppError {
+    AppError::PayloadTooLarge(format!(
+        "{what} is too large. The maximum is {} MB.",
+        limit_bytes / (1024 * 1024)
+    ))
+}
+
+/// Classify a multipart read failure by what actually went wrong.
+///
+/// The body limit rejects an oversized upload mid-stream, so it surfaces from
+/// whichever multipart call happened to be reading — `next_field` or `bytes` —
+/// as a parser error. Reporting that verbatim gave a 400 whose text pointed at
+/// the multipart decoder while the real cause was the size, which is what made
+/// a backup this system produced un-restorable *and* undiagnosable.
+/// `MultipartError::status` already distinguishes the two; this lifts that
+/// distinction into `AppError`.
+pub fn multipart_error(
+    err: &axum::extract::multipart::MultipartError,
+    // which part was being read, for the malformed branch ("the file data")
+    what: &str,
+    // the route's request ceiling, named in the over-size branch
+    limit_bytes: usize,
+) -> AppError {
+    if err.status() == StatusCode::PAYLOAD_TOO_LARGE {
+        payload_too_large("The upload", limit_bytes)
+    } else {
+        AppError::BadRequest(format!("Could not read {what}: {err}"))
+    }
 }
 
 impl IntoResponse for AppError {

@@ -190,43 +190,36 @@ pub async fn create(
     )
     .await?;
 
-    // Auto-send welcome email if a new user account was created
+    // Auto-send welcome email if a new user account was created. Composing it
+    // is `email_service`'s job: the letter carries the account's initial
+    // password and the service is what decides that the stored copy must not.
     if let Some(ref info) = account_info
         && info.created
         && let Some(ref email_addr) = emp.email
     {
         let company = company_service::get_company(&state.pool, company_id).await?;
-        let default_pw = info
-            .default_password
-            .as_deref()
-            .unwrap_or("(your IC number)");
-        let body_html = email_service::default_welcome_html(
-            &emp.full_name,
-            &company.name,
-            &state.config.frontend_url,
-            email_addr,
-            default_pw,
-        );
-        let subject = format!("Welcome to {} - PayrollMY", company.name);
 
         let config = state.config.clone();
         let pool = state.pool.clone();
+        let company_name = company.name.clone();
         let emp_id = emp.id;
         let emp_name = emp.full_name.clone();
         let email = email_addr.clone();
+        let default_pw = info
+            .default_password
+            .clone()
+            .unwrap_or_else(|| "(your IC number)".to_string());
         let user_id = auth.0.sub;
         tokio::spawn(async move {
-            if let Err(e) = email_service::send_email(
+            if let Err(e) = email_service::send_welcome_email(
                 &config,
                 &pool,
                 company_id,
-                Some(emp_id),
-                None,
-                "welcome",
-                &email,
+                &company_name,
+                emp_id,
                 &emp_name,
-                &subject,
-                &body_html,
+                &email,
+                &default_pw,
                 user_id,
             )
             .await

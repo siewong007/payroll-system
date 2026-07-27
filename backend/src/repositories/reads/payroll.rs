@@ -11,53 +11,50 @@ use uuid::Uuid;
 use crate::core::error::AppResult;
 use crate::models::payroll::{
     EmployeeBonusCommission, EmployeeCategoryTotal, EmployeeHours, EmployeeOtTypeHours,
-    EmployeeTotal, EmployeeUnratedOvertime, OrphanedEntryEmployee, PayrollEntryWithEmployee,
-    PayrollItemSummary, PayrollYtd, PayslipSourceLine,
+    EmployeeTotal, EmployeeUnpaidLeave, EmployeeUnratedOvertime, LaterCommittedRun,
+    OrphanedEntryEmployee, PayableClaim, PayrollEntryWithEmployee, PayrollItemSummary, PayrollYtd,
+    PayslipSourceLine,
 };
-
-/// Recurring allowances/deductions per employee, summed by category.
-pub async fn recurring_allowance_totals(
-    executor: impl Executor<'_, Database = Postgres>,
-    employee_ids: &[Uuid],
-    effective_date: NaiveDate,
-) -> AppResult<Vec<EmployeeCategoryTotal>> {
-    let rows = sqlx::query_as!(
-        EmployeeCategoryTotal,
-        r#"SELECT employee_id, category, SUM(amount)::BIGINT AS "total!"
-           FROM employee_allowances
-           WHERE employee_id = ANY($1) AND is_active = TRUE AND is_recurring = TRUE
-             AND effective_from <= $2 AND (effective_to IS NULL OR effective_to >= $2)
-           GROUP BY employee_id, category"#,
-        employee_ids,
-        effective_date,
-    )
-    .fetch_all(executor)
-    .await?;
-    Ok(rows)
-}
 
 /// Recurring allowances/deductions per employee, one row per configured line.
 ///
-/// `recurring_allowance_totals` gives the engine the figure it needs for gross;
-/// this gives it the lines it needs for the payslip breakdown, which used to be
-/// discarded — `payroll_item_details` was never written, so a payslip could show
-/// `total_allowances` without saying what the allowances were. Both reads apply
-/// the same filters, so the lines always sum to the total.
+/// Selection is an interval **overlap** with the period, not a point test at the
+/// period end. The old predicate asked whether a single instant — the last day of
+/// the month — fell inside the allowance's window, so a leaver whose allowance
+/// was correctly ended on the 15th failed `effective_to >= period_end` and was
+/// paid nothing while their basic was prorated to 15/31, and an allowance granted
+/// on the 25th passed `effective_from <= period_end` and was paid in full. Both
+/// errors flow into gross, so EPF/SOCSO/EIS/PCB moved with them.
+///
+/// Rows rather than a `SUM`: the engine prorates each line against its own
+/// window, so the per-line amounts and the total have to be the same arithmetic.
+/// The totals used to be a second query carrying a duplicate copy of these
+/// filters, with a comment promising the two agreed.
 pub async fn recurring_allowance_lines(
     executor: impl Executor<'_, Database = Postgres>,
     employee_ids: &[Uuid],
-    effective_date: NaiveDate,
+    period_start: NaiveDate,
+    period_end: NaiveDate,
 ) -> AppResult<Vec<PayslipSourceLine>> {
     let rows = sqlx::query_as!(
         PayslipSourceLine,
-        r#"SELECT employee_id, category, name AS "description!", amount,
-                  COALESCE(is_taxable, TRUE) AS "is_taxable!"
+        r#"SELECT employee_id, category,
+                  -- `employee_allowances` has no item_type of its own; the two
+                  -- names below are what the payslip breakdown has always
+                  -- labelled these lines.
+                  CASE WHEN category = 'earning' THEN 'allowance'::text
+                       ELSE 'other_deduction'::text END AS "item_type!",
+                  name AS "description!", amount,
+                  COALESCE(is_taxable, TRUE) AS "is_taxable!",
+                  effective_from AS "effective_from?", effective_to AS "effective_to?"
            FROM employee_allowances
            WHERE employee_id = ANY($1) AND is_active = TRUE AND is_recurring = TRUE
-             AND effective_from <= $2 AND (effective_to IS NULL OR effective_to >= $2)
+             AND effective_from <= $3
+             AND (effective_to IS NULL OR effective_to >= $2)
            ORDER BY employee_id, category, name"#,
         employee_ids,
-        effective_date,
+        period_start,
+        period_end,
     )
     .fetch_all(executor)
     .await?;
@@ -77,13 +74,23 @@ pub async fn entry_lines(
 ) -> AppResult<Vec<PayslipSourceLine>> {
     let rows = sqlx::query_as!(
         PayslipSourceLine,
-        r#"SELECT employee_id, category, description AS "description!", amount,
-                  COALESCE(is_taxable, TRUE) AS "is_taxable!"
+        r#"SELECT employee_id, category,
+                  -- Carried so the breakdown can label an unpaid-leave deduction
+                  -- as one instead of folding it into "other deduction".
+                  item_type AS "item_type!",
+                  description AS "description!", amount,
+                  COALESCE(is_taxable, TRUE) AS "is_taxable!",
+                  -- Staged entries are keyed by (period_year, period_month) and
+                  -- carry no window of their own, so they are never prorated.
+                  NULL::date AS "effective_from?", NULL::date AS "effective_to?"
            FROM payroll_entries
            WHERE employee_id = ANY($1) AND period_year = $2 AND period_month = $3
              AND is_processed = FALSE
              AND item_type NOT IN ('overtime', 'claim_reimbursement')
-           ORDER BY employee_id, category, created_at"#,
+           -- `id` breaks ties on `created_at`: a restore writes a whole period's
+           -- entries at one instant, and without it the breakdown's line order
+           -- is nondeterministic between two reads of the same payslip.
+           ORDER BY employee_id, category, created_at, id"#,
         employee_ids,
         year,
         month,
@@ -97,11 +104,20 @@ pub async fn entry_lines(
 ///
 /// Excludes the item types the engine recomputes from their own authoritative
 /// source: `overtime` comes from `approved_ot_totals`/`attendance_ot_hours` and
-/// `claim_reimbursement` from `approved_claim_totals`. Approving an OT
-/// application or a claim also stages a `payroll_entries` row, so counting
-/// those rows here would add the same money a second time — and, for claims,
-/// would pull a reimbursement into gross where it becomes EPF/SOCSO/EIS/PCB
-/// liable despite not being wages.
+/// `claim_reimbursement` from `payable_claims`. Approving an OT application
+/// stages a `payroll_entries` row, so counting those rows here would add the
+/// same money a second time.
+///
+/// The `claim_reimbursement` half of the exclusion is now defence in depth:
+/// claim approval no longer stages an entry and migration 1010 deleted the rows
+/// it used to write. It stays because dropping it would make a reimbursement
+/// EPF/SOCSO/EIS/PCB-liable the moment any future write path reintroduces the
+/// item type — which is the exact failure the staging was retired to prevent.
+///
+/// `taxable` is the same sum narrowed to rows the admin marked taxable. The flag
+/// was honoured by the rendered payslip line — which badges an earning
+/// "Non-taxable" — and by nothing else, so an earning staged as exempt was still
+/// inside the PCB base. Only the PCB base uses it; see `compute_payslip`.
 pub async fn entry_category_totals(
     executor: impl Executor<'_, Database = Postgres>,
     employee_ids: &[Uuid],
@@ -110,12 +126,49 @@ pub async fn entry_category_totals(
 ) -> AppResult<Vec<EmployeeCategoryTotal>> {
     let rows = sqlx::query_as!(
         EmployeeCategoryTotal,
-        r#"SELECT employee_id, category, SUM(amount)::BIGINT AS "total!"
+        r#"SELECT employee_id, category, SUM(amount)::BIGINT AS "total!",
+                  COALESCE(SUM(amount) FILTER (WHERE COALESCE(is_taxable, TRUE)), 0)::BIGINT AS "taxable!"
            FROM payroll_entries
            WHERE employee_id = ANY($1) AND period_year = $2 AND period_month = $3
              AND is_processed = FALSE
              AND item_type NOT IN ('overtime', 'claim_reimbursement')
            GROUP BY employee_id, category"#,
+        employee_ids,
+        year,
+        month,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(rows)
+}
+
+/// Staged unpaid-leave deductions per employee: amount and working days.
+///
+/// Same shape and filters as `bonus_commission_totals`, so the two reconcile
+/// against `entry_category_totals`. Both `payroll_items.unpaid_leave_deduction`
+/// and `unpaid_leave_days` existed and were never written, so the payslip, the
+/// portal, the PDF fallback and the backup archive all shipped a constant zero
+/// while the money sat anonymously inside `total_other_deductions`.
+///
+/// `quantity` is NULL on any row staged before it started being written, so the
+/// day count reads 0 for those rather than erroring.
+pub async fn unpaid_leave_totals(
+    executor: impl Executor<'_, Database = Postgres>,
+    employee_ids: &[Uuid],
+    year: i32,
+    month: i32,
+) -> AppResult<Vec<EmployeeUnpaidLeave>> {
+    let rows = sqlx::query_as!(
+        EmployeeUnpaidLeave,
+        r#"SELECT employee_id,
+                  COALESCE(SUM(amount), 0)::BIGINT AS "amount!",
+                  COALESCE(SUM(quantity), 0)::NUMERIC AS "days!"
+           FROM payroll_entries
+           WHERE employee_id = ANY($1) AND period_year = $2 AND period_month = $3
+             AND is_processed = FALSE
+             AND category = 'deduction'
+             AND item_type = 'unpaid_leave'
+           GROUP BY employee_id"#,
         employee_ids,
         year,
         month,
@@ -295,25 +348,83 @@ pub async fn approved_ot_totals(
     Ok(rows)
 }
 
-/// Approved claims per employee within the period.
-pub async fn approved_claim_totals(
+/// The approved, not-yet-paid claims a run will reimburse.
+///
+/// Carry-forward, not period-bounded. The old predicate required
+/// `expense_date BETWEEN period_start AND period_end`, so a claim approved after
+/// its own expense month had closed fell into a hole: that month's run refuses
+/// to be re-created, and the next month's window excludes the expense date.
+/// Nothing paid it and its status stayed 'approved' forever. Every approved and
+/// unpaid claim incurred on or before the period end is swept here instead; a
+/// future-dated expense still waits.
+///
+/// Rows rather than a `SUM` because the engine marks exactly the ids it summed.
+/// Summing and then re-running the same predicate to mark them paid meant a
+/// claim approved between the two was marked paid without being paid.
+pub async fn payable_claims(
     executor: impl Executor<'_, Database = Postgres>,
     employee_ids: &[Uuid],
     company_id: Uuid,
-    period_start: NaiveDate,
     period_end: NaiveDate,
-) -> AppResult<Vec<EmployeeTotal>> {
+) -> AppResult<Vec<PayableClaim>> {
     let rows = sqlx::query_as!(
-        EmployeeTotal,
-        r#"SELECT employee_id, SUM(amount)::BIGINT AS "total!"
+        PayableClaim,
+        r#"SELECT id, employee_id, title, amount, expense_date
            FROM claims
            WHERE employee_id = ANY($1)
              AND company_id = $2
              AND status = 'approved'
-             AND expense_date >= $3 AND expense_date <= $4
-           GROUP BY employee_id"#,
+             AND payroll_run_id IS NULL
+             AND expense_date <= $3
+           ORDER BY employee_id, expense_date, id"#,
         employee_ids,
         company_id,
+        period_end,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(rows)
+}
+
+/// Employees holding payable claims that this run will not reimburse.
+///
+/// The mirror of `staged_entries_outside_run` for the other money source the
+/// engine reads from its own authoritative table. A claim belonging to someone
+/// outside the selected payroll group is swept by no run at all, and without
+/// this the operator has nowhere to notice — the claim simply stays 'approved'.
+pub async fn approved_claims_outside_run(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    payroll_group_id: Uuid,
+    period_start: NaiveDate,
+    period_end: NaiveDate,
+) -> AppResult<Vec<OrphanedEntryEmployee>> {
+    let rows = sqlx::query_as!(
+        OrphanedEntryEmployee,
+        r#"SELECT e.id AS "employee_id!", e.employee_number AS "employee_number!",
+                  e.full_name AS "employee_name!",
+                  COUNT(*)::BIGINT AS "entry_count!",
+                  COALESCE(SUM(c.amount), 0)::BIGINT AS "total_amount!"
+           FROM claims c
+           JOIN employees e ON e.id = c.employee_id
+           WHERE c.company_id = $1
+             AND c.status = 'approved'
+             AND c.payroll_run_id IS NULL
+             AND c.expense_date <= $4
+             -- Same negation as staged_entries_outside_run, and COALESCE for the
+             -- same reason: an employee with no payroll group compares NULL, and
+             -- a NULL would drop exactly the case worth warning about.
+             AND NOT COALESCE(
+                   e.payroll_group_id = $2
+                   AND e.deleted_at IS NULL
+                   AND (e.is_active = TRUE OR e.date_resigned IS NOT NULL)
+                   AND e.date_joined <= $4
+                   AND (e.date_resigned IS NULL OR e.date_resigned >= $3)
+                 , FALSE)
+           GROUP BY e.id, e.employee_number, e.full_name
+           ORDER BY e.employee_number"#,
+        company_id,
+        payroll_group_id,
         period_start,
         period_end,
     )
@@ -355,7 +466,13 @@ pub async fn staged_entries_outside_run(
              -- when they are exactly the case worth warning about.
              AND NOT COALESCE(
                    e.payroll_group_id = $4
-                   AND e.is_active = TRUE AND e.deleted_at IS NULL
+                   AND e.deleted_at IS NULL
+                   -- Mirrors employees::list_for_payroll_run: selection is the
+                   -- employment window, and `is_active` only excludes someone
+                   -- with no resignation date to explain it. If the two drift, a
+                   -- leaver this run now pays is simultaneously reported as one
+                   -- it will not.
+                   AND (e.is_active = TRUE OR e.date_resigned IS NOT NULL)
                    AND e.date_joined <= $6
                    AND (e.date_resigned IS NULL OR e.date_resigned >= $5)
                  , FALSE)
@@ -516,6 +633,80 @@ pub async fn run_has_later_committed_run(
     .fetch_one(executor)
     .await?;
     Ok(exists)
+}
+
+/// Employees in a proposed run who already appear in a LATER committed run.
+///
+/// The batch, create-time mirror of `employee_has_later_run`. A run's
+/// `payroll_items.ytd_*` are frozen when it commits and its PCB annualisation
+/// already assumed every earlier month was in them, and nothing recomputes
+/// either — so processing February *after* March silently corrupts March's
+/// printed figures. A gap is legitimate (a group may simply not have been owed
+/// February); inserting behind a committed run is not, which is why the guard is
+/// on the later run's existence rather than on the gap.
+///
+/// The status filter is the one `payroll_ytd` sums, so the guard covers exactly
+/// what the YTD chain depends on. Employee number, name and the offending period
+/// come back with it so the refusal names who and when.
+pub async fn employees_with_later_committed_run(
+    executor: impl Executor<'_, Database = Postgres>,
+    employee_ids: &[Uuid],
+    company_id: Uuid,
+    period_year: i32,
+    period_month: i32,
+) -> AppResult<Vec<LaterCommittedRun>> {
+    let rows = sqlx::query_as!(
+        LaterCommittedRun,
+        r#"SELECT e.id AS "employee_id!", e.employee_number AS "employee_number!",
+                  e.full_name AS "employee_name!",
+                  MIN(pr.period_year * 100 + pr.period_month)::INT AS "earliest_later_period!"
+           FROM payroll_items pi
+           JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
+           JOIN employees e ON e.id = pi.employee_id
+           WHERE pi.employee_id = ANY($1)
+             AND pr.company_id = $2
+             AND pr.status::text IN ('processed', 'pending_approval', 'approved', 'paid')
+             AND (pr.period_year > $3 OR (pr.period_year = $3 AND pr.period_month > $4))
+           GROUP BY e.id, e.employee_number, e.full_name
+           ORDER BY e.employee_number"#,
+        employee_ids,
+        company_id,
+        period_year,
+        period_month,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(rows)
+}
+
+/// Months of the given tax year for which this group already has a committed run.
+///
+/// Feeds the advisory "you skipped a month" diagnostic: a genuinely skipped
+/// month makes the PCB annualisation's `remaining_months` over-count and
+/// under-withhold, and no ordering rule can repair that after the fact — the
+/// operator has to decide.
+pub async fn committed_months_for_group(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    payroll_group_id: Uuid,
+    period_year: i32,
+) -> AppResult<Vec<i32>> {
+    let months = sqlx::query_scalar!(
+        r#"SELECT period_month AS "period_month!"
+           FROM payroll_runs
+           WHERE company_id = $1
+             AND payroll_group_id = $2
+             AND period_year = $3
+             AND status::text IN ('processed', 'pending_approval', 'approved', 'paid')
+           GROUP BY period_month
+           ORDER BY period_month"#,
+        company_id,
+        payroll_group_id,
+        period_year,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(months)
 }
 
 /// Whether a later committed run already exists for an employee — blocks PCB edits.

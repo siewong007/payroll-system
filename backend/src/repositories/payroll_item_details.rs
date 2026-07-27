@@ -65,6 +65,37 @@ pub async fn list_for_item(
     Ok(rows)
 }
 
+/// Replace one payslip's PCB line so the stored breakdown matches an edited
+/// `payroll_items.pcb_amount`.
+///
+/// Delete-then-insert rather than UPDATE: the engine drops zero-valued lines, so
+/// a payslip whose PCB was 0 has no row to update, and an edit back to 0 must
+/// remove the row again. Both halves are one statement so the breakdown is never
+/// momentarily missing its PCB line, and the description matches the one
+/// `build_payslip_lines` writes — a payslip should not read differently
+/// depending on whether its PCB was edited.
+pub async fn replace_pcb_line(
+    executor: impl Executor<'_, Database = Postgres>,
+    payroll_item_id: Uuid,
+    amount: i64,
+) -> AppResult<()> {
+    sqlx::query!(
+        r#"WITH removed AS (
+            DELETE FROM payroll_item_details
+            WHERE payroll_item_id = $1 AND item_type = 'pcb'
+        )
+        INSERT INTO payroll_item_details
+            (payroll_item_id, category, item_type, description, amount, is_taxable, is_statutory)
+        SELECT $1, 'deduction', 'pcb', 'PCB (monthly tax deduction)', $2::bigint, FALSE, TRUE
+        WHERE $2::bigint <> 0"#,
+        payroll_item_id,
+        amount,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
 /// Delete all detail rows belonging to a run's payslip items.
 pub async fn delete_for_run(
     executor: impl Executor<'_, Database = Postgres>,

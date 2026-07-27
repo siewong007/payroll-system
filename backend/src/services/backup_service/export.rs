@@ -37,6 +37,8 @@ pub async fn export_company(pool: &PgPool, company_id: Uuid) -> AppResult<Compan
     let working_day_config = backup_repo::working_day_config(pool, company_id).await?;
     let email_templates = backup_repo::email_templates(pool, company_id).await?;
     let company_settings = backup_repo::company_settings(pool, company_id).await?;
+    let company_work_schedules = backup_repo::company_work_schedules(pool, company_id).await?;
+    let company_locations = backup_repo::company_locations(pool, company_id).await?;
 
     let mut record_counts = HashMap::new();
     record_counts.insert("payroll_groups".into(), payroll_groups.len());
@@ -61,9 +63,18 @@ pub async fn export_company(pool: &PgPool, company_id: Uuid) -> AppResult<Compan
     record_counts.insert("working_day_config".into(), working_day_config.len());
     record_counts.insert("email_templates".into(), email_templates.len());
     record_counts.insert("company_settings".into(), company_settings.len());
+    record_counts.insert(
+        "company_work_schedules".into(),
+        company_work_schedules.len(),
+    );
+    record_counts.insert("company_locations".into(), company_locations.len());
 
+    // 1.1 adds the attendance configuration: the three `companies` scalars plus
+    // `company_work_schedules` and `company_locations`. The importer accepts
+    // both versions — a 1.0 archive simply cannot speak to those settings, which
+    // is a different fact from them being unset, and it is treated as such.
     let metadata = BackupMetadata {
-        format_version: "1.0".into(),
+        format_version: "1.1".into(),
         exported_at: Utc::now(),
         source_company_id: company_id,
         source_company_name: company.name.clone(),
@@ -97,6 +108,8 @@ pub async fn export_company(pool: &PgPool, company_id: Uuid) -> AppResult<Compan
         working_day_config,
         email_templates,
         company_settings,
+        company_work_schedules,
+        company_locations,
         files,
     })
 }

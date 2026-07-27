@@ -43,6 +43,12 @@ pub struct CompanyBackup {
     pub working_day_config: Vec<WorkingDayConfigExport>,
     pub email_templates: Vec<EmailTemplateExport>,
     pub company_settings: Vec<CompanySettingExport>,
+    // Attendance configuration, captured from format 1.1 onwards. `default` is
+    // what lets a 1.0 archive — which has neither key — still deserialize.
+    #[serde(default)]
+    pub company_work_schedules: Vec<CompanyWorkScheduleExport>,
+    #[serde(default)]
+    pub company_locations: Vec<CompanyLocationExport>,
     #[serde(default)]
     pub files: HashMap<String, String>,
 }
@@ -80,6 +86,53 @@ pub struct CompanyExport {
     pub hrdf_enabled: Option<bool>,
     pub unpaid_leave_divisor: Option<i32>,
     pub is_active: Option<bool>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    // Attendance configuration, captured from format 1.1 onwards. `timezone` and
+    // `geofence_mode` are NOT NULL in the database, so `None` here means "this
+    // archive predates capture" rather than "the column was null" — a different
+    // fact, and the one the importer branches on. `attendance_method` is the
+    // exception: it is genuinely nullable, so `None` cannot distinguish the two,
+    // and the importer therefore leaves an overwrite target's value in place.
+    #[serde(default)]
+    pub attendance_method: Option<String>,
+    #[serde(default)]
+    pub timezone: Option<String>,
+    #[serde(default)]
+    pub geofence_mode: Option<String>,
+}
+
+/// A shift definition. The default one (`is_default`) is what the whole
+/// attendance subsystem reads its timezone, lateness grace and half-day
+/// threshold from, so an archive that cannot carry it silently relocates the
+/// restored tenant to `provision_company_defaults`' Malaysian 09:00-18:00.
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+pub struct CompanyWorkScheduleExport {
+    pub id: Uuid,
+    pub company_id: Uuid,
+    pub name: String,
+    pub start_time: NaiveTime,
+    pub end_time: NaiveTime,
+    pub grace_minutes: i32,
+    pub half_day_hours: rust_decimal::Decimal,
+    pub timezone: String,
+    pub is_default: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// A geofence anchor. `latitude`/`longitude` are `double precision` in the
+/// schema and are coordinates rather than money, so `f64` is the faithful
+/// mapping here.
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+pub struct CompanyLocationExport {
+    pub id: Uuid,
+    pub company_id: Uuid,
+    pub name: String,
+    pub latitude: f64,
+    pub longitude: f64,
+    pub radius_meters: i32,
+    pub is_active: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

@@ -3,6 +3,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::core::error::{AppError, AppResult};
+use crate::core::http_client;
 use crate::models::calendar::{Holiday, MonthCalendar, WorkingDayConfig};
 use crate::repositories::{holidays as holiday_repo, working_day_config as working_day_repo};
 
@@ -185,6 +186,14 @@ fn count_working_days_in_month(
     count
 }
 
+/// Widest range this function will evaluate, in days.
+///
+/// Deliberately looser than `leave_rules::MAX_LEAVE_SPAN_DAYS`: leave policy
+/// belongs in `leave_rules`, and ten years is the widest legitimate reporting
+/// window. This is the floor beneath every caller, so a future endpoint cannot
+/// reintroduce an unbounded walk from somewhere else.
+const MAX_CALENDAR_SPAN_DAYS: i64 = 3_660;
+
 /// Count working days between two dates (inclusive), respecting company calendar
 pub async fn count_working_days_between(
     pool: &PgPool,
@@ -192,16 +201,18 @@ pub async fn count_working_days_between(
     start_date: NaiveDate,
     end_date: NaiveDate,
 ) -> AppResult<i32> {
+    if (end_date - start_date).num_days() > MAX_CALENDAR_SPAN_DAYS {
+        return Err(AppError::BadRequest(
+            "Date range is too large to evaluate".into(),
+        ));
+    }
+
     let config = get_working_days(pool, company_id).await?;
 
-    // Get holidays for the range (may span years)
-    let start_year = start_date.year();
-    let end_year = end_date.year();
-    let mut all_holidays = Vec::new();
-    for yr in start_year..=end_year {
-        let mut h = get_holidays(pool, company_id, yr).await?;
-        all_holidays.append(&mut h);
-    }
+    // One query for the whole span. This used to be a `for yr in start..=end`
+    // loop over `list_for_year`, so a client-supplied range acquired a fresh
+    // pooled connection and ran a non-sargable seq scan once per year in it.
+    let all_holidays = holiday_repo::list_for_range(pool, company_id, start_date, end_date).await?;
 
     let holiday_dates: std::collections::HashSet<NaiveDate> =
         all_holidays.iter().map(|h| h.date).collect();
@@ -234,24 +245,19 @@ pub async fn count_working_days_between(
 }
 
 /// Import holidays from a Google Calendar ICS URL
+///
+/// The fetch itself is `core::http_client`'s job: the URL arrives in request
+/// JSON, so it is a request-forgery vector unless the scheme, the resolved
+/// addresses, the redirect policy, the timeout and the body size are all
+/// constrained together. Doing any of that here would put a second, drifting
+/// copy of the policy next to the one the upload path already trusts.
 pub async fn import_from_ics(
     pool: &PgPool,
     company_id: Uuid,
     ics_url: &str,
     created_by: Uuid,
 ) -> AppResult<Vec<Holiday>> {
-    let client = reqwest::Client::new();
-    let response = client
-        .get(ics_url)
-        .send()
-        .await
-        .map_err(|e| AppError::BadRequest(format!("Failed to fetch ICS URL: {}", e)))?;
-
-    let ics_text = response
-        .text()
-        .await
-        .map_err(|e| AppError::BadRequest(format!("Failed to read ICS response: {}", e)))?;
-
+    let ics_text = http_client::fetch_public_text(ics_url, http_client::MAX_ICS_BYTES).await?;
     import_from_ics_text(pool, company_id, &ics_text, created_by).await
 }
 

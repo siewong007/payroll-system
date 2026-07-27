@@ -36,6 +36,10 @@ readonly COMPOSE_SHA256=33b208d7e76639db742fae84b966cc01dacae58ca3fc4dabbc907045
 TAG="${1:-}"
 RELEASE_DIR="${2:-}"
 COMPOSE_COMMAND=()
+# Set by backup_existing_database and read by the failure path. It used to be a
+# function-local, so the one artefact that can undo a migration was created on
+# every deploy and named nowhere.
+PREDEPLOY_BACKUP=""
 
 log() {
   printf '[payroll-deploy] %s\n' "$*"
@@ -237,18 +241,20 @@ backup_existing_database() {
   [[ $(docker inspect --format '{{.State.Running}}' payroll-db 2>/dev/null || true) == true ]] || return 0
 
   install -d -m 0700 "$BACKUP_DIR"
-  local timestamp backup_tmp backup_path
+  local timestamp backup_tmp
   timestamp=$(date -u +%Y%m%dT%H%M%SZ)
-  backup_path="$BACKUP_DIR/predeploy-$timestamp.dump"
+  PREDEPLOY_BACKUP="$BACKUP_DIR/predeploy-$timestamp.dump"
   backup_tmp=$(mktemp "$BACKUP_DIR/.predeploy.XXXXXX")
   log "Creating local pre-deploy database backup"
   if docker exec payroll-db \
     pg_dump --format=custom --no-owner --no-acl -U payroll payroll_db \
     > "$backup_tmp"; then
     chmod 0600 "$backup_tmp"
-    mv "$backup_tmp" "$backup_path"
+    mv "$backup_tmp" "$PREDEPLOY_BACKUP"
+    log "Pre-deploy database backup: $PREDEPLOY_BACKUP"
   else
     rm -f "$backup_tmp"
+    PREDEPLOY_BACKUP=""
     die "database backup failed; refusing to deploy"
   fi
 
@@ -259,8 +265,27 @@ backup_existing_database() {
       | cut -d' ' -f2-
   )
   for ((index = 5; index < ${#backups[@]}; index++)); do
-    rm -f -- "${backups[$index]}"
+    # This run's own dump sorts first by mtime, but it is the one the failure
+    # path hands the operator — never bet a restore on a sort order.
+    if [[ "${backups[$index]}" != "$PREDEPLOY_BACKUP" ]]; then
+      rm -f -- "${backups[$index]}"
+    fi
   done
+}
+
+# The image rollback below is not a schema rollback. A release that applied a
+# migration and then failed its health gate leaves the previous binary facing a
+# newer schema; core::db warns and boots in that case rather than crash-looping,
+# but a migration that dropped or renamed a column still needs this dump. The
+# restore is deliberately NOT automatic: deploy_tag replaces the container behind
+# a Caddy upstream that is already live, so a release that merely missed the
+# 240 s deadline may have served traffic and committed rows.
+report_recovery_options() {
+  log "Pre-deploy database backup: ${PREDEPLOY_BACKUP:-<none — payroll-db was not running when this deploy started>}"
+  [[ -n "$PREDEPLOY_BACKUP" ]] || return 0
+  log "If ${previous_tag:-the previous release} will not start because release $TAG applied a migration, restore the schema with:"
+  log "  docker exec -i payroll-db pg_restore --clean --if-exists --no-owner --no-acl -U payroll -d payroll_db < $PREDEPLOY_BACKUP"
+  log "WARNING: that restore DISCARDS every row committed after the dump was taken."
 }
 
 configure_caddy() {
@@ -399,6 +424,7 @@ fi
 log "Release $TAG failed; collecting diagnostics"
 export IMAGE_TAG=$TAG
 show_diagnostics
+report_recovery_options
 
 if [[ -n "$previous_tag" ]] \
   && docker image inspect "payroll-backend:$previous_tag" >/dev/null 2>&1; then
@@ -417,4 +443,7 @@ else
   compose stop backend >/dev/null 2>&1 || true
 fi
 
+# Repeated on purpose: the rollback attempt above emits a full diagnostics dump,
+# and this is the line the operator needs after all of it has scrolled past.
+report_recovery_options
 die "deployment failed"

@@ -15,7 +15,11 @@ use crate::services::audit_service::AuditRequestMeta;
 use crate::services::notification_service;
 use crate::services::settings_service;
 
-use super::common::{ensure_employee_in_company, parse_overtime_times, validate_overtime_type};
+use super::common::{
+    Reviewer, audit_self_approval_override, ensure_employee_in_company, ensure_not_self_approval,
+    ensure_overtime_hours_within_window, parse_overtime_times, reviewer_employee_id,
+    validate_overtime_type,
+};
 
 pub use crate::models::approval::OvertimeWithEmployee;
 
@@ -31,6 +35,7 @@ pub async fn create_overtime_admin(
     let ot_type = req.ot_type.as_deref().unwrap_or("normal");
     validate_overtime_type(ot_type)?;
     let (start_time, end_time) = parse_overtime_times(&req.start_time, &req.end_time)?;
+    ensure_overtime_hours_within_window(req.hours, start_time, end_time)?;
 
     let overtime = overtime_applications::insert(
         pool,
@@ -97,6 +102,14 @@ pub async fn update_overtime_admin(
 
     let ot_type = req.ot_type.as_deref().unwrap_or(&current.ot_type);
     validate_overtime_type(ot_type)?;
+
+    // Validate the EFFECTIVE values, not just the supplied ones: `update_full`
+    // COALESCEs, so validating only what the request carried would let an edit
+    // keep out-of-range hours and shrink the window around them. The
+    // consequence is intended — an edit that touches only `reason` on a legacy
+    // out-of-range row fails until the hours are corrected.
+    let hours = req.hours.unwrap_or(current.hours);
+    ensure_overtime_hours_within_window(hours, start_time, end_time)?;
 
     let updated = overtime_applications::update_full(
         pool,
@@ -290,7 +303,7 @@ pub async fn approve_overtime(
     pool: &PgPool,
     company_id: Uuid,
     ot_id: Uuid,
-    reviewer_id: Uuid,
+    reviewer: Reviewer,
     notes: Option<&str>,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<OvertimeApplication> {
@@ -307,67 +320,57 @@ pub async fn approve_overtime(
     // The settings reads stay on the pool, ahead of the transaction — they are
     // company configuration, not request state, and `settings_service` takes
     // `&PgPool`. The row the CAS approves is re-checked below.
+    let reviewer_id = reviewer.user_id;
     let preview = overtime_applications::get_pending(pool, ot_id, company_id)
         .await?
         .ok_or_else(|| AppError::BadRequest("OT application not found or not pending".into()))?;
 
-    // Get employee hourly rate
+    // Approval is the third call site of the hours rule, and the one the
+    // database cannot cover. Rows written before the bound existed are outside
+    // the NOT VALID CHECK entirely, and the CHECK is in any case only the outer
+    // 0 < h <= 24 bound — it cannot see the declared window. Without this a
+    // legacy application still stages the money it was always going to stage.
+    //
+    // The message keeps the offending figure and the window the validator
+    // names, so an HR user can correct the row without raising a ticket.
+    ensure_overtime_hours_within_window(preview.hours, preview.start_time, preview.end_time)
+        .map_err(|err| match err {
+            AppError::BadRequest(detail) => AppError::BadRequest(format!(
+                "The overtime application for {} cannot be approved. {detail}. Edit the hours or the times, then approve it again.",
+                preview.ot_date
+            )),
+            other => other,
+        })?;
+
+    let reviewer_employee = reviewer_employee_id(pool, &reviewer).await?;
+
+    // Rated through the same `OvertimeSettings::rate_overtime` the payroll engine
+    // uses, so the amount quoted here is the amount the run pays. This used to
+    // parse the settings itself as `i64`/`f64` and truncate four times — an
+    // `effective_hours_per_day` of "7.5" failed `parse::<i64>()` and silently
+    // became 8, a saved "0" divided by zero, and the RM5,000/3 h case quoted
+    // RM108.12 against the run's RM108.17.
+    let ot_settings = settings_service::overtime_settings(pool, company_id).await;
     let staged = if let Some((hourly_rate, basic_salary)) =
         employee_repo::overtime_rate_basis(pool, preview.employee_id).await?
     {
         let ot = &preview;
-        // Use hourly_rate if set, otherwise calculate from basic: basic / working_days / effective_hours
-        // effective_hours_per_day excludes rest time (e.g. 8h for a 9h day with 1h lunch)
-        let effective_hours: i64 =
-            settings_service::get_setting(pool, company_id, "payroll", "effective_hours_per_day")
-                .await
-                .ok()
-                .and_then(|s| s.value.as_str().and_then(|v| v.parse::<i64>().ok()))
-                .unwrap_or(8);
-        let working_days: i64 =
-            settings_service::get_setting(pool, company_id, "payroll", "unpaid_leave_divisor")
-                .await
-                .ok()
-                .and_then(|s| s.value.as_str().and_then(|v| v.parse::<i64>().ok()))
-                .unwrap_or(26);
-        let base_hourly =
-            hourly_rate.unwrap_or_else(|| basic_salary / working_days / effective_hours);
-
-        // Get OT multiplier from company settings
-        let multiplier_key = match ot.ot_type.as_str() {
-            "rest_day" => "overtime_multiplier_rest",
-            "public_holiday" => "overtime_multiplier_public",
-            _ => "overtime_multiplier_normal",
-        };
-
-        let multiplier: f64 =
-            settings_service::get_setting(pool, company_id, "payroll", multiplier_key)
-                .await
-                .ok()
-                .and_then(|s| s.value.as_str().and_then(|v| v.parse::<f64>().ok()))
-                .unwrap_or(match ot.ot_type.as_str() {
-                    "rest_day" => 2.0,
-                    "public_holiday" => 3.0,
-                    _ => 1.5,
-                });
-
-        let ot_hours_f64 = rust_decimal::prelude::ToPrimitive::to_f64(&ot.hours).unwrap_or(0.0);
-        let ot_rate = (base_hourly as f64 * multiplier) as i64;
-        let ot_amount = (ot_rate as f64 * ot_hours_f64) as i64;
+        let multiplier = ot_settings.multiplier_for(&ot.ot_type);
+        let rating = ot_settings.rate_overtime(hourly_rate, basic_salary, &ot.ot_type, ot.hours);
 
         Some(StagedOvertime {
             period_year: ot.ot_date.year(),
             period_month: ot.ot_date.month0() as i32 + 1,
             description: format!(
-                "OT {} - {} ({} {}h @ {:.1}x)",
+                "OT {} - {} ({} {}h @ {}x)",
                 ot.ot_date,
                 ot.ot_type.replace('_', " "),
                 ot.start_time.format("%H:%M"),
                 ot.hours,
-                multiplier
+                multiplier.normalize()
             ),
-            amount: ot_amount,
-            rate: ot_rate,
+            amount: rating.amount_sen,
+            rate: rating.rate_sen,
         })
     } else {
         None
@@ -377,6 +380,10 @@ pub async fn approve_overtime(
     let ot = overtime_applications::set_approved(&mut *tx, ot_id, company_id, reviewer_id, notes)
         .await?
         .ok_or_else(|| AppError::BadRequest("OT application not found or not pending".into()))?;
+
+    // Compared against the row the CAS returned, inside the transaction, so a
+    // denial rolls the approval back rather than leaving it approved.
+    ensure_not_self_approval(reviewer_employee, ot.employee_id, "overtime")?;
 
     // The CAS guarantees the application was still pending, not that it was
     // unchanged since the figures above were computed.
@@ -423,6 +430,17 @@ pub async fn approve_overtime(
     }
 
     tx.commit().await?;
+
+    audit_self_approval_override(
+        pool,
+        &reviewer,
+        company_id,
+        "overtime",
+        ot.id,
+        ot.employee_id,
+        audit_meta,
+    )
+    .await;
 
     // Notify employee
     let employee_user = user_repo::active_id_for_employee(pool, ot.employee_id).await?;

@@ -1,10 +1,16 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Search, Plus, FileText, AlertTriangle, Trash2, X, Lock, User } from 'lucide-react';
+import { Search, Plus, FileText, AlertTriangle, Trash2, X, Lock, User, ChevronLeft, ChevronRight } from 'lucide-react';
 import { getDocuments, getDocumentCategories, createDocument, deleteDocument } from '@/api/documents';
 import { getEmployees } from '@/api/employees';
 import { AttachmentLink } from '@/components/ui/AttachmentPreview';
+import { EmployeePicker } from '@/components/employees/EmployeePicker';
+import { useAuth } from '@/context/AuthContext';
 import { formatDate } from '@/lib/utils';
+
+/** Both `/employees` and `/documents` clamp `per_page` to 100 server-side, so a
+ *  page is asked for and paged through rather than pretending 200 arrives. */
+const PER_PAGE = 20;
 
 
 function getStatusColor(status: string, expiryDate: string | null) {
@@ -31,21 +37,23 @@ function getStatusLabel(status: string, expiryDate: string | null) {
 
 export function DocumentList() {
   const queryClient = useQueryClient();
+  const { user } = useAuth();
+  const companyId = user?.company_id ?? null;
   const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
   const [selectedEmployee, setSelectedEmployee] = useState<{ id: string; name: string; number: string } | null>(null);
   const [showCreate, setShowCreate] = useState(false);
 
+  // `companyId` belongs in the key: the bare `['employees-select']` served the
+  // previous tenant's roster after a company switch.
   const { data: employees, isLoading: loadingEmployees } = useQuery({
-    queryKey: ['employees-select'],
-    queryFn: () => getEmployees({ per_page: 200 }),
+    queryKey: ['employees-select', companyId, search, page],
+    queryFn: () => getEmployees({ search: search || undefined, page, per_page: PER_PAGE }),
   });
 
-  const filteredEmployees = search.trim()
-    ? employees?.data.filter(emp =>
-        emp.full_name.toLowerCase().includes(search.toLowerCase()) ||
-        emp.employee_number.toLowerCase().includes(search.toLowerCase())
-      )
-    : employees?.data;
+  const employeeList = employees?.data ?? [];
+  const employeeTotal = employees?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(employeeTotal / PER_PAGE));
 
   return (
     <div>
@@ -67,7 +75,7 @@ export function DocumentList() {
           type="text"
           placeholder="Search employee by name or ID..."
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={(e) => { setSearch(e.target.value); setPage(1); }}
           className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-black focus:border-black outline-none"
         />
       </div>
@@ -77,14 +85,14 @@ export function DocumentList() {
         <div className="flex items-center justify-center py-12">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-black" />
         </div>
-      ) : !filteredEmployees || filteredEmployees.length === 0 ? (
+      ) : employeeList.length === 0 ? (
         <div className="bg-white rounded-xl border border-gray-200 py-12 text-center text-gray-400">
           <User className="w-8 h-8 mx-auto mb-2 text-gray-300" />
           No employees found
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredEmployees.map((emp) => (
+          {employeeList.map((emp) => (
             <button
               key={emp.id}
               onClick={() => setSelectedEmployee({ id: emp.id, name: emp.full_name, number: emp.employee_number })}
@@ -105,6 +113,32 @@ export function DocumentList() {
               )}
             </button>
           ))}
+        </div>
+      )}
+
+      {/* Paging — the roster is served a page at a time, so the count and the
+          controls are what tell an admin the tail exists at all. */}
+      {employeeTotal > PER_PAGE && (
+        <div className="flex items-center justify-between mt-6 text-sm text-gray-500">
+          <span>
+            Showing {(page - 1) * PER_PAGE + 1}–{Math.min(page * PER_PAGE, employeeTotal)} of {employeeTotal}
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page <= 1}
+              className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-gray-200 disabled:opacity-40 hover:bg-gray-50"
+            >
+              <ChevronLeft className="w-4 h-4" /> Previous
+            </button>
+            <button
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={page >= totalPages}
+              className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-gray-200 disabled:opacity-40 hover:bg-gray-50"
+            >
+              Next <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
         </div>
       )}
 
@@ -145,11 +179,13 @@ function EmployeeDocumentsModal({
 }) {
   const queryClient = useQueryClient();
   const [showCreate, setShowCreate] = useState(false);
+  const [page, setPage] = useState(1);
 
   const { data, isLoading } = useQuery({
-    queryKey: ['documents', { employee_id: employeeId }],
-    queryFn: () => getDocuments({ employee_id: employeeId, per_page: 200 }),
+    queryKey: ['documents', { employee_id: employeeId, page }],
+    queryFn: () => getDocuments({ employee_id: employeeId, page, per_page: PER_PAGE }),
   });
+  const totalPages = Math.max(1, Math.ceil((data?.total ?? 0) / PER_PAGE));
 
   const { data: categories } = useQuery({
     queryKey: ['document-categories'],
@@ -286,8 +322,29 @@ function EmployeeDocumentsModal({
 
         {/* Footer */}
         {data && data.total > 0 && (
-          <div className="px-8 py-3.5 border-t border-gray-200 text-sm text-gray-400 shrink-0 bg-gray-50/60 rounded-b-2xl">
-            {data.total} document{data.total !== 1 ? 's' : ''}
+          <div className="flex items-center justify-between px-8 py-3.5 border-t border-gray-200 text-sm text-gray-400 shrink-0 bg-gray-50/60 rounded-b-2xl">
+            <span>{data.total} document{data.total !== 1 ? 's' : ''}</span>
+            {data.total > PER_PAGE && (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  disabled={page <= 1}
+                  className="p-1.5 rounded-lg border border-gray-200 disabled:opacity-40 hover:bg-white"
+                  aria-label="Previous page"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                <span className="text-gray-500">Page {page} of {totalPages}</span>
+                <button
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={page >= totalPages}
+                  className="p-1.5 rounded-lg border border-gray-200 disabled:opacity-40 hover:bg-white"
+                  aria-label="Next page"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            )}
           </div>
         )}
 
@@ -295,6 +352,7 @@ function EmployeeDocumentsModal({
         {showCreate && (
           <CreateDocumentModal
             defaultEmployeeId={employeeId}
+            defaultEmployeeLabel={`${employeeName} (${employeeNumber})`}
             onClose={() => setShowCreate(false)}
             onCreated={() => {
               setShowCreate(false);
@@ -310,21 +368,18 @@ function EmployeeDocumentsModal({
 
 function CreateDocumentModal({
   defaultEmployeeId,
+  defaultEmployeeLabel,
   onClose,
   onCreated,
 }: {
   defaultEmployeeId?: string;
+  defaultEmployeeLabel?: string;
   onClose: () => void;
   onCreated: () => void;
 }) {
   const { data: categories } = useQuery({
     queryKey: ['document-categories'],
     queryFn: getDocumentCategories,
-  });
-
-  const { data: employees } = useQuery({
-    queryKey: ['employees-select'],
-    queryFn: () => getEmployees({ per_page: 200 }),
   });
 
   const [form, setForm] = useState({
@@ -395,16 +450,15 @@ function CreateDocumentModal({
             <div className="grid grid-cols-2 gap-5">
               <div>
                 <label className="block text-sm font-medium text-gray-600 mb-1.5">Employee</label>
-                <select
+                {/* `isActive={null}` — a leaver's contract or termination letter
+                    is exactly the kind of document filed after they go. */}
+                <EmployeePicker
                   value={employeeId}
-                  onChange={(e) => setEmployeeId(e.target.value)}
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-black focus:border-black outline-none text-sm bg-white transition-colors"
-                >
-                  <option value="">Company-wide</option>
-                  {employees?.data.map(emp => (
-                    <option key={emp.id} value={emp.id}>{emp.full_name} ({emp.employee_number})</option>
-                  ))}
-                </select>
+                  onChange={(id) => setEmployeeId(id)}
+                  isActive={null}
+                  initialLabel={defaultEmployeeLabel}
+                  placeholder="Company-wide"
+                />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-600 mb-1.5">Category</label>

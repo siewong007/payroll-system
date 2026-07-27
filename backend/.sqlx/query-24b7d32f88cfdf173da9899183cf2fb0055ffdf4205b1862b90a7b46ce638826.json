@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id FROM users\n        WHERE company_id = $1\n          AND employee_id IS NOT NULL\n          AND deleted_at IS NULL\n          AND roles <@ ARRAY['employee']::VARCHAR(50)[]",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "24b7d32f88cfdf173da9899183cf2fb0055ffdf4205b1862b90a7b46ce638826"
+}

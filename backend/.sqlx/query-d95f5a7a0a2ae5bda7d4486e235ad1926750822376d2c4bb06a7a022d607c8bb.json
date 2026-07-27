@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM bulk_import_sessions WHERE company_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d95f5a7a0a2ae5bda7d4486e235ad1926750822376d2c4bb06a7a022d607c8bb"
+}

@@ -8,7 +8,7 @@ use sqlx::{Executor, Postgres};
 use uuid::Uuid;
 
 use crate::core::error::AppResult;
-use crate::models::email::EmailLog;
+use crate::models::email::{EmailLog, EmailLogSummary};
 
 pub async fn count(
     executor: impl Executor<'_, Database = Postgres>,
@@ -26,16 +26,24 @@ pub async fn count(
     Ok(total)
 }
 
+/// One page of log rows *without* their bodies.
+///
+/// The columns are listed explicitly on purpose: the previous `SELECT *` meant
+/// `body_html` started being returned the moment the column existed, and the
+/// welcome letter's body contains the account's initial password.
 pub async fn list(
     executor: impl Executor<'_, Database = Postgres>,
     company_id: Uuid,
     employee_id: Option<Uuid>,
     limit: i64,
     offset: i64,
-) -> AppResult<Vec<EmailLog>> {
+) -> AppResult<Vec<EmailLogSummary>> {
     let logs = sqlx::query_as!(
-        EmailLog,
-        r#"SELECT * FROM email_logs
+        EmailLogSummary,
+        r#"SELECT id, company_id, employee_id, template_id, letter_type,
+            recipient_email, recipient_name, subject, status, error_message,
+            sent_at, created_at, created_by
+        FROM email_logs
         WHERE company_id = $1 AND ($2::uuid IS NULL OR employee_id = $2)
         ORDER BY created_at DESC
         LIMIT $3 OFFSET $4"#,

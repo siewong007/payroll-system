@@ -83,11 +83,39 @@ export function DataTable<T>({
 
   const totalItems = isServerSide ? (total ?? data.length) : data.length;
   const totalPages = Math.ceil(totalItems / perPage);
+  // Clamp before slicing so no frame is ever blank. Filtering 30 rows down to 8
+  // while sitting on page 3 used to slice [20,30) out of an eight-row array,
+  // render "No data found", and unmount the pager — leaving no control to get
+  // back to the rows that do match.
+  const safePage = Math.min(Math.max(1, currentPage), Math.max(1, totalPages));
   const displayData = isServerSide
     ? data
-    : data.slice((currentPage - 1) * perPage, currentPage * perPage);
+    : data.slice((safePage - 1) * perPage, safePage * perPage);
 
   const colCount = columns.length + (renderActions ? 1 : 0) + (selectable ? 1 : 0);
+
+  // Clamping fixes the frame; this fixes the state. Keyed on the derived page
+  // count and not on `data`, because Approvals, Reports and portal Leave all
+  // pass an inline `data={query.data ?? []}` — a `[data]` dependency would see a
+  // new array identity every render and pin those tables to page 1 forever.
+  useEffect(() => {
+    if (isServerSide) return;
+    if (internalPage > totalPages) {
+      setInternalPage(Math.max(1, totalPages));
+    }
+  }, [internalPage, isServerSide, totalPages]);
+
+  // Server-side the parent owns the page, so only correct it once the server has
+  // actually told us the size. The `total !== undefined` guard matters:
+  // `totalItems` falls back to `data.length` while a page is in flight, which
+  // would otherwise clamp the parent to page 1 on every refetch.
+  useEffect(() => {
+    if (!isServerSide || total === undefined || isLoading) return;
+    const lastPage = Math.max(1, totalPages);
+    if (currentPage > lastPage) {
+      onPageChange!(lastPage);
+    }
+  }, [currentPage, isLoading, isServerSide, onPageChange, total, totalPages]);
 
   const getKey = useCallback((row: T, index: number) => {
     if (rowKey) return rowKey(row, index);
@@ -171,11 +199,11 @@ export function DataTable<T>({
   const getPageNumbers = (): (number | 'ellipsis')[] => {
     if (totalPages <= 7) return Array.from({ length: totalPages }, (_, i) => i + 1);
     const pages: (number | 'ellipsis')[] = [1];
-    if (currentPage > 3) pages.push('ellipsis');
-    const start = Math.max(2, currentPage - 1);
-    const end = Math.min(totalPages - 1, currentPage + 1);
+    if (safePage > 3) pages.push('ellipsis');
+    const start = Math.max(2, safePage - 1);
+    const end = Math.min(totalPages - 1, safePage + 1);
     for (let i = start; i <= end; i++) pages.push(i);
-    if (currentPage < totalPages - 2) pages.push('ellipsis');
+    if (safePage < totalPages - 2) pages.push('ellipsis');
     if (totalPages > 1) pages.push(totalPages);
     return pages;
   };
@@ -341,22 +369,25 @@ export function DataTable<T>({
         </div>
 
         {/* Pagination */}
-        {totalPages > 1 && !isLoading && (
+        {/* `currentPage > 1` keeps a control on screen in the transitional frame
+            where a filter has just collapsed the set to a single page and the
+            reset effect has not run yet. */}
+        {(totalPages > 1 || currentPage > 1) && !isLoading && (
           <div className="flex flex-col gap-2 sm:flex-row items-center justify-between px-4 sm:px-6 py-3 border-t border-gray-100 bg-gray-50">
             <span className="text-sm text-gray-500">
-              Showing {(currentPage - 1) * perPage + 1}–{Math.min(currentPage * perPage, totalItems)} of {totalItems}
+              Showing {(safePage - 1) * perPage + 1}–{Math.min(safePage * perPage, totalItems)} of {totalItems}
             </span>
             <div className="flex items-center gap-1">
               <button
-                onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
-                disabled={currentPage === 1}
+                onClick={() => setCurrentPage(Math.max(1, safePage - 1))}
+                disabled={safePage === 1}
                 className="p-2 sm:p-1.5 rounded-lg hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
                 <ChevronLeft className="w-4 h-4" />
               </button>
               {/* Simplified pagination on mobile: just page count */}
               <span className="sm:hidden text-sm text-gray-600 px-2">
-                {currentPage} / {totalPages}
+                {safePage} / {Math.max(1, totalPages)}
               </span>
               {/* Full pagination on desktop */}
               <div className="hidden sm:flex items-center gap-1">
@@ -368,7 +399,7 @@ export function DataTable<T>({
                       key={p}
                       onClick={() => setCurrentPage(p)}
                       className={`min-w-[32px] h-8 rounded-lg text-sm font-medium transition-colors ${
-                        p === currentPage
+                        p === safePage
                           ? 'bg-black text-white'
                           : 'text-gray-600 hover:bg-gray-200'
                       }`}
@@ -379,8 +410,8 @@ export function DataTable<T>({
                 )}
               </div>
               <button
-                onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
-                disabled={currentPage === totalPages}
+                onClick={() => setCurrentPage(Math.min(Math.max(1, totalPages), safePage + 1))}
+                disabled={safePage >= Math.max(1, totalPages)}
                 className="p-2 sm:p-1.5 rounded-lg hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
                 <ChevronRight className="w-4 h-4" />

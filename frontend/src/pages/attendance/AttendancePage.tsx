@@ -5,7 +5,7 @@ import {
   Filter, Plus, MapPin, Fingerprint,
   AlertCircle, Calendar, User, LogIn, LogOut, MoreVertical,
   ChevronLeft, ChevronRight, Pencil, AlertTriangle, Timer, Download,
-  Link2, Copy, Trash2, ShieldCheck, X, Search, ListChecks, Eye, EyeOff,
+  Link2, Copy, Trash2, ShieldCheck, X, ListChecks, Eye, EyeOff,
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import {
@@ -21,7 +21,6 @@ import {
   type AttendanceRecordWithEmployee,
   type AttendanceSummaryItem,
 } from '@/api/attendance';
-import { getEmployees } from '@/api/employees';
 import {
   listKioskCredentials,
   createKioskCredential,
@@ -31,6 +30,7 @@ import {
 import { useAuth } from '@/context/AuthContext';
 import { hasAnyRole } from '@/lib/roles';
 import { toDateTimeLocalValue } from '@/lib/utils';
+import { EmployeePicker } from '@/components/employees/EmployeePicker';
 import { WorkScheduleCard } from '@/components/attendance/WorkScheduleCard';
 import { GeofenceCard } from '@/components/attendance/GeofenceCard';
 import { NetworkCard } from '@/components/attendance/NetworkCard';
@@ -80,109 +80,6 @@ function formatTime(iso: string | null) {
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString('en-MY', { day: 'numeric', month: 'short', year: 'numeric' });
-}
-
-// ─── Employee Picker ────────────────────────────────────────────────────────
-
-/**
- * Search-as-you-type employee selector. Replaces the raw UUID text input:
- * an admin correcting a missed check-in should never have to go find the
- * employee's UUID by hand.
- */
-function EmployeePicker({
-  value,
-  onChange,
-  placeholder = 'Search by name or employee number…',
-}: {
-  value: string;
-  onChange: (id: string, label: string) => void;
-  placeholder?: string;
-}) {
-  const [search, setSearch] = useState('');
-  const [open, setOpen] = useState(false);
-  const [selectedLabel, setSelectedLabel] = useState('');
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  const { data, isLoading } = useQuery({
-    queryKey: ['employees-picker', search],
-    queryFn: () => getEmployees({ search: search || undefined, is_active: true, per_page: 20 }),
-    enabled: open,
-    placeholderData: keepPreviousData,
-  });
-  const employees = data?.data ?? [];
-
-  // Close on outside click so the list doesn't linger over the form.
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
-  }, [open]);
-
-  // Follow the controlled value when it is reset from outside (the filter-bar
-  // "Clear" button, or the open-sessions tile). Otherwise the input keeps
-  // showing the old employee while the table shows everyone — and the X button,
-  // gated on `value`, disappears so the stale text cannot be cleared at all.
-  useEffect(() => {
-    if (!value) setSelectedLabel('');
-  }, [value]);
-
-  return (
-    <div className="relative" ref={containerRef}>
-      <div className="relative">
-        <Search className="w-3.5 h-3.5 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-        <input
-          type="text"
-          value={open ? search : selectedLabel}
-          onChange={e => { setSearch(e.target.value); setOpen(true); }}
-          onFocus={() => { setSearch(''); setOpen(true); }}
-          placeholder={placeholder}
-          className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-1 focus:ring-black outline-none"
-        />
-        {(value || selectedLabel) && !open && (
-          <button
-            type="button"
-            onClick={() => { onChange('', ''); setSelectedLabel(''); }}
-            className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-gray-700"
-            title="Clear"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
-        )}
-      </div>
-
-      {open && (
-        <div className="absolute z-10 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-56 overflow-y-auto">
-          {isLoading ? (
-            <div className="px-3 py-3 text-sm text-gray-400">Searching…</div>
-          ) : employees.length === 0 ? (
-            <div className="px-3 py-3 text-sm text-gray-400">No matching employees</div>
-          ) : (
-            employees.map(emp => (
-              <button
-                type="button"
-                key={emp.id}
-                onClick={() => {
-                  const label = `${emp.full_name} (${emp.employee_number})`;
-                  onChange(emp.id, label);
-                  setSelectedLabel(label);
-                  setOpen(false);
-                }}
-                className="w-full text-left px-3 py-2 hover:bg-gray-50 transition-colors"
-              >
-                <div className="text-sm font-medium text-gray-900">{emp.full_name}</div>
-                <div className="text-xs text-gray-400">
-                  {emp.employee_number}{emp.department ? ` · ${emp.department}` : ''}
-                </div>
-              </button>
-            ))
-          )}
-        </div>
-      )}
-    </div>
-  );
 }
 
 // ─── Kiosk Credentials Modal ────────────────────────────────────────────────
@@ -435,7 +332,7 @@ function QrPanel({ canGenerate }: { canGenerate: boolean }) {
   const [showQr, setShowQr] = useState(false);
   const queryClient = useQueryClient();
 
-  const { data: token, refetch: generateNew, isError } = useQuery({
+  const { data: token, dataUpdatedAt, refetch: generateNew, isError } = useQuery({
     queryKey: ['attendance-qr'],
     queryFn: generateQrToken,
     enabled: showQr && canGenerate,
@@ -456,18 +353,24 @@ function QrPanel({ canGenerate }: { canGenerate: boolean }) {
     });
   }, [token, showQr]);
 
-  // Countdown timer
+  // Countdown timer, measured from the TTL against the moment the response
+  // arrived here. `expires_at` is a *server* instant, so comparing it with
+  // Date.now() folded the device's clock offset into the countdown: a machine a
+  // few minutes fast read every fresh token as already expired and re-minted
+  // immediately. `dataUpdatedAt` is stamped locally, so both terms share a clock
+  // and the offset cancels.
   useEffect(() => {
-    if (!token) return;
+    if (!token || !dataUpdatedAt) return;
+    const ttl = token.ttl_seconds > 0 ? token.ttl_seconds : 300;
     const tick = () => {
-      const left = Math.max(0, Math.floor((new Date(token.expires_at).getTime() - Date.now()) / 1000));
+      const left = Math.max(0, Math.ceil(ttl - (Date.now() - dataUpdatedAt) / 1000));
       setTimeLeft(left);
       setIsExpired(left === 0);
     };
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
-  }, [token]);
+  }, [token, dataUpdatedAt]);
 
   const handleRefresh = useCallback(async () => {
     await queryClient.removeQueries({ queryKey: ['attendance-qr'] });

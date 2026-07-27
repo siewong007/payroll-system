@@ -1,19 +1,22 @@
 //! Claim admin CRUD + approval/reject workflow.
 
-use chrono::Datelike;
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::core::config::AppConfig;
 use crate::core::error::{AppError, AppResult};
+use crate::core::upload_path::validate_optional_file_url;
 use crate::models::portal::{Claim, CreateClaimRequest, UpdateClaimRequest};
 use crate::repositories::reads::approvals as approval_reads;
-use crate::repositories::{claims, payroll_entries, users as user_repo};
+use crate::repositories::{claims, users as user_repo};
 use crate::services::audit_service::AuditRequestMeta;
 use crate::services::email_service;
 use crate::services::notification_service;
 
-use super::common::{ensure_employee_in_company, ensure_positive_amount};
+use super::common::{
+    Reviewer, audit_self_approval_override, ensure_employee_in_company, ensure_not_self_approval,
+    ensure_positive_amount, reviewer_employee_id,
+};
 
 pub use crate::models::approval::ClaimWithEmployee;
 
@@ -27,6 +30,9 @@ pub async fn create_claim_admin(
 ) -> AppResult<Claim> {
     ensure_employee_in_company(pool, company_id, employee_id).await?;
     ensure_positive_amount(req.amount)?;
+    // `receipt_url` is joined onto a filesystem path by the backup export and
+    // restore paths, so it is settled at write time rather than at every sink.
+    validate_optional_file_url(req.receipt_url.as_deref())?;
 
     let claim = claims::insert(
         pool,
@@ -78,6 +84,8 @@ pub async fn update_claim_admin(
     if let Some(amount) = req.amount {
         ensure_positive_amount(amount)?;
     }
+
+    validate_optional_file_url(req.receipt_url.as_deref())?;
 
     let updated = claims::update_full(
         pool,
@@ -156,44 +164,26 @@ pub async fn cancel_claim_admin(
 ) -> AppResult<Claim> {
     let mut tx = pool.begin().await?;
 
+    // No `payroll_entries` probe any more. It asked whether a staged
+    // reimbursement keyed to the *approval* month had been processed — a row
+    // that never carried money and that the next run flipped to processed
+    // regardless of whether the claim was paid, which is what made an unpaid
+    // claim uncancellable. A paid claim is now simply not 'approved': it is
+    // 'processed' with a `payroll_run_id`, which `get_cancellable` excludes.
     let current = claims::get_cancellable(&mut *tx, claim_id, company_id)
         .await?
         .ok_or_else(|| AppError::BadRequest("Claim not found or cannot be cancelled".into()))?;
 
-    if current.status == "approved" {
-        let staged_at = current.reviewed_at.unwrap_or_else(chrono::Utc::now);
-        let description = format!("Claim: {}", current.title);
-        let processed = payroll_entries::exists_processed_claim(
-            &mut *tx,
-            current.employee_id,
-            company_id,
-            staged_at.year(),
-            staged_at.month() as i32,
-            &description,
-            current.amount,
-        )
-        .await?;
-
-        if processed {
-            return Err(AppError::BadRequest(
-                "Approved claim already included in processed payroll and cannot be cancelled"
+    // Compare-and-swap: a run committing between the read above and this write
+    // would otherwise have its just-paid claim cancelled out from under it.
+    let cancelled = claims::set_cancelled(&mut *tx, claim_id, company_id)
+        .await?
+        .ok_or_else(|| {
+            AppError::Conflict(
+                "This claim was paid or cancelled while it was being cancelled. Reload and try again."
                     .into(),
-            ));
-        }
-
-        payroll_entries::delete_unprocessed_claim(
-            &mut *tx,
-            current.employee_id,
-            company_id,
-            staged_at.year(),
-            staged_at.month() as i32,
-            &description,
-            current.amount,
-        )
-        .await?;
-    }
-
-    let cancelled = claims::set_cancelled(&mut *tx, claim_id, company_id).await?;
+            )
+        })?;
 
     tx.commit().await?;
 
@@ -248,39 +238,41 @@ pub async fn approve_claim(
     config: &AppConfig,
     company_id: Uuid,
     claim_id: Uuid,
-    reviewer_id: Uuid,
+    reviewer: Reviewer,
     notes: Option<&str>,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<Claim> {
-    // Approval and the staged reimbursement commit together. `claims::mark_processed`
-    // is the real lock on double payment, so this is defence in depth rather than
-    // a money bug — but the staged row is what the cancel path inspects, and
-    // `set_approved` is a compare-and-swap on `status = 'pending'`, so losing it
-    // left a state no retry could reach.
+    let reviewer_id = reviewer.user_id;
+
+    // Approval no longer stages a `payroll_entries` reimbursement. That row was
+    // keyed to the approval month, was excluded from every entry read, and so
+    // never carried money — while the run paid from `claims` on an unrelated
+    // predicate. `claims` is the single authority now: the run selects
+    // approved-and-unlinked claims and marks exactly those it paid.
+    //
+    // Resolved before the transaction opens; the guard itself runs inside it,
+    // against the row the compare-and-swap returned.
+    let reviewer_employee = reviewer_employee_id(pool, &reviewer).await?;
+
     let mut tx = pool.begin().await?;
     let claim = claims::set_approved(&mut *tx, claim_id, company_id, reviewer_id, notes)
         .await?
         .ok_or_else(|| AppError::BadRequest("Claim not found or not pending".into()))?;
 
-    // Auto-create payroll entry for the approved claim amount
-    // Stage it for the current payroll period (current month)
-    let now = chrono::Utc::now();
-    let period_year = now.year();
-    let period_month = now.month() as i32;
+    ensure_not_self_approval(reviewer_employee, claim.employee_id, "claim")?;
 
-    payroll_entries::insert_claim_reimbursement(
-        &mut *tx,
-        Uuid::now_v7(),
-        claim.employee_id,
-        company_id,
-        period_year,
-        period_month,
-        &format!("Claim: {}", claim.title),
-        claim.amount,
-        reviewer_id,
-    )
-    .await?;
     tx.commit().await?;
+
+    audit_self_approval_override(
+        pool,
+        &reviewer,
+        company_id,
+        "claim",
+        claim.id,
+        claim.employee_id,
+        audit_meta,
+    )
+    .await;
 
     // Notify employee
     let employee_user = user_repo::active_id_for_employee(pool, claim.employee_id).await?;

@@ -2,8 +2,9 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Mail, Send, Eye, Plus, FileText, Clock, CheckCircle, XCircle, X, Users, AtSign } from 'lucide-react';
 import { getEmailTemplates, createEmailTemplate, sendLetter, previewLetter, getEmailLogs } from '@/api/email';
-import { getEmployees } from '@/api/employees';
-import { formatDate } from '@/lib/utils';
+import { getEmployee } from '@/api/employees';
+import { EmployeePicker } from '@/components/employees/EmployeePicker';
+import { formatDate, getErrorMessage } from '@/lib/utils';
 import type { LetterType, EmailTemplate, PreviewLetterResponse } from '@/types';
 
 const LETTER_TYPES: { value: LetterType; label: string; description: string }[] = [
@@ -92,14 +93,15 @@ export function LettersPage() {
   const [bodyHtml, setBodyHtml] = useState(DEFAULT_TEMPLATES.general.body);
   const [preview, setPreview] = useState<PreviewLetterResponse | null>(null);
   const [showPreview, setShowPreview] = useState(false);
-  const [employeeSearch, setEmployeeSearch] = useState('');
-  const [showEmployeeDropdown, setShowEmployeeDropdown] = useState(false);
   const [showSaveTemplate, setShowSaveTemplate] = useState(false);
   const [templateName, setTemplateName] = useState('');
 
-  const { data: employees } = useQuery({
-    queryKey: ['employees-select'],
-    queryFn: () => getEmployees({ per_page: 200 }),
+  // One employee, fetched by id — the picker resolves the choice, and this is
+  // only here for the "no email on file" warning below.
+  const { data: selectedEmp } = useQuery({
+    queryKey: ['employee', selectedEmployee],
+    queryFn: () => getEmployee(selectedEmployee),
+    enabled: Boolean(selectedEmployee),
   });
 
   const { data: templates } = useQuery({
@@ -112,24 +114,35 @@ export function LettersPage() {
     queryFn: () => getEmailLogs({ per_page: 50 }),
   });
 
-  const previewMutation = useMutation({
-    mutationFn: previewLetter,
-    onSuccess: (data) => {
-      setPreview(data);
-      setShowPreview(true);
-    },
-  });
-
   const sendMutation = useMutation({
     mutationFn: sendLetter,
-    onSuccess: () => {
+    // A refused send still writes an email_logs row, and that row is the
+    // evidence of the attempt — so History refreshes either way, not only on
+    // success.
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['emailLogs'] });
+    },
+    onSuccess: (data) => {
+      // The API answers 502 when the letter was recorded but never delivered,
+      // so this guard should be unreachable. It stays because a 200 carrying
+      // status:"failed" is exactly what this page used to treat as delivery —
+      // clearing the form and unmounting the modal before anyone could read it.
+      if (data.status !== 'sent') return;
       setShowPreview(false);
       setPreview(null);
       setSelectedEmployee('');
-      setEmployeeSearch('');
       setCustomEmail('');
       setCustomName('');
+    },
+  });
+
+  const previewMutation = useMutation({
+    mutationFn: previewLetter,
+    onSuccess: (data) => {
+      // Reopening the preview must not still show the previous attempt's error.
+      sendMutation.reset();
+      setPreview(data);
+      setShowPreview(true);
     },
   });
 
@@ -197,14 +210,6 @@ export function LettersPage() {
       });
     }
   };
-
-  const filteredEmployees = employees?.data.filter(
-    (emp) =>
-      emp.full_name.toLowerCase().includes(employeeSearch.toLowerCase()) ||
-      emp.employee_number.toLowerCase().includes(employeeSearch.toLowerCase())
-  );
-
-  const selectedEmp = employees?.data.find((e) => e.id === selectedEmployee);
 
   return (
     <div>
@@ -290,46 +295,14 @@ export function LettersPage() {
 
               {recipientMode === 'employee' ? (
                 <>
-                  <div className="relative">
-                    <input
-                      type="text"
-                      value={selectedEmp ? `${selectedEmp.full_name} (${selectedEmp.employee_number})` : employeeSearch}
-                      onChange={(e) => {
-                        setEmployeeSearch(e.target.value);
-                        setSelectedEmployee('');
-                        setShowEmployeeDropdown(true);
-                      }}
-                      onFocus={() => setShowEmployeeDropdown(true)}
-                      placeholder="Search employee by name or number..."
-                      className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
-                    />
-                    {selectedEmployee && (
-                      <button
-                        onClick={() => { setSelectedEmployee(''); setEmployeeSearch(''); }}
-                        className="absolute right-2 top-2.5 text-gray-400 hover:text-gray-600"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    )}
-                    {showEmployeeDropdown && !selectedEmployee && filteredEmployees && filteredEmployees.length > 0 && (
-                      <div className="absolute z-10 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
-                        {filteredEmployees.slice(0, 20).map((emp) => (
-                          <button
-                            key={emp.id}
-                            onClick={() => {
-                              setSelectedEmployee(emp.id);
-                              setEmployeeSearch('');
-                              setShowEmployeeDropdown(false);
-                            }}
-                            className="w-full text-left px-3 py-2 hover:bg-gray-50 text-sm flex justify-between"
-                          >
-                            <span className="font-medium">{emp.full_name}</span>
-                            <span className="text-gray-400">{emp.employee_number}</span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                  {/* `isActive={null}` — a termination or an EA-form letter is
+                      routinely addressed to someone who has already left. */}
+                  <EmployeePicker
+                    value={selectedEmployee}
+                    onChange={(id) => setSelectedEmployee(id)}
+                    isActive={null}
+                    placeholder="Search employee by name or number..."
+                  />
                   {selectedEmp && !selectedEmp.email && (
                     <p className="text-xs text-red-500 mt-2">This employee has no email address on file.</p>
                   )}
@@ -558,14 +531,20 @@ export function LettersPage() {
                 />
               </div>
 
+              {/*
+                `getErrorMessage` reads the API's own text out of the axios
+                error. Rendering `error.message` gave "Request failed with
+                status code 502" and left the operator none the wiser about
+                which mail server refused what.
+              */}
               {sendMutation.isError && (
                 <div className="bg-red-50 text-red-600 text-sm px-4 py-3 rounded-lg">
-                  {(sendMutation.error as Error)?.message || 'Failed to send email'}
+                  {getErrorMessage(sendMutation.error, 'Failed to send email')}
                 </div>
               )}
-              {sendMutation.isSuccess && (
-                <div className="bg-green-50 text-green-600 text-sm px-4 py-3 rounded-lg">
-                  Email sent successfully! Check the History tab for details.
+              {sendMutation.data && sendMutation.data.status !== 'sent' && (
+                <div className="bg-red-50 text-red-600 text-sm px-4 py-3 rounded-lg">
+                  {sendMutation.data.error_message || 'The letter was recorded but not sent.'}
                 </div>
               )}
             </div>
@@ -578,7 +557,7 @@ export function LettersPage() {
               </button>
               <button
                 onClick={handleSend}
-                disabled={sendMutation.isPending || sendMutation.isSuccess}
+                disabled={sendMutation.isPending}
                 className="flex items-center gap-2 bg-black text-white px-6 py-2.5 rounded-lg font-medium hover:bg-gray-800 disabled:opacity-50 transition-colors text-sm"
               >
                 <Send className="w-4 h-4" />

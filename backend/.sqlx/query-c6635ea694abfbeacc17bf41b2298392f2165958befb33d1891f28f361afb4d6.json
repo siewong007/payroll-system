@@ -1,0 +1,36 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE companies SET registration_number=$2, tax_number=$3, epf_number=$4, socso_code=$5,\n               eis_code=$6, hrdf_number=$7, address_line1=$8, address_line2=$9, city=$10, state=$11,\n               postcode=$12, country=$13, phone=$14, email=$15, logo_url=$16, hrdf_enabled=$17,\n               unpaid_leave_divisor=$18, is_active=$19, updated_at=$20,\n               attendance_method=COALESCE($21, attendance_method),\n               timezone=COALESCE($22, timezone),\n               geofence_mode=COALESCE($23, geofence_mode)\n               WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Bool",
+        "Int4",
+        "Bool",
+        "Timestamptz",
+        "Varchar",
+        "Varchar",
+        "Varchar"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c6635ea694abfbeacc17bf41b2298392f2165958befb33d1891f28f361afb4d6"
+}

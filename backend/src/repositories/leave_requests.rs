@@ -297,6 +297,8 @@ pub async fn set_rejected(
 }
 
 /// An employee's own leave requests (with type name), newest first (max 50).
+///
+/// `id` breaks ties on `created_at`, which a restored batch shares.
 pub async fn list_for_employee(
     executor: impl Executor<'_, Database = Postgres>,
     employee_id: Uuid,
@@ -312,7 +314,7 @@ pub async fn list_for_employee(
         FROM leave_requests lr
         JOIN leave_types lt ON lr.leave_type_id = lt.id
         WHERE lr.employee_id = $1
-        ORDER BY lr.created_at DESC
+        ORDER BY lr.created_at DESC, lr.id DESC
         LIMIT 50"#,
         employee_id,
     )

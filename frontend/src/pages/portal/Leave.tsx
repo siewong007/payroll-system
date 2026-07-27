@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, ArrowLeft, Paperclip, ExternalLink, X, Calendar, AlertTriangle, Download, Trash2 } from 'lucide-react';
 import { getLeaveBalances, getLeaveRequests, getLeaveTypes, createLeaveRequest, cancelLeaveRequest, deleteLeaveRequest, uploadFile, getMyProfile, exportLeaveIcs } from '@/api/portal';
+import { runBulk, summarizeBulkFailure } from '@/lib/bulk';
 import { formatDate, getErrorMessage } from '@/lib/utils';
 import { AttachmentLink, AttachmentPreview } from '@/components/ui/AttachmentPreview';
 import { DataTable, type Column } from '@/components/ui/DataTable';
@@ -129,6 +130,7 @@ export function Leave() {
   const [tab, setTab] = useState<'balances' | 'requests'>('balances');
   const [showApply, setShowApply] = useState(false);
   const [selectedLeaveIds, setSelectedLeaveIds] = useState<string[]>([]);
+  const [bulkError, setBulkError] = useState('');
 
   const { data: profile } = useQuery({
     queryKey: ['my-profile'],
@@ -167,26 +169,33 @@ export function Leave() {
     },
   });
 
+  const refreshLeave = () => {
+    queryClient.invalidateQueries({ queryKey: ['leave-requests'] });
+    queryClient.invalidateQueries({ queryKey: ['leave-balances'] });
+  };
+
+  // Partial failure is an outcome, not an exception: the refetch runs whatever
+  // happens and only the requests that failed stay selected, so a retry hits
+  // exactly those. `Promise.all` used to short-circuit on the first rejection,
+  // leaving the balances stale and no error rendered anywhere.
   const bulkCancelMutation = useMutation({
-    mutationFn: async (ids: string[]) => {
-      await Promise.all(ids.map((id) => cancelLeaveRequest(id)));
+    mutationFn: (ids: string[]) => runBulk(ids, cancelLeaveRequest),
+    onSuccess: (outcome) => {
+      setSelectedLeaveIds(outcome.failed.map((failure) => failure.id));
+      setBulkError(summarizeBulkFailure(outcome, 'cancelled'));
     },
-    onSuccess: () => {
-      setSelectedLeaveIds([]);
-      queryClient.invalidateQueries({ queryKey: ['leave-requests'] });
-      queryClient.invalidateQueries({ queryKey: ['leave-balances'] });
-    },
+    onError: (err: unknown) => setBulkError(getErrorMessage(err, 'Failed to cancel the selected requests')),
+    onSettled: refreshLeave,
   });
 
   const bulkDeleteMutation = useMutation({
-    mutationFn: async (ids: string[]) => {
-      await Promise.all(ids.map((id) => deleteLeaveRequest(id)));
+    mutationFn: (ids: string[]) => runBulk(ids, deleteLeaveRequest),
+    onSuccess: (outcome) => {
+      setSelectedLeaveIds(outcome.failed.map((failure) => failure.id));
+      setBulkError(summarizeBulkFailure(outcome, 'deleted'));
     },
-    onSuccess: () => {
-      setSelectedLeaveIds([]);
-      queryClient.invalidateQueries({ queryKey: ['leave-requests'] });
-      queryClient.invalidateQueries({ queryKey: ['leave-balances'] });
-    },
+    onError: (err: unknown) => setBulkError(getErrorMessage(err, 'Failed to delete the selected requests')),
+    onSettled: refreshLeave,
   });
 
   const selectedLeaveRequests = (requests ?? []).filter((request) => selectedLeaveIds.includes(request.id));
@@ -270,36 +279,45 @@ export function Leave() {
       ) : (
         <div className="space-y-3">
           {selectedLeaveIds.length > 0 && (
-            <div className="flex flex-col gap-2 rounded-xl border border-gray-200 bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-              <span className="text-sm font-medium text-gray-700">{selectedLeaveIds.length} selected</span>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (confirm(`Cancel ${selectedCancelableLeaveIds.length} selected leave request(s)?`)) {
-                      bulkCancelMutation.mutate(selectedCancelableLeaveIds);
-                    }
-                  }}
-                  disabled={selectedCancelableLeaveIds.length === 0 || bulkCancelMutation.isPending}
-                  className="btn-secondary !py-2 text-sm disabled:opacity-50"
-                >
-                  <X className="w-4 h-4" />
-                  {bulkCancelMutation.isPending ? 'Cancelling...' : 'Cancel Selected'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (confirm(`Permanently delete ${selectedDeletableLeaveIds.length} cancelled leave request(s)?`)) {
-                      bulkDeleteMutation.mutate(selectedDeletableLeaveIds);
-                    }
-                  }}
-                  disabled={selectedDeletableLeaveIds.length === 0 || bulkDeleteMutation.isPending}
-                  className="btn-secondary !py-2 text-sm text-red-600 hover:!bg-red-50 disabled:opacity-50"
-                >
-                  <Trash2 className="w-4 h-4" />
-                  {bulkDeleteMutation.isPending ? 'Deleting...' : 'Delete Selected'}
-                </button>
+            <div className="space-y-2">
+              <div className="flex flex-col gap-2 rounded-xl border border-gray-200 bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                <span className="text-sm font-medium text-gray-700">{selectedLeaveIds.length} selected</span>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (confirm(`Cancel ${selectedCancelableLeaveIds.length} selected leave request(s)?`)) {
+                        setBulkError('');
+                        bulkCancelMutation.mutate(selectedCancelableLeaveIds);
+                      }
+                    }}
+                    disabled={selectedCancelableLeaveIds.length === 0 || bulkCancelMutation.isPending}
+                    className="btn-secondary !py-2 text-sm disabled:opacity-50"
+                  >
+                    <X className="w-4 h-4" />
+                    {bulkCancelMutation.isPending ? 'Cancelling...' : 'Cancel Selected'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (confirm(`Permanently delete ${selectedDeletableLeaveIds.length} cancelled leave request(s)?`)) {
+                        setBulkError('');
+                        bulkDeleteMutation.mutate(selectedDeletableLeaveIds);
+                      }
+                    }}
+                    disabled={selectedDeletableLeaveIds.length === 0 || bulkDeleteMutation.isPending}
+                    className="btn-secondary !py-2 text-sm text-red-600 hover:!bg-red-50 disabled:opacity-50"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    {bulkDeleteMutation.isPending ? 'Deleting...' : 'Delete Selected'}
+                  </button>
+                </div>
               </div>
+              {bulkError && (
+                <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                  {bulkError}
+                </div>
+              )}
             </div>
           )}
           <DataTable

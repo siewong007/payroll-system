@@ -306,13 +306,31 @@ pub fn generate_ea_form_pdf(data: &EaFormData) -> AppResult<Vec<u8>> {
     );
     y -= 7.0;
 
-    let income_items: Vec<(&str, &str, i64)> = vec![
+    let mut income_items: Vec<(&str, &str, i64)> = vec![
         ("1", "Salary / Wages / Gaji / Upah", data.ytd_basic),
         ("2", "Allowances / Elaun", data.ytd_allowances),
         ("3", "Bonus / Bonus", data.ytd_bonus),
         ("4", "Commission / Komisen", data.ytd_commission),
         ("5", "Overtime / Kerja Lebih Masa", data.ytd_overtime),
     ];
+
+    // The five categories above are narrow allow-lists over `item_type`, while
+    // the total below is the YTD gross of every earning that reached a payslip.
+    // Anything staged under another item type therefore sat inside the total
+    // without appearing in a line, and the form failed its own arithmetic — on a
+    // document filed under s.83(1A). The year's payslips cannot be reclassified
+    // after the fact, so the residual is named instead.
+    let unclassified = unclassified_earnings(
+        data.ytd_gross,
+        data.ytd_basic,
+        data.ytd_allowances,
+        data.ytd_overtime,
+        data.ytd_bonus,
+        data.ytd_commission,
+    );
+    if unclassified != 0 {
+        income_items.push(("6", "Other Remuneration / Saraan Lain", unclassified));
+    }
 
     for (num, label, amount) in &income_items {
         add_text(&mut ops, &font, 9.0, left + 3.0, y, num);

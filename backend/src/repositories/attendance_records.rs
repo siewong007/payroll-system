@@ -371,6 +371,16 @@ pub async fn update(
     Ok(record)
 }
 
+/// The note the auto-absent cron stamps on every placeholder it writes. It is
+/// the marker that separates a cron row from an HR-edited one, so it appears in
+/// three places: the INSERT below, the DELETE that a check-in uses to supersede
+/// it, and — necessarily as a literal, since an index predicate cannot be
+/// parameterised — migration 1019's partial unique index and the matching
+/// `ON CONFLICT` clause. Changing it requires changing 1019 too; the guard
+/// against forgetting is the reflection test over `pg_indexes` in
+/// `attendance_tests.rs`.
+pub const AUTO_ABSENT_NOTE: &str = "Auto-marked absent (no check-in recorded)";
+
 /// Remove today's auto-absent placeholder so a real (late) check-in
 /// supersedes it. Matches only rows the cron itself wrote: system-created
 /// (`created_by IS NULL`), method 'manual', status 'absent', with the cron's
@@ -387,10 +397,11 @@ pub async fn delete_auto_absent_today(
              AND status = 'absent'
              AND method = 'manual'
              AND created_by IS NULL
-             AND notes = 'Auto-marked absent (no check-in recorded)'
+             AND notes = $3
              AND DATE(check_in_at AT TIME ZONE $2) = DATE(NOW() AT TIME ZONE $2)"#,
         employee_id,
         tz,
+        AUTO_ABSENT_NOTE,
     )
     .execute(executor)
     .await?;
@@ -399,10 +410,14 @@ pub async fn delete_auto_absent_today(
 
 /// Auto-mark absent for the given local calendar date in `tz`, skipping
 /// holidays, approved leave, and employees who already have a record on that
-/// date. Idempotent — the target date is a parameter (not NOW()) so missed
-/// runs can be backfilled and tests can pin a date. `company_id` limits the
-/// run to one tenant (admin backfill); `None` covers all companies (the daily
-/// job). Returns rows inserted.
+/// date. Idempotent *and* concurrency-safe: the `NOT EXISTS` handles the serial
+/// case, and `attendance_auto_absent_one_per_employee_day` (migration 1019) is
+/// what makes two simultaneous runs — the daily timer racing the startup pass,
+/// or a double-clicked admin backfill — insert one placeholder rather than two.
+/// The target date is a parameter (not NOW()) so missed runs can be backfilled
+/// and tests can pin a date. `company_id` limits the run to one tenant (admin
+/// backfill); `None` covers all companies (the daily job). Returns rows
+/// genuinely inserted, so a re-run reports 0 instead of double-counting.
 pub async fn mark_absent(
     executor: impl Executor<'_, Database = Postgres>,
     tz: &str,
@@ -419,7 +434,7 @@ pub async fn mark_absent(
                ($2::date)::timestamp AT TIME ZONE $1,
                'manual',
                'absent',
-               'Auto-marked absent (no check-in recorded)'
+               $4::text
            FROM employees e
            -- Only working days. LEFT JOIN, not JOIN: a company that never saved
            -- working_day_config would otherwise be skipped entirely and never get
@@ -474,10 +489,23 @@ pub async fn mark_absent(
                  WHERE ar.employee_id = e.id
                    AND ar.check_in_at >= ($2::date)::timestamp AT TIME ZONE $1
                    AND ar.check_in_at < ($2::date + 1)::timestamp AT TIME ZONE $1
-             )"#,
+             )
+           -- Restating 1019's index predicate verbatim (literals, not $4 — the
+           -- planner infers the arbiter by proving the index predicate from
+           -- this clause, and cannot do that through a bind parameter). NOT a
+           -- bare `ON CONFLICT DO NOTHING`: that would also swallow a violation
+           -- of attendance_one_open_per_employee, turning a real bug into a
+           -- silent no-op.
+           ON CONFLICT (employee_id, check_in_at)
+               WHERE created_by IS NULL
+                 AND status = 'absent'
+                 AND method = 'manual'
+                 AND notes = 'Auto-marked absent (no check-in recorded)'
+           DO NOTHING"#,
         tz,
         target_date,
         company_id,
+        AUTO_ABSENT_NOTE,
     )
     .execute(executor)
     .await?;

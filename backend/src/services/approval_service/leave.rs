@@ -1,23 +1,29 @@
 //! Leave admin CRUD + approval/reject workflow.
 
 use chrono::Datelike;
+use rust_decimal::Decimal;
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::core::config::AppConfig;
 use crate::core::error::{AppError, AppResult};
+use crate::core::upload_path::validate_optional_file_url;
+use crate::models::payroll::round_sen;
 use crate::models::portal::{CreateLeaveRequest, LeaveRequest, UpdateLeaveRequest};
 use crate::repositories::reads::approvals as approval_reads;
 use crate::repositories::{
-    employees as employee_repo, leave_balances, leave_requests, leave_types, payroll_entries,
-    users as user_repo,
+    companies, employees as employee_repo, leave_balances, leave_requests, leave_types,
+    payroll_entries, users as user_repo,
 };
 use crate::services::audit_service::AuditRequestMeta;
 use crate::services::calendar_service;
 use crate::services::email_service;
 use crate::services::notification_service;
 
-use super::common::{ensure_employee_in_company, ensure_leave_type_in_company};
+use super::common::{
+    Reviewer, audit_self_approval_override, ensure_employee_in_company,
+    ensure_leave_type_in_company, ensure_not_self_approval, reviewer_employee_id,
+};
 
 pub use crate::models::approval::LeaveRequestWithEmployee;
 
@@ -31,6 +37,8 @@ pub async fn create_leave_request_admin(
     actor_id: Uuid,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<LeaveRequest> {
+    // Bound the span before the calendar walk, as the portal path does.
+    crate::services::leave_rules::validate_range(req.start_date, req.end_date)?;
     let working_days = calendar_service::count_working_days_between(
         pool,
         company_id,
@@ -46,6 +54,9 @@ pub async fn create_leave_request_admin(
     )?;
     ensure_employee_in_company(pool, company_id, employee_id).await?;
     ensure_leave_type_in_company(pool, company_id, req.leave_type_id).await?;
+    // `attachment_url` is joined onto a filesystem path by the backup export and
+    // restore paths, so it is settled here rather than at every sink.
+    validate_optional_file_url(req.attachment_url.as_deref())?;
 
     if leave_requests::overlaps_existing(pool, employee_id, req.start_date, req.end_date, None)
         .await?
@@ -126,10 +137,12 @@ pub async fn update_leave_request_admin(
     let start_date = req.start_date.unwrap_or(current.start_date);
     let end_date = req.end_date.unwrap_or(current.end_date);
     let days = req.days.unwrap_or(current.days);
+    crate::services::leave_rules::validate_range(start_date, end_date)?;
     let working_days =
         calendar_service::count_working_days_between(pool, company_id, start_date, end_date)
             .await?;
     crate::services::leave_rules::validate_period(start_date, end_date, days, working_days)?;
+    validate_optional_file_url(req.attachment_url.as_deref())?;
 
     if leave_requests::overlaps_existing(
         &mut *tx,
@@ -355,10 +368,26 @@ struct UnpaidLeaveDeduction {
     period_month: i32,
     description: String,
     amount: i64,
+    /// Working days of unpaid leave, stored on the entry's `quantity` so the
+    /// payslip's day count is a number rather than a substring of the
+    /// description.
+    working_days: Decimal,
 }
 
-/// Compute the deduction for an unpaid leave request: (basic_salary /
-/// working_days_in_month) * unpaid_leave_working_days.
+/// Compute the deduction for an unpaid leave request:
+/// `basic_salary × unpaid_working_days ÷ divisor`.
+///
+/// The divisor is the company's contractual paid days per month
+/// (`companies.unpaid_leave_divisor`), falling back to the calendar's working-day
+/// count for the leave month when it is unset. The numerator stays the calendar's
+/// count of working days actually taken.
+///
+/// One Decimal expression, rounded once. It used to compute an integer daily rate
+/// first — `basic_salary / total_working_days` in i64 — and only then multiply,
+/// so a RM3,000 basic over a 21-day month lost 2 sen on *every* day taken. The
+/// bare `.unwrap_or(22)` behind the calendar lookup is gone with it: a silent 22
+/// in a 21-working-day month is itself a wrong figure, and the error is now
+/// propagated so approval fails rather than quietly deducting the wrong amount.
 ///
 /// Pure reads, so it runs before the approval transaction opens. Returns `None`
 /// when there is nothing to stage (unknown employee, no working days in range,
@@ -394,20 +423,33 @@ async fn compute_unpaid_leave_deduction(
         return Ok(None);
     }
 
-    // Working days in the leave month, for the daily rate.
+    // The divisor: the company's contractual paid days per month if HR has set
+    // one, otherwise the calendar's working days in the leave month.
     let leave_month = lr.start_date.month();
     let leave_year = lr.start_date.year();
-    let total_working_days =
-        calendar_service::get_working_days_in_month(pool, emp_company_id, leave_year, leave_month)
-            .await
-            .unwrap_or(22); // fallback to 22 days
-
-    let daily_rate = if total_working_days > 0 {
-        basic_salary / total_working_days as i64
-    } else {
-        0
+    let configured_divisor = companies::get_unpaid_leave_divisor(pool, emp_company_id)
+        .await?
+        .filter(|divisor| *divisor > 0);
+    let divisor = match configured_divisor {
+        Some(divisor) => divisor,
+        None => {
+            calendar_service::get_working_days_in_month(
+                pool,
+                emp_company_id,
+                leave_year,
+                leave_month,
+            )
+            .await?
+        }
     };
-    let amount = daily_rate * unpaid_working_days as i64;
+
+    if divisor <= 0 {
+        return Ok(None);
+    }
+
+    let amount = round_sen(
+        Decimal::from(basic_salary) * Decimal::from(unpaid_working_days) / Decimal::from(divisor),
+    );
     if amount <= 0 {
         return Ok(None);
     }
@@ -424,6 +466,7 @@ async fn compute_unpaid_leave_deduction(
             lr.start_date, lr.end_date, unpaid_working_days
         ),
         amount,
+        working_days: Decimal::from(unpaid_working_days),
     }))
 }
 
@@ -432,10 +475,12 @@ pub async fn approve_leave(
     config: &AppConfig,
     company_id: Uuid,
     request_id: Uuid,
-    reviewer_id: Uuid,
+    reviewer: Reviewer,
     notes: Option<&str>,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<LeaveRequest> {
+    let reviewer_id = reviewer.user_id;
+
     // Everything this approval writes has to commit together — the state
     // transition, the pending->taken balance move, and (for unpaid leave) the
     // salary deduction. The deduction used to be staged on the pool *after* the
@@ -461,22 +506,38 @@ pub async fn approve_leave(
         None
     };
 
+    // Resolved on the pool for the same reason as the deduction inputs, and
+    // compared inside the transaction against the row the CAS returned.
+    let reviewer_employee = reviewer_employee_id(pool, &reviewer).await?;
+
     let mut tx = pool.begin().await?;
     let lr = leave_requests::set_approved(&mut *tx, request_id, company_id, reviewer_id, notes)
         .await?
         .ok_or_else(|| AppError::BadRequest("Leave request not found or not pending".into()))?;
 
+    // Read from the CAS-returned row, not from `preview`: the drift check below
+    // does not cover `employee_id`, so comparing the earlier read would leave the
+    // guard raceable.
+    ensure_not_self_approval(reviewer_employee, lr.employee_id, "leave request")?;
+
     // The request could have been edited between the read above and the CAS —
     // the CAS only guarantees it was still *pending*, not unchanged. Anything
     // the deduction depends on having moved means the figure is stale.
-    if (lr.leave_type_id, lr.start_date, lr.end_date, lr.days)
-        != (
-            preview.leave_type_id,
-            preview.start_date,
-            preview.end_date,
-            preview.days,
-        )
-    {
+    // `employee_id` is in the tuple because the deduction was computed from that
+    // employee's basic salary and company calendar.
+    if (
+        lr.employee_id,
+        lr.leave_type_id,
+        lr.start_date,
+        lr.end_date,
+        lr.days,
+    ) != (
+        preview.employee_id,
+        preview.leave_type_id,
+        preview.start_date,
+        preview.end_date,
+        preview.days,
+    ) {
         return Err(AppError::Conflict(
             "This leave request changed while it was being approved. Please review it again."
                 .into(),
@@ -504,12 +565,24 @@ pub async fn approve_leave(
             d.period_month,
             &d.description,
             d.amount,
+            d.working_days,
             reviewer_id,
         )
         .await?;
     }
 
     tx.commit().await?;
+
+    audit_self_approval_override(
+        pool,
+        &reviewer,
+        company_id,
+        "leave_request",
+        lr.id,
+        lr.employee_id,
+        audit_meta,
+    )
+    .await;
 
     // Notify employee
     let employee_user = user_repo::active_id_for_employee(pool, lr.employee_id).await?;

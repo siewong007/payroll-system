@@ -1,6 +1,7 @@
 use chrono::NaiveDate;
+use uuid::Uuid;
 
-use crate::tests::support::{seed_company, seed_employee, skip_if_no_db};
+use crate::tests::support::{seed_company, seed_employee, seed_payroll_group, skip_if_no_db};
 
 fn constraint_name(error: &sqlx::Error) -> Option<&str> {
     error.as_database_error().and_then(|db| db.constraint())
@@ -247,6 +248,60 @@ async fn overtime_hours_cannot_exceed_hours_worked() {
     );
 }
 
+/// Declared overtime hours are multiplied by an hourly rate to stage a payroll
+/// earning, so an unbounded value pays out arbitrary money and a negative one
+/// stages a negative earning. The service rule is tighter — it caps against the
+/// window the applicant declared, which the database cannot see — but this is
+/// the outer bound that rule already implies, and the backstop for a write path
+/// that forgets to call it.
+#[tokio::test]
+async fn overtime_hours_check_rejects_out_of_range_insert() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+
+    let company_id = seed_company(&pool).await;
+    let employee_id = seed_employee(&pool, company_id, None, 300_000).await;
+
+    for hours in ["0", "-50", "25"] {
+        let error = sqlx::query(&format!(
+            r#"
+            INSERT INTO overtime_applications (
+                employee_id, company_id, ot_date, start_time, end_time, hours, ot_type
+            ) VALUES ($1, $2, $3, TIME '09:00', TIME '11:00', {hours}, 'normal')
+            "#
+        ))
+        .bind(employee_id)
+        .bind(company_id)
+        .bind(NaiveDate::from_ymd_opt(2026, 3, 4).unwrap())
+        .execute(&pool)
+        .await
+        .unwrap_err();
+
+        assert_eq!(
+            constraint_name(&error),
+            Some("overtime_applications_hours_check"),
+            "hours = {hours} should violate the bound"
+        );
+    }
+
+    // The boundary itself is legal: a 24 h window is expressible (a shift whose
+    // end time wraps all the way round), so 24 must not be rejected.
+    sqlx::query(
+        r#"
+        INSERT INTO overtime_applications (
+            employee_id, company_id, ot_date, start_time, end_time, hours, ot_type
+        ) VALUES ($1, $2, $3, TIME '09:00', TIME '09:00', 24, 'normal')
+        "#,
+    )
+    .bind(employee_id)
+    .bind(company_id)
+    .bind(NaiveDate::from_ymd_opt(2026, 3, 5).unwrap())
+    .execute(&pool)
+    .await
+    .expect("24 hours is the inclusive upper bound, not a violation");
+}
+
 /// Seed a leave type so an `attachment_url` can be attached to a leave request.
 async fn seed_leave_type(pool: &sqlx::PgPool, company_id: uuid::Uuid) -> uuid::Uuid {
     sqlx::query_scalar(
@@ -396,4 +451,133 @@ async fn upload_url_columns_accept_stored_uploads_external_links_and_null() {
     .execute(&pool)
     .await
     .expect("claims rejected a permitted receipt_url");
+}
+
+// ─── Company teardown (R1-H5) ───
+
+/// Every table holding a NO ACTION foreign key into `companies` must be named in
+/// `companies::delete_company_data`, or `DELETE /api/admin/companies/{id}` raises
+/// 23503 and returns an opaque 500 for any tenant that ever wrote such a row.
+///
+/// Reflecting over `pg_constraint` rather than restating a list is the point: a
+/// table added by a later migration joins this assertion automatically. `'a'` is
+/// NO ACTION and `'r'` is RESTRICT — both block the parent delete. Anything
+/// CASCADE or SET NULL is the database's problem, not the wipe order's.
+#[tokio::test]
+async fn the_company_wipe_order_covers_every_blocking_foreign_key() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+
+    let wipe_source = include_str!("../repositories/companies.rs");
+
+    let blocking: Vec<String> = sqlx::query_scalar(
+        r#"
+        SELECT DISTINCT src.relname::text
+        FROM pg_constraint c
+        JOIN pg_class src ON src.oid = c.conrelid
+        JOIN pg_class tgt ON tgt.oid = c.confrelid
+        WHERE c.contype = 'f'
+          AND c.confdeltype IN ('a', 'r')
+          AND tgt.relname = 'companies'
+          AND src.relname <> 'companies'
+        ORDER BY 1
+        "#,
+    )
+    .fetch_all(&pool)
+    .await
+    .expect("pg_constraint is readable");
+
+    assert!(
+        !blocking.is_empty(),
+        "no blocking FKs found — the query is wrong, not the schema"
+    );
+
+    // Two ways to stop a row blocking the parent delete, and both count. Most
+    // tables are deleted outright; `users` outlives its company and instead has
+    // its nullable `company_id` cleared, because an account can belong to more
+    // than one tenant.
+    let missing: Vec<&String> = blocking
+        .iter()
+        .filter(|table| {
+            !wipe_source.contains(&format!("DELETE FROM {table} "))
+                && !wipe_source.contains(&format!("UPDATE {table} SET company_id = NULL"))
+        })
+        .collect();
+
+    assert!(
+        missing.is_empty(),
+        "these tables block a company delete but are absent from companies::delete_company_data: {missing:?}"
+    );
+}
+
+/// The regression itself: a tenant that has run payroll and sent an email could
+/// not be deleted at all. `payroll_item_details` and `tp3_records` were the two
+/// tables missing from the wipe order, and both are only reachable once real
+/// payroll data exists — which is why a fixture-light test never caught it.
+#[tokio::test]
+async fn a_company_that_has_run_payroll_can_still_be_deleted() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+
+    let company_id = seed_company(&pool).await;
+    let group_id = seed_payroll_group(&pool, company_id).await;
+    let employee_id = seed_employee(&pool, company_id, Some(group_id), 300_000).await;
+
+    let run_id: Uuid = sqlx::query_scalar(
+        r#"INSERT INTO payroll_runs (company_id, payroll_group_id, period_year, period_month,
+                                     period_start, period_end, pay_date)
+           VALUES ($1, $2, 2026, 1, $3, $4, $4) RETURNING id"#,
+    )
+    .bind(company_id)
+    .bind(group_id)
+    .bind(NaiveDate::from_ymd_opt(2026, 1, 1).unwrap())
+    .bind(NaiveDate::from_ymd_opt(2026, 1, 31).unwrap())
+    .fetch_one(&pool)
+    .await
+    .expect("payroll run seeds");
+
+    let item_id: Uuid = sqlx::query_scalar(
+        r#"INSERT INTO payroll_items (payroll_run_id, employee_id, basic_salary, gross_salary,
+                                      total_deductions, net_salary)
+           VALUES ($1, $2, 300000, 300000, 0, 300000) RETURNING id"#,
+    )
+    .bind(run_id)
+    .bind(employee_id)
+    .fetch_one(&pool)
+    .await
+    .expect("payroll item seeds");
+
+    sqlx::query(
+        r#"INSERT INTO payroll_item_details (payroll_item_id, category, item_type, description, amount)
+           VALUES ($1, 'earning', 'basic', 'Basic Salary', 300000)"#,
+    )
+    .bind(item_id)
+    .execute(&pool)
+    .await
+    .expect("breakdown line seeds");
+
+    sqlx::query(
+        r#"INSERT INTO tp3_records (employee_id, company_id, tax_year)
+           VALUES ($1, $2, 2026)"#,
+    )
+    .bind(employee_id)
+    .bind(company_id)
+    .execute(&pool)
+    .await
+    .expect("tp3 record seeds");
+
+    let mut conn = pool.acquire().await.expect("connection");
+    crate::repositories::companies::delete_cascade(&mut conn, company_id)
+        .await
+        .expect("a tenant with payroll history must be deletable");
+    drop(conn);
+
+    let survivors: i64 = sqlx::query_scalar("SELECT count(*) FROM companies WHERE id = $1")
+        .bind(company_id)
+        .fetch_one(&pool)
+        .await
+        .expect("count is readable");
+    assert_eq!(survivors, 0, "the company row itself must be gone");
 }

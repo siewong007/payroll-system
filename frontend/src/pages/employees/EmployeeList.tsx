@@ -4,10 +4,11 @@ import { Plus, Search, Edit, DollarSign, Shield, MapPin, TrendingUp, TrendingDow
 import { useNavigate } from 'react-router';
 import { getEmployees, createEmployee, updateEmployee, deleteEmployee, getEmployee, getSalaryHistory } from '@/api/employees';
 import { getPayrollGroups } from '@/api/payroll';
-import { formatMYR, formatDate, todayLocalDate } from '@/lib/utils';
+import { formatMYR, formatDate, getErrorMessage, todayLocalDate } from '@/lib/utils';
+import { stripPayrollFields } from '@/lib/employeeFields';
 import { DataTable, type Column } from '@/components/ui/DataTable';
 import { Modal } from '@/components/ui/Modal';
-import type { Employee, CreateEmployeeRequest } from '@/types';
+import type { Employee, CreateEmployeeRequest, UpdateEmployeeRequest } from '@/types';
 import { useAuth } from '@/context/AuthContext';
 import { canAccessPayrollData } from '@/lib/roles';
 
@@ -403,7 +404,16 @@ function EmployeeProfile({ employeeId }: { employeeId: string }) {
 
 /* ───────────── Shared Employee Form Modal (Create + Edit) ───────────── */
 
-function employeeToForm(emp: Employee): CreateEmployeeRequest & { salaryDisplay: string } {
+/**
+ * The edit modal also drives the employment lifecycle, which `CreateEmployeeRequest`
+ * has no fields for — a new hire is not resigned.
+ */
+type EmployeeFormState = CreateEmployeeRequest & {
+  date_resigned?: string;
+  resignation_reason?: string;
+};
+
+function employeeToForm(emp: Employee): EmployeeFormState & { salaryDisplay: string } {
   return {
     employee_number: emp.employee_number,
     full_name: emp.full_name,
@@ -443,32 +453,10 @@ function employeeToForm(emp: Employee): CreateEmployeeRequest & { salaryDisplay:
     ptptn_monthly_amount: emp.ptptn_monthly_amount ?? undefined,
     payroll_group_id: emp.payroll_group_id ?? undefined,
     is_active: emp.is_active ?? undefined,
+    date_resigned: emp.date_resigned ?? undefined,
+    resignation_reason: emp.resignation_reason ?? undefined,
     salaryDisplay: (emp.basic_salary / 100).toFixed(2),
   };
-}
-
-function stripPayrollFields(form: CreateEmployeeRequest): Partial<CreateEmployeeRequest> {
-  const safeFields: Partial<CreateEmployeeRequest> = { ...form };
-  const payrollFields: (keyof CreateEmployeeRequest)[] = [
-    'basic_salary',
-    'tax_identification_number',
-    'epf_number',
-    'socso_number',
-    'eis_number',
-    'working_spouse',
-    'epf_category',
-    'is_muslim',
-    'zakat_eligible',
-    'zakat_monthly_amount',
-    'ptptn_monthly_amount',
-    'payroll_group_id',
-  ];
-
-  payrollFields.forEach((field) => {
-    delete safeFields[field];
-  });
-
-  return safeFields;
 }
 
 function EmployeeFormModal({ mode, employeeId, onClose }: {
@@ -528,7 +516,7 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
     ? employeeToForm(initialData)
     : null;
 
-  const [form, setForm] = useState<CreateEmployeeRequest>(defaults ?? {
+  const [form, setForm] = useState<EmployeeFormState>(defaults ?? {
     employee_number: '',
     full_name: '',
     date_joined: todayLocalDate(),
@@ -552,7 +540,7 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
   });
 
   const updateMutation = useMutation({
-    mutationFn: (req: Partial<CreateEmployeeRequest>) => updateEmployee(employeeId!, req),
+    mutationFn: (req: UpdateEmployeeRequest) => updateEmployee(employeeId!, req),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['employees'] });
       queryClient.invalidateQueries({ queryKey: ['employee', employeeId] });
@@ -582,7 +570,15 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
       return;
     }
 
-    const payload = canViewPayroll ? form : stripPayrollFields(form);
+    const payload: UpdateEmployeeRequest = canViewPayroll ? { ...form } : stripPayrollFields(form);
+    // An omitted `date_resigned` means "keep existing" on the backend, so
+    // emptying the field has to be sent as an explicit clear or the resignation
+    // would be unremovable — which is what kept an un-terminated employee out of
+    // every later payroll run.
+    if (initialData?.date_resigned && !form.date_resigned) {
+      delete payload.date_resigned;
+      payload.clear_date_resigned = true;
+    }
     updateMutation.mutate(payload);
   };
 
@@ -594,7 +590,7 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
     <form onSubmit={handleSubmit} className="space-y-8">
       {mutation.isError && (
         <div className="bg-red-50 text-red-600 text-sm px-4 py-3 rounded-xl border border-red-100">
-          {(mutation.error as Error)?.message || `Failed to ${mode} employee`}
+          {getErrorMessage(mutation.error, `Failed to ${mode} employee`)}
         </div>
       )}
 
@@ -850,49 +846,92 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
             />
           </div>
           {mode === 'edit' && (
-            <div>
-              <label className={labelClass}>Status</label>
-              <select
-                value={form.is_active ? 'active' : 'inactive'}
-                onChange={(e) => updateField('is_active', e.target.value === 'active')}
-                className={inputClass}
-              >
-                <option value="active">Active</option>
-                <option value="inactive">Inactive</option>
-              </select>
-            </div>
+            <>
+              <div>
+                <label className={labelClass}>Status</label>
+                <select
+                  value={form.is_active ? 'active' : 'inactive'}
+                  onChange={(e) => updateField('is_active', e.target.value === 'active')}
+                  className={inputClass}
+                >
+                  <option value="active">Active</option>
+                  <option value="inactive">Inactive</option>
+                </select>
+                {/*
+                  Warn, do not block: an HR admin must still be able to represent
+                  a never-started hire. The backend is what refuses the payroll
+                  run, because it cannot tell whether a final payslip is owed.
+                */}
+                {!form.is_active && !form.date_resigned && (
+                  <p className="mt-1.5 text-xs text-amber-700 flex items-start gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5 mt-px shrink-0" />
+                    <span>
+                      Inactive with no resignation date. Payroll runs will refuse to process this
+                      group until a resignation date is set, the employee is re-activated, or they
+                      are removed from the payroll group.
+                    </span>
+                  </p>
+                )}
+              </div>
+              <div>
+                <label className={labelClass}>Date Resigned</label>
+                <input
+                  type="date"
+                  value={form.date_resigned || ''}
+                  min={form.date_joined}
+                  onChange={(e) => updateField('date_resigned', e.target.value || undefined)}
+                  className={inputClass}
+                />
+                <p className="mt-1.5 text-xs text-gray-500">
+                  The final month is paid pro rata to this date. Clear it to un-terminate.
+                </p>
+              </div>
+              <div>
+                <label className={labelClass}>Resignation Reason</label>
+                <input
+                  type="text"
+                  value={form.resignation_reason || ''}
+                  onChange={(e) => updateField('resignation_reason', e.target.value || undefined)}
+                  className={inputClass}
+                />
+              </div>
+            </>
           )}
         </div>
       </section>
 
-      {/* Banking Details */}
-      <section className="bg-gray-50 rounded-xl border border-gray-100 p-6">
-        <h3 className={sectionTitleClass}>Banking Details</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-5">
-          <div>
-            <label className={labelClass}>Bank Name</label>
-            <select
-              value={form.bank_name || ''}
-              onChange={(e) => updateField('bank_name', e.target.value || undefined)}
-              className={inputClass}
-            >
-              <option value="">Select Bank</option>
-              {BANKS.map((b) => (
-                <option key={b} value={b}>{b}</option>
-              ))}
-            </select>
+      {/* Banking Details — gated like Statutory & Tax: the API classifies both
+          bank fields as payroll-sensitive, so offering the editor to a role
+          that cannot save them only produces a 403 on the whole request. */}
+      {canViewPayroll && (
+        <section className="bg-gray-50 rounded-xl border border-gray-100 p-6">
+          <h3 className={sectionTitleClass}>Banking Details</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-5">
+            <div>
+              <label className={labelClass}>Bank Name</label>
+              <select
+                value={form.bank_name || ''}
+                onChange={(e) => updateField('bank_name', e.target.value || undefined)}
+                className={inputClass}
+              >
+                <option value="">Select Bank</option>
+                {BANKS.map((b) => (
+                  <option key={b} value={b}>{b}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className={labelClass}>Account Number</label>
+              <input
+                type="text"
+                value={form.bank_account_number || ''}
+                onChange={(e) => updateField('bank_account_number', e.target.value)}
+                className={inputClass}
+              />
+            </div>
           </div>
-          <div>
-            <label className={labelClass}>Account Number</label>
-            <input
-              type="text"
-              value={form.bank_account_number || ''}
-              onChange={(e) => updateField('bank_account_number', e.target.value)}
-              className={inputClass}
-            />
-          </div>
-        </div>
-      </section>
+        </section>
+      )}
 
       {canViewPayroll && (
         <section className="bg-gray-50 rounded-xl border border-gray-100 p-6">

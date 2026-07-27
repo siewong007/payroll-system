@@ -1,0 +1,22 @@
+# Copy to terraform.tfvars before ANY plan or apply:
+#
+#   cp terraform.tfvars.example terraform.tfvars
+#   terraform plan -var-file=terraform.tfvars
+#
+# This is not a template for a new environment. There are no workspaces and one
+# state key (main.tf: key = "terraform.tfstate"), so the values below are not
+# examples — they DESCRIBE THE LIVE STACK, and a plan run with anything else
+# will propose renaming or destroying it. `environment` and `domain_name` have
+# no defaults for exactly that reason; terraform now errors instead of planning
+# a destroy when they are missing.
+#
+# The live prefix is payroll-dev: bucket payroll-dev-frontend, CloudFront
+# distribution ED4843A8VKOA2, deploy role payroll-dev-cicd — all three are
+# hardcoded in .github/workflows/deploy.yml, which is the authority on what is
+# actually deployed.
+
+environment    = "dev"
+domain_name    = "payrollmy.com"
+api_subdomain  = "api"
+aws_region     = "ap-southeast-1"
+backend_vps_ip = "13.251.162.88"

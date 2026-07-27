@@ -1,0 +1,48 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, employee_id, title, amount, expense_date\n           FROM claims\n           WHERE employee_id = ANY($1)\n             AND company_id = $2\n             AND status = 'approved'\n             AND payroll_run_id IS NULL\n             AND expense_date <= $3\n           ORDER BY employee_id, expense_date, id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "employee_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "title",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "amount",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "expense_date",
+        "type_info": "Date"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "UuidArray",
+        "Uuid",
+        "Date"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "8da859dbd690dfc0a3a2d19f4b573f966f8cad337c9d72110964ce15fcd8145d"
+}

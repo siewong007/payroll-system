@@ -1,5 +1,5 @@
 import api from './client';
-import type { Employee, PaginatedResponse, CreateEmployeeRequest, SalaryHistory, ImportValidationResponse, ImportConfirmRequest, ImportConfirmResponse } from '@/types';
+import type { Employee, PaginatedResponse, CreateEmployeeRequest, UpdateEmployeeRequest, SalaryHistory, ImportValidationResponse, ImportConfirmRequest, ImportConfirmResponse } from '@/types';
 
 export async function getEmployees(params?: {
   search?: string;
@@ -35,7 +35,7 @@ export async function createEmployee(req: CreateEmployeeRequest): Promise<Create
   return data;
 }
 
-export async function updateEmployee(id: string, req: Partial<CreateEmployeeRequest>): Promise<Employee> {
+export async function updateEmployee(id: string, req: UpdateEmployeeRequest): Promise<Employee> {
   const { data } = await api.put(`/employees/${id}`, req);
   return data;
 }

@@ -209,6 +209,12 @@ pub struct UpdateEmployeeRequest {
     pub payroll_group_id: Option<Uuid>,
     pub salary_group: Option<String>,
     pub is_active: Option<bool>,
+    /// Explicitly clear the resignation (un-terminate). `date_resigned: None`
+    /// alone means "keep existing", so without this flag a recorded resignation
+    /// could never be undone through the API. Clears `resignation_reason` with
+    /// it — the reason is meaningless without a date. Same tri-state rationale
+    /// as `clear_check_out` on an attendance correction.
+    pub clear_date_resigned: Option<bool>,
 }
 
 #[derive(Debug, Serialize, sqlx::FromRow)]

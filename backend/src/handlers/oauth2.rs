@@ -4,7 +4,6 @@ use axum::{
     http::HeaderMap,
     response::{IntoResponse, Redirect, Response},
 };
-use uuid::Uuid;
 
 use crate::core::app_state::AppState;
 use crate::core::auth::AuthUser;
@@ -30,14 +29,23 @@ pub async fn list_providers(
 /// Send the browser back into the SPA with a message for its error card.
 ///
 /// The message travels in the fragment, not the query string, so it never
-/// reaches a server log or `Referer` header on the way.
+/// reaches a server log or `Referer` header on the way. The state binder is
+/// burned here too: a failed attempt must not leave a usable binder behind for
+/// the remainder of its ten-minute TTL.
 fn oauth2_error_redirect(frontend_url: &str, message: &str) -> Response {
-    Redirect::temporary(&format!(
-        "{}/oauth2/callback#error={}",
-        frontend_url,
-        urlencoding::encode(message),
-    ))
-    .into_response()
+    let mut headers = HeaderMap::new();
+    let (name, value) = cookie::clear_oauth_state_cookie(frontend_url);
+    headers.insert(name, value.parse().unwrap());
+
+    (
+        headers,
+        Redirect::temporary(&format!(
+            "{}/oauth2/callback#error={}",
+            frontend_url,
+            urlencoding::encode(message),
+        )),
+    )
+        .into_response()
 }
 
 /// Google OAuth2 callback — validates state/PKCE, exchanges code, finds/links user, redirects.
@@ -84,13 +92,18 @@ async fn google_callback_inner(
         });
     }
 
-    // Validate state parameter (CSRF protection)
+    // Validate state parameter (CSRF protection). The state alone proves only
+    // that *someone* started a flow; the binder cookie proves it was this
+    // browser, which is what stops a callback URL from being replayed into a
+    // victim's session.
     let oauth_state = query
         .state
         .as_deref()
         .ok_or_else(|| AppError::BadRequest("Missing OAuth2 state parameter".into()))?;
+    let binder = cookie::extract_oauth_state_binder(&headers);
 
-    let code_verifier = oauth2_service::consume_oauth2_state(&state.pool, oauth_state).await?;
+    let code_verifier =
+        oauth2_service::consume_oauth2_state(&state.pool, oauth_state, binder.as_deref()).await?;
 
     let client_id = state
         .config
@@ -197,11 +210,17 @@ async fn google_callback_inner(
     .await?;
 
     let mut headers = HeaderMap::new();
+    // The flow is over either way, so the binder is spent.
+    let (name, value) = cookie::clear_oauth_state_cookie(&state.config.frontend_url);
+    headers.insert(name, value.parse().unwrap());
+
     let redirect_url = match outcome {
         LoginOutcome::Session(session) => {
             let (name, value) =
                 cookie::set_refresh_cookie(&session.refresh_token, &state.config.frontend_url);
-            headers.insert(name, value.parse().unwrap());
+            // `append`, not `insert`: the binder-clearing Set-Cookie above is
+            // the same header name and `insert` would silently drop it.
+            headers.append(name, value.parse().unwrap());
 
             format!(
                 "{}/oauth2/callback#token={}&user={}",
@@ -221,7 +240,11 @@ async fn google_callback_inner(
 }
 
 /// Initiate Google OAuth2 flow — generates PKCE + state, returns the authorization URL.
-pub async fn google_authorize(State(state): State<AppState>) -> AppResult<Json<serde_json::Value>> {
+///
+/// The response also sets the state binder cookie. The SPA calls this endpoint
+/// with `withCredentials`, so the cookie is stored and replayed on the callback
+/// navigation without any frontend change.
+pub async fn google_authorize(State(state): State<AppState>) -> AppResult<Response> {
     let client_id = state
         .config
         .google_client_id
@@ -232,7 +255,11 @@ pub async fn google_authorize(State(state): State<AppState>) -> AppResult<Json<s
         "{}/api/auth/oauth2/google/callback",
         state.config.frontend_url
     );
-    let oauth_state = Uuid::new_v4().to_string();
+
+    // The state published to Google is a hash of the binder; the binder itself
+    // stays in the browser.
+    let binder = oauth2_service::generate_state_binder();
+    let oauth_state = oauth2_service::state_for_binder(&binder);
 
     // Generate PKCE code verifier and challenge
     let code_verifier = oauth2_service::generate_code_verifier();
@@ -248,9 +275,17 @@ pub async fn google_authorize(State(state): State<AppState>) -> AppResult<Json<s
         &code_challenge,
     );
 
-    Ok(Json(serde_json::json!({
-        "authorize_url": url,
-    })))
+    let mut headers = HeaderMap::new();
+    let (name, value) = cookie::set_oauth_state_cookie(&binder, &state.config.frontend_url);
+    headers.insert(name, value.parse().unwrap());
+
+    Ok((
+        headers,
+        Json(serde_json::json!({
+            "authorize_url": url,
+        })),
+    )
+        .into_response())
 }
 
 /// List OAuth2 accounts linked to the current user.
@@ -276,6 +311,7 @@ pub async fn unlink_provider(
 pub async fn link_google(
     State(state): State<AppState>,
     auth: AuthUser,
+    headers: HeaderMap,
     Json(body): Json<serde_json::Value>,
 ) -> AppResult<Json<LinkedAccount>> {
     let code = body
@@ -300,8 +336,14 @@ pub async fn link_google(
 
     // For account linking, PKCE state is optional (the code comes from a popup/redirect
     // the frontend manages). Exchange without PKCE code_verifier for the linking flow.
+    // When a state *is* supplied it goes through the same binder check as the
+    // login callback — linking mints no session, but leaving a second unbound
+    // consume path is how the bypass creeps back.
     let code_verifier = match body.get("state").and_then(|s| s.as_str()) {
-        Some(st) => oauth2_service::consume_oauth2_state(&state.pool, st).await?,
+        Some(st) => {
+            let binder = cookie::extract_oauth_state_binder(&headers);
+            oauth2_service::consume_oauth2_state(&state.pool, st, binder.as_deref()).await?
+        }
         None => String::new(),
     };
 

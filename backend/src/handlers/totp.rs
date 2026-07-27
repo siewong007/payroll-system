@@ -73,6 +73,8 @@ pub async fn verify_login(
     totp_service::verify_login_code(&state.pool, user_id, &req.code, &state.config.jwt_secret)
         .await?;
 
+    // This is the one minting path that does not go through `complete_login`,
+    // which is why the terminated-employee gate lives inside `get_active_user`.
     let user = auth_service::get_active_user(&state.pool, user_id).await?;
     let session = auth_service::issue_session(
         &state.pool,

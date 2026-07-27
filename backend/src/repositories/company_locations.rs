@@ -34,6 +34,30 @@ pub async fn list_active(
     Ok(locs)
 }
 
+/// How many active locations the company would still have if `exclude_id` were
+/// removed or deactivated. `None` excludes nothing, i.e. the current count.
+///
+/// One function serves all three write-side guards: an enforced geofence with
+/// zero active locations now rejects every check-in, so the API must not be
+/// able to reach that state.
+pub async fn count_active_excluding(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    exclude_id: Option<Uuid>,
+) -> AppResult<i64> {
+    let count = sqlx::query_scalar!(
+        r#"SELECT COUNT(*) AS "count!"
+           FROM company_locations
+           WHERE company_id = $1 AND is_active = TRUE
+             AND ($2::uuid IS NULL OR id <> $2)"#,
+        company_id,
+        exclude_id,
+    )
+    .fetch_one(executor)
+    .await?;
+    Ok(count)
+}
+
 pub async fn get(
     executor: impl Executor<'_, Database = Postgres>,
     location_id: Uuid,

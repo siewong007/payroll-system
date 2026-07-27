@@ -87,6 +87,11 @@
         "ordinal": 16,
         "name": "updated_at",
         "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 17,
+        "name": "payroll_run_id",
+        "type_info": "Uuid"
       }
     ],
     "parameters": {
@@ -112,7 +117,8 @@
       true,
       true,
       false,
-      false
+      false,
+      true
     ]
   },
   "hash": "a8248e444d9e2c48af6849dc0641edbf557bdb589b5ee54d876e3a69e10d38f7"

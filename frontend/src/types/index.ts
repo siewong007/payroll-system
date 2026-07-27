@@ -121,6 +121,7 @@ export interface Employee {
   probation_end: string | null;
   confirmation_date: string | null;
   date_resigned: string | null;
+  resignation_reason: string | null;
   basic_salary: number; // in sen
   hourly_rate: number | null;
   daily_rate: number | null;
@@ -185,6 +186,19 @@ export interface CreateEmployeeRequest {
   ptptn_monthly_amount?: number;
   payroll_group_id?: string;
   is_active?: boolean;
+}
+
+/**
+ * Employment lifecycle fields exist only on the update path — a new hire is not
+ * resigned, so the backend `CreateEmployeeRequest` has no place for them and
+ * `Partial<CreateEmployeeRequest>` structurally cannot express them.
+ */
+export interface UpdateEmployeeRequest extends Partial<CreateEmployeeRequest> {
+  confirmation_date?: string;
+  date_resigned?: string;
+  resignation_reason?: string;
+  /** Explicit clear (un-terminate). Omitting `date_resigned` means "keep existing". */
+  clear_date_resigned?: boolean;
 }
 
 export interface PaginatedResponse<T> {
@@ -639,6 +653,12 @@ export interface Claim {
   reviewed_at: string | null;
   review_notes: string | null;
   created_at: string;
+  /**
+   * The payroll run that reimbursed this claim. `null` until a run pays it —
+   * `claims` is the single authority for claim payment, and a claim is
+   * outstanding while this is null regardless of how long ago it was approved.
+   */
+  payroll_run_id: string | null;
 }
 
 export interface CreateClaimRequest {
@@ -888,6 +908,9 @@ export interface CreateEmailTemplateRequest {
   body_html: string;
 }
 
+// Mirrors the backend `EmailLogSummary`. `body_html` is deliberately absent:
+// the welcome letter's body contains the account's initial password, and
+// nothing in the app renders a stored body.
 export interface EmailLog {
   id: string;
   company_id: string;
@@ -897,11 +920,11 @@ export interface EmailLog {
   recipient_email: string;
   recipient_name: string | null;
   subject: string;
-  body_html: string;
   status: 'pending' | 'sent' | 'failed';
   error_message: string | null;
   sent_at: string | null;
   created_at: string;
+  created_by: string | null;
 }
 
 export interface SendLetterRequest {

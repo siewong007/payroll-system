@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT COUNT(*) AS \"count!\"\n           FROM company_locations\n           WHERE company_id = $1 AND is_active = TRUE\n             AND ($2::uuid IS NULL OR id <> $2)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "f624fce0c9180759677cc1ecb3b46ecd1d6c91df7319f571ebec6692e250d1ba"
+}

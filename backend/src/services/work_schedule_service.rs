@@ -3,6 +3,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::core::error::{AppError, AppResult};
+use crate::core::timezone;
 use crate::models::work_schedule::{
     CreateWorkScheduleRequest, UpdateWorkScheduleRequest, WorkSchedule,
 };
@@ -41,13 +42,20 @@ pub async fn upsert_default_schedule(
     let name = req.name.as_deref().unwrap_or("Default");
     let grace = req.grace_minutes.unwrap_or(15);
     let half_day = req.half_day_hours.unwrap_or(4.0);
-    let tz = req.timezone.as_deref().unwrap_or("Asia/Kuala_Lumpur");
+    let tz = req
+        .timezone
+        .as_deref()
+        .unwrap_or(timezone::DEFAULT_TIMEZONE);
 
     if !(0..=120).contains(&grace) {
         return Err(AppError::BadRequest(
             "Grace minutes must be between 0 and 120".into(),
         ));
     }
+    // The stored zone is interpolated into `AT TIME ZONE` by every attendance
+    // read, write and by the daily absent job. Unvalidated, one typo here made
+    // each of those a 500 for this tenant — and stalled the platform-wide job.
+    timezone::validate(tz)?;
 
     let existing = get_default_schedule(pool, company_id).await?;
 
@@ -119,6 +127,7 @@ pub async fn update_schedule(
             "Grace minutes must be between 0 and 120".into(),
         ));
     }
+    timezone::validate(tz)?;
 
     let schedule = company_work_schedules::update(
         pool,

@@ -186,17 +186,23 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    // Background task: auto-mark absent employees daily at 12:30 PM MYT
-    // (04:30 UTC). Sleeps directly until the next occurrence instead of
+    // Background task: auto-mark absent employees once a day, at 04:30 UTC
+    // (12:30 PM MYT). Sleeps directly until the next occurrence instead of
     // polling hourly and gating on the wall-clock hour; the next-run
     // computation is pure and unit-tested (core::schedule) with the invariant
     // that the delay is strictly positive, so this loop cannot arm a
     // zero-length sleep and spin.
     //
-    // Each run is a *catch-up*: it processes every local date since the last
-    // recorded successful run (bounded), so a deploy or outage spanning the
-    // daily window no longer skips that day forever. The startup pass covers
-    // the restart-after-downtime case without waiting for the next window.
+    // The tick only *paces* the job — it carries no timezone. Each tenant is
+    // evaluated on its own calendar and its own 12:30 cutoff inside the
+    // service, so a company west of MYT is never marked absent for a date that
+    // has not started there yet.
+    //
+    // Each run is a *catch-up*: it processes every local date since that
+    // company's last recorded successful run (bounded), so a deploy or outage
+    // spanning the daily window no longer skips that day forever. The startup
+    // pass covers the restart-after-downtime case without waiting for the next
+    // window.
     let absent_pool = pool.clone();
     tokio::spawn(async move {
         use payroll_system::core::schedule::next_daily_run_utc;
@@ -205,7 +211,7 @@ async fn main() -> anyhow::Result<()> {
         const RUN_HOUR_UTC: u32 = 4;
         const RUN_MINUTE_UTC: u32 = 30;
 
-        match attendance_service::run_auto_absent_catchup(&absent_pool, "Asia/Kuala_Lumpur").await {
+        match attendance_service::run_auto_absent_catchup(&absent_pool).await {
             Ok(count) => tracing::info!(marked = count, "auto-absent: startup catch-up completed"),
             Err(e) => tracing::error!("Auto-absent startup catch-up failed: {}", e),
         }
@@ -228,9 +234,7 @@ async fn main() -> anyhow::Result<()> {
             tokio::time::sleep(delay).await;
 
             tracing::info!("auto-absent: tick fired; marking absentees");
-            match attendance_service::run_auto_absent_catchup(&absent_pool, "Asia/Kuala_Lumpur")
-                .await
-            {
+            match attendance_service::run_auto_absent_catchup(&absent_pool).await {
                 Ok(count) => tracing::info!(marked = count, "auto-absent: completed"),
                 Err(e) => tracing::error!("Auto-absent marking failed: {}", e),
             }

@@ -39,7 +39,7 @@ pub async fn list_pending_leave(
         JOIN employees e ON lr.employee_id = e.id
         WHERE lr.company_id = $1
         AND ($2::text IS NULL OR lr.status = $2)
-        ORDER BY lr.created_at DESC
+        ORDER BY lr.created_at DESC, lr.id DESC
         LIMIT $3 OFFSET $4"#,
         company_id,
         status,
@@ -129,7 +129,7 @@ pub async fn list_pending_overtime(
         JOIN employees e ON oa.employee_id = e.id
         WHERE oa.company_id = $1
         AND ($2::text IS NULL OR oa.status = $2)
-        ORDER BY oa.created_at DESC
+        ORDER BY oa.created_at DESC, oa.id DESC
         LIMIT $3 OFFSET $4"#,
         company_id,
         status,
@@ -200,7 +200,7 @@ pub async fn list_pending_claims(
         JOIN employees e ON c.employee_id = e.id
         WHERE c.company_id = $1
         AND ($2::text IS NULL OR c.status = $2)
-        ORDER BY c.created_at DESC
+        ORDER BY c.created_at DESC, c.id DESC
         LIMIT $3 OFFSET $4"#,
         company_id,
         status,

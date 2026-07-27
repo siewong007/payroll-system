@@ -97,6 +97,12 @@ export function EmployeeDetail() {
             <InfoField label="Employment Type" value={employee.employment_type?.replace('_', ' ')} />
             <InfoField label="Date Joined" value={formatDate(employee.date_joined)} />
             <InfoField label="Confirmation Date" value={employee.confirmation_date ? formatDate(employee.confirmation_date) : null} />
+            {/* A termination should be visible without opening the edit modal —
+                it decides whether payroll still owes them a final payslip. */}
+            <InfoField label="Date Resigned" value={employee.date_resigned ? formatDate(employee.date_resigned) : null} />
+            {employee.resignation_reason && (
+              <InfoField label="Resignation Reason" value={employee.resignation_reason} />
+            )}
             {canViewPayroll && <InfoField label="Basic Salary" value={formatMYR(employee.basic_salary)} />}
             <InfoField label="Bank" value={employee.bank_name} />
             <InfoField label="Account No" value={employee.bank_account_number} />

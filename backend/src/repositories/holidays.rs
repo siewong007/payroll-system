@@ -26,6 +26,35 @@ pub async fn list_for_year(
     Ok(holidays)
 }
 
+/// Every holiday in a closed date range, in one round trip.
+///
+/// `list_for_year` wraps the column in `EXTRACT(YEAR FROM date)`, so it cannot
+/// use an index and a multi-year span cost one seq scan per year. Comparing the
+/// raw `date` against explicit bounds keeps it sargable — the same shape the
+/// attendance reads layer follows — and makes the working-day count two queries
+/// regardless of how wide the range is.
+pub async fn list_for_range(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    start: NaiveDate,
+    end: NaiveDate,
+) -> AppResult<Vec<Holiday>> {
+    let holidays = sqlx::query_as!(
+        Holiday,
+        r#"SELECT * FROM holidays
+        WHERE company_id = $1
+        AND date >= $2
+        AND date <= $3
+        ORDER BY date"#,
+        company_id,
+        start,
+        end,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(holidays)
+}
+
 pub async fn get_by_id(
     executor: impl Executor<'_, Database = Postgres>,
     id: Uuid,

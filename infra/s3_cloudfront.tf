@@ -1,6 +1,15 @@
 resource "aws_s3_bucket" "frontend" {
   bucket = "${local.name_prefix}-frontend"
 
+  # The bucket name is derived from local.name_prefix, which is derived from
+  # var.environment — and one wrong or missing value in a shared, un-workspaced
+  # state proposes replacing the bucket CloudFront serves the SPA from. Fail at
+  # plan time instead. Removing this block is the deliberate act that has to
+  # precede any legitimate replacement.
+  lifecycle {
+    prevent_destroy = true
+  }
+
   tags = { Name = "${local.name_prefix}-frontend" }
 }
 

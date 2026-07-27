@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE companies SET auto_absent_last_run_date = $2 WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Date"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f4a7420db1a17759960d154f74fa5f93d30894234b9f9849da4eac7edf07a7ca"
+}

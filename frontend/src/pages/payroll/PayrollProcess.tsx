@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Calculator, Pencil, Plus, Trash2, X } from 'lucide-react';
-import { getEmployees } from '@/api/employees';
 import {
   createPayrollEntry,
   deletePayrollEntry,
@@ -12,6 +11,8 @@ import {
   processPayroll,
   updatePayrollEntry,
 } from '@/api/payroll';
+import { EmployeePicker } from '@/components/employees/EmployeePicker';
+import { formatEmployeeLabel } from '@/lib/employeeFields';
 import { formatMYR, getErrorMessage } from '@/lib/utils';
 import { PayrollPreviewPanel } from './PayrollPreviewPanel';
 import type { PayrollEntryWithEmployee } from '@/types';
@@ -55,6 +56,9 @@ export function PayrollProcess() {
   const [entryError, setEntryError] = useState('');
   const [entryForm, setEntryForm] = useState({
     employee_id: '',
+    // Carried alongside the id so editing an entry can show the employee's name
+    // without the picker having to find them in a page of results.
+    employee_label: '',
     category: 'earning' as 'earning' | 'deduction',
     item_type: 'monthly_allowance',
     description: 'Monthly allowance',
@@ -68,13 +72,6 @@ export function PayrollProcess() {
     queryKey: ['payrollGroups'],
     queryFn: getPayrollGroups,
   });
-
-  const { data: employeeResp } = useQuery({
-    queryKey: ['payroll-entry-employees'],
-    queryFn: () => getEmployees({ is_active: true, page: 1, per_page: 200 }),
-  });
-
-  const employees = employeeResp?.data ?? [];
 
   const { data: entries = [] } = useQuery({
     queryKey: ['payrollEntries', year, month],
@@ -172,6 +169,7 @@ export function PayrollProcess() {
     setEntryError('');
     setEntryForm({
       employee_id: '',
+      employee_label: '',
       category: 'earning',
       item_type: 'monthly_allowance',
       description: 'Monthly allowance',
@@ -187,6 +185,7 @@ export function PayrollProcess() {
     setEntryError('');
     setEntryForm({
       employee_id: entry.employee_id,
+      employee_label: formatEmployeeLabel(entry.employee_name, entry.employee_number) ?? '',
       category: entry.category,
       item_type: entry.item_type,
       description: entry.description,
@@ -336,18 +335,14 @@ export function PayrollProcess() {
         <div className="grid grid-cols-1 gap-4 border-b border-gray-100 p-6 lg:grid-cols-6">
           <div className="lg:col-span-2">
             <label className="form-label">Employee *</label>
-            <select
+            {/* Keyed on the entry so switching between two edits cannot leave the
+                previous employee's name in the box. */}
+            <EmployeePicker
+              key={editingEntry?.id ?? 'new'}
               value={entryForm.employee_id}
-              onChange={(e) => setEntryForm((prev) => ({ ...prev, employee_id: e.target.value }))}
-              className="form-input"
-            >
-              <option value="">Select employee...</option>
-              {employees.map((employee) => (
-                <option key={employee.id} value={employee.id}>
-                  {employee.employee_number} - {employee.full_name}
-                </option>
-              ))}
-            </select>
+              onChange={(id, label) => setEntryForm((prev) => ({ ...prev, employee_id: id, employee_label: label }))}
+              initialLabel={entryForm.employee_label || undefined}
+            />
           </div>
           <div>
             <label className="form-label">Entry Kind *</label>

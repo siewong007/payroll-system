@@ -40,21 +40,49 @@ api.interceptors.request.use((config) => {
 });
 
 /**
- * Endpoints that establish a session rather than consume one. A 401 from any of
- * them is a credential rejection the caller must be able to display, so they are
- * exempt from both the refresh attempt and the redirect to /login.
+ * Endpoints whose 401 is about the *content* of the request, not the session.
+ *
+ * A mistyped TOTP digit, a rejected passkey assertion and a failed Face ID
+ * ceremony all come back as 401 from a request whose bearer token is perfectly
+ * valid. Refreshing achieves nothing and the replay is actively harmful: a
+ * WebAuthn challenge is consumed on first use, so the second attempt returns
+ * "challenge expired" and the user is told the wrong thing.
+ *
+ * Matched with `includes()` against the axios-relative url, which is the form
+ * every api module uses — no baseURL prefix.
  */
-const PRIMARY_AUTH_ENDPOINTS = [
+const NO_REFRESH_401_ENDPOINTS = [
   '/auth/login',
   '/auth/refresh',
   '/auth/2fa/verify',
+  '/auth/2fa/setup/confirm',
+  '/auth/2fa/disable',
+  '/auth/2fa/backup-codes/regenerate',
   '/auth/oauth2/providers',
   '/auth/passkey/check',
   '/auth/passkey/authenticate/begin',
   '/auth/passkey/authenticate/complete',
   '/auth/passkey/discoverable/begin',
   '/auth/passkey/discoverable/complete',
+  '/attendance/check-in/face-id',
 ];
+
+/**
+ * Does this 401 carry the backend's "your credential is not usable" marker?
+ *
+ * Inert for now: `AppError::SessionInvalid` is added by the auth cluster and
+ * nothing emits `code: "session_invalid"` yet. Once it does, the refresh branch
+ * below becomes an allow-list — refresh *only* when the server said the session
+ * is the problem — which is the durable form of the list above, since it cannot
+ * rot when someone adds a new endpoint that 401s on its payload.
+ */
+export function isSessionInvalid(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null || !('response' in error)) {
+    return false;
+  }
+  const response = (error as { response?: { data?: { code?: string } } }).response;
+  return response?.data?.code === 'session_invalid';
+}
 
 let isRefreshing = false;
 let failedQueue: { resolve: (token: string) => void; reject: (err: unknown) => void }[] = [];
@@ -103,34 +131,27 @@ api.interceptors.response.use(
       return Promise.reject(error);
     }
 
+    if (error.response?.status !== 401) {
+      return Promise.reject(error);
+    }
+
     // The public kiosk endpoint authenticates via a kiosk secret, not the user JWT.
     // A 401 there means the kiosk credential was revoked — surface it to the caller
     // verbatim, never refresh or redirect.
     const isKioskEndpoint = originalRequest.url === '/attendance/kiosk/qr';
 
-    // Primary-authentication endpoints: a 401 here means "wrong credentials or
-    // code", not "session expired". Refreshing is pointless and the redirect
-    // reloads the page, destroying the error the user needs to read — a failed
-    // passkey assertion returns 401, so omitting the passkey routes wiped
-    // "Passkey authentication failed" before it could render.
-    const isPrimaryAuthEndpoint = PRIMARY_AUTH_ENDPOINTS.includes(originalRequest.url ?? '');
-
+    // A 401 on a request that has *already* been replayed after a successful
+    // refresh is by definition not a session problem: the session was just
+    // renewed. Clearing the token and navigating to /login there is what logged
+    // a user out over a mistyped 2FA digit, unloading the document before the
+    // "Invalid authentication code" message could render and abandoning the
+    // pending enrolment secret. Reject and let the caller display it; the next
+    // genuine expiry refreshes, fails, and logs out normally.
     if (
-      error.response?.status !== 401 ||
       originalRequest._retry ||
-      isPrimaryAuthEndpoint ||
-      isKioskEndpoint
+      isKioskEndpoint ||
+      NO_REFRESH_401_ENDPOINTS.includes(originalRequest.url ?? '')
     ) {
-      // Only redirect for 401 on regular API calls, not auth endpoints
-      if (
-        error.response?.status === 401 &&
-        !isPrimaryAuthEndpoint &&
-        !isKioskEndpoint
-      ) {
-        accessToken = null;
-        localStorage.removeItem('user');
-        window.location.href = '/login';
-      }
       return Promise.reject(error);
     }
 

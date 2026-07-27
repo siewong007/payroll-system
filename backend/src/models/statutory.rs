@@ -62,6 +62,11 @@ pub struct PcbBracketLookup {
 pub struct EpfContribution {
     pub employee: i64,
     pub employer: i64,
+    /// The Third-Schedule part these figures came from — derived from age and
+    /// residency unless the employee record carries an explicit override.
+    /// Returned rather than assumed so a run can record what it actually applied
+    /// and the preview can flag an override that disagrees with the derivation.
+    pub category: String,
 }
 
 #[derive(Debug, Clone)]
@@ -86,7 +91,11 @@ pub enum SocsoCategory {
 
 #[derive(Debug, Clone)]
 pub struct PcbInput {
-    pub monthly_gross: i64,
+    /// This month's *normal* remuneration — the part that recurs and is
+    /// therefore meaningful to annualise. Deliberately not named `monthly_gross`
+    /// any more: the field's contract changed, and a silent semantic change on
+    /// an unchanged name is how the annualised-bonus defect would come back.
+    pub monthly_normal_remuneration: i64,
     pub epf_employee_monthly: i64,
     pub socso_employee_monthly: i64,
     pub eis_employee_monthly: i64,
@@ -101,7 +110,13 @@ pub struct PcbInput {
     pub ytd_socso: i64,
     pub ytd_eis: i64,
     pub ytd_zakat: i64,
-    pub is_bonus_month: bool,
+    /// This month's *additional* remuneration (bonus, commission), taxed by the
+    /// Schedule 2 differential rather than annualised.
+    ///
+    /// There is no companion `is_bonus_month` flag: it was a boolean whose only
+    /// two writers both said `false`, so the Schedule 2 path was unreachable and
+    /// the guard read as a feature rather than as the trap it was. `> 0` is the
+    /// same question with nothing to get out of step with.
     pub bonus_amount: i64,
 }
 

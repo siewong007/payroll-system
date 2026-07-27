@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use axum::{
     Router,
+    extract::DefaultBodyLimit,
     routing::{delete, get, post, put},
 };
 use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
@@ -130,13 +131,20 @@ pub fn create_router(state: AppState) -> Router {
             post(employee_import::confirm_import),
         )
         .route("/admin/backup/export", get(backup::export_company))
-        .route("/admin/backup/import", post(backup::import_company))
+        // The limit goes on the `MethodRouter`, not on the merged sub-router:
+        // hung on the sub-router it would also raise the ceiling on
+        // `/payroll/run` and `/payroll/preview`, which take small JSON bodies.
+        .route(
+            "/admin/backup/import",
+            post(backup::import_company)
+                .layer(DefaultBodyLimit::max(backup::BACKUP_REQUEST_MAX_BYTES)),
+        )
         .layer(GovernorLayer::new(heavy_job_rate_limit));
 
     let rate_limited_uploads = Router::new()
         .route(
             "/uploads",
-            post(portal::upload_file).layer(axum::extract::DefaultBodyLimit::max(11 * 1024 * 1024)),
+            post(portal::upload_file).layer(DefaultBodyLimit::max(11 * 1024 * 1024)),
         )
         .layer(GovernorLayer::new(upload_rate_limit));
 
@@ -276,7 +284,9 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route(
             "/employees/import/validate",
-            post(employee_import::validate_import),
+            post(employee_import::validate_import).layer(DefaultBodyLimit::max(
+                employee_import::IMPORT_REQUEST_MAX_BYTES,
+            )),
         )
         // POST /employees/import/confirm is rate-limited above.
         // Payroll Groups
@@ -445,7 +455,11 @@ pub fn create_router(state: AppState) -> Router {
                 .delete(calendar::delete_holiday),
         )
         .route("/calendar/import-ics", post(calendar::import_ics))
-        .route("/calendar/import-ics-file", post(calendar::import_ics_file))
+        .route(
+            "/calendar/import-ics-file",
+            post(calendar::import_ics_file)
+                .layer(DefaultBodyLimit::max(calendar::ICS_REQUEST_MAX_BYTES)),
+        )
         .route(
             "/calendar/working-days",
             get(calendar::get_working_days).put(calendar::update_working_days),

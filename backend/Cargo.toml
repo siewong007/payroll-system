@@ -36,6 +36,10 @@ aes-gcm = "0.11"
 # Types
 uuid = { version = "1", features = ["v4", "v7", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
+# IANA tz database: validates a tenant-supplied zone before it reaches
+# `AT TIME ZONE`, and resolves each company's local date without a per-tenant
+# database round trip (see core::timezone).
+chrono-tz = "0.10"
 rust_decimal = { version = "1", features = ["serde", "serde-with-str"] }
 rust_decimal_macros = "1"
 

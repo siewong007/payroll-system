@@ -6,10 +6,34 @@ use uuid::Uuid;
 
 use super::files;
 use crate::core::error::{AppError, AppResult};
+use crate::core::timezone;
+use crate::core::upload_path;
 use crate::models::backup::{CompanyBackup, ImportResult};
-use crate::repositories::{backup as backup_repo, companies, user_companies, users};
+use crate::repositories::{
+    backup as backup_repo, companies, refresh_tokens, user_companies, user_sessions, users,
+};
 
 const MAX_EMPLOYEE_NUMBER_CHARS: usize = 50;
+
+/// Archive format versions this importer understands. `1.1` added the
+/// attendance configuration; `1.0` archives are still restorable and are simply
+/// unable to speak to it.
+const SUPPORTED_FORMAT_VERSIONS: [&str; 2] = ["1.0", "1.1"];
+
+/// `companies.geofence_mode` values permitted by `companies_geofence_mode_check`.
+const GEOFENCE_MODES: [&str; 3] = ["none", "warn", "enforce"];
+
+/// `companies.attendance_method` values permitted by
+/// `companies_attendance_method_check`. NULL is also legal (nothing configured).
+const ATTENDANCE_METHODS: [&str; 2] = ["qr_code", "face_id"];
+
+/// The canonical spelling of `value` if it is one of `allowed`, else `None`.
+///
+/// Both columns are CHECK-constrained, so an archive carrying anything else
+/// would abort the restore with a bare 23514 — a 500 the admin cannot act on.
+fn sanitize_choice(value: &str, allowed: &[&'static str]) -> Option<&'static str> {
+    allowed.iter().copied().find(|choice| *choice == value)
+}
 
 #[derive(Debug, PartialEq, Eq)]
 enum AccountImportOutcome {
@@ -101,6 +125,108 @@ fn remap_id(remap: &HashMap<Uuid, Uuid>, old: Uuid, field: &str) -> AppResult<Uu
     })
 }
 
+/// The URL a restored row should carry, or `None` when the link cannot be
+/// honoured and has to be cleared.
+///
+/// Three cases. A local upload whose blob travelled with the archive is pointed
+/// at the server-generated name that blob will be written under. An external
+/// http(s) link survives verbatim — no file of ours is involved. Everything else
+/// is dropped, including a `/api/uploads/<name>` whose blob is *absent*: uploads
+/// share one flat directory, so keeping such a link would leave the restored
+/// tenant pointing at whatever another tenant happens to have stored under that
+/// name.
+fn restored_attachment_url(plan: &files::RestorePlan, stored_url: &str) -> Option<String> {
+    if let Some(rewritten) = plan.rewritten_url(stored_url) {
+        return Some(rewritten.to_owned());
+    }
+
+    match upload_path::local_upload_path(stored_url) {
+        Ok(None) if upload_path::validate_file_url(stored_url).is_ok() => {
+            Some(stored_url.to_owned())
+        }
+        _ => None,
+    }
+}
+
+/// Why a link was cleared, in terms the admin reading `ImportResult` can act on.
+fn dropped_link_reason(plan: &files::RestorePlan, stored_url: &str) -> &'static str {
+    if plan.is_dropped(stored_url) {
+        "the file travelled with the backup but its name carries no supported file extension"
+    } else if stored_url.starts_with(upload_path::UPLOAD_URL_PREFIX) {
+        "the file itself is not included in this backup"
+    } else {
+        "the stored link is neither an uploaded file nor an http(s) address"
+    }
+}
+
+/// Point every attachment-carrying row at the file this restore will actually
+/// write, and report every link it has to break.
+///
+/// A cleared link is a visible loss for the tenant, so it is never silent — the
+/// alternative was persisting an archive-supplied path, which is what let a
+/// forged backup name any file on the host.
+fn rewrite_attachment_urls(backup: &mut CompanyBackup, plan: &files::RestorePlan) -> Vec<String> {
+    let mut broken = Vec::new();
+
+    for (index, document) in backup.documents.iter_mut().enumerate() {
+        // `documents.file_url` is NOT NULL, so a link that cannot be honoured
+        // becomes an empty string. A row that already carried none stays silent:
+        // only a link this restore actually breaks is worth reporting.
+        if document.file_url.is_empty() {
+            continue;
+        }
+        let stored_url = document.file_url.clone();
+        match restored_attachment_url(plan, &stored_url) {
+            Some(url) => document.file_url = url,
+            None => {
+                document.file_url = String::new();
+                broken.push(format!(
+                    "documents[{index}] \"{}\" lost its file link: {}.",
+                    files::short_label(&document.title),
+                    dropped_link_reason(plan, &stored_url)
+                ));
+            }
+        }
+    }
+
+    for (index, leave_request) in backup.leave_requests.iter_mut().enumerate() {
+        let Some(stored_url) = leave_request.attachment_url.clone() else {
+            continue;
+        };
+        match restored_attachment_url(plan, &stored_url) {
+            Some(url) => leave_request.attachment_url = Some(url),
+            None => {
+                leave_request.attachment_url = None;
+                leave_request.attachment_name = None;
+                broken.push(format!(
+                    "leave_requests[{index}] lost its attachment: {}.",
+                    dropped_link_reason(plan, &stored_url)
+                ));
+            }
+        }
+    }
+
+    for (index, claim) in backup.claims.iter_mut().enumerate() {
+        let Some(stored_url) = claim.receipt_url.clone() else {
+            continue;
+        };
+        match restored_attachment_url(plan, &stored_url) {
+            Some(url) => claim.receipt_url = Some(url),
+            None => {
+                claim.receipt_url = None;
+                claim.receipt_file_name = None;
+                broken.push(format!(
+                    "claims[{index}] \"{}\" lost its receipt: {}.",
+                    files::short_label(&claim.title),
+                    dropped_link_reason(plan, &stored_url)
+                ));
+            }
+        }
+    }
+
+    broken
+}
+
 fn normalize_employee_number_for_import(
     employee_number: &str,
     is_deleted: bool,
@@ -124,18 +250,90 @@ fn normalize_employee_number_for_import(
     Ok(normalized.to_owned())
 }
 
+/// Bring the archive's attendance configuration inside what the database will
+/// accept, naming every value that had to be replaced.
+///
+/// Three guards stand between an archive and these columns: migration 1015's
+/// `assert_valid_timezone` trigger on both `companies` and
+/// `company_work_schedules`, and the two CHECK constraints on `companies`. A
+/// hand-edited archive — or an honest one written before a zone was retired from
+/// tzdata — would otherwise surface as a bare 500 mid-restore. Falling back is
+/// the right failure mode for a restore, but it must not be silent: the tenant
+/// would be quietly relocated to MYT and would have no way to know.
+///
+/// `None` is left as `None` throughout. It means "this archive predates capture",
+/// which the caller treats quite differently from a value it rejected.
+fn sanitize_attendance_config(backup: &mut CompanyBackup, warnings: &mut Vec<String>) {
+    let company = &mut backup.company;
+
+    if let Some(stored) = company.timezone.as_deref()
+        && timezone::parse(stored).is_none()
+    {
+        warnings.push(format!(
+            "Backup timezone \"{stored}\" is not a recognised IANA zone; the restored company uses {} instead.",
+            timezone::DEFAULT_TIMEZONE
+        ));
+        company.timezone = Some(timezone::DEFAULT_TIMEZONE.to_owned());
+    }
+
+    if let Some(stored) = company.geofence_mode.as_deref()
+        && sanitize_choice(stored, &GEOFENCE_MODES).is_none()
+    {
+        warnings.push(format!(
+            "Backup geofence mode \"{stored}\" is not one of none/warn/enforce; geofencing is left off on the restored company."
+        ));
+        company.geofence_mode = Some("none".to_owned());
+    }
+
+    if let Some(stored) = company.attendance_method.as_deref()
+        && sanitize_choice(stored, &ATTENDANCE_METHODS).is_none()
+    {
+        warnings.push(format!(
+            "Backup attendance method \"{stored}\" is not one of qr_code/face_id; the restored company has no attendance method set."
+        ));
+        company.attendance_method = None;
+    }
+
+    for schedule in &mut backup.company_work_schedules {
+        if timezone::parse(&schedule.timezone).is_none() {
+            warnings.push(format!(
+                "Work schedule \"{}\" carries timezone \"{}\", which is not a recognised IANA zone; it is restored on {} instead.",
+                files::short_label(&schedule.name),
+                schedule.timezone,
+                timezone::DEFAULT_TIMEZONE
+            ));
+            schedule.timezone = timezone::DEFAULT_TIMEZONE.to_owned();
+        }
+    }
+}
+
 pub async fn import_company(
     pool: &PgPool,
     mut backup: CompanyBackup,
     target_company_id: Option<Uuid>,
     importing_user_id: Uuid,
 ) -> AppResult<ImportResult> {
-    if backup.metadata.format_version != "1.0" {
+    if !SUPPORTED_FORMAT_VERSIONS.contains(&backup.metadata.format_version.as_str()) {
         return Err(AppError::BadRequest(format!(
-            "Unsupported backup format version: {}. Expected 1.0",
-            backup.metadata.format_version
+            "Unsupported backup format version: {}. Expected one of {}",
+            backup.metadata.format_version,
+            SUPPORTED_FORMAT_VERSIONS.join(", ")
         )));
     }
+
+    let mut warnings = Vec::new();
+
+    // Nothing the archive claims about where a file lives is trusted or stored:
+    // every blob is written under a server-generated name and the rows are
+    // rewritten to match. The pass runs here, above `pool.begin()`, so it stays
+    // out of the restore transaction and clear of the fail-closed id remaps.
+    let file_plan = files::plan_restore(&backup.files);
+    let broken_links = rewrite_attachment_urls(&mut backup, &file_plan);
+
+    // Also above `pool.begin()`: every value the archive supplies for a
+    // CHECK-constrained or trigger-guarded column is brought inside what the
+    // database accepts before the transaction that would otherwise abort on it.
+    sanitize_attendance_config(&mut backup, &mut warnings);
 
     for (index, employee) in backup.employees.iter_mut().enumerate() {
         employee.employee_number = normalize_employee_number_for_import(
@@ -232,6 +430,12 @@ pub async fn import_company(
     for cs in &backup.company_settings {
         remap.insert(cs.id, Uuid::now_v7());
     }
+    for ws in &backup.company_work_schedules {
+        remap.insert(ws.id, Uuid::now_v7());
+    }
+    for loc in &backup.company_locations {
+        remap.insert(loc.id, Uuid::now_v7());
+    }
 
     // `remap` is complete from here on; every id the importer writes is either
     // minted above or `new_company_id`. The field label is what makes a
@@ -244,22 +448,37 @@ pub async fn import_company(
     };
 
     let mut tx = pool.begin().await?;
-    let mut warnings = Vec::new();
     let mut accounts_created = 0usize;
     let mut accounts_linked = 0usize;
     let mut deleted_accounts_skipped = 0usize;
     let mut conflicting_accounts_skipped = 0usize;
     let now = Utc::now();
 
+    // Captured before the wipe destroys the employee rows these point at, and
+    // swept once the employee loop has had its chance to re-link them. Empty on
+    // a restore-as-new: a company minted moments ago owns no logins.
+    let orphan_candidates = if is_overwrite {
+        backup_repo::employee_linked_login_ids(&mut *tx, new_company_id).await?
+    } else {
+        Vec::new()
+    };
+
     if is_overwrite {
         warnings.push(format!(
             "Target company \"{new_company_name}\" data was overwritten from backup \"{}\".",
             backup.company.name,
         ));
-        backup_repo::delete_company_cascade(&mut tx, new_company_id).await?;
+        // The shared wipe order, not a second hand-maintained copy. The copy
+        // this replaces deleted `email_templates` before `email_logs`, so an
+        // overwrite restore raised 23503 on its second statement for any tenant
+        // that had sent a templated letter. Routing through the shared helper
+        // also clears `notifications` and `bulk_import_sessions`, neither of
+        // which is in `CompanyBackup` and both of which point at entities being
+        // replaced wholesale.
+        companies::delete_company_data(&mut tx, new_company_id).await?;
         backup_repo::update_company(&mut *tx, new_company_id, &backup.company, now).await?;
     } else {
-        backup_repo::insert_company(&mut *tx, new_company_id, &backup.company, now).await?;
+        backup_repo::insert_company(&mut *tx, new_company_id, &backup.company).await?;
     }
 
     for pg in &backup.payroll_groups {
@@ -268,7 +487,6 @@ pub async fn import_company(
             r(pg.id, "payroll_groups.id")?,
             new_company_id,
             pg,
-            now,
         )
         .await?;
     }
@@ -280,7 +498,6 @@ pub async fn import_company(
             new_company_id,
             ro(e.payroll_group_id, "employees.payroll_group_id")?,
             e,
-            now,
         )
         .await?;
 
@@ -303,6 +520,18 @@ pub async fn import_company(
             }
         }
     }
+
+    // The employee loop above is where surviving accounts get re-attached, so
+    // the sweep runs after it: anything still unlinked belonged to an employee
+    // this restore destroyed and did not bring back. Their live sessions and
+    // refresh tokens are user-scoped and survive the wipe untouched, so an
+    // already-signed-in orphan would otherwise keep refreshing indefinitely.
+    let deactivated = backup_repo::deactivate_unlinked_logins(&mut *tx, &orphan_candidates).await?;
+    for user_id in &deactivated {
+        user_sessions::revoke_all_for_user(&mut *tx, *user_id).await?;
+        refresh_tokens::revoke_all_for_user(&mut *tx, *user_id).await?;
+    }
+
     for a in &backup.employee_allowances {
         backup_repo::insert_employee_allowance(
             &mut *tx,
@@ -310,7 +539,6 @@ pub async fn import_company(
             r(a.employee_id, "employee_allowances.employee_id")?,
             new_company_id,
             a,
-            now,
         )
         .await?;
     }
@@ -321,7 +549,6 @@ pub async fn import_company(
             r(s.employee_id, "salary_history.employee_id")?,
             new_company_id,
             s,
-            now,
         )
         .await?;
     }
@@ -332,19 +559,12 @@ pub async fn import_company(
             r(t.employee_id, "tp3_records.employee_id")?,
             new_company_id,
             t,
-            now,
         )
         .await?;
     }
     for lt in &backup.leave_types {
-        backup_repo::insert_leave_type(
-            &mut *tx,
-            r(lt.id, "leave_types.id")?,
-            new_company_id,
-            lt,
-            now,
-        )
-        .await?;
+        backup_repo::insert_leave_type(&mut *tx, r(lt.id, "leave_types.id")?, new_company_id, lt)
+            .await?;
     }
     for lb in &backup.leave_balances {
         backup_repo::insert_leave_balance(
@@ -353,7 +573,6 @@ pub async fn import_company(
             r(lb.employee_id, "leave_balances.employee_id")?,
             r(lb.leave_type_id, "leave_balances.leave_type_id")?,
             lb,
-            now,
         )
         .await?;
     }
@@ -365,7 +584,6 @@ pub async fn import_company(
             new_company_id,
             r(lr.leave_type_id, "leave_requests.leave_type_id")?,
             lr,
-            now,
         )
         .await?;
     }
@@ -376,7 +594,6 @@ pub async fn import_company(
             r(cl.employee_id, "claims.employee_id")?,
             new_company_id,
             cl,
-            now,
         )
         .await?;
     }
@@ -387,7 +604,6 @@ pub async fn import_company(
             r(ot.employee_id, "overtime_applications.employee_id")?,
             new_company_id,
             ot,
-            now,
         )
         .await?;
     }
@@ -398,7 +614,6 @@ pub async fn import_company(
             new_company_id,
             r(pr.payroll_group_id, "payroll_runs.payroll_group_id")?,
             pr,
-            now,
         )
         .await?;
     }
@@ -409,7 +624,6 @@ pub async fn import_company(
             r(pi.payroll_run_id, "payroll_items.payroll_run_id")?,
             r(pi.employee_id, "payroll_items.employee_id")?,
             pi,
-            now,
         )
         .await?;
     }
@@ -419,7 +633,6 @@ pub async fn import_company(
             r(pid.id, "payroll_item_details.id")?,
             r(pid.payroll_item_id, "payroll_item_details.payroll_item_id")?,
             pid,
-            now,
         )
         .await?;
     }
@@ -431,7 +644,6 @@ pub async fn import_company(
             new_company_id,
             ro(pe.payroll_run_id, "payroll_entries.payroll_run_id")?,
             pe,
-            now,
         )
         .await?;
     }
@@ -441,7 +653,6 @@ pub async fn import_company(
             r(dc.id, "document_categories.id")?,
             new_company_id,
             dc,
-            now,
         )
         .await?;
     }
@@ -453,12 +664,11 @@ pub async fn import_company(
             ro(d.employee_id, "documents.employee_id")?,
             ro(d.category_id, "documents.category_id")?,
             d,
-            now,
         )
         .await?;
     }
     for t in &backup.teams {
-        backup_repo::insert_team(&mut *tx, r(t.id, "teams.id")?, new_company_id, t, now).await?;
+        backup_repo::insert_team(&mut *tx, r(t.id, "teams.id")?, new_company_id, t).await?;
     }
     for tm in &backup.team_members {
         backup_repo::insert_team_member(
@@ -467,13 +677,11 @@ pub async fn import_company(
             r(tm.team_id, "team_members.team_id")?,
             r(tm.employee_id, "team_members.employee_id")?,
             tm,
-            now,
         )
         .await?;
     }
     for h in &backup.holidays {
-        backup_repo::insert_holiday(&mut *tx, r(h.id, "holidays.id")?, new_company_id, h, now)
-            .await?;
+        backup_repo::insert_holiday(&mut *tx, r(h.id, "holidays.id")?, new_company_id, h).await?;
     }
     for w in &backup.working_day_config {
         backup_repo::insert_working_day_config(
@@ -481,7 +689,6 @@ pub async fn import_company(
             r(w.id, "working_day_config.id")?,
             new_company_id,
             w,
-            now,
         )
         .await?;
     }
@@ -491,7 +698,6 @@ pub async fn import_company(
             r(et.id, "email_templates.id")?,
             new_company_id,
             et,
-            now,
         )
         .await?;
     }
@@ -501,18 +707,84 @@ pub async fn import_company(
             r(cs.id, "company_settings.id")?,
             new_company_id,
             cs,
-            now,
         )
         .await?;
     }
 
+    // Attendance configuration. `company_work_schedules` and `company_locations`
+    // are ON DELETE CASCADE from `companies`, and an overwrite keeps the
+    // `companies` row, so `delete_company_data` never reaches them — the
+    // target's own rows are still standing here and are replaced or not at all.
+    //
+    // Replace only when the archive actually carries rows. An empty vector is
+    // ambiguous (a format-1.0 archive that could not capture them, or a tenant
+    // that genuinely had none), and deleting on that ambiguity is the worse
+    // error: restoring an old archive over a live Jakarta tenant would drop
+    // their schedule and `provision_defaults` would hand them MYT back.
+    if backup.company_work_schedules.is_empty() {
+        warnings.push(format!(
+            "This backup carries no work schedule, so the restored company keeps or receives the default 09:00-18:00 shift, 15-minute grace, 4.0 half-day hours and {}. Attendance day bucketing, lateness and half-day classification all follow it, so check Settings before the first attendance day. A backup does not carry per-employee shift overrides.",
+            timezone::DEFAULT_TIMEZONE
+        ));
+    } else {
+        backup_repo::delete_company_work_schedules(&mut *tx, new_company_id).await?;
+        for ws in &backup.company_work_schedules {
+            backup_repo::insert_company_work_schedule(
+                &mut *tx,
+                r(ws.id, "company_work_schedules.id")?,
+                new_company_id,
+                ws,
+            )
+            .await?;
+        }
+    }
+
+    if backup.company_locations.is_empty() {
+        // Only worth saying on an overwrite, where the target's own anchors
+        // survive and now disagree with the archive. On a restore-as-new "no
+        // locations in, no locations out" is exactly what was asked for.
+        if is_overwrite {
+            warnings.push(format!(
+                "This backup carries no geofence locations, so \"{new_company_name}\" keeps the ones it already had."
+            ));
+        }
+    } else {
+        backup_repo::delete_company_locations(&mut *tx, new_company_id).await?;
+        for loc in &backup.company_locations {
+            backup_repo::insert_company_location(
+                &mut *tx,
+                r(loc.id, "company_locations.id")?,
+                new_company_id,
+                loc,
+            )
+            .await?;
+        }
+    }
+
+    // An armed geofence with nothing to measure against blocks nobody, which
+    // looks like protection and is not.
+    if let Some(mode) = backup.company.geofence_mode.as_deref()
+        && matches!(mode, "warn" | "enforce")
+        && backup.company_locations.is_empty()
+    {
+        warnings.push(format!(
+            "Geofencing is set to \"{mode}\" but this backup contains no locations, so nothing will be enforced until one is added."
+        ));
+    }
+
     // Older backup formats may omit one or more setup domains. Fill only
-    // missing defaults before exposing the restored company.
+    // missing defaults before exposing the restored company. The partial unique
+    // index on `(company_id) WHERE is_default` makes this ON CONFLICT DO NOTHING,
+    // so a default schedule restored above is not clobbered.
     companies::provision_defaults(&mut *tx, new_company_id, Some(importing_user_id)).await?;
 
     tx.commit().await?;
 
-    warnings.extend(files::restore_backup_files(&backup.files).await);
+    warnings.extend(files::restore_backup_files(&backup.files, &file_plan).await);
+    warnings.extend(files::cap_warnings(
+        broken_links,
+        "row(s) whose file link was cleared",
+    ));
     if accounts_created > 0 {
         warnings.push(format!(
             "Created {accounts_created} employee login account(s). Employees must use Forgot Password before signing in."
@@ -526,6 +798,16 @@ pub async fn import_company(
     if conflicting_accounts_skipped > 0 {
         warnings.push(format!(
             "Skipped {conflicting_accounts_skipped} employee account(s) because their email belongs to an account outside this company or with a privileged role."
+        ));
+    }
+    if !deactivated.is_empty() {
+        // Linking an account back to an employee does not re-activate it, so
+        // restoring an older backup and then a newer one leaves a swept account
+        // relinked but inactive. That is deliberate: silently re-activating on
+        // link would override an administrator's own decision to disable someone.
+        warnings.push(format!(
+            "Deactivated {} employee login(s) whose employee record is not in this backup. Re-activate them from Users if any should keep access.",
+            deactivated.len()
         ));
     }
 
@@ -567,6 +849,12 @@ pub async fn import_company(
     records_imported.insert("working_day_config".into(), backup.working_day_config.len());
     records_imported.insert("email_templates".into(), backup.email_templates.len());
     records_imported.insert("company_settings".into(), backup.company_settings.len());
+    records_imported.insert(
+        "company_work_schedules".into(),
+        backup.company_work_schedules.len(),
+    );
+    records_imported.insert("company_locations".into(), backup.company_locations.len());
+    records_imported.insert("employee_logins_deactivated".into(), deactivated.len());
 
     Ok(ImportResult {
         new_company_id,
@@ -583,7 +871,9 @@ mod tests {
 
     use chrono::NaiveDate;
 
-    use crate::models::backup::EmployeeAllowanceExport;
+    use base64::Engine;
+
+    use crate::models::backup::{DocumentExport, EmployeeAllowanceExport};
     use crate::tests::support::{
         seed_company, seed_employee, seed_payroll_group, seed_user, skip_if_no_db,
     };
@@ -605,6 +895,31 @@ mod tests {
             effective_from: NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(),
             effective_to: None,
             is_active: Some(true),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    /// A document row as it arrives in an archive: `file_url` is whatever the
+    /// author of the file put there.
+    fn document_export(title: &str, file_url: &str) -> DocumentExport {
+        DocumentExport {
+            id: Uuid::new_v4(),
+            company_id: Uuid::new_v4(),
+            employee_id: None,
+            category_id: None,
+            title: title.into(),
+            description: None,
+            file_name: "handbook.pdf".into(),
+            file_url: file_url.into(),
+            file_size: None,
+            mime_type: None,
+            status: "active".into(),
+            issue_date: None,
+            expiry_date: None,
+            is_confidential: None,
+            tags: None,
+            deleted_at: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }
@@ -682,6 +997,26 @@ mod tests {
         assert_eq!(importable_employee_email(None, None, false), None);
     }
 
+    /// The two CHECK-constrained columns the archive can name. Anything outside
+    /// these lists reaches the database as a 23514 the admin cannot act on, so
+    /// the importer has to recognise the whole permitted set and nothing else.
+    #[test]
+    fn only_the_documented_geofence_modes_and_attendance_methods_are_accepted() {
+        for mode in ["none", "warn", "enforce"] {
+            assert_eq!(sanitize_choice(mode, &GEOFENCE_MODES), Some(mode));
+        }
+        for rejected in ["lockdown", "None", "enforce ", "", "warn,enforce"] {
+            assert_eq!(sanitize_choice(rejected, &GEOFENCE_MODES), None);
+        }
+
+        for method in ["qr_code", "face_id"] {
+            assert_eq!(sanitize_choice(method, &ATTENDANCE_METHODS), Some(method));
+        }
+        for rejected in ["qr", "faceid", "FACE_ID", ""] {
+            assert_eq!(sanitize_choice(rejected, &ATTENDANCE_METHODS), None);
+        }
+    }
+
     #[test]
     fn an_id_outside_the_archive_is_rejected_rather_than_passed_through() {
         let archived = Uuid::new_v4();
@@ -704,6 +1039,157 @@ mod tests {
             ),
             "an unmapped id must be reported, never returned as itself"
         );
+    }
+
+    #[test]
+    fn a_blob_that_travelled_with_the_archive_is_relinked_to_a_generated_name() {
+        let archive = HashMap::from([("/api/uploads/handbook.pdf".to_owned(), String::new())]);
+        let plan = files::plan_restore(&archive);
+
+        let restored = restored_attachment_url(&plan, "/api/uploads/handbook.pdf")
+            .expect("a blob that travelled with the archive keeps its link");
+
+        assert_ne!(
+            restored, "/api/uploads/handbook.pdf",
+            "the archive's own name must never be persisted"
+        );
+        let name = restored
+            .strip_prefix(upload_path::UPLOAD_URL_PREFIX)
+            .expect("a restored link is served from the upload prefix");
+        assert!(upload_path::sanitize_stored_name(name).is_ok());
+    }
+
+    #[test]
+    fn an_external_link_survives_a_restore_and_everything_else_is_cleared() {
+        let plan = files::plan_restore(&HashMap::new());
+
+        assert_eq!(
+            restored_attachment_url(&plan, "https://example.com/handbook.pdf").as_deref(),
+            Some("https://example.com/handbook.pdf")
+        );
+
+        for cleared in [
+            // Uploads share one flat directory, so a link with no blob behind it
+            // would resolve to another tenant's file.
+            "/api/uploads/absent.pdf",
+            "/api/uploads/../../app/.env",
+            "/api/uploads//etc/ssl/private/key.pem",
+            "/uploads/handbook.pdf",
+            "javascript:alert(1)",
+            "",
+        ] {
+            assert!(
+                restored_attachment_url(&plan, cleared).is_none(),
+                "{cleared:?} must not survive a restore"
+            );
+        }
+    }
+
+    #[test]
+    fn a_cleared_link_reports_which_of_the_three_reasons_applies() {
+        let archive = HashMap::from([("/api/uploads/../../app/.env".to_owned(), String::new())]);
+        let plan = files::plan_restore(&archive);
+
+        assert!(
+            dropped_link_reason(&plan, "/api/uploads/../../app/.env")
+                .contains("no supported file extension")
+        );
+        assert!(
+            dropped_link_reason(&plan, "/api/uploads/absent.pdf")
+                .contains("not included in this backup")
+        );
+        assert!(
+            dropped_link_reason(&plan, "javascript:alert(1)").contains("neither an uploaded file")
+        );
+    }
+
+    /// End-to-end proof of the restore half of the traversal defect: the four
+    /// shapes a `file_url` can arrive in, and what each one is worth after a
+    /// restore. The genuine attachment is re-linked and its blob written under a
+    /// name the server chose; the traversal payload is dropped; the external link
+    /// is left alone; the link with no blob behind it is cleared rather than
+    /// pointed into the shared uploads directory.
+    ///
+    /// It also pins the ordering: the archive path is rewritten *before* the
+    /// insert, so migration 1014's CHECK is never the thing that catches it.
+    #[tokio::test]
+    async fn a_restore_writes_files_under_generated_names_and_stores_no_archive_path() {
+        let Some(pool) = skip_if_no_db().await else {
+            return;
+        };
+        let source_company = seed_company(&pool).await;
+        let importing_user = seed_user(&pool, source_company, "admin").await;
+        let b64 = base64::engine::general_purpose::STANDARD;
+
+        let mut backup = crate::services::backup_service::export_company(&pool, source_company)
+            .await
+            .expect("export source company");
+        backup.company.name = format!("Restored-{}", Uuid::new_v4());
+
+        backup
+            .documents
+            .push(document_export("Genuine", "/api/uploads/handbook.pdf"));
+        backup
+            .documents
+            .push(document_export("Traversal", "/api/uploads/../../app/.env"));
+        backup.documents.push(document_export(
+            "External",
+            "https://example.com/handbook.pdf",
+        ));
+        backup
+            .documents
+            .push(document_export("Orphaned", "/api/uploads/absent.pdf"));
+        backup.files.insert(
+            "/api/uploads/handbook.pdf".to_owned(),
+            b64.encode(b"handbook"),
+        );
+        backup.files.insert(
+            "/api/uploads/../../app/.env".to_owned(),
+            b64.encode(b"SECRET=1"),
+        );
+
+        let result = import_company(&pool, backup, None, importing_user)
+            .await
+            .expect("a restore must not fail on hostile attachment urls");
+
+        let stored: HashMap<String, String> =
+            sqlx::query_as("SELECT title, file_url FROM documents WHERE company_id = $1")
+                .bind(result.new_company_id)
+                .fetch_all(&pool)
+                .await
+                .expect("read restored documents")
+                .into_iter()
+                .collect();
+
+        let genuine = stored.get("Genuine").expect("genuine document restored");
+        assert_ne!(genuine, "/api/uploads/handbook.pdf");
+        let name = genuine
+            .strip_prefix(upload_path::UPLOAD_URL_PREFIX)
+            .expect("restored link is served from the upload prefix");
+        let path = upload_path::stored_path(name).expect("generated name is safe");
+        assert_eq!(
+            tokio::fs::read(&path).await.expect("restored blob on disk"),
+            b"handbook",
+            "the blob must land under the name the server chose"
+        );
+        let _ = tokio::fs::remove_file(&path).await;
+
+        assert_eq!(stored.get("Traversal").map(String::as_str), Some(""));
+        assert_eq!(stored.get("Orphaned").map(String::as_str), Some(""));
+        assert_eq!(
+            stored.get("External").map(String::as_str),
+            Some("https://example.com/handbook.pdf")
+        );
+
+        // Every loss is named. A link that disappears without a word is the
+        // silent-failure class this pass exists to avoid.
+        for expected in ["Traversal", "Orphaned", "../../app/.env"] {
+            assert!(
+                result.warnings.iter().any(|w| w.contains(expected)),
+                "no warning mentioned {expected}: {:?}",
+                result.warnings
+            );
+        }
     }
 
     #[tokio::test]
