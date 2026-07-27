@@ -132,9 +132,9 @@ pub async fn consume_oauth2_state(
 
     // Checked before the row is touched: a probe carrying a guessed state must
     // not burn the legitimate user's single-use verifier as a side effect.
-    if !binder
+    if binder
         .map(state_for_binder)
-        .is_some_and(|expected| expected == state)
+        .is_none_or(|expected| expected != state)
     {
         return Err(invalid());
     }

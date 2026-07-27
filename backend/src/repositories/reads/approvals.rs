@@ -30,15 +30,15 @@ pub async fn list_pending_leave(
             lr.reviewed_by, lr.reviewed_at, lr.review_notes,
             lr.attachment_url, lr.attachment_name,
             lr.created_at, lr.updated_at,
-            lt.name AS "leave_type_name?",
-            e.full_name AS "employee_name?",
-            e.employee_number AS "employee_number?"
+            lt.name AS leave_type_name,
+            e.full_name AS employee_name,
+            e.employee_number AS employee_number
         FROM leave_requests lr
         JOIN leave_types lt ON lr.leave_type_id = lt.id
         JOIN employees e ON lr.employee_id = e.id
         WHERE lr.company_id = $1
         AND ($2::text IS NULL OR lr.status = $2)
-        ORDER BY lr.created_at DESC
+        ORDER BY lr.created_at DESC, lr.id DESC
         LIMIT $3 OFFSET $4"#,
     )
     .bind(company_id)
@@ -127,7 +127,7 @@ pub async fn list_pending_overtime(
         JOIN employees e ON oa.employee_id = e.id
         WHERE oa.company_id = $1
         AND ($2::text IS NULL OR oa.status = $2)
-        ORDER BY oa.created_at DESC
+        ORDER BY oa.created_at DESC, oa.id DESC
         LIMIT $3 OFFSET $4"#,
     )
     .bind(company_id)
@@ -197,7 +197,7 @@ pub async fn list_pending_claims(
         JOIN employees e ON c.employee_id = e.id
         WHERE c.company_id = $1
         AND ($2::text IS NULL OR c.status = $2)
-        ORDER BY c.created_at DESC
+        ORDER BY c.created_at DESC, c.id DESC
         LIMIT $3 OFFSET $4"#,
     )
     .bind(company_id)
