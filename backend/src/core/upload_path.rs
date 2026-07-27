@@ -15,8 +15,6 @@
 
 use std::path::{Component, Path, PathBuf};
 
-use uuid::Uuid;
-
 use crate::core::error::{AppError, AppResult};
 
 /// URL prefix under which locally stored uploads are served (`handlers::portal::serve_upload`).
@@ -106,20 +104,6 @@ pub fn validate_file_url(file_url: &str) -> AppResult<()> {
 /// [`validate_file_url`] for the nullable columns (`attachment_url`, `receipt_url`).
 pub fn validate_optional_file_url(file_url: Option<&str>) -> AppResult<()> {
     file_url.map_or(Ok(()), validate_file_url)
-}
-
-/// Server-generated stored name for a blob whose supplied key cannot be trusted.
-///
-/// Backup restore takes the *extension* from the archive and nothing else, so
-/// the name it writes under is structurally incapable of traversal. `None` means
-/// the source carries no allow-listed extension and the blob must not be
-/// restored at all.
-pub fn generated_stored_name(ext_source: &str) -> Option<String> {
-    let ext = ext_source.rsplit('.').next()?.to_lowercase();
-    if !ALLOWED_UPLOAD_EXTENSIONS.contains(&ext.as_str()) {
-        return None;
-    }
-    Some(format!("{}.{}", Uuid::now_v7(), ext))
 }
 
 /// Scheme match is case-insensitive: `HTTPS://…` is as safe as `https://…`, and
@@ -236,30 +220,5 @@ mod tests {
         assert!(validate_optional_file_url(None).is_ok());
         assert!(validate_optional_file_url(Some("/api/uploads/a.pdf")).is_ok());
         assert!(validate_optional_file_url(Some("/api/uploads/../x")).is_err());
-    }
-
-    #[test]
-    fn generated_names_are_safe_by_construction() {
-        for source in [
-            "a.pdf",
-            "/api/uploads/a.pdf",
-            "/api/uploads/../../app/config.PDF",
-            "https://example.com/x.png",
-        ] {
-            let name = generated_stored_name(source)
-                .unwrap_or_else(|| panic!("no name generated for {source:?}"));
-            assert!(sanitize_stored_name(&name).is_ok(), "unsafe name {name:?}");
-        }
-    }
-
-    #[test]
-    fn generated_names_require_an_allow_listed_extension() {
-        // The traversal payloads that carry no allow-listed extension are dropped
-        // rather than restored under some fallback name.
-        assert!(generated_stored_name("/api/uploads/../../app/.env").is_none());
-        assert!(generated_stored_name("/api/uploads/../../etc/passwd").is_none());
-        assert!(generated_stored_name("payload.sh").is_none());
-        assert!(generated_stored_name("noextension").is_none());
-        assert!(generated_stored_name("").is_none());
     }
 }

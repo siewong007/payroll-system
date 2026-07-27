@@ -10,26 +10,20 @@
 //! A download is now authorized against the record that references the file.
 //! Because an upload has no owning row of its own, that reverse lookup *is* the
 //! ownership model — see `repositories::reads::uploads`.
-
-use std::path::{Path, PathBuf};
+//!
+//! This module owns *who may read a file* and the content gate applied to bytes
+//! entering the store. It owns no path logic: resolving a name to a location
+//! under the upload directory belongs to [`crate::core::upload_path`], which is
+//! the single validator for every filesystem sink. Two implementations of that
+//! check briefly existed here and in `core` after parallel fixes for the same
+//! traversal defect; the stricter one won.
 
 use sqlx::PgPool;
 
 use crate::core::error::{AppError, AppResult};
+use crate::core::upload_path::{self, ALLOWED_UPLOAD_EXTENSIONS};
 use crate::models::upload::{UploadAccess, UploadReference, UploadReferenceKind};
 use crate::repositories::reads::uploads;
-
-/// Where `portal::upload_file` writes, relative to the API's working directory.
-pub const UPLOAD_DIR: &str = "uploads";
-
-/// The URL prefix stored in `claims.receipt_url` and its siblings.
-pub const UPLOAD_URL_PREFIX: &str = "/api/uploads/";
-
-/// File types the product accepts. Anything else is refused on the way in *and*
-/// on the way back in from a backup archive.
-pub const ALLOWED_EXTENSIONS: &[&str] = &[
-    "jpg", "jpeg", "png", "gif", "webp", "pdf", "doc", "docx", "xls", "xlsx",
-];
 
 /// Largest upload the API will store, enforced on both entry paths.
 pub const MAX_UPLOAD_SIZE: usize = 10 * 1024 * 1024; // 10 MB
@@ -63,11 +57,11 @@ pub fn validate_magic_bytes(data: &[u8], claimed_ext: &str) -> bool {
 pub fn validate_upload_bytes(filename: &str, data: &[u8]) -> AppResult<()> {
     let ext = extension_of(filename);
 
-    if !ALLOWED_EXTENSIONS.contains(&ext.as_str()) {
+    if !ALLOWED_UPLOAD_EXTENSIONS.contains(&ext.as_str()) {
         return Err(AppError::BadRequest(format!(
             "File type .{} is not allowed. Allowed: {}",
             ext,
-            ALLOWED_EXTENSIONS.join(", ")
+            ALLOWED_UPLOAD_EXTENSIONS.join(", ")
         )));
     }
 
@@ -85,29 +79,6 @@ pub fn validate_upload_bytes(filename: &str, data: &[u8]) -> AppResult<()> {
     }
 
     Ok(())
-}
-
-/// Resolves a request path segment to a file inside [`UPLOAD_DIR`].
-///
-/// Rejects anything that is not a single plain path component. The explicit
-/// `..`/separator checks are redundant with the component count on their own,
-/// but they are cheap and they keep the intent legible next to the traversal
-/// they exist to stop.
-///
-/// Public because backup restore resolves attacker-controlled names against the
-/// same directory and must not grow a second, weaker implementation.
-pub fn safe_upload_path(filename: &str) -> AppResult<PathBuf> {
-    let is_plain_name = !filename.is_empty()
-        && !filename.contains("..")
-        && !filename.contains('/')
-        && !filename.contains('\\')
-        && Path::new(filename).components().count() == 1;
-
-    if !is_plain_name {
-        return Err(AppError::BadRequest("Invalid filename".into()));
-    }
-
-    Ok(Path::new(UPLOAD_DIR).join(filename))
 }
 
 /// Whether `access` may read a file reachable through `reference`.
@@ -140,8 +111,8 @@ pub async fn read_authorized(
     filename: &str,
     access: &UploadAccess,
 ) -> AppResult<Vec<u8>> {
-    let path = safe_upload_path(filename)?;
-    let file_url = format!("{UPLOAD_URL_PREFIX}{filename}");
+    let path = upload_path::stored_path(filename)?;
+    let file_url = format!("{}{}", upload_path::UPLOAD_URL_PREFIX, filename);
 
     let references = uploads::find_references(pool, access.company_id, &file_url).await?;
     if !references
@@ -174,29 +145,41 @@ mod tests {
         UploadReference { kind, employee_id }
     }
 
+    // Path-shape cases (traversal, separators, absolute, NUL, UNC, length) are
+    // owned by `core::upload_path`, which this module now delegates to. The
+    // tests below cover what is unique here: the content gate, and who may read
+    // a file once its path has been resolved.
+
     #[test]
-    fn rejects_traversal_and_separators() {
-        for filename in [
-            "",
-            "..",
-            "../secrets.env",
-            "..\\secrets.env",
-            "nested/file.pdf",
-            "nested\\file.pdf",
-            "/etc/passwd",
-        ] {
-            assert!(
-                safe_upload_path(filename).is_err(),
-                "{filename:?} must not resolve to a path"
-            );
-        }
+    fn the_content_gate_requires_an_allow_listed_extension() {
+        assert!(validate_upload_bytes("payload.sh", b"#!/bin/sh\n").is_err());
+        assert!(validate_upload_bytes("noextension", b"%PDF-1.4").is_err());
+        assert!(validate_upload_bytes("doc.pdf", b"%PDF-1.4").is_ok());
+    }
+
+    /// The check that looks at content rather than at what the caller asserted:
+    /// a script renamed to `.png` must not enter the store.
+    #[test]
+    fn the_content_gate_rejects_bytes_that_contradict_the_extension() {
+        assert!(validate_upload_bytes("x.png", b"<?php echo 1; ?>").is_err());
+        assert!(validate_upload_bytes("x.pdf", b"GIF89a").is_err());
+        assert!(validate_upload_bytes("x.png", &[0x89, 0x50, 0x4E, 0x47, 0x0D]).is_ok());
+    }
+
+    /// `webp` is the only arm that indexes rather than matching a prefix, so a
+    /// short file must not panic it.
+    #[test]
+    fn a_truncated_webp_is_rejected_without_panicking() {
+        assert!(!validate_magic_bytes(b"RIFF", "webp"));
+        assert!(!validate_magic_bytes(b"", "webp"));
+        assert!(validate_magic_bytes(b"RIFF\0\0\0\0WEBPVP8 ", "webp"));
     }
 
     #[test]
-    fn accepts_a_stored_name() {
-        let stored = format!("{}_receipt.pdf", Uuid::new_v4());
-        let path = safe_upload_path(&stored).expect("a plain stored name resolves");
-        assert_eq!(path, Path::new(UPLOAD_DIR).join(&stored));
+    fn the_content_gate_enforces_the_size_cap() {
+        let mut oversized = vec![0x25, 0x50, 0x44, 0x46]; // "%PDF"
+        oversized.resize(MAX_UPLOAD_SIZE + 1, 0);
+        assert!(validate_upload_bytes("big.pdf", &oversized).is_err());
     }
 
     #[test]

@@ -49,7 +49,7 @@ all of them will fire the moment it opens.
 | # | Enhancement | Why it matters | Files/modules | Impact | Effort |
 |---|---|---|---|---|---|
 | 1 | Scheduled, encrypted, **off-host** database + uploads backups with weekly restore verification | The only pg_dump in the repo runs on deploy and writes to the same disk as the data it protects, so a host loss is unrecoverable and the RPO is "time since last merge". | `deploy/deploy.sh:236-264` (only caller), `deploy/docker-compose.prod.yml:102,124`, new `deploy/backup.sh` + timer installed by `install_release_files()` (`deploy.sh:150-162`), new bucket in `infra/` | Critical | M |
-| 2 | Contain the filename on backup **import** | `restore_backup_files` joins an attacker-supplied JSON key onto `uploads/` with no containment, so a key of `/api/uploads/../../<path>` writes anywhere the container user can write — and it bypasses the extension allow-list, 10 MB cap and magic-byte check the real upload path enforces. | `backup_service/files.rs:41-60` (and the mirrored read at `:17-26`), reuse `upload_service::safe_upload_path`, `handlers/portal.rs:239-264` for the controls being bypassed | Critical | S |
+| 2 | ~~Contain the filename on backup **import**~~ — **done, shipped** | `restore_backup_files` joined an attacker-supplied JSON key onto `uploads/` with no containment, so a key of `/api/uploads/../../<path>` wrote anywhere the container user could — bypassing the extension allow-list, 10 MB cap and magic-byte check. Both directions now resolve through `core::upload_path::stored_path` and re-apply the content gate, and rejected attachments are reported rather than dropped silently. | `backup_service/files.rs`, `core/upload_path.rs`, `services/upload_service.rs` | Critical | — |
 | 3 | Escrow `secrets.env` off-host | Backups are useless without the credentials to restore into. **Note:** the JWT-rotation half of this originally cited TOTP lockout as motivation — that is wrong, and it must follow item 20, not precede it (see below). | `deploy/deploy.sh:25,120-138`, `backend/src/core/config.rs:33` | Medium | M |
 | 4 | Make deploy rollback safe for schema-changing releases | `run_migrations` hard-asserts on unknown migration versions (`db.rs:41-49`), so the previous image panics on boot after any release that added a migration — rollback fails and production is left with no backend. | `deploy/deploy.sh:402-419`, `backend/src/core/db.rs:12-49`, `backend/migrations/` | High | M |
 | 5 | Deduct unpaid leave from the **statutory wage base**, not only from net | An approved unpaid-leave request is staged as an ordinary deduction and applied after EPF/SOCSO/EIS/PCB are computed on full gross — the employer over-remits and the employee is over-deducted; the dedicated payslip columns are never written either. | `payroll_engine.rs:989,993-1036,1043-1051`, `approval_service/leave.rs:497-510`, `repositories/payroll_items.rs:50-67`, `payslip_pdf_service.rs:253` | Critical | M |
@@ -274,15 +274,16 @@ misdirects future contributors.
 
 ## Start here
 
-**1. Item 2 — contain the backup-import filename.** Open
-`backend/src/services/backup_service/files.rs:52`. `restore_backup_files` does
-`url.strip_prefix("/api/uploads/")` and then `upload_dir.join(filename)` on a key that came from
-uploaded JSON, so `/api/uploads/../../<path>` escapes the uploads directory. `safe_upload_path` in
-`services/upload_service.rs` already implements exactly the containment needed — make it `pub` and
-call it here, skipping any entry it rejects. In the same commit, apply the extension allow-list and
-size cap from `handlers/portal.rs:239-264` so a restore cannot introduce a file the upload endpoint
-would have refused, and mirror the guard into `collect_backup_files` at `:17-26`. This is the
-smallest Tier 0 item and the highest severity per line changed.
+**1. Validate `receipt_url` and `attachment_url` at write time.** `core::upload_path` grew a
+`validate_file_url` gate — an allow-list of `/api/uploads/<safe name>` or an `http(s)` link, which
+also closes the `javascript:` stored-XSS variant — and `document_service.rs:58` calls it. Its
+nullable sibling `validate_optional_file_url` (`core/upload_path.rs:105`) has **no production
+caller**: `claims.receipt_url` and `leave_requests.attachment_url` are written unvalidated at
+`approval_service/claim.rs:39,91`, `approval_service/leave.rs:69,179` and `portal_service.rs:93,237`.
+Migration `1014` only constrains values matching `/api/uploads/%`, so an arbitrary-scheme value
+passes the database, and the stored string reaches an `href` through `useAuthorizedFile.ts` and
+`AttachmentPreview.tsx`. Traversal is already blocked — both filesystem consumers revalidate — so
+this is specifically about the scheme allow-list. One line per call site.
 
 **2. Item 1 — scheduled off-host backups.** Open `deploy/deploy.sh`. `install_release_files()`
 (lines 150-162) already writes `/etc/logrotate.d/payroll`, so it is the established place for
