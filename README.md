@@ -91,6 +91,137 @@ Handlers are intended to stay thin. Business rules live in services, while datab
 The detailed living design is in [docs/architecture.md](docs/architecture.md),
 and the schema/version contract is in [docs/database.md](docs/database.md).
 
+## How the System Works
+
+### Authentication, authorization, and company scope
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant SPA as React SPA
+    participant API as Axum API
+    participant DB as PostgreSQL
+
+    User->>SPA: Sign in with password, Google, or passkey
+    SPA->>API: Authenticate
+    API->>DB: Validate identity, role, company, and session
+    API-->>SPA: In-memory access token + httpOnly refresh cookie
+    SPA->>API: Request with Bearer token
+    API->>API: AuthUser and route permission checks
+    API->>DB: Company-scoped operation
+    API-->>SPA: Response
+    Note over SPA,API: One failed authenticated request triggers one queued refresh
+    User->>SPA: Switch active company
+    SPA->>API: PUT /auth/switch-company
+    API-->>SPA: New company-scoped token and user context
+```
+
+The access token is held in memory; the refresh token remains in an httpOnly
+cookie and is rotated by the backend. Concurrent requests share one refresh
+attempt rather than creating a refresh storm. The selected company and role are
+carried in the re-issued access token, but handlers and services still enforce
+company ownership and permissions. Payroll-sensitive routes additionally deny
+the read-mostly `exec` role.
+
+### Attendance
+
+1. An administrator selects the company attendance method and configures kiosk
+   credentials, office locations, geofences, or approved office networks.
+2. A kiosk requests a QR using its own revocable credential. Generating a new
+   token revokes the previous token; the displayed QR is multi-use by employees
+   during the server-provided TTL.
+3. An employee checks in with QR or the configured Face ID flow. The service
+   validates the employee, company, token or ceremony, and any enabled location
+   or network policy before recording attendance and audit evidence.
+4. Check-out closes the most recent open attendance record within 24 hours, so
+   overnight shifts are not constrained by a calendar-day boundary.
+5. Administrators can correct or enter records manually, view per-employee
+   summaries, and export filtered CSV data. Employees see their own current and
+   historical attendance in the portal.
+6. The hourly background task marks absences around 12:30 PM in the company
+   timezone while skipping approved leave and public holidays; an authorized
+   manual absent run uses the same rules.
+
+Office-network observations are evidence, not automatic configuration changes:
+candidate networks must be corroborated and explicitly approved before they can
+be enforced.
+
+### Employee self-service and approvals
+
+```mermaid
+flowchart LR
+    Employee["Employee portal"] --> Request["Create leave, claim,\nor overtime request"]
+    Request --> Pending["Pending approval"]
+    Pending -->|Approve| Approved["Approved"]
+    Pending -->|Reject| Rejected["Rejected"]
+    Request -->|Withdraw before completion| Cancelled["Cancelled"]
+    Approved --> Calendar["Leave and team calendar"]
+    Approved --> PayrollInput["Eligible claim or overtime\nbecomes payroll input"]
+    PayrollInput --> Paid["Included once in a paid run"]
+    Employee --> SelfService["Profile, attendance, payslips,\nnotifications, and downloads"]
+```
+
+Employees use the portal shell for their own records; administrators and
+approvers use the management shell. Approval services prevent ordinary users
+from approving their own requests, enforce company ownership, and record audit
+events. Approved claims and overtime are selected by an eligible payroll run
+and are not paid twice. Payslips become available through the portal after the
+payroll lifecycle permits them.
+
+### Payroll, reporting, and statutory outputs
+
+```mermaid
+flowchart LR
+    Inputs["Employees, salary history,\nrecurring entries, approved claims\nand overtime"] --> Preview["Preview or create payroll run"]
+    Preview --> Preflight{"Verified statutory\nrules available?"}
+    Preflight -->|No| Stop["Fail closed"]
+    Preflight -->|Yes| Calculate["EPF + SOCSO + EIS\n+ payroll calculations"]
+    Calculate --> Draft["Draft run and employee items"]
+    Draft --> Submitted["Submit for approval"]
+    Submitted -->|Return| Draft
+    Submitted -->|Approve| Approved["Approved run"]
+    Approved --> Lock["Mark paid and lock"]
+    Lock --> Outputs["Payslip PDFs, reports,\nEPF/SOCSO/EIS/PCB files, EA forms"]
+```
+
+Only one active run is allowed for a company, payroll group, year, and month.
+The payroll engine assembles source data inside a transaction and preflights
+effective-dated, source-linked statutory rules. Unverified academic fixtures
+cannot silently reach a production calculation. Automatic PCB remains disabled
+until the calculator passes LHDN computerised-MTD conformance; authorized users
+can follow the supported manual workflow. Once paid, a run is locked against
+ordinary mutation and feeds dashboards, reports, payslips, and statutory
+exports.
+
+### Production deployment
+
+```mermaid
+flowchart LR
+    Push["Push to main"] --> CI["GitHub Actions CI"]
+    CI -->|Successful latest main commit| Frontend["Build React frontend"]
+    CI -->|Successful latest main commit| Backend["Build linux/amd64 backend image"]
+    Frontend --> S3["Sync to private S3 bucket"]
+    S3 --> CloudFront["Invalidate and serve through CloudFront"]
+    Backend --> Bundle["Checksummed release bundle"]
+    Bundle --> SSH["Pinned-host-key SSH to Lightsail"]
+    SSH --> Compose["Load image and deploy with Docker Compose"]
+    Compose --> Health["Database, local API, and public HTTPS health checks"]
+    Health -->|Failure| Rollback["Protected rollback path"]
+```
+
+Production cannot be deployed manually from an untested revision. Separate
+frontend and backend workflows run only after successful push-triggered CI on
+`main`, reject superseded commits, and deploy the exact tested SHA. The frontend
+uses S3 and CloudFront. The backend image is transferred directly to the
+Lightsail VPS—there is no registry in this path—then started beside PostgreSQL
+19 Beta 2 with Docker Compose. The host reverse proxy is the only public route
+to Axum; PostgreSQL is not exposed on a host port.
+
+For endpoint-level coverage and known constraints, see
+[docs/features.md](docs/features.md). Operational details live alongside the
+workflows in [.github/workflows](.github/workflows), [deploy](deploy), and
+[infra](infra).
+
 ## Project Structure
 
 ```text
