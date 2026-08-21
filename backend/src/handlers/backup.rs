@@ -11,6 +11,7 @@ use uuid::Uuid;
 use crate::core::app_state::AppState;
 use crate::core::auth::{AuthUser, Permission};
 use crate::core::error::{AppError, AppResult, multipart_error, payload_too_large};
+use crate::models::audit::AuditRequestMeta;
 use crate::models::backup::{CompanyBackup, ExportQuery, ImportResult};
 use crate::services::backup_service;
 
@@ -45,8 +46,9 @@ pub async fn export_company(
     State(state): State<AppState>,
     auth: AuthUser,
     Query(query): Query<ExportQuery>,
+    audit_meta: AuditRequestMeta,
 ) -> Result<impl IntoResponse, AppError> {
-    let (user_company_id, _user_id) = require_backup_admin(&auth)?;
+    let (user_company_id, user_id) = require_backup_admin(&auth)?;
 
     let company_id = if auth.has_any_role(&["super_admin"]) {
         query.company_id.ok_or_else(|| {
@@ -71,6 +73,29 @@ pub async fn export_company(
         Utc::now().format("%Y%m%d_%H%M%S")
     );
 
+    // Best-effort (the dump itself already succeeded), but never silent: a
+    // full tenant dump — bank accounts, ICs, TINs — must show up in the
+    // target company's audit trail even when everything else about the
+    // request went right.
+    let _ = crate::services::audit_service::log_action_with_metadata(
+        &state.pool,
+        Some(company_id),
+        Some(user_id),
+        "export",
+        "company_backup",
+        Some(company_id),
+        None::<serde_json::Value>,
+        Some(serde_json::json!({
+            "bytes": json.len(),
+            "employees": backup.employees.len(),
+            "payroll_runs": backup.payroll_runs.len(),
+            "filename": filename,
+        })),
+        Some("Company backup exported"),
+        Some(&audit_meta),
+    )
+    .await;
+
     Ok((
         [
             (header::CONTENT_TYPE, "application/json".to_string()),
@@ -86,6 +111,7 @@ pub async fn export_company(
 pub async fn import_company(
     State(state): State<AppState>,
     auth: AuthUser,
+    audit_meta: AuditRequestMeta,
     mut multipart: Multipart,
 ) -> AppResult<Json<ImportResult>> {
     let (admin_company_id, user_id) = require_backup_admin(&auth)?;
@@ -177,8 +203,14 @@ pub async fn import_company(
         })?)
     };
 
-    let result =
-        backup_service::import_company(&state.pool, backup, target_company_id, user_id).await?;
+    let result = backup_service::import_company(
+        &state.pool,
+        backup,
+        target_company_id,
+        user_id,
+        Some(&audit_meta),
+    )
+    .await?;
 
     Ok(Json(result))
 }

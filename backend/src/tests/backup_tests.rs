@@ -173,7 +173,7 @@ async fn a_restored_tenant_keeps_its_timezone_schedule_and_geofence() {
     let mut backup = export_company(&pool, source).await.expect("export");
     backup.company.name = restored_name();
 
-    let result = import_company(&pool, backup, None, actor)
+    let result = import_company(&pool, backup, None, actor, None)
         .await
         .expect("restore the archive as a new company");
     let restored = result.new_company_id;
@@ -239,7 +239,7 @@ async fn a_legacy_archive_does_not_overwrite_the_targets_schedule() {
     backup.company.geofence_mode = None;
     backup.company.attendance_method = None;
 
-    let result = import_company(&pool, backup, Some(target), actor)
+    let result = import_company(&pool, backup, Some(target), actor, None)
         .await
         .expect("a 1.0 archive must still restore");
 
@@ -281,7 +281,7 @@ async fn an_unusable_timezone_or_geofence_mode_warns_instead_of_failing() {
     backup.company.attendance_method = Some("telepathy".into());
     backup.company_work_schedules[0].timezone = "Mars/Olympus".into();
 
-    let result = import_company(&pool, backup, None, actor)
+    let result = import_company(&pool, backup, None, actor, None)
         .await
         .expect("an unusable value must warn, not abort the restore");
     let restored = result.new_company_id;
@@ -323,7 +323,7 @@ async fn geofencing_restored_with_no_locations_warns() {
     let mut backup = export_company(&pool, source).await.expect("export");
     backup.company.name = restored_name();
 
-    let result = import_company(&pool, backup, None, actor)
+    let result = import_company(&pool, backup, None, actor, None)
         .await
         .expect("restore the archive as a new company");
 
@@ -380,7 +380,7 @@ async fn an_overwrite_restore_deactivates_a_login_the_backup_does_not_contain() 
     .await
     .expect("insert a live refresh token");
 
-    let result = import_company(&pool, backup, Some(company), actor)
+    let result = import_company(&pool, backup, Some(company), actor, None)
         .await
         .expect("overwrite the company from its own backup");
 
@@ -443,7 +443,7 @@ async fn a_privileged_login_and_an_already_unlinked_login_survive_the_sweep() {
     let demoted = seed_login(&pool, company, None, &demoted_email, "employee").await;
 
     let backup = export_company(&pool, company).await.expect("export");
-    let result = import_company(&pool, backup, Some(company), actor)
+    let result = import_company(&pool, backup, Some(company), actor, None)
         .await
         .expect("overwrite the company from its own backup");
 
@@ -522,7 +522,7 @@ async fn a_restore_preserves_the_archives_timestamps() {
 
     let mut backup = export_company(&pool, company).await.expect("export");
     backup.company.name = restored_name();
-    let result = import_company(&pool, backup, None, actor)
+    let result = import_company(&pool, backup, None, actor, None)
         .await
         .expect("restore the archive as a new company");
     let restored = result.new_company_id;
@@ -637,18 +637,154 @@ async fn both_archive_format_versions_restore_and_nothing_else_does() {
     let mut legacy = export_company(&pool, source).await.expect("export");
     legacy.metadata.format_version = "1.0".into();
     legacy.company.name = restored_name();
-    import_company(&pool, legacy, None, actor)
+    import_company(&pool, legacy, None, actor, None)
         .await
         .expect("a 1.0 archive must still restore");
 
     let mut unknown = export_company(&pool, source).await.expect("export");
     unknown.metadata.format_version = "2.0".into();
     unknown.company.name = restored_name();
-    let error = import_company(&pool, unknown, None, actor)
+    let error = import_company(&pool, unknown, None, actor, None)
         .await
         .expect_err("an unknown format version must be refused");
     assert!(
         format!("{error:?}").contains("2.0"),
         "the rejection must name the version it was handed: {error:?}"
+    );
+}
+
+// ─── Audit trail ───
+//
+// A whole-company dump carries bank accounts, ICs and TINs; a restore
+// overwrites all of them. Neither may be able to happen without leaving a
+// row behind (items 19 of docs/enhancement-plan.md).
+
+use crate::models::audit::AuditRequestMeta;
+
+#[tokio::test]
+async fn import_writes_its_audit_row_inside_the_restore_transaction() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let source = seed_company(&pool).await;
+    let actor = seed_user(&pool, source, "super_admin").await;
+
+    let mut backup = export_company(&pool, source).await.expect("export");
+    backup.company.name = restored_name();
+
+    let meta = AuditRequestMeta {
+        ip_address: Some("203.0.113.9".into()),
+        user_agent: Some("BackupAuditTest/1.0".into()),
+    };
+    let result = import_company(&pool, backup, None, actor, Some(&meta))
+        .await
+        .expect("restore the archive as a new company");
+
+    let row: (Option<serde_json::Value>, Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT new_values, ip_address, user_agent FROM audit_logs
+         WHERE company_id = $1 AND action = 'import' AND entity_type = 'company_backup'",
+    )
+    .bind(result.new_company_id)
+    .fetch_one(&pool)
+    .await
+    .expect("import audit row");
+
+    assert_eq!(row.1.as_deref(), Some("203.0.113.9"), "ip recorded");
+    assert_eq!(
+        row.2.as_deref(),
+        Some("BackupAuditTest/1.0"),
+        "user agent recorded"
+    );
+    let new_values = row.0.expect("new_values present");
+    assert_eq!(new_values["mode"], serde_json::json!("create_new"));
+}
+
+#[tokio::test]
+async fn overwrite_import_records_the_overwrite_mode() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let target = seed_company(&pool).await;
+    let actor = seed_user(&pool, target, "super_admin").await;
+
+    let mut backup = export_company(&pool, target).await.expect("export");
+    backup.company.name = restored_name();
+
+    import_company(&pool, backup, Some(target), actor, None)
+        .await
+        .expect("overwrite restore");
+
+    let mode: Option<serde_json::Value> = sqlx::query_scalar(
+        "SELECT new_values->'mode' FROM audit_logs
+         WHERE company_id = $1 AND action = 'import' AND entity_type = 'company_backup'",
+    )
+    .bind(target)
+    .fetch_one(&pool)
+    .await
+    .expect("import audit row");
+
+    assert_eq!(mode, Some(serde_json::json!("overwrite")));
+}
+
+/// The audit write for exports lives in the HTTP handler (the dump has no
+/// transaction of its own), so it is proven through the real route.
+#[tokio::test]
+async fn export_route_writes_an_audit_row() {
+    use std::net::SocketAddr;
+
+    use axum::body::{Body, to_bytes};
+    use axum::extract::ConnectInfo;
+    use axum::http::{Request, StatusCode, header};
+    use tower::ServiceExt;
+
+    use crate::tests::route_auth_tests::{app_for, token_for};
+
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let token = token_for(&pool, company_id, "super_admin").await;
+
+    let mut request = Request::builder()
+        .method("GET")
+        .uri(format!("/api/admin/backup/export?company_id={company_id}"))
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .header("x-forwarded-for", "203.0.113.10, 10.0.0.1")
+        .header(header::USER_AGENT, "BackupAuditTest/1.0")
+        .body(Body::empty())
+        .expect("build request");
+    request
+        .extensions_mut()
+        .insert(ConnectInfo(SocketAddr::from(([203, 0, 113, 10], 12345))));
+
+    let response = app_for(pool.clone())
+        .await
+        .oneshot(request)
+        .await
+        .expect("export response");
+    assert_eq!(response.status(), StatusCode::OK);
+    // Drain the body so the connection is not left half-read.
+    to_bytes(response.into_body(), 64 * 1024 * 1024)
+        .await
+        .expect("read export body");
+
+    let row: (Option<serde_json::Value>, Option<String>) = sqlx::query_as(
+        "SELECT new_values, ip_address FROM audit_logs
+         WHERE company_id = $1 AND action = 'export' AND entity_type = 'company_backup'",
+    )
+    .bind(company_id)
+    .fetch_one(&pool)
+    .await
+    .expect("export audit row");
+
+    assert_eq!(
+        row.1.as_deref(),
+        Some("10.0.0.1"),
+        "the right-most, proxy-appended entry is the trusted one"
+    );
+    let new_values = row.0.expect("new_values present");
+    assert!(
+        new_values["bytes"].as_u64().unwrap_or(0) > 0,
+        "dump size recorded"
     );
 }

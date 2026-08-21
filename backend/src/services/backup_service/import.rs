@@ -8,10 +8,12 @@ use super::files;
 use crate::core::error::{AppError, AppResult};
 use crate::core::timezone;
 use crate::core::upload_path;
+use crate::models::audit::AuditRequestMeta;
 use crate::models::backup::{CompanyBackup, ImportResult};
 use crate::repositories::{
     backup as backup_repo, companies, refresh_tokens, user_companies, user_sessions, users,
 };
+use crate::services::audit_service;
 
 const MAX_EMPLOYEE_NUMBER_CHARS: usize = 50;
 
@@ -312,6 +314,7 @@ pub async fn import_company(
     mut backup: CompanyBackup,
     target_company_id: Option<Uuid>,
     importing_user_id: Uuid,
+    audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<ImportResult> {
     if !SUPPORTED_FORMAT_VERSIONS.contains(&backup.metadata.format_version.as_str()) {
         return Err(AppError::BadRequest(format!(
@@ -778,6 +781,33 @@ pub async fn import_company(
     // so a default schedule restored above is not clobbered.
     companies::provision_defaults(&mut *tx, new_company_id, Some(importing_user_id)).await?;
 
+    // The audit row rides in the restore transaction: a whole-tenant overwrite
+    // (bank accounts, ICs, TINs, every payslip) is exactly the action whose
+    // trail must not be separable from its effect. Best-effort would let the
+    // restore commit and the evidence vanish independently; this way either
+    // both happen or neither.
+    audit_service::log_action_with_metadata(
+        &mut *tx,
+        Some(new_company_id),
+        Some(importing_user_id),
+        "import",
+        "company_backup",
+        Some(new_company_id),
+        None::<serde_json::Value>,
+        Some(serde_json::json!({
+            "mode": if is_overwrite { "overwrite" } else { "create_new" },
+            "source_company_name": backup.company.name,
+            "employees": backup.employees.len(),
+            "payroll_runs": backup.payroll_runs.len(),
+            "payroll_items": backup.payroll_items.len(),
+            "documents": backup.documents.len(),
+            "format_version": backup.metadata.format_version,
+        })),
+        Some("Company backup restored"),
+        audit_meta,
+    )
+    .await?;
+
     tx.commit().await?;
 
     warnings.extend(files::restore_backup_files(&backup.files, &file_plan).await);
@@ -1148,7 +1178,7 @@ mod tests {
             b64.encode(b"SECRET=1"),
         );
 
-        let result = import_company(&pool, backup, None, importing_user)
+        let result = import_company(&pool, backup, None, importing_user, None)
             .await
             .expect("a restore must not fail on hostile attachment urls");
 
@@ -1278,7 +1308,7 @@ mod tests {
             .employee_allowances
             .push(forged_allowance(victim_employee));
 
-        let error = import_company(&pool, backup, None, importing_user)
+        let error = import_company(&pool, backup, None, importing_user, None)
             .await
             .expect_err("a forged reference must not restore");
         assert!(
@@ -1351,7 +1381,7 @@ mod tests {
             .expect("export source company");
         backup.company.name = format!("Restored-{}", Uuid::new_v4());
 
-        let result = import_company(&pool, backup, None, importing_user)
+        let result = import_company(&pool, backup, None, importing_user, None)
             .await
             .expect("a genuine archive must still restore");
 
@@ -1418,7 +1448,7 @@ mod tests {
             .employee_allowances
             .push(forged_allowance(target_employee));
 
-        let error = import_company(&pool, backup, Some(target_company), importing_user)
+        let error = import_company(&pool, backup, Some(target_company), importing_user, None)
             .await
             .expect_err("a forged reference must not restore");
         assert!(
