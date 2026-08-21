@@ -45,13 +45,20 @@ pub struct AutoAbsentTarget {
 pub async fn auto_absent_targets(
     executor: impl Executor<'_, Database = Postgres>,
 ) -> AppResult<Vec<AutoAbsentTarget>> {
+    // The zone comes from a scalar subquery rather than a LEFT JOIN on
+    // purpose: Postgres' describe result for a nullable-side join column
+    // flipped depending on unrelated DDL against the table (the attendance
+    // tests' trigger disable/enable), which made `cargo sqlx prepare --check`
+    // pass or fail according to what had run against the database before it.
+    // A subquery is always described as nullable, so the cached metadata is
+    // stable no matter what touched the table.
     let rows = sqlx::query!(
         r#"SELECT c.id AS "company_id!",
-                  ws.timezone AS "timezone?",
+                  (SELECT ws.timezone FROM company_work_schedules ws
+                   WHERE ws.company_id = c.id AND ws.is_default = TRUE)
+                      AS "timezone?",
                   c.auto_absent_last_run_date AS "last_run_date?"
            FROM companies c
-           LEFT JOIN company_work_schedules ws
-               ON ws.company_id = c.id AND ws.is_default = TRUE
            WHERE c.is_active = TRUE
            ORDER BY c.id"#
     )
