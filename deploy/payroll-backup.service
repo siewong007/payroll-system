@@ -1,0 +1,20 @@
+[Unit]
+Description=Payroll nightly encrypted database backup
+Documentation=file:///opt/payroll/deploy/payroll-backup.sh
+# The dump needs the database container; the upload needs outbound network.
+Requires=docker.service
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/payroll/payroll-backup.sh
+# Runs as root: `docker exec` into payroll-db and writes /opt/payroll/backups.
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=yes
+ReadWritePaths=/opt/payroll/backups /opt/payroll/logs
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
