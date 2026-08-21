@@ -11,7 +11,7 @@ All commands run from the repo root unless noted.
 cp .env.example .env        # first time only, from the repo root
 docker compose up -d        # Postgres 19 Beta 2 on 127.0.0.1:5434
 ```
-Requires `POSTGRES_PASSWORD` in the root `.env` (no default).
+Requires `POSTGRES_PASSWORD` in the root `.env` (no default), as does `JWT_SECRET` and `TOTP_ENCRYPTION_KEY` (the dedicated AES key for stored TOTP secrets; generate with `openssl rand -hex 32`, never reuse `JWT_SECRET`).
 
 ### Backend (Rust / Axum, edition 2024)
 ```bash
@@ -59,6 +59,8 @@ Browser → Vite dev proxy (or CloudFront in prod) → Axum at `/api/*` → hand
 Errors: every fallible path returns `AppResult<T>` (`Result<T, AppError>`). `AppError::Database` wraps `sqlx::Error` via `#[from]`, so use `?` freely. `AppError::Internal` is logged and returned as a generic 500; all other variants surface their message to the client.
 
 Auth: JWT in `Authorization: Bearer`, refresh token in httpOnly cookie. `AuthUser` is an Axum extractor. The `exec` role is read-mostly and must not see payroll figures; that is enforced by the permission model rather than by an explicit call — `exec` is in no branch of `AuthUser::can()`, so `require_permission(Permission::ViewPayroll)` / `require_payroll_privileged()` / `is_payroll_privileged()` all deny it. `auth_user.deny_exec()?` exists for handlers that are not permission-gated. Every handler must carry an explicit gate: the operation itself needs a role check (`require_employee_manager`, `require_hr_admin`, `require_attendance_viewer`, …), not just a `company_id` lookup. Prefer an allow-list gate over the deny-list `require_non_employee` (which rejects only sole-role `employee`, so any role added later silently gains access) — `require_attendance_viewer` is the allow-list model to copy. Role strings in claims: `super_admin`, `admin`, `payroll_admin`, `hr_manager`, `finance`, `exec`, `employee`. Multi-company users switch active company via `PUT /api/auth/switch-company`, which re-issues the JWT with a new `company_id`.
+
+The audit trail also covers the credential lifecycle: login success (written once at the `issue_session` chokepoint, labelled with the method), login failures, logout, password change/reset (completions audited inside the rotation transaction) and TOTP enable/disable. These rows are company-scoped so they appear in the tenant's own audit view; a locked-out user is recovered by `POST /api/admin/users/{id}/2fa/reset` — super_admin-only, password re-confirmed, self-reset refused, session-revoking and audited in-transaction — never by direct SQL.
 
 Rate limiting is applied per-route group in `routes/mod.rs` via `tower_governor` — tighter limits on `/auth/login`, `/auth/forgot-password`, and OAuth2 endpoints. All limiters use `SmartIpKeyExtractor` (X-Forwarded-For / X-Real-IP, falling back to the TCP peer): behind CloudFront the default peer-IP key collapsed every client into one shared bucket, so a fleet of kiosks rate-limited each other.
 
