@@ -3,9 +3,11 @@ use uuid::Uuid;
 use webauthn_rs::prelude::*;
 
 use crate::core::error::{AppError, AppResult};
+use crate::models::audit::AuditRequestMeta;
 use crate::models::passkey::PasskeyInfo;
 use crate::repositories::reads::passkey as passkey_reads;
-use crate::repositories::{passkey_challenges, passkey_credentials};
+use crate::repositories::{passkey_challenges, passkey_credentials, users};
+use crate::services::audit_service;
 
 // ── Credential CRUD ────────────────────────────────────────────────────
 
@@ -39,11 +41,15 @@ pub async fn save_passkey(
     user_id: Uuid,
     name: &str,
     passkey: &Passkey,
+    audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<()> {
     let json = serde_json::to_value(passkey)
         .map_err(|e| AppError::Internal(format!("Failed to serialize passkey: {}", e)))?;
 
-    passkey_credentials::insert(pool, user_id, name, &json).await
+    passkey_credentials::insert(pool, user_id, name, &json).await?;
+
+    audit_credential_event(pool, user_id, "passkey_registered", Some(name), audit_meta).await;
+    Ok(())
 }
 
 pub async fn update_passkey_after_auth(
@@ -76,13 +82,52 @@ pub async fn rename_passkey(
     Ok(())
 }
 
-pub async fn delete_passkey(pool: &PgPool, user_id: Uuid, passkey_id: Uuid) -> AppResult<()> {
+pub async fn delete_passkey(
+    pool: &PgPool,
+    user_id: Uuid,
+    passkey_id: Uuid,
+    audit_meta: Option<&AuditRequestMeta>,
+) -> AppResult<()> {
     let rows = passkey_credentials::delete(pool, passkey_id, user_id).await?;
 
     if rows == 0 {
         return Err(AppError::NotFound("Passkey not found".into()));
     }
+
+    audit_credential_event(pool, user_id, "passkey_deleted", None, audit_meta).await;
     Ok(())
+}
+
+/// Writes a best-effort credential-lifecycle row, scoped to the user's active
+/// company so it appears in that tenant's audit view.
+async fn audit_credential_event(
+    pool: &PgPool,
+    user_id: Uuid,
+    action: &str,
+    label: Option<&str>,
+    audit_meta: Option<&AuditRequestMeta>,
+) {
+    let company_id = users::get_by_id(pool, user_id)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|u| u.company_id);
+
+    let _ = audit_service::log_action_with_metadata(
+        pool,
+        company_id,
+        Some(user_id),
+        action,
+        "auth",
+        Some(user_id),
+        None::<serde_json::Value>,
+        Some(serde_json::json!({
+            "credential": label,
+        })),
+        Some("Passkey credential change"),
+        audit_meta,
+    )
+    .await;
 }
 
 // ── Challenge storage ──────────────────────────────────────────────────

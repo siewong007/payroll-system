@@ -53,7 +53,9 @@ async fn store_backup_codes(pool: &PgPool, user_id: Uuid, codes: &[String]) -> A
     user_totp_backup_codes::insert_many(pool, user_id, &hashes).await
 }
 
-async fn verify_password(pool: &PgPool, user_id: Uuid, password: &str) -> AppResult<()> {
+/// Verifies the current password and returns the user row, so callers that
+/// need the account's company scope for auditing do not have to re-fetch it.
+async fn verify_password(pool: &PgPool, user_id: Uuid, password: &str) -> AppResult<User> {
     let user = auth_service::get_user_by_id(pool, user_id).await?;
     // A malformed stored hash is an authentication failure, not a server
     // fault — reporting it as one would turn a data problem into a 500.
@@ -62,7 +64,7 @@ async fn verify_password(pool: &PgPool, user_id: Uuid, password: &str) -> AppRes
     if !valid {
         return Err(AppError::BadRequest("Current password is incorrect".into()));
     }
-    Ok(())
+    Ok(user)
 }
 
 /// Starts (or restarts) enrollment: generates a fresh secret, stores it
@@ -110,6 +112,7 @@ pub async fn confirm_setup(
     user_id: Uuid,
     code: &str,
     encryption_key: &str,
+    audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<Vec<String>> {
     let row = user_totp::find_by_user(pool, user_id)
         .await?
@@ -132,6 +135,25 @@ pub async fn confirm_setup(
 
     let backup_codes = generate_backup_codes();
     store_backup_codes(pool, user_id, &backup_codes).await?;
+
+    // Best-effort: the enrolment succeeded; failing the request over its
+    // trail row would leave the account in an ambiguous state. The company
+    // scope is what makes the event visible in the tenant's audit view.
+    if let Ok(user) = auth_service::get_user_by_id(pool, user_id).await {
+        let _ = audit_service::log_action_with_metadata(
+            pool,
+            user.company_id,
+            Some(user_id),
+            "totp_enabled",
+            "auth",
+            Some(user_id),
+            None::<serde_json::Value>,
+            Some(serde_json::json!({ "method": "totp" })),
+            Some("Two-factor authentication enabled"),
+            audit_meta,
+        )
+        .await;
+    }
 
     Ok(backup_codes)
 }
@@ -191,14 +213,33 @@ pub async fn verify_login_code(
 }
 
 /// Disables 2FA after re-verifying the current password.
-pub async fn disable(pool: &PgPool, user_id: Uuid, password: &str) -> AppResult<()> {
-    verify_password(pool, user_id, password).await?;
+pub async fn disable(
+    pool: &PgPool,
+    user_id: Uuid,
+    password: &str,
+    audit_meta: Option<&AuditRequestMeta>,
+) -> AppResult<()> {
+    let user = verify_password(pool, user_id, password).await?;
 
     user_totp_backup_codes::delete_for_user(pool, user_id).await?;
     let rows = user_totp::delete_for_user(pool, user_id).await?;
     if rows == 0 {
         return Err(AppError::NotFound("2FA is not enabled".into()));
     }
+
+    let _ = audit_service::log_action_with_metadata(
+        pool,
+        user.company_id,
+        Some(user_id),
+        "totp_disabled",
+        "auth",
+        Some(user_id),
+        None::<serde_json::Value>,
+        Some(serde_json::json!({ "method": "totp" })),
+        Some("Two-factor authentication disabled"),
+        audit_meta,
+    )
+    .await;
     Ok(())
 }
 
@@ -208,8 +249,9 @@ pub async fn regenerate_backup_codes(
     pool: &PgPool,
     user_id: Uuid,
     password: &str,
+    audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<Vec<String>> {
-    verify_password(pool, user_id, password).await?;
+    let user = verify_password(pool, user_id, password).await?;
 
     if !is_enabled(pool, user_id).await? {
         return Err(AppError::BadRequest("2FA is not enabled".into()));
@@ -218,6 +260,23 @@ pub async fn regenerate_backup_codes(
     user_totp_backup_codes::delete_for_user(pool, user_id).await?;
     let codes = generate_backup_codes();
     store_backup_codes(pool, user_id, &codes).await?;
+
+    let _ = audit_service::log_action_with_metadata(
+        pool,
+        user.company_id,
+        Some(user_id),
+        "backup_codes_regenerated",
+        "auth",
+        Some(user_id),
+        None::<serde_json::Value>,
+        Some(serde_json::json!({
+            "count": codes.len(),
+            "prior_codes_invalidated": true,
+        })),
+        Some("Backup codes regenerated"),
+        audit_meta,
+    )
+    .await;
     Ok(codes)
 }
 
@@ -312,12 +371,18 @@ pub async fn admin_reset(
     user_sessions::revoke_all_for_user(&mut *tx, target_user_id).await?;
     refresh_tokens::revoke_all_for_user(&mut *tx, target_user_id).await?;
 
+    // Scoped to the target's company so the reset shows up in that tenant's
+    // own audit view, not just in a platform-wide query.
+    let target_company = crate::repositories::users::get_by_id(&mut *tx, target_user_id)
+        .await?
+        .and_then(|u| u.company_id);
+
     // Deliberately not best-effort-and-dropped: this call site writes inside
     // the transaction, so a failure here rolls the unlock back rather than
     // leaving an untraceable credential change behind.
     audit_service::log_action_with_metadata(
         &mut *tx,
-        None,
+        target_company,
         Some(actor_user_id),
         "reset",
         "user_totp",

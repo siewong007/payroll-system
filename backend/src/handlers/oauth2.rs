@@ -9,6 +9,7 @@ use crate::core::app_state::AppState;
 use crate::core::auth::AuthUser;
 use crate::core::cookie;
 use crate::core::error::{AppError, AppResult};
+use crate::models::audit::AuditRequestMeta;
 use crate::models::oauth2::{LinkedAccount, OAuth2CallbackQuery, OAuth2ProviderInfo};
 use crate::models::session::LoginOutcome;
 use crate::services::{auth_service, oauth2_service};
@@ -56,11 +57,12 @@ fn oauth2_error_redirect(frontend_url: &str, message: &str) -> Response {
 pub async fn google_callback(
     State(state): State<AppState>,
     headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Query(query): Query<OAuth2CallbackQuery>,
 ) -> Response {
     let frontend_url = state.config.frontend_url.clone();
 
-    match google_callback_inner(state, headers, query).await {
+    match google_callback_inner(state, headers, audit_meta, query).await {
         Ok(response) => response,
         Err(err) => {
             // `client_response` logs the detail of Internal/Database errors and
@@ -74,6 +76,7 @@ pub async fn google_callback(
 async fn google_callback_inner(
     state: AppState,
     headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     query: OAuth2CallbackQuery,
 ) -> AppResult<Response> {
     // Google reports a declined consent screen by redirecting back with `error`
@@ -206,6 +209,8 @@ async fn google_callback_inner(
         headers
             .get("user-agent")
             .and_then(|value| value.to_str().ok()),
+        "google",
+        Some(&audit_meta),
     )
     .await?;
 

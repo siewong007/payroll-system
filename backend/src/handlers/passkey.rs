@@ -11,6 +11,7 @@ use crate::core::app_state::AppState;
 use crate::core::auth::AuthUser;
 use crate::core::error::{AppError, AppResult};
 use crate::handlers::auth::login_outcome_response;
+use crate::models::audit::AuditRequestMeta;
 use crate::models::passkey::{
     AuthBeginRequest, AuthBeginResponse, AuthCompleteRequest, CheckPasskeyRequest,
     DiscoverableAuthBeginResponse, PasskeyInfo, RegistrationBeginResponse,
@@ -57,6 +58,7 @@ pub async fn registration_begin(
 pub async fn registration_complete(
     State(state): State<AppState>,
     auth: AuthUser,
+    audit_meta: AuditRequestMeta,
     Json(req): Json<RegistrationCompleteRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
     let state_json =
@@ -72,7 +74,8 @@ pub async fn registration_complete(
         .map_err(|e| AppError::BadRequest(format!("WebAuthn registration failed: {}", e)))?;
 
     let name = req.name.unwrap_or_else(|| "My Passkey".to_string());
-    passkey_service::save_passkey(&state.pool, auth.0.sub, &name, &passkey).await?;
+    passkey_service::save_passkey(&state.pool, auth.0.sub, &name, &passkey, Some(&audit_meta))
+        .await?;
 
     Ok(Json(
         serde_json::json!({"message": "Passkey registered successfully"}),
@@ -123,6 +126,7 @@ pub async fn authentication_begin(
 pub async fn authentication_complete(
     State(state): State<AppState>,
     headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Json(req): Json<AuthCompleteRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     // Consume the challenge (which carries the target user_id)
@@ -156,6 +160,8 @@ pub async fn authentication_complete(
         headers
             .get("user-agent")
             .and_then(|value| value.to_str().ok()),
+        "passkey",
+        Some(&audit_meta),
     )
     .await?;
 
@@ -194,6 +200,7 @@ pub async fn discoverable_auth_begin(
 pub async fn discoverable_auth_complete(
     State(state): State<AppState>,
     headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Json(req): Json<AuthCompleteRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     // Consume the challenge
@@ -240,6 +247,8 @@ pub async fn discoverable_auth_complete(
         headers
             .get("user-agent")
             .and_then(|value| value.to_str().ok()),
+        "passkey",
+        Some(&audit_meta),
     )
     .await?;
 
@@ -269,9 +278,10 @@ pub async fn rename_passkey(
 pub async fn delete_passkey(
     State(state): State<AppState>,
     auth: AuthUser,
+    audit_meta: AuditRequestMeta,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<serde_json::Value>> {
-    passkey_service::delete_passkey(&state.pool, auth.0.sub, id).await?;
+    passkey_service::delete_passkey(&state.pool, auth.0.sub, id, Some(&audit_meta)).await?;
     Ok(Json(serde_json::json!({"message": "Passkey deleted"})))
 }
 

@@ -228,9 +228,10 @@ async fn a_deactivated_employee_cannot_mint_a_session_by_any_path() {
         .await
         .expect("deactivate employee");
 
-    let completed = auth_service::complete_login(&pool, user_id, JWT_SECRET, 1, None)
-        .await
-        .expect_err("complete_login must refuse");
+    let completed =
+        auth_service::complete_login(&pool, user_id, JWT_SECRET, 1, None, "password", None)
+            .await
+            .expect_err("complete_login must refuse");
     match completed {
         AppError::Unauthorized(msg) => assert!(msg.contains("employee account"), "{msg}"),
         other => panic!("expected Unauthorized, got {other:?}"),
@@ -252,8 +253,9 @@ async fn an_account_with_no_linked_employee_still_logs_in() {
     let company_id = seed_company(&pool).await;
     let user_id = seed_user(&pool, company_id, "admin").await;
 
-    let outcome = auth_service::complete_login(&pool, user_id, JWT_SECRET, 1, None)
-        .await
-        .expect("an admin has no employee row to gate on");
+    let outcome =
+        auth_service::complete_login(&pool, user_id, JWT_SECRET, 1, None, "password", None)
+            .await
+            .expect("an admin has no employee row to gate on");
     assert!(matches!(outcome, LoginOutcome::Session(_)));
 }

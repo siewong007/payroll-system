@@ -4,7 +4,9 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::core::error::{AppError, AppResult};
+use crate::models::audit::AuditRequestMeta;
 use crate::repositories::{password_reset_requests, refresh_tokens, user_sessions, users};
+use crate::services::audit_service;
 
 fn hash_token(token: &str) -> String {
     let mut hasher = Sha256::new();
@@ -20,6 +22,7 @@ const RESET_TOKEN_HOURS: i64 = 1;
 pub async fn request_reset(
     pool: &PgPool,
     email: &str,
+    audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<Option<(String, String, String)>> {
     // Find user by email
     let Some(contact) = users::find_active_contact_by_email(pool, email).await? else {
@@ -36,6 +39,29 @@ pub async fn request_reset(
 
     password_reset_requests::insert_approved(pool, contact.id, &token_hash, expires_at).await?;
 
+    // The request is an unauthenticated probe of a known address — exactly the
+    // signal an incident review needs. Recorded against the user (company scope
+    // resolved separately) but never surfaced to the requester.
+    let company_id = users::get_by_id(pool, contact.id)
+        .await?
+        .and_then(|u| u.company_id);
+    let _ = audit_service::log_action_with_metadata(
+        pool,
+        company_id,
+        Some(contact.id),
+        "password_reset_requested",
+        "auth",
+        Some(contact.id),
+        None::<serde_json::Value>,
+        Some(serde_json::json!({
+            "email": crate::core::redact::email(&contact.email),
+            "expires_at": expires_at,
+        })),
+        Some("Password reset requested"),
+        audit_meta,
+    )
+    .await;
+
     Ok(Some((contact.email, contact.full_name, raw_token)))
 }
 
@@ -49,7 +75,12 @@ pub async fn validate_reset_token(pool: &PgPool, raw_token: &str) -> AppResult<U
 }
 
 /// Resets the user's password using a valid reset token.
-pub async fn reset_password(pool: &PgPool, raw_token: &str, new_password: &str) -> AppResult<()> {
+pub async fn reset_password(
+    pool: &PgPool,
+    raw_token: &str,
+    new_password: &str,
+    audit_meta: Option<&AuditRequestMeta>,
+) -> AppResult<()> {
     super::auth_service::validate_password_strength(new_password)?;
 
     let token_hash = hash_token(raw_token);
@@ -72,6 +103,26 @@ pub async fn reset_password(pool: &PgPool, raw_token: &str, new_password: &str) 
     password_reset_requests::mark_completed(&mut *tx, request.id).await?;
     user_sessions::revoke_all_for_user(&mut *tx, request.user_id).await?;
     refresh_tokens::revoke_all_for_user(&mut *tx, request.user_id).await?;
+
+    // Same-transaction audit, same rule as change_password and the break-glass
+    // reset: a completed credential rotation carries its own evidence.
+    let company_id = users::get_by_id(&mut *tx, request.user_id)
+        .await?
+        .and_then(|u| u.company_id);
+    audit_service::log_action_with_metadata(
+        &mut *tx,
+        company_id,
+        Some(request.user_id),
+        "password_reset_completed",
+        "auth",
+        Some(request.user_id),
+        None::<serde_json::Value>,
+        Some(serde_json::json!({ "sessions_revoked": true })),
+        Some("Password reset via email link; all sessions revoked"),
+        audit_meta,
+    )
+    .await?;
+
     tx.commit().await?;
 
     Ok(())

@@ -5,6 +5,7 @@ use crate::core::auth::{AuthUser, verify_mfa_pending_token};
 use crate::core::error::AppResult;
 use crate::core::extract::ValidatedJson;
 use crate::handlers::auth::login_outcome_response;
+use crate::models::audit::AuditRequestMeta;
 use crate::models::session::LoginOutcome;
 use crate::models::totp::{
     TotpConfirmRequest, TotpConfirmResponse, TotpDisableRequest, TotpRegenerateBackupCodesRequest,
@@ -27,6 +28,7 @@ pub async fn setup_begin(
 pub async fn setup_confirm(
     State(state): State<AppState>,
     auth: AuthUser,
+    audit_meta: AuditRequestMeta,
     ValidatedJson(req): ValidatedJson<TotpConfirmRequest>,
 ) -> AppResult<Json<TotpConfirmResponse>> {
     let backup_codes = totp_service::confirm_setup(
@@ -34,6 +36,7 @@ pub async fn setup_confirm(
         auth.0.sub,
         &req.code,
         &state.config.totp_encryption_key,
+        Some(&audit_meta),
     )
     .await?;
     Ok(Json(TotpConfirmResponse { backup_codes }))
@@ -50,19 +53,26 @@ pub async fn status(
 pub async fn disable(
     State(state): State<AppState>,
     auth: AuthUser,
+    audit_meta: AuditRequestMeta,
     ValidatedJson(req): ValidatedJson<TotpDisableRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
-    totp_service::disable(&state.pool, auth.0.sub, &req.password).await?;
+    totp_service::disable(&state.pool, auth.0.sub, &req.password, Some(&audit_meta)).await?;
     Ok(Json(serde_json::json!({ "message": "2FA disabled" })))
 }
 
 pub async fn regenerate_backup_codes(
     State(state): State<AppState>,
     auth: AuthUser,
+    audit_meta: AuditRequestMeta,
     ValidatedJson(req): ValidatedJson<TotpRegenerateBackupCodesRequest>,
 ) -> AppResult<Json<TotpConfirmResponse>> {
-    let backup_codes =
-        totp_service::regenerate_backup_codes(&state.pool, auth.0.sub, &req.password).await?;
+    let backup_codes = totp_service::regenerate_backup_codes(
+        &state.pool,
+        auth.0.sub,
+        &req.password,
+        Some(&audit_meta),
+    )
+    .await?;
     Ok(Json(TotpConfirmResponse { backup_codes }))
 }
 
@@ -72,6 +82,7 @@ pub async fn regenerate_backup_codes(
 pub async fn verify_login(
     State(state): State<AppState>,
     headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     ValidatedJson(req): ValidatedJson<TotpVerifyLoginRequest>,
 ) -> AppResult<Response> {
     let user_id = verify_mfa_pending_token(&req.mfa_token, &state.config.jwt_secret)?;
@@ -94,6 +105,8 @@ pub async fn verify_login(
         headers
             .get("user-agent")
             .and_then(|value| value.to_str().ok()),
+        "totp",
+        Some(&audit_meta),
     )
     .await?;
 

@@ -3,10 +3,11 @@ use uuid::Uuid;
 
 use crate::core::auth::{create_mfa_pending_token, create_token};
 use crate::core::error::{AppError, AppResult};
+use crate::models::audit::AuditRequestMeta;
 use crate::models::session::{LoginOutcome, LoginResponseWithRefresh};
 use crate::models::user::{LoginRequest, User, UserResponse};
 use crate::repositories::{employees, refresh_tokens, user_sessions, users};
-use crate::services::{session_service, totp_service};
+use crate::services::{audit_service, session_service, totp_service};
 
 const EMPLOYEE_DELETED_MSG: &str =
     "Your employee account has been deleted. Please contact your administrator.";
@@ -63,36 +64,105 @@ pub async fn login(
     user_agent: Option<&str>,
     jwt_secret: &str,
     jwt_expiry: i64,
+    audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<LoginOutcome> {
-    let user = users::find_active_by_email(pool, &req.email)
-        .await?
-        .ok_or_else(|| AppError::Unauthorized("Invalid email or password".into()))?;
+    let user = match users::find_active_by_email(pool, &req.email).await? {
+        Some(user) => user,
+        None => {
+            // Recorded against no user: the trail must answer "was this
+            // address probed" even when the address matched nobody. The
+            // attempted email is deliberately stored — that is exactly what
+            // an investigator needs, and login failures are already public
+            // knowledge to whoever typed it.
+            let _ = audit_service::log_action_with_metadata(
+                pool,
+                None,
+                None,
+                "login_failed",
+                "auth",
+                None,
+                None::<serde_json::Value>,
+                Some(serde_json::json!({
+                    "email": crate::core::redact::email(&req.email),
+                    "reason": "unknown_email",
+                    "method": "password",
+                })),
+                Some("Failed login attempt"),
+                audit_meta,
+            )
+            .await;
+            return Err(AppError::Unauthorized("Invalid email or password".into()));
+        }
+    };
 
+    // Bcrypt cost 12 inline: this is the pre-existing shape of `login`, kept
+    // as-is here; the offload work is tracked separately (plan item 38).
     let valid = bcrypt::verify(&req.password, &user.password_hash)
         .map_err(|_| AppError::Internal("Password verification failed".into()))?;
 
     if !valid {
+        let _ = audit_service::log_action_with_metadata(
+            pool,
+            user.company_id,
+            Some(user.id),
+            "login_failed",
+            "auth",
+            Some(user.id),
+            None::<serde_json::Value>,
+            Some(serde_json::json!({
+                "email": crate::core::redact::email(&req.email),
+                "reason": "invalid_password",
+                "method": "password",
+            })),
+            Some("Failed login attempt"),
+            audit_meta,
+        )
+        .await;
         return Err(AppError::Unauthorized("Invalid email or password".into()));
     }
 
     // The terminated-employee check lives in `get_active_user`, which
     // `complete_login` loads through — one gate covering every minting path
     // rather than one copy per caller.
-    complete_login(pool, user.id, jwt_secret, jwt_expiry, user_agent).await
+    complete_login(
+        pool, user.id, jwt_secret, jwt_expiry, user_agent, "password", audit_meta,
+    )
+    .await
 }
 
 /// Mints a JWT + refresh token for an already-authenticated user: records
 /// the login and issues tokens. Callers must have already verified the
 /// user's identity (password, passkey, Google OAuth) AND, if applicable,
 /// their second factor — this function does not gate on 2FA itself.
+///
+/// Every successful login of every kind ends here, which makes this the one
+/// place a "login" audit row is written; `login_method` labels which
+/// credential produced it. Best-effort: an audit failure must not strand an
+/// authenticated user without their session.
 pub async fn issue_session(
     pool: &PgPool,
     user: User,
     jwt_secret: &str,
     jwt_expiry: i64,
     user_agent: Option<&str>,
+    login_method: &str,
+    audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<LoginResponseWithRefresh> {
     users::update_last_login(pool, user.id).await?;
+
+    let _ = audit_service::log_action_with_metadata(
+        pool,
+        user.company_id,
+        Some(user.id),
+        "login",
+        "auth",
+        Some(user.id),
+        None::<serde_json::Value>,
+        Some(serde_json::json!({ "method": login_method })),
+        Some("Login succeeded"),
+        audit_meta,
+    )
+    .await;
 
     let (session_id, refresh_token) =
         session_service::create_session(pool, user.id, user_agent).await?;
@@ -125,6 +195,8 @@ pub async fn complete_login(
     jwt_secret: &str,
     jwt_expiry: i64,
     user_agent: Option<&str>,
+    login_method: &str,
+    audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<LoginOutcome> {
     let user = get_active_user(pool, user_id).await?;
 
@@ -133,7 +205,16 @@ pub async fn complete_login(
         return Ok(LoginOutcome::MfaRequired { mfa_token });
     }
 
-    let session = issue_session(pool, user, jwt_secret, jwt_expiry, user_agent).await?;
+    let session = issue_session(
+        pool,
+        user,
+        jwt_secret,
+        jwt_expiry,
+        user_agent,
+        login_method,
+        audit_meta,
+    )
+    .await?;
     Ok(LoginOutcome::Session(session))
 }
 
@@ -236,15 +317,30 @@ pub async fn change_password(
     user_id: Uuid,
     current_password: &str,
     new_password: &str,
+    audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<()> {
     validate_password_strength(new_password)?;
 
     let user = get_user_by_id(pool, user_id).await?;
 
+    // A malformed stored hash is an authentication failure, not a server fault.
     let valid = bcrypt::verify(current_password, &user.password_hash)
-        .map_err(|_| AppError::Internal("Password verification failed".into()))?;
+        .map_err(|_| AppError::BadRequest("Current password is incorrect".into()))?;
 
     if !valid {
+        let _ = audit_service::log_action_with_metadata(
+            pool,
+            user.company_id,
+            Some(user_id),
+            "password_change_failed",
+            "auth",
+            Some(user_id),
+            None::<serde_json::Value>,
+            Some(serde_json::json!({ "reason": "invalid_current_password" })),
+            Some("Password change rejected"),
+            audit_meta,
+        )
+        .await;
         return Err(AppError::BadRequest("Current password is incorrect".into()));
     }
 
@@ -258,6 +354,21 @@ pub async fn change_password(
     // extending the 30-day window, so the thief never loses access.
     user_sessions::revoke_all_for_user(&mut *tx, user_id).await?;
     refresh_tokens::revoke_all_for_user(&mut *tx, user_id).await?;
+    // In the same transaction as the change: a credential rotation and its
+    // trail must stand or fall together (same rule as the break-glass reset).
+    audit_service::log_action_with_metadata(
+        &mut *tx,
+        user.company_id,
+        Some(user_id),
+        "password_changed",
+        "auth",
+        Some(user_id),
+        None::<serde_json::Value>,
+        Some(serde_json::json!({ "sessions_revoked": true })),
+        Some("Password changed; all sessions revoked"),
+        audit_meta,
+    )
+    .await?;
     tx.commit().await?;
     Ok(())
 }

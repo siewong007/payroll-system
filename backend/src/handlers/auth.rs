@@ -10,6 +10,7 @@ use crate::core::auth::{AuthUser, create_token};
 use crate::core::cookie;
 use crate::core::error::{AppError, AppResult};
 use crate::core::extract::ValidatedJson;
+use crate::models::audit::AuditRequestMeta;
 use crate::models::session::{
     ForgotPasswordRequest, LoginOutcome, ResetPasswordRequest, UserSessionResponse,
 };
@@ -53,6 +54,7 @@ pub fn login_outcome_response(outcome: LoginOutcome, frontend_url: &str) -> Resp
 pub async fn login(
     State(state): State<AppState>,
     headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     ValidatedJson(req): ValidatedJson<LoginRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     let outcome = auth_service::login(
@@ -63,6 +65,7 @@ pub async fn login(
             .and_then(|value| value.to_str().ok()),
         &state.config.jwt_secret,
         state.config.jwt_expiry_hours,
+        Some(&audit_meta),
     )
     .await?;
 
@@ -146,12 +149,31 @@ pub async fn refresh_token(
 pub async fn logout(
     State(state): State<AppState>,
     headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
 ) -> Result<impl IntoResponse, AppError> {
     if let Some(refresh) = cookie::extract_refresh_token(&headers) {
         if let Ok((user_id, session_id)) =
             session_service::verify_refresh_token(&state.pool, &refresh).await
         {
             let _ = session_service::revoke_session(&state.pool, user_id, session_id).await;
+            // Best-effort, after the revocation: the logout itself must not
+            // fail because its trail row could not be written, but the row
+            // still answers "when did this account sign out".
+            if let Ok(user) = auth_service::get_user_by_id(&state.pool, user_id).await {
+                let _ = crate::services::audit_service::log_action_with_metadata(
+                    &state.pool,
+                    user.company_id,
+                    Some(user_id),
+                    "logout",
+                    "auth",
+                    Some(user_id),
+                    None::<serde_json::Value>,
+                    Some(serde_json::json!({ "session_id": session_id })),
+                    Some("Logout"),
+                    Some(&audit_meta),
+                )
+                .await;
+            }
         } else {
             let _ = session_service::revoke_refresh_token(&state.pool, &refresh).await;
         }
@@ -205,9 +227,11 @@ pub async fn revoke_other_sessions(
 /// User requests a password reset. Sends reset link via email automatically.
 pub async fn forgot_password(
     State(state): State<AppState>,
+    audit_meta: AuditRequestMeta,
     ValidatedJson(req): ValidatedJson<ForgotPasswordRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
-    let result = password_reset_service::request_reset(&state.pool, &req.email).await?;
+    let result =
+        password_reset_service::request_reset(&state.pool, &req.email, Some(&audit_meta)).await?;
 
     // Send reset email if user exists (fire-and-forget, don't reveal whether email exists)
     if let Some((user_email, user_name, raw_token)) = result {
@@ -243,9 +267,16 @@ pub async fn forgot_password(
 /// User resets password using an approved token.
 pub async fn reset_password(
     State(state): State<AppState>,
+    audit_meta: AuditRequestMeta,
     ValidatedJson(req): ValidatedJson<ResetPasswordRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
-    password_reset_service::reset_password(&state.pool, &req.token, &req.new_password).await?;
+    password_reset_service::reset_password(
+        &state.pool,
+        &req.token,
+        &req.new_password,
+        Some(&audit_meta),
+    )
+    .await?;
     Ok(Json(serde_json::json!({
         "message": "Password has been reset successfully. Please log in with your new password."
     })))
@@ -267,6 +298,7 @@ pub async fn validate_reset_token(
 pub async fn change_password(
     State(state): State<AppState>,
     auth: AuthUser,
+    audit_meta: AuditRequestMeta,
     Json(req): Json<ChangePasswordRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
     auth_service::change_password(
@@ -274,6 +306,7 @@ pub async fn change_password(
         auth.0.sub,
         &req.current_password,
         &req.new_password,
+        Some(&audit_meta),
     )
     .await?;
 

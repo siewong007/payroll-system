@@ -235,6 +235,7 @@ async fn enroll_target(
         user_id,
         &code_for_secret(&setup.secret),
         TOTP_ENCRYPTION_KEY,
+        None,
     )
     .await
     .expect("confirm 2FA setup");
