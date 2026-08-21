@@ -18,7 +18,8 @@ pub async fn setup_begin(
     auth: AuthUser,
 ) -> AppResult<Json<TotpSetupResponse>> {
     let user = auth_service::get_user_by_id(&state.pool, auth.0.sub).await?;
-    let resp = totp_service::begin_setup(&state.pool, &user, &state.config.jwt_secret).await?;
+    let resp =
+        totp_service::begin_setup(&state.pool, &user, &state.config.totp_encryption_key).await?;
     Ok(Json(resp))
 }
 
@@ -28,9 +29,13 @@ pub async fn setup_confirm(
     auth: AuthUser,
     ValidatedJson(req): ValidatedJson<TotpConfirmRequest>,
 ) -> AppResult<Json<TotpConfirmResponse>> {
-    let backup_codes =
-        totp_service::confirm_setup(&state.pool, auth.0.sub, &req.code, &state.config.jwt_secret)
-            .await?;
+    let backup_codes = totp_service::confirm_setup(
+        &state.pool,
+        auth.0.sub,
+        &req.code,
+        &state.config.totp_encryption_key,
+    )
+    .await?;
     Ok(Json(TotpConfirmResponse { backup_codes }))
 }
 
@@ -70,8 +75,13 @@ pub async fn verify_login(
     ValidatedJson(req): ValidatedJson<TotpVerifyLoginRequest>,
 ) -> AppResult<Response> {
     let user_id = verify_mfa_pending_token(&req.mfa_token, &state.config.jwt_secret)?;
-    totp_service::verify_login_code(&state.pool, user_id, &req.code, &state.config.jwt_secret)
-        .await?;
+    totp_service::verify_login_code(
+        &state.pool,
+        user_id,
+        &req.code,
+        &state.config.totp_encryption_key,
+    )
+    .await?;
 
     // This is the one minting path that does not go through `complete_login`,
     // which is why the terminated-employee gate lives inside `get_active_user`.

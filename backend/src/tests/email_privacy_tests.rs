@@ -15,6 +15,7 @@ fn test_config() -> AppConfig {
     AppConfig {
         database_url: std::env::var("DATABASE_URL").unwrap_or_else(|_| "postgres://test".into()),
         jwt_secret: "email-privacy-test-secret".into(),
+        totp_encryption_key: "email-privacy-test-totp-key".into(),
         jwt_expiry_hours: 1,
         server_host: "127.0.0.1".into(),
         server_port: 0,

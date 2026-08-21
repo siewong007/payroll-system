@@ -4,6 +4,10 @@ use std::env;
 pub struct AppConfig {
     pub database_url: String,
     pub jwt_secret: String,
+    /// Dedicated AES key material for encrypting TOTP secrets at rest.
+    /// Deliberately separate from `jwt_secret` so rotating the JWT secret
+    /// after a leak cannot lock every 2FA user out of their own accounts.
+    pub totp_encryption_key: String,
     pub jwt_expiry_hours: i64,
     pub server_host: String,
     pub server_port: u16,
@@ -31,6 +35,8 @@ impl AppConfig {
         Self {
             database_url: env::var("DATABASE_URL").expect("DATABASE_URL must be set"),
             jwt_secret: env::var("JWT_SECRET").expect("JWT_SECRET must be set"),
+            totp_encryption_key: env::var("TOTP_ENCRYPTION_KEY")
+                .expect("TOTP_ENCRYPTION_KEY must be set"),
             jwt_expiry_hours: env::var("JWT_EXPIRY_HOURS")
                 .unwrap_or_else(|_| "1".to_string())
                 .parse()
@@ -78,6 +84,7 @@ mod tests {
         AppConfig {
             database_url: "postgres://localhost/test".into(),
             jwt_secret: "test-secret".into(),
+            totp_encryption_key: "test-totp-encryption-key".into(),
             jwt_expiry_hours: 1,
             server_host: "0.0.0.0".into(),
             server_port: 8080,

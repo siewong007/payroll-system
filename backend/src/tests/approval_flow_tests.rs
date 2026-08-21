@@ -18,6 +18,7 @@ fn test_config() -> AppConfig {
     AppConfig {
         database_url: String::new(),
         jwt_secret: "test-secret-that-is-long-enough-for-tests".into(),
+        totp_encryption_key: "approval-flow-test-totp-key".into(),
         jwt_expiry_hours: 1,
         server_host: "0.0.0.0".into(),
         server_port: 8080,

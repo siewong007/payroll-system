@@ -139,6 +139,21 @@ ensure_secrets() {
     || die "POSTGRES_PASSWORD in $SECRETS_FILE must be at least 32 URL-safe characters"
   local jwt_value=${JWT_SECRET:-}
   (( ${#jwt_value} >= 32 )) || die "JWT_SECRET in $SECRETS_FILE must be at least 32 characters"
+
+  # TOTP_ENCRYPTION_KEY postdates both original secrets: it encrypts 2FA
+  # enrolments under its own value precisely so JWT_SECRET can be rotated
+  # without destroying them. Unlike the two above there is no historical value
+  # to preserve, so minting it on first deploy after this change is safe —
+  # every enrolment created before it existed was protected by the JWT-derived
+  # key and is migrated at backend boot (see core::crypto).
+  if [[ ! "${TOTP_ENCRYPTION_KEY:-}" =~ ^[A-Za-z0-9._~-]{32,}$ ]]; then
+    local totp_key
+    totp_key=$(openssl rand -hex 32) \
+      || die "TOTP_ENCRYPTION_KEY is missing from $SECRETS_FILE and could not be generated (openssl unavailable); add a 64-char random hex value manually"
+    printf '\n# Minted by deploy.sh: dedicated AES key for TOTP secrets at rest.\nTOTP_ENCRYPTION_KEY=%s\n' "$totp_key" >> "$SECRETS_FILE"
+    chmod 0600 "$SECRETS_FILE"
+    export TOTP_ENCRYPTION_KEY="$totp_key"
+  fi
 }
 
 install_release_files() {

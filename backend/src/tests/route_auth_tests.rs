@@ -19,11 +19,13 @@ use crate::tests::support::{
 };
 
 pub(crate) const JWT_SECRET: &str = "route-auth-test-secret";
+pub(crate) const TOTP_ENCRYPTION_KEY: &str = "route-auth-test-totp-key";
 
 fn test_config(database_url: String) -> AppConfig {
     AppConfig {
         database_url,
         jwt_secret: JWT_SECRET.to_string(),
+        totp_encryption_key: TOTP_ENCRYPTION_KEY.to_string(),
         jwt_expiry_hours: 1,
         server_host: "127.0.0.1".to_string(),
         server_port: 0,
@@ -84,11 +86,11 @@ pub(crate) async fn app_for(pool: sqlx::PgPool) -> axum::Router {
     routes::create_router(state).layer(Extension(JwtSecret(config.jwt_secret)))
 }
 
-async fn token_for(pool: &sqlx::PgPool, company_id: uuid::Uuid, role: &str) -> String {
+pub(crate) async fn token_for(pool: &sqlx::PgPool, company_id: uuid::Uuid, role: &str) -> String {
     token_and_user_for(pool, company_id, role).await.0
 }
 
-async fn token_and_user_for(
+pub(crate) async fn token_and_user_for(
     pool: &sqlx::PgPool,
     company_id: uuid::Uuid,
     role: &str,

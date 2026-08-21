@@ -62,6 +62,10 @@ pub struct TotpDisableRequest {
     pub password: String,
 }
 
+/// Super-admin break-glass reset: the caller re-presents their own password
+/// so a stolen super_admin session cannot strip 2FA off other accounts.
+pub type AdminTotpResetRequest = TotpDisableRequest;
+
 #[derive(Debug, Deserialize, validator::Validate)]
 pub struct TotpRegenerateBackupCodesRequest {
     #[validate(length(min = 1, message = "password is required"))]

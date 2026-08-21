@@ -59,6 +59,34 @@ pub async fn find_by_user(
     Ok(row)
 }
 
+/// Every enrolment row, keyed for the startup re-encryption pass. The table
+/// holds at most one row per 2FA user, so this is small by construction.
+pub async fn list_all(
+    executor: impl Executor<'_, Database = Postgres>,
+) -> AppResult<Vec<UserTotp>> {
+    let rows = sqlx::query_as!(UserTotp, "SELECT * FROM user_totp",)
+        .fetch_all(executor)
+        .await?;
+    Ok(rows)
+}
+
+/// Replaces the stored ciphertext — used only by the startup re-encryption
+/// pass when a legacy row has been successfully re-keyed.
+pub async fn update_secret(
+    executor: impl Executor<'_, Database = Postgres>,
+    id: Uuid,
+    secret_encrypted: &str,
+) -> AppResult<()> {
+    sqlx::query!(
+        "UPDATE user_totp SET secret_encrypted = $2, updated_at = NOW() WHERE id = $1",
+        id,
+        secret_encrypted,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
 pub async fn delete_for_user(
     executor: impl Executor<'_, Database = Postgres>,
     user_id: Uuid,

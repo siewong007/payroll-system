@@ -18,6 +18,7 @@ use payroll_system::core::auth::JwtSecret;
 use payroll_system::core::config::AppConfig;
 use payroll_system::core::db;
 use payroll_system::routes;
+use payroll_system::services;
 
 /// Response for a caught handler panic.
 ///
@@ -72,6 +73,13 @@ async fn main() -> anyhow::Result<()> {
     // Create DB pool + run migrations
     let pool = db::create_pool(&config.database_url).await;
     db::run_migrations(&pool).await;
+
+    // Migrate any TOTP secrets still encrypted under the old JWT-derived key
+    // to the dedicated TOTP_ENCRYPTION_KEY. Idempotent; no-op once every row
+    // is under the dedicated key. Runs before serving so a login never has to
+    // fall back to the legacy derivation.
+    services::totp_service::reencrypt_all(&pool, &config.totp_encryption_key, &config.jwt_secret)
+        .await?;
 
     tracing::info!("Database connected; schema and reference data applied");
 

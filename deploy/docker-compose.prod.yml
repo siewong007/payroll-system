@@ -70,6 +70,10 @@ services:
     environment:
       DATABASE_URL: "postgres://payroll:${POSTGRES_PASSWORD}@postgres:5432/payroll_db"
       JWT_SECRET: "${JWT_SECRET:?JWT_SECRET is required}"
+      # Deliberately separate from JWT_SECRET so rotating one after a leak
+      # cannot lock every 2FA user out of their own accounts. deploy.sh mints
+      # it into /opt/payroll/secrets.env on install.
+      TOTP_ENCRYPTION_KEY: "${TOTP_ENCRYPTION_KEY:?TOTP_ENCRYPTION_KEY is required}"
       JWT_EXPIRY_HOURS: "${JWT_EXPIRY_HOURS:-1}"
       SERVER_HOST: "0.0.0.0"
       SERVER_PORT: "8080"

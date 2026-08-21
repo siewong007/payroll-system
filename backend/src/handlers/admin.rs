@@ -6,13 +6,14 @@ use uuid::Uuid;
 
 use crate::core::app_state::AppState;
 use crate::core::auth::{AuthUser, Permission};
-use crate::core::error::AppResult;
+use crate::core::error::{AppError, AppResult};
 use crate::core::extract::ValidatedJson;
 use crate::models::audit::AuditRequestMeta;
 use crate::models::company::{Company, CreateCompanyRequest, UpdateCompanyRequest};
 use crate::models::pagination::PaginatedResponse;
+use crate::models::totp::AdminTotpResetRequest;
 use crate::models::user_company::{CreateUserRequest, UpdateUserRequest, UserWithCompanies};
-use crate::services::{company_service, user_service};
+use crate::services::{company_service, totp_service, user_service};
 
 #[derive(Debug, serde::Deserialize)]
 pub struct UserListQuery {
@@ -133,5 +134,31 @@ pub async fn delete_user(
 ) -> AppResult<Json<serde_json::Value>> {
     auth.require_permission(Permission::ManageUsers)?;
     user_service::delete_user(&state.pool, user_id, auth.0.sub, Some(&meta)).await?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+// ─── 2FA break-glass reset ───
+
+/// Super_admin-only: strip a user's TOTP enrolment and backup codes and
+/// revoke their sessions, so someone locked out of a lost authenticator (or
+/// locked out by a pre-v2 key-management bug) can sign in again without
+/// direct database access. The caller re-presents their own password.
+pub async fn reset_user_2fa(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(user_id): Path<Uuid>,
+    meta: AuditRequestMeta,
+    ValidatedJson(req): ValidatedJson<AdminTotpResetRequest>,
+) -> AppResult<Json<serde_json::Value>> {
+    // Deliberately not `require_permission`: no permission expresses
+    // "platform super_admin" here, and every role that holds ManageUsers
+    // (company admins) must not be able to switch off their own users'
+    // second factor — that would make phishing one company admin worth a
+    // company-wide 2FA bypass.
+    if !auth.has_any_role(&["super_admin"]) {
+        return Err(AppError::Forbidden("super_admin only".into()));
+    }
+
+    totp_service::admin_reset(&state.pool, user_id, auth.0.sub, &req.password, Some(&meta)).await?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }

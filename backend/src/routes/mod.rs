@@ -264,6 +264,9 @@ pub fn create_router(state: AppState) -> Router {
             "/admin/users/{id}",
             put(admin::update_user).delete(admin::delete_user),
         )
+        // Break-glass 2FA reset (super_admin only, password re-confirmed in
+        // the handler); the only recovery path that does not need SQL access.
+        .route("/admin/users/{id}/2fa/reset", post(admin::reset_user_2fa))
         // Employees
         .route("/employees", get(employee::list).post(employee::create))
         .route(
