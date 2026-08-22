@@ -331,6 +331,8 @@ pub fn create_router(state: AppState) -> Router {
             put(payroll::return_run_for_changes),
         )
         .route("/payroll/runs/{id}/lock", put(payroll::lock_run))
+        .route("/payroll/runs/{id}/cancel", put(payroll::cancel_run))
+        .route("/payroll/runs/{id}/reverse", put(payroll::reverse_run))
         // Documents (static routes before {id})
         .route("/documents", get(document::list).post(document::create))
         .route(

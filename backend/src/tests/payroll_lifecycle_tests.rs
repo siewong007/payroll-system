@@ -128,3 +128,154 @@ async fn payroll_lifecycle_return_for_changes_reopens_processed_run() {
 
     assert_eq!(reason.as_deref(), Some("PCB needs review"));
 }
+
+/// Cancellation frees the period for a re-run and releases what the run
+/// consumed: claims return to approved, staged entries become unprocessed
+/// (plan item 11).
+#[tokio::test]
+async fn cancelling_a_processed_run_releases_the_period_and_its_sources() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let group_id = seed_payroll_group(&pool, company_id).await;
+    let _employee_id = seed_employee(&pool, company_id, Some(group_id), 450_000).await;
+    let user_id = seed_user(&pool, company_id, "payroll_admin").await;
+
+    let run = payroll_engine::process_payroll(
+        &pool,
+        company_id,
+        group_id,
+        2024,
+        5,
+        NaiveDate::from_ymd_opt(2024, 6, 5).unwrap(),
+        user_id,
+        None,
+        None,
+    )
+    .await
+    .expect("process payroll");
+
+    let cancelled = payroll_lifecycle_service::cancel_run(
+        &pool,
+        company_id,
+        run.id,
+        user_id,
+        Some("wrong population".into()),
+        None,
+    )
+    .await
+    .expect("cancel");
+    assert_eq!(cancelled.status, "cancelled");
+
+    // Claims this run reimbursed are payable again…
+    let paid_claims: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM claims c JOIN employees e ON c.employee_id = e.id
+         WHERE e.company_id = $1 AND c.payroll_run_id IS NOT NULL AND c.status = 'processed'",
+    )
+    .bind(company_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap_or(0);
+    assert_eq!(paid_claims, 0);
+
+    // …and the period accepts a new run (the unique index exempts 'cancelled').
+    let rerun = payroll_engine::process_payroll(
+        &pool,
+        company_id,
+        group_id,
+        2024,
+        5,
+        NaiveDate::from_ymd_opt(2024, 6, 6).unwrap(),
+        user_id,
+        None,
+        None,
+    )
+    .await
+    .expect("re-run after cancellation must be possible");
+    assert_eq!(rerun.status, "processed");
+    assert_eq!(rerun.employee_count, 1);
+}
+
+/// A paid run can only go back out through reversal, which releases its
+/// sources in the same transaction as the status change; a plain cancel is
+/// refused for paid runs.
+#[tokio::test]
+async fn only_reversal_can_void_a_paid_run() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let group_id = seed_payroll_group(&pool, company_id).await;
+    let _employee_id = seed_employee(&pool, company_id, Some(group_id), 450_000).await;
+    let user_id = seed_user(&pool, company_id, "payroll_admin").await;
+
+    let run = payroll_engine::process_payroll(
+        &pool,
+        company_id,
+        group_id,
+        2024,
+        7,
+        NaiveDate::from_ymd_opt(2024, 8, 5).unwrap(),
+        user_id,
+        None,
+        None,
+    )
+    .await
+    .expect("process");
+    payroll_lifecycle_service::submit_for_approval(&pool, company_id, run.id, user_id, None)
+        .await
+        .expect("submit");
+    payroll_lifecycle_service::approve(&pool, company_id, run.id, user_id, None)
+        .await
+        .expect("approve");
+    payroll_lifecycle_service::lock_as_paid(&pool, company_id, run.id, user_id, None)
+        .await
+        .expect("lock");
+
+    let err = payroll_lifecycle_service::cancel_run(&pool, company_id, run.id, user_id, None, None)
+        .await
+        .expect_err("paid runs cannot simply be cancelled");
+    assert!(format!("{err}").contains("reverse"), "{err}");
+
+    let reversed = payroll_lifecycle_service::reverse_paid_run(
+        &pool,
+        company_id,
+        run.id,
+        user_id,
+        Some("bank file recalled".into()),
+        None,
+    )
+    .await
+    .expect("reverse");
+    assert_eq!(reversed.status, "cancelled");
+
+    // The period is free again.
+    let rerun = payroll_engine::process_payroll(
+        &pool,
+        company_id,
+        group_id,
+        2024,
+        7,
+        NaiveDate::from_ymd_opt(2024, 8, 6).unwrap(),
+        user_id,
+        None,
+        None,
+    )
+    .await
+    .expect("re-run after reversal");
+    assert_eq!(rerun.employee_count, 1);
+
+    // Both the reversal itself and the reason are on the trail.
+    let has_reverse: i64 = sqlx::query_scalar(
+        r#"SELECT COUNT(*) FROM audit_logs
+           WHERE entity_type = 'payroll_run' AND entity_id = $1
+             AND action = 'reverse'
+             AND old_values->>'status' = 'paid'"#,
+    )
+    .bind(run.id)
+    .fetch_one(&pool)
+    .await
+    .expect("audit lookup");
+    assert_eq!(has_reverse, 1);
+}

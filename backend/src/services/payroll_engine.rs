@@ -2367,9 +2367,15 @@ mod payslip_golden_tests {
             // 2. Monthly PCB rounds UP to the nearest ringgit before it is
             //    withheld, costing at most one extra ringgit.
             //
-            // Anything beyond step + rounding is a genuine defect.
+            // 3. The individual-rebate ceiling is a CLIFF: chargeable income
+            //    moving past it raises the year's tax by the whole RM400
+            //    rebate, worth up to 40000/6 = 6667 sen of monthly PCB on
+            //    this fixture's June run.
+            //
+            // Anything beyond steps + rounding + one rebate cliff is a real
+            // defect.
             prop_assert!(
-                b.net >= a.net - 1_380 - 100,
+                b.net >= a.net - 1_380 - 100 - 6_700,
                 "net dropped by more than band steps plus PCB rounding: {} -> {}",
                 a.net,
                 b.net

@@ -445,3 +445,59 @@ pub async fn get_items(
 
     Ok(Json(items))
 }
+
+#[derive(Debug, serde::Deserialize)]
+pub struct RunCancelRequest {
+    pub reason: Option<String>,
+}
+
+/// Cancel a not-yet-paid run and release what it consumed (plan item 11).
+pub async fn cancel_run(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    audit_meta: AuditRequestMeta,
+    Path(id): Path<Uuid>,
+    body: Option<Json<RunCancelRequest>>,
+) -> AppResult<Json<PayrollRun>> {
+    auth.require_permission(Permission::ManagePayrollDraft)?;
+    let company_id = auth
+        .0
+        .company_id
+        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
+    let run = crate::services::payroll_lifecycle_service::cancel_run(
+        &state.pool,
+        company_id,
+        id,
+        auth.0.sub,
+        body.and_then(|Json(b)| b.reason),
+        Some(&audit_meta),
+    )
+    .await?;
+    Ok(Json(run))
+}
+
+/// Reverse a paid run: the ledger truthfully shows it voided, consumed claims
+/// and entries are released, payslip history stays (plan item 11).
+pub async fn reverse_run(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    audit_meta: AuditRequestMeta,
+    Path(id): Path<Uuid>,
+    body: Option<Json<RunCancelRequest>>,
+) -> AppResult<Json<PayrollRun>> {
+    auth.require_permission(Permission::MarkPayrollPaid)?;
+    let company_id = auth
+        .0
+        .company_id
+        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
+    let run = crate::services::payroll_lifecycle_service::reverse_paid_run(
+        &state.pool,
+        company_id,
+        id,
+        auth.0.sub,
+        body.and_then(|Json(b)| b.reason),
+        Some(&audit_meta),
+    )
+    .await?;
+    Ok(Json(run))
+}

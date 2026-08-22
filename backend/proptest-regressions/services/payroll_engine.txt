@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 23a05fc3187d455f1e29d3ea1f7dd3f42b99a54876a35f0ecceea3fea11df1c8 # shrinks to low = 629310, delta = 6013, allowance = 4478, unpaid = 2687
+cc 82296b431b5b88733c0a56fa93af17301c200e8a394c7ea7a1be7d8da812ea6e # shrinks to low = 598925, delta = 4066, allowance = 34049, unpaid = 1873
