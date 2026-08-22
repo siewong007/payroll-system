@@ -75,6 +75,8 @@ services:
       # it into /opt/payroll/secrets.env on install.
       TOTP_ENCRYPTION_KEY: "${TOTP_ENCRYPTION_KEY:?TOTP_ENCRYPTION_KEY is required}"
       JWT_EXPIRY_HOURS: "${JWT_EXPIRY_HOURS:-1}"
+      # Structured JSON logs for docker logging drivers (plan item 24)
+      LOG_FORMAT: json
       SERVER_HOST: "0.0.0.0"
       SERVER_PORT: "8080"
       # The host Caddy is the ONLY path to this container: port 8080 is

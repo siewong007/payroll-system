@@ -52,9 +52,18 @@ async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
 
     // Init tracing
-    tracing_subscriber::fmt()
+    // Structured JSON when running as a container (LOG_FORMAT=json); humans
+    // get the pretty formatter locally (plan item 24). Without per-request
+    // telemetry the deploy log documented its own blindness.
+    let log_format = std::env::var("LOG_FORMAT").unwrap_or_else(|_| "pretty".into());
+    let subscriber = tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
-        .init();
+        .with_target(false);
+    if log_format.eq_ignore_ascii_case("json") {
+        subscriber.json().init();
+    } else {
+        subscriber.init();
+    }
 
     // Load config
     let config = AppConfig::from_env();
@@ -132,7 +141,40 @@ async fn main() -> anyhow::Result<()> {
             std::time::Duration::from_secs(30),
         ))
         .layer(cors)
-        .layer(TraceLayer::new_for_http())
+        // Correlation IDs: honour an upstream x-request-id (CloudFront issues
+        // one) or mint a UUID, and echo it back — so a user-reported timestamp
+        // maps to exactly one log line across API and access logs.
+        .layer(tower_http::request_id::PropagateRequestIdLayer::x_request_id())
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(|request: &axum::extract::Request| {
+                    let request_id = request
+                        .extensions()
+                        .get::<tower_http::request_id::RequestId>()
+                        .and_then(|id| id.header_value().to_str().ok())
+                        .unwrap_or("-");
+                    tracing::info_span!(
+                        "http_request",
+                        request_id = %request_id,
+                        method = %request.method(),
+                        uri = %request.uri(),
+                    )
+                })
+                .on_response(
+                    |response: &axum::response::Response,
+                     latency: std::time::Duration,
+                     _span: &tracing::Span| {
+                        tracing::info!(
+                            status = %response.status(),
+                            latency_ms = latency.as_millis() as u64,
+                            "request completed"
+                        )
+                    },
+                ),
+        )
+        .layer(tower_http::request_id::SetRequestIdLayer::x_request_id(
+            tower_http::request_id::MakeRequestUuid,
+        ))
         .layer(axum::Extension(JwtSecret(config.jwt_secret.clone())))
         // Gzip-compress eligible responses (large JSON lists, CSV/report exports).
         // Outermost so it wraps the final response body.
