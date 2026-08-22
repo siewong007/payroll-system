@@ -1,0 +1,37 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT employee_id, day_type AS \"day_type!\", COALESCE(SUM(overtime_hours), 0)::FLOAT AS \"hours!\"\n           FROM (\n               SELECT ar.employee_id,\n                      ar.overtime_hours,\n                      -- The local calendar date decides what the day was worth:\n                      -- a public holiday or a configured rest day earns its own\n                      -- multiplier instead of being flattened into `normal`\n                      -- (plan item 12). Holidays match their original date or,\n                      -- for recurring rows, the same month/day.\n                      CASE\n                        WHEN EXISTS (\n                          SELECT 1 FROM holidays h\n                          WHERE h.company_id = ar.company_id\n                            AND (h.date = local_date\n                                 OR (h.is_recurring\n                                     AND EXTRACT(MONTH FROM h.date) = EXTRACT(MONTH FROM local_date)\n                                     AND EXTRACT(DAY FROM h.date) = EXTRACT(DAY FROM local_date)))\n                        ) THEN 'public_holiday'\n                        WHEN COALESCE(\n                          (SELECT w.is_working_day FROM working_day_config w\n                           WHERE w.company_id = ar.company_id\n                             AND w.day_of_week = EXTRACT(DOW FROM local_date)::int),\n                          TRUE\n                        ) = FALSE THEN 'rest_day'\n                        ELSE 'normal'\n                      END AS day_type\n               FROM attendance_records ar\n               LEFT JOIN overtime_applications oa\n                   ON ar.employee_id = oa.employee_id\n                   AND (ar.check_in_at AT TIME ZONE $4)::date = oa.ot_date\n                   AND oa.status = 'approved'\n               CROSS JOIN LATERAL (\n                   SELECT (ar.check_in_at AT TIME ZONE $4)::date AS local_date\n               ) ld\n               WHERE ar.employee_id = ANY($1)\n                 -- Bucket by the company's local date, as a half-open range on\n                 -- the raw timestamptz: a closed upper bound at period_end + 1\n                 -- put a check-in at exactly that midnight in two consecutive\n                 -- runs, and wrapping the column in AT TIME ZONE would cost the\n                 -- (company_id, check_in_at) index.\n                 AND ar.check_in_at >= ($2::date)::timestamp AT TIME ZONE $4\n                 AND ar.check_in_at < ($3::date + 1)::timestamp AT TIME ZONE $4\n                 AND oa.id IS NULL\n           ) buckets\n           GROUP BY employee_id, day_type",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "employee_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "day_type!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "hours!",
+        "type_info": "Float8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "UuidArray",
+        "Date",
+        "Date",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      null,
+      null
+    ]
+  },
+  "hash": "8bac8f84ed6282f87b078288b5d1c0c768a5ccfecd1a6d9630dac4ef96fc8664"
+}

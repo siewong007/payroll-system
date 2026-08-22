@@ -268,18 +268,19 @@ async fn gather_run_inputs(
             .map(|r| (r.employee_id, (r.bonus, r.commission)))
             .collect();
 
-    // 3. Batch fetch attendance OT hours
-    let attendance_ot_map: HashMap<Uuid, f64> = payroll_reads::attendance_ot_hours(
-        &mut *conn,
-        &employee_ids,
-        period_start,
-        period_end,
-        &tz,
-    )
-    .await?
-    .into_iter()
-    .map(|r| (r.employee_id, r.hours))
-    .collect();
+    // 3. Batch fetch attendance OT hours, bucketed by the local date's type
+    let mut attendance_ot_map: HashMap<Uuid, Vec<(String, f64)>> = HashMap::new();
+    for row in
+        payroll_reads::attendance_ot_hours(&mut *conn, &employee_ids, period_start, period_end, &tz)
+            .await?
+    {
+        if row.hours > 0.0 {
+            attendance_ot_map
+                .entry(row.employee_id)
+                .or_default()
+                .push((row.day_type, row.hours));
+        }
+    }
 
     // 3b. Batch fetch approved overtime applications
     let mut approved_ot_map: HashMap<Uuid, Vec<(String, f64)>> = HashMap::new();
@@ -1232,7 +1233,6 @@ fn compute_payslip(
         .unpaid_leave
         .get(&emp.id)
         .unwrap_or(&(0, Decimal::ZERO));
-    let attendance_ot_hours = *bulk.attendance_ot_hours.get(&emp.id).unwrap_or(&0.0);
 
     // Overtime is rated through `OvertimeSettings::rate_overtime`, which the
     // approval path calls too — the hourly rate stays unrounded and only the
@@ -1299,24 +1299,33 @@ fn compute_payslip(
     // multiplier, none of which survive in `total_overtime` alone.
     let mut overtime_lines: Vec<PayslipLine> = Vec::new();
 
-    // Attendance-based OT (records without approved OT applications)
-    let attendance_ot_pay = if attendance_ot_hours > 0.0 {
-        let hours = Decimal::try_from(attendance_ot_hours).unwrap_or_default();
-        let rating = ot.rate_overtime(emp.hourly_rate, emp.basic_salary, "normal", hours);
-        let amount = rating.amount_sen;
-        overtime_lines.push(PayslipLine::earning(
-            "overtime",
-            format!(
-                "Overtime (attendance) — {} h @ {}x",
-                trim_decimal(hours),
-                trim_decimal(ot.multiplier_normal)
-            ),
-            amount,
-        ));
-        amount
-    } else {
-        0
-    };
+    // Attendance-based OT (records without approved OT applications), rated
+    // by what the local date was worth: rest-day and public-holiday shifts
+    // earn their own multipliers instead of 1.5x across the board.
+    let attendance_ot_pay = bulk
+        .attendance_ot_hours
+        .get(&emp.id)
+        .map(|buckets| {
+            let mut total = 0i64;
+            for (ot_type, hours) in buckets {
+                let hours = Decimal::try_from(*hours).unwrap_or_default();
+                let multiplier = ot.multiplier_for(ot_type);
+                let rating = ot.rate_overtime(emp.hourly_rate, emp.basic_salary, ot_type, hours);
+                overtime_lines.push(PayslipLine::earning(
+                    "overtime",
+                    format!(
+                        "Overtime (attendance, {}) — {} h @ {}x",
+                        ot_type.replace('_', " "),
+                        trim_decimal(hours),
+                        trim_decimal(multiplier)
+                    ),
+                    rating.amount_sen,
+                ));
+                total += rating.amount_sen;
+            }
+            total
+        })
+        .unwrap_or(0);
 
     // Approved OT applications with type-based rate multipliers
     let approved_ot_pay = if let Some(ot_entries) = bulk.approved_ot.get(&emp.id) {
@@ -2267,7 +2276,8 @@ mod payslip_golden_tests {
                 );
             }
             if ot_hours > 0.0 {
-                bulk.attendance_ot_hours.insert(emp.id, ot_hours);
+                bulk.attendance_ot_hours
+                    .insert(emp.id, vec![("normal".to_string(), ot_hours)]);
             }
             if unpaid > 0 {
                 bulk.variable_deductions.insert(emp.id, unpaid);

@@ -428,7 +428,10 @@ pub(crate) struct BulkPayrollData {
     /// `variable_deductions`; carried separately so the payslip can report them
     /// under their own name instead of anonymously inside other deductions.
     pub(crate) unpaid_leave: HashMap<Uuid, (i64, Decimal)>,
-    pub(crate) attendance_ot_hours: HashMap<Uuid, f64>,
+    /// Attendance-derived overtime bucketed by the local date's type — a
+    /// rest-day or public-holiday shift earns its own multiplier instead of
+    /// being flattened into `normal`.
+    pub(crate) attendance_ot_hours: HashMap<Uuid, Vec<(String, f64)>>,
     pub(crate) approved_ot: HashMap<Uuid, Vec<(String, f64)>>,
     /// The individual claims this run will reimburse, not a per-employee sum.
     /// The engine used to SUM inside its transaction and then re-run the same
@@ -671,6 +674,9 @@ pub struct EmployeeTotal {
 #[derive(Debug)]
 pub struct EmployeeHours {
     pub employee_id: Uuid,
+    /// Which multiplier the day earns: `normal`, `rest_day` or
+    /// `public_holiday` (plan item 12).
+    pub day_type: String,
     pub hours: f64,
 }
 

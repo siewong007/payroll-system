@@ -129,7 +129,17 @@ pub async fn check_out(
            FROM (
                SELECT open_record.id,
                       open_record.elapsed_hours,
-                      GREATEST(0, open_record.elapsed_hours - COALESCE((
+                      GREATEST(0, open_record.elapsed_hours
+                          -- The unpaid break is part of presence but not of
+                          -- work: without subtracting it, a standard lunch
+                          -- inside a long day was rated at the overtime
+                          -- multiplier (plan item 12). It comes from the same
+                          -- schedule row as the shift length.
+                          - COALESCE((SELECT ws.unpaid_break_minutes
+                              FROM company_work_schedules ws
+                              WHERE ws.company_id = open_record.company_id AND ws.is_default = TRUE
+                            ), 0) / 60.0
+                          - COALESCE((
                           -- Wrap past midnight: a night shift (e.g. 22:00->06:00)
                           -- has end_time < start_time, and a plain subtraction
                           -- yields -16h, which would turn an 8h shift into 24h of

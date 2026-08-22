@@ -12,6 +12,9 @@ pub struct WorkSchedule {
     pub grace_minutes: i32,
     pub half_day_hours: rust_decimal::Decimal,
     pub timezone: String,
+    /// Company-policy unpaid break subtracted before attendance-derived
+    /// overtime is rated (plan item 12). Not statutory: companies differ.
+    pub unpaid_break_minutes: i32,
     pub is_default: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -28,6 +31,8 @@ pub struct CreateWorkScheduleRequest {
     pub grace_minutes: Option<i32>,
     /// Hours threshold for half-day (default 4.0)
     pub half_day_hours: Option<f64>,
+    /// Unpaid break minutes (default 60)
+    pub unpaid_break_minutes: Option<i32>,
     /// IANA timezone, e.g. "Asia/Kuala_Lumpur"
     pub timezone: Option<String>,
 }
@@ -40,4 +45,5 @@ pub struct UpdateWorkScheduleRequest {
     pub grace_minutes: Option<i32>,
     pub half_day_hours: Option<f64>,
     pub timezone: Option<String>,
+    pub unpaid_break_minutes: Option<i32>,
 }

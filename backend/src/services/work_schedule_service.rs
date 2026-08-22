@@ -42,6 +42,7 @@ pub async fn upsert_default_schedule(
     let name = req.name.as_deref().unwrap_or("Default");
     let grace = req.grace_minutes.unwrap_or(15);
     let half_day = req.half_day_hours.unwrap_or(4.0);
+    let unpaid_break = req.unpaid_break_minutes.unwrap_or(60);
     let tz = req
         .timezone
         .as_deref()
@@ -52,6 +53,13 @@ pub async fn upsert_default_schedule(
             "Grace minutes must be between 0 and 120".into(),
         ));
     }
+    // Same policy bound as the database CHECK: a full working day is the most
+    // break anyone could plausibly configure away.
+    if !(0..=480).contains(&unpaid_break) {
+        return Err(AppError::BadRequest(
+            "Unpaid break minutes must be between 0 and 480".into(),
+        ));
+    }
     // The stored zone is interpolated into `AT TIME ZONE` by every attendance
     // read, write and by the daily absent job. Unvalidated, one typo here made
     // each of those a 500 for this tenant — and stalled the platform-wide job.
@@ -60,7 +68,15 @@ pub async fn upsert_default_schedule(
     let existing = get_default_schedule(pool, company_id).await?;
 
     let schedule = company_work_schedules::upsert_default(
-        pool, company_id, name, start, end, grace, half_day, tz,
+        pool,
+        company_id,
+        name,
+        start,
+        end,
+        grace,
+        half_day,
+        tz,
+        unpaid_break,
     )
     .await?;
 
@@ -121,10 +137,18 @@ pub async fn update_schedule(
         existing.half_day_hours.to_f64().unwrap_or(4.0)
     });
     let tz = req.timezone.as_deref().unwrap_or(&existing.timezone);
+    let unpaid_break = req
+        .unpaid_break_minutes
+        .unwrap_or(existing.unpaid_break_minutes);
 
     if !(0..=120).contains(&grace) {
         return Err(AppError::BadRequest(
             "Grace minutes must be between 0 and 120".into(),
+        ));
+    }
+    if !(0..=480).contains(&unpaid_break) {
+        return Err(AppError::BadRequest(
+            "Unpaid break minutes must be between 0 and 480".into(),
         ));
     }
     timezone::validate(tz)?;
@@ -139,6 +163,7 @@ pub async fn update_schedule(
         grace,
         half_day,
         tz,
+        unpaid_break,
     )
     .await?;
 

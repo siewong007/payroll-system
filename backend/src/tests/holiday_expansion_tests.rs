@@ -3,8 +3,6 @@
 //! these reads did not, so leave validation charged employees for days the
 //! cron agreed they were never expected to work.
 
-use uuid::Uuid;
-
 use crate::repositories::holidays;
 use crate::tests::support::{seed_company, seed_user, skip_if_no_db};
 

@@ -81,10 +81,13 @@ async fn list_in_span(
             // Feb-29 in a non-leap year yields None: skip, don't shift.
             if let Some(occurrence) =
                 NaiveDate::from_ymd_opt(year, holiday.date.month(), holiday.date.day())
+                && occurrence >= start
+                && occurrence >= holiday.date
             {
-                if occurrence >= start && occurrence >= holiday.date {
-                    out.push(Holiday { date: occurrence, ..holiday.clone() });
-                }
+                out.push(Holiday {
+                    date: occurrence,
+                    ..holiday.clone()
+                });
             }
             year += 1;
         }
