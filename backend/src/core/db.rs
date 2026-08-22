@@ -1,10 +1,41 @@
 use sqlx::PgPool;
-use sqlx::postgres::PgPoolOptions;
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 
+/// Every unit of work is bounded (plan item 23):
+///
+/// * `acquire_timeout` caps how long a request waits for a connection before
+///   it fails fast instead of piling up behind a saturated pool.
+/// * `idle_timeout` / `max_lifetime` recycle connections so Postgres-side
+///   bloat and restarts do not concentrate in one long-lived socket.
+/// * `statement_timeout` bounds any single query — the payroll persist loop
+///   holds the one-active-period index for its whole run, and an unbounded
+///   query on a 0.30-vCPU host can stall every tenant behind it.
+/// * `lock_timeout` keeps a blocked DDL/index wait from queueing everyone.
+/// * `idle_in_transaction_session_timeout` kills leaked transactions, which
+///   are otherwise invisible until the pool starves.
 pub async fn create_pool(database_url: &str) -> PgPool {
+    let statement_timeout_ms = 30_000;
+    let lock_timeout_ms = 10_000;
+    let idle_in_transaction_timeout_ms = 60_000;
+
+    let options = database_url
+        .parse::<PgConnectOptions>()
+        .expect("Invalid DATABASE_URL")
+        .options([
+            ("statement_timeout", &statement_timeout_ms.to_string()),
+            ("lock_timeout", &lock_timeout_ms.to_string()),
+            (
+                "idle_in_transaction_session_timeout",
+                &idle_in_transaction_timeout_ms.to_string(),
+            ),
+        ]);
+
     PgPoolOptions::new()
         .max_connections(10)
-        .connect(database_url)
+        .acquire_timeout(std::time::Duration::from_secs(5))
+        .idle_timeout(Some(std::time::Duration::from_secs(300)))
+        .max_lifetime(Some(std::time::Duration::from_secs(1_800)))
+        .connect_with(options)
         .await
         .expect("Failed to create database pool")
 }

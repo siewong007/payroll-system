@@ -8,6 +8,7 @@ use tokio::net::TcpListener;
 use axum::http::{HeaderValue, Method};
 use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::cors::CorsLayer;
+use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
 use url::Url;
@@ -122,6 +123,14 @@ async fn main() -> anyhow::Result<()> {
         // CORS layer so the 500 it synthesises still carries CORS headers and
         // the browser can read it.
         .layer(CatchPanicLayer::custom(panic_response))
+        // Outermost request bound: a handler that cannot finish within this
+        // budget returns 408/503-shaped failure instead of holding its worker,
+        // its connection and possibly a DB slot forever. PDF/statutory export
+        // routes stay comfortably inside it on the production host.
+        .layer(TimeoutLayer::with_status_code(
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            std::time::Duration::from_secs(30),
+        ))
         .layer(cors)
         .layer(TraceLayer::new_for_http())
         .layer(axum::Extension(JwtSecret(config.jwt_secret.clone())))
@@ -134,7 +143,9 @@ async fn main() -> anyhow::Result<()> {
     // so a silent log means the runtime's timers are wedged — not that the
     // task had nothing to do.
     let cleanup_pool = pool.clone();
-    tokio::spawn(async move {
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let mut cleanup_shutdown = shutdown_rx.clone();
+    let cleanup_handle = tokio::spawn(async move {
         use payroll_system::repositories::{attendance_network_observations, attendance_qr_tokens};
         use payroll_system::services::attendance_network_service;
 
@@ -143,7 +154,10 @@ async fn main() -> anyhow::Result<()> {
         // catch-up burst of every tick missed while suspended.
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
-            interval.tick().await;
+            tokio::select! {
+                _ = cleanup_shutdown.changed() => break,
+                _ = interval.tick() => {}
+            }
             tracing::info!("refresh-token cleanup: tick");
             match sqlx::query(
                 "DELETE FROM refresh_tokens \
@@ -212,7 +226,8 @@ async fn main() -> anyhow::Result<()> {
     // pass covers the restart-after-downtime case without waiting for the next
     // window.
     let absent_pool = pool.clone();
-    tokio::spawn(async move {
+    let mut absent_shutdown = shutdown_rx.clone();
+    let absent_handle = tokio::spawn(async move {
         use payroll_system::core::schedule::next_daily_run_utc;
         use payroll_system::services::attendance_service;
 
@@ -239,7 +254,10 @@ async fn main() -> anyhow::Result<()> {
                 sleep_secs = delay.as_secs(),
                 "auto-absent: scheduled next run"
             );
-            tokio::time::sleep(delay).await;
+            tokio::select! {
+                _ = absent_shutdown.changed() => break,
+                _ = tokio::time::sleep(delay) => {}
+            }
 
             tracing::info!("auto-absent: tick fired; marking absentees");
             match attendance_service::run_auto_absent_catchup(&absent_pool).await {
@@ -258,6 +276,11 @@ async fn main() -> anyhow::Result<()> {
     .with_graceful_shutdown(shutdown_signal())
     .await
     .context("API server stopped unexpectedly")?;
+
+    // Release the background loops so they stop between ticks instead of
+    // dying mid-query when the runtime drops.
+    let _ = shutdown_tx.send(true);
+    let _ = tokio::join!(cleanup_handle, absent_handle);
 
     tracing::info!("Shutting down — closing database pool...");
     pool.close().await;
