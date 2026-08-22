@@ -387,3 +387,122 @@ mod tests {
         assert!(t.epf_band("A", 250_000).is_none());
     }
 }
+
+/// DB-free rule tables for the payslip golden and property harness. Lives in
+/// its own module so the path reads cleanly from other test modules.
+#[cfg(test)]
+pub(crate) mod golden {
+    use super::*;
+
+    pub(crate) fn golden_fixture() -> StatutoryTables {
+        let eff = NaiveDate::from_ymd_opt(2025, 1, 1).unwrap();
+        let mut epf = Vec::new();
+        for category in ["A", "B", "C", "D", "E"] {
+            for (from, to, employee_contribution, employer_contribution) in [
+                (0i64, 200_000i64, 1_000i64, 1_300i64),
+                (200_001, i64::MAX, 2_200, 2_600),
+            ] {
+                epf.push(EpfBand {
+                    category: category.to_string(),
+                    wage_from: from,
+                    wage_to: to,
+                    employee_contribution,
+                    employer_contribution,
+                    effective_from: eff,
+                });
+            }
+        }
+
+        let socso = vec![
+            SocsoBand {
+                wage_from: 0,
+                wage_to: 200_000,
+                first_cat_employee: 100,
+                first_cat_employer: 400,
+                second_cat_employer: 100,
+                effective_from: eff,
+            },
+            SocsoBand {
+                wage_from: 200_001,
+                wage_to: i64::MAX,
+                first_cat_employee: 220,
+                first_cat_employer: 880,
+                second_cat_employer: 220,
+                effective_from: eff,
+            },
+        ];
+
+        let eis = vec![
+            EisBand {
+                wage_from: 0,
+                wage_to: 200_000,
+                employee_contribution: 50,
+                employer_contribution: 200,
+                effective_from: eff,
+            },
+            EisBand {
+                wage_from: 200_001,
+                wage_to: i64::MAX,
+                employee_contribution: 110,
+                employer_contribution: 440,
+                effective_from: eff,
+            },
+        ];
+
+        let pcb_brackets = vec![
+            PcbBracketLookup {
+                chargeable_income_from: 0,
+                chargeable_income_to: 500_000,
+                tax_rate_percent: rust_decimal::Decimal::ZERO,
+                cumulative_tax: 0,
+            },
+            PcbBracketLookup {
+                chargeable_income_from: 500_001,
+                chargeable_income_to: i64::MAX,
+                tax_rate_percent: rust_decimal::Decimal::from(10),
+                cumulative_tax: 0,
+            },
+        ];
+
+        let pcb_reliefs = [
+            ("individual", 900_000),
+            ("epf_additional", 60_000),
+            ("socso_relief", 35_000),
+            ("eis_relief", 35_000),
+            ("spouse", 40_000),
+            ("child_under_18", 20_000),
+            ("tax_rebate_individual", 40_000),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect();
+
+        let rule_sets = vec![VerifiedRuleSet {
+            rule_code: "test".to_string(),
+            rule_set_id: uuid::Uuid::nil(),
+            dataset_key: "golden-fixture".to_string(),
+            source_version: None,
+            source_sha256: None,
+            effective_from: eff,
+            effective_to: None,
+        }];
+
+        // Ceilings mirror what a real load derives: the top of the newest
+        // schedule. The lookups clamp wages through them, so `None` would
+        // reject every wage outright.
+        let socso_ceiling = socso.iter().map(|b| b.wage_to).max();
+        let eis_ceiling = eis.iter().map(|b| b.wage_to).max();
+        StatutoryTables {
+            effective_date: eff,
+            tax_year: 2025,
+            epf,
+            socso,
+            socso_ceiling,
+            eis,
+            eis_ceiling,
+            pcb_brackets,
+            pcb_reliefs,
+            rule_sets,
+        }
+    }
+}
