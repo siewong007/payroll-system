@@ -2195,6 +2195,55 @@ mod payslip_golden_tests {
         assert_eq!(c.net, 300_000 - c.total_deductions);
     }
 
+    /// A citizen past 60 derives EPF Part C, not Part A — the age/residency
+    /// derivation, pinned end to end through the engine.
+    #[test]
+    fn golden_over_sixty_citizen_derives_part_c() {
+        let mut emp = employee(300_000, NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(), None);
+        emp.date_of_birth = Some(NaiveDate::from_ymd_opt(1962, 3, 1).unwrap()); // 63 on the effective date
+        let p = period(2025, 6);
+        let c = compute(&emp, &p, &empty_bulk()).expect("compute");
+        assert_eq!(c.epf.category, "C");
+    }
+
+    /// Additional remuneration goes through the Schedule 2 differential: the
+    /// bonus never enters the annualised normal base (the normal leg of the
+    /// PCB is byte-identical to a bonus-free employee's), and the differential
+    /// is the increase in the year's payable tax caused by the bonus alone —
+    /// which on this fixture crosses the individual-rebate ceiling and so
+    /// gains RM90,000 of tax net of the RM40,000 rebate difference:
+    ///   without bonus: chargeable 3,282,290 ≤ ceiling → tax 278,228 − 40,000
+    ///   with bonus:    chargeable 3,782,290 >  ceiling → tax 328,228 − 0
+    ///   differential   = 90,000 (already ringgit-grained)
+    #[test]
+    fn golden_additional_remuneration_uses_schedule_2() {
+        let build = |bonus: i64| {
+            let emp = employee(600_000, NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(), None);
+            let p = period(2025, 6);
+            let mut bulk = empty_bulk();
+            if bonus > 0 {
+                // Production reads stage the bonus rows in the category totals
+                // AND carry them separately for the PCB split.
+                bulk.variable_earnings.insert(emp.id, bonus);
+                bulk.taxable_variable_earnings.insert(emp.id, bonus);
+                bulk.bonus_commission.insert(emp.id, (bonus, 0));
+            }
+            compute(&emp, &p, &bulk).expect("compute")
+        };
+
+        let baseline = build(0);
+        let bonused = build(500_000);
+
+        // Statutory contributions still levy on the bonus…
+        assert_eq!(bonused.gross, baseline.gross + 500_000);
+        assert_eq!(bonused.epf.employee, baseline.epf.employee);
+        assert_eq!(bonused.socso.employee, baseline.socso.employee);
+
+        // …while the normal PCB leg is untouched and the differential rides
+        // on top.
+        assert_eq!(bonused.pcb, baseline.pcb + 90_000);
+    }
+
     // ── properties (hold for any rule-table content) ────────────────────
 
     proptest::proptest! {
