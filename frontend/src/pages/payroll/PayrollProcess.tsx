@@ -357,7 +357,7 @@ export function PayrollProcess() {
                     ? 'monthly_allowance'
                     : kind === 'deduction'
                       ? 'manual_deduction'
-                      : 'manual_adjustment',
+                      : 'other_earning',
                   description: kind === 'monthly_allowance' && !prev.description
                     ? 'Monthly allowance'
                     : prev.description,
