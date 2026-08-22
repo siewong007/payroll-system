@@ -201,3 +201,53 @@ jobs:
         # bun matches an ignore against the advisory URL, so the GHSA id is
         # required — `--ignore CVE-2026-14257` would silently match nothing.
       - run: bun audit --audit-level=high --ignore GHSA-mh99-v99m-4gvg
+
+  backend-migrations:
+    name: Backend Migrations Forward+Immutable
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Enforce migration immutability (plan item 34)
+        run: |
+          git fetch origin main
+          status=$(git diff --name-status origin/main...HEAD -- backend/migrations || true)
+          echo "$status"
+          # Only ADDITIONS are freely allowed. Modifying or renaming an
+          # installed migration breaks every deployed database; squashing is a
+          # deliberate rebaseline and must land as deletions + additions in a
+          # commit that says so.
+          bad=$(echo "$status" | grep -E '^(M|R|C)[0-9]*\s' || true)
+          if [ -n "$bad" ]; then
+            echo "::error::Installed migrations were modified/renamed: $bad"
+            exit 1
+          fi
+
+      - name: Start PostgreSQL 19 Beta 2
+        run: |
+          docker run --rm -d --name pg-migrate             -e POSTGRES_USER=payroll -e POSTGRES_PASSWORD=ci -e POSTGRES_DB=payroll_db             -p 5432:5432 postgres:19beta2-alpine
+          for i in $(seq 1 30); do
+            docker exec pg-migrate pg_isready -U payroll && break
+            sleep 1
+          done
+
+      - name: Install sqlx-cli
+        run: cargo install sqlx-cli --version ^0.8 --no-default-features --features rustls,postgres --locked
+
+      - name: Apply full chain from empty, then prove re-run is a no-op
+        working-directory: backend
+        env:
+          DATABASE_URL: postgres://payroll:ci@localhost:5432/payroll_db
+        run: |
+          cargo sqlx migrate run
+          # Seed data AFTER the baseline so the chain is exercised against a
+          # database that already contains tenant rows, then apply again —
+          # this is exactly what next month's release will do to production.
+          docker exec pg-migrate psql -U payroll -d payroll_db -c             "INSERT INTO companies (name) VALUES ('CI forward-migration tenant')"
+          second=$(cargo sqlx migrate run 2>&1 | tail -1)
+          echo "$second"
+          echo "$second" | grep -qi "applied 0" || { echo "re-run was not a no-op"; exit 1; }

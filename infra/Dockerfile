@@ -48,6 +48,8 @@ USER 10001
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:8080/api/health || exit 1
+    # Readiness, not liveness: the container must not receive traffic until
+# migrations have run and the DB is reachable (plan item 35).
+CMD curl -f http://localhost:8080/api/health/ready || exit 1
 
 CMD ["./payroll-system"]

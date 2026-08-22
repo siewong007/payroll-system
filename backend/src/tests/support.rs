@@ -18,12 +18,25 @@ static MIGRATE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 /// the first-migration path so parallel tests don't race on the
 /// `_sqlx_migrations` advisory lock.
 pub async fn test_pool() -> Option<PgPool> {
-    let url = env::var("DATABASE_URL").ok()?;
-    let pool = PgPool::connect(&url).await.ok()?;
+    // Load the repo-root .env so a bare `cargo test` from backend/ works —
+    // CONTRIBUTING tells contributors to run exactly that (plan item 32).
+    dotenvy::dotenv().ok();
 
-    let lock = MIGRATE_LOCK.get_or_init(|| Mutex::new(()));
-    let _guard = lock.lock().await;
-    crate::core::db::run_migrations(&pool).await;
+    let Some(url) = env::var("DATABASE_URL").ok().filter(|u| !u.is_empty()) else {
+        // No DATABASE_URL at all: the caller decides whether that is fine.
+        eprintln!("SKIP: DATABASE_URL not set");
+        return None;
+    };
+
+    // A configured database that cannot be reached is an environment failure,
+    // NOT a skip. Silently reporting `ok` for 130 integration tests is how a
+    // broken local setup went unnoticed.
+    let pool = match PgPool::connect(&url).await {
+        Ok(pool) => pool,
+        Err(e) => panic!(
+            "DATABASE_URL is set but PostgreSQL is unreachable: {e}. Start docker compose (`docker compose up -d`) or unset DATABASE_URL."
+        ),
+    };
 
     // The repository deliberately ships only immutable, unverified academic
     // statutory fixtures. Test builds attach those rows to distinct test-only
@@ -72,20 +85,6 @@ pub async fn test_pool() -> Option<PgPool> {
     .await
     .expect("create test-only statutory rule sets");
 
-    // The PCB gate is data-driven now; tests exercise the calculator through
-    // the same path production takes, so the setting is enabled here and every
-    // test inherits it.
-    sqlx::query(
-        r#"
-        INSERT INTO platform_settings (key, value)
-        VALUES ('pcb_calculator_status', 'enabled')
-        ON CONFLICT (key) DO UPDATE SET value = 'enabled', updated_at = NOW()
-        "#,
-    )
-    .execute(&pool)
-    .await
-    .expect("enable the PCB calculator for this test run");
-
     for (table, dataset_key) in [
         ("epf_rates", "test-fixture-epf-2024"),
         ("socso_rates", "test-fixture-socso-2024"),
@@ -102,6 +101,20 @@ pub async fn test_pool() -> Option<PgPool> {
             .await
             .expect("attach statutory rows to a test-only rule set");
     }
+
+    // The PCB gate is data-driven now; tests exercise the calculator through
+    // the same path production takes, so the setting is enabled here and every
+    // test inherits it.
+    sqlx::query(
+        r#"
+        INSERT INTO platform_settings (key, value)
+        VALUES ('pcb_calculator_status', 'enabled')
+        ON CONFLICT (key) DO UPDATE SET value = 'enabled', updated_at = NOW()
+        "#,
+    )
+    .execute(&pool)
+    .await
+    .expect("enable the PCB calculator for this test run");
 
     Some(pool)
 }

@@ -219,6 +219,21 @@ jobs:
              sudo /bin/bash /opt/payroll/releases/$DEPLOY_SHA/deploy.sh \
                $DEPLOY_SHA /opt/payroll/releases/$DEPLOY_SHA"
 
+      - name: Authenticated-shaped business smoke (plan item 35)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # /api/health/ready already proves DB + config. This proves routing,
+          # rate limiting and the auth surface are live: a login attempt for a
+          # nonexistent account must be REFUSED with 401/422/429 — never 200,
+          # never a bare "ok", never a 500.
+          code=$(curl --silent --output /dev/null --write-out '%{http_code}'             --max-time 20             -X POST https://api.payrollmy.com/api/auth/login             -H 'content-type: application/json'             -d '{"email":"smoke-probe@example.invalid","password":"wrong"}')
+          echo "login probe answered $code"
+          case "$code" in
+            401|422|429) ;;
+            *) echo "unexpected login probe status: $code"; exit 1 ;;
+          esac
+
       - name: Verify public HTTPS when DNS points to Lightsail
         shell: bash
         run: |
@@ -227,7 +242,7 @@ jobs:
             curl --fail --silent --show-error \
               --retry 20 --retry-delay 5 --retry-all-errors \
               --max-time 20 \
-              https://api.payrollmy.com/api/health >/dev/null
+              https://api.payrollmy.com/api/health/ready >/dev/null
           else
             echo "DNS is not on $VPS_HOST yet; localhost health checks passed and public HTTPS was skipped."
           fi
