@@ -13,7 +13,7 @@ use std::net::SocketAddr;
 
 use axum::body::Body;
 use axum::extract::ConnectInfo;
-use axum::http::{Request, StatusCode};
+use axum::http::Request;
 use tower::ServiceExt;
 
 use crate::tests::route_auth_tests::app_for;
@@ -78,10 +78,8 @@ fn substitute_params(path: &str) -> String {
                 in_param = true;
                 out.push('0');
             }
-            '}' => {
-                in_param = false;
-            }
-            c if in_param => out.push('0'),
+            '}' => in_param = false,
+            _ if in_param => out.push('0'),
             c => out.push(c),
         }
     }
