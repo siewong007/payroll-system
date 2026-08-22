@@ -93,3 +93,23 @@ pub async fn touch(
         .await?;
     Ok(())
 }
+
+/// Delete sessions that ended long ago: revoked ones past the short window,
+/// unrevoked-but-inactive ones past the long one (plan item 26). A live
+/// session row is the session — nothing here touches those.
+pub async fn purge_stale(
+    executor: impl Executor<'_, Database = Postgres>,
+    revoked_retention_days: i32,
+    inactive_retention_days: i32,
+) -> AppResult<u64> {
+    let result = sqlx::query(
+        r#"DELETE FROM user_sessions
+           WHERE (revoked_at IS NOT NULL AND revoked_at < NOW() - ($1 || ' days')::interval)
+              OR last_seen_at < NOW() - ($2 || ' days')::interval"#,
+    )
+    .bind(revoked_retention_days.to_string())
+    .bind(inactive_retention_days.to_string())
+    .execute(executor)
+    .await?;
+    Ok(result.rows_affected())
+}

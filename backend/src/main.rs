@@ -68,6 +68,15 @@ async fn main() -> anyhow::Result<()> {
     // Load config
     let config = AppConfig::from_env();
 
+    // Retention windows for the daily cleanup task (plan item 26). Audit rows
+    // default to the seven-year statutory horizon; the others are operational.
+    const AUDIT_LOG_RETENTION_DAYS: i64 = 2_555;
+    const NOTIFICATION_READ_RETENTION_DAYS: i32 = 90;
+    const NOTIFICATION_UNREAD_RETENTION_DAYS: i32 = 365;
+    const EMAIL_LOG_RETENTION_DAYS: i32 = 180;
+    const SESSION_REVOKED_RETENTION_DAYS: i32 = 30;
+    const SESSION_INACTIVE_RETENTION_DAYS: i32 = 90;
+
     // Claim the configured address before running migrations or spawning background work.
     // This makes startup fail fast with an actionable error when another process owns the port.
     let addr: SocketAddr = format!("{}:{}", config.server_host, config.server_port)
@@ -246,6 +255,60 @@ async fn main() -> anyhow::Result<()> {
             match attendance_network_observations::purge_expired_dismissals(&cleanup_pool).await {
                 Ok(rows) => tracing::info!(rows, "network-dismissal cleanup: completed"),
                 Err(e) => tracing::error!("Failed to clean up network dismissals: {}", e),
+            }
+
+            // Retention purges for the append-only tables (plan item 26).
+            // Nothing deleted from these before, so each one grew forever:
+            // audit_logs and notifications are tenant data, email_logs holds
+            // recipient addresses, user_sessions accumulate one per login and
+            // bulk_import_sessions embed whole validated CSVs in jsonb.
+            match payroll_system::repositories::audit_logs::purge_older_than(
+                &cleanup_pool,
+                AUDIT_LOG_RETENTION_DAYS,
+            )
+            .await
+            {
+                Ok(rows) => tracing::info!(rows, "audit-log retention: completed"),
+                Err(e) => tracing::error!("Failed to purge old audit logs: {}", e),
+            }
+
+            match payroll_system::repositories::notifications::purge_stale(
+                &cleanup_pool,
+                NOTIFICATION_READ_RETENTION_DAYS,
+                NOTIFICATION_UNREAD_RETENTION_DAYS,
+            )
+            .await
+            {
+                Ok(rows) => tracing::info!(rows, "notification retention: completed"),
+                Err(e) => tracing::error!("Failed to purge stale notifications: {}", e),
+            }
+
+            match payroll_system::repositories::email_logs::purge_older_than(
+                &cleanup_pool,
+                EMAIL_LOG_RETENTION_DAYS,
+            )
+            .await
+            {
+                Ok(rows) => tracing::info!(rows, "email-log retention: completed"),
+                Err(e) => tracing::error!("Failed to purge old email logs: {}", e),
+            }
+
+            match payroll_system::repositories::user_sessions::purge_stale(
+                &cleanup_pool,
+                SESSION_REVOKED_RETENTION_DAYS,
+                SESSION_INACTIVE_RETENTION_DAYS,
+            )
+            .await
+            {
+                Ok(rows) => tracing::info!(rows, "session retention: completed"),
+                Err(e) => tracing::error!("Failed to purge stale sessions: {}", e),
+            }
+
+            match payroll_system::repositories::bulk_import_sessions::purge_expired(&cleanup_pool)
+                .await
+            {
+                Ok(rows) => tracing::info!(rows, "import-session retention: completed"),
+                Err(e) => tracing::error!("Failed to purge expired import sessions: {}", e),
             }
         }
     });
