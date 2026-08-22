@@ -1,4 +1,5 @@
 mod approval_flow_tests;
+mod holiday_expansion_tests;
 mod attendance_tests;
 mod audit_tests;
 mod auth_audit_tests;
