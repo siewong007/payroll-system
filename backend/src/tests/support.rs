@@ -72,6 +72,20 @@ pub async fn test_pool() -> Option<PgPool> {
     .await
     .expect("create test-only statutory rule sets");
 
+    // The PCB gate is data-driven now; tests exercise the calculator through
+    // the same path production takes, so the setting is enabled here and every
+    // test inherits it.
+    sqlx::query(
+        r#"
+        INSERT INTO platform_settings (key, value)
+        VALUES ('pcb_calculator_status', 'enabled')
+        ON CONFLICT (key) DO UPDATE SET value = 'enabled', updated_at = NOW()
+        "#,
+    )
+    .execute(&pool)
+    .await
+    .expect("enable the PCB calculator for this test run");
+
     for (table, dataset_key) in [
         ("epf_rates", "test-fixture-epf-2024"),
         ("socso_rates", "test-fixture-socso-2024"),

@@ -11,22 +11,27 @@ pub const SOCSO: &str = "socso";
 pub const EIS: &str = "eis";
 pub const PCB: &str = "pcb";
 
-#[cfg(not(test))]
-fn require_supported_calculator(rule_code: &str) -> AppResult<()> {
-    if rule_code == PCB {
-        return Err(AppError::Validation(
-            "Automatic PCB is disabled because the current academic calculator has not passed LHDN computerised-MTD conformance testing. Record an independently reviewed manual PCB amount outside automatic payroll until the calculator is replaced."
-                .into(),
-        ));
-    }
-    Ok(())
-}
+/// The platform setting that opens the automatic PCB gate (plan item 8).
+///
+/// The gate used to be a hardcoded compile-time constant with a `#[cfg(test)]`
+/// bypass, which meant no test ever exercised the production path and there
+/// was no defined exit criterion. It is now data: an operator flips
+/// `pcb_calculator_status` to `enabled` only after the regression vectors in
+/// `src/tests/fixtures/pcb_regression_vectors.json` — replaced, at conformance
+/// time, by official computerised-MTD vectors — all pass against the verified
+/// rule tables. Absent or any other value stays closed.
+pub const PCB_CALCULATOR_STATUS_KEY: &str = "pcb_calculator_status";
 
-#[cfg(test)]
-fn require_supported_calculator(_rule_code: &str) -> AppResult<()> {
-    // Tests exercise the legacy academic fixture deterministically; production
-    // builds never receive this bypass.
-    Ok(())
+async fn require_supported_calculator(pool: &PgPool) -> AppResult<()> {
+    let status =
+        crate::repositories::platform_settings::get_value(pool, PCB_CALCULATOR_STATUS_KEY).await?;
+    if status.as_deref() == Some("enabled") {
+        return Ok(());
+    }
+    Err(AppError::Validation(
+        "Automatic PCB is disabled because the current academic calculator has not passed LHDN computerised-MTD conformance testing. Record an independently reviewed manual PCB amount outside automatic payroll. To open the gate after conformance, set the platform setting 'pcb_calculator_status' to 'enabled'."
+            .into(),
+    ))
 }
 
 /// Refuse automatic payroll when the applicable rules have not been verified.
@@ -37,7 +42,7 @@ pub async fn require_verified(
     rule_code: &str,
     effective_date: NaiveDate,
 ) -> AppResult<()> {
-    require_supported_calculator(rule_code)?;
+    require_supported_calculator(pool).await?;
 
     if statutory_rule_sets::is_verified_for_date(pool, rule_code, effective_date).await? {
         return Ok(());
@@ -52,7 +57,7 @@ pub async fn require_verified(
 
 /// Verify all domains once before processing a payroll run.
 pub async fn require_all_verified(pool: &PgPool, effective_date: NaiveDate) -> AppResult<()> {
-    require_supported_calculator(PCB)?;
+    require_supported_calculator(pool).await?;
 
     let missing = statutory_rule_sets::missing_required_for_date(pool, effective_date).await?;
     if missing.is_empty() {
