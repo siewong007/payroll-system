@@ -110,7 +110,28 @@ pub async fn create_user_for_employee(
     let Some(ref email) = emp.email else {
         return Ok(None);
     };
+    create_user_for_employee_fields(
+        pool,
+        emp.id,
+        emp.company_id,
+        email,
+        &emp.full_name,
+        emp.ic_number.as_deref(),
+    )
+    .await
+}
 
+/// Primitive-based form so callers holding row data — the bulk importer —
+/// can provision portal accounts without materialising a full `Employee`
+/// (plan item 14). Same semantics as [`create_user_for_employee`].
+pub async fn create_user_for_employee_fields(
+    pool: &PgPool,
+    employee_id: Uuid,
+    company_id: Uuid,
+    email: &str,
+    full_name: &str,
+    ic_number: Option<&str>,
+) -> AppResult<Option<EmployeeAccountInfo>> {
     // Check if email already exists
     if let Some(existing) = users::find_by_email(pool, email).await? {
         let existing_id = existing.id;
@@ -120,7 +141,7 @@ pub async fn create_user_for_employee(
         // linking it would revive an account that must not authenticate.
         if existing.is_deleted {
             tracing::warn!(
-                employee_id = %emp.id,
+                employee_id = %employee_id,
                 "employee email matches a deleted user account; skipping portal account creation"
             );
             return Ok(None);
@@ -129,9 +150,9 @@ pub async fn create_user_for_employee(
         // Never touch an account belonging to another company. Both branches
         // below rewrite the account's company/employee binding, so without this
         // any caller could pull a foreign tenant's user into their own company.
-        if existing.company_id != Some(emp.company_id) {
+        if existing.company_id != Some(company_id) {
             tracing::warn!(
-                employee_id = %emp.id,
+                employee_id = %employee_id,
                 "employee email belongs to a user in another company; skipping portal account creation"
             );
             return Ok(None);
@@ -151,7 +172,7 @@ pub async fn create_user_for_employee(
             // bypassing `require_super_admin`, the self-delete guard and the
             // tombstone that stops the account being recreated.
             tracing::warn!(
-                employee_id = %emp.id,
+                employee_id = %employee_id,
                 "employee email belongs to a privileged account; skipping portal account creation"
             );
             return Ok(None);
@@ -159,7 +180,7 @@ pub async fn create_user_for_employee(
     }
 
     // Default password: IC number or "Welcome@123" if no IC
-    let default_password = emp.ic_number.as_deref().unwrap_or("Welcome@123");
+    let default_password = ic_number.unwrap_or("Welcome@123");
     let password_hash = bcrypt::hash(default_password, 12)
         .map_err(|e| AppError::Internal(format!("Failed to hash password: {}", e)))?;
 
@@ -169,23 +190,22 @@ pub async fn create_user_for_employee(
         user_id,
         email,
         &password_hash,
-        &emp.full_name,
-        emp.company_id,
-        emp.id,
+        full_name,
+        company_id,
+        employee_id,
     )
     .await?;
 
     // Link user to company
-    user_companies::insert(pool, user_id, emp.company_id).await?;
+    user_companies::insert(pool, user_id, company_id).await?;
 
     Ok(Some(EmployeeAccountInfo {
         created: true,
-        email: email.clone(),
+        email: email.to_string(),
         role: "employee".into(),
         default_password: Some(default_password.to_string()),
         message: format!(
-            "User account created for {}. Default password is their IC number.",
-            emp.full_name
+            "User account created for {full_name}. Default password is their IC number."
         ),
     }))
 }

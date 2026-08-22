@@ -107,6 +107,15 @@ pub struct ImportConfirmResponse {
     pub imported_count: usize,
     pub skipped_count: usize,
     pub errors: Vec<ImportRowValidation>,
+    /// Portal (`employee`-role) accounts created after commit. Zero when no
+    /// imported row carried an email, or when every address matched an
+    /// existing account the creator refuses to adopt.
+    pub portal_accounts_created: usize,
+    /// First-year leave-balance rows initialised (plan item 14).
+    pub leave_balances_created: usize,
+    /// Per-row provisioning failures. The employees themselves committed;
+    /// these are follow-ups an HR admin can redo from the UI.
+    pub provisioning_warnings: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]

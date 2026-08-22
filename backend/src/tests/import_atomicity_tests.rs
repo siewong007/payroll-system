@@ -303,3 +303,85 @@ async fn a_rejected_import_leaves_the_session_pending() {
             .expect("read session status");
     assert_eq!(status, "pending", "the session must stay retryable");
 }
+
+/// The import provisions what a new tenant actually needs on day one: a
+/// portal login per imported employee with an email, and first-year leave
+/// balances against the company's active leave types (plan item 14). Before
+/// this the import created bare employee rows — nobody could log in and
+/// nobody had an entitlement, with no retrofit path because the manual
+/// account creator refuses sole-role employees it isn't given.
+#[tokio::test]
+async fn import_provisions_portal_accounts_and_leave_balances() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let user_id = seed_user(&pool, company_id, "payroll_admin").await;
+
+    // One active leave type so balances have something to initialise from.
+    sqlx::query(
+        "INSERT INTO leave_types (company_id, name, default_days)
+         VALUES ($1, 'Annual', 16.0)",
+    )
+    .bind(company_id)
+    .execute(&pool)
+    .await
+    .expect("seed a leave type");
+
+    // Emails must be unique across runs: tests share one database, and the
+    // account creator deliberately refuses addresses that belong to another
+    // tenant's account.
+    let suffix = Uuid::new_v4().simple();
+    let mut rows = Vec::new();
+    for (n, with_email) in [(4usize, true), (5, true), (6, false)] {
+        let mut r = row(n, &format!("IMP-{n}"), None);
+        r.data.email = with_email.then(|| format!("imp-{suffix}-{n}@example.invalid"));
+        rows.push(r);
+    }
+    let session_id = stage_session(&pool, company_id, user_id, &rows).await;
+
+    let response = employee_import_service::confirm_import(
+        &pool,
+        company_id,
+        user_id,
+        ImportConfirmRequest {
+            session_id,
+            skip_invalid: false,
+        },
+        None,
+    )
+    .await
+    .expect("confirm import");
+
+    assert_eq!(response.imported_count, 3);
+    assert_eq!(response.portal_accounts_created, 2, "only rows with emails");
+    assert!(
+        response.provisioning_warnings.is_empty(),
+        "{:?}",
+        response.provisioning_warnings
+    );
+
+    // Logins exist and are linked to their employees.
+    let accounts: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM users u
+         JOIN employees e ON u.employee_id = e.id
+         WHERE e.company_id = $1 AND 'employee' = ANY(u.roles)",
+    )
+    .bind(company_id)
+    .fetch_one(&pool)
+    .await
+    .expect("count portal accounts");
+    assert_eq!(accounts, 2);
+
+    // Every imported employee has an entitlement row.
+    let balances: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM leave_balances lb
+         JOIN employees e ON lb.employee_id = e.id
+         WHERE e.company_id = $1",
+    )
+    .bind(company_id)
+    .fetch_one(&pool)
+    .await
+    .expect("count leave balances");
+    assert_eq!(balances, 3);
+}
