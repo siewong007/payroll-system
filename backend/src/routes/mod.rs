@@ -267,6 +267,12 @@ pub fn create_router(state: AppState) -> Router {
         // Break-glass 2FA reset (super_admin only, password re-confirmed in
         // the handler); the only recovery path that does not need SQL access.
         .route("/admin/users/{id}/2fa/reset", post(admin::reset_user_2fa))
+        // Platform 2FA enforcement policy (ManagePlatformSettings): the
+        // switch plus the privileged accounts it would refuse at login.
+        .route(
+            "/admin/platform/2fa-policy",
+            get(admin::get_2fa_policy).put(admin::set_2fa_policy),
+        )
         // Employees
         .route("/employees", get(employee::list).post(employee::create))
         .route(

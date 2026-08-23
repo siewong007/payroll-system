@@ -11,9 +11,9 @@ use crate::core::extract::ValidatedJson;
 use crate::models::audit::AuditRequestMeta;
 use crate::models::company::{Company, CreateCompanyRequest, UpdateCompanyRequest};
 use crate::models::pagination::PaginatedResponse;
-use crate::models::totp::AdminTotpResetRequest;
+use crate::models::totp::{AdminTotpResetRequest, TwoFactorPolicyRequest, TwoFactorPolicyResponse};
 use crate::models::user_company::{CreateUserRequest, UpdateUserRequest, UserWithCompanies};
-use crate::services::{company_service, totp_service, user_service};
+use crate::services::{auth_service, company_service, totp_service, user_service};
 
 #[derive(Debug, serde::Deserialize)]
 pub struct UserListQuery {
@@ -161,4 +161,31 @@ pub async fn reset_user_2fa(
 
     totp_service::admin_reset(&state.pool, user_id, auth.0.sub, &req.password, Some(&meta)).await?;
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+// ─── Platform 2FA enforcement policy (plan item 36) ───
+
+/// The policy plus the privileged accounts it would refuse, so an operator
+/// can see exactly who a cutover locks out before flipping it on.
+pub async fn get_2fa_policy(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> AppResult<Json<TwoFactorPolicyResponse>> {
+    auth.require_permission(Permission::ManagePlatformSettings)?;
+    Ok(Json(
+        auth_service::get_two_factor_policy(&state.pool).await?,
+    ))
+}
+
+pub async fn set_2fa_policy(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    audit_meta: AuditRequestMeta,
+    ValidatedJson(req): ValidatedJson<TwoFactorPolicyRequest>,
+) -> AppResult<Json<TwoFactorPolicyResponse>> {
+    auth.require_permission(Permission::ManagePlatformSettings)?;
+    let status =
+        auth_service::set_two_factor_policy(&state.pool, req, auth.0.sub, Some(&audit_meta))
+            .await?;
+    Ok(Json(status))
 }

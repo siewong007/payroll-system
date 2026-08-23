@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -70,4 +70,26 @@ pub type AdminTotpResetRequest = TotpDisableRequest;
 pub struct TotpRegenerateBackupCodesRequest {
     #[validate(length(min = 1, message = "password is required"))]
     pub password: String,
+}
+
+/// Platform 2FA enforcement policy (plan item 36). `grace_until` is a UTC
+/// calendar date through which privileged users without an enrolment may
+/// still sign in; each such login writes a `two_factor_overdue` audit row
+/// so the operator can see exactly who will be locked out at cutover.
+#[derive(Debug, Serialize)]
+pub struct TwoFactorPolicyResponse {
+    pub enforce: bool,
+    pub grace_until: Option<NaiveDate>,
+    /// Privileged-role accounts with no enabled enrolment — the exact set a
+    /// hard cut would refuse. Emails only: this endpoint is platform-admin
+    /// gated and exists precisely to name them.
+    pub non_compliant: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, validator::Validate)]
+pub struct TwoFactorPolicyRequest {
+    pub enforce: bool,
+    /// `Some(date)` sets/extends the grace window; `None` means a hard cut —
+    /// refused while any privileged account still lacks an enrolment.
+    pub grace_until: Option<NaiveDate>,
 }
