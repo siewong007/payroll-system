@@ -121,6 +121,14 @@ jobs:
           cp deploy/deploy.sh "$bundle_dir/deploy.sh"
           cp deploy/docker-compose.prod.yml "$bundle_dir/docker-compose.prod.yml"
           cp deploy/migrate-database.sh "$bundle_dir/migrate-database.sh"
+          # deploy.sh refuses to start unless these three are in the tarball.
+          cp deploy/payroll-backup.sh "$bundle_dir/payroll-backup.sh"
+          cp deploy/payroll-backup.service "$bundle_dir/payroll-backup.service"
+          cp deploy/payroll-backup.timer "$bundle_dir/payroll-backup.timer"
+          for payload in deploy.sh docker-compose.prod.yml payroll-backup.sh \
+                         payroll-backup.service payroll-backup.timer; do
+            test -f "$bundle_dir/$payload"
+          done
 
           (
             cd "$bundle_dir"
