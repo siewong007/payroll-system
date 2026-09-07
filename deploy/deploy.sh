@@ -329,13 +329,15 @@ report_recovery_options() {
 }
 
 configure_caddy() {
-  # If the host Caddyfile already serves the API domain (the pre-existing
-  # native deployment configured it inline), leave that config untouched: it
-  # already reverse-proxies to 127.0.0.1:8080, which is now the container.
-  # Adding our own block would duplicate the site and fail `caddy validate`.
+  # If any host Caddyfile already serves the API domain, leave that config
+  # untouched: AIC's /etc/caddy/Caddyfile imports payrollmy.Caddyfile, which
+  # already reverse-proxies api.payrollmy.com to 127.0.0.1:8080. Matching only
+  # the main Caddyfile misses that import, so a second site file is added and
+  # `caddy validate` fails with "ambiguous site definition".
   local domain_re="^[[:space:]]*${API_DOMAIN//./\\.}[[:space:]]*\{"
-  if grep -qE "$domain_re" "$CADDY_FILE" 2>/dev/null; then
-    log "Host Caddyfile already serves ${API_DOMAIN}; leaving it as-is (it now proxies to the container on 127.0.0.1:8080)."
+  if grep -RqsE --include='Caddyfile' --include='*.Caddyfile' \
+       "$domain_re" /etc/caddy 2>/dev/null; then
+    log "Host Caddy already serves ${API_DOMAIN}; leaving it as-is (it now proxies to the container on 127.0.0.1:8080)."
     caddy validate --config "$CADDY_FILE" \
       || die "existing host Caddyfile failed validation; not reloading"
     return 0
