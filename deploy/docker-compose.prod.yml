@@ -1,4 +1,4 @@
-# Production stack for the payroll backend on the shared Lightsail VPS.
+# Production stack for the payroll backend on the AIC cloud VPS.
 #
 # The host-level Caddy process owns ports 80/443. saliminn uses :3030/:8081
 # and the online-shopping-platform apps use their own reserved ports; this

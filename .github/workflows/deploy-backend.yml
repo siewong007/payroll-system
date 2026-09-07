@@ -1,17 +1,19 @@
 name: Deploy Backend
 
 # Zero-incremental-cost deployment path:
-#   public standard GitHub runner -> SSH/SCP -> existing Lightsail VPS.
+#   public standard GitHub runner -> SSH/SCP -> AIC cloud VPS.
 # No ECR, RDS, Secrets Manager, SSM, or paid cache. Mirrors the pattern
 # already used by the hotel-app and online-shopping-platform repos, which
 # share this same VPS.
 #
 # Required environment secret (GitHub environment "production"):
-#   LIGHTSAIL_SSH_PRIVATE_KEY - private key accepted for ubuntu@13.251.162.88
+#   VPS_SSH_PRIVATE_KEY - private key accepted for root@162.19.81.122:20049
 #
-# The public ED25519 host key below is pinned so a DNS/network attacker cannot
-# impersonate the VPS. Verify its fingerprint from the Lightsail console before
-# first use: SHA256:EvysNdkRZEdS5wOyNFI+lZs2dH589gW9ycQGAiVImsE.
+# The host is an LXC container with no public IPv4 of its own: 162.19.81.122 is
+# shared, and only port 20049 forwards to this container's sshd. GitHub-hosted
+# runners cannot reach the origin IPv6, so CI always uses the forwarded IPv4
+# port. Pinned host-key fingerprint:
+# SHA256:HV6OszvuYmwmWRLEY7z7jm8GojWZJppJlDBHIhJVUxw.
 
 on:
   # Intentionally no workflow_dispatch: production revisions must enter through
@@ -29,9 +31,11 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  VPS_HOST: 13.251.162.88
-  VPS_USER: ubuntu
-  VPS_HOST_KEY: "13.251.162.88 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGxQLowecYMuChjSX+ePbEKdDq0m8NfT8kfKaSw0Z3sF"
+  VPS_HOST: 162.19.81.122
+  VPS_PORT: "20049"
+  VPS_USER: root
+  VPS_HOST_KEY: "[162.19.81.122]:20049 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIxenH95jfg3hxfkumJpZJyV7phwCNDrXrAL0wUXnta9"
+  PUBLIC_DNS_CUTOVER: "true"
 
 jobs:
   gate:
@@ -66,7 +70,7 @@ jobs:
           fi
 
   deploy:
-    name: Build and deploy to Lightsail
+    name: Build and deploy to the AIC VPS
     needs: gate
     if: needs.gate.outputs.deploy == 'true'
     runs-on: ubuntu-latest
@@ -130,16 +134,16 @@ jobs:
       - name: Configure pinned SSH access
         shell: bash
         env:
-          LIGHTSAIL_SSH_PRIVATE_KEY: ${{ secrets.LIGHTSAIL_SSH_PRIVATE_KEY }}
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
         run: |
           set -euo pipefail
-          test -n "$LIGHTSAIL_SSH_PRIVATE_KEY"
-          install -m 0600 /dev/null "$RUNNER_TEMP/lightsail-key"
-          printf '%s\n' "$LIGHTSAIL_SSH_PRIVATE_KEY" > "$RUNNER_TEMP/lightsail-key"
-          install -m 0600 /dev/null "$RUNNER_TEMP/lightsail-known-hosts"
-          printf '%s\n' "$VPS_HOST_KEY" > "$RUNNER_TEMP/lightsail-known-hosts"
-          ssh-keygen -lf "$RUNNER_TEMP/lightsail-known-hosts" \
-            | grep -Fq 'SHA256:EvysNdkRZEdS5wOyNFI+lZs2dH589gW9ycQGAiVImsE'
+          test -n "$VPS_SSH_PRIVATE_KEY"
+          install -m 0600 /dev/null "$RUNNER_TEMP/vps-key"
+          printf '%s\n' "$VPS_SSH_PRIVATE_KEY" > "$RUNNER_TEMP/vps-key"
+          install -m 0600 /dev/null "$RUNNER_TEMP/vps-known-hosts"
+          printf '%s\n' "$VPS_HOST_KEY" > "$RUNNER_TEMP/vps-known-hosts"
+          ssh-keygen -lf "$RUNNER_TEMP/vps-known-hosts" \
+            | grep -Fq 'SHA256:HV6OszvuYmwmWRLEY7z7jm8GojWZJppJlDBHIhJVUxw'
 
       - name: Verify protected VPS disk capacity
         shell: bash
@@ -153,12 +157,13 @@ jobs:
           # deploy script's disk reserve for images and rollback.
           required_bytes=$((4294967296 + (archive_bytes * 2)))
           ssh \
-            -i "$RUNNER_TEMP/lightsail-key" \
+            -i "$RUNNER_TEMP/vps-key" \
+            -p "$VPS_PORT" \
             -o BatchMode=yes \
             -o ConnectTimeout=15 \
             -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=yes \
-            -o "UserKnownHostsFile=$RUNNER_TEMP/lightsail-known-hosts" \
+            -o "UserKnownHostsFile=$RUNNER_TEMP/vps-known-hosts" \
             "$VPS_USER@$VPS_HOST" \
             "set -eu
              for target in /tmp /opt; do
@@ -174,12 +179,13 @@ jobs:
         run: |
           set -euo pipefail
           scp \
-            -i "$RUNNER_TEMP/lightsail-key" \
+            -i "$RUNNER_TEMP/vps-key" \
+            -P "$VPS_PORT" \
             -o BatchMode=yes \
             -o ConnectTimeout=15 \
             -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=yes \
-            -o "UserKnownHostsFile=$RUNNER_TEMP/lightsail-known-hosts" \
+            -o "UserKnownHostsFile=$RUNNER_TEMP/vps-known-hosts" \
             "$RUNNER_TEMP/payroll-$DEPLOY_SHA.tar.gz" \
             "$VPS_USER@$VPS_HOST:/tmp/payroll-$DEPLOY_SHA.tar.gz.part"
 
@@ -199,14 +205,15 @@ jobs:
           fi
 
           ssh \
-            -i "$RUNNER_TEMP/lightsail-key" \
+            -i "$RUNNER_TEMP/vps-key" \
+            -p "$VPS_PORT" \
             -o BatchMode=yes \
             -o ConnectTimeout=15 \
             -o IdentitiesOnly=yes \
             -o ServerAliveInterval=15 \
             -o ServerAliveCountMax=4 \
             -o StrictHostKeyChecking=yes \
-            -o "UserKnownHostsFile=$RUNNER_TEMP/lightsail-known-hosts" \
+            -o "UserKnownHostsFile=$RUNNER_TEMP/vps-known-hosts" \
             "$VPS_USER@$VPS_HOST" \
             "set -euo pipefail
              trap 'rm -f /tmp/payroll-$DEPLOY_SHA.tar.gz.part /tmp/payroll-$DEPLOY_SHA.tar.gz' EXIT
@@ -219,31 +226,33 @@ jobs:
              sudo /bin/bash /opt/payroll/releases/$DEPLOY_SHA/deploy.sh \
                $DEPLOY_SHA /opt/payroll/releases/$DEPLOY_SHA"
 
-      - name: Verify public HTTPS when DNS points to Lightsail
+      - name: Verify public HTTPS once DNS has been cut over
         shell: bash
         run: |
           set -euo pipefail
-          if getent ahostsv4 api.payrollmy.com | awk '{print $1}' | grep -Fxq "$VPS_HOST"; then
-            curl --fail --silent --show-error \
-              --retry 20 --retry-delay 5 --retry-all-errors \
-              --max-time 20 \
-              https://api.payrollmy.com/api/health >/dev/null
-          else
-            echo "DNS is not on $VPS_HOST yet; localhost health checks passed and public HTTPS was skipped."
+          if [[ "$PUBLIC_DNS_CUTOVER" != "true" ]]; then
+            echo "PUBLIC_DNS_CUTOVER is not true; localhost health checks passed and public HTTPS was skipped."
+            exit 0
           fi
+          curl --fail --silent --show-error \
+            --retry 20 --retry-delay 5 --retry-all-errors \
+            --max-time 20 \
+            https://api.payrollmy.com/api/health >/dev/null
+          echo "Public HTTPS health check passed through Cloudflare."
 
       - name: Remove remote transfer files
         if: always()
         shell: bash
         run: |
-          if [[ -s "$RUNNER_TEMP/lightsail-key" && -s "$RUNNER_TEMP/lightsail-known-hosts" ]]; then
+          if [[ -s "$RUNNER_TEMP/vps-key" && -s "$RUNNER_TEMP/vps-known-hosts" ]]; then
             ssh \
-              -i "$RUNNER_TEMP/lightsail-key" \
+              -i "$RUNNER_TEMP/vps-key" \
+              -p "$VPS_PORT" \
               -o BatchMode=yes \
               -o ConnectTimeout=15 \
               -o IdentitiesOnly=yes \
               -o StrictHostKeyChecking=yes \
-              -o "UserKnownHostsFile=$RUNNER_TEMP/lightsail-known-hosts" \
+              -o "UserKnownHostsFile=$RUNNER_TEMP/vps-known-hosts" \
               "$VPS_USER@$VPS_HOST" \
               "rm -f -- /tmp/payroll-$DEPLOY_SHA.tar.gz.part /tmp/payroll-$DEPLOY_SHA.tar.gz" \
               || true
@@ -253,4 +262,4 @@ jobs:
         if: always()
         shell: bash
         run: |
-          rm -f "$RUNNER_TEMP/lightsail-key" "$RUNNER_TEMP/lightsail-known-hosts"
+          rm -f "$RUNNER_TEMP/vps-key" "$RUNNER_TEMP/vps-known-hosts"

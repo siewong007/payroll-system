@@ -1,8 +1,11 @@
 name: Deploy Frontend
 
-# Deploys only after a successful push-triggered CI run on main, mirroring
-# deploy-backend.yml's gate: production must never receive an untested
-# revision, so there is intentionally no workflow_dispatch here either.
+# Deploys the Vite SPA to the AIC VPS after a successful push-triggered CI
+# run on main. payrollmy.com is served by host Caddy from
+# /opt/payrollmy-site (CloudFront+S3 was retired in the 2026-09-07 cutover).
+#
+# Required environment secret (GitHub environment "production"):
+#   VPS_SSH_PRIVATE_KEY - private key accepted for root@162.19.81.122:20049
 
 on:
   workflow_run:
@@ -11,7 +14,6 @@ on:
     branches: [main]
 
 permissions:
-  id-token: write
   contents: read
 
 concurrency:
@@ -19,10 +21,13 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  AWS_REGION: ap-southeast-1
-  FRONTEND_BUCKET: payroll-dev-frontend
-  CLOUDFRONT_DISTRIBUTION_ID: ED4843A8VKOA2
+  VPS_HOST: 162.19.81.122
+  VPS_PORT: "20049"
+  VPS_USER: root
+  VPS_HOST_KEY: "[162.19.81.122]:20049 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIxenH95jfg3hxfkumJpZJyV7phwCNDrXrAL0wUXnta9"
   VITE_API_URL: https://api.payrollmy.com/api
+  PUBLIC_DNS_CUTOVER: "true"
+  SITE_DIR: /opt/payrollmy-site
 
 jobs:
   gate:
@@ -57,82 +62,104 @@ jobs:
           fi
 
   deploy-frontend:
-    name: Deploy Frontend
+    name: Build and deploy to the AIC VPS
     needs: gate
     if: needs.gate.outputs.deploy == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # TEMPORARY: `environment: production` is deliberately absent here.
-    #
-    # GitHub rewrites the OIDC `sub` claim for a job that targets an
-    # environment, so this job presented `repo:<repo>:environment:production`
-    # while the cicd role's trust policy accepted only
-    # `repo:<repo>:ref:refs/heads/main` -- every run died at "Configure AWS
-    # credentials" before reaching the S3 sync, stranding the frontend a
-    # release behind a backend that had already changed API shapes.
-    #
-    # infra/iam.tf now lists both subjects, but that fix is not live until
-    # someone runs `terraform apply -target=aws_iam_role.cicd`. Restore this
-    # line in a follow-up once it is applied.
-    #
-    # Removing it costs nothing operationally today: this job reads no
-    # environment secrets (it authenticates purely via OIDC) and the
-    # production environment carries no protection rules. deploy-backend.yml
-    # keeps its binding, which it needs for LIGHTSAIL_SSH_PRIVATE_KEY.
+    environment: production
     env:
       DEPLOY_SHA: ${{ needs.gate.outputs.sha }}
+
     steps:
       - name: Check out the tested commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.DEPLOY_SHA }}
-          # `bun ci` below runs third-party postinstall scripts in this job, so
-          # the token must not be left behind in .git/config. Matches
-          # deploy-backend.yml.
           persist-credentials: false
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: frontend/package.json
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
-        with:
-          role-to-assume: arn:aws:iam::371726673750:role/payroll-dev-cicd
-          role-session-name: github-actions-frontend-deploy
-          mask-aws-account-id: true
-          audience: sts.amazonaws.com
-          aws-region: ${{ env.AWS_REGION }}
-
       - name: Build frontend
         working-directory: frontend
         run: |
           bun ci
           bun run build
+          test -f dist/index.html
 
-      - name: Sync to S3
-        # Only `assets/` is content-hashed by Vite, so only it may be immutable.
-        # Everything else in dist/ is copied verbatim from frontend/public/ and
-        # keeps a stable URL (e.g. /branding/payrollmy-icon-primary.svg, which
-        # index.html references) — marking those immutable made a logo or favicon
-        # change unreachable for a year.
+      - name: Configure pinned SSH access
+        shell: bash
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
         run: |
-          aws s3 sync frontend/dist/assets/ s3://$FRONTEND_BUCKET/assets/ \
-            --delete \
-            --cache-control "public, max-age=31536000, immutable"
-          aws s3 sync frontend/dist/ s3://$FRONTEND_BUCKET \
-            --delete \
-            --exclude "assets/*" \
-            --exclude "index.html" \
-            --cache-control "public, max-age=300, must-revalidate"
-          aws s3 cp frontend/dist/index.html s3://$FRONTEND_BUCKET/index.html \
-            --cache-control "no-cache, no-store, must-revalidate"
+          set -euo pipefail
+          test -n "$VPS_SSH_PRIVATE_KEY"
+          install -m 0600 /dev/null "$RUNNER_TEMP/vps-key"
+          printf '%s\n' "$VPS_SSH_PRIVATE_KEY" > "$RUNNER_TEMP/vps-key"
+          install -m 0600 /dev/null "$RUNNER_TEMP/vps-known-hosts"
+          printf '%s\n' "$VPS_HOST_KEY" > "$RUNNER_TEMP/vps-known-hosts"
+          ssh-keygen -lf "$RUNNER_TEMP/vps-known-hosts" \
+            | grep -Fq 'SHA256:HV6OszvuYmwmWRLEY7z7jm8GojWZJppJlDBHIhJVUxw'
 
-      - name: Invalidate CloudFront
-        # Covers index.html and every stable-URL public asset. Hashed assets get
-        # a new path per build, so a wildcard costs nothing extra there and one
-        # "/*" counts as a single invalidation path.
+      - name: Upload SPA to the VPS
+        shell: bash
         run: |
-          aws cloudfront create-invalidation \
-            --distribution-id $CLOUDFRONT_DISTRIBUTION_ID \
-            --paths "/*"
+          set -euo pipefail
+          bundle="$RUNNER_TEMP/payroll-frontend-$DEPLOY_SHA.tar.gz"
+          tar -C frontend/dist -czf "$bundle" .
+          scp \
+            -i "$RUNNER_TEMP/vps-key" \
+            -P "$VPS_PORT" \
+            -o BatchMode=yes \
+            -o ConnectTimeout=15 \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o "UserKnownHostsFile=$RUNNER_TEMP/vps-known-hosts" \
+            "$bundle" \
+            "$VPS_USER@$VPS_HOST:/tmp/payroll-frontend-$DEPLOY_SHA.tar.gz.part"
+
+      - name: Activate the new site tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh \
+            -i "$RUNNER_TEMP/vps-key" \
+            -p "$VPS_PORT" \
+            -o BatchMode=yes \
+            -o ConnectTimeout=15 \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o "UserKnownHostsFile=$RUNNER_TEMP/vps-known-hosts" \
+            "$VPS_USER@$VPS_HOST" \
+            "set -euo pipefail
+             trap 'rm -f /tmp/payroll-frontend-$DEPLOY_SHA.tar.gz.part /tmp/payroll-frontend-$DEPLOY_SHA.tar.gz' EXIT
+             mv /tmp/payroll-frontend-$DEPLOY_SHA.tar.gz.part /tmp/payroll-frontend-$DEPLOY_SHA.tar.gz
+             incoming=\$(mktemp -d /opt/payrollmy-site.incoming.XXXXXX)
+             tar -xzf /tmp/payroll-frontend-$DEPLOY_SHA.tar.gz -C \"\$incoming\"
+             test -f \"\$incoming/index.html\"
+             rm -rf /opt/payrollmy-site.prev
+             if [ -d $SITE_DIR ]; then mv $SITE_DIR /opt/payrollmy-site.prev; fi
+             mv \"\$incoming\" $SITE_DIR
+             chmod -R a+rX $SITE_DIR"
+
+      - name: Verify public HTTPS once DNS has been cut over
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$PUBLIC_DNS_CUTOVER" != "true" ]]; then
+            echo "PUBLIC_DNS_CUTOVER is not true; the SPA was uploaded and public HTTPS was skipped."
+            exit 0
+          fi
+          curl --fail --silent --show-error \
+            --retry 20 --retry-delay 5 --retry-all-errors \
+            --max-time 20 \
+            https://payrollmy.com/ >/dev/null
+          echo "Public HTTPS health check passed through Cloudflare."
+
+      - name: Remove ephemeral SSH key
+        if: always()
+        shell: bash
+        run: |
+          rm -f "$RUNNER_TEMP/vps-key" "$RUNNER_TEMP/vps-known-hosts"

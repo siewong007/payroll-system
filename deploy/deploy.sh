@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploy the payroll backend on the shared Lightsail VPS.
+# Deploy the payroll backend on the AIC cloud VPS.
 #
 # Usage (as root):
 #   deploy.sh <40-character-git-sha> <extracted-release-directory>

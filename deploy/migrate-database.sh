@@ -3,7 +3,7 @@
 # deployment on the Lightsail VPS onto the dockerized stack in
 # deploy/docker-compose.prod.yml.
 #
-# Run this BY HAND, as root, on the VPS itself (13.251.162.88). It is staged
+# Run this BY HAND, as root, on the VPS itself. It is staged
 # so you can run one stage at a time and stop between them:
 #
 #   sudo ./migrate-database.sh discover
