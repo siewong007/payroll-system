@@ -4,6 +4,7 @@ import { getMyProfile } from '@/api/portal';
 import { formatMYR, formatDate } from '@/lib/utils';
 import { PasskeyManagement } from '@/components/PasskeyManagement';
 import { SessionManagement } from '@/components/SessionManagement';
+import { LinkedAccounts } from '@/components/LinkedAccounts';
 import { CheckInCard } from '@/components/attendance/CheckInCard';
 
 type Profile = NonNullable<Awaited<ReturnType<typeof getMyProfile>>>;
@@ -113,6 +114,7 @@ function ProfileDetails({ profile }: { profile: Profile }) {
           </div>
 
           <PasskeyManagement />
+          <LinkedAccounts />
           <SessionManagement />
         </div>
       </div>

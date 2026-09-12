@@ -7,6 +7,7 @@ import { useAuth } from '@/context/AuthContext';
 import { PasskeyManagement } from '@/components/PasskeyManagement';
 import { TwoFactorSetup } from '@/components/TwoFactorSetup';
 import { SessionManagement } from '@/components/SessionManagement';
+import { LinkedAccounts } from '@/components/LinkedAccounts';
 import { canAccessPayrollData } from '@/lib/roles';
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -160,6 +161,10 @@ export function SettingsPage() {
       {/* Passkey Management */}
       <div className="mt-6">
         <PasskeyManagement />
+      </div>
+
+      <div className="mt-6">
+        <LinkedAccounts />
       </div>
 
       <div className="mt-6">
