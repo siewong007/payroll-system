@@ -3,6 +3,7 @@ import api from './client';
 export interface UserSession {
   id: string;
   user_agent: string | null;
+  ip_address: string | null;
   created_at: string;
   last_seen_at: string;
   expires_at: string;

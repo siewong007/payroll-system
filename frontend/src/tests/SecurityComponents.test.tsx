@@ -152,15 +152,17 @@ describe('SessionManagement', () => {
   const sessions = [
     {
       id: 'sess-current',
-      user_agent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+      user_agent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+      ip_address: '203.0.113.10',
       created_at: '2026-07-20T02:00:00Z',
-      last_seen_at: '2026-07-27T02:00:00Z',
+      last_seen_at: new Date().toISOString(),
       expires_at: '2026-08-27T02:00:00Z',
       current: true,
     },
     {
       id: 'sess-phone',
-      user_agent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0)',
+      user_agent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1',
+      ip_address: null,
       created_at: '2026-07-21T02:00:00Z',
       last_seen_at: '2026-07-26T02:00:00Z',
       expires_at: '2026-08-26T02:00:00Z',
@@ -168,13 +170,21 @@ describe('SessionManagement', () => {
     },
   ];
 
-  it('labels devices from the user agent and badges the current one', async () => {
+  it('labels devices as "Browser on OS" and badges the current one', async () => {
     sessionMocks.getSessions.mockResolvedValue(sessions);
     renderWithClient(<SessionManagement />);
 
-    expect(await screen.findByText('Mac computer')).toBeInTheDocument();
-    expect(screen.getByText('Mobile device')).toBeInTheDocument();
+    expect(await screen.findByText('Chrome on macOS')).toBeInTheDocument();
+    expect(screen.getByText('Safari on iOS')).toBeInTheDocument();
     expect(screen.getByText('This device')).toBeInTheDocument();
+  });
+
+  it('shows the IP and "Active now" for a recently-seen session', async () => {
+    sessionMocks.getSessions.mockResolvedValue(sessions);
+    renderWithClient(<SessionManagement />);
+
+    expect(await screen.findByText(/203\.0\.113\.10/)).toBeInTheDocument();
+    expect(screen.getByText(/Active now/)).toBeInTheDocument();
   });
 
   it('falls back to a placeholder when the user agent is missing', async () => {
@@ -188,7 +198,7 @@ describe('SessionManagement', () => {
     sessionMocks.getSessions.mockResolvedValue(sessions);
     renderWithClient(<SessionManagement />);
 
-    await screen.findByText('Mac computer');
+    await screen.findByText('Chrome on macOS');
     // Revoking your own session would log you out of the page you are on.
     expect(screen.getAllByRole('button', { name: 'Sign out device' })).toHaveLength(1);
   });
@@ -199,7 +209,7 @@ describe('SessionManagement', () => {
     sessionMocks.revokeSession.mockResolvedValue(undefined);
     renderWithClient(<SessionManagement />);
 
-    await screen.findByText('Mobile device');
+    await screen.findByText('Safari on iOS');
     await typer.click(screen.getByRole('button', { name: 'Sign out device' }));
 
     // React Query v5 appends a mutation-context argument, so assert on the id.
@@ -208,31 +218,38 @@ describe('SessionManagement', () => {
     await waitFor(() => expect(sessionMocks.getSessions).toHaveBeenCalledTimes(2));
   });
 
-  it('confirms before signing out every other device', async () => {
+  it('confirms in a modal before signing out every other device', async () => {
     const typer = userEvent.setup();
     sessionMocks.getSessions.mockResolvedValue(sessions);
     sessionMocks.revokeOtherSessions.mockResolvedValue(undefined);
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     renderWithClient(<SessionManagement />);
 
-    await screen.findByText('Mac computer');
-    await typer.click(screen.getByRole('button', { name: 'Sign out all others' }));
+    await screen.findByText('Chrome on macOS');
+    await typer.click(screen.getByRole('button', { name: 'Sign out all other sessions' }));
 
-    expect(confirm).toHaveBeenCalled();
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toBeInTheDocument();
     expect(sessionMocks.revokeOtherSessions).not.toHaveBeenCalled();
 
-    confirm.mockReturnValue(true);
-    await typer.click(screen.getByRole('button', { name: 'Sign out all others' }));
+    await typer.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument(),
+    );
+
+    await typer.click(screen.getByRole('button', { name: 'Sign out all other sessions' }));
+    await screen.findByRole('dialog');
+    await typer.click(screen.getByRole('button', { name: /^Sign out 1 session$/ }));
     await waitFor(() => expect(sessionMocks.revokeOtherSessions).toHaveBeenCalledOnce());
-    confirm.mockRestore();
   });
 
   it('hides the bulk control when this is the only session', async () => {
     sessionMocks.getSessions.mockResolvedValue([sessions[0]]);
     renderWithClient(<SessionManagement />);
 
-    await screen.findByText('Mac computer');
-    expect(screen.queryByRole('button', { name: 'Sign out all others' })).not.toBeInTheDocument();
+    await screen.findByText('Chrome on macOS');
+    expect(
+      screen.queryByRole('button', { name: 'Sign out all other sessions' }),
+    ).not.toBeInTheDocument();
   });
 
   it('reports an empty list rather than rendering nothing', async () => {
