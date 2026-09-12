@@ -90,10 +90,16 @@ services:
       # every legitimate user.
       TRUST_PROXY_HEADERS: "true"
       FRONTEND_URL: "${FRONTEND_URL:-https://payrollmy.com}"
+      # The API's own public origin — Google OAuth callbacks must land here,
+      # not on the static frontend site. payrollmy.com serves only the SPA.
+      API_PUBLIC_URL: "${API_PUBLIC_URL:-https://api.payrollmy.com}"
       WEBAUTHN_RP_ID: "${WEBAUTHN_RP_ID:-payrollmy.com}"
       WEBAUTHN_RP_ORIGIN: "${WEBAUTHN_RP_ORIGIN:-https://payrollmy.com}"
       GOOGLE_CLIENT_ID: "${GOOGLE_CLIENT_ID:-}"
       GOOGLE_CLIENT_SECRET: "${GOOGLE_CLIENT_SECRET:-}"
+      # Empty = Turnstile verification off; set the real secret in
+      # /opt/payroll/secrets.env to enforce it on public auth endpoints.
+      TURNSTILE_SECRET_KEY: "${TURNSTILE_SECRET_KEY:-}"
       SMTP_HOST: "${SMTP_HOST:-}"
       SMTP_PORT: "${SMTP_PORT:-}"
       SMTP_USERNAME: "${SMTP_USERNAME:-}"
