@@ -23,6 +23,7 @@ fn test_config() -> AppConfig {
         server_host: "0.0.0.0".into(),
         server_port: 8080,
         frontend_url: "http://localhost:5173".into(),
+        api_public_url: String::new(),
         google_client_id: None,
         google_client_secret: None,
         webauthn_rp_id: "localhost".into(),
@@ -34,6 +35,8 @@ fn test_config() -> AppConfig {
         smtp_from_email: None,
         smtp_from_name: None,
         trust_proxy_headers: false,
+        turnstile_secret_key: None,
+        turnstile_verify_url: "https://challenges.cloudflare.com/turnstile/v0/siteverify".into(),
     }
 }
 

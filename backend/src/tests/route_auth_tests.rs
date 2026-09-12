@@ -30,6 +30,7 @@ fn test_config(database_url: String) -> AppConfig {
         server_host: "127.0.0.1".to_string(),
         server_port: 0,
         frontend_url: "http://localhost:5173".to_string(),
+        api_public_url: String::new(),
         google_client_id: None,
         google_client_secret: None,
         webauthn_rp_id: "localhost".to_string(),
@@ -44,6 +45,8 @@ fn test_config(database_url: String) -> AppConfig {
         // ConnectInfo; trusting the forwarded header the helper already sets
         // keeps the rate limiters able to extract a key.
         trust_proxy_headers: true,
+        turnstile_secret_key: None,
+        turnstile_verify_url: "https://challenges.cloudflare.com/turnstile/v0/siteverify".into(),
     }
 }
 
