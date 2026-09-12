@@ -14,8 +14,8 @@ use crate::handlers::auth::login_outcome_response;
 use crate::models::audit::AuditRequestMeta;
 use crate::models::passkey::{
     AuthBeginRequest, AuthBeginResponse, AuthCompleteRequest, CheckPasskeyRequest,
-    DiscoverableAuthBeginResponse, PasskeyInfo, RegistrationBeginResponse,
-    RegistrationCompleteRequest, RenamePasskeyRequest,
+    DiscoverableAuthBeginRequest, DiscoverableAuthBeginResponse, PasskeyInfo,
+    RegistrationBeginResponse, RegistrationCompleteRequest, RenamePasskeyRequest,
 };
 use crate::services::{auth_service, passkey_service};
 
@@ -86,8 +86,16 @@ pub async fn registration_complete(
 
 pub async fn authentication_begin(
     State(state): State<AppState>,
+    audit_meta: AuditRequestMeta,
     Json(req): Json<AuthBeginRequest>,
 ) -> AppResult<Json<AuthBeginResponse>> {
+    crate::core::turnstile::verify(
+        &state.config,
+        req.turnstile_token.as_deref(),
+        audit_meta.ip_address.as_deref(),
+    )
+    .await?;
+
     let user_id = passkey_service::get_user_id_by_email_with_passkeys(&state.pool, &req.email)
         .await?
         .ok_or_else(|| AppError::BadRequest("No passkeys registered for this email".into()))?;
@@ -172,7 +180,16 @@ pub async fn authentication_complete(
 
 pub async fn discoverable_auth_begin(
     State(state): State<AppState>,
+    audit_meta: AuditRequestMeta,
+    Json(req): Json<DiscoverableAuthBeginRequest>,
 ) -> AppResult<Json<DiscoverableAuthBeginResponse>> {
+    crate::core::turnstile::verify(
+        &state.config,
+        req.turnstile_token.as_deref(),
+        audit_meta.ip_address.as_deref(),
+    )
+    .await?;
+
     let (mut rcr, auth_state) =
         state
             .webauthn
@@ -288,8 +305,16 @@ pub async fn delete_passkey(
 /// Check if a given email has passkeys (used by frontend to show passkey button)
 pub async fn check_passkey(
     State(state): State<AppState>,
+    audit_meta: AuditRequestMeta,
     Json(req): Json<CheckPasskeyRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
+    crate::core::turnstile::verify(
+        &state.config,
+        req.turnstile_token.as_deref(),
+        audit_meta.ip_address.as_deref(),
+    )
+    .await?;
+
     let has = passkey_service::get_user_id_by_email_with_passkeys(&state.pool, &req.email)
         .await?
         .is_some();

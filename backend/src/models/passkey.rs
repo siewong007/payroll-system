@@ -45,6 +45,8 @@ pub struct RegistrationCompleteRequest {
 #[derive(Deserialize)]
 pub struct AuthBeginRequest {
     pub email: String,
+    #[serde(default)]
+    pub turnstile_token: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -59,6 +61,12 @@ pub struct AuthCompleteRequest {
     pub credential: PublicKeyCredential,
 }
 
+#[derive(Deserialize)]
+pub struct DiscoverableAuthBeginRequest {
+    #[serde(default)]
+    pub turnstile_token: Option<String>,
+}
+
 #[derive(Serialize)]
 pub struct DiscoverableAuthBeginResponse {
     pub challenge_id: Uuid,
@@ -68,6 +76,8 @@ pub struct DiscoverableAuthBeginResponse {
 #[derive(Deserialize)]
 pub struct CheckPasskeyRequest {
     pub email: String,
+    #[serde(default)]
+    pub turnstile_token: Option<String>,
 }
 
 pub struct ConsumedChallenge {

@@ -28,6 +28,8 @@ pub struct LoginRequest {
     pub email: String,
     #[validate(length(min = 1, message = "password is required"))]
     pub password: String,
+    #[serde(default)]
+    pub turnstile_token: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

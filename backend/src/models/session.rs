@@ -73,6 +73,8 @@ pub enum LoginOutcome {
 pub struct ForgotPasswordRequest {
     #[validate(email(message = "must be a valid email address"))]
     pub email: String,
+    #[serde(default)]
+    pub turnstile_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize, validator::Validate)]
@@ -81,4 +83,6 @@ pub struct ResetPasswordRequest {
     pub token: String,
     #[validate(length(min = 8, message = "must be at least 8 characters"))]
     pub new_password: String,
+    #[serde(default)]
+    pub turnstile_token: Option<String>,
 }

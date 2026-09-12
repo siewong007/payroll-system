@@ -10,7 +10,9 @@ use crate::core::auth::AuthUser;
 use crate::core::cookie;
 use crate::core::error::{AppError, AppResult};
 use crate::models::audit::AuditRequestMeta;
-use crate::models::oauth2::{LinkedAccount, OAuth2CallbackQuery, OAuth2ProviderInfo};
+use crate::models::oauth2::{
+    LinkGoogleRequest, LinkedAccount, OAuth2AuthorizeQuery, OAuth2CallbackQuery, OAuth2ProviderInfo,
+};
 use crate::models::session::LoginOutcome;
 use crate::services::{auth_service, oauth2_service};
 
@@ -118,10 +120,10 @@ async fn google_callback_inner(
         .google_client_secret
         .as_deref()
         .ok_or_else(|| AppError::Internal("Google OAuth2 not configured".into()))?;
-    let redirect_uri = format!(
-        "{}/api/auth/oauth2/google/callback",
-        state.config.frontend_url
-    );
+    // The callback is an Axum route, so the URI is built from the API's own
+    // public origin — on split-origin deploys the frontend host is a static
+    // site that would swallow the redirect.
+    let redirect_uri = state.config.google_redirect_uri();
 
     // Exchange code for tokens with PKCE code_verifier
     let token_resp = oauth2_service::google_exchange_code(
@@ -249,17 +251,31 @@ async fn google_callback_inner(
 /// The response also sets the state binder cookie. The SPA calls this endpoint
 /// with `withCredentials`, so the cookie is stored and replayed on the callback
 /// navigation without any frontend change.
-pub async fn google_authorize(State(state): State<AppState>) -> AppResult<Response> {
+pub async fn google_authorize(
+    State(state): State<AppState>,
+    audit_meta: AuditRequestMeta,
+    Query(query): Query<OAuth2AuthorizeQuery>,
+) -> AppResult<Response> {
+    crate::core::turnstile::verify(
+        &state.config,
+        query.turnstile_token.as_deref(),
+        audit_meta.ip_address.as_deref(),
+    )
+    .await?;
+
     let client_id = state
         .config
         .google_client_id
         .as_deref()
         .ok_or_else(|| AppError::BadRequest("Google OAuth2 is not configured".into()))?;
 
-    let redirect_uri = format!(
-        "{}/api/auth/oauth2/google/callback",
-        state.config.frontend_url
-    );
+    // `flow=link` is the account-linking journey: the code comes back to a SPA
+    // route that POSTs it with the user's JWT, not to the login callback.
+    let redirect_uri = if query.flow.as_deref() == Some("link") {
+        state.config.google_link_redirect_uri()
+    } else {
+        state.config.google_redirect_uri()
+    };
 
     // The state published to Google is a hash of the binder; the binder itself
     // stays in the browser.
@@ -317,13 +333,8 @@ pub async fn link_google(
     State(state): State<AppState>,
     auth: AuthUser,
     headers: HeaderMap,
-    Json(body): Json<serde_json::Value>,
-) -> AppResult<Json<LinkedAccount>> {
-    let code = body
-        .get("code")
-        .and_then(|c| c.as_str())
-        .ok_or_else(|| AppError::BadRequest("Authorization code is required".into()))?;
-
+    Json(body): Json<LinkGoogleRequest>,
+) -> AppResult<Response> {
     let client_id = state
         .config
         .google_client_id
@@ -334,38 +345,25 @@ pub async fn link_google(
         .google_client_secret
         .as_deref()
         .ok_or_else(|| AppError::BadRequest("Google OAuth2 is not configured".into()))?;
-    let redirect_uri = format!(
-        "{}/api/auth/oauth2/google/callback",
-        state.config.frontend_url
-    );
 
-    // For account linking, PKCE state is optional (the code comes from a popup/redirect
-    // the frontend manages). Exchange without PKCE code_verifier for the linking flow.
-    // When a state *is* supplied it goes through the same binder check as the
-    // login callback — linking mints no session, but leaving a second unbound
-    // consume path is how the bypass creeps back.
-    let code_verifier = match body.get("state").and_then(|s| s.as_str()) {
-        Some(st) => {
-            let binder = cookie::extract_oauth_state_binder(&headers);
-            oauth2_service::consume_oauth2_state(&state.pool, st, binder.as_deref()).await?
-        }
-        None => String::new(),
-    };
+    // The state goes through the same binder check as the login callback:
+    // without it, anyone holding a Google code could attach their own account
+    // to a victim's session. The cookie path covers /api/auth/oauth2, so this
+    // POST carries the binder just like the callback does.
+    let binder = cookie::extract_oauth_state_binder(&headers);
+    let code_verifier =
+        oauth2_service::consume_oauth2_state(&state.pool, &body.state, binder.as_deref()).await?;
 
-    let token_resp = if code_verifier.is_empty() {
-        // Linking flow without PKCE (backward compatible)
-        oauth2_service::google_exchange_code(client_id, client_secret, &redirect_uri, code, "")
-            .await?
-    } else {
-        oauth2_service::google_exchange_code(
-            client_id,
-            client_secret,
-            &redirect_uri,
-            code,
-            &code_verifier,
-        )
-        .await?
-    };
+    // Must equal the redirect_uri the authorization URL was built with — the
+    // SPA route that handed us this code, not the login callback.
+    let token_resp = oauth2_service::google_exchange_code(
+        client_id,
+        client_secret,
+        &state.config.google_link_redirect_uri(),
+        &body.code,
+        &code_verifier,
+    )
+    .await?;
 
     let google_user = oauth2_service::google_user_info(&token_resp.access_token).await?;
 
@@ -406,5 +404,11 @@ pub async fn link_google(
         .find(|a| a.provider == "google")
         .ok_or_else(|| AppError::Internal("Failed to fetch linked account".into()))?;
 
-    Ok(Json(linked))
+    // The flow is over either way, so the binder is spent — same invariant as
+    // the login callback.
+    let mut headers = HeaderMap::new();
+    let (name, value) = cookie::clear_oauth_state_cookie(&state.config.frontend_url);
+    headers.insert(name, value.parse().unwrap());
+
+    Ok((headers, Json(linked)).into_response())
 }

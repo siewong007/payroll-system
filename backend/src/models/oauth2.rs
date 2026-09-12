@@ -45,6 +45,20 @@ pub struct OAuth2CallbackQuery {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct OAuth2AuthorizeQuery {
+    /// `link` aims the Google redirect at the account-linking SPA route
+    /// instead of the login callback.
+    pub flow: Option<String>,
+    pub turnstile_token: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LinkGoogleRequest {
+    pub code: String,
+    pub state: String,
+}
+
 /// Response for OAuth2 providers listing
 #[derive(Debug, Serialize)]
 pub struct OAuth2ProviderInfo {

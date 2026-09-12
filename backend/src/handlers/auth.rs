@@ -57,6 +57,13 @@ pub async fn login(
     audit_meta: AuditRequestMeta,
     ValidatedJson(req): ValidatedJson<LoginRequest>,
 ) -> Result<impl IntoResponse, AppError> {
+    crate::core::turnstile::verify(
+        &state.config,
+        req.turnstile_token.as_deref(),
+        audit_meta.ip_address.as_deref(),
+    )
+    .await?;
+
     let outcome = auth_service::login(
         &state.pool,
         req,
@@ -230,6 +237,13 @@ pub async fn forgot_password(
     audit_meta: AuditRequestMeta,
     ValidatedJson(req): ValidatedJson<ForgotPasswordRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
+    crate::core::turnstile::verify(
+        &state.config,
+        req.turnstile_token.as_deref(),
+        audit_meta.ip_address.as_deref(),
+    )
+    .await?;
+
     let result =
         password_reset_service::request_reset(&state.pool, &req.email, Some(&audit_meta)).await?;
 
@@ -270,6 +284,13 @@ pub async fn reset_password(
     audit_meta: AuditRequestMeta,
     ValidatedJson(req): ValidatedJson<ResetPasswordRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
+    crate::core::turnstile::verify(
+        &state.config,
+        req.turnstile_token.as_deref(),
+        audit_meta.ip_address.as_deref(),
+    )
+    .await?;
+
     password_reset_service::reset_password(
         &state.pool,
         &req.token,
