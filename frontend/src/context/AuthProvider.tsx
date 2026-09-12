@@ -47,10 +47,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('user', JSON.stringify(newUser));
   }, []);
 
-  const login = async (email: string, password: string): Promise<LoginResult> => {
+  const login = async (
+    email: string,
+    password: string,
+    turnstileToken?: string,
+  ): Promise<LoginResult> => {
     const { data } = await api.post<LoginResponse | MfaRequiredResponse>('/auth/login', {
       email,
       password,
+      turnstile_token: turnstileToken,
     });
 
     if ('requires_2fa' in data && data.requires_2fa) {

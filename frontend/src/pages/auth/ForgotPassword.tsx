@@ -1,22 +1,28 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { motion } from 'framer-motion';
 import { forgotPassword } from '@/api/admin';
+import { TurnstileWidget, type TurnstileWidgetRef } from '@/components/TurnstileWidget';
 
 export function ForgotPassword() {
   const [email, setEmail] = useState('');
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const turnstileRef = useRef<TurnstileWidgetRef>(null);
+  const turnstileToken = useRef<string | undefined>(undefined);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setLoading(true);
+    const token = turnstileToken.current;
+    turnstileToken.current = undefined;
     try {
-      await forgotPassword(email);
+      await forgotPassword(email, token);
       setSubmitted(true);
     } catch {
+      turnstileRef.current?.reset();
       setError('Something went wrong. Please try again.');
     } finally {
       setLoading(false);
@@ -80,6 +86,19 @@ export function ForgotPassword() {
                   required
                 />
               </div>
+
+              <TurnstileWidget
+                ref={turnstileRef}
+                onVerify={(t) => {
+                  turnstileToken.current = t;
+                }}
+                onExpire={() => {
+                  turnstileToken.current = undefined;
+                }}
+                onError={() => {
+                  turnstileToken.current = undefined;
+                }}
+              />
 
               <button
                 type="submit"

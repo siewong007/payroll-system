@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import { motion } from 'framer-motion';
 import { resetPassword, validateResetToken } from '@/api/admin';
+import { TurnstileWidget, type TurnstileWidgetRef } from '@/components/TurnstileWidget';
 
 export function ResetPassword() {
   const [searchParams] = useSearchParams();
@@ -13,6 +14,8 @@ export function ResetPassword() {
   const [loading, setLoading] = useState(false);
   const [validating, setValidating] = useState(true);
   const [tokenValid, setTokenValid] = useState(false);
+  const turnstileRef = useRef<TurnstileWidgetRef>(null);
+  const turnstileToken = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     if (!token) {
@@ -39,10 +42,13 @@ export function ResetPassword() {
     }
 
     setLoading(true);
+    const captcha = turnstileToken.current;
+    turnstileToken.current = undefined;
     try {
-      await resetPassword(token, password);
+      await resetPassword(token, password, captcha);
       setSuccess(true);
     } catch {
+      turnstileRef.current?.reset();
       setError('Failed to reset password. The link may have expired.');
     } finally {
       setLoading(false);
@@ -133,6 +139,19 @@ export function ResetPassword() {
                   required
                 />
               </div>
+
+              <TurnstileWidget
+                ref={turnstileRef}
+                onVerify={(t) => {
+                  turnstileToken.current = t;
+                }}
+                onExpire={() => {
+                  turnstileToken.current = undefined;
+                }}
+                onError={() => {
+                  turnstileToken.current = undefined;
+                }}
+              />
 
               <button
                 type="submit"

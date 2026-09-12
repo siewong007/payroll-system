@@ -11,7 +11,7 @@ export type LoginResult =
 export interface AuthContextType {
   user: User | null;
   token: string | null;
-  login: (email: string, password: string) => Promise<LoginResult>;
+  login: (email: string, password: string, turnstileToken?: string) => Promise<LoginResult>;
   completeTwoFactorLogin: (mfaToken: string, code: string) => Promise<User>;
   logout: () => Promise<void>;
   switchCompany: (companyId: string) => Promise<void>;

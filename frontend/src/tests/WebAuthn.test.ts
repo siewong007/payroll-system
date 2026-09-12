@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createElement, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, screen, waitFor } from '@testing-library/react';
@@ -244,6 +244,10 @@ describe('passkey login call sites', () => {
   }
 
   beforeEach(() => {
+    // .env.local supplies a real site key; with Turnstile "enabled" the
+    // debounced passkey check waits on a token that never comes in jsdom.
+    vi.stubEnv('VITE_TURNSTILE_SITE_KEY', '');
+
     getCredential.mockReset().mockResolvedValue(assertion);
     createCredential.mockReset();
     apiMocks.setAccessToken.mockReset();
@@ -275,6 +279,10 @@ describe('passkey login call sites', () => {
       configurable: true,
       value: class PublicKeyCredential {},
     });
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it('unwraps options.publicKey for the discoverable flow before the browser ceremony', async () => {

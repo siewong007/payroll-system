@@ -52,12 +52,14 @@ export const getMyCompanies = () =>
 export const switchCompany = (companyId: string) =>
   api.put<LoginResponse>('/auth/switch-company', { company_id: companyId }).then((r) => r.data);
 
-// Auth - forgot/reset password (public)
-export const forgotPassword = (email: string) =>
-  api.post('/auth/forgot-password', { email }).then((r) => r.data);
+// Auth - forgot/reset password (public, Turnstile-gated server-side)
+export const forgotPassword = (email: string, turnstileToken?: string) =>
+  api.post('/auth/forgot-password', { email, turnstile_token: turnstileToken }).then((r) => r.data);
 
-export const resetPassword = (token: string, new_password: string) =>
-  api.post('/auth/reset-password', { token, new_password }).then((r) => r.data);
+export const resetPassword = (token: string, new_password: string, turnstileToken?: string) =>
+  api
+    .post('/auth/reset-password', { token, new_password, turnstile_token: turnstileToken })
+    .then((r) => r.data);
 
 export const validateResetToken = (token: string) =>
   api.post('/auth/validate-reset-token', { token }).then((r) => r.data);

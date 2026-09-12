@@ -46,7 +46,9 @@ export function TurnstileWidget({ onVerify, onExpire, onError, ref }: TurnstileW
   // Latest callbacks — the widget is rendered once and must not be torn down
   // and re-created every time a parent re-renders with a new closure.
   const callbacks = useRef({ onVerify, onExpire, onError });
-  callbacks.current = { onVerify, onExpire, onError };
+  useEffect(() => {
+    callbacks.current = { onVerify, onExpire, onError };
+  });
 
   useImperativeHandle(
     ref,

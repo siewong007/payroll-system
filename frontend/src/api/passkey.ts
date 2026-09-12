@@ -15,8 +15,11 @@ export interface PasskeyInfo {
 }
 
 // Check if email has passkeys registered
-export async function checkPasskey(email: string): Promise<{ has_passkey: boolean }> {
-  const { data } = await api.post('/auth/passkey/check', { email });
+export async function checkPasskey(
+  email: string,
+  turnstileToken?: string,
+): Promise<{ has_passkey: boolean }> {
+  const { data } = await api.post('/auth/passkey/check', { email, turnstile_token: turnstileToken });
   return data;
 }
 
@@ -37,8 +40,11 @@ export interface PasskeyCreationOptionsEnvelope {
 }
 
 // Authentication (login) flow
-export async function passkeyAuthBegin(email: string) {
-  const { data } = await api.post('/auth/passkey/authenticate/begin', { email });
+export async function passkeyAuthBegin(email: string, turnstileToken?: string) {
+  const { data } = await api.post('/auth/passkey/authenticate/begin', {
+    email,
+    turnstile_token: turnstileToken,
+  });
   return data as { challenge_id: string; options: PasskeyRequestOptionsEnvelope };
 }
 
@@ -54,8 +60,10 @@ export async function passkeyAuthComplete(
 }
 
 // Discoverable authentication (no email required)
-export async function passkeyDiscoverableBegin() {
-  const { data } = await api.post('/auth/passkey/discoverable/begin');
+export async function passkeyDiscoverableBegin(turnstileToken?: string) {
+  const { data } = await api.post('/auth/passkey/discoverable/begin', {
+    turnstile_token: turnstileToken,
+  });
   return data as { challenge_id: string; options: PasskeyRequestOptionsEnvelope };
 }
 
