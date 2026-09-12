@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, Navigate, Link, useSearchParams } from 'react-router';
 import type { User } from '@/types';
-import { motion } from 'framer-motion';
+import { AnimatePresence, motion } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
-import { Fingerprint, LifeBuoy, Smartphone } from 'lucide-react';
+import { ChevronDown, Eye, EyeOff, Fingerprint, LifeBuoy, Smartphone } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { getErrorMessage, safeRedirectPath } from '@/lib/utils';
 import { hasOnlyEmployeeRole } from '@/lib/roles';
@@ -20,6 +20,8 @@ import { turnstileEnabled } from '@/lib/turnstile';
 export function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showMoreOptions, setShowMoreOptions] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [passkeyLoading, setPasskeyLoading] = useState(false);
@@ -194,6 +196,25 @@ export function Login() {
     }
   };
 
+  // One widget per view, mounted directly above each form's submit button.
+  // The branches below are mutually exclusive, so only one instance exists
+  // at a time; a view swap remounts and re-mints, which the waiter tolerates.
+  const turnstile = (
+    <TurnstileWidget
+      ref={turnstileRef}
+      onVerify={(t) => {
+        turnstileToken.current = t;
+        turnstileWaiter.current?.();
+      }}
+      onExpire={() => {
+        turnstileToken.current = undefined;
+      }}
+      onError={() => {
+        turnstileToken.current = undefined;
+      }}
+    />
+  );
+
   return (
     <div className="relative isolate min-h-screen flex items-center justify-center overflow-hidden bg-slate-950">
       {/* Aurora backdrop — indigo hints at the admin console, teal at the portal */}
@@ -225,23 +246,6 @@ export function Login() {
             />
           ) : (
             <>
-              {/* One widget serves every submit on this page (password,
-                  passkey, Google, code sign-in) — keep it mounted across the
-                  method picker so its token survives the view swap. */}
-              <TurnstileWidget
-                ref={turnstileRef}
-                onVerify={(t) => {
-                  turnstileToken.current = t;
-                  turnstileWaiter.current?.();
-                }}
-                onExpire={() => {
-                  turnstileToken.current = undefined;
-                }}
-                onError={() => {
-                  turnstileToken.current = undefined;
-                }}
-              />
-
               {codeMethod ? (
                 <form onSubmit={handleCodeLogin} className="space-y-5">
                   <button
@@ -290,6 +294,8 @@ export function Login() {
                     />
                   </div>
 
+                  <div className="flex justify-center">{turnstile}</div>
+
                   <button
                     type="submit"
                     disabled={loading}
@@ -313,47 +319,9 @@ export function Login() {
                     </button>
                   )}
 
-                  {/* First-party alternatives grouped together */}
-                  <div className="mt-5">
-                    <p className="text-center text-xs text-gray-400 mb-2.5">
-                      Other ways to sign in
-                    </p>
-                    <div
-                      className={`grid gap-2 ${webauthnSupported ? 'grid-cols-3' : 'grid-cols-2'}`}
-                    >
-                      {webauthnSupported && (
-                        <button
-                          type="button"
-                          onClick={handlePasskeyLogin}
-                          disabled={passkeyLoading}
-                          className="flex flex-col items-center gap-1.5 py-2.5 px-2 bg-white border border-gray-200 rounded-xl text-xs font-medium text-gray-600 hover:border-gray-300 hover:shadow-sm disabled:opacity-50 transition-all"
-                        >
-                          <Fingerprint className="w-5 h-5" />
-                          {passkeyLoading ? 'Verifying...' : 'Sign in with Passkey'}
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => setCodeMethod('totp')}
-                        className="flex flex-col items-center gap-1.5 py-2.5 px-2 bg-white border border-gray-200 rounded-xl text-xs font-medium text-gray-600 hover:border-gray-300 hover:shadow-sm transition-all"
-                      >
-                        <Smartphone className="w-5 h-5" />
-                        Authenticator
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setCodeMethod('backup')}
-                        className="flex flex-col items-center gap-1.5 py-2.5 px-2 bg-white border border-gray-200 rounded-xl text-xs font-medium text-gray-600 hover:border-gray-300 hover:shadow-sm transition-all"
-                      >
-                        <LifeBuoy className="w-5 h-5" />
-                        Recovery code
-                      </button>
-                    </div>
-                  </div>
-
                   <div className="flex items-center gap-3 my-6">
                     <div className="h-px flex-1 bg-gray-200" />
-                    <span className="text-xs text-gray-400">or sign in with email</span>
+                    <span className="text-xs text-gray-400">Other ways to sign in</span>
                     <div className="h-px flex-1 bg-gray-200" />
                   </div>
 
@@ -378,15 +346,33 @@ export function Login() {
 
                     <div>
                       <label className="form-label">Password</label>
-                      <input
-                        type="password"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        className="form-input"
-                        placeholder="Enter your password"
-                        required
-                      />
+                      <div className="relative">
+                        <input
+                          type={showPassword ? 'text' : 'password'}
+                          value={password}
+                          onChange={(e) => setPassword(e.target.value)}
+                          className="form-input pr-11"
+                          placeholder="Enter your password"
+                          autoComplete="current-password"
+                          required
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowPassword((v) => !v)}
+                          aria-label={showPassword ? 'Hide password' : 'Show password'}
+                          aria-pressed={showPassword}
+                          className="absolute inset-y-0 right-0 flex items-center px-3 text-gray-400 hover:text-gray-600 transition-colors"
+                        >
+                          {showPassword ? (
+                            <EyeOff className="w-4 h-4" />
+                          ) : (
+                            <Eye className="w-4 h-4" />
+                          )}
+                        </button>
+                      </div>
                     </div>
+
+                    <div className="flex justify-center">{turnstile}</div>
 
                     <button
                       type="submit"
@@ -396,12 +382,68 @@ export function Login() {
                       {loading ? 'Signing in...' : 'Sign In'}
                     </button>
 
-                    <div className="text-center">
-                      <Link to="/forgot-password" className="text-sm text-gray-500 hover:text-gray-700">
+                    <div className="flex items-center justify-center gap-3 text-sm">
+                      <Link to="/forgot-password" className="text-gray-500 hover:text-gray-700">
                         Forgot password?
                       </Link>
+                      <span className="text-gray-300">·</span>
+                      <button
+                        type="button"
+                        onClick={() => setShowMoreOptions((v) => !v)}
+                        aria-expanded={showMoreOptions}
+                        className="inline-flex items-center gap-1 text-gray-500 hover:text-gray-700"
+                      >
+                        More sign-in options
+                        <ChevronDown
+                          className={`w-4 h-4 transition-transform ${showMoreOptions ? 'rotate-180' : ''}`}
+                        />
+                      </button>
                     </div>
                   </form>
+
+                  <AnimatePresence initial={false}>
+                    {showMoreOptions && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: 'auto', opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+                        className="overflow-hidden"
+                      >
+                        <div
+                          className={`grid gap-2 pt-4 ${webauthnSupported ? 'grid-cols-3' : 'grid-cols-2'}`}
+                        >
+                          {webauthnSupported && (
+                            <button
+                              type="button"
+                              onClick={handlePasskeyLogin}
+                              disabled={passkeyLoading}
+                              className="flex flex-col items-center gap-1.5 py-2.5 px-2 bg-white border border-gray-200 rounded-xl text-xs font-medium text-gray-600 hover:border-gray-300 hover:shadow-sm disabled:opacity-50 transition-all"
+                            >
+                              <Fingerprint className="w-5 h-5" />
+                              {passkeyLoading ? 'Verifying...' : 'Sign in with Passkey'}
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setCodeMethod('totp')}
+                            className="flex flex-col items-center gap-1.5 py-2.5 px-2 bg-white border border-gray-200 rounded-xl text-xs font-medium text-gray-600 hover:border-gray-300 hover:shadow-sm transition-all"
+                          >
+                            <Smartphone className="w-5 h-5" />
+                            Authenticator
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setCodeMethod('backup')}
+                            className="flex flex-col items-center gap-1.5 py-2.5 px-2 bg-white border border-gray-200 rounded-xl text-xs font-medium text-gray-600 hover:border-gray-300 hover:shadow-sm transition-all"
+                          >
+                            <LifeBuoy className="w-5 h-5" />
+                            Recovery code
+                          </button>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
                 </>
               )}
             </>

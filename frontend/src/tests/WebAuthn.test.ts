@@ -289,6 +289,7 @@ describe('passkey login call sites', () => {
     const user = userEvent.setup();
     renderLogin();
 
+    await user.click(await screen.findByRole('button', { name: /more sign-in options/i }));
     await user.click(await screen.findByRole('button', { name: /sign in with passkey/i }));
 
     await waitFor(() => expect(getCredential).toHaveBeenCalled());
@@ -326,6 +327,7 @@ describe('passkey login call sites', () => {
       await Promise.resolve();
     });
 
+    await user.click(screen.getByRole('button', { name: /more sign-in options/i }));
     await user.click(screen.getByRole('button', { name: /sign in with passkey/i }));
 
     await waitFor(() => expect(getCredential).toHaveBeenCalled());

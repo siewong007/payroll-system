@@ -39,6 +39,10 @@ function renderLogin() {
   return render(tree(createElement(Login)));
 }
 
+async function expandMoreOptions(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(await screen.findByRole('button', { name: /more sign-in options/i }));
+}
+
 describe('code sign-in (authenticator / recovery code)', () => {
   beforeEach(() => {
     // .env.local supplies a real site key; a Turnstile-enabled test run would
@@ -64,18 +68,48 @@ describe('code sign-in (authenticator / recovery code)', () => {
     vi.unstubAllEnvs();
   });
 
-  it('groups passkey-free methods under Other ways to sign in', async () => {
+  it('labels the email form as Other ways to sign in and hides alternates by default', async () => {
     renderLogin();
 
     expect(await screen.findByText('Other ways to sign in')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /authenticator/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /authenticator/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /recovery code/i })).not.toBeInTheDocument();
+  });
+
+  it('expands and collapses the extra sign-in methods via the link', async () => {
+    const user = userEvent.setup();
+    renderLogin();
+
+    const toggle = await screen.findByRole('button', { name: /more sign-in options/i });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(await screen.findByRole('button', { name: /authenticator/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /recovery code/i })).toBeInTheDocument();
+
+    await user.click(toggle);
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: /authenticator/i })).not.toBeInTheDocument(),
+    );
+  });
+
+  it('toggles password visibility', async () => {
+    const user = userEvent.setup();
+    renderLogin();
+
+    const password = await screen.findByPlaceholderText('Enter your password');
+    expect(password).toHaveAttribute('type', 'password');
+    await user.click(screen.getByRole('button', { name: /show password/i }));
+    expect(password).toHaveAttribute('type', 'text');
+    await user.click(screen.getByRole('button', { name: /hide password/i }));
+    expect(password).toHaveAttribute('type', 'password');
   });
 
   it('shows an email + authenticator code form and submits both to /auth/login/code', async () => {
     const user = userEvent.setup();
     renderLogin();
 
+    await expandMoreOptions(user);
     await user.click(await screen.findByRole('button', { name: /^authenticator$/i }));
     await user.type(screen.getByPlaceholderText('Enter your email'), 'employee@example.com');
     await user.type(screen.getByPlaceholderText('6-digit code'), '123456');
@@ -100,6 +134,7 @@ describe('code sign-in (authenticator / recovery code)', () => {
     const user = userEvent.setup();
     renderLogin();
 
+    await expandMoreOptions(user);
     await user.click(await screen.findByRole('button', { name: /recovery code/i }));
 
     expect(await screen.findByText('Recovery code')).toBeInTheDocument();
@@ -120,6 +155,7 @@ describe('code sign-in (authenticator / recovery code)', () => {
     const user = userEvent.setup();
     renderLogin();
 
+    await expandMoreOptions(user);
     await user.click(await screen.findByRole('button', { name: /^authenticator$/i }));
     await user.type(screen.getByPlaceholderText('Enter your email'), 'employee@example.com');
     await user.type(screen.getByPlaceholderText('6-digit code'), '000000');
@@ -128,14 +164,15 @@ describe('code sign-in (authenticator / recovery code)', () => {
     expect(await screen.findByText('Invalid email or code')).toBeInTheDocument();
   });
 
-  it('returns to the full option set via the back link', async () => {
+  it('returns to the default view via the back link', async () => {
     const user = userEvent.setup();
     renderLogin();
 
+    await expandMoreOptions(user);
     await user.click(await screen.findByRole('button', { name: /^authenticator$/i }));
     await user.click(screen.getByRole('button', { name: /back to all sign-in options/i }));
 
-    expect(await screen.findByText('Other ways to sign in')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('Enter your password')).toBeInTheDocument();
+    expect(await screen.findByPlaceholderText('Enter your password')).toBeInTheDocument();
+    expect(screen.getByText('Other ways to sign in')).toBeInTheDocument();
   });
 });
