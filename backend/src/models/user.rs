@@ -32,6 +32,20 @@ pub struct LoginRequest {
     pub turnstile_token: Option<String>,
 }
 
+/// Passwordless sign-in with a TOTP authenticator code or a one-time backup
+/// code. The code serves as both factors at once, so this endpoint exists
+/// only for accounts with 2FA enabled — everyone else gets the same generic
+/// rejection as a wrong code.
+#[derive(Debug, Deserialize, Validate)]
+pub struct CodeLoginRequest {
+    #[validate(email(message = "must be a valid email address"))]
+    pub email: String,
+    #[validate(length(min = 1, message = "code is required"))]
+    pub code: String,
+    #[serde(default)]
+    pub turnstile_token: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct LoginResponse {
     pub token: String,

@@ -461,6 +461,148 @@ async fn login_falls_back_to_backup_codes_when_the_totp_secret_is_unreadable() {
     );
 }
 
+// ─── Code sign-in (first-factor TOTP / backup code) ───
+//
+// `/auth/login/code` lets a user sign in with their authenticator code or a
+// backup code instead of a password. The code is both factors in one, so the
+// endpoint must issue a real session directly — routing it through
+// `complete_login` would hand back a pending-MFA marker and a backup code
+// already consumed by the first check would fail the second.
+
+/// Enrolls like `enroll_target` but also returns the raw TOTP secret, so a
+/// test can mint a *current* code to sign in with.
+async fn enroll_and_get_secret(
+    pool: &sqlx::PgPool,
+    company_id: Uuid,
+) -> (Uuid, String, String, Vec<String>) {
+    let email = format!("totp-code-login-{}@example.invalid", Uuid::new_v4());
+    let password = "Sup3rSecretPassw0rd";
+    let user_id = seed_user_with_password(pool, company_id, &email, password).await;
+    let user = crate::services::auth_service::get_user_by_id(pool, user_id)
+        .await
+        .expect("load target user");
+    let setup = totp_service::begin_setup(pool, &user, TOTP_ENCRYPTION_KEY)
+        .await
+        .expect("begin 2FA setup");
+    let codes = totp_service::confirm_setup(
+        pool,
+        user_id,
+        &code_for_secret(&setup.secret),
+        TOTP_ENCRYPTION_KEY,
+        None,
+    )
+    .await
+    .expect("confirm 2FA setup");
+    (user_id, email, setup.secret, codes)
+}
+
+#[tokio::test]
+async fn code_login_with_a_totp_code_issues_a_full_session() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let (_user_id, email, secret, _codes) = enroll_and_get_secret(&pool, company_id).await;
+
+    let resp = app_for(pool)
+        .await
+        .oneshot(json_request(
+            "POST",
+            "/api/auth/login/code",
+            None,
+            &format!(
+                r#"{{"email":"{email}","code":"{}"}}"#,
+                code_for_secret(&secret)
+            ),
+        ))
+        .await
+        .expect("code login response");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert!(
+        body["token"].as_str().is_some(),
+        "code login must issue a session, not a pending-MFA marker: {body}"
+    );
+    assert!(body.get("requires_2fa").is_none());
+    assert_eq!(body["user"]["email"], serde_json::json!(email));
+}
+
+#[tokio::test]
+async fn code_login_with_a_backup_code_issues_a_session_and_consumes_the_code() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let (_user_id, email, _secret, backup_codes) = enroll_target(&pool, company_id).await;
+    let app = app_for(pool).await;
+
+    let resp = app
+        .clone()
+        .oneshot(json_request(
+            "POST",
+            "/api/auth/login/code",
+            None,
+            &format!(r#"{{"email":"{email}","code":"{}"}}"#, backup_codes[0]),
+        ))
+        .await
+        .expect("code login response");
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert!(body_json(resp).await["token"].as_str().is_some());
+
+    // Backup codes are single-use: the same code must not sign in twice.
+    let resp = app
+        .oneshot(json_request(
+            "POST",
+            "/api/auth/login/code",
+            None,
+            &format!(r#"{{"email":"{email}","code":"{}"}}"#, backup_codes[0]),
+        ))
+        .await
+        .expect("replayed backup code response");
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn code_login_rejects_bad_code_unknown_email_and_no_2fa_identically() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let (_id, email, _secret, _codes) = enroll_target(&pool, company_id).await;
+    let no_2fa_email = format!("totp-none-{}@example.invalid", Uuid::new_v4());
+    seed_user_with_password(&pool, company_id, &no_2fa_email, "Sup3rSecretPassw0rd").await;
+    let app = app_for(pool).await;
+
+    let mut bodies = Vec::new();
+    for (probe_email, code) in [
+        (email.as_str(), "000000"),
+        ("nobody@example.invalid", "123456"),
+        (no_2fa_email.as_str(), "123456"),
+    ] {
+        let resp = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/auth/login/code",
+                None,
+                &format!(r#"{{"email":"{probe_email}","code":"{code}"}}"#),
+            ))
+            .await
+            .expect("code login response");
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        bodies.push(body_json(resp).await);
+    }
+    // Wrong code, unknown email and "no 2FA on this account" must be
+    // indistinguishable — the endpoint answers whether (email, code) is
+    // valid, nothing else.
+    assert_eq!(bodies[0], bodies[1]);
+    assert_eq!(bodies[1], bodies[2]);
+    assert_eq!(
+        bodies[0]["error"],
+        serde_json::json!("Invalid email or code")
+    );
+}
+
 /// The startup migration: a row encrypted under the old JWT-derived key is
 /// re-encrypted under `TOTP_ENCRYPTION_KEY`, and rows already under the
 /// dedicated key are left byte-identical by a second pass.

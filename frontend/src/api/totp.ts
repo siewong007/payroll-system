@@ -41,3 +41,21 @@ export async function verifyTwoFactorLogin(mfaToken: string, code: string): Prom
   const { data } = await api.post('/auth/2fa/verify', { mfa_token: mfaToken, code });
   return data;
 }
+
+/**
+ * Passwordless sign-in: email + a TOTP authenticator code or one-time backup
+ * code as the whole credential. Only works for accounts with 2FA enabled —
+ * everyone else gets the same generic rejection as a wrong code.
+ */
+export async function codeLogin(
+  email: string,
+  code: string,
+  turnstileToken?: string,
+): Promise<LoginResponse> {
+  const { data } = await api.post('/auth/login/code', {
+    email,
+    code,
+    turnstile_token: turnstileToken,
+  });
+  return data;
+}

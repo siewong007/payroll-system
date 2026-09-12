@@ -5,7 +5,7 @@ use crate::core::auth::{create_mfa_pending_token, create_token};
 use crate::core::error::{AppError, AppResult};
 use crate::models::audit::AuditRequestMeta;
 use crate::models::session::{LoginOutcome, LoginResponseWithRefresh};
-use crate::models::user::{LoginRequest, User, UserResponse};
+use crate::models::user::{CodeLoginRequest, LoginRequest, User, UserResponse};
 use crate::repositories::{employees, refresh_tokens, user_sessions, users};
 use crate::services::{audit_service, session_service, totp_service};
 
@@ -128,6 +128,84 @@ pub async fn login(
         pool, user.id, jwt_secret, jwt_expiry, user_agent, "password", audit_meta,
     )
     .await
+}
+
+/// Sign-in where the code is the whole credential: a current TOTP code or an
+/// unused backup code stands in for password + second factor at once. Only
+/// reachable for accounts with 2FA enabled — `verify_login_code` rejects the
+/// rest — and the verified code means `complete_login` must NOT be used here:
+/// it would issue a pending-MFA token and force the same code through
+/// `/auth/2fa/verify`, where an already-consumed backup code can never pass.
+///
+/// Every rejection — unknown email, no 2FA, bad code — is the same generic
+/// `Unauthorized`, so the endpoint answers only "was (email, code) valid".
+pub async fn code_login(
+    pool: &PgPool,
+    req: CodeLoginRequest,
+    user_agent: Option<&str>,
+    jwt_secret: &str,
+    jwt_expiry: i64,
+    encryption_key: &str,
+    audit_meta: Option<&AuditRequestMeta>,
+) -> AppResult<LoginOutcome> {
+    const INVALID: &str = "Invalid email or code";
+
+    let reject = |user: Option<&User>, reason: &'static str| {
+        let company_id = user.and_then(|u| u.company_id);
+        let user_id = user.map(|u| u.id);
+        audit_service::log_action_with_metadata(
+            pool,
+            company_id,
+            user_id,
+            "login_failed",
+            "auth",
+            user_id,
+            None::<serde_json::Value>,
+            Some(serde_json::json!({
+                "email": crate::core::redact::email(&req.email),
+                "reason": reason,
+                "method": "code",
+            })),
+            Some("Failed login attempt"),
+            audit_meta,
+        )
+    };
+
+    let user = match users::find_active_by_email(pool, &req.email).await? {
+        Some(user) => user,
+        None => {
+            let _ = reject(None, "unknown_email").await;
+            return Err(AppError::Unauthorized(INVALID.into()));
+        }
+    };
+
+    // get_active_user applies the terminated-employee gate — a portal account
+    // whose employee record was deleted must not mint a session off a code.
+    let user = get_active_user(pool, user.id).await?;
+
+    if let Err(e) =
+        totp_service::verify_login_code(pool, user.id, req.code.trim(), encryption_key).await
+    {
+        return match e {
+            AppError::Unauthorized(_) => {
+                let _ = reject(Some(&user), "invalid_code").await;
+                Err(AppError::Unauthorized(INVALID.into()))
+            }
+            other => Err(other),
+        };
+    }
+
+    // A 6-digit code matched the TOTP path; anything longer was a backup code.
+    let method = if req.code.trim().len() == 6 {
+        "totp"
+    } else {
+        "backup_code"
+    };
+    let session = issue_session(
+        pool, user, jwt_secret, jwt_expiry, user_agent, method, audit_meta,
+    )
+    .await?;
+    Ok(LoginOutcome::Session(session))
 }
 
 /// Mints a JWT + refresh token for an already-authenticated user: records

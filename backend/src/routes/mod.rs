@@ -60,6 +60,7 @@ pub fn create_router(state: AppState) -> Router {
     // Rate-limited auth routes
     let rate_limited_auth = Router::new()
         .route("/auth/login", post(auth::login))
+        .route("/auth/login/code", post(auth::code_login))
         .route("/auth/reset-password", post(auth::reset_password))
         .route("/auth/2fa/verify", post(totp::verify_login))
         .layer(GovernorLayer::new(auth_rate_limit));

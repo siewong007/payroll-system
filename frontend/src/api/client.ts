@@ -53,6 +53,7 @@ api.interceptors.request.use((config) => {
  */
 const NO_REFRESH_401_ENDPOINTS = [
   '/auth/login',
+  '/auth/login/code',
   '/auth/refresh',
   '/auth/2fa/verify',
   '/auth/2fa/setup/confirm',

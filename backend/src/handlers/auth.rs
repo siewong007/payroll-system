@@ -14,7 +14,9 @@ use crate::models::audit::AuditRequestMeta;
 use crate::models::session::{
     ForgotPasswordRequest, LoginOutcome, ResetPasswordRequest, UserSessionResponse,
 };
-use crate::models::user::{ChangePasswordRequest, LoginRequest, LoginResponse, UserResponse};
+use crate::models::user::{
+    ChangePasswordRequest, CodeLoginRequest, LoginRequest, LoginResponse, UserResponse,
+};
 use crate::models::user_company::{CompanySummary, SwitchCompanyRequest};
 use crate::services::{
     auth_service, email_service, password_reset_service, session_service, user_service,
@@ -72,6 +74,37 @@ pub async fn login(
             .and_then(|value| value.to_str().ok()),
         &state.config.jwt_secret,
         state.config.jwt_expiry_hours,
+        Some(&audit_meta),
+    )
+    .await?;
+
+    Ok(login_outcome_response(outcome, &state.config.frontend_url))
+}
+
+/// Passwordless sign-in: email + a TOTP authenticator code or one-time backup
+/// code. Turnstile applies — a 6-digit secret is exactly what bots guess.
+pub async fn code_login(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
+    ValidatedJson(req): ValidatedJson<CodeLoginRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    crate::core::turnstile::verify(
+        &state.config,
+        req.turnstile_token.as_deref(),
+        audit_meta.ip_address.as_deref(),
+    )
+    .await?;
+
+    let outcome = auth_service::code_login(
+        &state.pool,
+        req,
+        headers
+            .get("user-agent")
+            .and_then(|value| value.to_str().ok()),
+        &state.config.jwt_secret,
+        state.config.jwt_expiry_hours,
+        &state.config.totp_encryption_key,
         Some(&audit_meta),
     )
     .await?;

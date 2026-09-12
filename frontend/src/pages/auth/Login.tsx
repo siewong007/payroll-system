@@ -3,11 +3,12 @@ import { useNavigate, Navigate, Link, useSearchParams } from 'react-router';
 import type { User } from '@/types';
 import { motion } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
-import { Fingerprint } from 'lucide-react';
+import { Fingerprint, LifeBuoy, Smartphone } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { getErrorMessage, safeRedirectPath } from '@/lib/utils';
 import { hasOnlyEmployeeRole } from '@/lib/roles';
 import { checkPasskey, passkeyAuthBegin, passkeyAuthComplete, passkeyDiscoverableBegin, passkeyDiscoverableComplete } from '@/api/passkey';
+import { codeLogin } from '@/api/totp';
 import { getPasskeyCredential, isWebAuthnSupported } from '@/lib/webauthn';
 import { BrandLogo } from '@/components/ui/BrandLogo';
 import { TwoFactorPrompt } from '@/components/TwoFactorPrompt';
@@ -25,6 +26,9 @@ export function Login() {
   const [hasPasskey, setHasPasskey] = useState(false);
   const [webauthnSupported] = useState(isWebAuthnSupported());
   const [mfaToken, setMfaToken] = useState<string | null>(null);
+  const [codeMethod, setCodeMethod] = useState<'totp' | 'backup' | null>(null);
+  const [codeValue, setCodeValue] = useState('');
+  const [googleLoading, setGoogleLoading] = useState(false);
   const { login, setSession, user, isAuthenticated } = useAuth();
   const navigate = useNavigate();
   // The kiosk scan page sends unauthenticated scanners here with the scan URL
@@ -43,6 +47,27 @@ export function Login() {
     turnstileToken.current = undefined;
     turnstileRef.current?.reset();
     return token;
+  };
+
+  // The widget mints asynchronously after mount — a fast click would send an
+  // empty token and fail closed on the server. Wait for the next onVerify
+  // (or the timeout) instead of erroring immediately.
+  const turnstileWaiter = useRef<(() => void) | null>(null);
+  const waitForTurnstileToken = (): Promise<string | undefined> => {
+    if (!turnstileEnabled() || turnstileToken.current) {
+      return Promise.resolve(takeTurnstileToken());
+    }
+    return new Promise((resolve) => {
+      const timeout = window.setTimeout(() => {
+        turnstileWaiter.current = null;
+        resolve(takeTurnstileToken());
+      }, 5000);
+      turnstileWaiter.current = () => {
+        window.clearTimeout(timeout);
+        turnstileWaiter.current = null;
+        resolve(takeTurnstileToken());
+      };
+    });
   };
 
   const { data: providers } = useQuery({
@@ -134,10 +159,38 @@ export function Login() {
   };
 
   const handleGoogleLogin = async () => {
+    setError('');
+    setGoogleLoading(true);
     try {
-      window.location.href = await getGoogleAuthorizeUrl(undefined, takeTurnstileToken());
+      const token = await waitForTurnstileToken();
+      if (turnstileEnabled() && !token) {
+        setError('Verification is taking too long — try again');
+        return;
+      }
+      window.location.href = await getGoogleAuthorizeUrl(undefined, token);
     } catch {
       setError('Google sign-in is not available');
+    } finally {
+      setGoogleLoading(false);
+    }
+  };
+
+  // Passwordless sign-in with an authenticator/backup code: the code is both
+  // factors at once, so a success returns a complete session (never an
+  // mfa_required marker).
+  const handleCodeLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+    try {
+      const token = await waitForTurnstileToken();
+      const data = await codeLogin(email, codeValue.trim(), token);
+      setSession(data.token, data.user);
+      goPostLogin(data.user);
+    } catch (err: unknown) {
+      setError(getErrorMessage(err, 'Invalid email or code'));
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -172,31 +225,130 @@ export function Login() {
             />
           ) : (
             <>
-              {/* Social / Passkey Sign-In */}
-              {(googleProvider || webauthnSupported) && (
+              {/* One widget serves every submit on this page (password,
+                  passkey, Google, code sign-in) — keep it mounted across the
+                  method picker so its token survives the view swap. */}
+              <TurnstileWidget
+                ref={turnstileRef}
+                onVerify={(t) => {
+                  turnstileToken.current = t;
+                  turnstileWaiter.current?.();
+                }}
+                onExpire={() => {
+                  turnstileToken.current = undefined;
+                }}
+                onError={() => {
+                  turnstileToken.current = undefined;
+                }}
+              />
+
+              {codeMethod ? (
+                <form onSubmit={handleCodeLogin} className="space-y-5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCodeMethod(null);
+                      setCodeValue('');
+                      setError('');
+                    }}
+                    className="text-sm text-gray-500 hover:text-gray-700"
+                  >
+                    ← Back to all sign-in options
+                  </button>
+
+                  {error && (
+                    <div className="animate-fade-up bg-red-50 border border-red-100 text-red-600 text-sm px-4 py-3 rounded-xl">
+                      {error}
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="form-label">Email</label>
+                    <input
+                      type="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      className="form-input"
+                      placeholder="Enter your email"
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label className="form-label">
+                      {codeMethod === 'totp' ? 'Authenticator code' : 'Recovery code'}
+                    </label>
+                    <input
+                      value={codeValue}
+                      onChange={(e) => setCodeValue(e.target.value)}
+                      className="form-input"
+                      placeholder={
+                        codeMethod === 'totp' ? '6-digit code' : 'e.g. 1A2B-3C4D'
+                      }
+                      autoComplete="one-time-code"
+                      required
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className="w-full bg-gradient-to-r from-slate-900 to-slate-700 text-white py-2.5 rounded-xl font-semibold shadow-lg hover:shadow-[0_10px_30px_-8px_rgba(99,102,241,0.5),0_10px_30px_-8px_rgba(20,184,166,0.4)] hover:-translate-y-px active:translate-y-0 disabled:opacity-50 disabled:shadow-none transition-all"
+                  >
+                    {loading ? 'Signing in...' : 'Sign In'}
+                  </button>
+                </form>
+              ) : (
                 <>
-                  <div className="space-y-2.5">
-                    {googleProvider && (
+                  {/* Third-party identity stays on its own */}
+                  {googleProvider && (
+                    <button
+                      type="button"
+                      onClick={handleGoogleLogin}
+                      disabled={googleLoading}
+                      className="w-full flex items-center justify-center gap-3 py-2.5 px-4 bg-white border border-gray-200 rounded-xl text-sm font-medium text-gray-700 hover:border-gray-300 hover:shadow-md hover:-translate-y-px disabled:opacity-50 transition-all"
+                    >
+                      <GoogleIcon />
+                      {googleLoading ? 'Verifying...' : 'Continue with Google'}
+                    </button>
+                  )}
+
+                  {/* First-party alternatives grouped together */}
+                  <div className="mt-5">
+                    <p className="text-center text-xs text-gray-400 mb-2.5">
+                      Other ways to sign in
+                    </p>
+                    <div
+                      className={`grid gap-2 ${webauthnSupported ? 'grid-cols-3' : 'grid-cols-2'}`}
+                    >
+                      {webauthnSupported && (
+                        <button
+                          type="button"
+                          onClick={handlePasskeyLogin}
+                          disabled={passkeyLoading}
+                          className="flex flex-col items-center gap-1.5 py-2.5 px-2 bg-white border border-gray-200 rounded-xl text-xs font-medium text-gray-600 hover:border-gray-300 hover:shadow-sm disabled:opacity-50 transition-all"
+                        >
+                          <Fingerprint className="w-5 h-5" />
+                          {passkeyLoading ? 'Verifying...' : 'Sign in with Passkey'}
+                        </button>
+                      )}
                       <button
                         type="button"
-                        onClick={handleGoogleLogin}
-                        className="w-full flex items-center justify-center gap-3 py-2.5 px-4 bg-white border border-gray-200 rounded-xl text-sm font-medium text-gray-700 hover:border-gray-300 hover:shadow-md hover:-translate-y-px transition-all"
+                        onClick={() => setCodeMethod('totp')}
+                        className="flex flex-col items-center gap-1.5 py-2.5 px-2 bg-white border border-gray-200 rounded-xl text-xs font-medium text-gray-600 hover:border-gray-300 hover:shadow-sm transition-all"
                       >
-                        <GoogleIcon />
-                        Continue with Google
+                        <Smartphone className="w-5 h-5" />
+                        Authenticator
                       </button>
-                    )}
-                    {webauthnSupported && (
                       <button
                         type="button"
-                        onClick={handlePasskeyLogin}
-                        disabled={passkeyLoading}
-                        className="w-full flex items-center justify-center gap-3 py-2.5 px-4 bg-white border border-gray-200 rounded-xl text-sm font-medium text-gray-700 hover:border-gray-300 hover:shadow-md hover:-translate-y-px disabled:opacity-50 transition-all"
+                        onClick={() => setCodeMethod('backup')}
+                        className="flex flex-col items-center gap-1.5 py-2.5 px-2 bg-white border border-gray-200 rounded-xl text-xs font-medium text-gray-600 hover:border-gray-300 hover:shadow-sm transition-all"
                       >
-                        <Fingerprint className="w-5 h-5" />
-                        {passkeyLoading ? 'Verifying...' : 'Sign in with Passkey'}
+                        <LifeBuoy className="w-5 h-5" />
+                        Recovery code
                       </button>
-                    )}
+                    </div>
                   </div>
 
                   <div className="flex items-center gap-3 my-6">
@@ -204,67 +356,54 @@ export function Login() {
                     <span className="text-xs text-gray-400">or sign in with email</span>
                     <div className="h-px flex-1 bg-gray-200" />
                   </div>
+
+                  <form onSubmit={handleSubmit} className="space-y-5">
+                    {error && (
+                      <div className="animate-fade-up bg-red-50 border border-red-100 text-red-600 text-sm px-4 py-3 rounded-xl">
+                        {error}
+                      </div>
+                    )}
+
+                    <div>
+                      <label className="form-label">Email</label>
+                      <input
+                        type="email"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        className="form-input"
+                        placeholder="Enter your email"
+                        required
+                      />
+                    </div>
+
+                    <div>
+                      <label className="form-label">Password</label>
+                      <input
+                        type="password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        className="form-input"
+                        placeholder="Enter your password"
+                        required
+                      />
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={loading}
+                      className="w-full bg-gradient-to-r from-slate-900 to-slate-700 text-white py-2.5 rounded-xl font-semibold shadow-lg hover:shadow-[0_10px_30px_-8px_rgba(99,102,241,0.5),0_10px_30px_-8px_rgba(20,184,166,0.4)] hover:-translate-y-px active:translate-y-0 disabled:opacity-50 disabled:shadow-none transition-all"
+                    >
+                      {loading ? 'Signing in...' : 'Sign In'}
+                    </button>
+
+                    <div className="text-center">
+                      <Link to="/forgot-password" className="text-sm text-gray-500 hover:text-gray-700">
+                        Forgot password?
+                      </Link>
+                    </div>
+                  </form>
                 </>
               )}
-
-              <form onSubmit={handleSubmit} className="space-y-5">
-                {error && (
-                  <div className="animate-fade-up bg-red-50 border border-red-100 text-red-600 text-sm px-4 py-3 rounded-xl">
-                    {error}
-                  </div>
-                )}
-
-                <div>
-                  <label className="form-label">Email</label>
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="form-input"
-                    placeholder="Enter your email"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="form-label">Password</label>
-                  <input
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="form-input"
-                    placeholder="Enter your password"
-                    required
-                  />
-                </div>
-
-                <TurnstileWidget
-                  ref={turnstileRef}
-                  onVerify={(t) => {
-                    turnstileToken.current = t;
-                  }}
-                  onExpire={() => {
-                    turnstileToken.current = undefined;
-                  }}
-                  onError={() => {
-                    turnstileToken.current = undefined;
-                  }}
-                />
-
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full bg-gradient-to-r from-slate-900 to-slate-700 text-white py-2.5 rounded-xl font-semibold shadow-lg hover:shadow-[0_10px_30px_-8px_rgba(99,102,241,0.5),0_10px_30px_-8px_rgba(20,184,166,0.4)] hover:-translate-y-px active:translate-y-0 disabled:opacity-50 disabled:shadow-none transition-all"
-                >
-                  {loading ? 'Signing in...' : 'Sign In'}
-                </button>
-
-                <div className="text-center">
-                  <Link to="/forgot-password" className="text-sm text-gray-500 hover:text-gray-700">
-                    Forgot password?
-                  </Link>
-                </div>
-              </form>
             </>
           )}
         </div>
