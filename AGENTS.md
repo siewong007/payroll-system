@@ -62,6 +62,8 @@ Auth: JWT in `Authorization: Bearer`, refresh token in httpOnly cookie. `AuthUse
 
 Rate limiting is applied per-route group in `routes/mod.rs` via `tower_governor` — tighter limits on `/auth/login`, `/auth/forgot-password`, and OAuth2 endpoints.
 
+Bot protection is Cloudflare Turnstile (managed widget), enforced by `core::turnstile::verify` at the top of each unauthenticated, credential-free handler: `/auth/login`, `/auth/forgot-password`, `/auth/reset-password`, `/auth/passkey/check`, `/auth/passkey/{authenticate,discoverable}/begin`, and `/auth/oauth2/google/authorize`. Requests carry `turnstile_token` (body field; query param on the authorize GET). When `TURNSTILE_SECRET_KEY` is unset verification is skipped entirely — that is the intended dev/CI state; production sets it via `deploy/docker-compose.prod.yml` and the frontend gets `VITE_TURNSTILE_SITE_KEY` at build time. Failure modes are fail-closed: missing token 400, rejected token 403, Cloudflare unreachable 502. Deliberately NOT on `2fa/verify`, `validate-reset-token`, `refresh`, `kiosk/qr`, the passkey `complete` calls, or the OAuth callback — each is already credential-gated, downstream of a protected call, or cannot carry a token.
+
 Two background tasks spawn from `main.rs`:
 1. Daily cleanup of stale `refresh_tokens` (>30 days old and expired/revoked).
 2. Hourly tick that auto-marks absent employees at ~12:30 PM Asia/Kuala_Lumpur (04:30 UTC). This cron skips employees who have an approved `leave_requests` row covering that date, and skips public holidays.
