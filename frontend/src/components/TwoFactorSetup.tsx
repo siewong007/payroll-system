@@ -105,6 +105,11 @@ export function TwoFactorSetup() {
           <ShieldCheck className="w-4 h-4 text-gray-400" />
           <span className="section-title">Two-Factor Authentication</span>
         </div>
+        {status?.enabled ? (
+          <span className="badge badge-approved ml-auto">Enabled</span>
+        ) : (
+          <span className="badge badge-cancelled ml-auto">Off</span>
+        )}
       </div>
 
       <p className="text-sm text-gray-500 mb-4">

@@ -5,6 +5,7 @@ import { listPasskeys, deletePasskey, renamePasskey, passkeyRegisterBegin, passk
 import type { PasskeyInfo } from '@/api/passkey';
 import { createPasskeyCredential, isWebAuthnSupported } from '@/lib/webauthn';
 import { formatDate } from '@/lib/utils';
+import { Modal } from '@/components/ui/Modal';
 
 export function PasskeyManagement() {
   const queryClient = useQueryClient();
@@ -13,6 +14,7 @@ export function PasskeyManagement() {
   const [showNameInput, setShowNameInput] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
@@ -25,6 +27,7 @@ export function PasskeyManagement() {
     mutationFn: deletePasskey,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['passkeys'] });
+      setDeletingId(null);
       setSuccess('Passkey deleted');
       setTimeout(() => setSuccess(''), 3000);
     },
@@ -83,6 +86,9 @@ export function PasskeyManagement() {
           <Fingerprint className="w-4 h-4 text-gray-400" />
           <span className="section-title">Passkeys</span>
         </div>
+        {passkeys && passkeys.length > 0 && (
+          <span className="badge badge-cancelled ml-auto">{passkeys.length}</span>
+        )}
       </div>
 
       <p className="text-sm text-gray-500 mb-4">
@@ -154,11 +160,7 @@ export function PasskeyManagement() {
                       <Pencil className="w-3.5 h-3.5" />
                     </button>
                     <button
-                      onClick={() => {
-                        if (confirm('Delete this passkey? You won\'t be able to use it to sign in anymore.')) {
-                          deleteMutation.mutate(pk.id);
-                        }
-                      }}
+                      onClick={() => setDeletingId(pk.id)}
                       className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg"
                       title="Delete"
                     >
@@ -206,6 +208,32 @@ export function PasskeyManagement() {
           Add a passkey
         </button>
       )}
+
+      <Modal
+        open={deletingId !== null}
+        onClose={() => setDeletingId(null)}
+        title="Delete this passkey?"
+        maxWidth="max-w-md"
+        footer={
+          <div className="flex justify-end gap-2">
+            <button type="button" className="btn-secondary !min-h-0 !py-2" onClick={() => setDeletingId(null)}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => deletingId && deleteMutation.mutate(deletingId)}
+              disabled={deleteMutation.isPending}
+              className="btn-primary !min-h-0 !py-2 !bg-none !bg-red-600 hover:!bg-red-700"
+            >
+              {deleteMutation.isPending ? 'Deleting…' : 'Delete passkey'}
+            </button>
+          </div>
+        }
+      >
+        <p className="text-sm text-gray-600">
+          You won&apos;t be able to use this passkey to sign in anymore.
+        </p>
+      </Modal>
     </div>
   );
 }
