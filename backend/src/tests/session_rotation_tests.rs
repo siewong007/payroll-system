@@ -17,7 +17,7 @@ const JWT_SECRET: &str = "session-rotation-test-secret";
 async fn seed_session(pool: &PgPool) -> (Uuid, String) {
     let company_id = seed_company(pool).await;
     let user_id = seed_user(pool, company_id, "admin").await;
-    let session = session_service::create_session(pool, user_id, None).await;
+    let session = session_service::create_session(pool, user_id, None, None).await;
     session.expect("create session")
 }
 
@@ -70,8 +70,8 @@ async fn concurrent_refresh_leaves_exactly_one_live_token() {
     };
     let (session_id, raw) = seed_session(&pool).await;
 
-    let one = auth_service::refresh_session(&pool, &raw, JWT_SECRET, 1);
-    let two = auth_service::refresh_session(&pool, &raw, JWT_SECRET, 1);
+    let one = auth_service::refresh_session(&pool, &raw, JWT_SECRET, 1, None);
+    let two = auth_service::refresh_session(&pool, &raw, JWT_SECRET, 1, None);
     let (first, second) = tokio::join!(one, two);
 
     let winners = usize::from(first.is_ok()) + usize::from(second.is_ok());
@@ -81,7 +81,7 @@ async fn concurrent_refresh_leaves_exactly_one_live_token() {
     // The tab that lost must not have taken the session down with it.
     assert!(!session_is_revoked(&pool, session_id).await);
     let winner = first.or(second).expect("one refresh succeeded");
-    auth_service::refresh_session(&pool, &winner.refresh_token, JWT_SECRET, 1)
+    auth_service::refresh_session(&pool, &winner.refresh_token, JWT_SECRET, 1, None)
         .await
         .expect("the winner's successor still works");
 }
@@ -95,7 +95,7 @@ async fn a_replayed_token_past_the_grace_window_revokes_the_family() {
     };
     let (session_id, raw) = seed_session(&pool).await;
 
-    let rotated = auth_service::refresh_session(&pool, &raw, JWT_SECRET, 1)
+    let rotated = auth_service::refresh_session(&pool, &raw, JWT_SECRET, 1, None)
         .await
         .expect("first rotation");
 
@@ -109,7 +109,7 @@ async fn a_replayed_token_past_the_grace_window_revokes_the_family() {
     .await
     .expect("backdate the successor");
 
-    let err = auth_service::refresh_session(&pool, &raw, JWT_SECRET, 1)
+    let err = auth_service::refresh_session(&pool, &raw, JWT_SECRET, 1, None)
         .await
         .expect_err("a replayed token must fail");
     assert!(matches!(err, AppError::Unauthorized(_)));
@@ -120,7 +120,7 @@ async fn a_replayed_token_past_the_grace_window_revokes_the_family() {
     // The successor the honest client holds dies with the family — that is the
     // point: the user is signed out and re-authenticates, the thief cannot.
     let successor =
-        auth_service::refresh_session(&pool, &rotated.refresh_token, JWT_SECRET, 1).await;
+        auth_service::refresh_session(&pool, &rotated.refresh_token, JWT_SECRET, 1, None).await;
     assert!(successor.is_err());
 }
 
@@ -133,7 +133,7 @@ async fn an_unknown_refresh_token_revokes_nothing() {
     };
     let (session_id, _raw) = seed_session(&pool).await;
 
-    let err = auth_service::refresh_session(&pool, "rt_not_a_real_token", JWT_SECRET, 1)
+    let err = auth_service::refresh_session(&pool, "rt_not_a_real_token", JWT_SECRET, 1, None)
         .await
         .expect_err("unknown token must fail");
     assert!(matches!(err, AppError::Unauthorized(_)));
@@ -151,7 +151,7 @@ async fn revoking_an_already_revoked_hash_reports_no_rows() {
     };
     let company_id = seed_company(&pool).await;
     let user_id = seed_user(&pool, company_id, "admin").await;
-    let (session_id, _raw) = session_service::create_session(&pool, user_id, None)
+    let (session_id, _raw) = session_service::create_session(&pool, user_id, None, None)
         .await
         .expect("create session");
 
@@ -187,7 +187,7 @@ async fn a_deactivated_employee_loses_the_whole_session_on_refresh() {
     let company_id = seed_company(&pool).await;
     let employee_id = seed_employee(&pool, company_id, None, 500_000).await;
     let user_id = seed_portal_user(&pool, company_id, employee_id).await;
-    let (session_id, raw) = session_service::create_session(&pool, user_id, None)
+    let (session_id, raw) = session_service::create_session(&pool, user_id, None, None)
         .await
         .expect("create session");
 
@@ -197,7 +197,7 @@ async fn a_deactivated_employee_loses_the_whole_session_on_refresh() {
         .await
         .expect("deactivate employee");
 
-    let err = auth_service::refresh_session(&pool, &raw, JWT_SECRET, 1)
+    let err = auth_service::refresh_session(&pool, &raw, JWT_SECRET, 1, None)
         .await
         .expect_err("a deactivated employee must not refresh");
     match err {

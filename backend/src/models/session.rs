@@ -7,6 +7,7 @@ pub struct UserSession {
     pub id: Uuid,
     pub user_id: Uuid,
     pub user_agent: Option<String>,
+    pub ip_address: Option<String>,
     pub created_at: DateTime<Utc>,
     pub last_seen_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
@@ -16,6 +17,7 @@ pub struct UserSession {
 pub struct UserSessionResponse {
     pub id: Uuid,
     pub user_agent: Option<String>,
+    pub ip_address: Option<String>,
     pub created_at: DateTime<Utc>,
     pub last_seen_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
@@ -27,6 +29,7 @@ impl UserSessionResponse {
         Self {
             id: session.id,
             user_agent: session.user_agent,
+            ip_address: session.ip_address,
             created_at: session.created_at,
             last_seen_at: session.last_seen_at,
             expires_at: session.expires_at,

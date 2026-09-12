@@ -96,7 +96,7 @@ async fn totp_setup_gates_login_until_code_is_verified() {
     let email = format!("totp-{}@example.invalid", Uuid::new_v4());
     let password = "Sup3rSecretPassw0rd";
     let user_id = seed_user_with_password(&pool, company_id, &email, password).await;
-    let (session_id, _) = session_service::create_session(&pool, user_id, None)
+    let (session_id, _) = session_service::create_session(&pool, user_id, None, None)
         .await
         .expect("create test session");
 
@@ -272,7 +272,7 @@ async fn break_glass_reset_unlocks_login_and_revokes_sessions() {
     let (target_id, email, _, _) = enroll_target(&pool, company_id).await;
 
     // A live session the target holds when the reset lands must not survive it.
-    let (session_id, _) = session_service::create_session(&pool, target_id, None)
+    let (session_id, _) = session_service::create_session(&pool, target_id, None, None)
         .await
         .expect("create target session");
 

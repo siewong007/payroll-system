@@ -53,6 +53,7 @@ async fn seed_session(pool: &sqlx::PgPool, user_id: Uuid) -> (Uuid, String) {
         session_id,
         user_id,
         None,
+        None,
         Utc::now() + Duration::days(1),
     )
     .await

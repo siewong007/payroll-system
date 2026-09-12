@@ -99,7 +99,7 @@ pub(crate) async fn token_and_user_for(
     role: &str,
 ) -> (String, uuid::Uuid) {
     let user_id = seed_user(pool, company_id, role).await;
-    let (session_id, _) = session_service::create_session(pool, user_id, None)
+    let (session_id, _) = session_service::create_session(pool, user_id, None, None)
         .await
         .expect("create test session");
     let token = create_token(
@@ -791,7 +791,7 @@ async fn token_for_employee(
     role: &str,
 ) -> String {
     let user_id = seed_user(pool, company_id, role).await;
-    let (session_id, _) = session_service::create_session(pool, user_id, None)
+    let (session_id, _) = session_service::create_session(pool, user_id, None, None)
         .await
         .expect("create test session");
     create_token(

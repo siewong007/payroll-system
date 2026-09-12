@@ -37,9 +37,10 @@ pub async fn create_session(
     pool: &PgPool,
     user_id: Uuid,
     user_agent: Option<&str>,
+    ip_address: Option<&str>,
 ) -> AppResult<(Uuid, String)> {
     let session_id = Uuid::now_v7();
-    let raw_token = create_refresh_token(pool, user_id, session_id, user_agent).await?;
+    let raw_token = create_refresh_token(pool, user_id, session_id, user_agent, ip_address).await?;
     Ok((session_id, raw_token))
 }
 
@@ -48,12 +49,16 @@ pub async fn create_refresh_token(
     user_id: Uuid,
     session_id: Uuid,
     user_agent: Option<&str>,
+    ip_address: Option<&str>,
 ) -> AppResult<String> {
     let raw_token = format!("rt_{}_{}", Uuid::new_v4(), Uuid::new_v4());
     let token_hash = hash_token(&raw_token);
     let expires_at = Utc::now() + Duration::days(REFRESH_TOKEN_DAYS);
 
-    user_sessions::insert(pool, session_id, user_id, user_agent, expires_at).await?;
+    user_sessions::insert(
+        pool, session_id, user_id, user_agent, ip_address, expires_at,
+    )
+    .await?;
     refresh_tokens::insert(pool, user_id, session_id, &token_hash, expires_at).await?;
 
     Ok(raw_token)
@@ -89,13 +94,14 @@ pub async fn issue_rotated(
     conn: &mut PgConnection,
     user_id: Uuid,
     session_id: Uuid,
+    ip_address: Option<&str>,
 ) -> AppResult<String> {
     let raw_token = format!("rt_{}_{}", Uuid::new_v4(), Uuid::new_v4());
     let token_hash = hash_token(&raw_token);
     let expires_at = Utc::now() + Duration::days(REFRESH_TOKEN_DAYS);
 
     refresh_tokens::insert(&mut *conn, user_id, session_id, &token_hash, expires_at).await?;
-    user_sessions::touch(conn, session_id, expires_at).await?;
+    user_sessions::touch(conn, session_id, expires_at, ip_address).await?;
     Ok(raw_token)
 }
 

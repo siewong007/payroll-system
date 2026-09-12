@@ -242,8 +242,9 @@ pub async fn issue_session(
     )
     .await;
 
+    let ip_address = audit_meta.and_then(|m| m.ip_address.as_deref());
     let (session_id, refresh_token) =
-        session_service::create_session(pool, user.id, user_agent).await?;
+        session_service::create_session(pool, user.id, user_agent, ip_address).await?;
     let token = create_token(
         user.id,
         &user.email,
@@ -303,6 +304,7 @@ pub async fn refresh_session(
     raw_token: &str,
     jwt_secret: &str,
     jwt_expiry: i64,
+    ip_address: Option<&str>,
 ) -> AppResult<LoginResponseWithRefresh> {
     // The retire, the checks and the successor share one transaction. As three
     // autocommit statements, two concurrent refreshes both passed the read and
@@ -333,7 +335,8 @@ pub async fn refresh_session(
         return Err(AppError::Unauthorized(EMPLOYEE_DELETED_MSG.into()));
     }
 
-    let new_refresh = session_service::issue_rotated(&mut tx, user.id, token.session_id).await?;
+    let new_refresh =
+        session_service::issue_rotated(&mut tx, user.id, token.session_id, ip_address).await?;
     tx.commit().await?;
 
     let jwt = create_token(

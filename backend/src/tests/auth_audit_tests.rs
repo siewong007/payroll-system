@@ -166,9 +166,10 @@ async fn change_password_success_and_rejection_are_both_recorded() {
     let (user_id, _, password) = seed_login_user(&pool, company_id).await;
 
     // Session for the authenticated call.
-    let (session_id, _) = crate::services::session_service::create_session(&pool, user_id, None)
-        .await
-        .expect("create session");
+    let (session_id, _) =
+        crate::services::session_service::create_session(&pool, user_id, None, None)
+            .await
+            .expect("create session");
     let token = crate::core::auth::create_token(
         user_id,
         "unused@example.invalid",

@@ -12,14 +12,16 @@ pub async fn insert(
     id: Uuid,
     user_id: Uuid,
     user_agent: Option<&str>,
+    ip_address: Option<&str>,
     expires_at: DateTime<Utc>,
 ) -> AppResult<()> {
     sqlx::query(
-        "INSERT INTO user_sessions (id, user_id, user_agent, expires_at) VALUES ($1, $2, $3, $4)",
+        "INSERT INTO user_sessions (id, user_id, user_agent, ip_address, expires_at) VALUES ($1, $2, $3, $4::inet, $5)",
     )
     .bind(id)
     .bind(user_id)
     .bind(user_agent)
+    .bind(ip_address)
     .bind(expires_at)
     .execute(executor)
     .await?;
@@ -42,7 +44,7 @@ pub async fn list_active(
     user_id: Uuid,
 ) -> AppResult<Vec<UserSession>> {
     Ok(sqlx::query_as::<_, UserSession>(
-        "SELECT id, user_id, user_agent, created_at, last_seen_at, expires_at FROM user_sessions WHERE user_id = $1 AND revoked_at IS NULL AND expires_at > NOW() ORDER BY last_seen_at DESC",
+        "SELECT id, user_id, user_agent, ip_address::text AS ip_address, created_at, last_seen_at, expires_at FROM user_sessions WHERE user_id = $1 AND revoked_at IS NULL AND expires_at > NOW() ORDER BY last_seen_at DESC",
     ).bind(user_id).fetch_all(executor).await?)
 }
 
@@ -85,10 +87,12 @@ pub async fn touch(
     executor: impl Executor<'_, Database = Postgres>,
     session_id: Uuid,
     expires_at: DateTime<Utc>,
+    ip_address: Option<&str>,
 ) -> AppResult<()> {
-    sqlx::query("UPDATE user_sessions SET last_seen_at = NOW(), expires_at = $2 WHERE id = $1")
+    sqlx::query("UPDATE user_sessions SET last_seen_at = NOW(), expires_at = $2, ip_address = COALESCE($3::inet, ip_address) WHERE id = $1")
         .bind(session_id)
         .bind(expires_at)
+        .bind(ip_address)
         .execute(executor)
         .await?;
     Ok(())

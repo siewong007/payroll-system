@@ -159,15 +159,18 @@ pub async fn switch_company(
 pub async fn refresh_token(
     State(state): State<AppState>,
     headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
 ) -> Result<impl IntoResponse, AppError> {
     let refresh = cookie::extract_refresh_token(&headers)
         .ok_or_else(|| AppError::Unauthorized("No refresh token".into()))?;
 
+    let ip_address = audit_meta.ip_address.as_deref();
     let refreshed = auth_service::refresh_session(
         &state.pool,
         &refresh,
         &state.config.jwt_secret,
         state.config.jwt_expiry_hours,
+        ip_address,
     )
     .await?;
 
