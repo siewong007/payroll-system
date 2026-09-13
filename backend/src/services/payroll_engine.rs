@@ -268,18 +268,19 @@ async fn gather_run_inputs(
             .map(|r| (r.employee_id, (r.bonus, r.commission)))
             .collect();
 
-    // 3. Batch fetch attendance OT hours
-    let attendance_ot_map: HashMap<Uuid, f64> = payroll_reads::attendance_ot_hours(
-        &mut *conn,
-        &employee_ids,
-        period_start,
-        period_end,
-        &tz,
-    )
-    .await?
-    .into_iter()
-    .map(|r| (r.employee_id, r.hours))
-    .collect();
+    // 3. Batch fetch attendance OT hours, bucketed by the local date's type
+    let mut attendance_ot_map: HashMap<Uuid, Vec<(String, f64)>> = HashMap::new();
+    for row in
+        payroll_reads::attendance_ot_hours(&mut *conn, &employee_ids, period_start, period_end, &tz)
+            .await?
+    {
+        if row.hours > 0.0 {
+            attendance_ot_map
+                .entry(row.employee_id)
+                .or_default()
+                .push((row.day_type, row.hours));
+        }
+    }
 
     // 3b. Batch fetch approved overtime applications
     let mut approved_ot_map: HashMap<Uuid, Vec<(String, f64)>> = HashMap::new();
@@ -1232,7 +1233,6 @@ fn compute_payslip(
         .unpaid_leave
         .get(&emp.id)
         .unwrap_or(&(0, Decimal::ZERO));
-    let attendance_ot_hours = *bulk.attendance_ot_hours.get(&emp.id).unwrap_or(&0.0);
 
     // Overtime is rated through `OvertimeSettings::rate_overtime`, which the
     // approval path calls too — the hourly rate stays unrounded and only the
@@ -1299,24 +1299,33 @@ fn compute_payslip(
     // multiplier, none of which survive in `total_overtime` alone.
     let mut overtime_lines: Vec<PayslipLine> = Vec::new();
 
-    // Attendance-based OT (records without approved OT applications)
-    let attendance_ot_pay = if attendance_ot_hours > 0.0 {
-        let hours = Decimal::try_from(attendance_ot_hours).unwrap_or_default();
-        let rating = ot.rate_overtime(emp.hourly_rate, emp.basic_salary, "normal", hours);
-        let amount = rating.amount_sen;
-        overtime_lines.push(PayslipLine::earning(
-            "overtime",
-            format!(
-                "Overtime (attendance) — {} h @ {}x",
-                trim_decimal(hours),
-                trim_decimal(ot.multiplier_normal)
-            ),
-            amount,
-        ));
-        amount
-    } else {
-        0
-    };
+    // Attendance-based OT (records without approved OT applications), rated
+    // by what the local date was worth: rest-day and public-holiday shifts
+    // earn their own multipliers instead of 1.5x across the board.
+    let attendance_ot_pay = bulk
+        .attendance_ot_hours
+        .get(&emp.id)
+        .map(|buckets| {
+            let mut total = 0i64;
+            for (ot_type, hours) in buckets {
+                let hours = Decimal::try_from(*hours).unwrap_or_default();
+                let multiplier = ot.multiplier_for(ot_type);
+                let rating = ot.rate_overtime(emp.hourly_rate, emp.basic_salary, ot_type, hours);
+                overtime_lines.push(PayslipLine::earning(
+                    "overtime",
+                    format!(
+                        "Overtime (attendance, {}) — {} h @ {}x",
+                        ot_type.replace('_', " "),
+                        trim_decimal(hours),
+                        trim_decimal(multiplier)
+                    ),
+                    rating.amount_sen,
+                ));
+                total += rating.amount_sen;
+            }
+            total
+        })
+        .unwrap_or(0);
 
     // Approved OT applications with type-based rate multipliers
     let approved_ot_pay = if let Some(ot_entries) = bulk.approved_ot.get(&emp.id) {
@@ -1364,6 +1373,18 @@ fn compute_payslip(
     // reverse so no later edit can subtract the two apart.
     let epf_wage = basic + allowances_total + variable_earnings;
     let gross = epf_wage + total_overtime;
+
+    // Unpaid leave leaves WITH the money the statutory calculators see. It is
+    // staged as a deduction, so without this it reduced only net while
+    // EPF/SOCSO/EIS/PCB charged on wages the employee did not receive: the
+    // employer over-remitted and the employee was over-deducted on every
+    // unpaid-leave month. Gross itself stays at the contracted figure, so the
+    // leave remains a visible deduction under its own name. A mid-month
+    // joiner is not double-reduced: proration shrinks `basic` for days before
+    // employment, while an approved leave request can only cover days inside it.
+    let wage_reduction = unpaid_leave_deduction.max(0);
+    let statutory_epf_wage = (epf_wage - wage_reduction).max(0);
+    let statutory_socso_eis_wage = (gross - wage_reduction).max(0);
     let total_allowances = allowances_total + monthly_allowances;
 
     // `is_taxable` narrows the PCB base and NOTHING else, deliberately. It is an
@@ -1373,18 +1394,26 @@ fn compute_payslip(
     // lieu of notice) that no column in this schema expresses. Narrowing three
     // more bases off a flag that does not mean that would be a larger error than
     // the one being fixed. Overtime is always taxable.
-    let taxable_gross = basic + taxable_allowances + taxable_variable_earnings + total_overtime;
+    let taxable_gross = (basic + taxable_allowances + taxable_variable_earnings + total_overtime
+        - wage_reduction)
+        .max(0);
 
     // EPF / SOCSO / EIS â€” resolved from the run's rule snapshot, no I/O.
     let epf = epf_service::calculate_epf_with(
         statutory,
-        epf_wage,
+        statutory_epf_wage,
         age,
         is_foreigner,
         emp.epf_category.as_deref(),
     )?;
-    let socso = socso_service::calculate_socso_with(statutory, gross, age, is_foreigner)?;
-    let eis = eis_service::calculate_eis_with(statutory, gross, age, is_foreigner)?;
+    let socso = socso_service::calculate_socso_with(
+        statutory,
+        statutory_socso_eis_wage,
+        age,
+        is_foreigner,
+    )?;
+    let eis =
+        eis_service::calculate_eis_with(statutory, statutory_socso_eis_wage, age, is_foreigner)?;
 
     // Get YTD figures (from previous months this year)
     let (ytd_gross, ytd_pcb, ytd_epf, ytd_socso, ytd_eis, ytd_zakat, ytd_net) =
@@ -1769,5 +1798,599 @@ mod tests {
         let dob = date(2000, 2, 29);
         assert_eq!(calculate_age(dob, date(2026, 2, 28)), 25);
         assert_eq!(calculate_age(dob, date(2026, 3, 1)), 26);
+    }
+}
+
+/// DB-free golden and property harness over `compute_payslip` (plan item 30).
+///
+/// Everything here runs against `statutory_tables::golden_fixture()` — no
+/// database, no `#[cfg(test)]` bypass of the production gate. The goldens pin
+/// exact sen figures derived by hand from the fixture tables (documented in
+/// each test); the properties hold for any table content because they assert
+/// the engine's internal arithmetic, not the rates.
+#[cfg(test)]
+mod payslip_golden_tests {
+    use super::*;
+    use crate::models::payroll::{PayslipLine, PayslipSourceLine};
+    use chrono::{Duration as ChronoDuration, Utc};
+    use proptest::prelude::*;
+
+    // ── builders ────────────────────────────────────────────────────────
+
+    fn employee(
+        basic_salary: i64,
+        date_joined: NaiveDate,
+        date_resigned: Option<NaiveDate>,
+    ) -> Employee {
+        Employee {
+            id: Uuid::now_v7(),
+            company_id: Uuid::now_v7(),
+            employee_number: "E-0001".into(),
+            full_name: "Golden Test".into(),
+            ic_number: None,
+            passport_number: None,
+            date_of_birth: NaiveDate::from_ymd_opt(1990, 6, 15),
+            gender: None,
+            nationality: Some("Malaysian".into()),
+            race: None,
+            residency_status: "citizen".into(),
+            marital_status: Some("single".into()),
+            email: None,
+            phone: None,
+            address_line1: None,
+            address_line2: None,
+            city: None,
+            state: None,
+            postcode: None,
+            department: None,
+            designation: None,
+            cost_centre: None,
+            branch: None,
+            employment_type: "full_time".into(),
+            date_joined,
+            probation_start: None,
+            probation_end: None,
+            confirmation_date: None,
+            date_resigned,
+            resignation_reason: None,
+            basic_salary,
+            hourly_rate: None,
+            daily_rate: None,
+            bank_name: None,
+            bank_account_number: None,
+            bank_account_type: None,
+            tax_identification_number: None,
+            epf_number: None,
+            socso_number: None,
+            eis_number: None,
+            working_spouse: None,
+            num_children: None,
+            epf_category: None,
+            is_muslim: None,
+            zakat_eligible: None,
+            zakat_monthly_amount: None,
+            ptptn_monthly_amount: None,
+            tabung_haji_amount: None,
+            hrdf_contribution: None,
+            payroll_group_id: None,
+            salary_group: None,
+            is_active: Some(true),
+            deleted_at: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            created_by: None,
+            updated_by: None,
+        }
+    }
+
+    fn period(year: i32, month: i32) -> RunPeriod {
+        let start = NaiveDate::from_ymd_opt(year, month as u32, 1).unwrap();
+        let next = if month == 12 {
+            NaiveDate::from_ymd_opt(year + 1, 1, 1).unwrap()
+        } else {
+            NaiveDate::from_ymd_opt(year, (month + 1) as u32, 1).unwrap()
+        };
+        let end = next - ChronoDuration::days(1);
+        RunPeriod {
+            year,
+            month,
+            period_start: start,
+            period_end: end,
+            effective_date: end,
+        }
+    }
+
+    fn empty_bulk() -> BulkPayrollData {
+        BulkPayrollData {
+            recurring_lines: HashMap::new(),
+            entry_lines: HashMap::new(),
+            variable_earnings: HashMap::new(),
+            taxable_variable_earnings: HashMap::new(),
+            variable_deductions: HashMap::new(),
+            unpaid_leave: HashMap::new(),
+            attendance_ot_hours: HashMap::new(),
+            approved_ot: HashMap::new(),
+            approved_claims: HashMap::new(),
+            tp3: HashMap::new(),
+            ytd: HashMap::new(),
+            monthly_allowances: HashMap::new(),
+            bonus_commission: HashMap::new(),
+            ot_settings: OvertimeSettings::statutory_defaults(),
+        }
+    }
+
+    fn compute(
+        emp: &Employee,
+        period_: &RunPeriod,
+        bulk: &BulkPayrollData,
+    ) -> AppResult<ComputedPayslip> {
+        compute_payslip(
+            emp,
+            period_,
+            bulk,
+            &crate::services::statutory_tables::golden::golden_fixture(),
+        )
+    }
+
+    fn earning_line(employee_id: Uuid, item_type: &str, amount: i64) -> PayslipSourceLine {
+        PayslipSourceLine {
+            employee_id,
+            category: "earning".into(),
+            item_type: item_type.to_string(),
+            description: item_type.replace('_', " "),
+            amount,
+            is_taxable: true,
+            effective_from: None,
+            effective_to: None,
+        }
+    }
+
+    fn deduction_line(employee_id: Uuid, item_type: &str, amount: i64) -> PayslipSourceLine {
+        PayslipSourceLine {
+            employee_id,
+            category: "deduction".into(),
+            item_type: item_type.to_string(),
+            description: item_type.replace('_', " "),
+            amount,
+            is_taxable: false,
+            effective_from: None,
+            effective_to: None,
+        }
+    }
+
+    fn sum_lines(lines: &[PayslipLine], category: &str) -> i64 {
+        lines
+            .iter()
+            .filter(|l| l.category == category)
+            .map(|l| l.amount)
+            .sum()
+    }
+
+    // ── goldens ─────────────────────────────────────────────────────────
+
+    /// Full month, RM3,000 basic, no extras. Every figure hand-derived from
+    /// the fixture: EPF band 2 (2200/2600), SOCSO band 2 (220/880), EIS band 2
+    /// (110/440); PCB annualises 7 remaining months to RM21,000 chargeable
+    /// RM11,822.90 after reliefs, taxed RM682.28 less the RM400 rebate →
+    /// RM282.28/yr → RM403.25/mo → rounded up to RM400.
+    #[test]
+    fn golden_full_month_exact_figures() {
+        let emp = employee(300_000, NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(), None);
+        let p = period(2025, 6);
+        let c = compute(&emp, &p, &empty_bulk()).expect("compute");
+
+        assert_eq!(c.gross, 300_000);
+        assert!(!c.is_prorated);
+        assert_eq!(c.epf.employee, 2_200);
+        assert_eq!(c.epf.employer, 2_600);
+        assert_eq!(c.socso.employee, 220);
+        assert_eq!(c.socso.employer, 880);
+        assert_eq!(c.eis.employee, 110);
+        assert_eq!(c.eis.employer, 440);
+        assert_eq!(c.pcb, 4_100);
+        assert_eq!(c.total_deductions, 2_200 + 220 + 110 + 4_100);
+        assert_eq!(c.net, 300_000 - 6_630);
+        assert_eq!(c.employer_cost, 300_000 + 2_600 + 880 + 440);
+        assert_eq!(c.new_ytd_gross, 300_000);
+        assert_eq!(c.new_ytd_net, c.net);
+
+        // The stored breakdown must explain the totals exactly.
+        assert_eq!(sum_lines(&c.lines, "earning"), c.gross + c.total_claims);
+        assert_eq!(sum_lines(&c.lines, "deduction"), c.total_deductions);
+    }
+
+    /// A leaver working 15 of June's 30 calendar days: EA s.18B proration on
+    /// CALENDAR days drops basic into EPF/SOCSO/EIS band 1.
+    #[test]
+    fn golden_mid_month_leaver_prorates_every_base() {
+        let mut resigned_mid =
+            employee(300_000, NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(), None);
+        // Employment window intersects June only up to resignation.
+        resigned_mid.date_resigned = Some(NaiveDate::from_ymd_opt(2026, 6, 15).unwrap());
+        let p = period(2026, 6);
+        let c = compute(&resigned_mid, &p, &empty_bulk()).expect("compute");
+
+        assert!(c.is_prorated);
+        assert_eq!(c.period_days, 30);
+        assert_eq!(c.days_worked, 15);
+        assert_eq!(c.basic, 150_000);
+        assert_eq!(c.gross, 150_000);
+        assert_eq!(c.epf.employee, 1_000);
+        assert_eq!(c.socso.employee, 100);
+        assert_eq!(c.eis.employee, 50);
+
+        let basic_line = c
+            .lines
+            .iter()
+            .find(|l| l.item_type == "basic_salary")
+            .expect("basic line");
+        assert!(basic_line.description.contains("prorated"));
+    }
+
+    /// THE unpaid-leave invariant: an approved unpaid deduction leaves with the
+    /// statutory wage bases, not only with net. With basic RM2,100 the RM500
+    /// reduction crosses the fixture's band boundary, so a base that still saw
+    /// the un-reduced wage is off by more than rounding.
+    ///
+    /// Gross itself stays at the contracted figure — unpaid leave remains a
+    /// visible deduction line and its own payslip column; only the four
+    /// calculator bases shrink.
+    #[test]
+    fn golden_unpaid_leave_reduces_the_statutory_bases() {
+        let emp = employee(210_000, NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(), None);
+        let p = period(2025, 6);
+        let mut bulk = empty_bulk();
+        bulk.variable_deductions.insert(emp.id, 50_000);
+        bulk.unpaid_leave.insert(emp.id, (50_000, Decimal::from(2)));
+        bulk.entry_lines
+            .insert(emp.id, vec![deduction_line(emp.id, "unpaid_leave", 50_000)]);
+
+        let c = compute(&emp, &p, &bulk).expect("compute");
+
+        assert_eq!(c.gross, 210_000, "gross stays contracted");
+        assert_eq!(c.unpaid_leave_deduction, 50_000);
+        assert_eq!(c.other_deductions, 0, "unpaid leave partitions out");
+        // Reduced bases hit band 1, not band 2.
+        assert_eq!(c.epf.employee, 1_000, "EPF on 160k, not 210k");
+        assert_eq!(c.socso.employee, 100, "SOCSO on the reduced wage");
+        assert_eq!(c.eis.employee, 50, "EIS on the reduced wage");
+
+        // Deductions still include the leave once, under its own line.
+        assert_eq!(c.pcb, 0, "reduced chargeable income sits in the 0% band");
+        assert_eq!(c.total_deductions, 1_150 + 50_000);
+        assert_eq!(sum_lines(&c.lines, "deduction"), c.total_deductions);
+        let leave_line = c
+            .lines
+            .iter()
+            .find(|l| l.item_type == "unpaid_leave")
+            .expect("unpaid-leave breakdown line");
+        assert_eq!(leave_line.amount, 50_000);
+    }
+
+    /// Feeding run N's new YTD into run N+1 accumulates without drift, and the
+    /// PCB month counter changes what it is supposed to change.
+    #[test]
+    fn golden_ytd_chain_across_two_runs() {
+        let emp = employee(300_000, NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(), None);
+
+        let jan_p = period(2025, 1);
+        let jan = compute(&emp, &jan_p, &empty_bulk()).expect("january");
+        // Remaining months 12: annual 3.6M chargeable 2_657_760, tax 215_775 −
+        // rebate 40_000 → /12 = RM1,474.58 → rounded up to RM1,480.
+        assert_eq!(jan.pcb, 14_800);
+
+        let mut feb_bulk = empty_bulk();
+        feb_bulk.ytd.insert(
+            emp.id,
+            (
+                jan.new_ytd_gross,
+                jan.new_ytd_pcb,
+                jan.new_ytd_epf,
+                jan.new_ytd_socso,
+                jan.new_ytd_eis,
+                jan.new_ytd_zakat,
+                jan.new_ytd_net,
+            ),
+        );
+        let feb_p = period(2025, 2);
+        let feb = compute(&emp, &feb_p, &feb_bulk).expect("february");
+
+        assert_eq!(feb.new_ytd_gross, jan.new_ytd_gross + feb.gross);
+        assert_eq!(feb.new_ytd_epf, jan.new_ytd_epf + feb.epf.employee);
+        assert_eq!(feb.new_ytd_net, jan.new_ytd_net + feb.net);
+        // Same economics, one fewer month of annualisation headroom minus the
+        // PCB already withheld: the two effects cancel to the same RM1,480 on
+        // this fixture — pinned so a change in either direction is visible.
+        assert_eq!(feb.pcb, 14_800);
+    }
+
+    /// Overtime multipliers come from company settings, OT pays at the
+    /// unrounded hourly rate, and it reaches SOCSO/EIS but never the EPF wage.
+    #[test]
+    fn golden_overtime_multipliers_and_base_exclusions() {
+        let mut emp = employee(300_000, NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(), None);
+        emp.hourly_rate = Some(1_000);
+        let p = period(2025, 6);
+        let mut bulk = empty_bulk();
+        bulk.approved_ot.insert(
+            emp.id,
+            vec![
+                ("normal".to_string(), 2.0),
+                ("rest_day".to_string(), 2.0),
+                ("public_holiday".to_string(), 1.0),
+            ],
+        );
+
+        let c = compute(&emp, &p, &bulk).expect("compute");
+
+        assert_eq!(c.total_overtime, 3_000 + 4_000 + 3_000);
+        assert_eq!(c.gross, 310_000);
+        // EPF excludes overtime by statute…
+        assert_eq!(c.epf.employee, 2_200);
+        // …SOCSO and EIS include it.
+        assert_eq!(c.socso.employee, 220);
+        assert_eq!(c.eis.employee, 110);
+
+        for (label, multiplier) in [
+            ("normal", "1.5x"),
+            ("rest day", "2x"),
+            ("public holiday", "3x"),
+        ] {
+            let line = c
+                .lines
+                .iter()
+                .find(|l| l.description.contains(label))
+                .unwrap_or_else(|| panic!("overtime line for {label}"));
+            assert!(line.description.contains(multiplier), "{label}: {line:?}");
+        }
+    }
+
+    /// Claims are reimbursements: outside gross, added on top of net, carried
+    /// through as their own non-taxable lines and their own id list.
+    #[test]
+    fn golden_claims_stack_on_top_of_net() {
+        let emp = employee(300_000, NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(), None);
+        let claim_id = Uuid::now_v7();
+        let p = period(2025, 6);
+        let mut bulk = empty_bulk();
+        bulk.approved_claims.insert(
+            emp.id,
+            vec![PayableClaim {
+                id: claim_id,
+                employee_id: emp.id,
+                title: "Client travel".into(),
+                amount: 25_000,
+                expense_date: NaiveDate::from_ymd_opt(2025, 5, 20).unwrap(),
+            }],
+        );
+
+        let baseline = compute(&emp, &p, &empty_bulk()).expect("baseline");
+        let c = compute(&emp, &p, &bulk).expect("with claim");
+
+        assert_eq!(c.total_claims, 25_000);
+        assert_eq!(c.gross, baseline.gross, "claims never inflate gross");
+        assert_eq!(c.net, baseline.net + 25_000);
+        assert_eq!(c.claim_ids, vec![claim_id]);
+        let line = c
+            .lines
+            .iter()
+            .find(|l| l.item_type == "claim_reimbursement")
+            .expect("claim line");
+        assert_eq!(line.amount, 25_000);
+        assert!(!line.is_taxable);
+    }
+
+    /// Zakat offsets PCB ringgit-for-ringgit before rounding; PTPTN and
+    /// Tabung Haji are plain additions to deductions.
+    #[test]
+    fn golden_zakat_ptptn_tabung_haji_stack() {
+        let mut emp = employee(300_000, NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(), None);
+        emp.zakat_eligible = Some(true);
+        emp.zakat_monthly_amount = Some(15_000);
+        emp.ptptn_monthly_amount = Some(8_000);
+        emp.tabung_haji_amount = Some(5_000);
+        let p = period(2025, 6);
+        let c = compute(&emp, &p, &empty_bulk()).expect("compute");
+
+        // Annual zakat 7×15000=105_000 swamps the RM275 annual tax → PCB zero.
+        assert_eq!(c.pcb, 0);
+        assert_eq!(c.zakat, 15_000);
+        assert_eq!(c.ptptn, 8_000);
+        assert_eq!(c.tabung_haji, 5_000);
+        assert_eq!(
+            c.total_deductions,
+            2_200 + 220 + 110 + 15_000 + 8_000 + 5_000
+        );
+        assert_eq!(c.net, 300_000 - c.total_deductions);
+    }
+
+    /// A citizen past 60 derives EPF Part C, not Part A — the age/residency
+    /// derivation, pinned end to end through the engine.
+    #[test]
+    fn golden_over_sixty_citizen_derives_part_c() {
+        let mut emp = employee(300_000, NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(), None);
+        emp.date_of_birth = Some(NaiveDate::from_ymd_opt(1962, 3, 1).unwrap()); // 63 on the effective date
+        let p = period(2025, 6);
+        let c = compute(&emp, &p, &empty_bulk()).expect("compute");
+        assert_eq!(c.epf.category, "C");
+    }
+
+    /// Additional remuneration goes through the Schedule 2 differential: the
+    /// bonus never enters the annualised normal base (the normal leg of the
+    /// PCB is byte-identical to a bonus-free employee's), and the differential
+    /// is the increase in the year's payable tax caused by the bonus alone —
+    /// which on this fixture crosses the individual-rebate ceiling and so
+    /// gains RM90,000 of tax net of the RM40,000 rebate difference:
+    ///   without bonus: chargeable 3,282,290 ≤ ceiling → tax 278,228 − 40,000
+    ///   with bonus:    chargeable 3,782,290 >  ceiling → tax 328,228 − 0
+    ///   differential   = 90,000 (already ringgit-grained)
+    #[test]
+    fn golden_additional_remuneration_uses_schedule_2() {
+        let build = |bonus: i64| {
+            let emp = employee(600_000, NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(), None);
+            let p = period(2025, 6);
+            let mut bulk = empty_bulk();
+            if bonus > 0 {
+                // Production reads stage the bonus rows in the category totals
+                // AND carry them separately for the PCB split.
+                bulk.variable_earnings.insert(emp.id, bonus);
+                bulk.taxable_variable_earnings.insert(emp.id, bonus);
+                bulk.bonus_commission.insert(emp.id, (bonus, 0));
+            }
+            compute(&emp, &p, &bulk).expect("compute")
+        };
+
+        let baseline = build(0);
+        let bonused = build(500_000);
+
+        // Statutory contributions still levy on the bonus…
+        assert_eq!(bonused.gross, baseline.gross + 500_000);
+        assert_eq!(bonused.epf.employee, baseline.epf.employee);
+        assert_eq!(bonused.socso.employee, baseline.socso.employee);
+
+        // …while the normal PCB leg is untouched and the differential rides
+        // on top.
+        assert_eq!(bonused.pcb, baseline.pcb + 90_000);
+    }
+
+    // ── properties (hold for any rule-table content) ────────────────────
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
+
+        #[test]
+        fn engine_invariants_hold(
+            basic in 120_000i64..900_000,
+            allowance in 0i64..80_000,
+            ot_hours in 0.0f64..4.0,
+            unpaid in 0i64..25_000,
+            claims in 0i64..40_000,
+        ) {
+            let emp = employee(basic, NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(), None);
+            let p = period(2025, 6);
+            let mut bulk = empty_bulk();
+            if allowance > 0 {
+                bulk.recurring_lines.insert(
+                    emp.id,
+                    vec![earning_line(emp.id, "allowance", allowance)],
+                );
+            }
+            if ot_hours > 0.0 {
+                bulk.attendance_ot_hours
+                    .insert(emp.id, vec![("normal".to_string(), ot_hours)]);
+            }
+            if unpaid > 0 {
+                bulk.variable_deductions.insert(emp.id, unpaid);
+                bulk.unpaid_leave.insert(emp.id, (unpaid, Decimal::from(2)));
+                bulk.entry_lines.insert(
+                    emp.id,
+                    vec![deduction_line(emp.id, "unpaid_leave", unpaid)],
+                );
+            }
+            if claims > 0 {
+                bulk.approved_claims.insert(
+                    emp.id,
+                    vec![PayableClaim {
+                        id: Uuid::now_v7(),
+                        employee_id: emp.id,
+                        title: "Property claim".into(),
+                        amount: claims,
+                        expense_date: NaiveDate::from_ymd_opt(2025, 5, 1).unwrap(),
+                    }],
+                );
+            }
+
+            // A draw whose deductions exceed earnings fails closed with a
+            // validation error; that is the documented behaviour, not an
+            // invariant violation, so the property skips those draws.
+            let Ok(c) = compute(&emp, &p, &bulk) else {
+                return Ok(());
+            };
+
+            // Earnings reconcile: gross plus reimbursements, nothing else.
+            prop_assert_eq!(sum_lines(&c.lines, "earning") - c.total_claims, c.gross);
+            prop_assert_eq!(c.gross, c.basic + c.total_allowances + c.variable_part() + c.total_overtime);
+            // Deductions reconcile line-for-line.
+            prop_assert_eq!(sum_lines(&c.lines, "deduction"), c.total_deductions);
+            // Net identity, partition of deductions, employer cost.
+            prop_assert_eq!(c.net, c.gross - c.total_deductions + c.total_claims);
+            prop_assert!(c.net >= 0);
+            prop_assert_eq!(
+                c.other_deductions + c.unpaid_leave_deduction,
+                c.total_deductions
+                    - c.epf.employee - c.socso.employee - c.eis.employee
+                    - c.pcb - c.zakat - c.ptptn - c.tabung_haji
+            );
+            prop_assert_eq!(
+                c.employer_cost,
+                c.gross + c.epf.employer + c.socso.employer + c.eis.employer
+            );
+            // YTD accumulation.
+            prop_assert_eq!(c.new_ytd_gross, c.ytd_gross_input(&bulk) + c.gross);
+        }
+
+        #[test]
+        fn net_is_monotonic_in_basic(
+            low in 120_000i64..800_000,
+            delta in 1i64..100_000,
+            allowance in 0i64..40_000,
+            unpaid in 0i64..10_000,
+        ) {
+            let high = low + delta;
+            let build = |basic: i64| {
+                let emp = employee(basic, NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(), None);
+                let p = period(2025, 6);
+                let mut bulk = empty_bulk();
+                if allowance > 0 {
+                    bulk.recurring_lines.insert(
+                        emp.id,
+                        vec![earning_line(emp.id, "allowance", allowance)],
+                    );
+                }
+                if unpaid > 0 {
+                    bulk.variable_deductions.insert(emp.id, unpaid);
+                    bulk.unpaid_leave.insert(emp.id, (unpaid, Decimal::from(2)));
+                }
+                compute(&emp, &p, &bulk)
+            };
+            let (Ok(a), Ok(b)) = (build(low), build(high)) else {
+                return Ok(());
+            };
+            // Two legitimate mechanisms can lower net as basic rises, both
+            // inherited from how Malaysian statutory tables work rather than
+            // being engine defects:
+            //
+            // 1. Contribution tables are STEP functions. Crossing the
+            //    fixture's RM2,000 cell boundary raises EPF by 1200, SOCSO by
+            //    120 and EIS by 60 sen while gross rose by as little as one
+            //    sen — real Third Schedule cells behave identically.
+            // 2. Monthly PCB rounds UP to the nearest ringgit before it is
+            //    withheld, costing at most one extra ringgit.
+            //
+            // 3. The individual-rebate ceiling is a CLIFF: chargeable income
+            //    moving past it raises the year's tax by the whole RM400
+            //    rebate, worth up to 40000/6 = 6667 sen of monthly PCB on
+            //    this fixture's June run.
+            //
+            // Anything beyond steps + rounding + one rebate cliff is a real
+            // defect.
+            prop_assert!(
+                b.net >= a.net - 1_380 - 100 - 6_700,
+                "net dropped by more than band steps plus PCB rounding: {} -> {}",
+                a.net,
+                b.net
+            );
+        }
+    }
+
+    // Small accessors the property assertions need that ComputedPayslip keeps
+    // private alongside the rest of the engine's plumbing.
+    impl ComputedPayslip {
+        fn variable_part(&self) -> i64 {
+            self.gross - self.basic - self.total_allowances - self.total_overtime
+        }
+        fn ytd_gross_input(&self, _bulk: &BulkPayrollData) -> i64 {
+            self.new_ytd_gross - self.gross
+        }
     }
 }

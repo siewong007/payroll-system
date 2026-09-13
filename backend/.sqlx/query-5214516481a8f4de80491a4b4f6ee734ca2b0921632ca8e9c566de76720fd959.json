@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE company_work_schedules\n           SET name = $3, start_time = $4, end_time = $5,\n               grace_minutes = $6, half_day_hours = $7::float8, timezone = $8,\n               updated_at = NOW()\n           WHERE id = $1 AND company_id = $2\n           RETURNING *",
+  "query": "UPDATE company_work_schedules\n           SET name = $3, start_time = $4, end_time = $5,\n               grace_minutes = $6, half_day_hours = $7::float8, timezone = $8,\n               unpaid_break_minutes = $9, updated_at = NOW()\n           WHERE id = $1 AND company_id = $2\n           RETURNING *",
   "describe": {
     "columns": [
       {
@@ -57,6 +57,11 @@
         "ordinal": 10,
         "name": "updated_at",
         "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 11,
+        "name": "unpaid_break_minutes",
+        "type_info": "Int4"
       }
     ],
     "parameters": {
@@ -68,7 +73,8 @@
         "Time",
         "Int4",
         "Float8",
-        "Varchar"
+        "Varchar",
+        "Int4"
       ]
     },
     "nullable": [
@@ -82,8 +88,9 @@
       false,
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "57270a3ea23d49a3f1f6d790563deeb9488de4456186bf0aa584df0eebc117c2"
+  "hash": "5214516481a8f4de80491a4b4f6ee734ca2b0921632ca8e9c566de76720fd959"
 }

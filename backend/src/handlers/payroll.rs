@@ -467,7 +467,7 @@ pub async fn overview(
 }
 
 /// Cancel a run before money moves: draft/processed by the preparer,
-/// pending_approval/approved by the approver. `paid` is terminal.
+/// pending_approval/approved by the approver. `paid` exits via `reverse_run`.
 pub async fn cancel_run(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -490,6 +490,32 @@ pub async fn cancel_run(
     )
     .await?;
 
+    Ok(Json(run))
+}
+
+/// Reverse a paid run: the ledger truthfully shows it voided, consumed claims
+/// and entries are released, payslip history stays (plan item 11).
+pub async fn reverse_run(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    audit_meta: AuditRequestMeta,
+    Path(id): Path<Uuid>,
+    Json(req): Json<CancelPayrollRunRequest>,
+) -> AppResult<Json<PayrollRun>> {
+    let company_id = auth
+        .0
+        .company_id
+        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
+
+    let run = crate::services::payroll_lifecycle_service::reverse_paid_run(
+        &state.pool,
+        company_id,
+        id,
+        &auth,
+        req.reason,
+        Some(&audit_meta),
+    )
+    .await?;
     Ok(Json(run))
 }
 

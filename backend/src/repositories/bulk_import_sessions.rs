@@ -79,3 +79,12 @@ pub async fn claim_for_confirmation(
     .await?;
     Ok(result.rows_affected() == 1)
 }
+
+/// Purge sessions whose expiry has passed (plan item 26). The table stores
+/// whole validated CSVs in jsonb, so an unpurged session is pure bloat.
+pub async fn purge_expired(executor: impl Executor<'_, Database = Postgres>) -> AppResult<u64> {
+    let result = sqlx::query("DELETE FROM bulk_import_sessions WHERE expires_at < NOW()")
+        .execute(executor)
+        .await?;
+    Ok(result.rows_affected())
+}

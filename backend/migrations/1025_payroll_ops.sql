@@ -20,10 +20,18 @@ ALTER TABLE public.payroll_runs
     ADD COLUMN cancelled_at timestamp with time zone,
     ADD COLUMN cancel_reason character varying(500);
 
+-- Runs cancelled before this migration recorded no actor. Timestamp them from
+-- updated_at (the write that last changed the status) rather than fabricating a
+-- canceller. The constraint therefore requires the timestamp only — the cancel
+-- and reverse endpoints always set cancelled_by too.
+UPDATE public.payroll_runs
+SET cancelled_at = updated_at
+WHERE status = 'cancelled'::public.payroll_status AND cancelled_at IS NULL;
+
 ALTER TABLE public.payroll_runs
     ADD CONSTRAINT payroll_runs_cancel_consistency_check CHECK (
         (status <> 'cancelled'::public.payroll_status)
-        OR (cancelled_at IS NOT NULL AND cancelled_by IS NOT NULL)
+        OR (cancelled_at IS NOT NULL)
     );
 
 ALTER TABLE public.salary_history

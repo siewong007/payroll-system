@@ -91,12 +91,13 @@ pub async fn upsert_default(
     grace_minutes: i32,
     half_day_hours: f64,
     timezone: &str,
+    unpaid_break_minutes: i32,
 ) -> AppResult<WorkSchedule> {
     let schedule = sqlx::query_as!(
         WorkSchedule,
         r#"INSERT INTO company_work_schedules
-           (company_id, name, start_time, end_time, grace_minutes, half_day_hours, timezone, is_default)
-           VALUES ($1, $2, $3, $4, $5, $6::float8, $7, TRUE)
+           (company_id, name, start_time, end_time, grace_minutes, half_day_hours, timezone, is_default, unpaid_break_minutes)
+           VALUES ($1, $2, $3, $4, $5, $6::float8, $7, TRUE, $8)
            ON CONFLICT (company_id) WHERE is_default = TRUE
            DO UPDATE SET
                name = EXCLUDED.name,
@@ -105,6 +106,7 @@ pub async fn upsert_default(
                grace_minutes = EXCLUDED.grace_minutes,
                half_day_hours = EXCLUDED.half_day_hours,
                timezone = EXCLUDED.timezone,
+               unpaid_break_minutes = EXCLUDED.unpaid_break_minutes,
                updated_at = NOW()
            RETURNING *"#,
         company_id,
@@ -114,6 +116,7 @@ pub async fn upsert_default(
         grace_minutes,
         half_day_hours,
         timezone,
+        unpaid_break_minutes,
     )
     .fetch_one(executor)
     .await?;
@@ -131,13 +134,14 @@ pub async fn update(
     grace_minutes: i32,
     half_day_hours: f64,
     timezone: &str,
+    unpaid_break_minutes: i32,
 ) -> AppResult<WorkSchedule> {
     let schedule = sqlx::query_as!(
         WorkSchedule,
         r#"UPDATE company_work_schedules
            SET name = $3, start_time = $4, end_time = $5,
                grace_minutes = $6, half_day_hours = $7::float8, timezone = $8,
-               updated_at = NOW()
+               unpaid_break_minutes = $9, updated_at = NOW()
            WHERE id = $1 AND company_id = $2
            RETURNING *"#,
         schedule_id,
@@ -148,6 +152,7 @@ pub async fn update(
         grace_minutes,
         half_day_hours,
         timezone,
+        unpaid_break_minutes,
     )
     .fetch_one(executor)
     .await?;

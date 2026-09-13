@@ -204,7 +204,7 @@ pub async fn cancel(
         }
         "paid" => {
             return Err(AppError::BadRequest(
-                "Paid payroll runs cannot be cancelled — payment has already been recorded. Correct it with a supplemental run instead.".into(),
+                "Paid payroll runs cannot be cancelled — payment has already been recorded. Use the reverse endpoint for a paid run.".into(),
             ));
         }
         other => {
@@ -285,6 +285,82 @@ pub async fn lock_as_paid(
         serde_json::to_value(&run).unwrap_or_default(),
         format!(
             "Marked payroll run as paid and locked for {:02}/{}",
+            run.period_month, run.period_year
+        ),
+        audit_meta,
+    )
+    .await;
+
+    Ok(run)
+}
+
+/// Reverse a PAID run (plan item 11): status becomes `cancelled`, consumed
+/// claims and staged entries are released in the same transaction, and the
+/// payslip history remains for auditors. The bank transfer itself is the
+/// operator's to unwind — this endpoint makes the payroll ledger tell the
+/// truth about it, nothing more.
+///
+/// Reversal is the only exit from `paid`, so it sits behind
+/// `MarkPayrollPaid` — the same role trusted to mark money as moved decides
+/// when it must be unwound. Reason is mandatory, same evidence bar as
+/// [`cancel`].
+pub async fn reverse_paid_run(
+    pool: &PgPool,
+    company_id: Uuid,
+    run_id: Uuid,
+    auth: &AuthUser,
+    reason: Option<String>,
+    audit_meta: Option<&AuditRequestMeta>,
+) -> AppResult<PayrollRun> {
+    auth.require_permission(Permission::MarkPayrollPaid)?;
+
+    let reason = reason
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.chars().take(500).collect::<String>())
+        .ok_or_else(|| {
+            AppError::BadRequest("A reason is required to reverse a paid payroll run".into())
+        })?;
+
+    let old_run = load_run(pool, company_id, run_id).await?;
+    if old_run.status != "paid" {
+        return Err(AppError::BadRequest(format!(
+            "Only paid payroll runs can be reversed; this one is '{}'. Cancel instead.",
+            old_run.status
+        )));
+    }
+
+    if payroll_reads::run_has_later_committed_run(pool, company_id, run_id).await? {
+        return Err(AppError::BadRequest(
+            "A later payroll run already includes these employees; reverse that run first".into(),
+        ));
+    }
+
+    let actor_user_id = auth.0.sub;
+    let mut tx = pool.begin().await?;
+    payroll_entries::revert_for_run(&mut *tx, run_id, company_id, actor_user_id).await?;
+    claims::revert_for_run(&mut *tx, run_id, company_id).await?;
+    let run = payroll_runs::set_reversed(&mut *tx, run_id, company_id, actor_user_id, &reason)
+        .await?
+        .ok_or_else(|| {
+            AppError::BadRequest("Payroll run changed state while being reversed".into())
+        })?;
+    tx.commit().await?;
+
+    audit_transition(
+        pool,
+        company_id,
+        actor_user_id,
+        "reverse",
+        &old_run,
+        &run,
+        serde_json::json!({
+            "payroll_run": run,
+            "reason": reason,
+        }),
+        format!(
+            "Reversed paid payroll run for {:02}/{}",
             run.period_month, run.period_year
         ),
         audit_meta,

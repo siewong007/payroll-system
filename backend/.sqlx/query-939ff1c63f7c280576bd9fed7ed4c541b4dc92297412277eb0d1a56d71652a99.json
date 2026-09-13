@@ -57,6 +57,11 @@
         "ordinal": 10,
         "name": "updated_at",
         "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 11,
+        "name": "unpaid_break_minutes",
+        "type_info": "Int4"
       }
     ],
     "parameters": {
@@ -65,6 +70,7 @@
       ]
     },
     "nullable": [
+      false,
       false,
       false,
       false,

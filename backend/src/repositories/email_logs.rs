@@ -141,3 +141,16 @@ pub async fn mark_failed(
     .await?;
     Ok(log)
 }
+
+/// Delete email log rows older than the retention window (plan item 26).
+pub async fn purge_older_than(
+    executor: impl Executor<'_, Database = Postgres>,
+    days: i32,
+) -> AppResult<u64> {
+    let result =
+        sqlx::query("DELETE FROM email_logs WHERE created_at < NOW() - ($1 || ' days')::interval")
+            .bind(days.to_string())
+            .execute(executor)
+            .await?;
+    Ok(result.rows_affected())
+}

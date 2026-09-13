@@ -8,7 +8,7 @@ edition = "2024"
 axum = { version = "0.8", features = ["macros", "multipart"] }
 tokio = { version = "1", features = ["full"] }
 tower = "0.5"
-tower-http = { version = "0.6", features = ["cors", "trace", "compression-gzip", "catch-panic"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "compression-gzip", "catch-panic", "timeout", "request-id"] }
 
 # Database
 sqlx = { version = "0.8", default-features = false, features = [
@@ -55,7 +55,7 @@ dotenvy = "0.15"
 
 # Logging
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 # PDF generation
 printpdf = "0.10"
@@ -80,3 +80,6 @@ tower_governor = "0.8"
 webauthn-rs = { version = "0.5.4", features = ["danger-allow-state-serialisation", "conditional-ui"] }
 base64 = "0.22.1"
 url = "2.5.8"
+
+[dev-dependencies]
+proptest = "1"

@@ -987,6 +987,9 @@ export interface ImportConfirmResponse {
   imported_count: number;
   skipped_count: number;
   errors: ImportRowValidation[];
+  portal_accounts_created: number;
+  leave_balances_created: number;
+  provisioning_warnings: string[];
 }
 
 // ─── Audit Trail ───

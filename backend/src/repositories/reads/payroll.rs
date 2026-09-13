@@ -248,30 +248,51 @@ pub async fn attendance_ot_hours(
 ) -> AppResult<Vec<EmployeeHours>> {
     let rows = sqlx::query_as!(
         EmployeeHours,
-        r#"SELECT ar.employee_id, COALESCE(SUM(ar.overtime_hours), 0)::FLOAT AS "hours!"
-           FROM attendance_records ar
-           LEFT JOIN overtime_applications oa
-               ON ar.employee_id = oa.employee_id
-               AND (ar.check_in_at AT TIME ZONE $4)::date = oa.ot_date
-               AND oa.status = 'approved'
-           WHERE ar.employee_id = ANY($1)
-             -- Bucket by the company's local date, as a half-open range on the
-             -- raw timestamptz. Comparing the UTC instant against ::date paid a
-             -- 00:00-08:00 local check-in on the 1st in the previous month, and
-             -- a closed upper bound at period_end + 1 day put a check-in at
-             -- exactly that midnight in two consecutive runs. Wrapping the
-             -- column in AT TIME ZONE fixed both but cost the
-             -- (company_id, check_in_at) index, and hardcoded MYT for tenants
-             -- that are not on it.
-             AND ar.check_in_at >= ($2::date)::timestamp AT TIME ZONE $4
-             AND ar.check_in_at < ($3::date + 1)::timestamp AT TIME ZONE $4
-             AND oa.id IS NULL
-           -- COALESCE, not a bare SUM: a group whose overtime is entirely NULL
-           -- (a forgotten check-out left unrated, or a correction that reopened
-           -- the session) still produces a row, and SUM returns NULL for it.
-           -- The non-null assertion on "hours!" turned that into a runtime error
-           -- that failed the whole run.
-           GROUP BY ar.employee_id"#,
+        r#"SELECT employee_id, day_type AS "day_type!", COALESCE(SUM(overtime_hours), 0)::FLOAT AS "hours!"
+           FROM (
+               SELECT ar.employee_id,
+                      ar.overtime_hours,
+                      -- The local calendar date decides what the day was worth:
+                      -- a public holiday or a configured rest day earns its own
+                      -- multiplier instead of being flattened into `normal`
+                      -- (plan item 12). Holidays match their original date or,
+                      -- for recurring rows, the same month/day.
+                      CASE
+                        WHEN EXISTS (
+                          SELECT 1 FROM holidays h
+                          WHERE h.company_id = ar.company_id
+                            AND (h.date = local_date
+                                 OR (h.is_recurring
+                                     AND EXTRACT(MONTH FROM h.date) = EXTRACT(MONTH FROM local_date)
+                                     AND EXTRACT(DAY FROM h.date) = EXTRACT(DAY FROM local_date)))
+                        ) THEN 'public_holiday'
+                        WHEN COALESCE(
+                          (SELECT w.is_working_day FROM working_day_config w
+                           WHERE w.company_id = ar.company_id
+                             AND w.day_of_week = EXTRACT(DOW FROM local_date)::int),
+                          TRUE
+                        ) = FALSE THEN 'rest_day'
+                        ELSE 'normal'
+                      END AS day_type
+               FROM attendance_records ar
+               LEFT JOIN overtime_applications oa
+                   ON ar.employee_id = oa.employee_id
+                   AND (ar.check_in_at AT TIME ZONE $4)::date = oa.ot_date
+                   AND oa.status = 'approved'
+               CROSS JOIN LATERAL (
+                   SELECT (ar.check_in_at AT TIME ZONE $4)::date AS local_date
+               ) ld
+               WHERE ar.employee_id = ANY($1)
+                 -- Bucket by the company's local date, as a half-open range on
+                 -- the raw timestamptz: a closed upper bound at period_end + 1
+                 -- put a check-in at exactly that midnight in two consecutive
+                 -- runs, and wrapping the column in AT TIME ZONE would cost the
+                 -- (company_id, check_in_at) index.
+                 AND ar.check_in_at >= ($2::date)::timestamp AT TIME ZONE $4
+                 AND ar.check_in_at < ($3::date + 1)::timestamp AT TIME ZONE $4
+                 AND oa.id IS NULL
+           ) buckets
+           GROUP BY employee_id, day_type"#,
         employee_ids,
         period_start,
         period_end,

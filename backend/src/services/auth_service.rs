@@ -226,6 +226,10 @@ pub async fn issue_session(
     login_method: &str,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<LoginResponseWithRefresh> {
+    // The 2FA-completing path bypasses complete_login by design, so policy
+    // runs here as well — after the code check, before anything is minted.
+    enforce_two_factor_policy(pool, &user).await?;
+
     users::update_last_login(pool, user.id).await?;
 
     let _ = audit_service::log_action_with_metadata(
@@ -278,6 +282,10 @@ pub async fn complete_login(
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<LoginOutcome> {
     let user = get_active_user(pool, user_id).await?;
+
+    // Enforcement runs BEFORE the MFA branch: a privileged user with no
+    // enrolment has no second factor to complete and must be stopped here.
+    enforce_two_factor_policy(pool, &user).await?;
 
     if totp_service::is_enabled(pool, user.id).await? {
         let mfa_token = create_mfa_pending_token(user.id, jwt_secret)?;
@@ -456,4 +464,193 @@ pub async fn change_password(
 
 pub async fn skip_change_password(pool: &PgPool, user_id: Uuid) -> AppResult<()> {
     users::clear_must_change_password(pool, user_id).await
+}
+
+/// Roles whose holders can move tenant money or export tenant PII. When the
+/// platform enables 2FA enforcement, these roles must hold a working second
+/// factor before any session is minted (plan item 36).
+pub const TWO_FACTOR_REQUIRED_ROLES: &[&str] =
+    &["super_admin", "admin", "payroll_admin", "finance"];
+
+pub const ENFORCE_2FA_KEY: &str = "enforce_2fa";
+pub const ENFORCE_2FA_GRACE_UNTIL_KEY: &str = "enforce_2fa_grace_until";
+
+/// The enforcement check shared by every session-minting path.
+///
+/// Semantics: with `enforce_2fa` unset/false nothing changes — TOTP stays
+/// opt-in exactly as today. Once enabled, a privileged role without an
+/// enabled enrolment is refused at login with an actionable message, unless
+/// `enforce_2fa_grace_until` (ISO date) names a day in the future: during the
+/// grace window the login proceeds but every refusal-to-be is audit-warned,
+/// so the operator can see who will be locked out on cutover. Enrollment
+/// itself requires a session, so a hard cut without grace would lock out the
+/// very people needed to fix it.
+async fn enforce_two_factor_policy(pool: &PgPool, user: &User) -> AppResult<()> {
+    let privileged = user
+        .roles
+        .iter()
+        .any(|r| TWO_FACTOR_REQUIRED_ROLES.contains(&r.as_str()));
+    if !privileged {
+        return Ok(());
+    }
+
+    let enabled = platform_settings_value(pool, ENFORCE_2FA_KEY)
+        .await?
+        .as_deref()
+        == Some("true");
+    if !enabled {
+        return Ok(());
+    }
+
+    if totp_service::is_enabled(pool, user.id).await? {
+        return Ok(());
+    }
+
+    let grace = platform_settings_value(pool, ENFORCE_2FA_GRACE_UNTIL_KEY).await?;
+    if let Some(until) = parse_grace(grace) {
+        let now_utc_date = chrono::Utc::now().date_naive();
+        if now_utc_date <= until {
+            let _ = crate::services::audit_service::log_action_with_metadata(
+                pool,
+                user.company_id,
+                Some(user.id),
+                "two_factor_overdue",
+                "auth",
+                Some(user.id),
+                None::<serde_json::Value>,
+                Some(serde_json::json!({ "grace_until": until.to_string() })),
+                Some("Privileged account signed in without required 2FA during the grace window"),
+                None,
+            )
+            .await;
+            return Ok(());
+        }
+    }
+
+    Err(AppError::Validation(format!(
+        "Two-factor authentication is required for your role ({}) and no second factor is enrolled. Enrol via 2FA settings; the grace window (if any) has passed.",
+        user.roles.join(", ")
+    )))
+}
+
+/// Current enforcement policy plus the privileged accounts it would refuse —
+/// the admin visibility half of plan item 36.
+pub async fn get_two_factor_policy(
+    pool: &PgPool,
+) -> AppResult<crate::models::totp::TwoFactorPolicyResponse> {
+    let enforce = platform_settings_value(pool, ENFORCE_2FA_KEY)
+        .await?
+        .as_deref()
+        == Some("true");
+    let grace_until =
+        parse_grace(platform_settings_value(pool, ENFORCE_2FA_GRACE_UNTIL_KEY).await?);
+
+    let required_roles: Vec<String> = TWO_FACTOR_REQUIRED_ROLES
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let non_compliant = sqlx::query!(
+        r#"SELECT u.email FROM users u
+           WHERE u.roles && $1::varchar(50)[]
+             AND u.is_active AND u.deleted_at IS NULL
+             AND NOT EXISTS (
+                 SELECT 1 FROM user_totp t WHERE t.user_id = u.id AND t.enabled
+             )
+           ORDER BY u.email"#,
+        &required_roles,
+    )
+    .fetch_all(pool)
+    .await?
+    .into_iter()
+    .map(|r| r.email)
+    .collect();
+
+    Ok(crate::models::totp::TwoFactorPolicyResponse {
+        enforce,
+        grace_until,
+        non_compliant,
+    })
+}
+
+/// Write the enforcement policy. Guardrails mirror `enforce_two_factor_policy`
+/// semantics: a past date is meaningless, and a hard cut (`grace_until: null`)
+/// is refused while any active privileged account still lacks an enrolment —
+/// enrolment itself needs a session, so that cut would lock out exactly the
+/// people needed to undo it.
+pub async fn set_two_factor_policy(
+    pool: &PgPool,
+    req: crate::models::totp::TwoFactorPolicyRequest,
+    actor: Uuid,
+    audit_meta: Option<&AuditRequestMeta>,
+) -> AppResult<crate::models::totp::TwoFactorPolicyResponse> {
+    if let Some(until) = req.grace_until
+        && until < chrono::Utc::now().date_naive()
+    {
+        return Err(AppError::Validation(
+            "grace_until must be today or a future date".into(),
+        ));
+    }
+
+    let status = get_two_factor_policy(pool).await?;
+    if req.enforce && req.grace_until.is_none() && !status.non_compliant.is_empty() {
+        return Err(AppError::Validation(format!(
+            "Cannot enable enforcement without a grace window: {} privileged account(s) still lack an enrolment ({})",
+            status.non_compliant.len(),
+            status.non_compliant.join(", ")
+        )));
+    }
+
+    crate::repositories::platform_settings::set_value(
+        pool,
+        ENFORCE_2FA_KEY,
+        if req.enforce { "true" } else { "false" },
+        Some(actor),
+    )
+    .await?;
+    match req.grace_until {
+        Some(until) => {
+            crate::repositories::platform_settings::set_value(
+                pool,
+                ENFORCE_2FA_GRACE_UNTIL_KEY,
+                &until.to_string(),
+                Some(actor),
+            )
+            .await?;
+        }
+        None => {
+            crate::repositories::platform_settings::delete_key(pool, ENFORCE_2FA_GRACE_UNTIL_KEY)
+                .await?;
+        }
+    }
+
+    let _ = audit_service::log_action_with_metadata(
+        pool,
+        None,
+        Some(actor),
+        "two_factor_policy_updated",
+        "platform_setting",
+        None,
+        Some(serde_json::json!({
+            "enforce": status.enforce,
+            "grace_until": status.grace_until.map(|d| d.to_string()),
+        })),
+        Some(serde_json::json!({
+            "enforce": req.enforce,
+            "grace_until": req.grace_until.map(|d| d.to_string()),
+        })),
+        Some("Platform 2FA enforcement policy changed"),
+        audit_meta,
+    )
+    .await;
+
+    get_two_factor_policy(pool).await
+}
+
+async fn platform_settings_value(pool: &PgPool, key: &str) -> AppResult<Option<String>> {
+    crate::repositories::platform_settings::get_value(pool, key).await
+}
+
+fn parse_grace(raw: Option<String>) -> Option<chrono::NaiveDate> {
+    raw.as_deref()
+        .and_then(|v| chrono::NaiveDate::parse_from_str(v, "%Y-%m-%d").ok())
 }

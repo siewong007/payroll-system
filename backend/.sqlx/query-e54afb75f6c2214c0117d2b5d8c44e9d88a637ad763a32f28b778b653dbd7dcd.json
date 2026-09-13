@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT * FROM holidays\n        WHERE company_id = $1\n        AND EXTRACT(YEAR FROM date)::int = $2\n        ORDER BY date",
+  "query": "SELECT * FROM holidays\n        WHERE company_id = $1\n        AND date <= $2\n        ORDER BY date",
   "describe": {
     "columns": [
       {
@@ -67,7 +67,7 @@
     "parameters": {
       "Left": [
         "Uuid",
-        "Int4"
+        "Date"
       ]
     },
     "nullable": [
@@ -85,5 +85,5 @@
       true
     ]
   },
-  "hash": "89eedafd65aeb85e16bfbf455505548003eb1a6e957583bed80762c783b932d6"
+  "hash": "e54afb75f6c2214c0117d2b5d8c44e9d88a637ad763a32f28b778b653dbd7dcd"
 }

@@ -1,4 +1,15 @@
+use chrono::Datelike;
 use sqlx::{Executor, PgPool};
+
+/// One committed import row awaiting post-commit provisioning.
+struct ProvisionRow {
+    row_number: usize,
+    employee_id: Uuid,
+    email: Option<String>,
+    full_name: String,
+    ic_number: Option<String>,
+    date_joined: chrono::NaiveDate,
+}
 use uuid::Uuid;
 
 // Per-row savepoint, issued as explicit SQL rather than via sqlx's nested
@@ -24,6 +35,7 @@ use crate::models::employee::CreateEmployeeRequest;
 use crate::models::employee_import::*;
 use crate::repositories::{bulk_import_sessions, employees as employee_repo, salary_history};
 use crate::services::audit_service::{self, AuditRequestMeta};
+use crate::services::{employee_service, portal_service};
 
 fn row_to_create_request(row: &ImportRowRaw) -> CreateEmployeeRequest {
     CreateEmployeeRequest {
@@ -155,6 +167,11 @@ pub async fn confirm_import(
 
     let mut imported_count = 0;
     let mut failed_rows = Vec::new();
+    // Employees this import committed, held for post-commit provisioning:
+    // portal account + first-year leave balances. The realistic first act of a
+    // new tenant is importing the whole headcount — without this, nobody can
+    // log in and nobody has an entitlement (plan item 14).
+    let mut to_provision: Vec<ProvisionRow> = Vec::new();
     let mut tx = pool.begin().await?;
 
     for row_validation in &valid_rows {
@@ -194,6 +211,14 @@ pub async fn confirm_import(
             Ok(_) => {
                 (&mut *tx).execute(SAVEPOINT_RELEASE).await?;
                 imported_count += 1;
+                to_provision.push(ProvisionRow {
+                    row_number: row_validation.row_number,
+                    employee_id: id,
+                    email: create_req.email.clone(),
+                    full_name: create_req.full_name.clone(),
+                    ic_number: create_req.ic_number.clone(),
+                    date_joined: create_req.date_joined,
+                });
             }
             Err(e) => {
                 (&mut *tx).execute(SAVEPOINT_ROLLBACK).await?;
@@ -251,9 +276,69 @@ pub async fn confirm_import(
 
     tx.commit().await?;
 
+    // Post-commit, best-effort, exactly like single-employee creation treats
+    // these steps: the employees exist either way, and each failure is
+    // reported per row instead of failing an import that already committed.
+    // `create_user_for_employee_fields` deliberately refuses to adopt foreign
+    // or privileged accounts, so re-importing over existing staff is inert.
+    let current_year = chrono::Utc::now().year();
+    let mut portal_accounts_created = 0usize;
+    let mut leave_balances_created = 0usize;
+    let mut provisioning_warnings = Vec::new();
+    for ProvisionRow {
+        row_number,
+        employee_id: id,
+        email,
+        full_name,
+        ic_number,
+        date_joined,
+    } in &to_provision
+    {
+        // No address on the row means nothing to log in with: skip silently,
+        // matching single-employee creation.
+        if let Some(email) = email.as_deref().filter(|e| !e.trim().is_empty()) {
+            match employee_service::create_user_for_employee_fields(
+                pool,
+                *id,
+                company_id,
+                email,
+                full_name,
+                ic_number.as_deref(),
+            )
+            .await
+            {
+                Ok(Some(_)) => portal_accounts_created += 1,
+                Ok(None) => {}
+                Err(e) => provisioning_warnings.push(format!(
+                    "Row {row_number}: portal account not created: {}",
+                    e.client_response().1
+                )),
+            }
+        }
+
+        match portal_service::initialize_leave_balances(
+            pool,
+            *id,
+            company_id,
+            *date_joined,
+            current_year,
+        )
+        .await
+        {
+            Ok(balances) => leave_balances_created += balances.len(),
+            Err(e) => provisioning_warnings.push(format!(
+                "Row {row_number}: leave balances not initialised: {}",
+                e.client_response().1
+            )),
+        }
+    }
+
     Ok(ImportConfirmResponse {
         imported_count,
         skipped_count,
         errors: failed_rows,
+        portal_accounts_created,
+        leave_balances_created,
+        provisioning_warnings,
     })
 }

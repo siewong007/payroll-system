@@ -88,3 +88,18 @@ pub async fn insert(
 // return. The import now goes through `audit_service::log_action_with_metadata`
 // like every other mutation, which makes that class of drift impossible rather
 // than merely fixed once.
+
+/// Delete audit rows older than the retention window (plan item 26). Payroll
+/// records are subject to seven-year statutory retention in Malaysia, so the
+/// default is conservative; the operator can shorten it via configuration.
+pub async fn purge_older_than(
+    executor: impl Executor<'_, Database = Postgres>,
+    days: i64,
+) -> AppResult<u64> {
+    let result =
+        sqlx::query("DELETE FROM audit_logs WHERE created_at < NOW() - ($1 || ' days')::interval")
+            .bind(days.to_string())
+            .execute(executor)
+            .await?;
+    Ok(result.rows_affected())
+}

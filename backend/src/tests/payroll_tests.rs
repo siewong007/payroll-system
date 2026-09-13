@@ -2230,3 +2230,109 @@ async fn a_skipped_earlier_period_is_a_warning_not_a_blocker() {
     assert!(skipped.message.contains("01/2024"), "{}", skipped.message);
     assert!(skipped.message.contains("02/2024"), "{}", skipped.message);
 }
+
+/// Attendance overtime is bucketed by what the local date was worth: a
+/// configured rest day and a public holiday each get their own multiplier
+/// bucket instead of being flattened into `normal` (plan item 12).
+#[tokio::test]
+async fn attendance_overtime_is_bucketed_by_day_type() {
+    use crate::repositories::reads::payroll as payroll_reads;
+
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let employee_id = seed_employee(&pool, company_id, None, 300_000).await;
+
+    async fn seed_rated(
+        pool: &sqlx::PgPool,
+        company_id: uuid::Uuid,
+        employee_id: uuid::Uuid,
+        date: NaiveDate,
+        hours: f64,
+    ) {
+        sqlx::query(
+            r#"INSERT INTO attendance_records
+                      (company_id, employee_id, check_in_at, check_out_at, method, status,
+                       hours_worked, overtime_hours)
+                   VALUES ($1, $2,
+                           ($3::date + TIME '09:00')::timestamp AT TIME ZONE 'Asia/Kuala_Lumpur',
+                           ($3::date + TIME '18:00')::timestamp AT TIME ZONE 'Asia/Kuala_Lumpur',
+                           'manual', 'present', 9.00, $4)"#,
+        )
+        .bind(company_id)
+        .bind(employee_id)
+        .bind(date)
+        .bind(hours)
+        .execute(pool)
+        .await
+        .expect("seed rated attendance record");
+    }
+
+    // 2024-06-05 is a Wednesday (normal); 2024-06-09 a Sunday; make the Sunday
+    // a rest day via the working-day config and put a holiday on the 10th.
+    seed_rated(
+        &pool,
+        company_id,
+        employee_id,
+        NaiveDate::from_ymd_opt(2024, 6, 5).unwrap(),
+        2.0,
+    )
+    .await;
+    seed_rated(
+        &pool,
+        company_id,
+        employee_id,
+        NaiveDate::from_ymd_opt(2024, 6, 9).unwrap(),
+        3.0,
+    )
+    .await;
+    seed_rated(
+        &pool,
+        company_id,
+        employee_id,
+        NaiveDate::from_ymd_opt(2024, 6, 10).unwrap(),
+        1.5,
+    )
+    .await;
+
+    sqlx::query(
+        "INSERT INTO working_day_config (company_id, day_of_week, is_working_day)
+         VALUES ($1, 0, FALSE)", // Sunday
+    )
+    .bind(company_id)
+    .execute(&pool)
+    .await
+    .expect("mark Sundays as rest days");
+
+    sqlx::query(
+        "INSERT INTO holidays (company_id, name, date, holiday_type, is_recurring, created_by)
+         VALUES ($1, 'Test Holiday', $2, 'public_holiday', FALSE, NULL)",
+    )
+    .bind(company_id)
+    .bind(NaiveDate::from_ymd_opt(2024, 6, 10).unwrap())
+    .execute(&pool)
+    .await
+    .expect("seed the holiday");
+
+    let rows = payroll_reads::attendance_ot_hours(
+        &pool,
+        &[employee_id],
+        NaiveDate::from_ymd_opt(2024, 6, 1).unwrap(),
+        NaiveDate::from_ymd_opt(2024, 6, 30).unwrap(),
+        "Asia/Kuala_Lumpur",
+    )
+    .await
+    .expect("bucketed read");
+
+    let bucket = |day_type: &str| -> f64 {
+        rows.iter()
+            .find(|r| r.employee_id == employee_id && r.day_type == day_type)
+            .map(|r| r.hours)
+            .unwrap_or(0.0)
+    };
+
+    assert!((bucket("normal") - 2.0).abs() < 1e-9);
+    assert!((bucket("rest_day") - 3.0).abs() < 1e-9);
+    assert!((bucket("public_holiday") - 1.5).abs() < 1e-9);
+}

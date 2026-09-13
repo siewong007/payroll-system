@@ -10,35 +10,47 @@ use crate::models::backup::{BackupMetadata, CompanyBackup};
 use crate::repositories::backup as backup_repo;
 
 pub async fn export_company(pool: &PgPool, company_id: Uuid) -> AppResult<CompanyBackup> {
-    let company = backup_repo::company(pool, company_id)
+    // One snapshot for the whole archive (plan item 27): 24 independent reads
+    // at READ COMMITTED meant a run committing mid-export produced orphan
+    // payslips — items whose run row was read before it existed. REPEATABLE
+    // READ gives every read the same snapshot; READ ONLY because the export
+    // never writes and the planner can then skip some overhead.
+    let mut tx = pool.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        .execute(&mut *tx)
+        .await?;
+
+    let company = backup_repo::company(&mut *tx, company_id)
         .await?
         .ok_or_else(|| AppError::NotFound("Company not found".into()))?;
 
-    let payroll_groups = backup_repo::payroll_groups(pool, company_id).await?;
-    let employees = backup_repo::employees(pool, company_id).await?;
-    let employee_allowances = backup_repo::employee_allowances(pool, company_id).await?;
-    let salary_history = backup_repo::salary_history(pool, company_id).await?;
-    let tp3_records = backup_repo::tp3_records(pool, company_id).await?;
-    let leave_types = backup_repo::leave_types(pool, company_id).await?;
-    let leave_balances = backup_repo::leave_balances(pool, company_id).await?;
-    let leave_requests = backup_repo::leave_requests(pool, company_id).await?;
-    let claims = backup_repo::claims(pool, company_id).await?;
-    let overtime_applications = backup_repo::overtime_applications(pool, company_id).await?;
+    let payroll_groups = backup_repo::payroll_groups(&mut *tx, company_id).await?;
+    let employees = backup_repo::employees(&mut *tx, company_id).await?;
+    let employee_allowances = backup_repo::employee_allowances(&mut *tx, company_id).await?;
+    let salary_history = backup_repo::salary_history(&mut *tx, company_id).await?;
+    let tp3_records = backup_repo::tp3_records(&mut *tx, company_id).await?;
+    let leave_types = backup_repo::leave_types(&mut *tx, company_id).await?;
+    let leave_balances = backup_repo::leave_balances(&mut *tx, company_id).await?;
+    let leave_requests = backup_repo::leave_requests(&mut *tx, company_id).await?;
+    let claims = backup_repo::claims(&mut *tx, company_id).await?;
+    let overtime_applications = backup_repo::overtime_applications(&mut *tx, company_id).await?;
 
-    let payroll_runs = backup_repo::payroll_runs(pool, company_id).await?;
-    let payroll_items = backup_repo::payroll_items(pool, company_id).await?;
-    let payroll_item_details = backup_repo::payroll_item_details(pool, company_id).await?;
-    let payroll_entries = backup_repo::payroll_entries(pool, company_id).await?;
-    let document_categories = backup_repo::document_categories(pool, company_id).await?;
-    let documents = backup_repo::documents(pool, company_id).await?;
-    let teams = backup_repo::teams(pool, company_id).await?;
-    let team_members = backup_repo::team_members(pool, company_id).await?;
-    let holidays = backup_repo::holidays(pool, company_id).await?;
-    let working_day_config = backup_repo::working_day_config(pool, company_id).await?;
-    let email_templates = backup_repo::email_templates(pool, company_id).await?;
-    let company_settings = backup_repo::company_settings(pool, company_id).await?;
-    let company_work_schedules = backup_repo::company_work_schedules(pool, company_id).await?;
-    let company_locations = backup_repo::company_locations(pool, company_id).await?;
+    let payroll_runs = backup_repo::payroll_runs(&mut *tx, company_id).await?;
+    let payroll_items = backup_repo::payroll_items(&mut *tx, company_id).await?;
+    let payroll_item_details = backup_repo::payroll_item_details(&mut *tx, company_id).await?;
+    let payroll_entries = backup_repo::payroll_entries(&mut *tx, company_id).await?;
+    let document_categories = backup_repo::document_categories(&mut *tx, company_id).await?;
+    let documents = backup_repo::documents(&mut *tx, company_id).await?;
+    let teams = backup_repo::teams(&mut *tx, company_id).await?;
+    let team_members = backup_repo::team_members(&mut *tx, company_id).await?;
+    let holidays = backup_repo::holidays(&mut *tx, company_id).await?;
+    let working_day_config = backup_repo::working_day_config(&mut *tx, company_id).await?;
+    let email_templates = backup_repo::email_templates(&mut *tx, company_id).await?;
+    let company_settings = backup_repo::company_settings(&mut *tx, company_id).await?;
+    let company_work_schedules = backup_repo::company_work_schedules(&mut *tx, company_id).await?;
+    let company_locations = backup_repo::company_locations(&mut *tx, company_id).await?;
+
+    tx.commit().await?;
 
     let mut record_counts = HashMap::new();
     record_counts.insert("payroll_groups".into(), payroll_groups.len());

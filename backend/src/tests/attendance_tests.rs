@@ -889,6 +889,7 @@ async fn work_schedule_writes_reject_an_unrecognised_timezone() {
         grace_minutes: None,
         half_day_hours: None,
         timezone: Some(tz.to_string()),
+        unpaid_break_minutes: None,
     };
 
     let err = work_schedule_service::upsert_default_schedule(
@@ -931,6 +932,7 @@ async fn work_schedule_writes_reject_an_unrecognised_timezone() {
         grace_minutes: None,
         half_day_hours: None,
         timezone: Some("Asia/Kuala_Lumpr".into()),
+        unpaid_break_minutes: None,
     };
     let err = work_schedule_service::update_schedule(
         &pool,
@@ -1038,6 +1040,7 @@ async fn a_wedged_tenant_no_longer_halts_the_absent_run_and_heals_itself() {
             grace_minutes: None,
             half_day_hours: None,
             timezone: Some(KL.to_string()),
+            unpaid_break_minutes: None,
         },
         seed_user(&pool, wedged, "hr_manager").await,
         None,

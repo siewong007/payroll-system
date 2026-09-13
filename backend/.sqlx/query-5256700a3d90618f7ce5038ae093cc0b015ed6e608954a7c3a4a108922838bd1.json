@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT u.email FROM users u\n           WHERE u.roles && $1::varchar(50)[]\n             AND u.is_active AND u.deleted_at IS NULL\n             AND NOT EXISTS (\n                 SELECT 1 FROM user_totp t WHERE t.user_id = u.id AND t.enabled\n             )\n           ORDER BY u.email",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "email",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "VarcharArray"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "5256700a3d90618f7ce5038ae093cc0b015ed6e608954a7c3a4a108922838bd1"
+}

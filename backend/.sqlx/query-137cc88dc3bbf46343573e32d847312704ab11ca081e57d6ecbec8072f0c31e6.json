@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO company_work_schedules\n           (company_id, name, start_time, end_time, grace_minutes, half_day_hours, timezone, is_default)\n           VALUES ($1, $2, $3, $4, $5, $6::float8, $7, TRUE)\n           ON CONFLICT (company_id) WHERE is_default = TRUE\n           DO UPDATE SET\n               name = EXCLUDED.name,\n               start_time = EXCLUDED.start_time,\n               end_time = EXCLUDED.end_time,\n               grace_minutes = EXCLUDED.grace_minutes,\n               half_day_hours = EXCLUDED.half_day_hours,\n               timezone = EXCLUDED.timezone,\n               updated_at = NOW()\n           RETURNING *",
+  "query": "INSERT INTO company_work_schedules\n           (company_id, name, start_time, end_time, grace_minutes, half_day_hours, timezone, is_default, unpaid_break_minutes)\n           VALUES ($1, $2, $3, $4, $5, $6::float8, $7, TRUE, $8)\n           ON CONFLICT (company_id) WHERE is_default = TRUE\n           DO UPDATE SET\n               name = EXCLUDED.name,\n               start_time = EXCLUDED.start_time,\n               end_time = EXCLUDED.end_time,\n               grace_minutes = EXCLUDED.grace_minutes,\n               half_day_hours = EXCLUDED.half_day_hours,\n               timezone = EXCLUDED.timezone,\n               unpaid_break_minutes = EXCLUDED.unpaid_break_minutes,\n               updated_at = NOW()\n           RETURNING *",
   "describe": {
     "columns": [
       {
@@ -57,6 +57,11 @@
         "ordinal": 10,
         "name": "updated_at",
         "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 11,
+        "name": "unpaid_break_minutes",
+        "type_info": "Int4"
       }
     ],
     "parameters": {
@@ -67,7 +72,8 @@
         "Time",
         "Int4",
         "Float8",
-        "Varchar"
+        "Varchar",
+        "Int4"
       ]
     },
     "nullable": [
@@ -81,8 +87,9 @@
       false,
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "69123918caab989cd75543ef57221212bb3bf8a16684dc0e9f6aeafb3ea6b963"
+  "hash": "137cc88dc3bbf46343573e32d847312704ab11ca081e57d6ecbec8072f0c31e6"
 }

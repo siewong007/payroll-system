@@ -12,18 +12,9 @@ pub async fn list_for_year(
     company_id: Uuid,
     year: i32,
 ) -> AppResult<Vec<Holiday>> {
-    let holidays = sqlx::query_as!(
-        Holiday,
-        r#"SELECT * FROM holidays
-        WHERE company_id = $1
-        AND EXTRACT(YEAR FROM date)::int = $2
-        ORDER BY date"#,
-        company_id,
-        year,
-    )
-    .fetch_all(executor)
-    .await?;
-    Ok(holidays)
+    let start = NaiveDate::from_ymd_opt(year, 1, 1).expect("valid year start");
+    let end = NaiveDate::from_ymd_opt(year, 12, 31).expect("valid year end");
+    list_in_span(executor, company_id, start, end).await
 }
 
 /// Every holiday in a closed date range, in one round trip.
@@ -39,20 +30,71 @@ pub async fn list_for_range(
     start: NaiveDate,
     end: NaiveDate,
 ) -> AppResult<Vec<Holiday>> {
-    let holidays = sqlx::query_as!(
+    list_in_span(executor, company_id, start, end).await
+}
+
+/// Every holiday touching `[start, end]`, with recurring holidays expanded
+/// into their virtual occurrences inside the span (plan item 13).
+///
+/// The auto-absent cron has always honoured `is_recurring`; these reads did
+/// not — so leave validation charged an employee a day the cron agreed they
+/// were never expected to work, and the calendar screen disagreed with both.
+/// A recurring row is returned once per matching month/day in the span, each
+/// carrying the row's own `id` (consumers key on name+date, never id) and its
+/// date rewritten to the occurrence. A Feb-29 recurrence is skipped in years
+/// without one rather than shifted: granting a different day silently would
+/// be worse than granting none. Occurrences begin at the original date — a
+/// 2024 holiday does not appear in 2023.
+async fn list_in_span(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    start: NaiveDate,
+    end: NaiveDate,
+) -> AppResult<Vec<Holiday>> {
+    use chrono::Datelike;
+
+    let rows = sqlx::query_as!(
         Holiday,
         r#"SELECT * FROM holidays
         WHERE company_id = $1
-        AND date >= $2
-        AND date <= $3
+        AND date <= $2
         ORDER BY date"#,
         company_id,
-        start,
         end,
     )
     .fetch_all(executor)
     .await?;
-    Ok(holidays)
+
+    let mut out = Vec::new();
+    for holiday in rows {
+        if !holiday.is_recurring {
+            if holiday.date >= start {
+                out.push(holiday);
+            }
+            continue;
+        }
+
+        let first_year = holiday.date.year();
+        let last_year = end.year();
+        let mut year = first_year.max(start.year());
+        while year <= last_year {
+            // Feb-29 in a non-leap year yields None: skip, don't shift.
+            if let Some(occurrence) =
+                NaiveDate::from_ymd_opt(year, holiday.date.month(), holiday.date.day())
+                && occurrence >= start
+                && occurrence >= holiday.date
+            {
+                out.push(Holiday {
+                    date: occurrence,
+                    ..holiday.clone()
+                });
+            }
+            year += 1;
+        }
+    }
+
+    out.sort_by_key(|h| h.date);
+    Ok(out)
 }
 
 pub async fn get_by_id(

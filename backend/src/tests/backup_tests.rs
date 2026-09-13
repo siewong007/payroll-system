@@ -49,7 +49,7 @@ fn restored_name() -> String {
 async fn seed_schedule(pool: &PgPool, company_id: Uuid, name: &str, zone: &str) {
     let start = NaiveTime::from_hms_opt(8, 0, 0).unwrap();
     let end = NaiveTime::from_hms_opt(17, 0, 0).unwrap();
-    company_work_schedules::upsert_default(pool, company_id, name, start, end, 5, 6.0, zone)
+    company_work_schedules::upsert_default(pool, company_id, name, start, end, 5, 6.0, zone, 0)
         .await
         .expect("seed the default work schedule");
 }

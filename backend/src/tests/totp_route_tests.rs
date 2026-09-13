@@ -91,6 +91,8 @@ async fn totp_setup_gates_login_until_code_is_verified() {
     let Some(pool) = skip_if_no_db().await else {
         return;
     };
+    // Password logins below are policy-sensitive: see POLICY_SENSITIVE_LOGINS.
+    let _policy_guard = POLICY_SENSITIVE_LOGINS.lock().await;
 
     let company_id = seed_company(&pool).await;
     let email = format!("totp-{}@example.invalid", Uuid::new_v4());
@@ -268,6 +270,8 @@ async fn break_glass_reset_unlocks_login_and_revokes_sessions() {
     let Some(pool) = skip_if_no_db().await else {
         return;
     };
+    // Password logins below are policy-sensitive: see POLICY_SENSITIVE_LOGINS.
+    let _policy_guard = POLICY_SENSITIVE_LOGINS.lock().await;
     let company_id = seed_company(&pool).await;
     let (target_id, email, _, _) = enroll_target(&pool, company_id).await;
 
@@ -325,6 +329,8 @@ async fn break_glass_reset_is_super_admin_only_and_leaves_2fa_intact_when_denied
     let Some(pool) = skip_if_no_db().await else {
         return;
     };
+    // Password logins below are policy-sensitive: see POLICY_SENSITIVE_LOGINS.
+    let _policy_guard = POLICY_SENSITIVE_LOGINS.lock().await;
     let company_id = seed_company(&pool).await;
     let (target_id, email, password, _) = enroll_target(&pool, company_id).await;
     let caller_token = crate::tests::route_auth_tests::token_for(&pool, company_id, "admin").await;
@@ -406,6 +412,8 @@ async fn login_falls_back_to_backup_codes_when_the_totp_secret_is_unreadable() {
     let Some(pool) = skip_if_no_db().await else {
         return;
     };
+    // Password logins below are policy-sensitive: see POLICY_SENSITIVE_LOGINS.
+    let _policy_guard = POLICY_SENSITIVE_LOGINS.lock().await;
     let company_id = seed_company(&pool).await;
     let (target_id, email, password, backup_codes) = enroll_target(&pool, company_id).await;
 
@@ -646,4 +654,281 @@ async fn startup_reencryption_migrates_legacy_rows_and_is_idempotent() {
         .expect("find row")
         .expect("row exists");
     assert_eq!(row.secret_encrypted, row_after.secret_encrypted);
+}
+
+// ─── Platform 2FA enforcement policy (plan item 36) ───
+//
+// With `enforce_2fa` off (the default) TOTP stays opt-in. Once on, every
+// privileged role must hold a working enrolment before a session is minted;
+// a grace window lets logins through but audits each one as overdue.
+
+use crate::repositories::platform_settings;
+
+/// The policy keys are global platform state shared by every test against
+/// this database — always restore the off/default state, even mid-test.
+async fn set_policy_raw(pool: &sqlx::PgPool, enforce: &str, grace: Option<&str>) {
+    platform_settings::set_value(
+        pool,
+        crate::services::auth_service::ENFORCE_2FA_KEY,
+        enforce,
+        None,
+    )
+    .await
+    .expect("write enforce_2fa");
+    match grace {
+        Some(date) => platform_settings::set_value(
+            pool,
+            crate::services::auth_service::ENFORCE_2FA_GRACE_UNTIL_KEY,
+            date,
+            None,
+        )
+        .await
+        .expect("write grace"),
+        None => platform_settings::delete_key(
+            pool,
+            crate::services::auth_service::ENFORCE_2FA_GRACE_UNTIL_KEY,
+        )
+        .await
+        .expect("clear grace"),
+    }
+}
+
+/// Serialises every privileged *password* login in this file against the
+/// enforcement test: the policy keys are global platform state, so a login
+/// racing an enforce-on window would 422 for reasons unrelated to the code
+/// under test. Lock holders keep their window short.
+static POLICY_SENSITIVE_LOGINS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// `body_json` caps at 64 KiB; a long-lived dev database accumulates
+/// privileged seed users, so the policy's `non_compliant` array can outgrow
+/// that. These policy tests read with a roomier ceiling instead of dragging
+/// every other test's allocation up with them.
+async fn policy_body(response: axum::response::Response) -> serde_json::Value {
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), 8 * 1024 * 1024)
+        .await
+        .expect("read policy body");
+    serde_json::from_slice(&bytes)
+        .unwrap_or_else(|e| panic!("policy body should be JSON: {e}; status={status}"))
+}
+
+async fn login(app: &axum::Router, email: &str, password: &str) -> (StatusCode, serde_json::Value) {
+    let resp = app
+        .clone()
+        .oneshot(json_request(
+            "POST",
+            "/api/auth/login",
+            None,
+            &format!(r#"{{"email":"{email}","password":"{password}"}}"#),
+        ))
+        .await
+        .expect("login response");
+    let status = resp.status();
+    (status, body_json(resp).await)
+}
+
+#[tokio::test]
+async fn two_factor_policy_is_platform_admin_gated() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let admin_token = crate::tests::route_auth_tests::token_for(&pool, company_id, "admin").await;
+    let super_token =
+        crate::tests::route_auth_tests::token_for(&pool, company_id, "super_admin").await;
+    let app = app_for(pool).await;
+
+    // A company admin must not read or flip a platform-wide gate: the
+    // non_compliant list names accounts across every tenant.
+    for method in ["GET", "PUT"] {
+        let resp = app
+            .clone()
+            .oneshot(json_request(
+                method,
+                "/api/admin/platform/2fa-policy",
+                Some(&admin_token),
+                r#"{"enforce":true,"grace_until":null}"#,
+            ))
+            .await
+            .expect("policy response");
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN, "{method} as admin");
+    }
+
+    let resp = app
+        .oneshot(json_request(
+            "GET",
+            "/api/admin/platform/2fa-policy",
+            Some(&super_token),
+            "",
+        ))
+        .await
+        .expect("policy response");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = policy_body(resp).await;
+    assert!(body["enforce"].is_boolean());
+    assert!(body["non_compliant"].is_array());
+}
+
+#[tokio::test]
+async fn enforcement_refuses_hard_cut_and_gates_only_privileged_logins() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    // The keys are global platform state: a previous failed run may have left
+    // enforcement on, which would poison this test's baseline and every other
+    // test's privileged logins. Always start from the documented default.
+    set_policy_raw(&pool, "false", None).await;
+    let company_id = seed_company(&pool).await;
+    let email = format!("enforce-{}@example.invalid", Uuid::new_v4());
+    let password = "Sup3rSecretPassw0rd";
+    // Privileged (admin) with NO enrolment — the account a hard cut locks out.
+    seed_user_with_password(&pool, company_id, &email, password).await;
+    // An unprivileged colleague, to prove the gate is role-scoped.
+    let staff_email = format!("staff-{}@example.invalid", Uuid::new_v4());
+    let staff_password = "Sup3rSecretPassw0rd";
+    {
+        let id = Uuid::new_v4();
+        let hash = bcrypt::hash(staff_password, 4).expect("hash test password");
+        sqlx::query(
+            r#"INSERT INTO users (id, email, password_hash, full_name, roles, company_id)
+               VALUES ($1, $2, $3, 'Staff Test User', ARRAY['employee']::VARCHAR(50)[], $4)"#,
+        )
+        .bind(id)
+        .bind(&staff_email)
+        .bind(&hash)
+        .bind(company_id)
+        .execute(&pool)
+        .await
+        .expect("insert staff user");
+        id
+    };
+
+    let super_token =
+        crate::tests::route_auth_tests::token_for(&pool, company_id, "super_admin").await;
+    let app = app_for(pool.clone()).await;
+
+    // Hold the policy lock for the whole enforce-on window, and confirm the
+    // gate is actually off before flipping it — every other login test here
+    // already proves opt-in behaviour.
+    let _policy_guard = POLICY_SENSITIVE_LOGINS.lock().await;
+    let resp = app
+        .clone()
+        .oneshot(json_request(
+            "GET",
+            "/api/admin/platform/2fa-policy",
+            Some(&super_token),
+            "",
+        ))
+        .await
+        .expect("policy response");
+    assert_eq!(policy_body(resp).await["enforce"], serde_json::json!(false));
+
+    // Visibility: the fresh privileged account shows up as non-compliant.
+    let resp = app
+        .clone()
+        .oneshot(json_request(
+            "GET",
+            "/api/admin/platform/2fa-policy",
+            Some(&super_token),
+            "",
+        ))
+        .await
+        .expect("policy response");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let policy = policy_body(resp).await;
+    assert!(
+        policy["non_compliant"]
+            .as_array()
+            .expect("array")
+            .iter()
+            .any(|v| v == &serde_json::json!(email)),
+        "expected {email} listed non-compliant: {policy}"
+    );
+
+    // A hard cut while anyone is non-compliant is refused at the API.
+    let resp = app
+        .clone()
+        .oneshot(json_request(
+            "PUT",
+            "/api/admin/platform/2fa-policy",
+            Some(&super_token),
+            r#"{"enforce":true,"grace_until":null}"#,
+        ))
+        .await
+        .expect("hard cut response");
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    // With a live grace window the same switch is accepted...
+    let tomorrow = (chrono::Utc::now() + chrono::Duration::days(1))
+        .date_naive()
+        .to_string();
+    let resp = app
+        .clone()
+        .oneshot(json_request(
+            "PUT",
+            "/api/admin/platform/2fa-policy",
+            Some(&super_token),
+            &format!(r#"{{"enforce":true,"grace_until":"{tomorrow}"}}"#),
+        ))
+        .await
+        .expect("grace switch response");
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // ...and the un-enrolled privileged login passes but is audit-flagged.
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    let (status, body) = login(&app, &email, password).await;
+    assert_eq!(status, StatusCode::OK, "grace login body: {body}");
+    assert!(body["token"].as_str().is_some());
+    let flagged: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT id FROM audit_logs WHERE action = 'two_factor_overdue' AND user_id = (
+             SELECT id FROM users WHERE email = $1)",
+    )
+    .bind(&email)
+    .fetch_optional(&pool)
+    .await
+    .expect("query audit row");
+    assert!(flagged.is_some(), "grace-window login must be audited");
+
+    // Cutover: clear the grace window; the same login is now refused before
+    // any session exists, while the unprivileged colleague is unaffected.
+    set_policy_raw(&pool, "true", None).await;
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    let (status, body) = login(&app, &email, password).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "body: {body}");
+    let message = serde_json::to_string(&body).unwrap_or_default();
+    assert!(message.contains("Two-factor authentication"), "{message}");
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    let (status, _) = login(&app, &staff_email, staff_password).await;
+    assert_eq!(status, StatusCode::OK, "employee must not be gated");
+
+    // Enrolment satisfies the gate: setup + confirm via the service layer,
+    // then login reaches the familiar MFA-pending branch.
+    let user = crate::services::auth_service::get_active_user(&pool, {
+        sqlx::query_scalar("SELECT id FROM users WHERE email = $1")
+            .bind(&email)
+            .fetch_one(&pool)
+            .await
+            .expect("load user id")
+    })
+    .await
+    .expect("load user");
+    let setup = totp_service::begin_setup(&pool, &user, TOTP_ENCRYPTION_KEY)
+        .await
+        .expect("begin setup");
+    totp_service::confirm_setup(
+        &pool,
+        user.id,
+        &code_for_secret(&setup.secret),
+        TOTP_ENCRYPTION_KEY,
+        None,
+    )
+    .await
+    .expect("confirm setup");
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    let (status, body) = login(&app, &email, password).await;
+    assert_eq!(status, StatusCode::OK, "enrolled login body: {body}");
+    assert_eq!(body["requires_2fa"], serde_json::json!(true));
+
+    // Restore the shared default so other tests see an opt-in platform.
+    set_policy_raw(&pool, "false", None).await;
 }

@@ -139,3 +139,23 @@ pub async fn insert_for_admins(
     .await?;
     Ok(())
 }
+
+/// Delete handled notifications past the retention window and stale unread
+/// ones past a longer one (plan item 26). A notification nobody acted on for
+/// a year is not actionable any more either.
+pub async fn purge_stale(
+    executor: impl Executor<'_, Database = Postgres>,
+    read_retention_days: i32,
+    unread_retention_days: i32,
+) -> AppResult<u64> {
+    let result = sqlx::query(
+        r#"DELETE FROM notifications
+           WHERE (read_at IS NOT NULL AND created_at < NOW() - ($1 || ' days')::interval)
+              OR created_at < NOW() - ($2 || ' days')::interval"#,
+    )
+    .bind(read_retention_days.to_string())
+    .bind(unread_retention_days.to_string())
+    .execute(executor)
+    .await?;
+    Ok(result.rows_affected())
+}

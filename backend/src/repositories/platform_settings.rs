@@ -92,6 +92,18 @@ pub async fn set_value(
     Ok(())
 }
 
+/// Remove a setting outright. Used where "unset" is meaningful — e.g. clearing
+/// the 2FA grace window — as opposed to storing an empty string.
+pub async fn delete_key(
+    executor: impl Executor<'_, Database = Postgres>,
+    key: &str,
+) -> AppResult<()> {
+    sqlx::query!("DELETE FROM platform_settings WHERE key = $1", key)
+        .execute(executor)
+        .await?;
+    Ok(())
+}
+
 pub async fn set_allow_override(
     executor: impl Executor<'_, Database = Postgres>,
     value: &str,

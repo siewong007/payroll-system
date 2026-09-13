@@ -269,7 +269,7 @@ deploy_tag() {
   wait_for_healthy payroll-backend || return 1
   # Verify from the HOST (not just the container healthcheck) so a missing port
   # publish is caught before Caddy is pointed at an unreachable upstream.
-  curl -fsS http://127.0.0.1:8080/api/health >/dev/null || return 1
+  curl -fsS http://127.0.0.1:8080/api/health/ready >/dev/null || return 1
 }
 
 show_diagnostics() {

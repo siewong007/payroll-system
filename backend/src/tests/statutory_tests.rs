@@ -779,3 +779,165 @@ fn bracket_validation_rejects_gaps_a_missing_floor_and_a_finite_ceiling() {
     let err = tables.validate_pcb_brackets().unwrap_err();
     assert!(err.contains("open-ended"), "{err}");
 }
+
+use crate::services::pcb_calculator::round_up_to_ringgit;
+
+// ─── PCB regression vectors (plan item 8) ────────────────────────────────
+//
+// The vectors pin the calculator's current output on the seeded academic
+// tables; the file header documents that they are NOT LHDN conformance
+// vectors and what replaces them at conformance time. The production gate
+// they unlock is data-driven — `platform_settings.pcb_calculator_status` —
+// so this harness is the defined exit criterion instead of a compile-time
+// constant with a test-only bypass.
+
+const PCB_VECTORS: &str = include_str!("fixtures/pcb_regression_vectors.json");
+
+#[derive(serde::Deserialize)]
+struct PcbVectorFile {
+    #[allow(dead_code)]
+    description: String,
+    vectors: Vec<PcbVector>,
+}
+
+#[derive(serde::Deserialize)]
+struct PcbVector {
+    name: String,
+    monthly_normal_remuneration: i64,
+    epf_monthly: i64,
+    socso_monthly: i64,
+    eis_monthly: i64,
+    zakat_monthly: i64,
+    marital_status: String,
+    working_spouse: bool,
+    num_children: i32,
+    months_worked: i32,
+    ytd_gross: i64,
+    ytd_pcb: i64,
+    ytd_epf: i64,
+    ytd_socso: i64,
+    ytd_eis: i64,
+    ytd_zakat: i64,
+    bonus_amount: i64,
+    expected_pcb: i64,
+}
+
+impl PcbVector {
+    fn to_input(&self) -> PcbInput {
+        PcbInput {
+            monthly_normal_remuneration: self.monthly_normal_remuneration,
+            epf_employee_monthly: self.epf_monthly,
+            socso_employee_monthly: self.socso_monthly,
+            eis_employee_monthly: self.eis_monthly,
+            zakat_monthly: self.zakat_monthly,
+            marital_status: self.marital_status.clone(),
+            working_spouse: self.working_spouse,
+            num_children: self.num_children,
+            months_worked: self.months_worked,
+            ytd_gross: self.ytd_gross,
+            ytd_pcb: self.ytd_pcb,
+            ytd_epf: self.ytd_epf,
+            ytd_socso: self.ytd_socso,
+            ytd_eis: self.ytd_eis,
+            ytd_zakat: self.ytd_zakat,
+            bonus_amount: self.bonus_amount,
+        }
+    }
+}
+
+/// Every vector must reproduce its recorded figure against the verified rule
+/// tables the run path loads. A `-1` expectation means "not yet recorded":
+/// the harness refuses to pass with an unrecorded vector so nobody can open
+/// the gate on an unpinned calculator.
+#[tokio::test]
+async fn pcb_regression_vectors_reproduce_recorded_output() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let tables = StatutoryTables::load(&pool, NaiveDate::from_ymd_opt(2024, 6, 30).unwrap())
+        .await
+        .expect("load the seeded academic rule tables");
+
+    let file: PcbVectorFile = serde_json::from_str(PCB_VECTORS).expect("valid vectors file");
+    assert!(!file.vectors.is_empty(), "an empty vector set pins nothing");
+
+    for vector in &file.vectors {
+        let pcb = pcb_calculator::calculate_pcb_with(&tables, &vector.to_input())
+            .unwrap_or_else(|e| panic!("vector {}: calculation failed: {e}", vector.name));
+        assert_ne!(
+            vector.expected_pcb, -1,
+            "vector {} has no recorded expectation; run the record probe and bake in the output",
+            vector.name
+        );
+        assert_eq!(
+            pcb, vector.expected_pcb,
+            "vector {} drifted from its recorded figure",
+            vector.name
+        );
+    }
+}
+
+/// Recording probe: prints each vector's current output. Run with
+/// `cargo test pcb_record_vectors -- --ignored --nocapture`, then paste the
+/// numbers into `pcb_regression_vectors.json`.
+#[tokio::test]
+#[ignore = "recording probe for the regression vectors"]
+async fn pcb_record_vectors() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let tables = StatutoryTables::load(&pool, NaiveDate::from_ymd_opt(2024, 6, 30).unwrap())
+        .await
+        .expect("load tables");
+    let file: PcbVectorFile = serde_json::from_str(PCB_VECTORS).expect("valid vectors file");
+    for vector in &file.vectors {
+        let pcb = pcb_calculator::calculate_pcb_with(&tables, &vector.to_input())
+            .unwrap_or_else(|e| panic!("vector {}: {e}", vector.name));
+        println!("RECORD {} -> {}", vector.name, pcb);
+    }
+}
+
+/// The production gate is data now: absent or any value other than `enabled`
+/// keeps automatic PCB closed even when every rule set is verified.
+///
+/// The delete runs inside a transaction that is rolled back — the setting is
+/// global test-harness state, and deleting it on the shared pool raced every
+/// other test's `skip_if_no_db` re-enable and their in-flight gate checks.
+#[tokio::test]
+async fn pcb_gate_stays_closed_without_the_platform_setting() {
+    use crate::services::statutory_rules;
+
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+
+    let mut tx = pool.begin().await.expect("begin tx");
+    sqlx::query("DELETE FROM platform_settings WHERE key = 'pcb_calculator_status'")
+        .execute(&mut *tx)
+        .await
+        .expect("clear the gate setting");
+
+    let err = statutory_rules::require_verified(
+        &mut *tx,
+        statutory_rules::PCB,
+        NaiveDate::from_ymd_opt(2024, 6, 30).unwrap(),
+    )
+    .await
+    .expect_err("closed gate");
+    assert!(
+        format!("{err}").contains("pcb_calculator_status"),
+        "the error must name the exit criterion: {err}"
+    );
+
+    tx.rollback().await.expect("restore the gate setting");
+}
+
+/// Rounding helper stays pinned while it is exported for the vectors.
+#[test]
+fn round_up_to_ringgit_rounds_positive_values_only() {
+    assert_eq!(round_up_to_ringgit(0), 0);
+    assert_eq!(round_up_to_ringgit(-500), 0);
+    assert_eq!(round_up_to_ringgit(1), 100);
+    assert_eq!(round_up_to_ringgit(199), 200);
+    assert_eq!(round_up_to_ringgit(200), 200);
+}
