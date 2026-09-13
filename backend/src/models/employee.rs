@@ -188,6 +188,12 @@ pub struct UpdateEmployeeRequest {
     pub date_resigned: Option<NaiveDate>,
     pub resignation_reason: Option<String>,
     pub basic_salary: Option<i64>,
+    /// Classification written to `salary_history` when `basic_salary` changes;
+    /// validated against the `salary_history_change_type_check` vocabulary.
+    /// Ignored (with the salary unchanged) when `basic_salary` is absent.
+    pub salary_change_type: Option<String>,
+    /// Free-text context for the history row (`notes` column), max 500 chars.
+    pub salary_change_notes: Option<String>,
     pub hourly_rate: Option<i64>,
     pub daily_rate: Option<i64>,
     pub bank_name: Option<String>,
@@ -225,6 +231,15 @@ pub struct SalaryHistory {
     pub new_salary: i64,
     pub effective_date: NaiveDate,
     pub reason: Option<String>,
+    /// Why the salary changed, from the `salary_history_change_type_check`
+    /// vocabulary (`new_hire`, `increment`, `promotion`, …). Rows written before
+    /// the column existed carry the `adjustment` default.
+    pub change_type: String,
+    pub notes: Option<String>,
+    /// Set when the change went through an approval step; NULL today, the
+    /// anchor for a future salary-approval workflow.
+    pub approved_by: Option<Uuid>,
+    pub approved_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub created_by: Option<Uuid>,
 }

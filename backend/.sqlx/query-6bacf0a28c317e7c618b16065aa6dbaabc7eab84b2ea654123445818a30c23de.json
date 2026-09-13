@@ -1,0 +1,118 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH committed AS (\n            SELECT id, period_year, period_month, employee_count,\n                total_gross, total_net, total_employer_cost,\n                total_epf_employee, total_epf_employer,\n                total_socso_employee, total_socso_employer,\n                total_eis_employee, total_eis_employer,\n                total_pcb, total_zakat\n            FROM payroll_runs\n            WHERE company_id = $1\n              AND status::text IN ('processed', 'pending_approval', 'approved', 'paid')\n        ),\n        item_sums AS (\n            SELECT c.period_year, c.period_month,\n                SUM(pi.total_overtime)::bigint AS total_overtime,\n                SUM(pi.total_deductions)::bigint AS total_deductions\n            FROM payroll_items pi\n            JOIN committed c ON pi.payroll_run_id = c.id\n            GROUP BY c.period_year, c.period_month\n        )\n        SELECT c.period_year, c.period_month,\n            COUNT(*)::bigint AS \"run_count!\",\n            COALESCE(SUM(c.employee_count), 0)::bigint AS \"employee_count!\",\n            COALESCE(SUM(c.total_gross), 0)::bigint AS \"total_gross!\",\n            COALESCE(SUM(c.total_net), 0)::bigint AS \"total_net!\",\n            COALESCE(SUM(c.total_employer_cost), 0)::bigint AS \"total_employer_cost!\",\n            COALESCE(SUM(c.total_epf_employee), 0)::bigint AS \"total_epf_employee!\",\n            COALESCE(SUM(c.total_epf_employer), 0)::bigint AS \"total_epf_employer!\",\n            COALESCE(SUM(c.total_socso_employee), 0)::bigint AS \"total_socso_employee!\",\n            COALESCE(SUM(c.total_socso_employer), 0)::bigint AS \"total_socso_employer!\",\n            COALESCE(SUM(c.total_eis_employee), 0)::bigint AS \"total_eis_employee!\",\n            COALESCE(SUM(c.total_eis_employer), 0)::bigint AS \"total_eis_employer!\",\n            COALESCE(SUM(c.total_pcb), 0)::bigint AS \"total_pcb!\",\n            COALESCE(SUM(c.total_zakat), 0)::bigint AS \"total_zakat!\",\n            COALESCE(i.total_overtime, 0)::bigint AS \"total_overtime!\",\n            COALESCE(i.total_deductions, 0)::bigint AS \"total_deductions!\"\n        FROM committed c\n        LEFT JOIN item_sums i\n          ON i.period_year = c.period_year AND i.period_month = c.period_month\n        GROUP BY c.period_year, c.period_month, i.total_overtime, i.total_deductions\n        ORDER BY c.period_year DESC, c.period_month DESC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "period_year",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 1,
+        "name": "period_month",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 2,
+        "name": "run_count!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "employee_count!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "total_gross!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "total_net!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 6,
+        "name": "total_employer_cost!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 7,
+        "name": "total_epf_employee!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 8,
+        "name": "total_epf_employer!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 9,
+        "name": "total_socso_employee!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 10,
+        "name": "total_socso_employer!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 11,
+        "name": "total_eis_employee!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 12,
+        "name": "total_eis_employer!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 13,
+        "name": "total_pcb!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 14,
+        "name": "total_zakat!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 15,
+        "name": "total_overtime!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 16,
+        "name": "total_deductions!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "6bacf0a28c317e7c618b16065aa6dbaabc7eab84b2ea654123445818a30c23de"
+}

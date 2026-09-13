@@ -1,0 +1,46 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT pr.id, pr.period_year, pr.period_month,\n            pr.status::text AS \"status!\", pg.name AS \"payroll_group_name!\"\n        FROM payroll_runs pr\n        JOIN payroll_groups pg ON pr.payroll_group_id = pg.id\n        WHERE pr.company_id = $1\n          AND pr.status::text IN ('processed', 'pending_approval', 'approved')\n        ORDER BY pr.period_year, pr.period_month, pg.name",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "period_year",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 2,
+        "name": "period_month",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 3,
+        "name": "status!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "payroll_group_name!",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      null,
+      false
+    ]
+  },
+  "hash": "d20d09bb5da7661cf483c05c7984c4b721c077ecddcd9a9ae4e041de4d9843ad"
+}

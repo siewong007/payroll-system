@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, company_id, payroll_group_id, period_year, period_month,\n            period_start, period_end, pay_date, status::text AS \"status!\",\n            total_gross, total_net, total_employer_cost,\n            total_epf_employee, total_epf_employer, total_socso_employee, total_socso_employer,\n            total_eis_employee, total_eis_employer, total_pcb, total_zakat,\n            employee_count, version, processed_by, processed_at, approved_by, approved_at,\n            locked_at, locked_by, notes, created_at, updated_at, created_by, updated_by\n        FROM payroll_runs\n        WHERE company_id = $1\n        ORDER BY period_year DESC, period_month DESC, created_at DESC\n        LIMIT 50",
+  "query": "SELECT id, company_id, payroll_group_id, period_year, period_month,\n            period_start, period_end, pay_date, status::text AS \"status!\",\n            total_gross, total_net, total_employer_cost,\n            total_epf_employee, total_epf_employer, total_socso_employee, total_socso_employer,\n            total_eis_employee, total_eis_employer, total_pcb, total_zakat,\n            employee_count, version, processed_by, processed_at, approved_by, approved_at,\n            locked_at, locked_by, cancelled_by, cancelled_at, cancel_reason, notes, created_at, updated_at, created_by, updated_by\n        FROM payroll_runs\n        WHERE company_id = $1\n        ORDER BY period_year DESC, period_month DESC, created_at DESC\n        LIMIT 50",
   "describe": {
     "columns": [
       {
@@ -145,26 +145,41 @@
       },
       {
         "ordinal": 28,
-        "name": "notes",
-        "type_info": "Text"
+        "name": "cancelled_by",
+        "type_info": "Uuid"
       },
       {
         "ordinal": 29,
-        "name": "created_at",
+        "name": "cancelled_at",
         "type_info": "Timestamptz"
       },
       {
         "ordinal": 30,
+        "name": "cancel_reason",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 31,
+        "name": "notes",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 32,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 33,
         "name": "updated_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 31,
+        "ordinal": 34,
         "name": "created_by",
         "type_info": "Uuid"
       },
       {
-        "ordinal": 32,
+        "ordinal": 35,
         "name": "updated_by",
         "type_info": "Uuid"
       }
@@ -204,11 +219,14 @@
       true,
       true,
       true,
+      true,
+      true,
+      true,
       false,
       false,
       true,
       true
     ]
   },
-  "hash": "5b70d65060bdc0e42d15e73283b3f7ece4126faf2992232397e7df68551679e0"
+  "hash": "178a85a4ebd57c826a8531dc13da17960bd620bbf83f9e33d6795dd5f615013d"
 }

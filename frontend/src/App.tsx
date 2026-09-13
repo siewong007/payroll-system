@@ -29,6 +29,7 @@ const EmployeeCreate = lazyNamed(() => import('@/pages/employees/EmployeeCreate'
 const EmployeeDetail = lazyNamed(() => import('@/pages/employees/EmployeeDetail'), 'EmployeeDetail');
 const EmployeeImport = lazyNamed(() => import('@/pages/employees/EmployeeImport'), 'EmployeeImport');
 const PayrollList = lazyNamed(() => import('@/pages/payroll/PayrollList'), 'PayrollList');
+const PayrollOverview = lazyNamed(() => import('@/pages/payroll/PayrollOverview'), 'PayrollOverview');
 const PayrollProcess = lazyNamed(() => import('@/pages/payroll/PayrollProcess'), 'PayrollProcess');
 const PayrollDetail = lazyNamed(() => import('@/pages/payroll/PayrollDetail'), 'PayrollDetail');
 const DocumentList = lazyNamed(() => import('@/pages/documents/DocumentList'), 'DocumentList');
@@ -198,6 +199,14 @@ export default function App() {
                   />
                   <Route
                     path="/payroll"
+                    element={(
+                      <PermissionGuard requires="view_payroll">
+                        <PayrollOverview />
+                      </PermissionGuard>
+                    )}
+                  />
+                  <Route
+                    path="/payroll/runs"
                     element={(
                       <PermissionGuard requires="view_payroll">
                         <PayrollList />

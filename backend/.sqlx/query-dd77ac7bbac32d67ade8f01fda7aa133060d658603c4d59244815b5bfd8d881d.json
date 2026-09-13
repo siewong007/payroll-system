@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE payroll_runs SET\n            status = 'processed', updated_by = $3, updated_at = NOW()\n        WHERE id = $1 AND company_id = $2 AND status = 'pending_approval'\n        RETURNING id, company_id, payroll_group_id, period_year, period_month,\n            period_start, period_end, pay_date, status::text AS \"status!\",\n            total_gross, total_net, total_employer_cost,\n            total_epf_employee, total_epf_employer, total_socso_employee, total_socso_employer,\n            total_eis_employee, total_eis_employer, total_pcb, total_zakat,\n            employee_count, version, processed_by, processed_at, approved_by, approved_at,\n            locked_at, locked_by, notes, created_at, updated_at, created_by, updated_by",
+  "query": "UPDATE payroll_runs SET\n            status = 'cancelled', cancelled_by = $3, cancelled_at = NOW(),\n            cancel_reason = $4, updated_by = $3, updated_at = NOW()\n        WHERE id = $1 AND company_id = $2\n          AND status::text IN ('draft', 'processed', 'pending_approval', 'approved')\n        RETURNING id, company_id, payroll_group_id, period_year, period_month,\n            period_start, period_end, pay_date, status::text AS \"status!\",\n            total_gross, total_net, total_employer_cost,\n            total_epf_employee, total_epf_employer, total_socso_employee, total_socso_employer,\n            total_eis_employee, total_eis_employer, total_pcb, total_zakat,\n            employee_count, version, processed_by, processed_at, approved_by, approved_at,\n            locked_at, locked_by, cancelled_by, cancelled_at, cancel_reason, notes, created_at, updated_at, created_by, updated_by",
   "describe": {
     "columns": [
       {
@@ -145,26 +145,41 @@
       },
       {
         "ordinal": 28,
-        "name": "notes",
-        "type_info": "Text"
+        "name": "cancelled_by",
+        "type_info": "Uuid"
       },
       {
         "ordinal": 29,
-        "name": "created_at",
+        "name": "cancelled_at",
         "type_info": "Timestamptz"
       },
       {
         "ordinal": 30,
+        "name": "cancel_reason",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 31,
+        "name": "notes",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 32,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 33,
         "name": "updated_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 31,
+        "ordinal": 34,
         "name": "created_by",
         "type_info": "Uuid"
       },
       {
-        "ordinal": 32,
+        "ordinal": 35,
         "name": "updated_by",
         "type_info": "Uuid"
       }
@@ -173,7 +188,8 @@
       "Left": [
         "Uuid",
         "Uuid",
-        "Uuid"
+        "Uuid",
+        "Varchar"
       ]
     },
     "nullable": [
@@ -206,11 +222,14 @@
       true,
       true,
       true,
+      true,
+      true,
+      true,
       false,
       false,
       true,
       true
     ]
   },
-  "hash": "32e035070620efca9648cabf6afcde2b68185c739c62a9b1add789c4c59a2c67"
+  "hash": "dd77ac7bbac32d67ade8f01fda7aa133060d658603c4d59244815b5bfd8d881d"
 }

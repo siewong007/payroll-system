@@ -53,6 +53,9 @@ pub struct PayrollRun {
     pub approved_at: Option<DateTime<Utc>>,
     pub locked_at: Option<DateTime<Utc>>,
     pub locked_by: Option<Uuid>,
+    pub cancelled_by: Option<Uuid>,
+    pub cancelled_at: Option<DateTime<Utc>>,
+    pub cancel_reason: Option<String>,
 
     pub notes: Option<String>,
 
@@ -215,6 +218,12 @@ pub struct ProcessPayrollRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct ReturnPayrollRunRequest {
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CancelPayrollRunRequest {
+    /// Mandatory, written to `payroll_runs.cancel_reason` and the audit row.
     pub reason: Option<String>,
 }
 
@@ -710,4 +719,150 @@ pub struct PcbFields {
     pub total_deductions: i64,
     pub net_salary: i64,
     pub ytd_pcb: i64,
+}
+
+// ─── Payroll overview (operational dashboard) ───
+
+/// One payroll run status and how many runs currently sit in it.
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct PayrollStatusCount {
+    pub status: String,
+    pub count: i64,
+}
+
+/// An employee surfaced by an action-queue check (number + name for display).
+#[derive(Debug, Serialize)]
+pub struct ActionEmployeeRef {
+    pub employee_id: Uuid,
+    pub employee_number: String,
+    pub employee_name: String,
+}
+
+/// One action-queue finding: what is wrong, how many are affected, and where
+/// to go fix it. Codes are stable machine-readable identifiers (shared with
+/// `PayrollDiagnostic` codes where the same condition exists in preview), so
+/// the UI can group or link without matching on prose.
+#[derive(Debug, Serialize)]
+pub struct PayrollActionItem {
+    pub code: String,
+    /// `blocking` — a run will refuse to process; `warning` — review advised;
+    /// `info` — queue depth, not a defect.
+    pub severity: String,
+    pub count: i64,
+    pub message: String,
+    /// Frontend route the operator is sent to (`/employees`, `/approvals`,
+    /// `/payroll/{id}`, ...). `None` when there is nothing to click.
+    pub link: Option<String>,
+    /// Up to a handful of affected employees, for display without a follow-up
+    /// query. Empty for run-level or aggregate findings.
+    pub employees: Vec<ActionEmployeeRef>,
+}
+
+/// Committed run totals for one period, summed across payroll groups.
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct PayrollPeriodTotals {
+    pub period_year: i32,
+    pub period_month: i32,
+    /// Number of committed runs contributing to this period.
+    pub run_count: i64,
+    /// Payslips issued — summed per run, so an employee paid by two groups in
+    /// one period counts once per run they appear in.
+    pub employee_count: i64,
+    pub total_gross: i64,
+    pub total_net: i64,
+    pub total_employer_cost: i64,
+    pub total_epf_employee: i64,
+    pub total_epf_employer: i64,
+    pub total_socso_employee: i64,
+    pub total_socso_employer: i64,
+    pub total_eis_employee: i64,
+    pub total_eis_employer: i64,
+    pub total_pcb: i64,
+    pub total_zakat: i64,
+    pub total_overtime: i64,
+    pub total_deductions: i64,
+}
+
+/// Latest committed period compared with the one before it. Percentages are
+/// `None` when the previous period's figure is zero (a ratio to zero is a
+/// number that looks meaningful and is not).
+#[derive(Debug, Serialize)]
+pub struct PayrollPeriodVariance {
+    pub period_year: i32,
+    pub period_month: i32,
+    pub previous_period_year: i32,
+    pub previous_period_month: i32,
+    pub gross_delta: i64,
+    pub gross_change_pct: Option<Decimal>,
+    pub net_delta: i64,
+    pub net_change_pct: Option<Decimal>,
+    pub employer_cost_delta: i64,
+    pub headcount_delta: i64,
+}
+
+/// The operational payroll dashboard payload. Every figure in it is either
+/// stored on committed runs or computed from live records — nothing here is
+/// estimated or projected.
+#[derive(Debug, Serialize)]
+pub struct PayrollOverview {
+    pub generated_at: DateTime<Utc>,
+    /// Totals for the most recent period with a committed run. `None` for a
+    /// company that has never processed payroll.
+    pub current_period: Option<PayrollPeriodTotals>,
+    pub variance: Option<PayrollPeriodVariance>,
+    /// Every run grouped by lifecycle status — the pipeline strip.
+    pub pipeline: Vec<PayrollStatusCount>,
+    /// Committed period totals, oldest first, up to 12 periods.
+    pub trend: Vec<PayrollPeriodTotals>,
+    /// Labour cost by department for `current_period` (empty when it is None).
+    pub departments: Vec<crate::models::report::DepartmentPayrollRow>,
+    /// The five most recent runs regardless of status.
+    pub recent_runs: Vec<PayrollRun>,
+    pub action_queue: Vec<PayrollActionItem>,
+}
+
+// ─── Payment file export ───
+
+/// One row of the bank payment file for an approved/paid run.
+#[derive(Debug)]
+pub struct PaymentFileRow {
+    pub employee_number: String,
+    pub employee_name: String,
+    pub bank_name: Option<String>,
+    pub bank_account_number: Option<String>,
+    pub bank_account_type: Option<String>,
+    pub net_salary: i64,
+}
+
+// ─── Journal preview ───
+
+/// One journal line in the preview: account, optional department tag, and a
+/// one-sided amount in sen (`debit` XOR `credit`, never both).
+#[derive(Debug, Serialize)]
+pub struct JournalLine {
+    pub side: String,
+    pub account_code: String,
+    pub account_name: String,
+    pub department: Option<String>,
+    pub amount: i64,
+    pub memo: Option<String>,
+}
+
+/// A balanced journal a finance user can transcribe or an integration can map.
+/// Computed from the committed run's stored figures — it writes nothing, and
+/// the account codes are fixed defaults until a configurable chart of
+/// accounts exists.
+#[derive(Debug, Serialize)]
+pub struct JournalPreview {
+    pub payroll_run_id: Uuid,
+    pub period_year: i32,
+    pub period_month: i32,
+    pub lines: Vec<JournalLine>,
+    pub total_debits: i64,
+    pub total_credits: i64,
+    /// Debits equal credits — the sanity property the whole preview exists to
+    /// demonstrate. False means a defect, not a configuration issue.
+    pub balanced: bool,
+    /// What the preview deliberately does not model.
+    pub notes: Vec<String>,
 }

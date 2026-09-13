@@ -1,9 +1,11 @@
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use crate::core::auth::{AuthUser, Permission};
 use crate::core::error::{AppError, AppResult};
 use crate::models::payroll::PayrollRun;
-use crate::repositories::payroll_runs;
+use crate::repositories::reads::payroll as payroll_reads;
+use crate::repositories::{claims, payroll_entries, payroll_runs};
 use crate::services::audit_service::AuditRequestMeta;
 
 async fn load_run(pool: &PgPool, company_id: Uuid, id: Uuid) -> AppResult<PayrollRun> {
@@ -152,6 +154,101 @@ pub async fn return_for_changes(
         format!(
             "Returned payroll run for changes for {:02}/{}",
             old_run.period_month, old_run.period_year
+        ),
+        audit_meta,
+    )
+    .await;
+
+    Ok(run)
+}
+
+/// Cancel a run before money moves, keeping the row as the audit record.
+///
+/// Cancellation is the mid-lifecycle exit the schema always had a status value
+/// for but no transition could reach: a processed run that should not be
+/// submitted, or an approved run discovered wrong before payment. `paid` stays
+/// terminal — the money already moved, so recovery there is a corrective run,
+/// not a status change. The row and its payslip items are kept (cancelled runs
+/// are excluded from YTD, portal and report reads), while staged entries and
+/// claims are released so a re-run can pick them up.
+///
+/// The required permission follows the state being cancelled: the preparer
+/// (`ManagePayrollDraft`) can withdraw their own draft/processed run, but
+/// cancelling what was submitted or approved belongs to the approver
+/// (`ApprovePayroll`) — the same four-eyes boundary as approve/return.
+pub async fn cancel(
+    pool: &PgPool,
+    company_id: Uuid,
+    run_id: Uuid,
+    auth: &AuthUser,
+    reason: Option<String>,
+    audit_meta: Option<&AuditRequestMeta>,
+) -> AppResult<PayrollRun> {
+    let reason = reason
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.chars().take(500).collect::<String>())
+        .ok_or_else(|| {
+            AppError::BadRequest("A reason is required to cancel a payroll run".into())
+        })?;
+
+    let old_run = load_run(pool, company_id, run_id).await?;
+    match old_run.status.as_str() {
+        "draft" | "processed" => auth.require_permission(Permission::ManagePayrollDraft)?,
+        "pending_approval" | "approved" => auth.require_permission(Permission::ApprovePayroll)?,
+        "processing" => {
+            return Err(AppError::BadRequest(
+                "Payroll run is currently processing and cannot be cancelled".into(),
+            ));
+        }
+        "paid" => {
+            return Err(AppError::BadRequest(
+                "Paid payroll runs cannot be cancelled — payment has already been recorded. Correct it with a supplemental run instead.".into(),
+            ));
+        }
+        other => {
+            return Err(AppError::BadRequest(format!(
+                "Payroll run is already {other}"
+            )));
+        }
+    }
+
+    // Same corruption rule as `delete_run`: a later committed run's frozen YTD
+    // and PCB annualisation were computed from this run's figures.
+    if payroll_reads::run_has_later_committed_run(pool, company_id, run_id).await? {
+        return Err(AppError::BadRequest(
+            "A later payroll run already includes these employees; cancel that run first".into(),
+        ));
+    }
+
+    let actor_user_id = auth.0.sub;
+    let mut tx = pool.begin().await?;
+    payroll_entries::revert_for_run(&mut *tx, run_id, company_id, actor_user_id).await?;
+    claims::revert_for_run(&mut *tx, run_id, company_id).await?;
+    // Re-checked inside the transaction: the status predicates in the UPDATE
+    // are the atomic guard against a concurrent submit/approve/pay.
+    let run = payroll_runs::set_cancelled(&mut *tx, run_id, company_id, actor_user_id, &reason)
+        .await?
+        .ok_or_else(|| {
+            AppError::BadRequest("Payroll run changed state while being cancelled".into())
+        })?;
+    tx.commit().await?;
+
+    audit_transition(
+        pool,
+        company_id,
+        actor_user_id,
+        "cancel",
+        &old_run,
+        &run,
+        serde_json::json!({
+            "payroll_run": run,
+            "reason": reason,
+        }),
+        format!(
+            "Cancelled payroll run for {:02}/{}",
+            run.period_month, run.period_year
         ),
         audit_meta,
     )

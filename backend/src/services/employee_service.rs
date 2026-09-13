@@ -245,6 +245,32 @@ pub async fn update_employee(
     if let Some(new_salary) = req.basic_salary
         && new_salary != existing.basic_salary
     {
+        // Mirrors `salary_history_change_type_check` — validated here so a bad
+        // value fails as 400 naming the field, not as a constraint violation.
+        const CHANGE_TYPES: &[&str] = &[
+            "new_hire",
+            "increment",
+            "promotion",
+            "demotion",
+            "contract_change",
+            "correction",
+            "backdated_adjustment",
+            "termination",
+            "adjustment",
+        ];
+        let change_type = req.salary_change_type.as_deref().unwrap_or("adjustment");
+        if !CHANGE_TYPES.contains(&change_type) {
+            return Err(AppError::BadRequest(format!(
+                "Invalid salary_change_type '{change_type}' — expected one of: {}",
+                CHANGE_TYPES.join(", ")
+            )));
+        }
+        let notes = req
+            .salary_change_notes
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| value.chars().take(500).collect::<String>());
         let history_id = Uuid::now_v7();
         salary_history::insert(
             &mut *tx,
@@ -253,6 +279,8 @@ pub async fn update_employee(
             company_id,
             existing.basic_salary,
             new_salary,
+            change_type,
+            notes.as_deref(),
             updated_by,
         )
         .await?;

@@ -12,9 +12,10 @@ use crate::core::error::AppResult;
 use crate::models::payroll::{
     EmployeeBonusCommission, EmployeeCategoryTotal, EmployeeHours, EmployeeOtTypeHours,
     EmployeeTotal, EmployeeUnpaidLeave, EmployeeUnratedOvertime, LaterCommittedRun,
-    OrphanedEntryEmployee, PayableClaim, PayrollEntryWithEmployee, PayrollItemSummary, PayrollYtd,
-    PayslipSourceLine,
+    OrphanedEntryEmployee, PayableClaim, PaymentFileRow, PayrollEntryWithEmployee,
+    PayrollItemSummary, PayrollYtd, PayslipSourceLine,
 };
+use crate::models::report::DepartmentPayrollRow;
 
 /// Recurring allowances/deductions per employee, one row per configured line.
 ///
@@ -735,4 +736,56 @@ pub async fn employee_has_later_run(
     .fetch_one(executor)
     .await?;
     Ok(exists)
+}
+
+/// Per-employee net pay and bank details for a run's payment file.
+///
+/// Run-scoped rather than period-scoped: the file must reflect exactly what
+/// this run committed to pay, including a corrected figure after a PCB edit.
+/// Missing bank fields come back NULL — the service surfaces them as the
+/// `missing_bank_account` rows the action queue already counts.
+pub async fn payment_file_rows(
+    executor: impl Executor<'_, Database = Postgres>,
+    run_id: Uuid,
+) -> AppResult<Vec<PaymentFileRow>> {
+    let rows = sqlx::query_as!(
+        PaymentFileRow,
+        r#"SELECT e.employee_number, e.full_name AS employee_name,
+            e.bank_name, e.bank_account_number, e.bank_account_type,
+            pi.net_salary
+        FROM payroll_items pi
+        JOIN employees e ON pi.employee_id = e.id
+        WHERE pi.payroll_run_id = $1
+        ORDER BY e.employee_number"#,
+        run_id,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(rows)
+}
+
+/// Department totals for one run — the expense-side allocation of the journal
+/// preview. `department` is NULL for employees with no department on record;
+/// the service labels it "Unallocated" rather than dropping the wages.
+pub async fn run_department_totals(
+    executor: impl Executor<'_, Database = Postgres>,
+    run_id: Uuid,
+) -> AppResult<Vec<DepartmentPayrollRow>> {
+    let rows = sqlx::query_as!(
+        DepartmentPayrollRow,
+        r#"SELECT e.department,
+            COUNT(DISTINCT pi.employee_id) AS "employee_count!",
+            COALESCE(SUM(pi.gross_salary), 0)::bigint AS "total_gross!",
+            COALESCE(SUM(pi.net_salary), 0)::bigint AS "total_net!",
+            COALESCE(SUM(pi.employer_cost), 0)::bigint AS "total_employer_cost!"
+        FROM payroll_items pi
+        JOIN employees e ON pi.employee_id = e.id
+        WHERE pi.payroll_run_id = $1
+        GROUP BY e.department
+        ORDER BY COALESCE(SUM(pi.gross_salary), 0) DESC"#,
+        run_id,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(rows)
 }

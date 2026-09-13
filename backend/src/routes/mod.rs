@@ -304,10 +304,20 @@ pub fn create_router(state: AppState) -> Router {
             "/payroll/entries/{id}",
             put(payroll::update_entry).delete(payroll::delete_entry),
         )
+        .route("/payroll/overview", get(payroll::overview))
         .route("/payroll/runs", get(payroll::list_runs))
         .route(
             "/payroll/runs/{id}",
             get(payroll::get_run).delete(payroll::delete_run),
+        )
+        .route("/payroll/runs/{id}/cancel", put(payroll::cancel_run))
+        .route(
+            "/payroll/runs/{id}/payment-file",
+            get(payroll::download_payment_file),
+        )
+        .route(
+            "/payroll/runs/{id}/journal-preview",
+            get(payroll::journal_preview),
         )
         .route(
             "/payroll/runs/{id}/audit-logs",

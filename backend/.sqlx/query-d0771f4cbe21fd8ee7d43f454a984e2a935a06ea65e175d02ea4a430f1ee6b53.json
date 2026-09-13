@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO salary_history (id, employee_id, company_id, old_salary, new_salary, effective_date, reason, change_type, notes, approved_by, approved_at, created_at)\n               VALUES ($1,$2,$3,$4,$5,$6,$7,COALESCE($8, 'adjustment'),$9,$10,$11,$12)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Int8",
+        "Int8",
+        "Date",
+        "Varchar",
+        "Text",
+        "Varchar",
+        "Uuid",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d0771f4cbe21fd8ee7d43f454a984e2a935a06ea65e175d02ea4a430f1ee6b53"
+}

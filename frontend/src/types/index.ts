@@ -247,6 +247,9 @@ export interface PayrollRun {
   approved_at: string | null;
   locked_by: string | null;
   locked_at: string | null;
+  cancelled_by: string | null;
+  cancelled_at: string | null;
+  cancel_reason: string | null;
   notes: string | null;
 }
 
@@ -1024,4 +1027,101 @@ export interface ImportResult {
   is_overwrite: boolean;
   records_imported: Record<string, number>;
   warnings: string[];
+}
+
+// ─── Payroll overview (GET /payroll/overview) ───
+
+export interface PayrollStatusCount {
+  status: string;
+  count: number;
+}
+
+export interface ActionEmployeeRef {
+  employee_id: string;
+  employee_number: string;
+  employee_name: string;
+}
+
+export interface PayrollActionItem {
+  code: string;
+  severity: 'blocking' | 'warning' | 'info' | string;
+  count: number;
+  message: string;
+  link: string | null;
+  employees: ActionEmployeeRef[];
+}
+
+export interface PayrollPeriodTotals {
+  period_year: number;
+  period_month: number;
+  run_count: number;
+  employee_count: number;
+  total_gross: number;
+  total_net: number;
+  total_employer_cost: number;
+  total_epf_employee: number;
+  total_epf_employer: number;
+  total_socso_employee: number;
+  total_socso_employer: number;
+  total_eis_employee: number;
+  total_eis_employer: number;
+  total_pcb: number;
+  total_zakat: number;
+  total_overtime: number;
+  total_deductions: number;
+}
+
+export interface PayrollPeriodVariance {
+  period_year: number;
+  period_month: number;
+  previous_period_year: number;
+  previous_period_month: number;
+  gross_delta: number;
+  /// Decimal serializes as a string (serde-with-str); null when the base is 0.
+  gross_change_pct: string | null;
+  net_delta: number;
+  net_change_pct: string | null;
+  employer_cost_delta: number;
+  headcount_delta: number;
+}
+
+export interface DepartmentPayrollRow {
+  department: string | null;
+  employee_count: number;
+  total_gross: number;
+  total_net: number;
+  total_employer_cost: number;
+}
+
+export interface PayrollOverview {
+  generated_at: string;
+  current_period: PayrollPeriodTotals | null;
+  variance: PayrollPeriodVariance | null;
+  pipeline: PayrollStatusCount[];
+  trend: PayrollPeriodTotals[];
+  departments: DepartmentPayrollRow[];
+  recent_runs: PayrollRun[];
+  action_queue: PayrollActionItem[];
+}
+
+// ─── Journal preview (GET /payroll/runs/:id/journal-preview) ───
+
+export interface JournalLine {
+  side: 'debit' | 'credit' | string;
+  account_code: string;
+  account_name: string;
+  department: string | null;
+  amount: number;
+  memo: string | null;
+}
+
+export interface JournalPreview {
+  payroll_run_id: string;
+  period_year: number;
+  period_month: number;
+  lines: JournalLine[];
+  total_debits: number;
+  total_credits: number;
+  balanced: boolean;
+  notes: string[];
 }

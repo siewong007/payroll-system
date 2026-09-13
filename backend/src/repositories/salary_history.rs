@@ -7,6 +7,7 @@ use uuid::Uuid;
 use crate::core::error::AppResult;
 use crate::models::employee::SalaryHistory;
 
+#[allow(clippy::too_many_arguments)]
 pub async fn insert(
     executor: impl Executor<'_, Database = Postgres>,
     id: Uuid,
@@ -14,18 +15,20 @@ pub async fn insert(
     company_id: Uuid,
     old_salary: i64,
     new_salary: i64,
+    change_type: &str,
+    notes: Option<&str>,
     created_by: Uuid,
 ) -> AppResult<()> {
-    // NOTE: the `VALUES` line is indented to match the byte-exact SQL stored in the
-    // offline `.sqlx` cache (query hashing is whitespace-sensitive). Do not reflow it.
     sqlx::query!(
-        r#"INSERT INTO salary_history (id, employee_id, company_id, old_salary, new_salary, effective_date, created_by)
-                VALUES ($1, $2, $3, $4, $5, NOW()::date, $6)"#,
+        r#"INSERT INTO salary_history (id, employee_id, company_id, old_salary, new_salary, effective_date, change_type, notes, created_by)
+                VALUES ($1, $2, $3, $4, $5, NOW()::date, $6, $7, $8)"#,
         id,
         employee_id,
         company_id,
         old_salary,
         new_salary,
+        change_type,
+        notes,
         created_by,
     )
     .execute(executor)
@@ -47,8 +50,8 @@ pub async fn insert_bulk_import_initial(
     created_by: Uuid,
 ) -> AppResult<()> {
     sqlx::query!(
-        r#"INSERT INTO salary_history (id, employee_id, company_id, old_salary, new_salary, effective_date, reason, created_by)
-                    VALUES ($1, $2, $3, 0, $4, $5, 'Initial salary (bulk import)', $6)"#,
+        r#"INSERT INTO salary_history (id, employee_id, company_id, old_salary, new_salary, effective_date, reason, change_type, created_by)
+                    VALUES ($1, $2, $3, 0, $4, $5, 'Initial salary (bulk import)', 'new_hire', $6)"#,
         id,
         employee_id,
         company_id,
@@ -70,7 +73,8 @@ pub async fn list_by_employee(
     // `GET /employees/:id/salary-history` payload.
     let history = sqlx::query_as!(
         SalaryHistory,
-        r#"SELECT id, employee_id, old_salary, new_salary, effective_date, reason, created_at, created_by
+        r#"SELECT id, employee_id, old_salary, new_salary, effective_date, reason,
+               change_type, notes, approved_by, approved_at, created_at, created_by
            FROM salary_history WHERE employee_id = $1 ORDER BY effective_date DESC"#,
         employee_id,
     )

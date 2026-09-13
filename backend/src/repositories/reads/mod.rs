@@ -13,6 +13,7 @@ pub mod ea_form;
 pub mod oauth2;
 pub mod passkey;
 pub mod payroll;
+pub mod payroll_overview;
 pub mod payslip;
 pub mod portal;
 pub mod reports;

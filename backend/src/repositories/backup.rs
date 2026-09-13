@@ -142,7 +142,8 @@ pub async fn salary_history(
     let rows = sqlx::query_as!(
         SalaryHistoryExport,
         r#"SELECT sh.id, sh.employee_id, sh.old_salary, sh.new_salary,
-                  sh.effective_date, sh.reason, sh.created_at
+                  sh.effective_date, sh.reason, sh.change_type, sh.notes,
+                  sh.approved_by, sh.approved_at, sh.created_at
            FROM salary_history sh
            JOIN employees e ON sh.employee_id = e.id
            WHERE e.company_id = $1 ORDER BY sh.id"#,
@@ -909,8 +910,8 @@ pub async fn insert_salary_history(
     s: &SalaryHistoryExport,
 ) -> AppResult<()> {
     sqlx::query!(
-        r#"INSERT INTO salary_history (id, employee_id, company_id, old_salary, new_salary, effective_date, reason, created_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8)"#,
+        r#"INSERT INTO salary_history (id, employee_id, company_id, old_salary, new_salary, effective_date, reason, change_type, notes, approved_by, approved_at, created_at)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,COALESCE($8, 'adjustment'),$9,$10,$11,$12)"#,
         id,
         employee_id,
         company_id,
@@ -918,6 +919,10 @@ pub async fn insert_salary_history(
         s.new_salary,
         s.effective_date,
         s.reason,
+        s.change_type,
+        s.notes,
+        s.approved_by,
+        s.approved_at,
         s.created_at,
     )
     .execute(executor)

@@ -8,26 +8,7 @@ import { DataTable, type Column } from '@/components/ui/DataTable';
 import { useAuth } from '@/context/AuthContext';
 import { canPreparePayroll } from '@/lib/roles';
 import type { PayrollRun } from '@/types';
-
-const STATUS_STYLES: Record<string, string> = {
-  draft: 'bg-gray-100 text-gray-600',
-  processing: 'bg-yellow-50 text-yellow-700',
-  processed: 'bg-gray-100 text-gray-900',
-  pending_approval: 'bg-blue-50 text-blue-700',
-  approved: 'bg-green-50 text-green-700',
-  paid: 'bg-emerald-50 text-emerald-700',
-  cancelled: 'bg-red-50 text-red-700',
-};
-
-const STATUS_LABELS: Record<string, string> = {
-  draft: 'Draft',
-  processing: 'Processing',
-  processed: 'Processed',
-  pending_approval: 'Pending Approval',
-  approved: 'Approved',
-  paid: 'Paid',
-  cancelled: 'Cancelled',
-};
+import { PAYROLL_STATUS_LABELS, PAYROLL_STATUS_STYLES } from './statusMeta';
 
 const MONTHS = [
   '', 'January', 'February', 'March', 'April', 'May', 'June',
@@ -83,8 +64,8 @@ const buildColumns = (groupName: (id: string) => string): Column<PayrollRun>[] =
     header: 'Status',
     align: 'center',
     render: (run) => (
-      <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${STATUS_STYLES[run.status] || ''}`}>
-        {STATUS_LABELS[run.status] ?? run.status}
+      <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${PAYROLL_STATUS_STYLES[run.status] || ''}`}>
+        {PAYROLL_STATUS_LABELS[run.status] ?? run.status}
       </span>
     ),
   },
@@ -179,7 +160,7 @@ export function PayrollList() {
           aria-label="Filter by status"
         >
           <option value="">All statuses</option>
-          {Object.entries(STATUS_LABELS).map(([value, label]) => (
+          {Object.entries(PAYROLL_STATUS_LABELS).map(([value, label]) => (
             <option key={value} value={value}>{label}</option>
           ))}
         </select>
@@ -203,8 +184,8 @@ export function PayrollList() {
                 <span className="text-lg font-semibold">{MONTHS[run.period_month]} {run.period_year}</span>
                 <p className="text-xs text-gray-400">{groupName(run.payroll_group_id)}</p>
               </div>
-              <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-medium ${STATUS_STYLES[run.status] || ''}`}>
-                {STATUS_LABELS[run.status] ?? run.status}
+              <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-medium ${PAYROLL_STATUS_STYLES[run.status] || ''}`}>
+                {PAYROLL_STATUS_LABELS[run.status] ?? run.status}
               </span>
             </div>
             <div className="grid grid-cols-2 gap-4">

@@ -1,8 +1,11 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, CheckCircle, Clock, Download, Lock, Pencil, RotateCcw, Save, Send, Trash2, X } from 'lucide-react';
+import { ArrowLeft, Ban, CheckCircle, Clock, Download, FileText, Lock, Pencil, RotateCcw, Save, Send, Trash2, X } from 'lucide-react';
 import {
+  cancelPayrollRun,
+  downloadPaymentFile,
+  getJournalPreview,
   getPayrollRun,
   getPayrollRunAuditLogs,
   approvePayroll,
@@ -16,6 +19,9 @@ import {
 import { formatMYR, getErrorMessage } from '@/lib/utils';
 import { useAuth } from '@/context/AuthContext';
 import { canApprovePayroll, canPreparePayroll } from '@/lib/roles';
+import { userCan } from '@/lib/usePermissions';
+import { Modal } from '@/components/ui/Modal';
+import type { JournalPreview } from '@/types';
 import { PayslipBreakdownDrawer } from './PayslipBreakdownDrawer';
 import type { PayrollSummary } from '@/types';
 
@@ -36,6 +42,11 @@ const STATUS_LABELS: Record<string, string> = {
 
 const canDeletePayrollRun = (status: string) => ['draft', 'processed', 'cancelled'].includes(status);
 const canDownloadPayslips = (status: string) => ['approved', 'paid'].includes(status);
+// Cancellation follows the four-eyes split the backend enforces: the preparer
+// withdraws their own draft/processed run; once submitted, only an approver
+// can cancel it.
+const canCancelAsPreparer = (status: string) => ['draft', 'processed'].includes(status);
+const canCancelAsApprover = (status: string) => ['pending_approval', 'approved'].includes(status);
 
 export function PayrollDetail() {
   const { id } = useParams<{ id: string }>();
@@ -47,6 +58,7 @@ export function PayrollDetail() {
   const [pcbInput, setPcbInput] = useState('');
   const [pcbError, setPcbError] = useState('');
   const [lifecycleError, setLifecycleError] = useState('');
+  const [journal, setJournal] = useState<JournalPreview | null>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ['payrollRun', id],
@@ -112,6 +124,30 @@ export function PayrollDetail() {
     },
   });
 
+  const cancelMutation = useMutation({
+    mutationFn: (reason: string) => cancelPayrollRun(id!, reason),
+    onSuccess: () => {
+      setLifecycleError('');
+      queryClient.invalidateQueries({ queryKey: ['payrollRun', id] });
+      queryClient.invalidateQueries({ queryKey: ['payrollRuns'] });
+      queryClient.invalidateQueries({ queryKey: ['payrollRunAuditLogs', id] });
+    },
+    onError: (error: unknown) => {
+      setLifecycleError(getErrorMessage(error, 'Failed to cancel payroll run'));
+    },
+  });
+
+  const journalMutation = useMutation({
+    mutationFn: () => getJournalPreview(id!),
+    onSuccess: (preview) => {
+      setLifecycleError('');
+      setJournal(preview);
+    },
+    onError: (error: unknown) => {
+      setLifecycleError(getErrorMessage(error, 'Failed to load journal preview'));
+    },
+  });
+
   const deleteMutation = useMutation({
     mutationFn: () => deletePayrollRun(id!),
     onSuccess: () => {
@@ -152,6 +188,10 @@ export function PayrollDetail() {
   const { payroll_run: run, items } = data;
   const canPrepare = canPreparePayroll(user);
   const canApprove = canApprovePayroll(user);
+  const canPay = userCan(user, 'mark_payroll_paid');
+  const showCancel =
+    (canPrepare && canCancelAsPreparer(run.status)) ||
+    (canApprove && canCancelAsApprover(run.status));
   const canEditPcb = canPrepare && run.status === 'processed';
 
   const startEditPcb = (employeeId: string, pcbAmount: number) => {
@@ -252,6 +292,37 @@ export function PayrollDetail() {
               {lockMutation.isPending ? 'Locking...' : 'Lock & Mark Paid'}
             </button>
           )}
+          {canPay && canDownloadPayslips(run.status) && (
+            <>
+              <button
+                onClick={() => downloadPaymentFile(id!)}
+                className="flex items-center gap-2 bg-white border border-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-50 text-sm font-medium"
+              >
+                <Download className="w-4 h-4" /> Payment File
+              </button>
+              <button
+                onClick={() => journalMutation.mutate()}
+                disabled={journalMutation.isPending}
+                className="flex items-center gap-2 bg-white border border-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-50 disabled:opacity-50 text-sm font-medium"
+              >
+                <FileText className="w-4 h-4" />
+                {journalMutation.isPending ? 'Loading...' : 'Journal Preview'}
+              </button>
+            </>
+          )}
+          {showCancel && (
+            <button
+              onClick={() => {
+                const reason = prompt('Reason for cancelling this payroll run? (required)')?.trim();
+                if (reason) cancelMutation.mutate(reason);
+              }}
+              disabled={cancelMutation.isPending}
+              className="flex items-center gap-2 bg-white border border-red-200 text-red-600 px-4 py-2 rounded-lg hover:bg-red-50 disabled:opacity-50 text-sm font-medium"
+            >
+              <Ban className="w-4 h-4" />
+              {cancelMutation.isPending ? 'Cancelling...' : 'Cancel Run'}
+            </button>
+          )}
           <span className={`px-3 py-1 rounded-full text-sm font-medium ${
             run.status === 'paid' ? 'bg-emerald-50 text-emerald-700' :
             run.status === 'approved' ? 'bg-green-50 text-green-700' :
@@ -275,6 +346,13 @@ export function PayrollDetail() {
       {run.status === 'pending_approval' && (
         <div className="mb-6 rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-700">
           This payroll run is submitted for approval. PCB edits and deletion are disabled while it is under review.
+        </div>
+      )}
+      {run.status === 'cancelled' && (
+        <div className="mb-6 rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">
+          This payroll run was cancelled{run.cancel_reason ? `: ${run.cancel_reason}` : ''}
+          {run.cancelled_at ? ` on ${new Date(run.cancelled_at).toLocaleDateString()}` : ''}.
+          Its staged entries and claims were released; process a new run to re-pay this period.
         </div>
       )}
 
@@ -445,6 +523,63 @@ export function PayrollDetail() {
           onClose={() => setBreakdownEmployeeId(null)}
         />
       )}
+
+      <Modal
+        open={journal !== null}
+        onClose={() => setJournal(null)}
+        title={`Journal preview — ${journal ? `${MONTHS[journal.period_month]} ${journal.period_year}` : ''}`}
+        maxWidth="max-w-3xl"
+      >
+        {journal && (
+          <div>
+            {!journal.balanced && (
+              <div className="mb-4 rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">
+                This preview does not balance — debits {formatMYR(journal.total_debits)} vs credits{' '}
+                {formatMYR(journal.total_credits)}. That indicates a defect in the run's stored
+                figures; do not post it.
+              </div>
+            )}
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs text-gray-400 border-b border-gray-100">
+                  <th className="py-2 font-medium">Account</th>
+                  <th className="py-2 font-medium">Department</th>
+                  <th className="py-2 font-medium text-right">Debit</th>
+                  <th className="py-2 font-medium text-right">Credit</th>
+                </tr>
+              </thead>
+              <tbody>
+                {journal.lines.map((line, i) => (
+                  <tr key={i} className="border-b border-gray-50 last:border-0">
+                    <td className="py-2">
+                      <span className="font-medium">{line.account_code}</span>{' '}
+                      <span className="text-gray-600">{line.account_name}</span>
+                      {line.memo && <div className="text-xs text-gray-400">{line.memo}</div>}
+                    </td>
+                    <td className="py-2 text-gray-500">{line.department ?? '—'}</td>
+                    <td className="py-2 text-right tabular-nums">
+                      {line.side === 'debit' ? formatMYR(line.amount) : ''}
+                    </td>
+                    <td className="py-2 text-right tabular-nums">
+                      {line.side === 'credit' ? formatMYR(line.amount) : ''}
+                    </td>
+                  </tr>
+                ))}
+                <tr className="border-t border-gray-200 font-semibold">
+                  <td className="py-2" colSpan={2}>Totals</td>
+                  <td className="py-2 text-right tabular-nums">{formatMYR(journal.total_debits)}</td>
+                  <td className="py-2 text-right tabular-nums">{formatMYR(journal.total_credits)}</td>
+                </tr>
+              </tbody>
+            </table>
+            <ul className="mt-4 list-disc pl-5 text-xs text-gray-500 space-y-1">
+              {journal.notes.map((note, i) => (
+                <li key={i}>{note}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }

@@ -1,0 +1,46 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT e.department,\n            COUNT(DISTINCT pi.employee_id) AS \"employee_count!\",\n            COALESCE(SUM(pi.gross_salary), 0)::bigint AS \"total_gross!\",\n            COALESCE(SUM(pi.net_salary), 0)::bigint AS \"total_net!\",\n            COALESCE(SUM(pi.employer_cost), 0)::bigint AS \"total_employer_cost!\"\n        FROM payroll_items pi\n        JOIN employees e ON pi.employee_id = e.id\n        WHERE pi.payroll_run_id = $1\n        GROUP BY e.department\n        ORDER BY COALESCE(SUM(pi.gross_salary), 0) DESC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "department",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "employee_count!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "total_gross!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "total_net!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "total_employer_cost!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      true,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "c6d804e348cd3c029a57e9799c7774a799cd75ad4f586edbed707d9f2b88ad5a"
+}

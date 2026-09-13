@@ -1,6 +1,8 @@
 use axum::{
     Json,
     extract::{Path, Query, State},
+    http::header,
+    response::IntoResponse,
 };
 use uuid::Uuid;
 
@@ -8,10 +10,10 @@ use crate::core::app_state::AppState;
 use crate::core::auth::{AuthUser, Permission};
 use crate::core::error::{AppError, AppResult};
 use crate::models::payroll::{
-    CreatePayrollEntryRequest, PayrollEntry, PayrollEntryQuery, PayrollEntryWithEmployee,
-    PayrollGroup, PayrollItem, PayrollPreview, PayrollRun, PayrollSummary, PayslipBreakdown,
-    ProcessPayrollRequest, ReturnPayrollRunRequest, UpdatePayrollEntryRequest,
-    UpdatePayrollPcbRequest,
+    CancelPayrollRunRequest, CreatePayrollEntryRequest, JournalPreview, PayrollEntry,
+    PayrollEntryQuery, PayrollEntryWithEmployee, PayrollGroup, PayrollItem, PayrollOverview,
+    PayrollPreview, PayrollRun, PayrollSummary, PayslipBreakdown, ProcessPayrollRequest,
+    ReturnPayrollRunRequest, UpdatePayrollEntryRequest, UpdatePayrollPcbRequest,
 };
 use crate::services::audit_service::{AuditLogWithUser, AuditRequestMeta};
 use crate::services::{payroll_engine, payroll_entry_service, payroll_service};
@@ -444,4 +446,103 @@ pub async fn get_items(
     let items = payroll_service::list_items(&state.pool, company_id, id).await?;
 
     Ok(Json(items))
+}
+
+/// The operational payroll dashboard: committed period totals, status
+/// pipeline, variance vs the previous period, department split and the live
+/// action queue. Read-only; figures come from committed runs.
+pub async fn overview(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> AppResult<Json<PayrollOverview>> {
+    auth.require_permission(Permission::ViewPayroll)?;
+    let company_id = auth
+        .0
+        .company_id
+        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
+
+    Ok(Json(
+        payroll_service::overview(&state.pool, company_id).await?,
+    ))
+}
+
+/// Cancel a run before money moves: draft/processed by the preparer,
+/// pending_approval/approved by the approver. `paid` is terminal.
+pub async fn cancel_run(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    audit_meta: AuditRequestMeta,
+    Path(id): Path<Uuid>,
+    Json(req): Json<CancelPayrollRunRequest>,
+) -> AppResult<Json<PayrollRun>> {
+    let company_id = auth
+        .0
+        .company_id
+        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
+
+    let run = crate::services::payroll_lifecycle_service::cancel(
+        &state.pool,
+        company_id,
+        id,
+        &auth,
+        req.reason,
+        Some(&audit_meta),
+    )
+    .await?;
+
+    Ok(Json(run))
+}
+
+/// Download the bank payment file (CSV) for an approved/paid run. Gated on
+/// `MarkPayrollPaid` — the file carries bank account numbers, so the same role
+/// that marks a run paid is the one trusted to export it.
+pub async fn download_payment_file(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    audit_meta: AuditRequestMeta,
+    Path(id): Path<Uuid>,
+) -> AppResult<impl IntoResponse> {
+    auth.require_permission(Permission::MarkPayrollPaid)?;
+    let company_id = auth
+        .0
+        .company_id
+        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
+
+    let bytes = payroll_service::export_payment_file(
+        &state.pool,
+        company_id,
+        id,
+        auth.0.sub,
+        Some(&audit_meta),
+    )
+    .await?;
+
+    Ok((
+        [
+            (header::CONTENT_TYPE, "text/csv; charset=utf-8".to_string()),
+            (
+                header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"payment-file-{id}.csv\""),
+            ),
+        ],
+        bytes,
+    ))
+}
+
+/// Balanced journal preview for an approved/paid run. Finance-facing, so it
+/// shares the `MarkPayrollPaid` gate with the payment file.
+pub async fn journal_preview(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<JournalPreview>> {
+    auth.require_permission(Permission::MarkPayrollPaid)?;
+    let company_id = auth
+        .0
+        .company_id
+        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
+
+    Ok(Json(
+        payroll_service::journal_preview(&state.pool, company_id, id).await?,
+    ))
 }

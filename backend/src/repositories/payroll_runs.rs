@@ -188,7 +188,7 @@ pub async fn get_by_id(
             total_epf_employee, total_epf_employer, total_socso_employee, total_socso_employer,
             total_eis_employee, total_eis_employer, total_pcb, total_zakat,
             employee_count, version, processed_by, processed_at, approved_by, approved_at,
-            locked_at, locked_by, notes, created_at, updated_at, created_by, updated_by
+            locked_at, locked_by, cancelled_by, cancelled_at, cancel_reason, notes, created_at, updated_at, created_by, updated_by
         FROM payroll_runs WHERE id = $1"#,
         run_id,
     )
@@ -210,7 +210,7 @@ pub async fn get_for_company(
             total_epf_employee, total_epf_employer, total_socso_employee, total_socso_employer,
             total_eis_employee, total_eis_employer, total_pcb, total_zakat,
             employee_count, version, processed_by, processed_at, approved_by, approved_at,
-            locked_at, locked_by, notes, created_at, updated_at, created_by, updated_by
+            locked_at, locked_by, cancelled_by, cancelled_at, cancel_reason, notes, created_at, updated_at, created_by, updated_by
         FROM payroll_runs
         WHERE id = $1 AND company_id = $2"#,
         run_id,
@@ -239,7 +239,7 @@ pub async fn set_pending_approval(
             total_epf_employee, total_epf_employer, total_socso_employee, total_socso_employer,
             total_eis_employee, total_eis_employer, total_pcb, total_zakat,
             employee_count, version, processed_by, processed_at, approved_by, approved_at,
-            locked_at, locked_by, notes, created_at, updated_at, created_by, updated_by"#,
+            locked_at, locked_by, cancelled_by, cancelled_at, cancel_reason, notes, created_at, updated_at, created_by, updated_by"#,
         run_id,
         company_id,
         updated_by,
@@ -267,7 +267,7 @@ pub async fn set_approved(
             total_epf_employee, total_epf_employer, total_socso_employee, total_socso_employer,
             total_eis_employee, total_eis_employer, total_pcb, total_zakat,
             employee_count, version, processed_by, processed_at, approved_by, approved_at,
-            locked_at, locked_by, notes, created_at, updated_at, created_by, updated_by"#,
+            locked_at, locked_by, cancelled_by, cancelled_at, cancel_reason, notes, created_at, updated_at, created_by, updated_by"#,
         run_id,
         company_id,
         approved_by,
@@ -295,10 +295,45 @@ pub async fn set_returned(
             total_epf_employee, total_epf_employer, total_socso_employee, total_socso_employer,
             total_eis_employee, total_eis_employer, total_pcb, total_zakat,
             employee_count, version, processed_by, processed_at, approved_by, approved_at,
-            locked_at, locked_by, notes, created_at, updated_at, created_by, updated_by"#,
+            locked_at, locked_by, cancelled_by, cancelled_at, cancel_reason, notes, created_at, updated_at, created_by, updated_by"#,
         run_id,
         company_id,
         updated_by,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(run)
+}
+
+/// `draft|processed|pending_approval|approved` → `cancelled`, recording who and
+/// why. `processing` and `paid` are excluded in the statement itself, so a run
+/// that moved on between the caller's check and this write cannot be cancelled
+/// — the caller's `ok_or` turns that into a clean error.
+pub async fn set_cancelled(
+    executor: impl Executor<'_, Database = Postgres>,
+    run_id: Uuid,
+    company_id: Uuid,
+    cancelled_by: Uuid,
+    reason: &str,
+) -> AppResult<Option<PayrollRun>> {
+    let run = sqlx::query_as!(
+        PayrollRun,
+        r#"UPDATE payroll_runs SET
+            status = 'cancelled', cancelled_by = $3, cancelled_at = NOW(),
+            cancel_reason = $4, updated_by = $3, updated_at = NOW()
+        WHERE id = $1 AND company_id = $2
+          AND status::text IN ('draft', 'processed', 'pending_approval', 'approved')
+        RETURNING id, company_id, payroll_group_id, period_year, period_month,
+            period_start, period_end, pay_date, status::text AS "status!",
+            total_gross, total_net, total_employer_cost,
+            total_epf_employee, total_epf_employer, total_socso_employee, total_socso_employer,
+            total_eis_employee, total_eis_employer, total_pcb, total_zakat,
+            employee_count, version, processed_by, processed_at, approved_by, approved_at,
+            locked_at, locked_by, cancelled_by, cancelled_at, cancel_reason, notes, created_at, updated_at, created_by, updated_by"#,
+        run_id,
+        company_id,
+        cancelled_by,
+        reason,
     )
     .fetch_optional(executor)
     .await?;
@@ -323,7 +358,7 @@ pub async fn set_paid(
             total_epf_employee, total_epf_employer, total_socso_employee, total_socso_employer,
             total_eis_employee, total_eis_employer, total_pcb, total_zakat,
             employee_count, version, processed_by, processed_at, approved_by, approved_at,
-            locked_at, locked_by, notes, created_at, updated_at, created_by, updated_by"#,
+            locked_at, locked_by, cancelled_by, cancelled_at, cancel_reason, notes, created_at, updated_at, created_by, updated_by"#,
         run_id,
         company_id,
         locked_by,
@@ -346,7 +381,7 @@ pub async fn list_for_company(
             total_epf_employee, total_epf_employer, total_socso_employee, total_socso_employer,
             total_eis_employee, total_eis_employer, total_pcb, total_zakat,
             employee_count, version, processed_by, processed_at, approved_by, approved_at,
-            locked_at, locked_by, notes, created_at, updated_at, created_by, updated_by
+            locked_at, locked_by, cancelled_by, cancelled_at, cancel_reason, notes, created_at, updated_at, created_by, updated_by
         FROM payroll_runs
         WHERE company_id = $1
         ORDER BY period_year DESC, period_month DESC, created_at DESC

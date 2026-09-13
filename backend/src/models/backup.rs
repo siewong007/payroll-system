@@ -234,6 +234,16 @@ pub struct SalaryHistoryExport {
     pub new_salary: i64,
     pub effective_date: NaiveDate,
     pub reason: Option<String>,
+    /// `#[serde(default)]` keeps backups written before migration 1025
+    /// importable — their rows restore with the `adjustment` column default.
+    #[serde(default)]
+    pub change_type: Option<String>,
+    #[serde(default)]
+    pub notes: Option<String>,
+    #[serde(default)]
+    pub approved_by: Option<Uuid>,
+    #[serde(default)]
+    pub approved_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
 }
 

@@ -2,6 +2,8 @@ import api from './client';
 import type {
   AuditLog,
   CreatePayrollEntryRequest,
+  JournalPreview,
+  PayrollOverview,
   PayrollEntry,
   PayrollEntryWithEmployee,
   PayrollGroup,
@@ -119,4 +121,35 @@ export async function downloadRunPayslips(runId: string): Promise<void> {
   a.download = `payslips_${runId}.pdf`;
   a.click();
   window.URL.revokeObjectURL(url);
+}
+
+/// Operational dashboard payload: committed period totals, pipeline, variance,
+/// department split and the live action queue.
+export async function getPayrollOverview(): Promise<PayrollOverview> {
+  const { data } = await api.get('/payroll/overview');
+  return data;
+}
+
+/// Cancel a run before money moves. `reason` is mandatory and is written to
+/// the run row and the audit trail. `paid` runs cannot be cancelled.
+export async function cancelPayrollRun(id: string, reason: string): Promise<PayrollRun> {
+  const { data } = await api.put(`/payroll/runs/${id}/cancel`, { reason });
+  return data;
+}
+
+/// Bank payment file (CSV) for an approved/paid run — finance-facing.
+export async function downloadPaymentFile(runId: string): Promise<void> {
+  const res = await api.get(`/payroll/runs/${runId}/payment-file`, { responseType: 'blob' });
+  const url = window.URL.createObjectURL(new Blob([res.data]));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `payment_file_${runId}.csv`;
+  a.click();
+  window.URL.revokeObjectURL(url);
+}
+
+/// Balanced journal preview for an approved/paid run. Writes nothing.
+export async function getJournalPreview(runId: string): Promise<JournalPreview> {
+  const { data } = await api.get(`/payroll/runs/${runId}/journal-preview`);
+  return data;
 }
