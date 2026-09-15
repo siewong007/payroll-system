@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useMutation } from '@tanstack/react-query';
 import { Building2 } from 'lucide-react';
 import { createUser, updateUser } from '@/api/admin';
 import { Modal } from '@/components/ui/Modal';
 import { FieldGroup, FormField } from '@/components/ui/FormField';
-import { PASSWORD_POLICY_HINT, validatePassword } from '@/lib/password';
+import { passwordPolicyHint, validatePassword } from '@/lib/password';
 import {
   ALL_ROLES,
   CREATABLE_ROLES,
@@ -81,6 +82,7 @@ export function UserFormModal({
   onClose,
   onSaved,
 }: UserFormModalProps) {
+  const { t } = useTranslation();
   const [form, setForm] = useState<FormState>(() => initialState(mode, user));
   const [error, setError] = useState('');
 
@@ -129,7 +131,7 @@ export function UserFormModal({
     },
     onSuccess: onSaved,
     onError: (err: unknown) =>
-      setError(getErrorMessage(err, isCreate ? 'Failed to create user' : 'Failed to update user')),
+      setError(getErrorMessage(err, isCreate ? t('users.createFailed') : t('users.updateFailed'))),
   });
 
   const setRoles = (role: AppRole) => {
@@ -152,13 +154,13 @@ export function UserFormModal({
   };
 
   const validate = (): string | null => {
-    if (!form.full_name.trim()) return 'Full name is required';
-    if (!form.email.trim()) return 'Email is required';
+    if (!form.full_name.trim()) return t('users.errors.fullNameRequired');
+    if (!form.email.trim()) return t('users.errors.emailRequired');
     if (isCreate) {
       const passwordError = validatePassword(form.password);
       if (passwordError) return passwordError;
     }
-    if (form.company_ids.length === 0) return 'Select at least one company';
+    if (form.company_ids.length === 0) return t('users.errors.companyRequired');
     return null;
   };
 
@@ -179,18 +181,18 @@ export function UserFormModal({
     <Modal
       open={open}
       onClose={onClose}
-      title={isCreate ? 'Add User' : 'Edit User'}
+      title={isCreate ? t('users.addUser') : t('users.editUser')}
       maxWidth="max-w-lg"
       footer={
         <div className="flex flex-col gap-3">
           {willRevokeSessions && (
             <p className="text-xs text-amber-700">
-              Saving a role, company or status change signs this user out of all devices.
+              {t('users.revokeSessionsWarning')}
             </p>
           )}
           <div className="flex justify-end gap-3">
             <button type="button" onClick={onClose} className="btn-secondary">
-              Cancel
+              {t('common.cancel')}
             </button>
             <button
               type="submit"
@@ -200,11 +202,11 @@ export function UserFormModal({
             >
               {mutation.isPending
                 ? isCreate
-                  ? 'Creating...'
-                  : 'Saving...'
+                  ? t('common.creating')
+                  : t('common.saving')
                 : isCreate
-                  ? 'Create User'
-                  : 'Save Changes'}
+                  ? t('users.createUser')
+                  : t('common.saveChanges')}
             </button>
           </div>
         </div>
@@ -220,20 +222,20 @@ export function UserFormModal({
           </div>
         )}
 
-        <FormField label="Full Name" required>
+        <FormField label={t('users.fullName')} required>
           {(aria) => (
             <input
               {...aria}
               value={form.full_name}
               onChange={(e) => setForm((p) => ({ ...p, full_name: e.target.value }))}
               className="form-input"
-              placeholder="John Doe"
+              placeholder={t('users.fullNamePlaceholder')}
               autoComplete="name"
             />
           )}
         </FormField>
 
-        <FormField label="Email" required>
+        <FormField label={t('common.email')} required>
           {(aria) => (
             <input
               {...aria}
@@ -241,14 +243,14 @@ export function UserFormModal({
               value={form.email}
               onChange={(e) => setForm((p) => ({ ...p, email: e.target.value }))}
               className="form-input"
-              placeholder="john@example.com"
+              placeholder={t('users.emailPlaceholder')}
               autoComplete="email"
             />
           )}
         </FormField>
 
         {isCreate && (
-          <FormField label="Password" required hint={PASSWORD_POLICY_HINT}>
+          <FormField label={t('common.password')} required hint={passwordPolicyHint()}>
             {(aria) => (
               <input
                 {...aria}
@@ -262,7 +264,7 @@ export function UserFormModal({
           </FormField>
         )}
 
-        <FieldGroup legend="Roles" required>
+        <FieldGroup legend={t('users.roles')} required>
           <div className="grid grid-cols-2 gap-2 mt-2">
             {selectableRoles.map((role) => (
               <label
@@ -282,7 +284,7 @@ export function UserFormModal({
         </FieldGroup>
 
         {!isCreate && (
-          <FormField label="Status">
+          <FormField label={t('common.status')}>
             {(aria) => (
               <select
                 {...aria}
@@ -290,33 +292,33 @@ export function UserFormModal({
                 onChange={(e) => setForm((p) => ({ ...p, is_active: e.target.value === 'active' }))}
                 className="form-input"
               >
-                <option value="active">Active</option>
-                <option value="inactive">Inactive</option>
+                <option value="active">{t('common.active')}</option>
+                <option value="inactive">{t('common.inactive')}</option>
               </select>
             )}
           </FormField>
         )}
 
         <FieldGroup
-          legend="Assign Companies"
+          legend={t('users.assignCompanies')}
           required
-          note={isSingleCompany ? '(max 1)' : undefined}
+          note={isSingleCompany ? t('users.maxOne') : undefined}
         >
           <div className="space-y-2 mt-2 max-h-48 overflow-y-auto">
             {companiesLoading ? (
-              <p className="text-sm text-gray-400">Loading companies…</p>
+              <p className="text-sm text-gray-400">{t('users.loadingCompanies')}</p>
             ) : companiesError ? (
               <div className="text-sm text-red-600">
-                Could not load companies.{' '}
+                {t('users.companiesLoadFailed')}{' '}
                 {onRetryCompanies && (
                   <button type="button" onClick={onRetryCompanies} className="underline">
-                    Retry
+                    {t('common.retry')}
                   </button>
                 )}
               </div>
             ) : companies.length === 0 ? (
               <p className="text-sm text-gray-400">
-                No companies available. Create a company first.
+                {t('users.noCompanies')}
               </p>
             ) : (
               companies.map((company) => (

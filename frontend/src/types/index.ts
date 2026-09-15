@@ -320,6 +320,7 @@ export interface PayslipBreakdown {
 export interface PayrollDiagnostic {
   code: string;
   message: string;
+  params?: Record<string, string>;
   employee_id: string | null;
   employee_number: string | null;
   employee_name: string | null;
@@ -1050,6 +1051,7 @@ export interface PayrollActionItem {
   severity: 'blocking' | 'warning' | 'info' | string;
   count: number;
   message: string;
+  detail?: string;
   link: string | null;
   employees: ActionEmployeeRef[];
 }

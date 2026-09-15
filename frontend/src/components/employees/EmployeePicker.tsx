@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { Search, X } from 'lucide-react';
 import { getEmployees } from '@/api/employees';
@@ -40,10 +41,11 @@ interface EmployeePickerProps {
 export function EmployeePicker({
   value,
   onChange,
-  placeholder = 'Search by name or employee number…',
+  placeholder,
   initialLabel,
   isActive = true,
 }: EmployeePickerProps) {
+  const { t } = useTranslation();
   const { user } = useAuth();
   const companyId = user?.company_id ?? null;
   const [search, setSearch] = useState('');
@@ -103,7 +105,7 @@ export function EmployeePicker({
           value={open ? search : selectedLabel}
           onChange={e => { setSearch(e.target.value); setOpen(true); }}
           onFocus={() => { setSearch(''); setOpen(true); }}
-          placeholder={placeholder}
+          placeholder={placeholder ?? t('employees.pickerPlaceholder')}
           className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-1 focus:ring-black outline-none"
         />
         {(value || selectedLabel) && !open && (
@@ -111,7 +113,7 @@ export function EmployeePicker({
             type="button"
             onClick={() => { onChange('', ''); setSelectedLabel(''); }}
             className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-gray-700"
-            title="Clear"
+            title={t('common.clear')}
           >
             <X className="w-3.5 h-3.5" />
           </button>
@@ -121,9 +123,9 @@ export function EmployeePicker({
       {open && (
         <div className="absolute z-10 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-56 overflow-y-auto">
           {isLoading ? (
-            <div className="px-3 py-3 text-sm text-gray-400">Searching…</div>
+            <div className="px-3 py-3 text-sm text-gray-400">{t('employees.searching')}</div>
           ) : employees.length === 0 ? (
-            <div className="px-3 py-3 text-sm text-gray-400">No matching employees</div>
+            <div className="px-3 py-3 text-sm text-gray-400">{t('employees.noMatch')}</div>
           ) : (
             employees.map(emp => (
               <button
@@ -148,7 +150,7 @@ export function EmployeePicker({
               truncation into a visible one. */}
           {data && data.total > employees.length && (
             <div className="px-3 py-2 text-xs text-gray-400 border-t border-gray-100">
-              Showing {employees.length} of {data.total} — keep typing to narrow
+              {t('employees.showingPartial', { shown: employees.length, total: data.total })}
             </div>
           )}
         </div>

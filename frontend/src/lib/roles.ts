@@ -1,11 +1,11 @@
 import type { AppRole, User } from '@/types';
+import i18n from '@/i18n';
 
 export type { AppRole };
 
 type MaybeAppRole = AppRole | AppRole[] | User | undefined | null;
 
 export interface RoleMeta {
-  label: string;
   badgeClass: string;
 }
 
@@ -15,13 +15,13 @@ export interface RoleMeta {
  * than a role that silently renders as a raw identifier.
  */
 export const ROLE_META: Record<AppRole, RoleMeta> = {
-  super_admin: { label: 'Super Admin', badgeClass: 'bg-purple-100 text-purple-700' },
-  admin: { label: 'Admin', badgeClass: 'bg-indigo-100 text-indigo-700' },
-  payroll_admin: { label: 'Payroll Admin', badgeClass: 'bg-blue-100 text-blue-700' },
-  hr_manager: { label: 'HR Manager', badgeClass: 'bg-green-100 text-green-700' },
-  finance: { label: 'Finance', badgeClass: 'bg-amber-100 text-amber-700' },
-  exec: { label: 'Executive', badgeClass: 'bg-gray-100 text-gray-700' },
-  employee: { label: 'Employee', badgeClass: 'bg-sky-100 text-sky-700' },
+  super_admin: { badgeClass: 'bg-purple-100 text-purple-700' },
+  admin: { badgeClass: 'bg-indigo-100 text-indigo-700' },
+  payroll_admin: { badgeClass: 'bg-blue-100 text-blue-700' },
+  hr_manager: { badgeClass: 'bg-green-100 text-green-700' },
+  finance: { badgeClass: 'bg-amber-100 text-amber-700' },
+  exec: { badgeClass: 'bg-gray-100 text-gray-700' },
+  employee: { badgeClass: 'bg-sky-100 text-sky-700' },
 };
 
 export const ALL_ROLES: AppRole[] = Object.keys(ROLE_META) as AppRole[];
@@ -40,7 +40,8 @@ export const SINGLE_COMPANY_ROLES: AppRole[] = ['exec', 'employee'];
 export const CREATABLE_ROLES: AppRole[] = ALL_ROLES.filter((role) => role !== 'employee');
 
 export function roleLabel(role: string): string {
-  return ROLE_META[role as AppRole]?.label ?? role;
+  if (!(role in ROLE_META)) return role;
+  return i18n.t(`roles.${role}`);
 }
 
 export function roleBadgeClass(role: string): string {

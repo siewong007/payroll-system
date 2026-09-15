@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react';
+import { Trans, useTranslation } from 'react-i18next';
 import { useMutation } from '@tanstack/react-query';
 import { useNavigate } from 'react-router';
 import { Upload, Download, CheckCircle, XCircle, AlertTriangle, ArrowLeft, FileSpreadsheet, Loader2 } from 'lucide-react';
@@ -8,6 +9,7 @@ import type { ImportValidationResponse, ImportConfirmResponse } from '@/types';
 type Step = 'upload' | 'preview' | 'confirm';
 
 export function EmployeeImport() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [step, setStep] = useState<Step>('upload');
   const [file, setFile] = useState<File | null>(null);
@@ -50,11 +52,11 @@ export function EmployeeImport() {
     const validExts = ['.csv', '.xlsx', '.xls'];
     const ext = selectedFile.name.substring(selectedFile.name.lastIndexOf('.')).toLowerCase();
     if (!validExts.includes(ext)) {
-      alert('Please select a .csv or .xlsx file');
+      alert(t('employees.import.invalidFile'));
       return;
     }
     setFile(selectedFile);
-  }, []);
+  }, [t]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -88,7 +90,7 @@ export function EmployeeImport() {
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
-        <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Import Employees</h1>
+        <h1 className="text-xl sm:text-2xl font-bold text-gray-900">{t('employees.import.title')}</h1>
       </div>
 
       {/* Steps indicator */}
@@ -103,7 +105,7 @@ export function EmployeeImport() {
               {i + 1}
             </div>
             <span className={`text-sm hidden sm:inline ${step === s ? 'font-medium text-gray-900' : 'text-gray-400'}`}>
-              {s === 'upload' ? 'Upload' : s === 'preview' ? 'Preview' : 'Results'}
+              {t(`employees.import.steps.${s}`)}
             </span>
             {i < 2 && <div className="w-8 h-px bg-gray-200" />}
           </div>
@@ -113,12 +115,12 @@ export function EmployeeImport() {
       {/* Step 1: Upload */}
       {step === 'upload' && (
         <div className="bg-white rounded-xl border border-gray-200 p-6">
-          <h2 className="text-lg font-semibold mb-4">Upload Employee File</h2>
+          <h2 className="text-lg font-semibold mb-4">{t('employees.import.uploadTitle')}</h2>
 
           {/* Template download */}
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
             <p className="text-sm text-blue-800 mb-3">
-              Download a template file with the correct headers and a sample row.
+              {t('employees.import.templateHint')}
             </p>
             <div className="flex gap-2">
               <button
@@ -126,14 +128,14 @@ export function EmployeeImport() {
                 className="flex items-center gap-2 bg-blue-600 text-white px-3 py-1.5 rounded-lg hover:bg-blue-700 transition-colors text-sm"
               >
                 <Download className="w-4 h-4" />
-                Excel Template
+                {t('employees.import.excelTemplate')}
               </button>
               <button
                 onClick={() => handleDownloadTemplate('csv')}
                 className="flex items-center gap-2 border border-blue-300 text-blue-700 px-3 py-1.5 rounded-lg hover:bg-blue-100 transition-colors text-sm"
               >
                 <Download className="w-4 h-4" />
-                CSV Template
+                {t('employees.import.csvTemplate')}
               </button>
             </div>
           </div>
@@ -158,16 +160,16 @@ export function EmployeeImport() {
                   onClick={() => setFile(null)}
                   className="text-sm text-red-600 hover:text-red-700"
                 >
-                  Remove
+                  {t('common.remove')}
                 </button>
               </div>
             ) : (
               <div className="flex flex-col items-center gap-3">
                 <Upload className="w-12 h-12 text-gray-400" />
                 <div>
-                  <p className="text-gray-600">Drag and drop your file here, or</p>
+                  <p className="text-gray-600">{t('employees.import.dropPrompt')}</p>
                   <label className="text-black font-medium cursor-pointer hover:underline">
-                    browse files
+                    {t('employees.import.browse')}
                     <input
                       type="file"
                       accept=".csv,.xlsx,.xls"
@@ -176,14 +178,14 @@ export function EmployeeImport() {
                     />
                   </label>
                 </div>
-                <p className="text-xs text-gray-400">Supports .csv and .xlsx files up to 20MB</p>
+                <p className="text-xs text-gray-400">{t('employees.import.fileTypes')}</p>
               </div>
             )}
           </div>
 
           {validateMutation.error && (
             <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
-              {(validateMutation.error as Error).message || 'Failed to validate file'}
+              {(validateMutation.error as Error).message || t('employees.import.validateFailed')}
             </div>
           )}
 
@@ -196,10 +198,10 @@ export function EmployeeImport() {
               {validateMutation.isPending ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  Validating...
+                  {t('employees.import.validating')}
                 </>
               ) : (
-                'Validate & Preview'
+                t('employees.import.validateButton')
               )}
             </button>
           </div>
@@ -209,25 +211,25 @@ export function EmployeeImport() {
       {/* Step 2: Preview */}
       {step === 'preview' && validation && (
         <div className="bg-white rounded-xl border border-gray-200 p-6">
-          <h2 className="text-lg font-semibold mb-4">Validation Results</h2>
+          <h2 className="text-lg font-semibold mb-4">{t('employees.import.resultsTitle')}</h2>
 
           {/* Summary */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
             <div className="bg-gray-50 rounded-lg p-3 text-center">
               <p className="text-2xl font-bold text-gray-900">{validation.total_rows}</p>
-              <p className="text-xs text-gray-500">Total Rows</p>
+              <p className="text-xs text-gray-500">{t('employees.import.totalRows')}</p>
             </div>
             <div className="bg-green-50 rounded-lg p-3 text-center">
               <p className="text-2xl font-bold text-green-700">{validation.valid_rows}</p>
-              <p className="text-xs text-green-600">Valid</p>
+              <p className="text-xs text-green-600">{t('employees.import.valid')}</p>
             </div>
             <div className="bg-red-50 rounded-lg p-3 text-center">
               <p className="text-2xl font-bold text-red-700">{validation.error_rows}</p>
-              <p className="text-xs text-red-600">Errors</p>
+              <p className="text-xs text-red-600">{t('employees.import.errorsLabel')}</p>
             </div>
             <div className="bg-yellow-50 rounded-lg p-3 text-center">
               <p className="text-2xl font-bold text-yellow-700">{validation.duplicate_rows}</p>
-              <p className="text-xs text-yellow-600">Duplicates</p>
+              <p className="text-xs text-yellow-600">{t('employees.import.duplicates')}</p>
             </div>
           </div>
 
@@ -237,10 +239,10 @@ export function EmployeeImport() {
               <table className="w-full text-sm">
                 <thead className="bg-gray-50 sticky top-0">
                   <tr>
-                    <th className="px-3 py-2 text-left font-medium text-gray-600">Row</th>
-                    <th className="px-3 py-2 text-left font-medium text-gray-600">Status</th>
-                    <th className="px-3 py-2 text-left font-medium text-gray-600">Employee</th>
-                    <th className="px-3 py-2 text-left font-medium text-gray-600">Details</th>
+                    <th className="px-3 py-2 text-left font-medium text-gray-600">{t('employees.import.colRow')}</th>
+                    <th className="px-3 py-2 text-left font-medium text-gray-600">{t('common.status')}</th>
+                    <th className="px-3 py-2 text-left font-medium text-gray-600">{t('employees.columns.employee')}</th>
+                    <th className="px-3 py-2 text-left font-medium text-gray-600">{t('common.details')}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
@@ -270,7 +272,7 @@ export function EmployeeImport() {
                             ))}
                           </ul>
                         ) : (
-                          <span className="text-xs text-green-600">Ready to import</span>
+                          <span className="text-xs text-green-600">{t('employees.import.readyToImport')}</span>
                         )}
                       </td>
                     </tr>
@@ -289,13 +291,13 @@ export function EmployeeImport() {
                 onChange={(e) => setSkipInvalid(e.target.checked)}
                 className="rounded"
               />
-              <span>Skip invalid rows and import only valid ones ({validation.valid_rows} rows)</span>
+              <span>{t('employees.import.skipInvalid', { count: validation.valid_rows })}</span>
             </label>
           )}
 
           {confirmMutation.error && (
             <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
-              {(confirmMutation.error as Error).message || 'Failed to import'}
+              {(confirmMutation.error as Error).message || t('employees.import.importFailed')}
             </div>
           )}
 
@@ -304,7 +306,7 @@ export function EmployeeImport() {
               onClick={() => { setStep('upload'); setValidation(null); setFile(null); }}
               className="text-sm text-gray-600 hover:text-gray-900"
             >
-              Back to upload
+              {t('employees.import.backToUpload')}
             </button>
             <button
               onClick={handleConfirm}
@@ -314,10 +316,10 @@ export function EmployeeImport() {
               {confirmMutation.isPending ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  Importing...
+                  {t('employees.import.importing')}
                 </>
               ) : (
-                <>Import {skipInvalid ? validation.valid_rows : validation.total_rows} Employees</>
+                t('employees.import.importButton', { count: skipInvalid ? validation.valid_rows : validation.total_rows })
               )}
             </button>
           </div>
@@ -328,21 +330,25 @@ export function EmployeeImport() {
       {step === 'confirm' && result && (
         <div className="bg-white rounded-xl border border-gray-200 p-6 text-center">
           <CheckCircle className="w-16 h-16 text-green-600 mx-auto mb-4" />
-          <h2 className="text-xl font-semibold mb-2">Import Complete</h2>
+          <h2 className="text-xl font-semibold mb-2">{t('employees.import.completeTitle')}</h2>
           <p className="text-gray-600 mb-6">
-            Successfully imported <span className="font-bold text-green-700">{result.imported_count}</span> employees.
+            <Trans
+              i18nKey="employees.import.completeBody"
+              values={{ count: result.imported_count }}
+              components={{ b: <span className="font-bold text-green-700" /> }}
+            />
             {result.skipped_count > 0 && (
-              <> <span className="text-yellow-600">{result.skipped_count} rows were skipped.</span></>
+              <> <span className="text-yellow-600">{t('employees.import.skippedRows', { count: result.skipped_count })}</span></>
             )}
           </p>
 
           {result.errors.length > 0 && (
             <div className="mb-6 text-left">
-              <h3 className="text-sm font-medium text-red-700 mb-2">Failed rows:</h3>
+              <h3 className="text-sm font-medium text-red-700 mb-2">{t('employees.import.failedRows')}</h3>
               <div className="bg-red-50 rounded-lg p-3 text-sm text-red-700 max-h-40 overflow-auto">
                 {result.errors.map((row) => (
                   <div key={row.row_number} className="mb-1">
-                    Row {row.row_number}: {row.errors.map(e => `${e.field}: ${e.message}`).join(', ')}
+                    {t('employees.import.rowError', { row: row.row_number, errors: row.errors.map(e => `${e.field}: ${e.message}`).join(', ') })}
                   </div>
                 ))}
               </div>
@@ -353,7 +359,7 @@ export function EmployeeImport() {
             onClick={() => navigate('/employees')}
             className="bg-black text-white px-6 py-2 rounded-lg hover:bg-gray-800 transition-colors text-sm font-medium"
           >
-            View Employees
+            {t('employees.import.viewEmployees')}
           </button>
         </div>
       )}

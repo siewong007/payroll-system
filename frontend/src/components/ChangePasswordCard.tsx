@@ -1,13 +1,15 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
+import { useTranslation } from 'react-i18next';
 import { KeyRound } from 'lucide-react';
 import api from '@/api/client';
 import { useAuth } from '@/context/AuthContext';
-import { PASSWORD_POLICY_HINT, validatePassword } from '@/lib/password';
+import { passwordPolicyHint, validatePassword } from '@/lib/password';
 import { getErrorMessage } from '@/lib/utils';
 
 export function ChangePasswordCard() {
   const { logout } = useAuth();
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -20,7 +22,7 @@ export function ChangePasswordCard() {
     setError('');
 
     if (newPassword !== confirmPassword) {
-      setError('New passwords do not match');
+      setError(t('auth.passwordCard.mismatch'));
       return;
     }
     const policyError = validatePassword(newPassword);
@@ -40,7 +42,7 @@ export function ChangePasswordCard() {
       await logout();
       navigate('/login');
     } catch (err) {
-      setError(getErrorMessage(err, 'Failed to change password'));
+      setError(getErrorMessage(err, t('auth.passwordCard.failed')));
       setLoading(false);
     }
   };
@@ -50,12 +52,12 @@ export function ChangePasswordCard() {
       <div className="section-header">
         <div className="flex items-center gap-2">
           <KeyRound className="w-4 h-4 text-gray-400" />
-          <span className="section-title">Password</span>
+          <span className="section-title">{t('auth.passwordCard.title')}</span>
         </div>
       </div>
 
       <p className="text-sm text-gray-500 mb-4">
-        Change the password you use to sign in. You will be signed out on all devices.
+        {t('auth.passwordCard.description')}
       </p>
 
       {error && (
@@ -64,7 +66,7 @@ export function ChangePasswordCard() {
 
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
-          <label className="form-label" htmlFor="cp-current">Current password</label>
+          <label className="form-label" htmlFor="cp-current">{t('auth.passwordCard.current')}</label>
           <input
             id="cp-current"
             type="password"
@@ -76,7 +78,7 @@ export function ChangePasswordCard() {
           />
         </div>
         <div>
-          <label className="form-label" htmlFor="cp-new">New password</label>
+          <label className="form-label" htmlFor="cp-new">{t('auth.passwordCard.new')}</label>
           <input
             id="cp-new"
             type="password"
@@ -86,10 +88,10 @@ export function ChangePasswordCard() {
             onChange={(e) => setNewPassword(e.target.value)}
             required
           />
-          <p className="text-xs text-gray-400 mt-1">{PASSWORD_POLICY_HINT}</p>
+          <p className="text-xs text-gray-400 mt-1">{passwordPolicyHint()}</p>
         </div>
         <div>
-          <label className="form-label" htmlFor="cp-confirm">Confirm new password</label>
+          <label className="form-label" htmlFor="cp-confirm">{t('auth.passwordCard.confirm')}</label>
           <input
             id="cp-confirm"
             type="password"
@@ -102,7 +104,7 @@ export function ChangePasswordCard() {
         </div>
         <div className="flex justify-end">
           <button type="submit" disabled={loading} className="btn-primary">
-            {loading ? 'Changing…' : 'Change password'}
+            {loading ? t('auth.passwordCard.submitting') : t('auth.passwordCard.submit')}
           </button>
         </div>
       </form>

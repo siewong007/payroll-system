@@ -1,11 +1,14 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
+import { Trans, useTranslation } from 'react-i18next';
 import { useAuth } from '@/context/AuthContext';
 import api from '@/api/client';
+import { getErrorMessage } from '@/lib/utils';
 import { hasOnlyEmployeeRole } from '@/lib/roles';
 
 export function ChangePassword() {
   const { user, logout } = useAuth();
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -32,12 +35,12 @@ export function ChangePassword() {
     setError('');
 
     if (newPassword !== confirmPassword) {
-      setError('New passwords do not match');
+      setError(t('auth.change.mismatch'));
       return;
     }
 
     if (newPassword.length < 10) {
-      setError('Password must be at least 10 characters');
+      setError(t('auth.change.tooShort'));
       return;
     }
 
@@ -58,8 +61,7 @@ export function ChangePassword() {
       await logout();
       navigate('/login');
     } catch (err: unknown) {
-      const msg = err instanceof Error ? (err as { response?: { data?: { error?: string } } }).response?.data?.error || err.message : 'Failed to change password';
-      setError(msg);
+      setError(getErrorMessage(err, t('auth.change.failed')));
     } finally {
       setLoading(false);
     }
@@ -75,12 +77,16 @@ export function ChangePassword() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
               </svg>
             </div>
-            <h1 className="text-xl font-bold text-gray-900">Change Your Password</h1>
+            <h1 className="text-xl font-bold text-gray-900">{t('auth.change.title')}</h1>
             <p className="text-sm text-gray-500 mt-1">
-              Your account is using a default password. Please set a new password to continue.
+              {t('auth.change.body')}
             </p>
             <p className="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2 mt-3">
-              Your default password is your NRIC/IC number, or <span className="font-mono">Welcome@123</span> if no NRIC was provided.
+              <Trans
+                i18nKey="auth.change.defaultNote"
+                values={{ code: 'Welcome@123' }}
+                components={{ code: <span className="font-mono" /> }}
+              />
             </p>
           </div>
 
@@ -92,18 +98,18 @@ export function ChangePassword() {
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Current Password</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('auth.change.current')}</label>
               <input
                 type="password"
                 value={currentPassword}
                 onChange={(e) => setCurrentPassword(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
                 required
-                placeholder="Enter your current password"
+                placeholder={t('auth.change.currentPlaceholder')}
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">New Password</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('auth.change.new')}</label>
               <input
                 type="password"
                 value={newPassword}
@@ -111,18 +117,18 @@ export function ChangePassword() {
                 className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
                 required
                 minLength={10}
-                placeholder="At least 10 characters"
+                placeholder={t('auth.change.newPlaceholder')}
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Confirm New Password</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('auth.change.confirm')}</label>
               <input
                 type="password"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
                 required
-                placeholder="Re-enter new password"
+                placeholder={t('auth.change.confirmPlaceholder')}
               />
             </div>
             <button
@@ -130,14 +136,14 @@ export function ChangePassword() {
               disabled={loading}
               className="w-full bg-black text-white py-2.5 rounded-lg font-medium hover:bg-gray-800 disabled:opacity-50 transition-colors"
             >
-              {loading ? 'Changing...' : 'Change Password'}
+              {loading ? t('auth.change.submitting') : t('auth.change.submit')}
             </button>
           </form>
           <button
             onClick={handleSkip}
             className="w-full mt-3 text-sm text-gray-400 hover:text-gray-600 transition-colors"
           >
-            Skip for now
+            {t('auth.change.skip')}
           </button>
         </div>
       </div>

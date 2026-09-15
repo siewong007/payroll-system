@@ -1,8 +1,11 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
 import { Bell, Check, CheckCheck } from 'lucide-react';
 import { getNotifications, markAsRead, markAllRead, type Notification } from '@/api/notifications';
+import { formatDateTime } from '@/lib/format';
 
 export function Notifications() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
 
   const { data: notifications = [], isLoading } = useQuery({
@@ -51,12 +54,12 @@ export function Notifications() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div className="page-header">
-          <h1 className="page-title">Notifications</h1>
-          {unreadCount > 0 && <p className="page-subtitle">{unreadCount} unread</p>}
+          <h1 className="page-title">{t('portal.notifications.title')}</h1>
+          {unreadCount > 0 && <p className="page-subtitle">{t('portal.notifications.unread', { count: unreadCount })}</p>}
         </div>
         {unreadCount > 0 && (
           <button onClick={() => markAllM.mutate()} disabled={markAllM.isPending} className="btn-secondary">
-            <CheckCheck className="w-4 h-4" /> Mark all read
+            <CheckCheck className="w-4 h-4" /> {t('portal.notifications.markAllRead')}
           </button>
         )}
       </div>
@@ -64,7 +67,7 @@ export function Notifications() {
       {notifications.length === 0 ? (
         <div className="card text-center py-16">
           <Bell className="w-12 h-12 mx-auto text-gray-200 mb-4" />
-          <p className="text-gray-400">No notifications yet</p>
+          <p className="text-gray-400">{t('portal.notifications.empty')}</p>
         </div>
       ) : (
         <div className="card p-0 divide-y divide-gray-100 overflow-hidden">
@@ -92,14 +95,14 @@ export function Notifications() {
                     <button
                       onClick={() => markReadM.mutate(n.id)}
                       className="flex-shrink-0 p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-all-fast"
-                      title="Mark as read"
+                      title={t('portal.notifications.markRead')}
                     >
                       <Check className="w-4 h-4" />
                     </button>
                   )}
                 </div>
                 <p className="text-xs text-gray-300 mt-1.5">
-                  {new Date(n.created_at).toLocaleString()}
+                  {formatDateTime(n.created_at)}
                 </p>
               </div>
             </div>

@@ -331,6 +331,7 @@ async fn build_action_queue(pool: &PgPool, company_id: Uuid) -> AppResult<Vec<Pa
             severity: "info".into(),
             count: runs.len() as i64,
             message: format!("{}: {}", message, runs[0].payroll_group_name),
+            detail: Some(runs[0].payroll_group_name.clone()),
             link: runs.first().map(|r| format!("/payroll/{}", r.id)),
             employees: Vec::new(),
         });
@@ -343,6 +344,7 @@ async fn build_action_queue(pool: &PgPool, company_id: Uuid) -> AppResult<Vec<Pa
             severity: "info".into(),
             count: unprocessed,
             message: "Staged payroll entries not yet consumed by a run".into(),
+            detail: None,
             link: Some("/payroll/entries".into()),
             employees: Vec::new(),
         });
@@ -407,6 +409,7 @@ async fn build_action_queue(pool: &PgPool, company_id: Uuid) -> AppResult<Vec<Pa
             severity: severity.into(),
             count,
             message: message.into(),
+            detail: None,
             link: Some("/employees".into()),
             employees,
         });

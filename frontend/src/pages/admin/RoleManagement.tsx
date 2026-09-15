@@ -1,4 +1,5 @@
 import { Fragment } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { Check, X } from 'lucide-react';
 import { permissionsApi, type PermissionDescriptor, type RoleDescriptor } from '@/api/permissions';
@@ -15,15 +16,17 @@ import type { AppRole } from '@/types';
  * which the API ever allowed. A table nobody can verify is worse than no table,
  * because it gets used to answer "who can see payroll?".
  */
-const ROLE_DESCRIPTIONS: Record<AppRole, string> = {
-  super_admin: 'Full system access. Manages companies, users, and roles.',
-  admin: 'Company administration: employees, attendance, teams, approvals and settings. No payroll access.',
-  payroll_admin: 'Prepares and submits payroll, manages employees, and reads statutory exports.',
-  hr_manager: 'Employee records, attendance corrections, approvals and scheduling. No payroll access.',
-  finance: 'Approves and marks payroll paid, and reads reports and statutory exports.',
-  exec: 'Read-mostly company overview. Never payroll. Limited to one company.',
-  employee: 'Self-service portal only. View payslips, submit leave/claims/overtime.',
+const ROLE_DESCRIPTION_KEYS: Record<AppRole, string> = {
+  super_admin: 'roles.descriptions.super_admin',
+  admin: 'roles.descriptions.admin',
+  payroll_admin: 'roles.descriptions.payroll_admin',
+  hr_manager: 'roles.descriptions.hr_manager',
+  finance: 'roles.descriptions.finance',
+  exec: 'roles.descriptions.exec',
+  employee: 'roles.descriptions.employee',
 };
+
+const groupKey = (group: string) => group.toLowerCase().replace(/[^a-z0-9]+/g, '_');
 
 function groupOrder(permissions: PermissionDescriptor[]): string[] {
   const seen: string[] = [];
@@ -34,6 +37,7 @@ function groupOrder(permissions: PermissionDescriptor[]): string[] {
 }
 
 export function RoleManagement() {
+  const { t } = useTranslation();
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['auth', 'permissions', 'matrix'],
     queryFn: permissionsApi.matrix,
@@ -52,7 +56,7 @@ export function RoleManagement() {
     return (
       <div className="card p-5">
         <p className="text-sm text-red-600">
-          Could not load the permission matrix{error instanceof Error ? `: ${error.message}` : '.'}
+          {t('roles.matrixLoadFailed')}{error instanceof Error ? `: ${error.message}` : '.'}
         </p>
       </div>
     );
@@ -65,9 +69,9 @@ export function RoleManagement() {
   return (
     <div className="space-y-6">
       <div className="page-header">
-        <h1 className="page-title">Roles &amp; Permissions</h1>
+        <h1 className="page-title">{t('roles.title')}</h1>
         <p className="page-subtitle">
-          Live view of what each role may do, served by the API — not a copy maintained here
+          {t('roles.subtitle')}
         </p>
       </div>
 
@@ -82,19 +86,19 @@ export function RoleManagement() {
                 </span>
                 {multiCompany ? (
                   <span className="text-[10px] uppercase tracking-wider text-green-600 font-semibold">
-                    Multi-Company
+                    {t('roles.multiCompany')}
                   </span>
                 ) : (
                   <span className="text-[10px] uppercase tracking-wider text-gray-400 font-semibold">
-                    Single Company
+                    {t('roles.singleCompany')}
                   </span>
                 )}
               </div>
-              <p className="text-sm text-gray-500">{ROLE_DESCRIPTIONS[role.key] ?? ''}</p>
+              <p className="text-sm text-gray-500">{ROLE_DESCRIPTION_KEYS[role.key] ? t(ROLE_DESCRIPTION_KEYS[role.key]) : ''}</p>
               <p className="text-xs text-gray-400">
                 {role.permissions.length === 0
-                  ? 'No administrative permissions'
-                  : `${role.permissions.length} permission${role.permissions.length === 1 ? '' : 's'}`}
+                  ? t('roles.noPermissions')
+                  : t('roles.permissionCount', { count: role.permissions.length })}
               </p>
             </div>
           );
@@ -103,7 +107,7 @@ export function RoleManagement() {
 
       <div className="card p-0 overflow-hidden">
         <div className="p-5 border-b border-gray-100">
-          <h2 className="text-base font-semibold text-gray-900">Permission Matrix</h2>
+          <h2 className="text-base font-semibold text-gray-900">{t('roles.matrixTitle')}</h2>
         </div>
         {/* Wide table: scrolls within its own container so the page body never
             scrolls sideways on a narrow viewport. */}
@@ -111,7 +115,7 @@ export function RoleManagement() {
           <table className="data-table">
             <thead>
               <tr>
-                <th className="sticky left-0 bg-gray-50 z-10">Permission</th>
+                <th className="sticky left-0 bg-gray-50 z-10">{t('roles.permission')}</th>
                 {roles.map((role) => (
                   <th key={role.key} className="text-center whitespace-nowrap">
                     <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${roleBadgeClass(role.key)}`}>
@@ -129,7 +133,7 @@ export function RoleManagement() {
                       className="sticky left-0 bg-gray-50 z-10 text-xs font-semibold uppercase tracking-wider text-gray-500"
                       colSpan={roles.length + 1}
                     >
-                      {group}
+                      {t(`permissions.groups.${groupKey(group)}`, { defaultValue: group })}
                     </td>
                   </tr>
                   {data.permissions
@@ -137,19 +141,19 @@ export function RoleManagement() {
                     .map((permission) => (
                       <tr key={permission.key}>
                         <td className="sticky left-0 bg-white z-10 font-medium text-gray-700">
-                          {permission.label}
+                          {t(`permissions.labels.${permission.key}`, { defaultValue: permission.label })}
                         </td>
                         {roles.map((role) => (
                           <td key={role.key} className="text-center">
                             {grantedBy.get(role.key)?.has(permission.key) ? (
                               <Check
                                 className="w-4 h-4 text-green-500 mx-auto"
-                                aria-label={`${roleLabel(role.key)} can ${permission.label.toLowerCase()}`}
+                                aria-label={t('roles.can', { role: roleLabel(role.key), permission: t(`permissions.labels.${permission.key}`, { defaultValue: permission.label }) })}
                               />
                             ) : (
                               <X
                                 className="w-4 h-4 text-gray-200 mx-auto"
-                                aria-label={`${roleLabel(role.key)} cannot ${permission.label.toLowerCase()}`}
+                                aria-label={t('roles.cannot', { role: roleLabel(role.key), permission: t(`permissions.labels.${permission.key}`, { defaultValue: permission.label }) })}
                               />
                             )}
                           </td>
@@ -159,7 +163,7 @@ export function RoleManagement() {
                 </Fragment>
               ))}
               <tr>
-                <td className="sticky left-0 bg-white z-10 font-medium text-gray-700">Multi-Company</td>
+                <td className="sticky left-0 bg-white z-10 font-medium text-gray-700">{t('roles.multiCompany')}</td>
                 {roles.map((role) => (
                   <td key={role.key} className="text-center">
                     {SINGLE_COMPANY_ROLES.includes(role.key) ? (
@@ -177,8 +181,7 @@ export function RoleManagement() {
 
       {Object.keys(ROLE_META).length !== roles.length && (
         <p className="text-xs text-amber-600">
-          The API returned {roles.length} roles but this build knows {Object.keys(ROLE_META).length}. Labels
-          for unknown roles fall back to their identifier.
+          {t('roles.countMismatch', { api: roles.length, known: Object.keys(ROLE_META).length })}
         </p>
       )}
     </div>

@@ -1,5 +1,9 @@
 import { AlertTriangle, CheckCircle2, Info, XCircle } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { formatMYR } from '@/lib/utils';
+import { formatDate, formatNumber } from '@/lib/format';
+import { payrollDiagnosticText } from './statusMeta';
+import { translateServerMessage } from '@/lib/utils';
 import type { PayrollDiagnostic, PayrollPreview } from '@/types';
 
 /**
@@ -20,6 +24,7 @@ export function PayrollPreviewPanel({
   onBack: () => void;
   isProcessing: boolean;
 }) {
+  const { t } = useTranslation();
   const failedCount = preview.employee_count - preview.payable_count;
 
   return (
@@ -40,43 +45,46 @@ export function PayrollPreviewPanel({
           <div>
             <p className={`font-medium ${preview.can_process ? 'text-green-800' : 'text-red-800'}`}>
               {preview.can_process
-                ? `Ready to process ${preview.payable_count} ${preview.payable_count === 1 ? 'payslip' : 'payslips'}`
-                : 'This payroll run cannot be processed yet'}
+                ? t('payroll.preview.ready', { count: preview.payable_count })
+                : t('payroll.preview.cannotProcess')}
             </p>
             <p className={`text-sm ${preview.can_process ? 'text-green-700' : 'text-red-700'}`}>
-              Nothing has been saved. {preview.period_start} to {preview.period_end}, paid{' '}
-              {preview.pay_date}.
+              {t('payroll.preview.range', {
+                start: formatDate(preview.period_start),
+                end: formatDate(preview.period_end),
+                payDate: formatDate(preview.pay_date),
+              })}
               {failedCount > 0 &&
-                ` ${failedCount} of ${preview.employee_count} employees could not be calculated.`}
+                ` ${t('payroll.preview.failedCount', { count: failedCount, total: preview.employee_count })}`}
             </p>
           </div>
         </div>
       </div>
 
       <DiagnosticList
-        title="Must be fixed before processing"
+        title={t('payroll.preview.blockingTitle')}
         diagnostics={preview.blocking}
         tone="error"
       />
-      <DiagnosticList title="Worth reviewing" diagnostics={preview.warnings} tone="warning" />
+      <DiagnosticList title={t('payroll.preview.warningsTitle')} diagnostics={preview.warnings} tone="warning" />
 
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-        <TotalCard label="Employees" value={String(preview.employee_count)} />
-        <TotalCard label="Total Gross" value={formatMYR(preview.total_gross)} />
-        <TotalCard label="Total Net" value={formatMYR(preview.total_net)} emphasis />
-        <TotalCard label="Employer Cost" value={formatMYR(preview.total_employer_cost)} />
+        <TotalCard label={t('payroll.preview.employees')} value={formatNumber(preview.employee_count)} />
+        <TotalCard label={t('payroll.totals.gross')} value={formatMYR(preview.total_gross)} />
+        <TotalCard label={t('payroll.totals.net')} value={formatMYR(preview.total_net)} emphasis />
+        <TotalCard label={t('payroll.totals.employerCost')} value={formatMYR(preview.total_employer_cost)} />
         <TotalCard
-          label="EPF (EE + ER)"
+          label={t('payroll.preview.epfSplit')}
           value={`${formatMYR(preview.total_epf_employee)} + ${formatMYR(preview.total_epf_employer)}`}
           small
         />
         <TotalCard
-          label="SOCSO (EE + ER)"
+          label={t('payroll.preview.socsoSplit')}
           value={`${formatMYR(preview.total_socso_employee)} + ${formatMYR(preview.total_socso_employer)}`}
           small
         />
         <TotalCard
-          label="EIS (EE + ER)"
+          label={t('payroll.preview.eisSplit')}
           value={`${formatMYR(preview.total_eis_employee)} + ${formatMYR(preview.total_eis_employer)}`}
           small
         />
@@ -85,26 +93,25 @@ export function PayrollPreviewPanel({
 
       <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow">
         <div className="border-b border-gray-100 px-6 py-4">
-          <h2 className="font-semibold text-gray-900">Projected payslips</h2>
+          <h2 className="font-semibold text-gray-900">{t('payroll.preview.projectedTitle')}</h2>
           <p className="text-sm text-gray-500">
-            These are the figures that would be written. Rows with an error are excluded from the
-            totals above.
+            {t('payroll.preview.projectedBody')}
           </p>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead className="bg-gray-50 text-left">
               <tr>
-                <th className="px-4 py-3 text-xs font-medium uppercase tracking-wide text-gray-500">Employee</th>
-                <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Basic</th>
-                <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Allowances</th>
-                <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">OT</th>
-                <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Gross</th>
+                <th className="px-4 py-3 text-xs font-medium uppercase tracking-wide text-gray-500">{t('employees.columns.employee')}</th>
+                <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">{t('payroll.cols.basic')}</th>
+                <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">{t('payroll.cols.allowances')}</th>
+                <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">{t('payroll.cols.ot')}</th>
+                <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">{t('payroll.cols.gross')}</th>
                 <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">EPF</th>
                 <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">SOCSO</th>
                 <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">EIS</th>
                 <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">PCB</th>
-                <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Net</th>
+                <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">{t('payroll.cols.net')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -118,16 +125,16 @@ export function PayrollPreviewPanel({
                     <div className="text-xs text-gray-400">{employee.employee_number}</div>
                     {employee.is_prorated && !employee.error && (
                       <div className="mt-1 inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-700">
-                        Prorated {employee.days_worked}/{employee.working_days} days
+                        {t('payroll.preview.prorated', { worked: employee.days_worked, total: employee.working_days })}
                       </div>
                     )}
                     {employee.error && (
-                      <div className="mt-1 text-xs text-red-700">{employee.error}</div>
+                      <div className="mt-1 text-xs text-red-700">{translateServerMessage(employee.error)}</div>
                     )}
                   </td>
                   {employee.error ? (
                     <td colSpan={9} className="px-4 py-3 text-right text-sm text-red-600">
-                      Not calculable
+                      {t('payroll.preview.notCalculable')}
                     </td>
                   ) : (
                     <>
@@ -163,7 +170,7 @@ export function PayrollPreviewPanel({
           className="flex items-center justify-center gap-2 rounded-lg bg-black px-6 py-2.5 font-medium text-white transition-colors hover:bg-gray-800 disabled:opacity-50"
         >
           <CheckCircle2 className="h-4 w-4" />
-          {isProcessing ? 'Processing...' : 'Confirm & Process Payroll'}
+          {isProcessing ? t('payroll.preview.processing') : t('payroll.preview.confirmButton')}
         </button>
         <button
           type="button"
@@ -171,7 +178,7 @@ export function PayrollPreviewPanel({
           disabled={isProcessing}
           className="rounded-lg border border-gray-200 px-6 py-2.5 font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-50"
         >
-          Back to adjustments
+          {t('payroll.preview.backToAdjustments')}
         </button>
       </div>
     </div>
@@ -211,7 +218,7 @@ function DiagnosticList({
                   {diagnostic.employee_number} {diagnostic.employee_name}:{' '}
                 </span>
               )}
-              {diagnostic.message}
+              {payrollDiagnosticText(diagnostic)}
             </span>
           </li>
         ))}

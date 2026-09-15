@@ -1,14 +1,17 @@
 import { useState, useRef } from 'react';
+import { Trans, useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { Download, Upload, FileJson, CheckCircle2, AlertTriangle, Loader2 } from 'lucide-react';
 import { exportCompanyBackup, importCompanyBackup } from '@/api/backup';
 import { listCompanies } from '@/api/admin';
 import { getErrorMessage } from '@/lib/utils';
+import { formatNumber } from '@/lib/format';
 import { useAuth } from '@/context/AuthContext';
 import { hasAnyRole } from '@/lib/roles';
 import type { ImportResult } from '@/types';
 
 export function BackupPage() {
+  const { t } = useTranslation();
   const { user } = useAuth();
   const isSuperAdmin = hasAnyRole(user, ['super_admin']);
 
@@ -39,7 +42,7 @@ export function BackupPage() {
       await exportCompanyBackup(isSuperAdmin ? selectedCompanyId : undefined);
       setExportSuccess(true);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? (err as { response?: { data?: { error?: string } } }).response?.data?.error || err.message : 'Export failed';
+      const msg = err instanceof Error ? (err as { response?: { data?: { error?: string } } }).response?.data?.error || err.message : t('backup.exportFailed');
       setExportError(msg);
     } finally {
       setExporting(false);
@@ -70,7 +73,7 @@ export function BackupPage() {
       setSelectedFile(null);
       if (fileInputRef.current) fileInputRef.current.value = '';
     } catch (err: unknown) {
-      setImportError(getErrorMessage(err, 'Failed to import backup'));
+      setImportError(getErrorMessage(err, t('backup.importFailed')));
     } finally {
       setImporting(false);
     }
@@ -83,9 +86,9 @@ export function BackupPage() {
   return (
     <div className="max-w-4xl mx-auto space-y-8">
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">Backup & Data Migration</h1>
+        <h1 className="text-2xl font-bold text-gray-900">{t('backup.title')}</h1>
         <p className="text-sm text-gray-500 mt-1">
-          Export company data for backup or import a backup to restore/migrate data.
+          {t('backup.subtitle')}
         </p>
       </div>
 
@@ -96,24 +99,23 @@ export function BackupPage() {
             <Download className="w-5 h-5 text-blue-600" />
           </div>
           <div className="flex-1">
-            <h2 className="text-lg font-semibold text-gray-900">Export Company Data</h2>
+            <h2 className="text-lg font-semibold text-gray-900">{t('backup.exportTitle')}</h2>
             <p className="text-sm text-gray-500 mt-1">
-              Download a complete backup of company data as JSON. Includes employees, payroll history,
-              leave records, documents metadata, settings, and more.
+              {t('backup.exportDescription')}
             </p>
             <p className="text-xs text-gray-400 mt-2">
-              Excludes: user accounts, passwords, auth tokens, and passkey credentials.
+              {t('backup.exportExcludes')}
             </p>
 
             {isSuperAdmin && (
               <div className="mt-4 max-w-xs">
-                <label className="block text-sm font-medium text-gray-700 mb-1">Select Company</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.selectCompany')}</label>
                 <select
                   value={selectedCompanyId}
                   onChange={(e) => { setSelectedCompanyId(e.target.value); setExportSuccess(false); setExportError(''); }}
                   className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-1 focus:ring-black outline-none"
                 >
-                  <option value="">Choose a company...</option>
+                  <option value="">{t('backup.chooseCompany')}</option>
                   {companies?.map((c) => (
                     <option key={c.id} value={c.id}>{c.name}</option>
                   ))}
@@ -132,12 +134,12 @@ export function BackupPage() {
                 ) : (
                   <Download className="w-4 h-4" />
                 )}
-                {exporting ? 'Exporting...' : 'Export Backup'}
+                {exporting ? t('common.exporting') : t('backup.exportBackup')}
               </button>
               {exportSuccess && (
                 <span className="inline-flex items-center gap-1.5 text-sm text-green-600">
                   <CheckCircle2 className="w-4 h-4" />
-                  Backup downloaded
+                  {t('backup.downloaded')}
                 </span>
               )}
             </div>
@@ -158,14 +160,12 @@ export function BackupPage() {
             <Upload className="w-5 h-5 text-amber-600" />
           </div>
           <div className="flex-1">
-            <h2 className="text-lg font-semibold text-gray-900">Import / Restore Data</h2>
+            <h2 className="text-lg font-semibold text-gray-900">{t('backup.importTitle')}</h2>
             <p className="text-sm text-gray-500 mt-1">
-              Company admins can restore only into their managed company. Super admins can explicitly
-              overwrite a selected company or create a new company from the backup.
+              {t('backup.importDescription')}
             </p>
             <p className="text-xs text-amber-600 mt-2">
-              Active employees with an email can receive a login account. Accounts deleted by a super admin
-              are never restored from a backup.
+              {t('backup.importNote')}
             </p>
 
             {isSuperAdmin && (
@@ -176,7 +176,7 @@ export function BackupPage() {
                     checked={!createNewCompany}
                     onChange={() => { setCreateNewCompany(false); setImportResult(null); setImportError(''); }}
                   />
-                  Overwrite an existing company
+                  {t('backup.overwriteExisting')}
                 </label>
                 {!createNewCompany && (
                   <select
@@ -184,7 +184,7 @@ export function BackupPage() {
                     onChange={(e) => { setSelectedCompanyId(e.target.value); setImportResult(null); setImportError(''); }}
                     className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-1 focus:ring-black outline-none"
                   >
-                    <option value="">Choose a target company...</option>
+                    <option value="">{t('backup.chooseTarget')}</option>
                     {companies?.map((c) => (
                       <option key={c.id} value={c.id}>{c.name}</option>
                     ))}
@@ -196,11 +196,11 @@ export function BackupPage() {
                     checked={createNewCompany}
                     onChange={() => { setCreateNewCompany(true); setImportResult(null); setImportError(''); }}
                   />
-                  Create a new company from this backup
+                  {t('backup.createNew')}
                 </label>
                 {createNewCompany && (
                   <p className="text-xs text-gray-500">
-                    The backup company name will be used. If it already exists, select that company to overwrite it.
+                    {t('backup.createNewNote')}
                   </p>
                 )}
               </div>
@@ -212,7 +212,7 @@ export function BackupPage() {
                   className="inline-flex items-center gap-2 px-4 py-2.5 bg-gray-100 text-gray-700 text-sm font-medium rounded-xl hover:bg-gray-200 cursor-pointer transition-all"
                 >
                   <FileJson className="w-4 h-4" />
-                  Choose File
+                  {t('common.chooseFile')}
                   <input
                     ref={fileInputRef}
                     type="file"
@@ -238,7 +238,7 @@ export function BackupPage() {
                 ) : (
                   <Upload className="w-4 h-4" />
                 )}
-                {importing ? 'Importing...' : 'Import Backup'}
+                {importing ? t('common.importing') : t('backup.importBackup')}
               </button>
             </div>
 
@@ -254,19 +254,19 @@ export function BackupPage() {
                 <div className="p-4 bg-green-50 rounded-xl">
                   <div className="flex items-center gap-2 text-green-700 font-medium">
                     <CheckCircle2 className="w-5 h-5" />
-                    {importResult.is_overwrite ? 'Data Overwritten' : 'Import Successful'}
+                    {importResult.is_overwrite ? t('backup.overwritten') : t('backup.importSuccess')}
                   </div>
                   <p className="text-sm text-green-600 mt-1">
                     {importResult.is_overwrite
-                      ? <>Company "<strong>{importResult.new_company_name}</strong>" data overwritten with {totalRecords} records.</>
-                      : <>Company "<strong>{importResult.new_company_name}</strong>" created with {totalRecords} records.</>
+                      ? <Trans i18nKey="backup.overwrittenDetail" values={{ name: importResult.new_company_name, count: totalRecords }} components={{ b: <strong /> }} />
+                      : <Trans i18nKey="backup.createdDetail" values={{ name: importResult.new_company_name, count: totalRecords }} components={{ b: <strong /> }} />
                     }
                   </p>
                 </div>
 
                 {importResult.warnings.length > 0 && (
                   <div className="p-3 bg-amber-50 rounded-xl">
-                    <p className="text-sm font-medium text-amber-700">Warnings:</p>
+                    <p className="text-sm font-medium text-amber-700">{t('backup.warnings')}</p>
                     <ul className="mt-1 text-sm text-amber-600 list-disc list-inside">
                       {importResult.warnings.map((w, i) => (
                         <li key={i}>{w}</li>
@@ -279,8 +279,8 @@ export function BackupPage() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="bg-gray-50 border-b border-gray-200">
-                        <th className="text-left px-4 py-2.5 font-medium text-gray-600">Table</th>
-                        <th className="text-right px-4 py-2.5 font-medium text-gray-600">Records</th>
+                        <th className="text-left px-4 py-2.5 font-medium text-gray-600">{t('backup.table')}</th>
+                        <th className="text-right px-4 py-2.5 font-medium text-gray-600">{t('backup.records')}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -290,7 +290,7 @@ export function BackupPage() {
                           <tr key={table} className="border-b border-gray-100 last:border-0">
                             <td className="px-4 py-2 text-gray-700">{table.replace(/_/g, ' ')}</td>
                             <td className="px-4 py-2 text-right text-gray-900 font-medium tabular-nums">
-                              {count.toLocaleString()}
+                              {formatNumber(count)}
                             </td>
                           </tr>
                         ))}

@@ -20,7 +20,9 @@ import {
   UserCheck,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
+import { useTranslation } from 'react-i18next';
 import { CompanySwitcher } from './CompanySwitcher';
+import { LanguageSwitcher } from '@/components/ui/LanguageSwitcher';
 import { AnimatePresence, motion } from 'framer-motion';
 import { BrandLogo } from '@/components/ui/BrandLogo';
 import { hasAnyRole, roleList, type AppRole } from '@/lib/roles';
@@ -45,32 +47,32 @@ import type { PermissionKey } from '@/api/permissions';
  * never sees a link to a page that can only tell them to contact HR.
  */
 const navigation = [
-  { name: 'Company', href: '/company', icon: Building2, hideFor: ['super_admin'], section: 'workspace' },
-  { name: 'Employees', href: '/employees', icon: Users, requires: 'view_employees', hideFor: ['super_admin'], section: 'workspace' },
-  { name: 'Payroll', href: '/payroll', icon: Calculator, requires: 'view_payroll', section: 'workspace' },
-  { name: 'Teams', href: '/teams', icon: Users2, requires: 'view_teams', hideFor: ['super_admin'], section: 'workspace' },
-  { name: 'Calendar', href: '/calendar', icon: CalendarDays, requires: 'view_calendar', hideFor: ['super_admin'], section: 'workspace' },
-  { name: 'Attendance', href: '/attendance', icon: ScanLine, requires: 'view_attendance', hideFor: ['super_admin'], section: 'workspace' },
-  { name: 'Approvals', href: '/approvals', icon: ClipboardCheck, requires: 'view_approvals', hideFor: ['super_admin'], section: 'workspace' },
+  { nameKey: 'nav.company', href: '/company', icon: Building2, hideFor: ['super_admin'], section: 'workspace' },
+  { nameKey: 'nav.employees', href: '/employees', icon: Users, requires: 'view_employees', hideFor: ['super_admin'], section: 'workspace' },
+  { nameKey: 'nav.payroll', href: '/payroll', icon: Calculator, requires: 'view_payroll', section: 'workspace' },
+  { nameKey: 'nav.teams', href: '/teams', icon: Users2, requires: 'view_teams', hideFor: ['super_admin'], section: 'workspace' },
+  { nameKey: 'nav.calendar', href: '/calendar', icon: CalendarDays, requires: 'view_calendar', hideFor: ['super_admin'], section: 'workspace' },
+  { nameKey: 'nav.attendance', href: '/attendance', icon: ScanLine, requires: 'view_attendance', hideFor: ['super_admin'], section: 'workspace' },
+  { nameKey: 'nav.approvals', href: '/approvals', icon: ClipboardCheck, requires: 'view_approvals', hideFor: ['super_admin'], section: 'workspace' },
   // No `hideFor`: super_admin keeps Reports and Payroll, as it did before —
   // these are the two platform-wide entries in the workspace section.
-  { name: 'Reports', href: '/reports', icon: BarChart3, requires: 'view_reports', section: 'workspace' },
-  { name: 'Documents', href: '/documents', icon: FileText, requires: 'view_documents', hideFor: ['super_admin'], section: 'workspace' },
-  { name: 'Letters', href: '/letters', icon: Mail, requires: 'view_email_logs', hideFor: ['super_admin'], section: 'workspace' },
-  { name: 'Settings', href: '/settings', icon: Settings, requires: 'manage_company_settings', hideFor: ['super_admin'], section: 'workspace' },
+  { nameKey: 'nav.reports', href: '/reports', icon: BarChart3, requires: 'view_reports', section: 'workspace' },
+  { nameKey: 'nav.documents', href: '/documents', icon: FileText, requires: 'view_documents', hideFor: ['super_admin'], section: 'workspace' },
+  { nameKey: 'nav.letters', href: '/letters', icon: Mail, requires: 'view_email_logs', hideFor: ['super_admin'], section: 'workspace' },
+  { nameKey: 'nav.settings', href: '/settings', icon: Settings, requires: 'manage_company_settings', hideFor: ['super_admin'], section: 'workspace' },
   // Own attendance, not the company's. `AppLayout` redirects only *sole-role*
   // employees to the portal, so staff holding a second role are held in this
   // shell with no route to their own check-in but a hand-typed URL.
-  { name: 'My Attendance', href: '/my/attendance', icon: UserCheck, requiresEmployeeProfile: true, section: 'personal' },
-  { name: 'Companies', href: '/companies', icon: Building2, requires: 'manage_companies', section: 'admin' },
-  { name: 'Users', href: '/users', icon: UserCog, requires: 'manage_users', section: 'admin' },
-  { name: 'Roles', href: '/roles', icon: Shield, requires: 'manage_users', section: 'admin' },
-  { name: 'User Groups', href: '/user-groups', icon: Users2, requires: 'manage_users', section: 'admin' },
-  { name: 'Attendance Settings', href: '/admin/attendance-settings', icon: ScanLine, requires: 'manage_platform_settings', section: 'admin' },
-  { name: 'Audit Trail', href: '/audit-trail', icon: ScrollText, requires: 'view_audit_log', section: 'admin' },
-  { name: 'Backup', href: '/backup', icon: DatabaseBackup, requires: 'manage_backups', section: 'admin' },
+  { nameKey: 'nav.myAttendance', href: '/my/attendance', icon: UserCheck, requiresEmployeeProfile: true, section: 'personal' },
+  { nameKey: 'nav.companies', href: '/companies', icon: Building2, requires: 'manage_companies', section: 'admin' },
+  { nameKey: 'nav.users', href: '/users', icon: UserCog, requires: 'manage_users', section: 'admin' },
+  { nameKey: 'nav.roles', href: '/roles', icon: Shield, requires: 'manage_users', section: 'admin' },
+  { nameKey: 'nav.userGroups', href: '/user-groups', icon: Users2, requires: 'manage_users', section: 'admin' },
+  { nameKey: 'nav.attendanceSettings', href: '/admin/attendance-settings', icon: ScanLine, requires: 'manage_platform_settings', section: 'admin' },
+  { nameKey: 'nav.auditTrail', href: '/audit-trail', icon: ScrollText, requires: 'view_audit_log', section: 'admin' },
+  { nameKey: 'nav.backup', href: '/backup', icon: DatabaseBackup, requires: 'manage_backups', section: 'admin' },
 ] satisfies ReadonlyArray<{
-  name: string;
+  nameKey: string;
   href: string;
   icon: typeof Building2;
   requires?: PermissionKey;
@@ -83,9 +85,9 @@ const navigation = [
 // reads as a variant of the company-wide "Attendance" list two rows above it,
 // and the two go to very different places.
 const sections = [
-  { key: 'workspace', label: 'Workspace' },
-  { key: 'personal', label: 'Me' },
-  { key: 'admin', label: 'Administration' },
+  { key: 'workspace', labelKey: 'nav.section.workspace' },
+  { key: 'personal', labelKey: 'nav.section.personal' },
+  { key: 'admin', labelKey: 'nav.section.admin' },
 ] as const;
 
 interface SidebarProps {
@@ -96,6 +98,7 @@ interface SidebarProps {
 function SidebarContent({ onClose }: { onClose?: () => void }) {
   const location = useLocation();
   const { user, logout } = useAuth();
+  const { t } = useTranslation();
 
   const visibleNav = navigation.filter((item) => {
     if (item.hideFor && hasAnyRole(user, item.hideFor)) return false;
@@ -119,7 +122,7 @@ function SidebarContent({ onClose }: { onClose?: () => void }) {
           <BrandLogo variant="lockup-light" className="h-8 w-auto brightness-125 drop-shadow-md" />
           <span className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-indigo-200">
             <span className="glow-dot" />
-            Admin Console
+            {t('nav.adminConsoleBadge')}
           </span>
         </div>
         {onClose && (
@@ -139,13 +142,13 @@ function SidebarContent({ onClose }: { onClose?: () => void }) {
 
       {/* Navigation */}
       <nav className="relative flex-1 py-3 px-3 overflow-y-auto scrollbar-thin">
-        {sections.map(({ key, label }) => {
+        {sections.map(({ key, labelKey }) => {
           const items = visibleNav.filter((item) => item.section === key);
           if (items.length === 0) return null;
           return (
             <div key={key}>
               <p className="px-3 pt-3 pb-1.5 text-[10px] font-semibold uppercase tracking-widest text-slate-500">
-                {label}
+                {t(labelKey)}
               </p>
               <div className="space-y-0.5">
                 {items.map((item) => {
@@ -153,7 +156,7 @@ function SidebarContent({ onClose }: { onClose?: () => void }) {
                     (item.href !== '/' && location.pathname.startsWith(item.href));
                   return (
                     <Link
-                      key={item.name}
+                      key={item.nameKey}
                       to={item.href}
                       onClick={onClose}
                       className={`group relative flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all-fast ${
@@ -179,7 +182,7 @@ function SidebarContent({ onClose }: { onClose?: () => void }) {
                           isActive ? 'text-indigo-300' : 'text-slate-500 group-hover:text-slate-300'
                         }`}
                       />
-                      <span className="relative">{item.name}</span>
+                      <span className="relative">{t(item.nameKey)}</span>
                     </Link>
                   );
                 })}
@@ -194,17 +197,23 @@ function SidebarContent({ onClose }: { onClose?: () => void }) {
         className="relative p-4 border-t border-white/10 bg-white/[0.03] shrink-0"
         style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}
       >
+        <div className="mb-3">
+          <LanguageSwitcher dark />
+        </div>
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-full bg-gradient-to-br from-indigo-500 to-violet-500 ring-2 ring-white/15 shadow-[0_0_16px_-4px_var(--glow)] flex items-center justify-center text-sm font-semibold text-white shrink-0">
             {user?.full_name?.[0] || 'U'}
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-white truncate">{user?.full_name || 'User'}</p>
-            <p className="text-xs text-slate-400 truncate capitalize">{roleList(user).join(', ').replaceAll('_', ' ')}</p>
+            <p className="text-sm font-semibold text-white truncate">{user?.full_name || t('common.user')}</p>
+            <p className="text-xs text-slate-400 truncate capitalize">
+              {roleList(user).map((role) => t(`roles.${role}`)).join(', ')}
+            </p>
           </div>
           <button
             onClick={logout}
-            title="Sign Out"
+            title={t('nav.signOut')}
+            aria-label={t('nav.signOut')}
             className="p-2 text-slate-400 hover:text-rose-300 hover:bg-rose-500/10 rounded-lg transition-all-fast shrink-0"
           >
             <LogOut className="w-4 h-4" />

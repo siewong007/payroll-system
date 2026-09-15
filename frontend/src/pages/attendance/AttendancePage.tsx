@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import {
   QrCode, RefreshCw, Clock, CheckCircle2,
@@ -29,7 +30,13 @@ import {
 } from '@/api/kiosk';
 import { useAuth } from '@/context/AuthContext';
 import { hasAnyRole } from '@/lib/roles';
-import { toDateTimeLocalValue } from '@/lib/utils';
+import { toDateTimeLocalValue, getErrorMessage } from '@/lib/utils';
+import i18n from '@/i18n';
+import {
+  formatTime as formatTimeL,
+  formatDateMedium,
+  formatDateTime as formatDateTimeL,
+} from '@/lib/format';
 import { EmployeePicker } from '@/components/employees/EmployeePicker';
 import { WorkScheduleCard } from '@/components/attendance/WorkScheduleCard';
 import { GeofenceCard } from '@/components/attendance/GeofenceCard';
@@ -42,12 +49,13 @@ import { NetworkCard } from '@/components/attendance/NetworkCard';
  */
 function todayInZone(timeZone: string | undefined): string {
   try {
+    // i18n-ok: en-CA produces ISO YYYY-MM-DD for API params, not display.
     return new Intl.DateTimeFormat('en-CA', {
       timeZone: timeZone || 'Asia/Kuala_Lumpur',
       year: 'numeric', month: '2-digit', day: '2-digit',
     }).format(new Date());
   } catch {
-    return new Intl.DateTimeFormat('en-CA').format(new Date());
+    return new Intl.DateTimeFormat('en-CA').format(new Date()); // i18n-ok
   }
 }
 
@@ -55,47 +63,43 @@ function firstOfMonth(day: string): string {
   return `${day.slice(0, 7)}-01`;
 }
 
-/** Extract a server error message, falling back to a caller-supplied default. */
-function apiError(e: unknown, fallback: string): string {
-  return (e as { response?: { data?: { error?: string } } }).response?.data?.error || fallback;
-}
-
-const STATUS_CONFIG = {
-  present: { label: 'Present', color: 'bg-emerald-100 text-emerald-700' },
-  late:    { label: 'Late',    color: 'bg-amber-100  text-amber-700'   },
-  absent:  { label: 'Absent',  color: 'bg-red-100    text-red-700'     },
-  half_day:{ label: 'Half Day',color: 'bg-blue-100   text-blue-700'    },
+const STATUS_COLORS = {
+  present: 'bg-emerald-100 text-emerald-700',
+  late:    'bg-amber-100  text-amber-700',
+  absent:  'bg-red-100    text-red-700',
+  half_day:'bg-blue-100   text-blue-700',
 } as const;
 
 const METHOD_CONFIG = {
-  qr_code:  { label: 'QR Code',  icon: QrCode,      color: 'text-violet-600' },
-  face_id:  { label: 'Face ID',  icon: Fingerprint,  color: 'text-sky-600'    },
-  manual:   { label: 'Manual',   icon: User,         color: 'text-gray-500'   },
+  qr_code:  { icon: QrCode,      color: 'text-violet-600' },
+  face_id:  { icon: Fingerprint, color: 'text-sky-600'    },
+  manual:   { icon: User,        color: 'text-gray-500'   },
 } as const;
 
+function attStatusLabel(status: string): string {
+  return i18n.t(`enums.attendanceStatus.${status}`, { defaultValue: status });
+}
+
+function attMethodLabel(method: string): string {
+  return i18n.t(`enums.attendanceMethod.${method}`, { defaultValue: method });
+}
+
 function formatTime(iso: string | null) {
-  if (!iso) return '—';
-  return new Date(iso).toLocaleTimeString('en-MY', { hour: '2-digit', minute: '2-digit' });
+  return iso ? formatTimeL(iso) : '—';
 }
 
 function formatDate(iso: string) {
-  return new Date(iso).toLocaleDateString('en-MY', { day: 'numeric', month: 'short', year: 'numeric' });
+  return formatDateMedium(iso);
 }
 
 // ─── Kiosk Credentials Modal ────────────────────────────────────────────────
 
 function formatDateTime(iso: string | null) {
-  if (!iso) return '—';
-  return new Date(iso).toLocaleString('en-MY', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  return iso ? formatDateTimeL(iso) : '—';
 }
 
 function KioskCredentialsModal({ onClose }: { onClose: () => void }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [label, setLabel] = useState('');
   const [created, setCreated] = useState<CreateKioskCredentialResponse | null>(null);
@@ -116,14 +120,14 @@ function KioskCredentialsModal({ onClose }: { onClose: () => void }) {
       queryClient.invalidateQueries({ queryKey: ['kiosk-credentials'] });
     },
     onError: (e: Error & { response?: { data?: { error?: string } } }) => {
-      setError(e.response?.data?.error || 'Failed to create kiosk link');
+      setError(getErrorMessage(e, t('attendance.kioskModal.createFailed')));
     },
   });
 
   const revokeMut = useMutation({
     mutationFn: (id: string) => revokeKioskCredential(id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['kiosk-credentials'] }),
-    onError: (e) => setError(apiError(e, 'Failed to revoke kiosk link')),
+    onError: (e) => setError(getErrorMessage(e, t('attendance.kioskModal.revokeFailed'))),
   });
 
   const copyUrl = async (url: string) => {
@@ -141,9 +145,9 @@ function KioskCredentialsModal({ onClose }: { onClose: () => void }) {
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
         <div className="flex items-start justify-between mb-1">
           <div>
-            <h3 className="font-semibold text-gray-900">Kiosk links</h3>
+            <h3 className="font-semibold text-gray-900">{t('attendance.kioskModal.title')}</h3>
             <p className="text-sm text-gray-500">
-              Each link opens the rotating QR on a tablet without anyone needing to log in.
+              {t('attendance.kioskModal.body')}
             </p>
           </div>
           <button
@@ -161,10 +165,10 @@ function KioskCredentialsModal({ onClose }: { onClose: () => void }) {
               <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-emerald-900">
-                  Copy this link now — it will not be shown again.
+                  {t('attendance.kioskModal.copyNow')}
                 </p>
                 <p className="text-xs text-emerald-700 mt-0.5">
-                  Anyone with the link can display the QR. Treat it like a password.
+                  {t('attendance.kioskModal.treatLikePassword')}
                 </p>
                 <div className="mt-3 flex items-center gap-2">
                   <input
@@ -178,14 +182,14 @@ function KioskCredentialsModal({ onClose }: { onClose: () => void }) {
                     className="flex items-center gap-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium rounded-lg transition-colors"
                   >
                     <Copy className="w-3.5 h-3.5" />
-                    {copied ? 'Copied' : 'Copy'}
+                    {copied ? t('common.copied') : t('common.copy')}
                   </button>
                 </div>
                 <button
                   onClick={() => setCreated(null)}
                   className="mt-3 text-xs text-emerald-800 hover:underline"
                 >
-                  Done — hide this link
+                  {t('attendance.kioskModal.doneHide')}
                 </button>
               </div>
             </div>
@@ -198,7 +202,7 @@ function KioskCredentialsModal({ onClose }: { onClose: () => void }) {
             onSubmit={(e) => {
               e.preventDefault();
               if (!label.trim()) {
-                setError('Please give this kiosk a name');
+                setError(t('attendance.kioskModal.nameRequired'));
                 return;
               }
               createMut.mutate(label.trim());
@@ -209,7 +213,7 @@ function KioskCredentialsModal({ onClose }: { onClose: () => void }) {
               type="text"
               value={label}
               onChange={(e) => setLabel(e.target.value)}
-              placeholder="Reception tablet"
+              placeholder={t('attendance.kioskModal.namePlaceholder')}
               maxLength={100}
               className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-1 focus:ring-black outline-none"
             />
@@ -219,7 +223,7 @@ function KioskCredentialsModal({ onClose }: { onClose: () => void }) {
               className="flex items-center gap-1.5 px-4 py-2 bg-black hover:bg-gray-800 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
             >
               <Plus className="w-4 h-4" />
-              {createMut.isPending ? 'Creating…' : 'Create link'}
+              {createMut.isPending ? t('common.creating') : t('attendance.kioskModal.createLink')}
             </button>
           </form>
         )}
@@ -232,7 +236,7 @@ function KioskCredentialsModal({ onClose }: { onClose: () => void }) {
         {/* List */}
         <div className="mt-6">
           <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
-            Existing links
+            {t('attendance.kioskModal.existing')}
           </h4>
           {isLoading ? (
             <div className="flex items-center justify-center h-24">
@@ -243,16 +247,16 @@ function KioskCredentialsModal({ onClose }: { onClose: () => void }) {
             // different situation entirely.
             <p className="text-sm text-red-600 flex items-center gap-1.5">
               <AlertCircle className="w-3.5 h-3.5" />
-              Couldn't load kiosk links. You may not have permission to manage them.
+              {t('attendance.kioskModal.loadFailed')}
             </p>
           ) : credentials.length === 0 ? (
-            <p className="text-sm text-gray-400 italic">No kiosk links yet.</p>
+            <p className="text-sm text-gray-400 italic">{t('attendance.kioskModal.empty')}</p>
           ) : (
             <div className="border border-gray-200 rounded-xl overflow-hidden">
               <table className="w-full text-sm">
                 <thead className="bg-gray-50">
                   <tr>
-                    {['Label', 'Prefix', 'Created', 'Last used', 'Status', ''].map((h) => (
+                    {[t('attendance.kioskModal.cols.label'), t('attendance.kioskModal.cols.prefix'), t('attendance.kioskModal.cols.created'), t('attendance.kioskModal.cols.lastUsed'), t('common.status'), ''].map((h) => (
                       <th
                         key={h}
                         className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider"
@@ -283,11 +287,11 @@ function KioskCredentialsModal({ onClose }: { onClose: () => void }) {
                         <td className="px-3 py-2.5">
                           {revoked ? (
                             <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500">
-                              Revoked
+                              {t('attendance.kioskModal.revoked')}
                             </span>
                           ) : (
                             <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700">
-                              Active
+                              {t('common.active')}
                             </span>
                           )}
                         </td>
@@ -295,13 +299,13 @@ function KioskCredentialsModal({ onClose }: { onClose: () => void }) {
                           {!revoked && (
                             <button
                               onClick={() => {
-                                if (confirm(`Revoke "${c.label}"? Tablets using this link will stop working within ~5 minutes.`)) {
+                                if (confirm(t('attendance.kioskModal.revokeConfirm', { label: c.label }))) {
                                   revokeMut.mutate(c.id);
                                 }
                               }}
                               disabled={revokeMut.isPending}
                               className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50"
-                              title="Revoke"
+                              title={t('attendance.kioskModal.revoke')}
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
@@ -323,6 +327,7 @@ function KioskCredentialsModal({ onClose }: { onClose: () => void }) {
 // ─── QR Panel ────────────────────────────────────────────────────────────────
 
 function QrPanel({ canGenerate }: { canGenerate: boolean }) {
+  const { t } = useTranslation();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [timeLeft, setTimeLeft] = useState(0);
   const [isExpired, setIsExpired] = useState(false);
@@ -400,7 +405,7 @@ function QrPanel({ canGenerate }: { canGenerate: boolean }) {
       <div className="flex items-center justify-between w-full">
         <div className="flex items-center gap-2">
           <QrCode className="w-5 h-5 text-violet-600" />
-          <h2 className="font-semibold text-gray-900">Attendance QR Code</h2>
+          <h2 className="font-semibold text-gray-900">{t('attendance.qrPanel.title')}</h2>
         </div>
         {showQr && canGenerate && (
           <button
@@ -408,14 +413,14 @@ function QrPanel({ canGenerate }: { canGenerate: boolean }) {
             className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-900 bg-gray-100 hover:bg-gray-200 px-3 py-1.5 rounded-lg transition-colors"
           >
             <RefreshCw className="w-3.5 h-3.5" />
-            Refresh
+            {t('common.refresh')}
           </button>
         )}
       </div>
 
       {!canGenerate ? (
         <p className="text-sm text-gray-500 text-center py-4">
-          Your role can view attendance but not display the check-in QR.
+          {t('attendance.qrPanel.noPermission')}
         </p>
       ) : !showQr ? (
         <>
@@ -424,8 +429,7 @@ function QrPanel({ canGenerate }: { canGenerate: boolean }) {
               <QrCode className="w-7 h-7 text-violet-500" />
             </div>
             <p className="text-sm text-gray-500 px-2">
-              Show the rotating check-in code on this screen. For a permanent
-              wall display, create a kiosk link instead.
+              {t('attendance.qrPanel.showHint')}
             </p>
           </div>
           <button
@@ -433,18 +437,18 @@ function QrPanel({ canGenerate }: { canGenerate: boolean }) {
             className="w-full flex items-center justify-center gap-2 bg-black hover:bg-gray-800 text-white text-sm font-medium py-2.5 rounded-xl transition-colors"
           >
             <Eye className="w-4 h-4" />
-            Show QR code
+            {t('attendance.qrPanel.showButton')}
           </button>
         </>
       ) : isError ? (
         <div className="w-full py-6 flex flex-col items-center gap-3 text-center">
           <AlertCircle className="w-8 h-8 text-red-400" />
-          <p className="text-sm text-gray-600">Couldn't generate a QR code.</p>
+          <p className="text-sm text-gray-600">{t('attendance.qrPanel.generateFailed')}</p>
           <button
             onClick={handleRefresh}
             className="flex items-center gap-1.5 text-sm font-medium text-gray-900 hover:underline"
           >
-            <RefreshCw className="w-3.5 h-3.5" /> Try again
+            <RefreshCw className="w-3.5 h-3.5" /> {t('common.retry')}
           </button>
         </div>
       ) : (
@@ -455,7 +459,7 @@ function QrPanel({ canGenerate }: { canGenerate: boolean }) {
             {isExpired && (
               <div className="absolute inset-0 flex items-center justify-center">
                 <div className="bg-white/90 rounded-xl px-4 py-2 text-sm font-semibold text-gray-700">
-                  Refreshing…
+                  {t('attendance.qrPanel.refreshing')}
                 </div>
               </div>
             )}
@@ -464,9 +468,9 @@ function QrPanel({ canGenerate }: { canGenerate: boolean }) {
           {/* Countdown */}
           <div className="w-full">
             <div className="flex justify-between text-xs text-gray-500 mb-1">
-              <span>Expires in</span>
+              <span>{t('attendance.qrPanel.expiresIn')}</span>
               <span className={`font-semibold tabular-nums ${timeLeft <= 10 ? 'text-red-500' : 'text-gray-700'}`}>
-                {timeLeft}s
+                {t('attendance.kiosk.secondsShort', { count: timeLeft })}
               </span>
             </div>
             <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
@@ -478,15 +482,14 @@ function QrPanel({ canGenerate }: { canGenerate: boolean }) {
           </div>
 
           <p className="text-xs text-gray-400 text-center">
-            Display on kiosk screen. Employees scan with their phone. The code
-            works for everyone for {ttlMinutes} minutes, then rotates.
+            {t('attendance.qrPanel.rotateNote', { minutes: ttlMinutes })}
           </p>
 
           <button
             onClick={() => setShowQr(false)}
             className="text-xs text-gray-400 hover:text-gray-600 flex items-center gap-1"
           >
-            <EyeOff className="w-3 h-3" /> Hide QR
+            <EyeOff className="w-3 h-3" /> {t('attendance.qrPanel.hide')}
           </button>
         </>
       )}
@@ -496,7 +499,7 @@ function QrPanel({ canGenerate }: { canGenerate: boolean }) {
         className="w-full flex items-center justify-center gap-2 bg-violet-600 hover:bg-violet-700 text-white text-sm font-medium py-2.5 rounded-xl transition-colors"
       >
         <Link2 className="w-4 h-4" />
-        Kiosk links
+        {t('attendance.kioskModal.title')}
       </button>
 
       {showKiosks && <KioskCredentialsModal onClose={() => setShowKiosks(false)} />}
@@ -507,6 +510,7 @@ function QrPanel({ canGenerate }: { canGenerate: boolean }) {
 // ─── Stats Bar ────────────────────────────────────────────────────────────────
 
 function StatsBar({ today, onShowOpen }: { today: string; onShowOpen: () => void }) {
+  const { t } = useTranslation();
   // These tiles report today across the whole company, so they must not be
   // derived from `records` — that is one 50-row page of the *currently filtered*
   // query, so a date filter or a second page made the numbers undercount or
@@ -526,16 +530,16 @@ function StatsBar({ today, onShowOpen }: { today: string; onShowOpen: () => void
     return (
       <div className="bg-white rounded-2xl shadow p-5 mb-6 flex items-center gap-3 text-sm text-gray-600">
         <AlertCircle className="w-5 h-5 text-red-400 shrink-0" />
-        Couldn't load today's attendance figures.
+        {t('attendance.stats.loadFailed')}
       </div>
     );
   }
 
   const tiles = [
-    { icon: CheckCircle2, label: 'Present Today', short: 'Present', value: present, color: 'text-emerald-600', bg: 'bg-emerald-50', action: undefined },
-    { icon: Clock,        label: 'Late',          short: 'Late',    value: late,    color: 'text-amber-600',   bg: 'bg-amber-50',   action: undefined },
+    { icon: CheckCircle2, label: t('attendance.stats.presentToday'), short: t('attendance.stats.present'), value: present, color: 'text-emerald-600', bg: 'bg-emerald-50', action: undefined },
+    { icon: Clock,        label: t('attendance.stats.late'),         short: t('attendance.stats.late'),    value: late,    color: 'text-amber-600',   bg: 'bg-amber-50',   action: undefined },
     // Actionable: these are the sessions someone has to chase or correct.
-    { icon: LogOut,       label: 'Still Checked In', short: 'Still in', value: stillIn, color: 'text-blue-600', bg: 'bg-blue-50', action: onShowOpen },
+    { icon: LogOut,       label: t('attendance.stats.stillIn'),      short: t('attendance.stats.stillInShort'), value: stillIn, color: 'text-blue-600', bg: 'bg-blue-50', action: onShowOpen },
   ];
 
   return (
@@ -553,7 +557,7 @@ function StatsBar({ today, onShowOpen }: { today: string; onShowOpen: () => void
               <p className="text-[11px] sm:text-xs text-gray-500 leading-tight">
                 <span className="sm:hidden">{s.short}</span>
                 <span className="hidden sm:inline">{s.label}</span>
-                {s.action && s.value > 0 && <span className="ml-1 text-blue-600 font-medium">· review</span>}
+                {s.action && s.value > 0 && <span className="ml-1 text-blue-600 font-medium">{t('attendance.stats.review')}</span>}
               </p>
             </div>
           </>
@@ -586,11 +590,12 @@ function StatsBar({ today, onShowOpen }: { today: string; onShowOpen: () => void
  * counts stay on one row so they remain scannable down the list.
  */
 function SummaryCard({ item: i }: { item: AttendanceSummaryItem }) {
+  const { t } = useTranslation();
   const counts = [
-    { label: 'Present', value: i.present_days, color: 'text-emerald-700' },
-    { label: 'Late',    value: i.late_days,    color: 'text-amber-700'   },
-    { label: 'Absent',  value: i.absent_days,  color: 'text-red-700'     },
-    { label: 'Half',    value: i.half_days,    color: 'text-blue-700'    },
+    { label: t('attendance.stats.present'), value: i.present_days, color: 'text-emerald-700' },
+    { label: t('attendance.stats.late'),    value: i.late_days,    color: 'text-amber-700'   },
+    { label: attStatusLabel('absent'),      value: i.absent_days,  color: 'text-red-700'     },
+    { label: t('attendance.stats.half'),    value: i.half_days,    color: 'text-blue-700'    },
   ];
 
   return (
@@ -604,11 +609,11 @@ function SummaryCard({ item: i }: { item: AttendanceSummaryItem }) {
         </div>
         {i.unchecked_out_days > 0 && (
           <span
-            title="Days with no check-out"
+            title={t('attendance.summary.noCheckout')}
             className="shrink-0 inline-flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700"
           >
             <AlertTriangle className="w-3.5 h-3.5" />
-            {i.unchecked_out_days} open
+            {t('attendance.summary.openDays', { count: i.unchecked_out_days })}
           </span>
         )}
       </div>
@@ -623,9 +628,9 @@ function SummaryCard({ item: i }: { item: AttendanceSummaryItem }) {
       </div>
 
       <div className="mt-2.5 flex items-center gap-4 text-xs text-gray-600">
-        <span className="tabular-nums">{Number(i.total_hours).toFixed(1)}h worked</span>
+        <span className="tabular-nums">{t('attendance.summary.hoursWorked', { value: Number(i.total_hours).toFixed(1) })}</span>
         <span className="tabular-nums">
-          <Timer className="w-3 h-3 inline text-amber-600" /> {Number(i.overtime_hours).toFixed(1)}h OT
+          <Timer className="w-3 h-3 inline text-amber-600" /> {t('attendance.summary.hoursOt', { value: Number(i.overtime_hours).toFixed(1) })}
         </span>
       </div>
     </div>
@@ -638,6 +643,7 @@ function SummaryCard({ item: i }: { item: AttendanceSummaryItem }) {
  * consumed them until now (the tiles above only ever asked for "today").
  */
 function SummaryTab({ today, canExport }: { today: string; canExport: boolean }) {
+  const { t } = useTranslation();
   const [range, setRange] = useState({ date_from: firstOfMonth(today), date_to: today });
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState('');
@@ -653,7 +659,7 @@ function SummaryTab({ today, canExport }: { today: string; canExport: boolean })
     <div className="bg-white rounded-2xl shadow">
       <div className="flex flex-wrap items-center gap-2.5 sm:gap-3 p-4 sm:p-5 border-b border-gray-100">
         <div className="flex w-full sm:w-auto items-center gap-2 text-sm text-gray-600">
-          <Calendar className="w-4 h-4" /> Period:
+          <Calendar className="w-4 h-4" /> {t('attendance.summary.period')}
         </div>
         <input
           type="date"
@@ -675,7 +681,7 @@ function SummaryTab({ today, canExport }: { today: string; canExport: boolean })
               try {
                 await downloadAttendanceCsv({ date_from: range.date_from, date_to: range.date_to });
               } catch (e) {
-                setExportError(apiError(e, 'Export failed. Please try again.'));
+                setExportError(getErrorMessage(e, t('attendance.page.exportFailed')));
               } finally {
                 setExporting(false);
               }
@@ -684,7 +690,7 @@ function SummaryTab({ today, canExport }: { today: string; canExport: boolean })
             className="w-full sm:w-auto sm:ml-auto flex items-center justify-center gap-2 whitespace-nowrap text-sm font-medium px-4 py-2 sm:py-1.5 rounded-lg border border-gray-300 hover:bg-gray-50 transition-colors disabled:opacity-50"
           >
             <Download className="w-4 h-4 shrink-0" />
-            {exporting ? 'Exporting…' : 'Export period'}
+            {exporting ? t('common.exporting') : t('attendance.summary.exportPeriod')}
           </button>
         )}
       </div>
@@ -702,9 +708,9 @@ function SummaryTab({ today, canExport }: { today: string; canExport: boolean })
       ) : isError ? (
         <div className="flex flex-col items-center justify-center h-48 gap-2 text-gray-600">
           <AlertCircle className="w-8 h-8 text-red-400" />
-          <p className="text-sm">Couldn't load the attendance summary.</p>
+          <p className="text-sm">{t('attendance.summary.loadFailed')}</p>
           <button onClick={() => refetch()} className="text-sm font-medium text-gray-900 hover:underline">
-            Try again
+            {t('common.retry')}
           </button>
         </div>
       ) : (
@@ -720,7 +726,7 @@ function SummaryTab({ today, canExport }: { today: string; canExport: boolean })
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100">
-                {['Employee', 'Department', 'Present', 'Late', 'Absent', 'Half', 'Hours', 'Overtime', 'Open'].map(h => (
+                {[t('common.employee'), t('common.department'), t('attendance.stats.present'), t('attendance.stats.late'), attStatusLabel('absent'), t('attendance.stats.half'), t('attendance.summary.hours'), t('attendance.summary.overtime'), t('attendance.summary.open')].map(h => (
                   <th key={h} className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">
                     {h}
                   </th>
@@ -734,13 +740,13 @@ function SummaryTab({ today, canExport }: { today: string; canExport: boolean })
                     <div className="font-medium text-gray-900">{i.full_name}</div>
                     <div className="text-xs text-gray-400">{i.employee_number}</div>
                   </td>
-                  <td className="px-5 py-3 text-gray-600">{i.department ?? '—'}</td>
+                  <td className="px-5 py-3 text-gray-600">{i.department || t('common.unassigned')}</td>
                   <td className="px-5 py-3 tabular-nums text-emerald-700">{i.present_days}</td>
                   <td className="px-5 py-3 tabular-nums text-amber-700">{i.late_days}</td>
                   <td className="px-5 py-3 tabular-nums text-red-700">{i.absent_days}</td>
                   <td className="px-5 py-3 tabular-nums text-blue-700">{i.half_days}</td>
-                  <td className="px-5 py-3 tabular-nums text-gray-700">{Number(i.total_hours).toFixed(1)}h</td>
-                  <td className="px-5 py-3 tabular-nums text-gray-700">{Number(i.overtime_hours).toFixed(1)}h</td>
+                  <td className="px-5 py-3 tabular-nums text-gray-700">{t('attendance.hoursShort', { value: Number(i.total_hours).toFixed(1) })}</td>
+                  <td className="px-5 py-3 tabular-nums text-gray-700">{t('attendance.hoursShort', { value: Number(i.overtime_hours).toFixed(1) })}</td>
                   <td className="px-5 py-3 tabular-nums">
                     {i.unchecked_out_days > 0 ? (
                       <span className="inline-flex items-center gap-1 text-amber-600 font-medium">
@@ -762,7 +768,7 @@ function SummaryTab({ today, canExport }: { today: string; canExport: boolean })
         {items.length === 0 && (
           <div className="flex flex-col items-center justify-center h-40 text-gray-400">
             <Calendar className="w-10 h-10 mb-2 opacity-40" />
-            <p className="text-sm">No employees to summarize</p>
+            <p className="text-sm">{t('attendance.summary.empty')}</p>
           </div>
         )}
         </>
@@ -780,6 +786,7 @@ function ManualEntryModal({
   onClose: () => void;
   presetEmployee?: { id: string; label: string };
 }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [form, setForm] = useState({
     employee_id: presetEmployee?.id ?? '',
@@ -797,12 +804,12 @@ function ManualEntryModal({
       queryClient.invalidateQueries({ queryKey: ['attendance-summary'] });
       onClose();
     },
-    onError: (e) => setError(apiError(e, 'Failed to create record')),
+    onError: (e) => setError(getErrorMessage(e, t('attendance.manual.createFailed'))),
   });
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.employee_id.trim()) { setError('Please choose an employee'); return; }
+    if (!form.employee_id.trim()) { setError(t('attendance.manual.employeeRequired')); return; }
     mutation.mutate({
       employee_id: form.employee_id.trim(),
       check_in_at: new Date(form.check_in_at).toISOString(),
@@ -815,10 +822,10 @@ function ManualEntryModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
-        <h3 className="font-semibold text-gray-900 mb-5">Manual Attendance Entry</h3>
+        <h3 className="font-semibold text-gray-900 mb-5">{t('attendance.manual.title')}</h3>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Employee</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.employee')}</label>
             {presetEmployee ? (
               <div className="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-800">
                 {presetEmployee.label}
@@ -831,32 +838,32 @@ function ManualEntryModal({
             )}
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Check In</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('attendance.manual.checkIn')}</label>
             <input type="datetime-local" value={form.check_in_at}
               onChange={e => setForm(p => ({ ...p, check_in_at: e.target.value }))}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-1 focus:ring-black outline-none"
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Check Out (optional)</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('attendance.manual.checkOutOptional')}</label>
             <input type="datetime-local" value={form.check_out_at}
               onChange={e => setForm(p => ({ ...p, check_out_at: e.target.value }))}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-1 focus:ring-black outline-none"
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
-            <select value={form.status} onChange={e => setForm(p => ({ ...p, status: e.target.value as keyof typeof STATUS_CONFIG }))}
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.status')}</label>
+            <select value={form.status} onChange={e => setForm(p => ({ ...p, status: e.target.value as keyof typeof STATUS_COLORS }))}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-1 focus:ring-black outline-none"
             >
-              <option value="present">Present</option>
-              <option value="late">Late</option>
-              <option value="absent">Absent</option>
-              <option value="half_day">Half Day</option>
+              <option value="present">{attStatusLabel('present')}</option>
+              <option value="late">{attStatusLabel('late')}</option>
+              <option value="absent">{attStatusLabel('absent')}</option>
+              <option value="half_day">{attStatusLabel('half_day')}</option>
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Notes (optional)</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('attendance.manual.notesOptional')}</label>
             <textarea value={form.notes} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))}
               rows={2} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-1 focus:ring-black outline-none resize-none"
             />
@@ -865,11 +872,11 @@ function ManualEntryModal({
           <div className="flex gap-3 pt-2">
             <button type="button" onClick={onClose}
               className="flex-1 py-2 border border-gray-300 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors">
-              Cancel
+              {t('common.cancel')}
             </button>
             <button type="submit" disabled={mutation.isPending}
               className="flex-1 py-2 bg-black text-white rounded-xl text-sm font-medium hover:bg-gray-800 transition-colors disabled:opacity-50">
-              {mutation.isPending ? 'Saving…' : 'Save'}
+              {mutation.isPending ? t('common.saving') : t('common.save')}
             </button>
           </div>
         </form>
@@ -881,6 +888,7 @@ function ManualEntryModal({
 // ─── Edit Attendance Modal ────────────────────────────────────────────────────
 
 function EditAttendanceModal({ record, onClose }: { record: AttendanceRecordWithEmployee; onClose: () => void }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [form, setForm] = useState({
     check_in_at: toDateTimeLocalValue(record.check_in_at),
@@ -912,13 +920,13 @@ function EditAttendanceModal({ record, onClose }: { record: AttendanceRecordWith
       queryClient.invalidateQueries({ queryKey: ['attendance-summary'] });
       onClose();
     },
-    onError: (e) => setError(apiError(e, 'Failed to update record')),
+    onError: (e) => setError(getErrorMessage(e, t('attendance.edit.updateFailed'))),
   });
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.reason.trim()) {
-      setError('Please give a reason for this correction — it goes into the audit trail.');
+      setError(t('attendance.edit.reasonRequired'));
       return;
     }
     mutation.mutate();
@@ -927,18 +935,18 @@ function EditAttendanceModal({ record, onClose }: { record: AttendanceRecordWith
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto">
-        <h3 className="font-semibold text-gray-900 mb-1">Edit Attendance</h3>
+        <h3 className="font-semibold text-gray-900 mb-1">{t('attendance.edit.title')}</h3>
         <p className="text-sm text-gray-500 mb-5">{record.full_name} ({record.employee_number})</p>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Check In</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('attendance.manual.checkIn')}</label>
             <input type="datetime-local" value={form.check_in_at}
               onChange={e => setForm(p => ({ ...p, check_in_at: e.target.value }))}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-1 focus:ring-black outline-none"
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Check Out</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('attendance.manual.checkOut')}</label>
             <input type="datetime-local" value={form.check_out_at}
               onChange={e => setForm(p => ({ ...p, check_out_at: e.target.value }))}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-1 focus:ring-black outline-none"
@@ -946,51 +954,51 @@ function EditAttendanceModal({ record, onClose }: { record: AttendanceRecordWith
             {hadCheckOut && !form.check_out_at && (
               <p className="mt-1 text-xs text-amber-600 flex items-center gap-1">
                 <AlertTriangle className="w-3 h-3" />
-                Saving will reopen this session and clear its hours.
+                {t('attendance.edit.reopenWarning')}
               </p>
             )}
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
-            <select value={form.status} onChange={e => setForm(p => ({ ...p, status: e.target.value as keyof typeof STATUS_CONFIG }))}
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.status')}</label>
+            <select value={form.status} onChange={e => setForm(p => ({ ...p, status: e.target.value as keyof typeof STATUS_COLORS }))}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-1 focus:ring-black outline-none">
-              <option value="present">Present</option>
-              <option value="late">Late</option>
-              <option value="absent">Absent</option>
-              <option value="half_day">Half Day</option>
+              <option value="present">{attStatusLabel('present')}</option>
+              <option value="late">{attStatusLabel('late')}</option>
+              <option value="absent">{attStatusLabel('absent')}</option>
+              <option value="half_day">{attStatusLabel('half_day')}</option>
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.notes')}</label>
             <textarea value={form.notes} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))}
               rows={2} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-1 focus:ring-black outline-none resize-none"
             />
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Reason for correction <span className="text-red-500">*</span>
+              {t('attendance.edit.reason')} <span className="text-red-500">*</span>
             </label>
             <input
               type="text"
               value={form.reason}
               onChange={e => setForm(p => ({ ...p, reason: e.target.value }))}
-              placeholder="e.g. Employee forgot to check out; confirmed with manager"
+              placeholder={t('attendance.edit.reasonPlaceholder')}
               maxLength={400}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-1 focus:ring-black outline-none"
             />
             <p className="mt-1 text-xs text-gray-400">
-              Recorded in the audit trail, not on the employee's record.
+              {t('attendance.edit.reasonNote')}
             </p>
           </div>
           {error && <p className="text-sm text-red-600 flex items-center gap-1"><AlertCircle className="w-3.5 h-3.5" />{error}</p>}
           <div className="flex gap-3 pt-2">
             <button type="button" onClick={onClose}
               className="flex-1 py-2 border border-gray-300 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors">
-              Cancel
+              {t('common.cancel')}
             </button>
             <button type="submit" disabled={mutation.isPending}
               className="flex-1 py-2 bg-black text-white rounded-xl text-sm font-medium hover:bg-gray-800 transition-colors disabled:opacity-50">
-              {mutation.isPending ? 'Saving...' : 'Save Changes'}
+              {mutation.isPending ? t('common.saving') : t('common.saveChanges')}
             </button>
           </div>
         </form>
@@ -1016,7 +1024,8 @@ function RecordCard({
   canEdit: boolean;
   onEdit: () => void;
 }) {
-  const statusCfg = STATUS_CONFIG[r.status as keyof typeof STATUS_CONFIG];
+  const { t } = useTranslation();
+  const statusCfg = STATUS_COLORS[r.status as keyof typeof STATUS_COLORS];
   const methodCfg = METHOD_CONFIG[r.method as keyof typeof METHOD_CONFIG];
   const MethodIcon = methodCfg?.icon ?? MoreVertical;
 
@@ -1033,12 +1042,12 @@ function RecordCard({
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
           {statusCfg && (
-            <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${statusCfg.color}`}>
-              {statusCfg.label}
+            <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${statusCfg}`}>
+              {attStatusLabel(r.status)}
             </span>
           )}
           {r.is_outside_geofence && (
-            <span title="Checked in outside office radius" className="text-amber-500">
+            <span title={t('attendance.records.outsideGeofence')} className="text-amber-500">
               <AlertTriangle className="w-4 h-4" />
             </span>
           )}
@@ -1046,7 +1055,7 @@ function RecordCard({
             <button
               onClick={onEdit}
               className="-mr-1 p-2 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
-              title="Edit record"
+              title={t('attendance.records.editRecord')}
             >
               <Pencil className="w-4 h-4" />
             </button>
@@ -1056,14 +1065,14 @@ function RecordCard({
 
       <div className="mt-3 grid grid-cols-2 gap-3">
         <div>
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">Check in</p>
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">{t('attendance.records.checkIn')}</p>
           <p className="mt-0.5 flex items-center gap-1.5 text-sm tabular-nums text-gray-700">
             <LogIn className="w-3.5 h-3.5 shrink-0 text-emerald-500" />
             {formatTime(r.check_in_at)}
           </p>
         </div>
         <div>
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">Check out</p>
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">{t('attendance.records.checkOut')}</p>
           <p className="mt-0.5 flex items-center gap-1.5 text-sm tabular-nums text-gray-700">
             <LogOut className="w-3.5 h-3.5 shrink-0 text-gray-400" />
             {formatTime(r.check_out_at)}
@@ -1073,16 +1082,16 @@ function RecordCard({
 
       <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs">
         <span className="tabular-nums text-gray-600">
-          {r.hours_worked != null ? `${Number(r.hours_worked).toFixed(1)}h` : '—'}
+          {r.hours_worked != null ? t('attendance.hoursShort', { value: Number(r.hours_worked).toFixed(1) }) : '—'}
           {r.overtime_hours != null && Number(r.overtime_hours) > 0 && (
             <span className="ml-1 text-amber-600 font-medium">
-              <Timer className="w-3 h-3 inline" /> +{Number(r.overtime_hours).toFixed(1)}
+              <Timer className="w-3 h-3 inline" /> {t('attendance.hoursOtShort', { value: Number(r.overtime_hours).toFixed(1) })}
             </span>
           )}
         </span>
         <span className={`flex items-center gap-1.5 ${methodCfg?.color ?? 'text-gray-500'}`}>
           <MethodIcon className="w-3.5 h-3.5" />
-          <span className="font-medium">{methodCfg?.label ?? r.method}</span>
+          <span className="font-medium">{methodCfg ? attMethodLabel(r.method) : r.method}</span>
         </span>
         {r.latitude && r.longitude && (
           <a
@@ -1092,7 +1101,7 @@ function RecordCard({
             className="flex items-center gap-1 text-sky-600 hover:text-sky-700"
           >
             <MapPin className="w-3.5 h-3.5" />
-            Location
+            {t('attendance.records.location')}
           </a>
         )}
       </div>
@@ -1110,6 +1119,7 @@ const NO_FILTERS = {
 };
 
 export function AttendancePage() {
+  const { t } = useTranslation();
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<'records' | 'summary'>('records');
@@ -1174,7 +1184,7 @@ export function AttendancePage() {
       queryClient.invalidateQueries({ queryKey: ['attendance-method'] });
       setPageError('');
     },
-    onError: (e) => setPageError(apiError(e, 'Failed to change attendance method')),
+    onError: (e) => setPageError(getErrorMessage(e, t('attendance.page.methodFailed'))),
   });
 
   const backfillMut = useMutation({
@@ -1184,9 +1194,9 @@ export function AttendancePage() {
       queryClient.invalidateQueries({ queryKey: ['attendance-summary'] });
       setPageError('');
       setBackfillDate('');
-      alert(`Marked ${res.marked} absence${res.marked === 1 ? '' : 's'} for ${res.date}.`);
+      alert(t('attendance.page.backfillDone', { count: res.marked, date: res.date }));
     },
-    onError: (e) => setPageError(apiError(e, 'Absence marking failed')),
+    onError: (e) => setPageError(getErrorMessage(e, t('attendance.page.backfillFailed'))),
   });
 
   // Reset to page 1 when filters change
@@ -1216,10 +1226,10 @@ export function AttendancePage() {
           squeezing the title into a two-line button stack. */}
       <div className="flex flex-col gap-3 mb-6 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
-          <h1 className="text-2xl font-bold text-gray-900">Attendance</h1>
+          <h1 className="text-2xl font-bold text-gray-900">{t('attendance.page.title')}</h1>
           {method && (
             <div className="text-sm text-gray-500 mt-0.5 flex items-center gap-1.5">
-              <span>Method:</span>
+              <span>{t('attendance.page.method')}</span>
               {canSwitchMethod ? (
                 <select
                   value={method.method}
@@ -1227,16 +1237,16 @@ export function AttendancePage() {
                   disabled={methodMut.isPending}
                   className="px-2 py-0.5 border border-gray-200 rounded-lg text-sm font-medium text-gray-700 outline-none focus:ring-1 focus:ring-black disabled:opacity-50"
                 >
-                  <option value="qr_code">QR Code</option>
-                  <option value="face_id">Face ID</option>
+                  <option value="qr_code">{attMethodLabel('qr_code')}</option>
+                  <option value="face_id">{attMethodLabel('face_id')}</option>
                 </select>
               ) : (
                 <span className="font-medium text-gray-700">
-                  {method.method === 'qr_code' ? 'QR Code' : 'Face ID'}
+                  {attMethodLabel(method.method)}
                 </span>
               )}
               {method.is_company_override && (
-                <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">Company Override</span>
+                <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">{t('attendance.page.companyOverride')}</span>
               )}
             </div>
           )}
@@ -1258,7 +1268,7 @@ export function AttendancePage() {
                 } catch (e) {
                   // Previously try/finally with no catch: a failed export was an
                   // unhandled rejection and the admin saw nothing at all.
-                  setPageError(apiError(e, 'Export failed. Please try again.'));
+                  setPageError(getErrorMessage(e, t('attendance.page.exportFailed')));
                 } finally {
                   setExporting(false);
                 }
@@ -1267,7 +1277,7 @@ export function AttendancePage() {
               className="flex flex-1 sm:flex-none items-center justify-center gap-2 whitespace-nowrap text-sm font-medium px-4 py-2 rounded-xl border border-gray-300 hover:bg-gray-50 transition-colors disabled:opacity-50"
             >
               <Download className="w-4 h-4 shrink-0" />
-              {exporting ? 'Exporting…' : 'Export CSV'}
+              {exporting ? t('common.exporting') : t('attendance.page.exportCsv')}
             </button>
           )}
           {canEdit && (
@@ -1276,7 +1286,7 @@ export function AttendancePage() {
               className="flex flex-1 sm:flex-none items-center justify-center gap-2 whitespace-nowrap bg-black text-white text-sm font-medium px-4 py-2 rounded-xl hover:bg-gray-800 transition-colors"
             >
               <Plus className="w-4 h-4 shrink-0" />
-              Manual Entry
+              {t('attendance.page.manualEntry')}
             </button>
           )}
         </div>
@@ -1303,8 +1313,8 @@ export function AttendancePage() {
       {/* Tabs */}
       <div className="flex items-center gap-1 mb-4 border-b border-gray-200">
         {([
-          { key: 'records', label: 'Records', icon: Clock },
-          { key: 'summary', label: 'Summary', icon: ListChecks },
+          { key: 'records', label: t('attendance.page.tabs.records'), icon: Clock },
+          { key: 'summary', label: t('attendance.page.tabs.summary'), icon: ListChecks },
         ] as const).map(t => (
           <button
             key={t.key}
@@ -1338,42 +1348,42 @@ export function AttendancePage() {
             {/* Filters */}
             <div className="flex flex-wrap items-center gap-2.5 sm:gap-3 p-4 sm:p-5 border-b border-gray-100">
               <div className="flex w-full sm:w-auto items-center gap-2 text-sm text-gray-600">
-                <Filter className="w-4 h-4" /> Filters:
+                <Filter className="w-4 h-4" /> {t('attendance.page.filters')}
               </div>
               <input
                 type="date"
                 value={filters.date_from}
                 onChange={e => updateFilter('date_from', e.target.value)}
                 className="min-w-[8.5rem] flex-1 sm:flex-none px-3 py-1.5 border border-gray-200 rounded-lg text-sm outline-none focus:ring-1 focus:ring-black"
-                placeholder="From"
+                placeholder={t('attendance.page.from')}
               />
               <input
                 type="date"
                 value={filters.date_to}
                 onChange={e => updateFilter('date_to', e.target.value)}
                 className="min-w-[8.5rem] flex-1 sm:flex-none px-3 py-1.5 border border-gray-200 rounded-lg text-sm outline-none focus:ring-1 focus:ring-black"
-                placeholder="To"
+                placeholder={t('attendance.page.to')}
               />
               <select
                 value={filters.status}
                 onChange={e => updateFilter('status', e.target.value)}
                 className="min-w-[8.5rem] flex-1 sm:flex-none px-3 py-1.5 border border-gray-200 rounded-lg text-sm outline-none focus:ring-1 focus:ring-black"
               >
-                <option value="">All Status</option>
-                <option value="present">Present</option>
-                <option value="late">Late</option>
-                <option value="absent">Absent</option>
-                <option value="half_day">Half Day</option>
+                <option value="">{t('attendance.page.allStatus')}</option>
+                <option value="present">{attStatusLabel('present')}</option>
+                <option value="late">{attStatusLabel('late')}</option>
+                <option value="absent">{attStatusLabel('absent')}</option>
+                <option value="half_day">{attStatusLabel('half_day')}</option>
               </select>
               <select
                 value={filters.method}
                 onChange={e => updateFilter('method', e.target.value)}
                 className="min-w-[8.5rem] flex-1 sm:flex-none px-3 py-1.5 border border-gray-200 rounded-lg text-sm outline-none focus:ring-1 focus:ring-black"
               >
-                <option value="">All Methods</option>
-                <option value="qr_code">QR Code</option>
-                <option value="face_id">Face ID</option>
-                <option value="manual">Manual</option>
+                <option value="">{t('attendance.page.allMethods')}</option>
+                <option value="qr_code">{attMethodLabel('qr_code')}</option>
+                <option value="face_id">{attMethodLabel('face_id')}</option>
+                <option value="manual">{attMethodLabel('manual')}</option>
               </select>
               <label className="flex w-full sm:w-auto items-center gap-1.5 text-sm text-gray-600 cursor-pointer select-none">
                 <input
@@ -1382,7 +1392,7 @@ export function AttendancePage() {
                   onChange={e => updateFilter('open_only', e.target.checked)}
                   className="rounded border-gray-300"
                 />
-                Open sessions only
+                {t('attendance.page.openOnly')}
               </label>
               {/* The off-site flag was stored and shown per row, but with no
                   predicate the only way to find these was to page the whole
@@ -1394,7 +1404,7 @@ export function AttendancePage() {
                   onChange={e => updateFilter('outside_geofence_only', e.target.checked)}
                   className="rounded border-gray-300"
                 />
-                Off-site only
+                {t('attendance.page.offsiteOnly')}
               </label>
               {hasFilters && (
                 <button
@@ -1404,7 +1414,7 @@ export function AttendancePage() {
                   }}
                   className="text-xs text-gray-500 hover:text-gray-900 underline"
                 >
-                  Clear
+                  {t('common.clear')}
                 </button>
               )}
               {/* Employee filter — the API always accepted employee_id; without
@@ -1413,7 +1423,7 @@ export function AttendancePage() {
                 <EmployeePicker
                   value={filters.employee_id}
                   onChange={(id) => updateFilter('employee_id', id)}
-                  placeholder="Filter by employee…"
+                  placeholder={t('attendance.page.filterEmployee')}
                 />
               </div>
             </div>
@@ -1422,7 +1432,7 @@ export function AttendancePage() {
             {canEdit && (
               <div className="flex flex-wrap items-center gap-2 px-4 sm:px-5 py-3 border-b border-gray-100 bg-gray-50/60">
                 <span className="text-xs text-gray-500">
-                  Missed absence marking for a past day?
+                  {t('attendance.page.backfillHint')}
                 </span>
                 <input
                   type="date"
@@ -1436,10 +1446,10 @@ export function AttendancePage() {
                   disabled={!backfillDate || backfillMut.isPending}
                   className="text-xs font-medium px-3 py-1 rounded-lg border border-gray-300 bg-white hover:bg-gray-100 transition-colors disabled:opacity-40"
                 >
-                  {backfillMut.isPending ? 'Running…' : 'Mark absences'}
+                  {backfillMut.isPending ? t('common.running') : t('attendance.page.markAbsences')}
                 </button>
                 <span className="text-xs text-gray-400">
-                  Safe to re-run — days that already have records are skipped.
+                  {t('attendance.page.backfillSafe')}
                 </span>
               </div>
             )}
@@ -1456,12 +1466,12 @@ export function AttendancePage() {
                 <AlertCircle className="w-8 h-8 text-red-400" />
                 <p className="text-sm">
                   {forbidden
-                    ? "You don't have permission to view company attendance records."
-                    : "Couldn't load attendance records."}
+                    ? t('attendance.page.forbidden')
+                    : t('attendance.page.loadFailed')}
                 </p>
                 {!forbidden && (
                   <button onClick={() => refetch()} className="text-sm font-medium text-gray-900 hover:underline">
-                    Try again
+                    {t('common.retry')}
                   </button>
                 )}
               </div>
@@ -1470,10 +1480,10 @@ export function AttendancePage() {
                 <Calendar className="w-10 h-10 mb-2 opacity-40" />
                 <p className="text-sm">
                   {filters.open_only
-                    ? 'No open sessions — everyone has checked out'
+                    ? t('attendance.page.emptyOpen')
                     : filters.outside_geofence_only
-                      ? 'No off-site check-ins — everyone scanned inside the geofence'
-                      : 'No attendance records found'}
+                      ? t('attendance.page.emptyOffsite')
+                      : t('attendance.page.empty')}
                 </p>
               </div>
             ) : (
@@ -1494,7 +1504,7 @@ export function AttendancePage() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-gray-100">
-                        {['Date', 'Employee', 'Check In', 'Check Out', 'Hours', 'Method', 'Status', 'Location', ''].map(h => (
+                        {[t('common.date'), t('common.employee'), t('attendance.records.checkIn'), t('attendance.records.checkOut'), t('attendance.summary.hours'), t('attendance.records.method'), t('common.status'), t('attendance.records.location'), ''].map(h => (
                           <th key={h} className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">
                             {h}
                           </th>
@@ -1503,7 +1513,7 @@ export function AttendancePage() {
                     </thead>
                     <tbody className="divide-y divide-gray-50">
                       {records.map(r => {
-                        const statusCfg = STATUS_CONFIG[r.status as keyof typeof STATUS_CONFIG];
+                        const statusCfg = STATUS_COLORS[r.status as keyof typeof STATUS_COLORS];
                         const methodCfg = METHOD_CONFIG[r.method as keyof typeof METHOD_CONFIG];
                         const MethodIcon = methodCfg?.icon ?? MoreVertical;
                         return (
@@ -1530,10 +1540,10 @@ export function AttendancePage() {
                             <td className="px-5 py-3.5 tabular-nums text-gray-700">
                               {r.hours_worked != null ? (
                                 <div className="text-xs">
-                                  <span>{Number(r.hours_worked).toFixed(1)}h</span>
+                                  <span>{t('attendance.hoursShort', { value: Number(r.hours_worked).toFixed(1) })}</span>
                                   {r.overtime_hours != null && Number(r.overtime_hours) > 0 && (
                                     <span className="ml-1 text-amber-600 font-medium">
-                                      <Timer className="w-3 h-3 inline" /> +{Number(r.overtime_hours).toFixed(1)}
+                                      <Timer className="w-3 h-3 inline" /> {t('attendance.hoursOtShort', { value: Number(r.overtime_hours).toFixed(1) })}
                                     </span>
                                   )}
                                 </div>
@@ -1544,18 +1554,18 @@ export function AttendancePage() {
                             <td className="px-5 py-3.5">
                               <div className={`flex items-center gap-1.5 ${methodCfg?.color ?? ''}`}>
                                 <MethodIcon className="w-3.5 h-3.5" />
-                                <span className="text-xs font-medium">{methodCfg?.label ?? r.method}</span>
+                                <span className="text-xs font-medium">{methodCfg ? attMethodLabel(r.method) : r.method}</span>
                               </div>
                             </td>
                             <td className="px-5 py-3.5">
                               <div className="flex items-center gap-1.5">
                                 {statusCfg && (
-                                  <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${statusCfg.color}`}>
-                                    {statusCfg.label}
+                                  <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${statusCfg}`}>
+                                    {attStatusLabel(r.status)}
                                   </span>
                                 )}
                                 {r.is_outside_geofence && (
-                                  <span title="Checked in outside office radius" className="text-amber-500">
+                                  <span title={t('attendance.records.outsideGeofence')} className="text-amber-500">
                                     <AlertTriangle className="w-3.5 h-3.5" />
                                   </span>
                                 )}
@@ -1570,7 +1580,7 @@ export function AttendancePage() {
                                   className="flex items-center gap-1 text-sky-600 hover:text-sky-700 text-xs"
                                 >
                                   <MapPin className="w-3.5 h-3.5" />
-                                  View
+                                  {t('common.view')}
                                 </a>
                               ) : (
                                 <span className="text-gray-300 text-xs">---</span>
@@ -1581,7 +1591,7 @@ export function AttendancePage() {
                                 <button
                                   onClick={() => setEditRecord(r)}
                                   className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
-                                  title="Edit record"
+                                  title={t('attendance.records.editRecord')}
                                 >
                                   <Pencil className="w-3.5 h-3.5" />
                                 </button>
@@ -1598,7 +1608,7 @@ export function AttendancePage() {
                 {totalPages > 1 && (
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-4 sm:px-5 py-3 border-t border-gray-100">
                     <p className="text-xs text-gray-500">
-                      Showing {(page - 1) * perPage + 1}–{Math.min(page * perPage, total)} of {total} records
+                      {t('common.showing', { from: (page - 1) * perPage + 1, to: Math.min(page * perPage, total), total })}
                     </p>
                     <div className="flex items-center justify-center gap-1">
                       <button

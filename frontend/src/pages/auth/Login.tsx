@@ -5,6 +5,8 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
 import { ChevronDown, Eye, EyeOff, Fingerprint, LifeBuoy, Smartphone } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
+import { useTranslation } from 'react-i18next';
+import { LanguageSwitcher } from '@/components/ui/LanguageSwitcher';
 import { getErrorMessage, safeRedirectPath } from '@/lib/utils';
 import { hasOnlyEmployeeRole } from '@/lib/roles';
 import { checkPasskey, passkeyAuthBegin, passkeyAuthComplete, passkeyDiscoverableBegin, passkeyDiscoverableComplete } from '@/api/passkey';
@@ -32,6 +34,7 @@ export function Login() {
   const [codeValue, setCodeValue] = useState('');
   const [googleLoading, setGoogleLoading] = useState(false);
   const { login, setSession, user, isAuthenticated } = useAuth();
+  const { t } = useTranslation();
   const navigate = useNavigate();
   // The kiosk scan page sends unauthenticated scanners here with the scan URL
   // (including its QR token) in `?redirect=`; without honouring it they landed on
@@ -123,7 +126,7 @@ export function Login() {
         goPostLogin(result.user);
       }
     } catch (err: unknown) {
-      setError(getErrorMessage(err, 'Invalid email or password'));
+      setError(getErrorMessage(err, t('auth.invalidCredentials')));
     } finally {
       setLoading(false);
     }
@@ -154,7 +157,7 @@ export function Login() {
         navigate(redirectTo ?? (hasOnlyEmployeeRole(response.user) ? '/portal' : '/'));
       }
     } catch (err: unknown) {
-      setError(getErrorMessage(err, 'Passkey authentication failed'));
+      setError(getErrorMessage(err, t('auth.passkeyFailed')));
     } finally {
       setPasskeyLoading(false);
     }
@@ -166,12 +169,12 @@ export function Login() {
     try {
       const token = await waitForTurnstileToken();
       if (turnstileEnabled() && !token) {
-        setError('Verification is taking too long — try again');
+        setError(t('auth.verificationSlow'));
         return;
       }
       window.location.href = await getGoogleAuthorizeUrl(undefined, token);
     } catch {
-      setError('Google sign-in is not available');
+      setError(t('auth.googleUnavailable'));
     } finally {
       setGoogleLoading(false);
     }
@@ -190,7 +193,7 @@ export function Login() {
       setSession(data.token, data.user);
       goPostLogin(data.user);
     } catch (err: unknown) {
-      setError(getErrorMessage(err, 'Invalid email or code'));
+      setError(getErrorMessage(err, t('auth.invalidEmailOrCode')));
     } finally {
       setLoading(false);
     }
@@ -235,7 +238,7 @@ export function Login() {
           {/* Logo */}
           <div className="text-center mb-8">
             <BrandLogo variant="lockup-dark" className="h-12 w-auto mx-auto mb-4" />
-            <p className="text-sm text-gray-500 mt-1">Malaysian Payroll System</p>
+            <p className="text-sm text-gray-500 mt-1">{t('auth.tagline')}</p>
           </div>
 
           {mfaToken ? (
@@ -257,7 +260,7 @@ export function Login() {
                     }}
                     className="text-sm text-gray-500 hover:text-gray-700"
                   >
-                    ← Back to all sign-in options
+                    ← {t('auth.backToOptions')}
                   </button>
 
                   {error && (
@@ -267,27 +270,27 @@ export function Login() {
                   )}
 
                   <div>
-                    <label className="form-label">Email</label>
+                    <label className="form-label">{t('auth.email')}</label>
                     <input
                       type="email"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
                       className="form-input"
-                      placeholder="Enter your email"
+                      placeholder={t('auth.emailPlaceholder')}
                       required
                     />
                   </div>
 
                   <div>
                     <label className="form-label">
-                      {codeMethod === 'totp' ? 'Authenticator code' : 'Recovery code'}
+                      {codeMethod === 'totp' ? t('auth.authenticatorCode') : t('auth.recoveryCode')}
                     </label>
                     <input
                       value={codeValue}
                       onChange={(e) => setCodeValue(e.target.value)}
                       className="form-input"
                       placeholder={
-                        codeMethod === 'totp' ? '6-digit code' : 'e.g. 1A2B-3C4D'
+                        codeMethod === 'totp' ? t('auth.code6Placeholder') : t('auth.recoveryCodePlaceholder')
                       }
                       autoComplete="one-time-code"
                       required
@@ -301,7 +304,7 @@ export function Login() {
                     disabled={loading}
                     className="w-full bg-gradient-to-r from-slate-900 to-slate-700 text-white py-2.5 rounded-xl font-semibold shadow-lg hover:shadow-[0_10px_30px_-8px_rgba(99,102,241,0.5),0_10px_30px_-8px_rgba(20,184,166,0.4)] hover:-translate-y-px active:translate-y-0 disabled:opacity-50 disabled:shadow-none transition-all"
                   >
-                    {loading ? 'Signing in...' : 'Sign In'}
+                    {loading ? t('auth.signingIn') : t('auth.signIn')}
                   </button>
                 </form>
               ) : (
@@ -315,13 +318,13 @@ export function Login() {
                       className="w-full flex items-center justify-center gap-3 py-2.5 px-4 bg-white border border-gray-200 rounded-xl text-sm font-medium text-gray-700 hover:border-gray-300 hover:shadow-md hover:-translate-y-px disabled:opacity-50 transition-all"
                     >
                       <GoogleIcon />
-                      {googleLoading ? 'Verifying...' : 'Continue with Google'}
+                      {googleLoading ? t('auth.verifying') : t('auth.continueGoogle')}
                     </button>
                   )}
 
                   <div className="flex items-center gap-3 my-6">
                     <div className="h-px flex-1 bg-gray-200" />
-                    <span className="text-xs text-gray-400">Other ways to sign in</span>
+                    <span className="text-xs text-gray-400">{t('auth.otherWays')}</span>
                     <div className="h-px flex-1 bg-gray-200" />
                   </div>
 
@@ -333,33 +336,33 @@ export function Login() {
                     )}
 
                     <div>
-                      <label className="form-label">Email</label>
+                      <label className="form-label">{t('auth.email')}</label>
                       <input
                         type="email"
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
                         className="form-input"
-                        placeholder="Enter your email"
+                        placeholder={t('auth.emailPlaceholder')}
                         required
                       />
                     </div>
 
                     <div>
-                      <label className="form-label">Password</label>
+                      <label className="form-label">{t('auth.password')}</label>
                       <div className="relative">
                         <input
                           type={showPassword ? 'text' : 'password'}
                           value={password}
                           onChange={(e) => setPassword(e.target.value)}
                           className="form-input pr-11"
-                          placeholder="Enter your password"
+                          placeholder={t('auth.passwordPlaceholder')}
                           autoComplete="current-password"
                           required
                         />
                         <button
                           type="button"
                           onClick={() => setShowPassword((v) => !v)}
-                          aria-label={showPassword ? 'Hide password' : 'Show password'}
+                          aria-label={showPassword ? t('a11y.hidePassword') : t('a11y.showPassword')}
                           aria-pressed={showPassword}
                           className="absolute inset-y-0 right-0 flex items-center px-3 text-gray-400 hover:text-gray-600 transition-colors"
                         >
@@ -379,12 +382,12 @@ export function Login() {
                       disabled={loading}
                       className="w-full bg-gradient-to-r from-slate-900 to-slate-700 text-white py-2.5 rounded-xl font-semibold shadow-lg hover:shadow-[0_10px_30px_-8px_rgba(99,102,241,0.5),0_10px_30px_-8px_rgba(20,184,166,0.4)] hover:-translate-y-px active:translate-y-0 disabled:opacity-50 disabled:shadow-none transition-all"
                     >
-                      {loading ? 'Signing in...' : 'Sign In'}
+                      {loading ? t('auth.signingIn') : t('auth.signIn')}
                     </button>
 
                     <div className="flex items-center justify-center gap-3 text-sm">
                       <Link to="/forgot-password" className="text-gray-500 hover:text-gray-700">
-                        Forgot password?
+                        {t('auth.forgotPasswordLink')}
                       </Link>
                       <span className="text-gray-300">·</span>
                       <button
@@ -393,7 +396,7 @@ export function Login() {
                         aria-expanded={showMoreOptions}
                         className="inline-flex items-center gap-1 text-gray-500 hover:text-gray-700"
                       >
-                        More sign-in options
+                        {t('auth.moreOptions')}
                         <ChevronDown
                           className={`w-4 h-4 transition-transform ${showMoreOptions ? 'rotate-180' : ''}`}
                         />
@@ -421,7 +424,7 @@ export function Login() {
                               className="flex flex-col items-center gap-1.5 py-2.5 px-2 bg-white border border-gray-200 rounded-xl text-xs font-medium text-gray-600 hover:border-gray-300 hover:shadow-sm disabled:opacity-50 transition-all"
                             >
                               <Fingerprint className="w-5 h-5" />
-                              {passkeyLoading ? 'Verifying...' : 'Sign in with Passkey'}
+                              {passkeyLoading ? t('auth.verifying') : t('auth.passkeySignIn')}
                             </button>
                           )}
                           <button
@@ -430,7 +433,7 @@ export function Login() {
                             className="flex flex-col items-center gap-1.5 py-2.5 px-2 bg-white border border-gray-200 rounded-xl text-xs font-medium text-gray-600 hover:border-gray-300 hover:shadow-sm transition-all"
                           >
                             <Smartphone className="w-5 h-5" />
-                            Authenticator
+                            {t('auth.authenticator')}
                           </button>
                           <button
                             type="button"
@@ -438,7 +441,7 @@ export function Login() {
                             className="flex flex-col items-center gap-1.5 py-2.5 px-2 bg-white border border-gray-200 rounded-xl text-xs font-medium text-gray-600 hover:border-gray-300 hover:shadow-sm transition-all"
                           >
                             <LifeBuoy className="w-5 h-5" />
-                            Recovery code
+                            {t('auth.recoveryCode')}
                           </button>
                         </div>
                       </motion.div>
@@ -450,9 +453,12 @@ export function Login() {
           )}
         </div>
 
-        <p className="mt-6 text-center text-xs text-slate-500">
-          Secure payroll for Malaysian teams
-        </p>
+        <div className="mt-6 flex items-center justify-center gap-4">
+          <p className="text-center text-xs text-slate-500">
+            {t('auth.footerTagline')}
+          </p>
+          <LanguageSwitcher dark />
+        </div>
       </motion.div>
     </div>
   );

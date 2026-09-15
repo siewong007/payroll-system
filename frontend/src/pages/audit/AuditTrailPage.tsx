@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { ScrollText, Search, X, ChevronLeft, ChevronRight } from 'lucide-react';
 import { getAuditFilterOptions, getAuditLogs } from '@/api/audit';
 import type { AuditLog } from '@/types';
+import { formatDateTime } from '@/lib/format';
 
 /**
  * Fallback label for a value the filter response has not supplied — a row
@@ -15,13 +17,9 @@ const formatEntityType = (entityType: string) => {
   return words ? words.charAt(0).toUpperCase() + words.slice(1) : entityType;
 };
 
-const formatTimestamp = (value: string) =>
-  new Date(value).toLocaleString('en-MY', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  });
 
 export function AuditTrailPage() {
+  const { t } = useTranslation();
   const [entityType, setEntityType] = useState('');
   // One record's full history. Set by clicking a row's entity id rather than by
   // typing a UUID — the point is to answer "who changed *this*, and why".
@@ -87,12 +85,12 @@ export function AuditTrailPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Audit Trail</h1>
-          <p className="text-sm text-gray-500 mt-1">Track all changes and actions across the system</p>
+          <h1 className="text-2xl font-bold text-gray-900">{t('audit.title')}</h1>
+          <p className="text-sm text-gray-500 mt-1">{t('audit.subtitle')}</p>
         </div>
         <div className="flex items-center gap-2 text-sm text-gray-500">
           <ScrollText className="w-4 h-4" />
-          {total} records
+          {t('audit.recordsCount', { count: total })}
         </div>
       </div>
 
@@ -100,33 +98,33 @@ export function AuditTrailPage() {
       <div className="bg-white rounded-xl border border-gray-200 p-4">
         <div className="flex flex-wrap items-end gap-3">
           <div className="flex-1 min-w-[140px]">
-            <label className="block text-xs font-medium text-gray-500 mb-1">Entity Type</label>
+            <label className="block text-xs font-medium text-gray-500 mb-1">{t('audit.entityType')}</label>
             <select
               value={entityType}
               onChange={(e) => { setEntityType(e.target.value); setPage(1); }}
               className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-black/5"
             >
-              <option value="">All types</option>
+              <option value="">{t('audit.allTypes')}</option>
               {entityTypeOptions.map((option) => (
                 <option key={option.value} value={option.value}>{option.label}</option>
               ))}
             </select>
           </div>
           <div className="flex-1 min-w-[140px]">
-            <label className="block text-xs font-medium text-gray-500 mb-1">Action</label>
+            <label className="block text-xs font-medium text-gray-500 mb-1">{t('audit.action')}</label>
             <select
               value={action}
               onChange={(e) => { setAction(e.target.value); setPage(1); }}
               className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-black/5"
             >
-              <option value="">All actions</option>
+              <option value="">{t('audit.allActions')}</option>
               {actionOptions.map((option) => (
                 <option key={option.value} value={option.value}>{option.label}</option>
               ))}
             </select>
           </div>
           <div className="flex-1 min-w-[140px]">
-            <label className="block text-xs font-medium text-gray-500 mb-1">From</label>
+            <label className="block text-xs font-medium text-gray-500 mb-1">{t('common.from')}</label>
             <input
               type="date"
               value={startDate}
@@ -135,7 +133,7 @@ export function AuditTrailPage() {
             />
           </div>
           <div className="flex-1 min-w-[140px]">
-            <label className="block text-xs font-medium text-gray-500 mb-1">To</label>
+            <label className="block text-xs font-medium text-gray-500 mb-1">{t('common.to')}</label>
             <input
               type="date"
               value={endDate}
@@ -148,7 +146,7 @@ export function AuditTrailPage() {
               onClick={clearFilters}
               className="px-3 py-2 text-sm text-gray-500 hover:text-gray-700 flex items-center gap-1"
             >
-              <X className="w-3.5 h-3.5" /> Clear
+              <X className="w-3.5 h-3.5" /> {t('common.clear')}
             </button>
           )}
         </div>
@@ -157,12 +155,12 @@ export function AuditTrailPage() {
         {entityId && (
           <div className="mt-3 flex items-center gap-2 text-xs text-gray-600">
             <span className="inline-flex items-center gap-1.5 px-2 py-1 bg-gray-100 rounded-full">
-              <span className="font-medium">Record</span>
+              <span className="font-medium">{t('audit.record')}</span>
               <span className="font-mono">{entityId.slice(0, 8)}...</span>
               <button
                 type="button"
                 onClick={() => { setEntityId(''); setPage(1); }}
-                aria-label="Clear record filter"
+                aria-label={t('audit.clearRecordFilter')}
                 className="text-gray-400 hover:text-gray-900"
               >
                 <X className="w-3 h-3" />
@@ -176,23 +174,23 @@ export function AuditTrailPage() {
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
         {isLoading ? (
           <div className="flex items-center justify-center py-20 text-gray-400">
-            <Search className="w-5 h-5 animate-spin mr-2" /> Loading...
+            <Search className="w-5 h-5 animate-spin mr-2" /> {t('common.loading')}
           </div>
         ) : logs.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-gray-400">
             <ScrollText className="w-8 h-8 mb-2" />
-            <p>No audit logs found</p>
+            <p>{t('audit.noLogs')}</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-100 bg-gray-50/50">
-                  <th className="text-left px-4 py-3 font-medium text-gray-500">Timestamp</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-500">User</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-500">Entity</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-500">Action</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-500">Details</th>
+                  <th className="text-left px-4 py-3 font-medium text-gray-500">{t('audit.timestamp')}</th>
+                  <th className="text-left px-4 py-3 font-medium text-gray-500">{t('audit.user')}</th>
+                  <th className="text-left px-4 py-3 font-medium text-gray-500">{t('audit.entity')}</th>
+                  <th className="text-left px-4 py-3 font-medium text-gray-500">{t('audit.action')}</th>
+                  <th className="text-left px-4 py-3 font-medium text-gray-500">{t('audit.details')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -203,7 +201,7 @@ export function AuditTrailPage() {
                     className="border-b border-gray-50 hover:bg-gray-50/50 cursor-pointer transition-colors"
                   >
                     <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
-                      {formatTimestamp(log.created_at)}
+                      {formatDateTime(log.created_at)}
                     </td>
                     <td className="px-4 py-3">
                       <div className="text-gray-900">{log.user_full_name || '-'}</div>
@@ -229,7 +227,7 @@ export function AuditTrailPage() {
                             setEntityId(log.entity_id!);
                             setPage(1);
                           }}
-                          title="Show this record's full history"
+                          title={t('audit.showRecordHistory')}
                           className="mt-0.5 font-mono text-[11px] text-gray-400 hover:text-gray-900 hover:underline"
                         >
                           {log.entity_id.slice(0, 8)}...
@@ -247,7 +245,7 @@ export function AuditTrailPage() {
         {totalPages > 1 && (
           <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100">
             <p className="text-sm text-gray-500">
-              Page {page} of {totalPages} ({total} total)
+              {t('common.pageOfTotal', { page, totalPages, total })}
             </p>
             <div className="flex gap-1">
               <button
@@ -338,6 +336,7 @@ function AuditDetailModal({
   actionLabel?: string;
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div
@@ -346,8 +345,8 @@ function AuditDetailModal({
       >
         <div className="flex items-center justify-between p-5 border-b border-gray-100">
           <div>
-            <h2 className="text-lg font-semibold text-gray-900">Audit Log Detail</h2>
-            <p className="text-sm text-gray-500">{formatTimestamp(log.created_at)}</p>
+            <h2 className="text-lg font-semibold text-gray-900">{t('audit.detailTitle')}</h2>
+            <p className="text-sm text-gray-500">{formatDateTime(log.created_at)}</p>
           </div>
           <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-lg">
             <X className="w-5 h-5 text-gray-400" />
@@ -357,39 +356,39 @@ function AuditDetailModal({
         <div className="p-5 overflow-y-auto space-y-4">
           <div className="grid grid-cols-2 gap-4 text-sm">
             <div>
-              <p className="text-gray-500">User</p>
+              <p className="text-gray-500">{t('audit.user')}</p>
               <p className="font-medium">{log.user_full_name || '-'}</p>
               <p className="text-xs text-gray-400">{log.user_email}</p>
             </div>
             <div>
-              <p className="text-gray-500">IP Address</p>
+              <p className="text-gray-500">{t('audit.ipAddress')}</p>
               <p className="font-medium">{log.ip_address || '-'}</p>
             </div>
             <div>
-              <p className="text-gray-500">Entity Type</p>
+              <p className="text-gray-500">{t('audit.entityType')}</p>
               <p className="font-medium">{entityLabel ?? formatEntityType(log.entity_type)}</p>
             </div>
             <div>
-              <p className="text-gray-500">Action</p>
+              <p className="text-gray-500">{t('audit.action')}</p>
               <ActionBadge action={log.action} label={actionLabel} />
             </div>
             <div className="col-span-2">
-              <p className="text-gray-500">Entity ID</p>
+              <p className="text-gray-500">{t('audit.entityId')}</p>
               <p className="font-mono text-xs">{log.entity_id || '-'}</p>
             </div>
             <div className="col-span-2">
-              <p className="text-gray-500">Description</p>
+              <p className="text-gray-500">{t('common.description')}</p>
               <p className="font-medium">{log.description || '-'}</p>
             </div>
             <div className="col-span-2">
-              <p className="text-gray-500">User Agent</p>
+              <p className="text-gray-500">{t('audit.userAgent')}</p>
               <p className="text-xs text-gray-600 break-all">{log.user_agent || '-'}</p>
             </div>
           </div>
 
           {log.old_values && Object.keys(log.old_values).length > 0 && (
             <div>
-              <h3 className="text-sm font-medium text-gray-700 mb-2">Previous Values</h3>
+              <h3 className="text-sm font-medium text-gray-700 mb-2">{t('audit.previousValues')}</h3>
               <pre className="bg-red-50 text-red-900 rounded-lg p-3 text-xs overflow-x-auto max-h-48">
                 {JSON.stringify(log.old_values, null, 2)}
               </pre>
@@ -398,7 +397,7 @@ function AuditDetailModal({
 
           {log.new_values && Object.keys(log.new_values).length > 0 && (
             <div>
-              <h3 className="text-sm font-medium text-gray-700 mb-2">New Values</h3>
+              <h3 className="text-sm font-medium text-gray-700 mb-2">{t('audit.newValues')}</h3>
               <pre className="bg-green-50 text-green-900 rounded-lg p-3 text-xs overflow-x-auto max-h-48">
                 {JSON.stringify(log.new_values, null, 2)}
               </pre>

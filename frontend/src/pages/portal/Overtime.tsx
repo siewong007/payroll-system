@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Clock, X, Trash2 } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
@@ -8,6 +9,7 @@ import { runBulk, summarizeBulkFailure } from '@/lib/bulk';
 import { formatDate, getErrorMessage } from '@/lib/utils';
 import { OT_DEFAULT_END, OT_DEFAULT_HOURS, OT_DEFAULT_START, calculateOvertimeHours } from '@/lib/overtime';
 import type { OvertimeApplication, CreateOvertimeRequest } from '@/types';
+import i18n from '@/i18n';
 
 const statusBadge = (status: string) => {
   const cls: Record<string, string> = {
@@ -16,17 +18,14 @@ const statusBadge = (status: string) => {
     rejected: 'badge-rejected',
     cancelled: 'badge-cancelled',
   };
-  return <span className={`badge ${cls[status] || 'badge-draft'}`}>{status}</span>;
+  return (
+    <span className={`badge ${cls[status] || 'badge-draft'}`}>
+      {i18n.t(`enums.requestStatus.${status}`, { defaultValue: status })}
+    </span>
+  );
 };
 
-const otTypeLabel = (t: string) => {
-  const labels: Record<string, string> = {
-    normal: 'Normal Day',
-    rest_day: 'Rest Day',
-    public_holiday: 'Public Holiday',
-  };
-  return labels[t] || t;
-};
+const otTypeLabel = (t: string) => i18n.t(`enums.otType.${t}`, { defaultValue: t });
 
 const otTypeMultiplier = (t: string) => {
   const m: Record<string, string> = { normal: '1.5x', rest_day: '2.0x', public_holiday: '3.0x' };
@@ -34,6 +33,7 @@ const otTypeMultiplier = (t: string) => {
 };
 
 export function Overtime() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const selectAllRef = useRef<HTMLInputElement>(null);
   const [showModal, setShowModal] = useState(false);
@@ -86,7 +86,7 @@ export function Overtime() {
       setSelectedOvertimeIds(outcome.failed.map((failure) => failure.id));
       setBulkError(summarizeBulkFailure(outcome, 'cancelled'));
     },
-    onError: (err: unknown) => setBulkError(getErrorMessage(err, 'Failed to cancel the selected applications')),
+    onError: (err: unknown) => setBulkError(getErrorMessage(err, t('portal.overtime.bulkCancelFailed'))),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ['my-overtime'] }),
   });
 
@@ -96,7 +96,7 @@ export function Overtime() {
       setSelectedOvertimeIds(outcome.failed.map((failure) => failure.id));
       setBulkError(summarizeBulkFailure(outcome, 'deleted'));
     },
-    onError: (err: unknown) => setBulkError(getErrorMessage(err, 'Failed to delete the selected applications')),
+    onError: (err: unknown) => setBulkError(getErrorMessage(err, t('portal.overtime.bulkDeleteFailed'))),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ['my-overtime'] }),
   });
 
@@ -126,11 +126,11 @@ export function Overtime() {
   const handleSubmit = () => {
     setFormError('');
     if (!form.ot_date) {
-      setFormError('Pick an OT date.');
+      setFormError(t('portal.overtime.dateRequired'));
       return;
     }
     if (!form.start_time || !form.end_time || form.hours <= 0) {
-      setFormError('Start and end time must differ.');
+      setFormError(t('portal.overtime.timesMustDiffer'));
       return;
     }
     createMutation.mutate({
@@ -140,13 +140,13 @@ export function Overtime() {
   };
 
   const handleCancel = (app: OvertimeApplication) => {
-    if (confirm('Cancel this overtime application?')) {
+    if (confirm(t('portal.overtime.cancelConfirm'))) {
       cancelMutation.mutate(app.id);
     }
   };
 
   const handleDelete = (app: OvertimeApplication) => {
-    if (confirm('Permanently delete this cancelled overtime application?')) {
+    if (confirm(t('portal.overtime.deleteConfirm'))) {
       deleteMutation.mutate(app.id);
     }
   };
@@ -184,22 +184,22 @@ export function Overtime() {
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="page-header">
-          <h1 className="page-title">Overtime</h1>
-          <p className="page-subtitle">Submit and track overtime applications</p>
+          <h1 className="page-title">{t('portal.overtime.title')}</h1>
+          <p className="page-subtitle">{t('portal.overtime.subtitle')}</p>
         </div>
         <button
           onClick={() => { resetForm(); setShowModal(true); }}
           className="btn-primary flex items-center gap-2 w-full sm:w-auto"
         >
           <Plus className="w-4 h-4" />
-          Apply OT
+          {t('portal.overtime.apply')}
         </button>
       </div>
 
       {/* Applications List */}
       <div className="bg-white rounded-2xl border border-gray-200">
         <div className="flex items-center justify-between gap-3 px-6 py-4 border-b border-gray-100">
-          <h3 className="text-sm font-semibold text-gray-900">My Applications</h3>
+          <h3 className="text-sm font-semibold text-gray-900">{t('portal.overtime.myApplications')}</h3>
           {applications.length > 0 && (
             <label className="inline-flex items-center gap-2 text-xs font-medium text-gray-500">
               <input
@@ -209,19 +209,19 @@ export function Overtime() {
                 onChange={toggleAllDisplayedOvertime}
                 className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-900"
               />
-              Select all
+              {t('common.selectAll')}
             </label>
           )}
         </div>
         {selectedOvertimeIds.length > 0 && (
           <div className="border-b border-gray-100 bg-gray-50">
             <div className="flex flex-col gap-2 px-6 py-3 sm:flex-row sm:items-center sm:justify-between">
-              <span className="text-sm font-medium text-gray-700">{selectedOvertimeIds.length} selected</span>
+              <span className="text-sm font-medium text-gray-700">{t('common.selected', { count: selectedOvertimeIds.length })}</span>
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
                   onClick={() => {
-                    if (confirm(`Cancel ${selectedCancelableIds.length} selected overtime application(s)?`)) {
+                    if (confirm(t('portal.overtime.bulkCancelConfirm', { count: selectedCancelableIds.length }))) {
                       setBulkError('');
                       bulkCancelMutation.mutate(selectedCancelableIds);
                     }
@@ -230,12 +230,12 @@ export function Overtime() {
                   className="btn-secondary !py-2 text-sm disabled:opacity-50"
                 >
                   <X className="w-4 h-4" />
-                  {bulkCancelMutation.isPending ? 'Cancelling...' : 'Cancel Selected'}
+                  {bulkCancelMutation.isPending ? t('common.cancelling') : t('common.cancelSelected')}
                 </button>
                 <button
                   type="button"
                   onClick={() => {
-                    if (confirm(`Permanently delete ${selectedDeletableIds.length} cancelled overtime application(s)?`)) {
+                    if (confirm(t('portal.overtime.bulkDeleteConfirm', { count: selectedDeletableIds.length }))) {
                       setBulkError('');
                       bulkDeleteMutation.mutate(selectedDeletableIds);
                     }
@@ -244,7 +244,7 @@ export function Overtime() {
                   className="btn-secondary !py-2 text-sm text-red-600 hover:!bg-red-50 disabled:opacity-50"
                 >
                   <Trash2 className="w-4 h-4" />
-                  {bulkDeleteMutation.isPending ? 'Deleting...' : 'Delete Selected'}
+                  {bulkDeleteMutation.isPending ? t('common.deleting') : t('common.deleteSelected')}
                 </button>
               </div>
             </div>
@@ -254,11 +254,11 @@ export function Overtime() {
           </div>
         )}
         {isLoading ? (
-          <div className="p-8 text-center text-sm text-gray-400">Loading...</div>
+          <div className="p-8 text-center text-sm text-gray-400">{t('common.loading')}</div>
         ) : applications.length === 0 ? (
           <div className="p-12 text-center">
             <Clock className="w-10 h-10 text-gray-200 mx-auto mb-3" />
-            <p className="text-sm text-gray-400">No overtime applications yet</p>
+            <p className="text-sm text-gray-400">{t('portal.overtime.empty')}</p>
           </div>
         ) : (
           <div className="divide-y divide-gray-100">
@@ -271,7 +271,7 @@ export function Overtime() {
                       checked={selectedOvertimeIds.includes(app.id)}
                       onChange={() => toggleOvertimeSelection(app.id)}
                       className="mt-1 h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-900"
-                      aria-label={`Select overtime application for ${formatDate(app.ot_date)}`}
+                      aria-label={t('portal.overtime.selectAria', { date: formatDate(app.ot_date) })}
                     />
                     <div className="space-y-1">
                     <div className="flex items-center gap-3">
@@ -287,11 +287,11 @@ export function Overtime() {
                     </div>
                     <p className="text-sm text-gray-500">
                       {app.start_time?.slice(0, 5)} — {app.end_time?.slice(0, 5)}
-                      <span className="ml-2 font-medium text-gray-700">{Number(app.hours)}h</span>
+                      <span className="ml-2 font-medium text-gray-700">{t('attendance.hoursShort', { value: Number(app.hours) })}</span>
                     </p>
                     {app.reason && <p className="text-sm text-gray-400">{app.reason}</p>}
                     {app.review_notes && (
-                      <p className="text-sm text-amber-600 mt-1">Note: {app.review_notes}</p>
+                      <p className="text-sm text-amber-600 mt-1">{t('portal.overtime.reviewNote', { notes: app.review_notes })}</p>
                     )}
                     </div>
                   </div>
@@ -301,7 +301,7 @@ export function Overtime() {
                         onClick={() => handleCancel(app)}
                         disabled={cancelMutation.isPending}
                         className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50"
-                        title="Cancel"
+                        title={t('common.cancel')}
                       >
                         <X className="w-4 h-4" />
                       </button>
@@ -311,7 +311,7 @@ export function Overtime() {
                         onClick={() => handleDelete(app)}
                         disabled={deleteMutation.isPending}
                         className="p-1.5 rounded-lg text-red-500 hover:text-red-700 hover:bg-red-50"
-                        title="Delete permanently"
+                        title={t('common.deletePermanently')}
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -328,23 +328,23 @@ export function Overtime() {
       <Modal
         open={showModal}
         onClose={() => setShowModal(false)}
-        title="Apply for Overtime"
+        title={t('portal.overtime.modalTitle')}
         footer={
           <div className="flex justify-end gap-3">
-            <button onClick={() => setShowModal(false)} className="btn-secondary">Cancel</button>
+            <button onClick={() => setShowModal(false)} className="btn-secondary">{t('common.cancel')}</button>
             <button
               onClick={handleSubmit}
               disabled={createMutation.isPending}
               className="btn-primary"
             >
-              {createMutation.isPending ? 'Submitting...' : 'Submit Application'}
+              {createMutation.isPending ? t('common.submitting') : t('portal.overtime.submit')}
             </button>
           </div>
         }
       >
         <div className="space-y-4">
           <div>
-            <label className="form-label">OT Date *</label>
+            <label className="form-label">{t('portal.overtime.otDate')} *</label>
             <input
               type="date"
               value={form.ot_date}
@@ -354,7 +354,7 @@ export function Overtime() {
           </div>
 
           <div>
-            <label className="form-label">OT Type *</label>
+            <label className="form-label">{t('portal.overtime.otType')} *</label>
             <div className="grid grid-cols-3 gap-2">
               {(['normal', 'rest_day', 'public_holiday'] as const).map((t) => (
                 <label
@@ -382,12 +382,12 @@ export function Overtime() {
 
           <div className="grid grid-cols-2 gap-4">
             <TimeSelector
-              label="Start Time *"
+              label={t('portal.overtime.startTime')}
               value={form.start_time}
               onChange={(value) => updateTime('start_time', value)}
             />
             <TimeSelector
-              label="End Time *"
+              label={t('portal.overtime.endTime')}
               value={form.end_time}
               onChange={(value) => updateTime('end_time', value)}
             />
@@ -396,25 +396,25 @@ export function Overtime() {
           {form.hours > 0 && (
             <div className="bg-gray-50 rounded-lg p-3 text-center">
               <span className="text-2xl font-bold text-gray-900">{form.hours}</span>
-              <span className="text-sm text-gray-400 ml-1">hours</span>
+              <span className="text-sm text-gray-400 ml-1">{t('portal.overtime.hoursUnit')}</span>
             </div>
           )}
 
           <div>
-            <label className="form-label">Reason</label>
+            <label className="form-label">{t('common.reason')}</label>
             <textarea
               value={form.reason}
               onChange={(e) => setForm({ ...form, reason: e.target.value })}
               className="form-input"
               rows={2}
-              placeholder="Describe the work performed..."
+              placeholder={t('portal.overtime.reasonPlaceholder')}
             />
           </div>
 
           {formError && <p className="text-sm text-red-600">{formError}</p>}
 
           {createMutation.isError && (
-            <p className="text-sm text-red-600">{getErrorMessage(createMutation.error, 'Failed to submit')}</p>
+            <p className="text-sm text-red-600">{getErrorMessage(createMutation.error, t('portal.overtime.submitFailed'))}</p>
           )}
         </div>
       </Modal>

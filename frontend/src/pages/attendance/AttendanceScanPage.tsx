@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router';
+import { useTranslation } from 'react-i18next';
 import { CheckCircle2, XCircle, Loader2, MapPin, QrCode, Info, RefreshCw, Navigation } from 'lucide-react';
 import { checkInQr, getAttendanceMethod } from '@/api/attendance';
 import { useAuth } from '@/context/AuthContext';
 import { BrandLogo } from '@/components/ui/BrandLogo';
 import { classifyCheckInError, getGeolocation } from '@/lib/attendance';
+import { getErrorMessage, translateServerMessage } from '@/lib/utils';
+import { formatTimeSeconds } from '@/lib/format';
 
 type State =
   | 'locating'
@@ -18,6 +21,7 @@ type State =
   | 'login-required';
 
 export function AttendanceScanPage() {
+  const { t } = useTranslation();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { isAuthenticated, isLoading: authLoading, user } = useAuth();
@@ -51,7 +55,8 @@ export function AttendanceScanPage() {
       setState('success');
     } catch (e: unknown) {
       const err = e as { response?: { status?: number; data?: { error?: string } } };
-      const message = err.response?.data?.error || 'Check-in failed. Please try again.';
+      const raw = err.response?.data?.error;
+      const message = getErrorMessage(e, t('attendance.scan.checkInFailed'));
       setError(message);
 
       // Branch on what actually went wrong. Every failure — including "you
@@ -60,14 +65,14 @@ export function AttendanceScanPage() {
       // reads "…check in from an approved office location", so matching a bare
       // /location/ sent an off-site employee to a "grant permission and retry"
       // screen that could never succeed; `classifyCheckInError` splits the two.
-      switch (classifyCheckInError(message)) {
+      switch (classifyCheckInError(raw ?? message)) {
         case 'already-checked-in': setState('already-checked-in'); break;
         case 'outside-geofence':   setState('outside-geofence'); break;
         case 'location-permission': setState('location-required'); break;
         default:                   setState('error');
       }
     }
-  }, [token]); // eslint-disable-line react-hooks/exhaustive-deps -- Babel cannot identify setError as a stable React setter.
+  }, [token, t]); // eslint-disable-line react-hooks/exhaustive-deps -- Babel cannot identify setError as a stable React setter.
 
   useEffect(() => {
     if (!token) {
@@ -84,15 +89,15 @@ export function AttendanceScanPage() {
 
     if (!user?.employee_id) {
       setState('error');
-      setError('Your account is not linked to an employee profile. Please contact HR.');
+      setError(t('attendance.scan.noEmployeeProfile'));
       return;
     }
 
     void runCheckIn();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- t must not re-arm a check-in attempt on language switch; the visible text is re-rendered anyway via state
   }, [token, authLoading, isAuthenticated, navigate, user, runCheckIn, attempt]);
 
-  const formatTime = (iso: string) =>
-    new Date(iso).toLocaleTimeString('en-MY', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const formatTime = (iso: string) => formatTimeSeconds(iso);
 
   const retry = () => setAttempt((n) => n + 1);
 
@@ -113,8 +118,8 @@ export function AttendanceScanPage() {
                 <MapPin className="w-9 h-9 text-sky-500 animate-pulse" />
               </div>
               <div>
-                <h2 className="text-xl font-bold text-gray-900 mb-1">Getting Location…</h2>
-                <p className="text-sm text-gray-500">Please allow location access for attendance</p>
+                <h2 className="text-xl font-bold text-gray-900 mb-1">{t('attendance.scan.locating')}</h2>
+                <p className="text-sm text-gray-500">{t('attendance.scan.locatingBody')}</p>
               </div>
             </>
           )}
@@ -126,8 +131,8 @@ export function AttendanceScanPage() {
                 <Loader2 className="w-9 h-9 text-violet-500 animate-spin" />
               </div>
               <div>
-                <h2 className="text-xl font-bold text-gray-900 mb-1">Checking In…</h2>
-                <p className="text-sm text-gray-500">Recording your attendance</p>
+                <h2 className="text-xl font-bold text-gray-900 mb-1">{t('attendance.scan.checkingIn')}</h2>
+                <p className="text-sm text-gray-500">{t('attendance.scan.checkingInBody')}</p>
               </div>
             </>
           )}
@@ -139,23 +144,23 @@ export function AttendanceScanPage() {
                 <CheckCircle2 className="w-10 h-10 text-emerald-500" />
               </div>
               <div>
-                <h2 className="text-xl font-bold text-gray-900 mb-1">Checked In! ✓</h2>
+                <h2 className="text-xl font-bold text-gray-900 mb-1">{t('attendance.scan.checkedIn')}</h2>
                 {record && (
                   <p className="text-sm text-gray-500">
-                    Welcome, <strong className="text-gray-700">{user?.full_name}</strong>
+                    {t('attendance.scan.welcome', { name: user?.full_name })}
                     <br />
-                    at {formatTime(record.check_in_at)}
+                    {t('attendance.scan.atTime', { time: formatTime(record.check_in_at) })}
                   </p>
                 )}
               </div>
               <div className="w-full bg-emerald-50 rounded-2xl p-4 text-emerald-700 text-sm">
-                Your attendance has been recorded successfully.
+                {t('attendance.scan.recorded')}
               </div>
               <button
                 onClick={() => navigate('/portal/attendance')}
                 className="w-full py-3 bg-teal-700 text-white rounded-2xl text-sm font-semibold hover:bg-teal-800 transition-colors"
               >
-                View My Attendance
+                {t('attendance.scan.viewMyAttendance')}
               </button>
             </>
           )}
@@ -167,16 +172,16 @@ export function AttendanceScanPage() {
                 <Info className="w-10 h-10 text-sky-500" />
               </div>
               <div>
-                <h2 className="text-xl font-bold text-gray-900 mb-1">You're already checked in</h2>
+                <h2 className="text-xl font-bold text-gray-900 mb-1">{t('attendance.scan.alreadyTitle')}</h2>
                 <p className="text-sm text-gray-500">
-                  No need to scan again — your attendance for today is recorded.
+                  {t('attendance.scan.alreadyBody')}
                 </p>
               </div>
               <button
                 onClick={() => navigate('/portal/attendance')}
                 className="w-full py-3 bg-teal-700 text-white rounded-2xl text-sm font-semibold hover:bg-teal-800 transition-colors"
               >
-                View My Attendance
+                {t('attendance.scan.viewMyAttendance')}
               </button>
             </>
           )}
@@ -188,20 +193,20 @@ export function AttendanceScanPage() {
                 <MapPin className="w-10 h-10 text-amber-500" />
               </div>
               <div>
-                <h2 className="text-xl font-bold text-gray-900 mb-1">Location Needed</h2>
-                <p className="text-sm text-gray-500">{error}</p>
+                <h2 className="text-xl font-bold text-gray-900 mb-1">{t('attendance.scan.locationNeeded')}</h2>
+                <p className="text-sm text-gray-500">{translateServerMessage(error)}</p>
               </div>
               <button
                 onClick={retry}
                 className="w-full py-3 bg-teal-700 text-white rounded-2xl text-sm font-semibold hover:bg-teal-800 transition-colors flex items-center justify-center gap-2"
               >
-                <RefreshCw className="w-4 h-4" /> Enable location and retry
+                <RefreshCw className="w-4 h-4" /> {t('attendance.scan.enableLocationRetry')}
               </button>
               <button
                 onClick={() => navigate('/portal/attendance')}
                 className="w-full py-3 border border-gray-200 text-gray-700 rounded-2xl text-sm font-semibold hover:bg-gray-50 transition-colors"
               >
-                Go to Portal
+                {t('attendance.scan.goToPortal')}
               </button>
             </>
           )}
@@ -215,20 +220,20 @@ export function AttendanceScanPage() {
                 <Navigation className="w-10 h-10 text-amber-500" />
               </div>
               <div>
-                <h2 className="text-xl font-bold text-gray-900 mb-1">You're not at an approved location</h2>
-                <p className="text-sm text-gray-500">{error}</p>
+                <h2 className="text-xl font-bold text-gray-900 mb-1">{t('attendance.scan.notAtLocation')}</h2>
+                <p className="text-sm text-gray-500">{translateServerMessage(error)}</p>
               </div>
               <button
                 onClick={retry}
                 className="w-full py-3 bg-teal-700 text-white rounded-2xl text-sm font-semibold hover:bg-teal-800 transition-colors flex items-center justify-center gap-2"
               >
-                <RefreshCw className="w-4 h-4" /> I've moved — try again
+                <RefreshCw className="w-4 h-4" /> {t('attendance.scan.movedRetry')}
               </button>
               <button
                 onClick={() => navigate('/portal/attendance')}
                 className="w-full py-3 border border-gray-200 text-gray-700 rounded-2xl text-sm font-semibold hover:bg-gray-50 transition-colors"
               >
-                Go to Portal
+                {t('attendance.scan.goToPortal')}
               </button>
             </>
           )}
@@ -240,20 +245,20 @@ export function AttendanceScanPage() {
                 <XCircle className="w-10 h-10 text-red-500" />
               </div>
               <div>
-                <h2 className="text-xl font-bold text-gray-900 mb-1">Check-in Failed</h2>
-                <p className="text-sm text-gray-500">{error}</p>
+                <h2 className="text-xl font-bold text-gray-900 mb-1">{t('attendance.scan.failedTitle')}</h2>
+                <p className="text-sm text-gray-500">{translateServerMessage(error)}</p>
               </div>
               <button
                 onClick={retry}
                 className="w-full py-3 bg-teal-700 text-white rounded-2xl text-sm font-semibold hover:bg-teal-800 transition-colors flex items-center justify-center gap-2"
               >
-                <RefreshCw className="w-4 h-4" /> Try again
+                <RefreshCw className="w-4 h-4" /> {t('common.retry')}
               </button>
               <button
                 onClick={() => navigate('/portal/attendance')}
                 className="w-full py-3 border border-gray-200 text-gray-700 rounded-2xl text-sm font-semibold hover:bg-gray-50 transition-colors"
               >
-                Go to Portal
+                {t('attendance.scan.goToPortal')}
               </button>
             </>
           )}
@@ -265,8 +270,8 @@ export function AttendanceScanPage() {
                 <QrCode className="w-9 h-9 text-gray-400" />
               </div>
               <div>
-                <h2 className="text-xl font-bold text-gray-900 mb-1">Invalid QR Code</h2>
-                <p className="text-sm text-gray-500">Scan the QR code displayed at the attendance kiosk.</p>
+                <h2 className="text-xl font-bold text-gray-900 mb-1">{t('attendance.scan.invalidQr')}</h2>
+                <p className="text-sm text-gray-500">{t('attendance.scan.invalidQrBody')}</p>
               </div>
             </>
           )}

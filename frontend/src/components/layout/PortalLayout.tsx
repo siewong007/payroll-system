@@ -7,37 +7,40 @@ import { useQuery } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'framer-motion';
 import { getNotificationCount } from '@/api/notifications';
 import { BrandLogo } from '@/components/ui/BrandLogo';
+import { LanguageSwitcher } from '@/components/ui/LanguageSwitcher';
 import { PageTransition } from '@/components/ui/PageTransition';
+import { useTranslation } from 'react-i18next';
 
 const portalNav = [
-  { name: 'My Profile', href: '/portal/profile', icon: User },
-  { name: 'My Payslips', href: '/portal/payslips', icon: FileText },
-  { name: 'Leave', href: '/portal/leave', icon: Calendar },
-  { name: 'Attendance', href: '/portal/attendance', icon: ScanLine },
-  { name: 'Claims', href: '/portal/claims', icon: Receipt },
-  { name: 'Overtime', href: '/portal/overtime', icon: Clock },
-  { name: 'Team Calendar', href: '/portal/team-calendar', icon: Users },
-  { name: 'Notifications', href: '/portal/notifications', icon: Bell },
+  { nameKey: 'nav.portal.profile', href: '/portal/profile', icon: User },
+  { nameKey: 'nav.portal.payslips', href: '/portal/payslips', icon: FileText },
+  { nameKey: 'nav.portal.leave', href: '/portal/leave', icon: Calendar },
+  { nameKey: 'nav.portal.attendance', href: '/portal/attendance', icon: ScanLine },
+  { nameKey: 'nav.portal.claims', href: '/portal/claims', icon: Receipt },
+  { nameKey: 'nav.portal.overtime', href: '/portal/overtime', icon: Clock },
+  { nameKey: 'nav.portal.teamCalendar', href: '/portal/team-calendar', icon: Users },
+  { nameKey: 'nav.portal.notifications', href: '/portal/notifications', icon: Bell },
 ];
 
 // Primary tabs shown in mobile bottom bar
 const mobileTabNav = [
-  { name: 'Profile', href: '/portal/profile', icon: User },
-  { name: 'Payslips', href: '/portal/payslips', icon: FileText },
-  { name: 'Leave', href: '/portal/leave', icon: Calendar },
-  { name: 'Claims', href: '/portal/claims', icon: Receipt },
+  { nameKey: 'nav.portal.profileShort', href: '/portal/profile', icon: User },
+  { nameKey: 'nav.portal.payslipsShort', href: '/portal/payslips', icon: FileText },
+  { nameKey: 'nav.portal.leave', href: '/portal/leave', icon: Calendar },
+  { nameKey: 'nav.portal.claims', href: '/portal/claims', icon: Receipt },
 ];
 
 // Items shown in "More" menu on mobile
 const mobileMoreNav = [
-  { name: 'Attendance', href: '/portal/attendance', icon: ScanLine },
-  { name: 'Overtime', href: '/portal/overtime', icon: Clock },
-  { name: 'Team Calendar', href: '/portal/team-calendar', icon: Users },
-  { name: 'Notifications', href: '/portal/notifications', icon: Bell },
+  { nameKey: 'nav.portal.attendance', href: '/portal/attendance', icon: ScanLine },
+  { nameKey: 'nav.portal.overtime', href: '/portal/overtime', icon: Clock },
+  { nameKey: 'nav.portal.teamCalendar', href: '/portal/team-calendar', icon: Users },
+  { nameKey: 'nav.portal.notifications', href: '/portal/notifications', icon: Bell },
 ];
 
 export function PortalLayout() {
   const { user, logout, isAuthenticated, isLoading } = useAuth();
+  const { t } = useTranslation();
   const location = useLocation();
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
@@ -104,7 +107,7 @@ export function PortalLayout() {
               <BrandLogo variant="lockup-dark" className="h-8 w-auto shrink-0" />
               <span className="inline-flex items-center gap-1 bg-gradient-to-r from-teal-500 to-emerald-500 text-white text-[10px] font-semibold px-2 py-0.5 rounded-full shadow-[0_2px_10px_-2px_var(--glow)]">
                 <Sparkles className="w-2.5 h-2.5" />
-                PORTAL
+                {t('nav.portalBadge')}
               </span>
             </div>
 
@@ -116,7 +119,7 @@ export function PortalLayout() {
                   location.pathname.startsWith(item.href + '/');
                 return (
                   <Link
-                    key={item.name}
+                    key={item.nameKey}
                     to={item.href}
                     className={`relative flex items-center gap-1.5 px-3 py-2 text-sm rounded-xl transition-all-fast ${
                       isActive
@@ -132,8 +135,8 @@ export function PortalLayout() {
                       />
                     )}
                     <item.icon className={`relative w-4 h-4 ${isActive ? 'text-teal-600' : ''}`} />
-                    <span className="relative">{item.name}</span>
-                    {item.name === 'Notifications' && hasUnread && (
+                    <span className="relative whitespace-nowrap">{t(item.nameKey)}</span>
+                    {item.nameKey === 'nav.portal.notifications' && hasUnread && (
                       <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 text-[10px] font-bold bg-red-500 text-white rounded-full flex items-center justify-center leading-none shadow-[0_0_10px_rgba(239,68,68,0.6)]">
                         {notifCount.unread}
                       </span>
@@ -149,6 +152,7 @@ export function PortalLayout() {
             {/* Mobile notification bell */}
             <Link
               to="/portal/notifications"
+              aria-label={t('nav.portal.notifications')}
               className="relative md:hidden p-2 text-gray-500 hover:text-gray-900 hover:bg-white/60 rounded-lg transition-all-fast"
             >
               <Bell className="w-5 h-5" />
@@ -167,7 +171,7 @@ export function PortalLayout() {
                 <div className="w-8 h-8 rounded-full bg-gradient-to-br from-teal-500 to-emerald-500 ring-2 ring-white/80 shadow-[0_4px_14px_-4px_var(--glow)] flex items-center justify-center text-xs font-bold text-white">
                   {user?.full_name?.[0] || 'U'}
                 </div>
-                <span className="hidden md:inline font-medium">{user?.full_name || 'User'}</span>
+                <span className="hidden md:inline font-medium">{user?.full_name || t('common.user')}</span>
                 <ChevronDown
                   className={`hidden md:block w-3.5 h-3.5 text-gray-400 transition-transform duration-200 ${showUserMenu ? 'rotate-180' : ''}`}
                 />
@@ -199,14 +203,17 @@ export function PortalLayout() {
                         onClick={() => setShowUserMenu(false)}
                         className="flex items-center gap-2.5 w-full px-4 py-3 text-sm text-gray-600 border-b border-gray-200/60 hover:bg-white/70 hover:text-teal-700 transition-all-fast"
                       >
-                        <LayoutDashboard className="w-4 h-4" /> Admin Console
+                        <LayoutDashboard className="w-4 h-4" /> {t('nav.adminConsole')}
                       </Link>
                     )}
+                    <div className="px-4 py-2 border-b border-gray-200/60">
+                      <LanguageSwitcher />
+                    </div>
                     <button
                       onClick={logout}
                       className="flex items-center gap-2.5 w-full px-4 py-3 text-sm text-gray-600 hover:bg-white/70 hover:text-red-600 transition-all-fast"
                     >
-                      <LogOut className="w-4 h-4" /> Sign Out
+                      <LogOut className="w-4 h-4" /> {t('nav.signOut')}
                     </button>
                   </motion.div>
                 )}
@@ -235,7 +242,7 @@ export function PortalLayout() {
               location.pathname.startsWith(item.href + '/');
             return (
               <Link
-                key={item.name}
+                key={item.nameKey}
                 to={item.href}
                 onClick={() => setShowMoreMenu(false)}
                 className={`relative z-20 flex-1 flex flex-col items-center gap-0.5 py-2 pt-2.5 text-[10px] font-medium transition-colors ${
@@ -250,7 +257,7 @@ export function PortalLayout() {
                   />
                 )}
                 <item.icon className="w-5 h-5" />
-                {item.name}
+                <span className="max-w-full truncate">{t(item.nameKey)}</span>
               </Link>
             );
           })}
@@ -271,7 +278,7 @@ export function PortalLayout() {
                 />
               )}
               <MoreHorizontal className="w-5 h-5" />
-              More
+              {t('nav.portal.more')}
             </button>
 
             <AnimatePresence>
@@ -289,7 +296,7 @@ export function PortalLayout() {
                         location.pathname.startsWith(item.href);
                       return (
                         <Link
-                          key={item.name}
+                          key={item.nameKey}
                           to={item.href}
                           onClick={() => setShowMoreMenu(false)}
                           className={`flex items-center gap-3 px-4 py-3 text-sm transition-colors ${
@@ -299,8 +306,8 @@ export function PortalLayout() {
                           }`}
                         >
                           <item.icon className={`w-4 h-4 ${isActive ? 'text-teal-600' : ''}`} />
-                          {item.name}
-                          {item.name === 'Notifications' && hasUnread && (
+                          {t(item.nameKey)}
+                          {item.nameKey === 'nav.portal.notifications' && hasUnread && (
                             <span className="ml-auto min-w-[18px] h-[18px] px-1 text-[10px] font-bold bg-red-500 text-white rounded-full flex items-center justify-center leading-none">
                               {notifCount.unread}
                             </span>

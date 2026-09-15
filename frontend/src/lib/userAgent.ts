@@ -1,3 +1,5 @@
+import i18n from '@/i18n';
+
 export type DeviceType = 'desktop' | 'mobile' | 'tablet' | 'unknown';
 
 export interface ParsedUserAgent {
@@ -35,7 +37,9 @@ export function parseUserAgent(ua: string | null | undefined): ParsedUserAgent {
 }
 
 export function deviceLabel(p: ParsedUserAgent): string {
-  if (p.deviceType === 'unknown' && p.browser === 'Unknown browser') return 'Unknown device';
-  if (p.browser === 'Unknown browser') return `Browser on ${p.os}`;
-  return `${p.browser} on ${p.os}`;
+  const t = i18n.t.bind(i18n);
+  const os = p.os === 'Unknown OS' ? t('devices.unknownOs') : p.os;
+  if (p.deviceType === 'unknown' && p.browser === 'Unknown browser') return t('devices.unknown');
+  if (p.browser === 'Unknown browser') return t('devices.browserOn', { os });
+  return t('devices.nameOn', { browser: p.browser, os });
 }

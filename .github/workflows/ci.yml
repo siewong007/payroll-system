@@ -159,6 +159,9 @@ jobs:
       - run: bun run lint
       - run: bun run test
       - run: bun run typecheck
+      # Hardcoded-string + server-error-map gate; runs from the repo root.
+      - run: node scripts/i18n-scan.mjs --ci
+        working-directory: ${{ github.workspace }}
 
   frontend-build:
     name: Frontend Build

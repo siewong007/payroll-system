@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router';
+import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Ban, CheckCircle, Clock, Download, FileText, Lock, Pencil, RotateCcw, Save, Send, Trash2, X } from 'lucide-react';
 import {
@@ -16,29 +17,18 @@ import {
   submitPayrollForApproval,
   updatePayrollItemPcb,
 } from '@/api/payroll';
-import { formatMYR, getErrorMessage } from '@/lib/utils';
+import { formatMYR, getErrorMessage, translateServerMessage } from '@/lib/utils';
+import { formatDate, formatDateTime, formatPeriod } from '@/lib/format';
+import { payrollStatusLabel } from './statusMeta';
 import { useAuth } from '@/context/AuthContext';
 import { canApprovePayroll, canPreparePayroll } from '@/lib/roles';
 import { userCan } from '@/lib/usePermissions';
 import { Modal } from '@/components/ui/Modal';
 import type { JournalPreview } from '@/types';
+import type { TFunction } from 'i18next';
+import i18n from '@/i18n';
 import { PayslipBreakdownDrawer } from './PayslipBreakdownDrawer';
 import type { PayrollSummary } from '@/types';
-
-const MONTHS = [
-  '', 'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-];
-
-const STATUS_LABELS: Record<string, string> = {
-  draft: 'Draft',
-  processing: 'Processing',
-  processed: 'Processed',
-  pending_approval: 'Pending Approval',
-  approved: 'Approved',
-  paid: 'Paid',
-  cancelled: 'Cancelled',
-};
 
 const canDeletePayrollRun = (status: string) => ['draft', 'processed', 'cancelled'].includes(status);
 const canDownloadPayslips = (status: string) => ['approved', 'paid'].includes(status);
@@ -49,6 +39,7 @@ const canCancelAsPreparer = (status: string) => ['draft', 'processed'].includes(
 const canCancelAsApprover = (status: string) => ['pending_approval', 'approved'].includes(status);
 
 export function PayrollDetail() {
+  const { t } = useTranslation();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -81,7 +72,7 @@ export function PayrollDetail() {
       queryClient.invalidateQueries({ queryKey: ['payrollRunAuditLogs', id] });
     },
     onError: (error: unknown) => {
-      setLifecycleError(getErrorMessage(error, 'Failed to submit payroll run for approval'));
+      setLifecycleError(getErrorMessage(error, t('payroll.detail.submitFailed')));
     },
   });
 
@@ -94,7 +85,7 @@ export function PayrollDetail() {
       queryClient.invalidateQueries({ queryKey: ['payrollRunAuditLogs', id] });
     },
     onError: (error: unknown) => {
-      setLifecycleError(getErrorMessage(error, 'Failed to approve payroll run'));
+      setLifecycleError(getErrorMessage(error, t('payroll.detail.approveFailed')));
     },
   });
 
@@ -107,7 +98,7 @@ export function PayrollDetail() {
       queryClient.invalidateQueries({ queryKey: ['payrollRunAuditLogs', id] });
     },
     onError: (error: unknown) => {
-      setLifecycleError(getErrorMessage(error, 'Failed to return payroll run for changes'));
+      setLifecycleError(getErrorMessage(error, t('payroll.detail.returnFailed')));
     },
   });
 
@@ -120,7 +111,7 @@ export function PayrollDetail() {
       queryClient.invalidateQueries({ queryKey: ['payrollRunAuditLogs', id] });
     },
     onError: (error: unknown) => {
-      setLifecycleError(getErrorMessage(error, 'Failed to lock payroll run'));
+      setLifecycleError(getErrorMessage(error, t('payroll.detail.lockFailed')));
     },
   });
 
@@ -133,7 +124,7 @@ export function PayrollDetail() {
       queryClient.invalidateQueries({ queryKey: ['payrollRunAuditLogs', id] });
     },
     onError: (error: unknown) => {
-      setLifecycleError(getErrorMessage(error, 'Failed to cancel payroll run'));
+      setLifecycleError(getErrorMessage(error, t('payroll.detail.cancelFailed')));
     },
   });
 
@@ -144,7 +135,7 @@ export function PayrollDetail() {
       setJournal(preview);
     },
     onError: (error: unknown) => {
-      setLifecycleError(getErrorMessage(error, 'Failed to load journal preview'));
+      setLifecycleError(getErrorMessage(error, t('payroll.detail.journalFailed')));
     },
   });
 
@@ -155,7 +146,7 @@ export function PayrollDetail() {
       navigate('/payroll');
     },
     onError: (error: unknown) => {
-      setLifecycleError(getErrorMessage(error, 'Failed to delete payroll run'));
+      setLifecycleError(getErrorMessage(error, t('payroll.detail.deleteFailed')));
     },
   });
 
@@ -171,7 +162,7 @@ export function PayrollDetail() {
       setPcbError('');
     },
     onError: (err: unknown) => {
-      setPcbError(getErrorMessage(err, 'Failed to update PCB'));
+      setPcbError(getErrorMessage(err, t('payroll.detail.pcbFailed')));
     },
   });
 
@@ -183,7 +174,7 @@ export function PayrollDetail() {
     );
   }
 
-  if (!data) return <div className="text-center text-gray-500 py-12">Payroll run not found</div>;
+  if (!data) return <div className="text-center text-gray-500 py-12">{t('payroll.detail.notFound')}</div>;
 
   const { payroll_run: run, items } = data;
   const canPrepare = canPreparePayroll(user);
@@ -203,7 +194,7 @@ export function PayrollDetail() {
   const savePcb = (employeeId: string) => {
     const amount = Number(pcbInput);
     if (!Number.isFinite(amount) || amount < 0) {
-      setPcbError('PCB amount must be zero or greater');
+      setPcbError(t('payroll.detail.pcbInvalid'));
       return;
     }
     updatePcbMutation.mutate({ employeeId, pcbAmount: Math.round(amount * 100) });
@@ -215,16 +206,16 @@ export function PayrollDetail() {
         onClick={() => navigate('/payroll')}
         className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700 mb-4"
       >
-        <ArrowLeft className="w-4 h-4" /> Back to Payroll
+        <ArrowLeft className="w-4 h-4" /> {t('payroll.process.backToPayroll')}
       </button>
 
       {/* Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-6">
         <div>
           <h1 className="text-xl sm:text-2xl font-bold text-gray-900">
-            {MONTHS[run.period_month]} {run.period_year} Payroll
+            {t('payroll.detail.title', { period: formatPeriod(run.period_year, run.period_month) })}
           </h1>
-          <p className="text-gray-500">{run.employee_count} employees processed</p>
+          <p className="text-gray-500">{t('payroll.detail.employeesProcessed', { count: run.employee_count })}</p>
         </div>
         <div className="flex items-center gap-3">
           {canDownloadPayslips(run.status) && (
@@ -232,13 +223,13 @@ export function PayrollDetail() {
               onClick={() => downloadRunPayslips(id!)}
               className="flex items-center gap-2 bg-white border border-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-50 text-sm font-medium"
             >
-              <Download className="w-4 h-4" /> Download Payslips
+              <Download className="w-4 h-4" /> {t('payroll.detail.downloadPayslips')}
             </button>
           )}
           {canPrepare && canDeletePayrollRun(run.status) && (
             <button
               onClick={() => {
-                if (confirm(`Delete ${MONTHS[run.period_month]} ${run.period_year} payroll run? This cannot be undone.`)) {
+                if (confirm(t('payroll.deleteConfirm', { period: formatPeriod(run.period_year, run.period_month) }))) {
                   deleteMutation.mutate();
                 }
               }}
@@ -246,7 +237,7 @@ export function PayrollDetail() {
               className="flex items-center gap-2 bg-white border border-red-200 text-red-600 px-4 py-2 rounded-lg hover:bg-red-50 disabled:opacity-50 text-sm font-medium"
             >
               <Trash2 className="w-4 h-4" />
-              {deleteMutation.isPending ? 'Deleting...' : 'Delete'}
+              {deleteMutation.isPending ? t('common.deleting') : t('common.delete')}
             </button>
           )}
           {canPrepare && run.status === 'processed' && (
@@ -256,21 +247,21 @@ export function PayrollDetail() {
               className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm font-medium"
             >
               <Send className="w-4 h-4" />
-              {submitMutation.isPending ? 'Submitting...' : 'Submit for Approval'}
+              {submitMutation.isPending ? t('payroll.detail.submitting') : t('payroll.detail.submitForApproval')}
             </button>
           )}
           {canApprove && run.status === 'pending_approval' && (
             <>
               <button
                 onClick={() => {
-                  const reason = prompt('Reason for returning this payroll run?')?.trim();
+                  const reason = prompt(t('payroll.detail.returnPrompt'))?.trim();
                   if (reason !== undefined) returnMutation.mutate(reason || undefined);
                 }}
                 disabled={returnMutation.isPending}
                 className="flex items-center gap-2 bg-white border border-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-50 disabled:opacity-50 text-sm font-medium"
               >
                 <RotateCcw className="w-4 h-4" />
-                {returnMutation.isPending ? 'Returning...' : 'Return'}
+                {returnMutation.isPending ? t('payroll.detail.returning') : t('payroll.detail.return')}
               </button>
               <button
                 onClick={() => approveMutation.mutate()}
@@ -278,7 +269,7 @@ export function PayrollDetail() {
                 className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 disabled:opacity-50 text-sm font-medium"
               >
                 <CheckCircle className="w-4 h-4" />
-                {approveMutation.isPending ? 'Approving...' : 'Approve'}
+                {approveMutation.isPending ? t('payroll.detail.approving') : t('payroll.detail.approve')}
               </button>
             </>
           )}
@@ -289,7 +280,7 @@ export function PayrollDetail() {
               className="flex items-center gap-2 bg-black text-white px-4 py-2 rounded-lg hover:bg-gray-800 disabled:opacity-50 text-sm font-medium"
             >
               <Lock className="w-4 h-4" />
-              {lockMutation.isPending ? 'Locking...' : 'Lock & Mark Paid'}
+              {lockMutation.isPending ? t('payroll.detail.locking') : t('payroll.detail.lockMarkPaid')}
             </button>
           )}
           {canPay && canDownloadPayslips(run.status) && (
@@ -298,7 +289,7 @@ export function PayrollDetail() {
                 onClick={() => downloadPaymentFile(id!)}
                 className="flex items-center gap-2 bg-white border border-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-50 text-sm font-medium"
               >
-                <Download className="w-4 h-4" /> Payment File
+                <Download className="w-4 h-4" /> {t('payroll.detail.paymentFile')}
               </button>
               <button
                 onClick={() => journalMutation.mutate()}
@@ -306,21 +297,21 @@ export function PayrollDetail() {
                 className="flex items-center gap-2 bg-white border border-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-50 disabled:opacity-50 text-sm font-medium"
               >
                 <FileText className="w-4 h-4" />
-                {journalMutation.isPending ? 'Loading...' : 'Journal Preview'}
+                {journalMutation.isPending ? t('common.loading') : t('payroll.detail.journalPreview')}
               </button>
             </>
           )}
           {showCancel && (
             <button
               onClick={() => {
-                const reason = prompt('Reason for cancelling this payroll run? (required)')?.trim();
+                const reason = prompt(t('payroll.detail.cancelPrompt'))?.trim();
                 if (reason) cancelMutation.mutate(reason);
               }}
               disabled={cancelMutation.isPending}
               className="flex items-center gap-2 bg-white border border-red-200 text-red-600 px-4 py-2 rounded-lg hover:bg-red-50 disabled:opacity-50 text-sm font-medium"
             >
               <Ban className="w-4 h-4" />
-              {cancelMutation.isPending ? 'Cancelling...' : 'Cancel Run'}
+              {cancelMutation.isPending ? t('payroll.detail.cancelling') : t('payroll.detail.cancelRun')}
             </button>
           )}
           <span className={`px-3 py-1 rounded-full text-sm font-medium ${
@@ -329,7 +320,7 @@ export function PayrollDetail() {
             run.status === 'pending_approval' ? 'bg-blue-50 text-blue-700' :
             'bg-gray-100 text-gray-900'
           }`}>
-            {STATUS_LABELS[run.status] ?? run.status}
+            {payrollStatusLabel(run.status)}
           </span>
         </div>
       </div>
@@ -340,19 +331,20 @@ export function PayrollDetail() {
       )}
       {run.status === 'paid' && (
         <div className="mb-6 rounded-lg border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
-          This payroll run is paid and locked. Create an adjustment in a future payroll run for corrections.
+          {t('payroll.detail.paidNotice')}
         </div>
       )}
       {run.status === 'pending_approval' && (
         <div className="mb-6 rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-700">
-          This payroll run is submitted for approval. PCB edits and deletion are disabled while it is under review.
+          {t('payroll.detail.pendingNotice')}
         </div>
       )}
       {run.status === 'cancelled' && (
         <div className="mb-6 rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">
-          This payroll run was cancelled{run.cancel_reason ? `: ${run.cancel_reason}` : ''}
-          {run.cancelled_at ? ` on ${new Date(run.cancelled_at).toLocaleDateString()}` : ''}.
-          Its staged entries and claims were released; process a new run to re-pay this period.
+          {t('payroll.detail.cancelledNotice', {
+            reason: run.cancel_reason ? t('payroll.detail.cancelledReason', { reason: run.cancel_reason }) : '',
+            date: run.cancelled_at ? t('payroll.detail.cancelledOn', { date: formatDate(run.cancelled_at) }) : '',
+          })}
         </div>
       )}
 
@@ -361,19 +353,19 @@ export function PayrollDetail() {
       {/* Summary Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <div className="bg-white rounded-2xl shadow border border-gray-200 p-4">
-          <p className="text-xs text-gray-400">Total Gross</p>
+          <p className="text-xs text-gray-400">{t('payroll.totals.gross')}</p>
           <p className="text-lg font-bold mt-1">{formatMYR(run.total_gross)}</p>
         </div>
         <div className="bg-white rounded-2xl shadow border border-gray-200 p-4">
-          <p className="text-xs text-gray-400">Total Net</p>
+          <p className="text-xs text-gray-400">{t('payroll.totals.net')}</p>
           <p className="text-lg font-bold mt-1 text-green-600">{formatMYR(run.total_net)}</p>
         </div>
         <div className="bg-white rounded-2xl shadow border border-gray-200 p-4">
-          <p className="text-xs text-gray-400">Employer Cost</p>
+          <p className="text-xs text-gray-400">{t('payroll.totals.employerCost')}</p>
           <p className="text-lg font-bold mt-1">{formatMYR(run.total_employer_cost)}</p>
         </div>
         <div className="bg-white rounded-2xl shadow border border-gray-200 p-4">
-          <p className="text-xs text-gray-400">Total PCB</p>
+          <p className="text-xs text-gray-400">{t('payroll.totals.pcb')}</p>
           <p className="text-lg font-bold mt-1">{formatMYR(run.total_pcb)}</p>
         </div>
       </div>
@@ -381,19 +373,19 @@ export function PayrollDetail() {
       {/* Statutory Summary */}
       <div className="grid grid-cols-3 gap-4 mb-6">
         <div className="bg-white rounded-2xl shadow border border-gray-200 p-4">
-          <p className="text-xs text-gray-400">EPF (Employee + Employer)</p>
+          <p className="text-xs text-gray-400">{t('payroll.preview.epfFull')}</p>
           <p className="text-sm font-bold mt-1">
             {formatMYR(run.total_epf_employee)} + {formatMYR(run.total_epf_employer)}
           </p>
         </div>
         <div className="bg-white rounded-2xl shadow border border-gray-200 p-4">
-          <p className="text-xs text-gray-400">SOCSO (Employee + Employer)</p>
+          <p className="text-xs text-gray-400">{t('payroll.preview.socsoFull')}</p>
           <p className="text-sm font-bold mt-1">
             {formatMYR(run.total_socso_employee)} + {formatMYR(run.total_socso_employer)}
           </p>
         </div>
         <div className="bg-white rounded-2xl shadow border border-gray-200 p-4">
-          <p className="text-xs text-gray-400">EIS (Employee + Employer)</p>
+          <p className="text-xs text-gray-400">{t('payroll.preview.eisFull')}</p>
           <p className="text-sm font-bold mt-1">
             {formatMYR(run.total_eis_employee)} + {formatMYR(run.total_eis_employer)}
           </p>
@@ -403,11 +395,10 @@ export function PayrollDetail() {
       {/* Employee Details Table */}
       <div className="bg-white rounded-2xl shadow border border-gray-200 overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-200">
-          <h2 className="font-semibold">Employee Breakdown</h2>
+          <h2 className="font-semibold">{t('payroll.detail.breakdownTitle')}</h2>
           <p className="mt-1 text-sm text-gray-500">
-            Select an employee to see the stored line-by-line breakdown behind their figures.
-            {canEditPcb &&
-              ' PCB can be edited while this payroll run is processed and before it is submitted for approval.'}
+            {t('payroll.detail.breakdownBody')}
+            {canEditPcb && ` ${t('payroll.detail.breakdownPcbHint')}`}
           </p>
           {pcbError && (
             <div className="mt-3 rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -419,18 +410,18 @@ export function PayrollDetail() {
           <table className="w-full">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Employee</th>
-                <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase">Basic</th>
-                <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase">Allowances</th>
-                <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase">OT</th>
-                <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase">Gross</th>
+                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">{t('employees.columns.employee')}</th>
+                <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase">{t('payroll.cols.basic')}</th>
+                <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase">{t('payroll.cols.allowances')}</th>
+                <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase">{t('payroll.cols.ot')}</th>
+                <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase">{t('payroll.cols.gross')}</th>
                 <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase">EPF</th>
                 <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase">SOCSO</th>
                 <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase">EIS</th>
                 <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase">PCB</th>
-                <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase">Deductions</th>
-                <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase">Claims</th>
-                <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase">Net</th>
+                <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase">{t('payroll.cols.deductions')}</th>
+                <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase">{t('payroll.cols.claims')}</th>
+                <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase">{t('payroll.cols.net')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -471,7 +462,7 @@ export function PayrollDetail() {
                           onClick={() => savePcb(item.employee_id)}
                           disabled={updatePcbMutation.isPending}
                           className="rounded-lg p-1.5 text-green-600 hover:bg-green-50 disabled:opacity-50"
-                          title="Save PCB"
+                          title={t('payroll.detail.savePcb')}
                         >
                           <Save className="w-4 h-4" />
                         </button>
@@ -483,7 +474,7 @@ export function PayrollDetail() {
                             setPcbError('');
                           }}
                           className="rounded-lg p-1.5 text-gray-500 hover:bg-gray-100"
-                          title="Cancel PCB edit"
+                          title={t('payroll.detail.cancelPcbEdit')}
                         >
                           <X className="w-4 h-4" />
                         </button>
@@ -496,7 +487,7 @@ export function PayrollDetail() {
                             type="button"
                             onClick={() => startEditPcb(item.employee_id, item.pcb_amount)}
                             className="rounded-lg p-1.5 text-gray-500 hover:bg-gray-100 hover:text-black"
-                            title="Edit PCB"
+                            title={t('payroll.detail.editPcb')}
                           >
                             <Pencil className="w-4 h-4" />
                           </button>
@@ -527,25 +518,28 @@ export function PayrollDetail() {
       <Modal
         open={journal !== null}
         onClose={() => setJournal(null)}
-        title={`Journal preview — ${journal ? `${MONTHS[journal.period_month]} ${journal.period_year}` : ''}`}
+        title={t('payroll.detail.journalTitle', {
+          period: journal ? formatPeriod(journal.period_year, journal.period_month) : '',
+        })}
         maxWidth="max-w-3xl"
       >
         {journal && (
           <div>
             {!journal.balanced && (
               <div className="mb-4 rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">
-                This preview does not balance — debits {formatMYR(journal.total_debits)} vs credits{' '}
-                {formatMYR(journal.total_credits)}. That indicates a defect in the run's stored
-                figures; do not post it.
+                {t('payroll.detail.journalUnbalanced', {
+                  debits: formatMYR(journal.total_debits),
+                  credits: formatMYR(journal.total_credits),
+                })}
               </div>
             )}
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-xs text-gray-400 border-b border-gray-100">
-                  <th className="py-2 font-medium">Account</th>
-                  <th className="py-2 font-medium">Department</th>
-                  <th className="py-2 font-medium text-right">Debit</th>
-                  <th className="py-2 font-medium text-right">Credit</th>
+                  <th className="py-2 font-medium">{t('payroll.detail.journalCols.account')}</th>
+                  <th className="py-2 font-medium">{t('payroll.detail.journalCols.department')}</th>
+                  <th className="py-2 font-medium text-right">{t('payroll.detail.journalCols.debit')}</th>
+                  <th className="py-2 font-medium text-right">{t('payroll.detail.journalCols.credit')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -566,7 +560,7 @@ export function PayrollDetail() {
                   </tr>
                 ))}
                 <tr className="border-t border-gray-200 font-semibold">
-                  <td className="py-2" colSpan={2}>Totals</td>
+                  <td className="py-2" colSpan={2}>{t('payroll.detail.journalTotals')}</td>
                   <td className="py-2 text-right tabular-nums">{formatMYR(journal.total_debits)}</td>
                   <td className="py-2 text-right tabular-nums">{formatMYR(journal.total_credits)}</td>
                 </tr>
@@ -574,7 +568,7 @@ export function PayrollDetail() {
             </table>
             <ul className="mt-4 list-disc pl-5 text-xs text-gray-500 space-y-1">
               {journal.notes.map((note, i) => (
-                <li key={i}>{note}</li>
+                <li key={i}>{translateServerMessage(note)}</li>
               ))}
             </ul>
           </div>
@@ -590,25 +584,25 @@ export function PayrollDetail() {
 /// mutable and effective-dated, so a run recomputed today may not match what was
 /// paid. The run records its inputs at commit time; this surfaces them.
 function CalculationProvenance({ snapshot }: { snapshot: PayrollSummary['calculation_snapshot'] }) {
+  const { t } = useTranslation();
   if (!snapshot) return null;
 
   const ot = snapshot.overtime_settings;
 
   return (
     <div className="mt-6 rounded-2xl border border-gray-200 bg-white p-4 shadow">
-      <h2 className="mb-1 text-sm font-semibold text-gray-900">Calculation Basis</h2>
+      <h2 className="mb-1 text-sm font-semibold text-gray-900">{t('payroll.detail.basisTitle')}</h2>
       <p className="mb-3 text-xs text-gray-500">
-        Rated as at {snapshot.effective_date}. These are the rules that produced the figures above,
-        recorded when the run was processed.
+        {t('payroll.detail.basisBody', { date: formatDate(snapshot.effective_date) })}
       </p>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="text-left text-xs uppercase tracking-wide text-gray-400">
             <tr>
-              <th className="py-1 pr-4">Domain</th>
-              <th className="py-1 pr-4">Dataset</th>
-              <th className="py-1 pr-4">Source version</th>
-              <th className="py-1">Effective</th>
+              <th className="py-1 pr-4">{t('payroll.detail.basisCols.domain')}</th>
+              <th className="py-1 pr-4">{t('payroll.detail.basisCols.dataset')}</th>
+              <th className="py-1 pr-4">{t('payroll.detail.basisCols.sourceVersion')}</th>
+              <th className="py-1">{t('payroll.detail.basisCols.effective')}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
@@ -618,7 +612,7 @@ function CalculationProvenance({ snapshot }: { snapshot: PayrollSummary['calcula
                 <td className="py-1.5 pr-4 text-gray-600">{ruleSet.dataset_key}</td>
                 <td className="py-1.5 pr-4 text-gray-600">{ruleSet.source_version ?? '—'}</td>
                 <td className="py-1.5 text-gray-600">
-                  {ruleSet.effective_from} → {ruleSet.effective_to ?? 'open'}
+                  {formatDate(ruleSet.effective_from)} → {ruleSet.effective_to ? formatDate(ruleSet.effective_to) : t('payroll.detail.effectiveOpen')}
                 </td>
               </tr>
             ))}
@@ -626,40 +620,45 @@ function CalculationProvenance({ snapshot }: { snapshot: PayrollSummary['calcula
         </table>
       </div>
       <p className="mt-3 text-xs text-gray-500">
-        Overtime rated at {ot.multiplier_normal}× normal, {ot.multiplier_rest_day}× rest day,{' '}
-        {ot.multiplier_public_holiday}× public holiday, on a {ot.working_days_per_month}-day month
-        and {ot.effective_hours_per_day}-hour day.
+        {t('payroll.detail.otRated', {
+          normal: ot.multiplier_normal,
+          restDay: ot.multiplier_rest_day,
+          publicHoliday: ot.multiplier_public_holiday,
+          daysPerMonth: ot.working_days_per_month,
+          hoursPerDay: ot.effective_hours_per_day,
+        })}
       </p>
     </div>
   );
 }
 
 function PayrollAuditTimeline({ logs }: { logs: Awaited<ReturnType<typeof getPayrollRunAuditLogs>> }) {
+  const { t } = useTranslation();
   const visibleLogs = logs.slice(0, 6);
 
   return (
     <div className="mb-6 bg-white rounded-2xl shadow border border-gray-200 p-4">
       <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-gray-900">Audit Trail</h2>
-        <span className="text-xs text-gray-400">{logs.length} records</span>
+        <h2 className="text-sm font-semibold text-gray-900">{t('payroll.detail.auditTitle')}</h2>
+        <span className="text-xs text-gray-400">{t('payroll.detail.auditRecords', { count: logs.length })}</span>
       </div>
       {visibleLogs.length === 0 ? (
-        <p className="text-sm text-gray-400">No payroll lifecycle events recorded yet.</p>
+        <p className="text-sm text-gray-400">{t('payroll.detail.auditEmpty')}</p>
       ) : (
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {visibleLogs.map((log) => (
             <div key={log.id} className="rounded-lg border border-gray-100 px-3 py-2">
               <div className="mb-1 flex items-center justify-between gap-2">
                 <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${getAuditActionClass(log.action)}`}>
-                  {formatAuditAction(log.action)}
+                  {formatAuditAction(log.action, t)}
                 </span>
                 <span className="inline-flex items-center gap-1 text-xs text-gray-400">
                   <Clock className="h-3 w-3" />
-                  {formatAuditTimestamp(log.created_at)}
+                  {formatDateTime(log.created_at)}
                 </span>
               </div>
-              <p className="truncate text-sm text-gray-700">{log.description || 'Payroll event'}</p>
-              <p className="mt-0.5 truncate text-xs text-gray-400">{log.user_full_name || log.user_email || 'System'}</p>
+              <p className="truncate text-sm text-gray-700">{log.description || t('payroll.detail.auditEventFallback')}</p>
+              <p className="mt-0.5 truncate text-xs text-gray-400">{log.user_full_name || log.user_email || t('payroll.detail.system')}</p>
             </div>
           ))}
         </div>
@@ -681,15 +680,7 @@ function getAuditActionClass(action: string) {
   return classes[action] ?? 'bg-gray-100 text-gray-700';
 }
 
-function formatAuditAction(action: string) {
-  return action.replace(/_/g, ' ').replace(/^\w/, (char) => char.toUpperCase());
-}
-
-function formatAuditTimestamp(value: string) {
-  return new Date(value).toLocaleString('en-MY', {
-    day: '2-digit',
-    month: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+function formatAuditAction(action: string, t: TFunction) {
+  const key = `payroll.detail.auditActions.${action}`;
+  return i18n.exists(key) ? t(key) : action.replace(/_/g, ' ').replace(/^\w/, (char) => char.toUpperCase());
 }

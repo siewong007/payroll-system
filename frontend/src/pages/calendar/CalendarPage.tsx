@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { Download, Upload, Link as LinkIcon } from 'lucide-react';
@@ -15,21 +16,14 @@ import {
 } from '@/api/calendar';
 import { Modal } from '@/components/ui/Modal';
 import { getErrorMessage } from '@/lib/utils';
+import { monthName, weekdayName } from '@/lib/format';
 import type { Holiday, CreateHolidayRequest } from '@/types';
 
-const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-const MONTH_NAMES = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-];
-const HOLIDAY_TYPES = [
-  { value: 'public_holiday', label: 'Public Holiday' },
-  { value: 'company_holiday', label: 'Company Holiday' },
-  { value: 'replacement_leave', label: 'Replacement Leave' },
-  { value: 'state_holiday', label: 'State Holiday' },
-];
+const DAY_INDICES = [0, 1, 2, 3, 4, 5, 6];
+const HOLIDAY_TYPE_VALUES = ['public_holiday', 'company_holiday', 'replacement_leave', 'state_holiday'];
 
 export function CalendarPage() {
+  const { t } = useTranslation();
   const now = new Date();
   const [selectedYear, setSelectedYear] = useState(now.getFullYear());
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth() + 1);
@@ -93,7 +87,7 @@ export function CalendarPage() {
   const toggleWorkingDay = (dayOfWeek: number) => {
     const current = workingDays.find((d) => d.day_of_week === dayOfWeek);
     const isWorking = current ? !current.is_working_day : false;
-    const days = DAY_NAMES.map((_, i) => ({
+    const days = DAY_INDICES.map((i) => ({
       day_of_week: i,
       is_working_day: i === dayOfWeek ? isWorking : (workingDays.find((d) => d.day_of_week === i)?.is_working_day ?? (i >= 1 && i <= 5)),
     }));
@@ -168,9 +162,9 @@ export function CalendarPage() {
 
     return (
       <div className="grid grid-cols-7 gap-0">
-        {DAY_NAMES.map((name) => (
-          <div key={name} className="text-center text-xs font-medium text-gray-500 py-2 bg-gray-50 border border-gray-100">
-            {name.slice(0, 3)}
+        {DAY_INDICES.map((dow) => (
+          <div key={dow} className="text-center text-xs font-medium text-gray-500 py-2 bg-gray-50 border border-gray-100">
+            {weekdayName(dow)}
           </div>
         ))}
         {cells}
@@ -182,9 +176,9 @@ export function CalendarPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Calendar Management</h1>
+          <h1 className="text-2xl font-bold text-gray-900">{t('calendar.title')}</h1>
           <p className="text-sm text-gray-500 mt-1">
-            Manage holidays, working days, and calendar configuration
+            {t('calendar.subtitle')}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -193,7 +187,7 @@ export function CalendarPage() {
             className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 flex items-center gap-2"
           >
             <Download className="w-4 h-4" />
-            Import from Google Calendar
+            {t('calendar.importGoogle')}
           </button>
           <button
             onClick={() => {
@@ -202,7 +196,7 @@ export function CalendarPage() {
             }}
             className="px-4 py-2 bg-black text-white rounded-lg text-sm font-medium hover:bg-gray-800"
           >
-            Add Holiday
+            {t('calendar.addHoliday')}
           </button>
         </div>
       </div>
@@ -219,7 +213,7 @@ export function CalendarPage() {
                 : 'text-gray-500 hover:text-gray-700'
             }`}
           >
-            {tab === 'calendar' ? 'Calendar View' : tab === 'holidays' ? 'Holidays' : 'Working Days'}
+            {t(`calendar.tabs.${tab === 'working-days' ? 'workingDays' : tab}`)}
           </button>
         ))}
       </div>
@@ -243,11 +237,11 @@ export function CalendarPage() {
             </button>
             <div className="text-center">
               <h2 className="text-lg font-semibold">
-                {MONTH_NAMES[selectedMonth - 1]} {selectedYear}
+                {monthName(selectedMonth)} {selectedYear}
               </h2>
               {monthCal && (
                 <p className="text-sm text-gray-500">
-                  {monthCal.working_days} working days &middot; {monthCal.holidays.length} holidays
+                  {t('calendar.workingDaysCount', { count: monthCal.working_days })} &middot; {t('calendar.holidaysCount', { count: monthCal.holidays.length })}
                 </p>
               )}
             </div>
@@ -269,19 +263,19 @@ export function CalendarPage() {
           {/* Legend */}
           <div className="flex gap-4 mt-4 text-xs text-gray-500">
             <span className="flex items-center gap-1">
-              <span className="w-3 h-3 rounded bg-red-100 border border-red-200" /> Public Holiday
+              <span className="w-3 h-3 rounded bg-red-100 border border-red-200" /> {t('enums.holidayType.public_holiday')}
             </span>
             <span className="flex items-center gap-1">
-              <span className="w-3 h-3 rounded bg-blue-100 border border-blue-200" /> Company Holiday
+              <span className="w-3 h-3 rounded bg-blue-100 border border-blue-200" /> {t('enums.holidayType.company_holiday')}
             </span>
             <span className="flex items-center gap-1">
-              <span className="w-3 h-3 rounded bg-green-100 border border-green-200" /> Replacement Leave
+              <span className="w-3 h-3 rounded bg-green-100 border border-green-200" /> {t('enums.holidayType.replacement_leave')}
             </span>
             <span className="flex items-center gap-1">
-              <span className="w-3 h-3 rounded bg-yellow-100 border border-yellow-200" /> State Holiday
+              <span className="w-3 h-3 rounded bg-yellow-100 border border-yellow-200" /> {t('enums.holidayType.state_holiday')}
             </span>
             <span className="flex items-center gap-1">
-              <span className="w-3 h-3 rounded bg-gray-100 border border-gray-200" /> Non-Working Day
+              <span className="w-3 h-3 rounded bg-gray-100 border border-gray-200" /> {t('calendar.nonWorkingDay')}
             </span>
           </div>
         </div>
@@ -290,7 +284,7 @@ export function CalendarPage() {
       {activeTab === 'holidays' && (
         <div className="bg-white rounded-2xl border border-gray-200">
           <div className="p-4 border-b border-gray-100 flex items-center gap-3">
-            <label className="text-sm font-medium text-gray-700">Year:</label>
+            <label className="text-sm font-medium text-gray-700">{t('common.year')}:</label>
             <select
               value={selectedYear}
               onChange={(e) => setSelectedYear(Number(e.target.value))}
@@ -304,7 +298,7 @@ export function CalendarPage() {
           <div className="divide-y divide-gray-100">
             {holidays.length === 0 && (
               <div className="p-8 text-center text-sm text-gray-400">
-                No holidays configured for {selectedYear}
+                {t('calendar.noHolidays', { year: selectedYear })}
               </div>
             )}
             {holidays.map((h) => (
@@ -312,7 +306,7 @@ export function CalendarPage() {
                 <div className="flex items-center gap-4">
                   <div className="text-center min-w-[50px]">
                     <div className="text-xs text-gray-400 uppercase">
-                      {MONTH_NAMES[new Date(h.date).getMonth()].slice(0, 3)}
+                      {monthName(new Date(h.date).getMonth() + 1).slice(0, 3)}
                     </div>
                     <div className="text-xl font-bold text-gray-900">
                       {new Date(h.date).getDate()}
@@ -332,10 +326,10 @@ export function CalendarPage() {
                             : 'bg-yellow-100 text-yellow-700'
                         }`}
                       >
-                        {HOLIDAY_TYPES.find((t) => t.value === h.holiday_type)?.label || h.holiday_type}
+                        {t(`enums.holidayType.${h.holiday_type}`, { defaultValue: h.holiday_type })}
                       </span>
                       {h.is_recurring && (
-                        <span className="text-[10px] text-gray-400">Recurring</span>
+                        <span className="text-[10px] text-gray-400">{t('calendar.recurring')}</span>
                       )}
                       {h.state && (
                         <span className="text-[10px] text-gray-400">{h.state}</span>
@@ -351,17 +345,17 @@ export function CalendarPage() {
                     }}
                     className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1"
                   >
-                    Edit
+                    {t('common.edit')}
                   </button>
                   <button
                     onClick={() => {
-                      if (confirm(`Delete "${h.name}"?`)) {
+                      if (confirm(t('calendar.deleteConfirm', { name: h.name }))) {
                         deleteMutation.mutate(h.id);
                       }
                     }}
                     className="text-xs text-red-500 hover:text-red-700 px-2 py-1"
                   >
-                    Delete
+                    {t('common.delete')}
                   </button>
                 </div>
               </div>
@@ -373,13 +367,13 @@ export function CalendarPage() {
       {activeTab === 'working-days' && (
         <div className="bg-white rounded-2xl border border-gray-200 p-6">
           <h3 className="text-sm font-semibold text-gray-900 mb-4">
-            Working Day Configuration
+            {t('calendar.workingDaysTitle')}
           </h3>
           <p className="text-xs text-gray-500 mb-6">
-            Configure which days of the week are working days. This affects payroll calculations for unpaid leave deductions.
+            {t('calendar.workingDaysDescription')}
           </p>
           <div className="grid grid-cols-7 gap-3">
-            {DAY_NAMES.map((name, i) => {
+            {DAY_INDICES.map((i) => {
               const config = workingDays.find((d) => d.day_of_week === i);
               const isWorking = config ? config.is_working_day : i >= 1 && i <= 5;
               return (
@@ -392,8 +386,8 @@ export function CalendarPage() {
                       : 'border-gray-200 bg-white text-gray-400 hover:border-gray-300'
                   }`}
                 >
-                  <div className="text-sm font-semibold">{name.slice(0, 3)}</div>
-                  <div className="text-xs mt-1">{isWorking ? 'Working' : 'Off'}</div>
+                  <div className="text-sm font-semibold">{weekdayName(i)}</div>
+                  <div className="text-xs mt-1">{isWorking ? t('calendar.working') : t('calendar.off')}</div>
                 </button>
               );
             })}
@@ -445,6 +439,7 @@ function HolidayModal({
   onSave: (data: CreateHolidayRequest) => void;
   isLoading: boolean;
 }) {
+  const { t } = useTranslation();
   const { register, handleSubmit, reset } = useForm<CreateHolidayRequest>({
     defaultValues: holiday
       ? {
@@ -474,18 +469,18 @@ function HolidayModal({
   }, [holiday, reset]);
 
   return (
-    <Modal open={open} onClose={onClose} title={holiday ? 'Edit Holiday' : 'Add Holiday'}>
+    <Modal open={open} onClose={onClose} title={holiday ? t('calendar.editHoliday') : t('calendar.addHoliday')}>
       <form onSubmit={handleSubmit(onSave)} className="space-y-4">
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.name')}</label>
           <input
             {...register('name', { required: true })}
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-            placeholder="e.g. Hari Raya Aidilfitri"
+            placeholder={t('calendar.namePlaceholder')}
           />
         </div>
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Date</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.date')}</label>
           <input
             type="date"
             {...register('date', { required: true })}
@@ -493,36 +488,36 @@ function HolidayModal({
           />
         </div>
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">{t('calendar.type')}</label>
           <select
             {...register('holiday_type')}
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
           >
-            {HOLIDAY_TYPES.map((t) => (
-              <option key={t.value} value={t.value}>{t.label}</option>
+            {HOLIDAY_TYPE_VALUES.map((v) => (
+              <option key={v} value={v}>{t(`enums.holidayType.${v}`)}</option>
             ))}
           </select>
         </div>
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.description')}</label>
           <input
             {...register('description')}
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-            placeholder="Optional description"
+            placeholder={t('teams.descriptionPlaceholder')}
           />
         </div>
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">State (optional)</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">{t('calendar.stateOptional')}</label>
           <input
             {...register('state')}
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-            placeholder="e.g. Selangor, Kuala Lumpur"
+            placeholder={t('calendar.statePlaceholder')}
           />
         </div>
         <div className="flex items-center gap-2">
           <input type="checkbox" {...register('is_recurring')} id="is_recurring" />
           <label htmlFor="is_recurring" className="text-sm text-gray-700">
-            Recurring annually (same month & day each year)
+            {t('calendar.recurringLabel')}
           </label>
         </div>
         <div className="flex justify-end gap-3 pt-2">
@@ -531,14 +526,14 @@ function HolidayModal({
             onClick={onClose}
             className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg"
           >
-            Cancel
+            {t('common.cancel')}
           </button>
           <button
             type="submit"
             disabled={isLoading}
             className="px-4 py-2 bg-black text-white rounded-lg text-sm font-medium hover:bg-gray-800 disabled:opacity-50"
           >
-            {isLoading ? 'Saving...' : holiday ? 'Update' : 'Create'}
+            {isLoading ? t('common.saving') : holiday ? t('common.update') : t('common.create')}
           </button>
         </div>
       </form>
@@ -555,6 +550,7 @@ function ImportIcsModal({
   onClose: () => void;
   onSuccess: () => void;
 }) {
+  const { t } = useTranslation();
   const [importMode, setImportMode] = useState<'url' | 'file'>('file');
   const [url, setUrl] = useState('');
   const [file, setFile] = useState<File | null>(null);
@@ -568,7 +564,7 @@ function ImportIcsModal({
       onSuccess();
     },
     onError: (err: unknown) => {
-      setError(getErrorMessage(err, 'Failed to import from URL. Please check the URL and try again.'));
+      setError(getErrorMessage(err, t('calendar.importUrlFailed')));
     },
   });
 
@@ -579,7 +575,7 @@ function ImportIcsModal({
       onSuccess();
     },
     onError: (err: unknown) => {
-      setError(getErrorMessage(err, 'Failed to import file. Please check the file and try again.'));
+      setError(getErrorMessage(err, t('calendar.importFileFailed')));
     },
   });
 
@@ -590,13 +586,13 @@ function ImportIcsModal({
     setResult(null);
     if (importMode === 'url') {
       if (!url.trim()) {
-        setError('Please enter a calendar ICS URL');
+        setError(t('calendar.urlRequired'));
         return;
       }
       urlMutation.mutate(url.trim());
     } else {
       if (!file) {
-        setError('Please select an .ics file');
+        setError(t('calendar.fileRequired'));
         return;
       }
       fileMutation.mutate(file);
@@ -612,10 +608,10 @@ function ImportIcsModal({
   };
 
   return (
-    <Modal open={open} onClose={handleClose} title="Import Calendar (ICS)">
+    <Modal open={open} onClose={handleClose} title={t('calendar.importTitle')}>
       <div className="space-y-4">
         <p className="text-sm text-gray-600">
-          Import holidays from a Google Calendar ICS feed URL or upload an .ics file directly.
+          {t('calendar.importDescription')}
         </p>
 
         {/* Mode Toggle */}
@@ -630,7 +626,7 @@ function ImportIcsModal({
             }`}
           >
             <Upload className="w-4 h-4" />
-            Upload File
+            {t('calendar.uploadFile')}
           </button>
           <button
             type="button"
@@ -642,13 +638,13 @@ function ImportIcsModal({
             }`}
           >
             <LinkIcon className="w-4 h-4" />
-            Paste URL
+            {t('calendar.pasteUrl')}
           </button>
         </div>
 
         {importMode === 'file' ? (
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">ICS File</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('calendar.icsFile')}</label>
             <label className={`flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-xl cursor-pointer transition-all ${
               file ? 'border-black bg-gray-50' : 'border-gray-300 hover:border-gray-400 hover:bg-gray-50'
             }`}>
@@ -661,8 +657,9 @@ function ImportIcsModal({
                   </>
                 ) : (
                   <>
-                    <p className="text-sm text-gray-500">Click to select an <span className="font-medium">.ics</span> file</p>
-                    <p className="text-xs text-gray-400 mt-0.5">or drag and drop</p>
+                    {/* i18n-ok: `.ics` is a file extension, not copy */}
+                    <p className="text-sm text-gray-500">{t('calendar.clickToSelect')} <span className="font-medium">.ics</span></p>
+                    <p className="text-xs text-gray-400 mt-0.5">{t('calendar.orDragDrop')}</p>
                   </>
                 )}
               </div>
@@ -677,12 +674,12 @@ function ImportIcsModal({
               />
             </label>
             <p className="text-xs text-gray-400 mt-2">
-              Export your Google Calendar as .ics: Google Calendar &rarr; Settings &rarr; Import & Export &rarr; Export
+              {t('calendar.icsExportHint')}
             </p>
           </div>
         ) : (
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">ICS Calendar URL</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('calendar.icsUrl')}</label>
             <input
               type="url"
               value={url}
@@ -691,11 +688,11 @@ function ImportIcsModal({
               placeholder="https://calendar.google.com/calendar/ical/..."
             />
             <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 mt-2 text-xs text-gray-500 space-y-1">
-              <p className="font-medium text-gray-700">How to get the ICS URL:</p>
+              <p className="font-medium text-gray-700">{t('calendar.icsHowTo')}</p>
               <ol className="list-decimal list-inside space-y-0.5">
-                <li>Open Google Calendar &rarr; Settings</li>
-                <li>Find "Holidays in Malaysia" under other calendars</li>
-                <li>Copy the "Public address in iCal format" URL</li>
+                <li>{t('calendar.icsStep1')}</li>
+                <li>{t('calendar.icsStep2')}</li>
+                <li>{t('calendar.icsStep3')}</li>
               </ol>
             </div>
           </div>
@@ -709,7 +706,7 @@ function ImportIcsModal({
 
         {result && (
           <div className="p-3 bg-emerald-50 text-emerald-700 text-sm rounded-lg border border-emerald-100">
-            Successfully imported {result.count} holiday{result.count !== 1 ? 's' : ''}. Duplicates were skipped.
+            {t('calendar.importSuccess', { count: result.count })}
           </div>
         )}
 
@@ -719,7 +716,7 @@ function ImportIcsModal({
             onClick={handleClose}
             className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg"
           >
-            {result ? 'Done' : 'Cancel'}
+            {result ? t('common.done') : t('common.cancel')}
           </button>
           {!result && (
             <button
@@ -728,7 +725,7 @@ function ImportIcsModal({
               className="px-4 py-2 bg-black text-white rounded-lg text-sm font-medium hover:bg-gray-800 disabled:opacity-50 flex items-center gap-2"
             >
               <Download className="w-4 h-4" />
-              {isPending ? 'Importing...' : 'Import Holidays'}
+              {isPending ? t('common.importing') : t('calendar.importHolidays')}
             </button>
           )}
         </div>

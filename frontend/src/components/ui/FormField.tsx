@@ -1,4 +1,5 @@
 import { useId } from 'react';
+import { useTranslation } from 'react-i18next';
 
 interface FieldAria {
   id: string;
@@ -20,6 +21,7 @@ interface FormFieldProps {
  * call site. Controls rendered by hand previously had no accessible name at all.
  */
 export function FormField({ label, required, hint, error, children }: FormFieldProps) {
+  const { t } = useTranslation();
   const id = useId();
   const hintId = `${id}-hint`;
   const errorId = `${id}-error`;
@@ -31,7 +33,7 @@ export function FormField({ label, required, hint, error, children }: FormFieldP
       <label htmlFor={id} className="form-label">
         {label}
         {required && <span aria-hidden="true"> *</span>}
-        {required && <span className="sr-only"> (required)</span>}
+        {required && <span className="sr-only"> ({t('common.required')})</span>}
       </label>
       {children({
         id,
@@ -65,12 +67,13 @@ interface FieldsetProps {
  * group gets a `<fieldset>`/`<legend>` instead.
  */
 export function FieldGroup({ legend, required, note, children }: FieldsetProps) {
+  const { t } = useTranslation();
   return (
     <fieldset className="border-0 p-0 m-0">
       <legend className="form-label p-0">
         {legend}
         {required && <span aria-hidden="true"> *</span>}
-        {required && <span className="sr-only"> (required)</span>}
+        {required && <span className="sr-only"> ({t('common.required')})</span>}
         {note && <span className="text-gray-400 font-normal"> {note}</span>}
       </legend>
       {children}

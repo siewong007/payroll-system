@@ -1,10 +1,12 @@
 import { useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { motion } from 'framer-motion';
+import { useTranslation } from 'react-i18next';
 import { forgotPassword } from '@/api/admin';
 import { TurnstileWidget, type TurnstileWidgetRef } from '@/components/TurnstileWidget';
 
 export function ForgotPassword() {
+  const { t } = useTranslation();
   const [email, setEmail] = useState('');
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState('');
@@ -23,7 +25,7 @@ export function ForgotPassword() {
       setSubmitted(true);
     } catch {
       turnstileRef.current?.reset();
-      setError('Something went wrong. Please try again.');
+      setError(t('auth.forgot.failed'));
     } finally {
       setLoading(false);
     }
@@ -42,9 +44,9 @@ export function ForgotPassword() {
             <div className="w-12 h-12 bg-black rounded-xl flex items-center justify-center mx-auto mb-4">
               <span className="text-white font-bold text-lg">P</span>
             </div>
-            <h1 className="text-xl font-semibold text-gray-900">Forgot Password</h1>
+            <h1 className="text-xl font-semibold text-gray-900">{t('auth.forgot.title')}</h1>
             <p className="text-sm text-gray-400 mt-1">
-              Enter your email to request a password reset
+              {t('auth.forgot.subtitle')}
             </p>
           </div>
 
@@ -57,14 +59,14 @@ export function ForgotPassword() {
               </div>
               <div>
                 <p className="text-sm text-gray-600">
-                  If an account exists with that email, we've sent a password reset link. Please check your inbox and spam folder.
+                  {t('auth.forgot.sentBody')}
                 </p>
               </div>
               <Link
                 to="/login"
                 className="inline-block text-sm text-black font-medium hover:underline"
               >
-                Back to login
+                {t('auth.backToLogin')}
               </Link>
             </div>
           ) : (
@@ -76,13 +78,13 @@ export function ForgotPassword() {
               )}
 
               <div>
-                <label className="form-label">Email</label>
+                <label className="form-label">{t('auth.email')}</label>
                 <input
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="border p-2.5 rounded-lg w-full text-sm outline-none focus:border-black transition-colors"
-                  placeholder="Enter your email"
+                  placeholder={t('auth.emailPlaceholder')}
                   required
                 />
               </div>
@@ -105,12 +107,12 @@ export function ForgotPassword() {
                 disabled={loading}
                 className="w-full bg-black text-white py-2.5 rounded-xl font-semibold hover:bg-gray-800 disabled:opacity-50 transition-all"
               >
-                {loading ? 'Submitting...' : 'Request Password Reset'}
+                {loading ? t('auth.submitting') : t('auth.forgot.submit')}
               </button>
 
               <div className="text-center">
                 <Link to="/login" className="text-sm text-gray-500 hover:text-gray-700">
-                  Back to login
+                  {t('auth.backToLogin')}
                 </Link>
               </div>
             </form>

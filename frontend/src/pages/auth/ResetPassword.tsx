@@ -1,10 +1,12 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import { motion } from 'framer-motion';
+import { useTranslation } from 'react-i18next';
 import { resetPassword, validateResetToken } from '@/api/admin';
 import { TurnstileWidget, type TurnstileWidgetRef } from '@/components/TurnstileWidget';
 
 export function ResetPassword() {
+  const { t } = useTranslation();
   const [searchParams] = useSearchParams();
   const token = searchParams.get('token') || '';
   const [password, setPassword] = useState('');
@@ -33,11 +35,11 @@ export function ResetPassword() {
     setError('');
 
     if (password.length < 8) {
-      setError('Password must be at least 8 characters');
+      setError(t('auth.reset.tooShort'));
       return;
     }
     if (password !== confirmPassword) {
-      setError('Passwords do not match');
+      setError(t('auth.reset.mismatch'));
       return;
     }
 
@@ -49,7 +51,7 @@ export function ResetPassword() {
       setSuccess(true);
     } catch {
       turnstileRef.current?.reset();
-      setError('Failed to reset password. The link may have expired.');
+      setError(t('auth.reset.failed'));
     } finally {
       setLoading(false);
     }
@@ -58,7 +60,7 @@ export function ResetPassword() {
   if (validating) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-100">
-        <div className="text-gray-500">Validating reset link...</div>
+        <div className="text-gray-500">{t('auth.reset.validating')}</div>
       </div>
     );
   }
@@ -76,7 +78,7 @@ export function ResetPassword() {
             <div className="w-12 h-12 bg-black rounded-xl flex items-center justify-center mx-auto mb-4">
               <span className="text-white font-bold text-lg">P</span>
             </div>
-            <h1 className="text-xl font-semibold text-gray-900">Reset Password</h1>
+            <h1 className="text-xl font-semibold text-gray-900">{t('auth.reset.title')}</h1>
           </div>
 
           {!token || !tokenValid ? (
@@ -87,10 +89,10 @@ export function ResetPassword() {
                 </svg>
               </div>
               <p className="text-sm text-gray-600">
-                This reset link is invalid or has expired. Please request a new password reset.
+                {t('auth.reset.invalidLink')}
               </p>
               <Link to="/forgot-password" className="inline-block text-sm text-black font-medium hover:underline">
-                Request new reset
+                {t('auth.reset.requestNew')}
               </Link>
             </div>
           ) : success ? (
@@ -101,10 +103,10 @@ export function ResetPassword() {
                 </svg>
               </div>
               <p className="text-sm text-gray-600">
-                Your password has been reset successfully.
+                {t('auth.reset.success')}
               </p>
               <Link to="/login" className="inline-block text-sm text-black font-medium hover:underline">
-                Sign in with your new password
+                {t('auth.reset.signInNew')}
               </Link>
             </div>
           ) : (
@@ -116,26 +118,26 @@ export function ResetPassword() {
               )}
 
               <div>
-                <label className="form-label">New Password</label>
+                <label className="form-label">{t('auth.reset.newPassword')}</label>
                 <input
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className="border p-2.5 rounded-lg w-full text-sm outline-none focus:border-black transition-colors"
-                  placeholder="Enter new password"
+                  placeholder={t('auth.reset.newPasswordPlaceholder')}
                   required
                   minLength={8}
                 />
               </div>
 
               <div>
-                <label className="form-label">Confirm Password</label>
+                <label className="form-label">{t('auth.reset.confirmPassword')}</label>
                 <input
                   type="password"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   className="border p-2.5 rounded-lg w-full text-sm outline-none focus:border-black transition-colors"
-                  placeholder="Confirm new password"
+                  placeholder={t('auth.reset.confirmPlaceholder')}
                   required
                 />
               </div>
@@ -158,7 +160,7 @@ export function ResetPassword() {
                 disabled={loading}
                 className="w-full bg-black text-white py-2.5 rounded-xl font-semibold hover:bg-gray-800 disabled:opacity-50 transition-all"
               >
-                {loading ? 'Resetting...' : 'Reset Password'}
+                {loading ? t('auth.reset.submitting') : t('auth.reset.submit')}
               </button>
             </form>
           )}

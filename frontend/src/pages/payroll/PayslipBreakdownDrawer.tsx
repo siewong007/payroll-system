@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { X } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { getPayslipBreakdown } from '@/api/payroll';
 import { formatMYR } from '@/lib/utils';
 import type { PayrollItemDetail } from '@/types';
@@ -21,6 +22,7 @@ export function PayslipBreakdownDrawer({
   employeeId: string;
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
   const { data, isLoading, isError } = useQuery({
     queryKey: ['payslipBreakdown', runId, employeeId],
     queryFn: () => getPayslipBreakdown(runId, employeeId),
@@ -35,12 +37,12 @@ export function PayslipBreakdownDrawer({
         className="flex h-full w-full max-w-lg flex-col overflow-y-auto bg-white shadow-xl"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
-        aria-label="Payslip breakdown"
+        aria-label={t('payroll.breakdown.title')}
       >
         <div className="sticky top-0 flex items-start justify-between border-b border-gray-200 bg-white px-6 py-4">
           <div>
             <h2 className="font-semibold text-gray-900">
-              {data?.employee_name ?? 'Payslip breakdown'}
+              {data?.employee_name ?? t('payroll.breakdown.title')}
             </h2>
             {data && <p className="text-xs text-gray-400">{data.employee_number}</p>}
           </div>
@@ -48,36 +50,35 @@ export function PayslipBreakdownDrawer({
             type="button"
             onClick={onClose}
             className="rounded-lg p-1.5 text-gray-500 hover:bg-gray-100"
-            aria-label="Close breakdown"
+            aria-label={t('payroll.breakdown.close')}
           >
             <X className="h-4 w-4" />
           </button>
         </div>
 
-        {isLoading && <p className="px-6 py-8 text-sm text-gray-400">Loading breakdown...</p>}
+        {isLoading && <p className="px-6 py-8 text-sm text-gray-400">{t('payroll.breakdown.loading')}</p>}
         {isError && (
-          <p className="px-6 py-8 text-sm text-red-600">Failed to load this payslip breakdown.</p>
+          <p className="px-6 py-8 text-sm text-red-600">{t('payroll.breakdown.failed')}</p>
         )}
 
         {data && (
           <div className="space-y-6 px-6 py-5">
             {data.lines.length === 0 ? (
               <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                This payslip has no stored breakdown. It was processed before the engine began
-                recording one; its totals are still shown on the run.
+                {t('payroll.breakdown.noStored')}
               </p>
             ) : (
               <>
-                <LineSection title="Earnings" lines={earnings} tone="text-gray-900" />
-                <LineSection title="Deductions" lines={deductions} tone="text-red-600" />
+                <LineSection title={t('payroll.breakdown.earnings')} lines={earnings} tone="text-gray-900" />
+                <LineSection title={t('payroll.breakdown.deductions')} lines={deductions} tone="text-red-600" />
               </>
             )}
 
             <div className="space-y-2 rounded-xl border border-gray-200 bg-gray-50 p-4">
-              <TotalRow label="Gross salary" value={data.item.gross_salary} />
-              <TotalRow label="Total deductions" value={data.item.total_deductions} negative />
+              <TotalRow label={t('payroll.breakdown.grossSalary')} value={data.item.gross_salary} />
+              <TotalRow label={t('payroll.breakdown.totalDeductions')} value={data.item.total_deductions} negative />
               <div className="border-t border-gray-200 pt-2">
-                <TotalRow label="Net salary" value={data.item.net_salary} emphasis />
+                <TotalRow label={t('payroll.breakdown.netSalary')} value={data.item.net_salary} emphasis />
               </div>
             </div>
           </div>
@@ -96,6 +97,7 @@ function LineSection({
   lines: PayrollItemDetail[];
   tone: string;
 }) {
+  const { t } = useTranslation();
   if (lines.length === 0) return null;
 
   return (
@@ -109,12 +111,12 @@ function LineSection({
               <div className="mt-0.5 flex gap-1.5">
                 {line.is_statutory && (
                   <span className="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700">
-                    Statutory
+                    {t('payroll.breakdown.statutory')}
                   </span>
                 )}
                 {line.category === 'earning' && line.is_taxable === false && (
                   <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-gray-600">
-                    Non-taxable
+                    {t('payroll.breakdown.nonTaxable')}
                   </span>
                 )}
               </div>

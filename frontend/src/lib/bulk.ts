@@ -1,4 +1,5 @@
 import { getErrorMessage } from '@/lib/utils';
+import i18n from '@/i18n';
 
 export interface BulkFailure {
   id: string;
@@ -34,7 +35,10 @@ export async function runBulk(
       succeeded.push(ids[index]);
       return;
     }
-    failed.push({ id: ids[index], message: getErrorMessage(result.reason, 'Request failed') });
+    failed.push({
+      id: ids[index],
+      message: getErrorMessage(result.reason, i18n.t('errors.requestFailed')),
+    });
   });
 
   return { succeeded, failed };
@@ -54,5 +58,10 @@ export function summarizeBulkFailure(outcome: BulkOutcome, verb: string): string
 
   const total = outcome.succeeded.length + outcome.failed.length;
   const reasons = Array.from(new Set(outcome.failed.map((failure) => failure.message))).slice(0, 3);
-  return `${outcome.failed.length} of ${total} could not be ${verb} — ${reasons.join('; ')}`;
+  return i18n.t('bulk.failedSummary', {
+    count: outcome.failed.length,
+    total,
+    verb: i18n.t(`bulk.verbs.${verb}`, { defaultValue: verb }),
+    reasons: reasons.join('; '),
+  });
 }

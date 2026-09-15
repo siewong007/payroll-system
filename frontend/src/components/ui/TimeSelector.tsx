@@ -1,4 +1,5 @@
 import { Clock3 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 interface TimeSelectorProps {
   label: string;
@@ -32,6 +33,7 @@ export function TimeSelector({
   minuteStep = 30,
   disabled = false,
 }: TimeSelectorProps) {
+  const { t } = useTranslation();
   const { hour, minute } = getValueParts(value || '');
   const minuteOptions = getMinuteOptions(minuteStep);
 
@@ -59,7 +61,7 @@ export function TimeSelector({
           onChange={(event) => setHour(event.target.value)}
           className={selectClass}
           disabled={disabled}
-          aria-label={`${label} — hour`}
+          aria-label={`${label} — ${t('a11y.hour')}`}
         >
           {Array.from({ length: 24 }, (_, index) => {
             const option = pad(index);
@@ -76,7 +78,7 @@ export function TimeSelector({
           onChange={(event) => setMinute(event.target.value)}
           className={selectClass}
           disabled={disabled}
-          aria-label={`${label} — minute`}
+          aria-label={`${label} — ${t('a11y.minute')}`}
         >
           {minuteOptions.map((option) => {
             const value = pad(option);

@@ -1,6 +1,15 @@
 import '@testing-library/jest-dom';
 import { cleanup } from '@testing-library/react';
 import { afterEach, vi } from 'vitest';
+// Initializes the i18n instance so components using t() render English copy
+// instead of raw keys. i18n tests re-init/change language explicitly.
+import '@/i18n';
+import i18n from '@/i18n';
+
+afterEach(() => {
+  // A test that switches language must not leak the locale into the next one.
+  if (i18n.language !== 'en') void i18n.changeLanguage('en');
+});
 
 // Turnstile is opt-in via VITE_TURNSTILE_SITE_KEY; a developer's .env.local
 // must not change what components render in tests. Turnstile.test.tsx

@@ -7,18 +7,22 @@
  * thing a new administrator saw was a server error.
  */
 
+import i18n from '@/i18n';
+
 export const PASSWORD_MIN_LENGTH = 10;
 
-export const PASSWORD_POLICY_HINT =
-  'At least 10 characters, with an uppercase letter, a lowercase letter, and a digit';
+/** Policy hint, translated at call time so it follows the active locale. */
+export function passwordPolicyHint(): string {
+  return i18n.t('auth.passwordCard.policy', { count: PASSWORD_MIN_LENGTH });
+}
 
 /** Returns an error message, or `null` when the password satisfies the policy. */
 export function validatePassword(password: string): string | null {
   if (password.length < PASSWORD_MIN_LENGTH) {
-    return `Password must be at least ${PASSWORD_MIN_LENGTH} characters`;
+    return i18n.t('auth.passwordCard.tooShort', { count: PASSWORD_MIN_LENGTH });
   }
   if (!/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/[0-9]/.test(password)) {
-    return 'Password must contain uppercase, lowercase, and a digit';
+    return i18n.t('auth.passwordCard.complexity');
   }
   return null;
 }

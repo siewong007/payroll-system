@@ -1,5 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { AlertTriangle, Home, RotateCcw } from 'lucide-react';
+import i18n from '@/i18n';
 
 /**
  * Marker recording that a stale-chunk reload has already been attempted.
@@ -139,11 +140,10 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
           </div>
 
           <h1 id="boundary-title" className="text-3xl font-bold tracking-tight text-gray-950 sm:text-4xl">
-            Something went wrong
+            {i18n.t('errors.boundary.title')}
           </h1>
           <p className="mx-auto mt-4 max-w-md text-base leading-7 text-gray-600">
-            This page could not be displayed. Reloading usually fixes it — the application may have
-            been updated while your tab was open.
+            {i18n.t('errors.boundary.body')}
           </p>
 
           {import.meta.env.DEV && (
@@ -155,11 +155,11 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
           <div className="mt-8 flex flex-col-reverse justify-center gap-3 sm:flex-row">
             <a href="/" className="btn-secondary">
               <Home className="h-4 w-4" aria-hidden="true" />
-              Go to home
+              {i18n.t('common.goHome')}
             </a>
             <button type="button" onClick={this.handleRetry} className="btn-primary">
               <RotateCcw className="h-4 w-4" aria-hidden="true" />
-              Reload
+              {i18n.t('common.reload')}
             </button>
           </div>
         </section>

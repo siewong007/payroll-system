@@ -536,16 +536,19 @@ pub async fn preview_payroll(
     )
     .await?
     {
-        blocking.push(PayrollDiagnostic::for_employee(
-            "later_run_exists",
-            format!(
-                "Already paid by a run for {}. That run's year-to-date figures and PCB annualisation assumed this period was already included, and nothing recomputes them, so this period cannot be inserted behind it. Delete the later run first if it must be re-created.",
-                format_period(row.earliest_later_period)
-            ),
-            row.employee_id,
-            row.employee_number,
-            row.employee_name,
-        ));
+        blocking.push(
+            PayrollDiagnostic::for_employee(
+                "later_run_exists",
+                format!(
+                    "Already paid by a run for {}. That run's year-to-date figures and PCB annualisation assumed this period was already included, and nothing recomputes them, so this period cannot be inserted behind it. Delete the later run first if it must be re-created.",
+                    format_period(row.earliest_later_period)
+                ),
+                row.employee_id,
+                row.employee_number,
+                row.employee_name,
+            )
+            .with_params(&[("period", format_period(row.earliest_later_period))]),
+        );
     }
 
     if inputs.employees.is_empty() {
@@ -601,16 +604,19 @@ pub async fn preview_payroll(
             .map(|m| format!("{m:02}/{year}"))
             .collect();
         if !skipped.is_empty() {
-            warnings.push(PayrollDiagnostic::for_employee(
-                "missing_earlier_period",
-                format!(
-                    "No committed payroll run for {} in this group. This period's PCB annualises over the remaining months as if those were already paid, so the year will under-withhold unless they are run or the employee genuinely was not owed them.",
-                    skipped.join(", ")
-                ),
-                emp.id,
-                emp.employee_number.clone(),
-                emp.full_name.clone(),
-            ));
+            warnings.push(
+                PayrollDiagnostic::for_employee(
+                    "missing_earlier_period",
+                    format!(
+                        "No committed payroll run for {} in this group. This period's PCB annualises over the remaining months as if those were already paid, so the year will under-withhold unless they are run or the employee genuinely was not owed them.",
+                        skipped.join(", ")
+                    ),
+                    emp.id,
+                    emp.employee_number.clone(),
+                    emp.full_name.clone(),
+                )
+                .with_params(&[("periods", skipped.join(", "))]),
+            );
         }
     }
 
@@ -640,15 +646,21 @@ pub async fn preview_payroll(
                 emp.residency_status == "foreigner",
             );
             if stored.trim() != derived && !stored.trim().is_empty() {
-                warnings.push(PayrollDiagnostic::for_employee(
-                    "epf_category_override",
-                    format!(
-                        "EPF category {stored} is set on the employee record, but their age and residency resolve to Part {derived}. The record wins; clear it to use Part {derived}."
-                    ),
-                    emp.id,
-                    emp.employee_number.clone(),
-                    emp.full_name.clone(),
-                ));
+                warnings.push(
+                    PayrollDiagnostic::for_employee(
+                        "epf_category_override",
+                        format!(
+                            "EPF category {stored} is set on the employee record, but their age and residency resolve to Part {derived}. The record wins; clear it to use Part {derived}."
+                        ),
+                        emp.id,
+                        emp.employee_number.clone(),
+                        emp.full_name.clone(),
+                    )
+                    .with_params(&[
+                        ("stored", stored.trim().to_string()),
+                        ("derived", derived.to_string()),
+                    ]),
+                );
             }
         }
         if emp
@@ -681,18 +693,24 @@ pub async fn preview_payroll(
     )
     .await?
     {
-        warnings.push(PayrollDiagnostic::for_employee(
-            "staged_entries_not_in_run",
-            format!(
-                "{} staged {} totalling {} sen will not be paid by this run — this employee is not in the selected payroll group for this period.",
-                orphan.entry_count,
-                if orphan.entry_count == 1 { "entry" } else { "entries" },
-                orphan.total_amount
-            ),
-            orphan.employee_id,
-            orphan.employee_number,
-            orphan.employee_name,
-        ));
+        warnings.push(
+            PayrollDiagnostic::for_employee(
+                "staged_entries_not_in_run",
+                format!(
+                    "{} staged {} totalling {} sen will not be paid by this run — this employee is not in the selected payroll group for this period.",
+                    orphan.entry_count,
+                    if orphan.entry_count == 1 { "entry" } else { "entries" },
+                    orphan.total_amount
+                ),
+                orphan.employee_id,
+                orphan.employee_number,
+                orphan.employee_name,
+            )
+            .with_params(&[
+                ("count", orphan.entry_count.to_string()),
+                ("total", orphan.total_amount.to_string()),
+            ]),
+        );
     }
 
     // Claim selection is carry-forward, so the first run after this change
@@ -712,19 +730,26 @@ pub async fn preview_payroll(
             continue;
         };
         let total: i64 = earlier.iter().map(|claim| claim.amount).sum();
-        warnings.push(PayrollDiagnostic::for_employee(
-            "claims_from_earlier_periods",
-            format!(
-                "{} approved {} from before this period, totalling {} sen (oldest expense {}), will be reimbursed by this run. They were incurred earlier but never paid.",
-                earlier.len(),
-                if earlier.len() == 1 { "claim" } else { "claims" },
-                total,
-                oldest
-            ),
-            emp.id,
-            emp.employee_number.clone(),
-            emp.full_name.clone(),
-        ));
+        warnings.push(
+            PayrollDiagnostic::for_employee(
+                "claims_from_earlier_periods",
+                format!(
+                    "{} approved {} from before this period, totalling {} sen (oldest expense {}), will be reimbursed by this run. They were incurred earlier but never paid.",
+                    earlier.len(),
+                    if earlier.len() == 1 { "claim" } else { "claims" },
+                    total,
+                    oldest
+                ),
+                emp.id,
+                emp.employee_number.clone(),
+                emp.full_name.clone(),
+            )
+            .with_params(&[
+                ("count", earlier.len().to_string()),
+                ("total", total.to_string()),
+                ("oldest", oldest.to_string()),
+            ]),
+        );
     }
 
     // The claims mirror of the staged-entry warning: a claim belonging to
@@ -739,18 +764,24 @@ pub async fn preview_payroll(
     )
     .await?
     {
-        warnings.push(PayrollDiagnostic::for_employee(
-            "approved_claims_outside_run",
-            format!(
-                "{} approved {} totalling {} sen will not be reimbursed by this run — this employee is not in the selected payroll group for this period.",
-                orphan.entry_count,
-                if orphan.entry_count == 1 { "claim" } else { "claims" },
-                orphan.total_amount
-            ),
-            orphan.employee_id,
-            orphan.employee_number,
-            orphan.employee_name,
-        ));
+        warnings.push(
+            PayrollDiagnostic::for_employee(
+                "approved_claims_outside_run",
+                format!(
+                    "{} approved {} totalling {} sen will not be reimbursed by this run — this employee is not in the selected payroll group for this period.",
+                    orphan.entry_count,
+                    if orphan.entry_count == 1 { "claim" } else { "claims" },
+                    orphan.total_amount
+                ),
+                orphan.employee_id,
+                orphan.employee_number,
+                orphan.employee_name,
+            )
+            .with_params(&[
+                ("count", orphan.entry_count.to_string()),
+                ("total", orphan.total_amount.to_string()),
+            ]),
+        );
     }
 
     // Overtime the check-out path refused to rate is silently absent from this
@@ -768,18 +799,30 @@ pub async fn preview_payroll(
     )
     .await?
     {
-        warnings.push(PayrollDiagnostic::for_employee(
-            "unrated_overtime",
-            format!(
-                "{} attendance record(s) this period have overtime above the {} h/day ceiling (longest shift {} h) and were left unrated, so no overtime is paid for them. Correct the check-out times if the hours were genuinely worked.",
-                row.record_count,
-                trim_decimal(ceiling),
-                row.max_hours_worked.map(trim_decimal).unwrap_or_else(|| "?".into()),
-            ),
-            row.employee_id,
-            row.employee_number,
-            row.employee_name,
-        ));
+        warnings.push(
+            PayrollDiagnostic::for_employee(
+                "unrated_overtime",
+                format!(
+                    "{} attendance record(s) this period have overtime above the {} h/day ceiling (longest shift {} h) and were left unrated, so no overtime is paid for them. Correct the check-out times if the hours were genuinely worked.",
+                    row.record_count,
+                    trim_decimal(ceiling),
+                    row.max_hours_worked.map(trim_decimal).unwrap_or_else(|| "?".into()),
+                ),
+                row.employee_id,
+                row.employee_number,
+                row.employee_name,
+            )
+            .with_params(&[
+                ("count", row.record_count.to_string()),
+                ("ceiling", trim_decimal(ceiling)),
+                (
+                    "max",
+                    row.max_hours_worked
+                        .map(trim_decimal)
+                        .unwrap_or_else(|| "?".into()),
+                ),
+            ]),
+        );
     }
 
     let mut totals = RunTotals::default();

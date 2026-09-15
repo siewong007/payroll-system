@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { Modal } from './Modal';
 
@@ -60,10 +61,10 @@ export function DataTable<T>({
   onPageChange,
   perPage = 10,
   isLoading,
-  emptyMessage = 'No data found',
+  emptyMessage,
   emptyIcon,
   rowKey,
-  summaryTitle = 'Record Details',
+  summaryTitle,
   renderSummary,
   renderSummaryFooter,
   disableRowClick = false,
@@ -73,9 +74,12 @@ export function DataTable<T>({
   onSelectedRowKeysChange,
   isRowSelectable,
 }: DataTableProps<T>) {
+  const { t } = useTranslation();
   const [selectedRow, setSelectedRow] = useState<T | null>(null);
   const [internalPage, setInternalPage] = useState(1);
   const selectAllRef = useRef<HTMLInputElement>(null);
+  const resolvedEmptyMessage = emptyMessage ?? t('common.noResults');
+  const resolvedSummaryTitle = summaryTitle ?? t('common.recordDetails');
 
   const isServerSide = controlledPage !== undefined && onPageChange !== undefined;
   const currentPage = isServerSide ? controlledPage : internalPage;
@@ -185,9 +189,9 @@ export function DataTable<T>({
     }
   }, [data, getKey, selectedRow]);
 
-  const modalTitle = typeof summaryTitle === 'function' && selectedRow
-    ? summaryTitle(selectedRow)
-    : (summaryTitle as string);
+  const modalTitle = typeof resolvedSummaryTitle === 'function' && selectedRow
+    ? resolvedSummaryTitle(selectedRow)
+    : (resolvedSummaryTitle as string);
 
   // Split columns into primary (shown prominently on mobile cards) and secondary
   const primaryColumns = columns.filter((col) => col.primary);
@@ -217,13 +221,13 @@ export function DataTable<T>({
             <div className="px-4 py-12 text-center text-gray-400">
               <div className="flex items-center justify-center gap-2">
                 <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-gray-900" />
-                <span>Loading...</span>
+                <span>{t('common.loading')}</span>
               </div>
             </div>
           ) : displayData.length === 0 ? (
             <div className="px-4 py-12 text-center text-gray-400">
               {emptyIcon && <div className="flex justify-center mb-2">{emptyIcon}</div>}
-              {emptyMessage}
+              {resolvedEmptyMessage}
             </div>
           ) : (
             <div className="divide-y divide-gray-100">
@@ -243,7 +247,7 @@ export function DataTable<T>({
                           disabled={!(isRowSelectable?.(row) ?? true)}
                           onChange={() => toggleRowSelection(row, idx)}
                           className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-900 disabled:opacity-40"
-                          aria-label="Select row"
+                          aria-label={t('common.selectRow')}
                         />
                       </div>
                     )}
@@ -291,7 +295,7 @@ export function DataTable<T>({
                       disabled={!hasSelectableRows}
                       onChange={toggleDisplaySelection}
                       className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-900 disabled:opacity-40"
-                      aria-label="Select all visible rows"
+                      aria-label={t('common.selectAllRows')}
                     />
                   </th>
                 )}
@@ -306,7 +310,7 @@ export function DataTable<T>({
                   </th>
                 ))}
                 {renderActions && (
-                  <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase text-center">Actions</th>
+                  <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase text-center">{t('common.actions')}</th>
                 )}
               </tr>
             </thead>
@@ -316,7 +320,7 @@ export function DataTable<T>({
                   <td colSpan={colCount} className="px-6 py-12 text-center text-gray-400">
                     <div className="flex items-center justify-center gap-2">
                       <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-gray-900" />
-                      <span>Loading...</span>
+                      <span>{t('common.loading')}</span>
                     </div>
                   </td>
                 </tr>
@@ -324,7 +328,7 @@ export function DataTable<T>({
                 <tr>
                   <td colSpan={colCount} className="px-6 py-12 text-center text-gray-400">
                     {emptyIcon && <div className="flex justify-center mb-2">{emptyIcon}</div>}
-                    {emptyMessage}
+                    {resolvedEmptyMessage}
                   </td>
                 </tr>
               ) : (
@@ -342,7 +346,7 @@ export function DataTable<T>({
                           disabled={!(isRowSelectable?.(row) ?? true)}
                           onChange={() => toggleRowSelection(row, idx)}
                           className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-900 disabled:opacity-40"
-                          aria-label="Select row"
+                          aria-label={t('common.selectRow')}
                         />
                       </td>
                     )}
@@ -375,7 +379,7 @@ export function DataTable<T>({
         {(totalPages > 1 || currentPage > 1) && !isLoading && (
           <div className="flex flex-col gap-2 sm:flex-row items-center justify-between px-4 sm:px-6 py-3 border-t border-gray-100 bg-gray-50">
             <span className="text-sm text-gray-500">
-              Showing {(safePage - 1) * perPage + 1}–{Math.min(safePage * perPage, totalItems)} of {totalItems}
+              {t('common.showing', { from: (safePage - 1) * perPage + 1, to: Math.min(safePage * perPage, totalItems), total: totalItems })}
             </span>
             <div className="flex items-center gap-1">
               <button

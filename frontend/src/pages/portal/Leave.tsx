@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation, Trans } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, ArrowLeft, Paperclip, ExternalLink, X, Calendar, AlertTriangle, Download, Trash2 } from 'lucide-react';
 import { getLeaveBalances, getLeaveRequests, getLeaveTypes, createLeaveRequest, cancelLeaveRequest, deleteLeaveRequest, uploadFile, getMyProfile, exportLeaveIcs } from '@/api/portal';
@@ -7,6 +8,7 @@ import { formatDate, getErrorMessage } from '@/lib/utils';
 import { AttachmentLink, AttachmentPreview } from '@/components/ui/AttachmentPreview';
 import { DataTable, type Column } from '@/components/ui/DataTable';
 import type { Employee, LeaveBalance, LeaveRequest, LeaveType } from '@/types';
+import i18n from '@/i18n';
 
 function getLeaveEligibility(
   leaveType: string,
@@ -16,16 +18,16 @@ function getLeaveEligibility(
   const name = leaveType.toLowerCase();
 
   if (name.includes('maternity')) {
-    if (profile.gender !== 'female') return { eligible: false, reason: 'Available to female employees.' };
+    if (profile.gender !== 'female') return { eligible: false, reason: i18n.t('portal.leave.eligibilityFemale') };
   }
 
   if (name.includes('paternity')) {
-    if (profile.gender !== 'male') return { eligible: false, reason: 'Available to male employees.' };
-    if ((profile.num_children ?? 0) === 0) return { eligible: false, reason: 'Employee has no registered children (requires date of birth).' };
+    if (profile.gender !== 'male') return { eligible: false, reason: i18n.t('portal.leave.eligibilityMale') };
+    if ((profile.num_children ?? 0) === 0) return { eligible: false, reason: i18n.t('portal.leave.eligibilityChildren') };
   }
 
   if (name.includes('marriage')) {
-    if (profile.marital_status === 'married') return { eligible: false, reason: 'Employee is already married.' };
+    if (profile.marital_status === 'married') return { eligible: false, reason: i18n.t('portal.leave.eligibilityMarried') };
   }
 
   return { eligible: true };
@@ -36,14 +38,18 @@ const statusBadge = (status: string) => {
     pending: 'badge-pending', approved: 'badge-approved',
     rejected: 'badge-rejected', cancelled: 'badge-cancelled',
   };
-  return <span className={`badge ${cls[status] || 'badge-draft'}`}>{status}</span>;
+  return (
+    <span className={`badge ${cls[status] || 'badge-draft'}`}>
+      {i18n.t(`enums.requestStatus.${status}`, { defaultValue: status })}
+    </span>
+  );
 };
 
 function getBalanceColumns(profile: Employee | undefined): Column<LeaveBalance>[] {
   return [
-    { key: 'type', header: 'Leave Type', render: (b) => <span className="font-semibold text-gray-900">{b.leave_type_name}</span> },
+    { key: 'type', header: i18n.t('portal.leave.cols.type'), render: (b) => <span className="font-semibold text-gray-900">{b.leave_type_name}</span> },
     {
-      key: 'status', header: 'Status / Remarks', render: (b) => {
+      key: 'status', header: i18n.t('portal.leave.cols.statusRemarks'), render: (b) => {
         const elig = getLeaveEligibility(b.leave_type_name, profile);
         if (!elig.eligible) {
           return (
@@ -56,32 +62,36 @@ function getBalanceColumns(profile: Employee | undefined): Column<LeaveBalance>[
         const balance = Number(b.entitled_days) + Number(b.carried_forward) - Number(b.taken_days) - Number(b.pending_days);
         return (
           <span className="text-gray-600 text-sm">
-            Employee has <strong>{balance} day(s)</strong> of {b.leave_type_name}
+            <Trans
+              i18nKey="portal.leave.hasDays"
+              values={{ count: balance, type: b.leave_type_name }}
+              components={{ strong: <strong /> }}
+            />
           </span>
         );
       },
     },
     {
-      key: 'entitled', header: 'Entitled', align: 'center', render: (b) => {
+      key: 'entitled', header: i18n.t('portal.leave.cols.entitled'), align: 'center', render: (b) => {
         const elig = getLeaveEligibility(b.leave_type_name, profile);
         return elig.eligible ? Number(b.entitled_days) : <span className="text-gray-300">{'\u2014'}</span>;
       },
     },
     {
-      key: 'taken', header: 'Taken', align: 'center', render: (b) => {
+      key: 'taken', header: i18n.t('portal.leave.cols.taken'), align: 'center', render: (b) => {
         const elig = getLeaveEligibility(b.leave_type_name, profile);
         return elig.eligible ? Number(b.taken_days) : <span className="text-gray-300">{'\u2014'}</span>;
       },
     },
     {
-      key: 'pending', header: 'Pending', align: 'center', render: (b) => {
+      key: 'pending', header: i18n.t('portal.leave.cols.pending'), align: 'center', render: (b) => {
         const elig = getLeaveEligibility(b.leave_type_name, profile);
         if (!elig.eligible) return <span className="text-gray-300">{'\u2014'}</span>;
         return <span className={Number(b.pending_days) > 0 ? 'text-amber-600' : ''}>{Number(b.pending_days)}</span>;
       },
     },
     {
-      key: 'balance', header: 'Balance', align: 'center', render: (b) => {
+      key: 'balance', header: i18n.t('portal.leave.cols.balance'), align: 'center', render: (b) => {
         const elig = getLeaveEligibility(b.leave_type_name, profile);
         if (!elig.eligible) return <span className="text-gray-300">{'\u2014'}</span>;
         const balance = Number(b.entitled_days) + Number(b.carried_forward) - Number(b.taken_days) - Number(b.pending_days);
@@ -91,41 +101,42 @@ function getBalanceColumns(profile: Employee | undefined): Column<LeaveBalance>[
   ];
 }
 
-const requestColumns: Column<LeaveRequest>[] = [
-  { key: 'type', header: 'Type', render: (r) => <span className="font-semibold text-gray-900">{r.leave_type_name}</span> },
+const getRequestColumns = (): Column<LeaveRequest>[] => [
+  { key: 'type', header: i18n.t('portal.leave.cols.type'), render: (r) => <span className="font-semibold text-gray-900">{r.leave_type_name}</span> },
   {
-    key: 'period', header: 'Period', render: (r) => (
+    key: 'period', header: i18n.t('portal.leave.cols.period'), render: (r) => (
       <span className="text-gray-600">{formatDate(r.start_date)} – {formatDate(r.end_date)}</span>
     ),
   },
-  { key: 'days', header: 'Days', align: 'center', render: (r) => Number(r.days) },
-  { key: 'reason', header: 'Reason', render: (r) => <span className="text-gray-400 max-w-[160px] truncate block">{r.reason || '\u2014'}</span> },
+  { key: 'days', header: i18n.t('portal.leave.cols.days'), align: 'center', render: (r) => Number(r.days) },
+  { key: 'reason', header: i18n.t('common.reason'), render: (r) => <span className="text-gray-400 max-w-[160px] truncate block">{r.reason || '\u2014'}</span> },
   {
-    key: 'attachment', header: 'Attachment', render: (r) => (
+    key: 'attachment', header: i18n.t('common.attachment'), render: (r) => (
       r.attachment_url ? (
         r.attachment_url.startsWith('blob:') ? (
           <span className="inline-flex items-center gap-1 text-red-400 text-sm">
             <Paperclip className="w-3 h-3" />
-            <span className="truncate max-w-[100px]">Unavailable</span>
+            <span className="truncate max-w-[100px]">{i18n.t('common.unavailable')}</span>
           </span>
         ) : (
           <AttachmentLink url={r.attachment_url}
             className="inline-flex items-center gap-1 text-gray-900 hover:text-black text-sm">
             <Paperclip className="w-3 h-3" />
-            <span className="truncate max-w-[100px]">{r.attachment_name || 'View'}</span>
+            <span className="truncate max-w-[100px]">{r.attachment_name || i18n.t('common.view')}</span>
             <ExternalLink className="w-3 h-3" />
           </AttachmentLink>
         )
       ) : <span className="text-gray-300">\u2014</span>
     ),
   },
-  { key: 'status', header: 'Status', align: 'center', render: (r) => statusBadge(r.status) },
+  { key: 'status', header: i18n.t('common.status'), align: 'center', render: (r) => statusBadge(r.status) },
 ];
 
 const canCancelLeave = (request: LeaveRequest) => ['pending', 'approved', 'rejected'].includes(request.status);
 const canDeleteLeave = (request: LeaveRequest) => request.status === 'cancelled';
 
 export function Leave() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<'balances' | 'requests'>('balances');
   const [showApply, setShowApply] = useState(false);
@@ -184,7 +195,7 @@ export function Leave() {
       setSelectedLeaveIds(outcome.failed.map((failure) => failure.id));
       setBulkError(summarizeBulkFailure(outcome, 'cancelled'));
     },
-    onError: (err: unknown) => setBulkError(getErrorMessage(err, 'Failed to cancel the selected requests')),
+    onError: (err: unknown) => setBulkError(getErrorMessage(err, t('portal.leave.bulkCancelFailed'))),
     onSettled: refreshLeave,
   });
 
@@ -194,7 +205,7 @@ export function Leave() {
       setSelectedLeaveIds(outcome.failed.map((failure) => failure.id));
       setBulkError(summarizeBulkFailure(outcome, 'deleted'));
     },
-    onError: (err: unknown) => setBulkError(getErrorMessage(err, 'Failed to delete the selected requests')),
+    onError: (err: unknown) => setBulkError(getErrorMessage(err, t('portal.leave.bulkDeleteFailed'))),
     onSettled: refreshLeave,
   });
 
@@ -218,15 +229,15 @@ export function Leave() {
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="page-header">
-          <h1 className="page-title">Leave</h1>
-          <p className="page-subtitle">Manage your leave entitlements and requests</p>
+          <h1 className="page-title">{t('portal.leave.title')}</h1>
+          <p className="page-subtitle">{t('portal.leave.subtitle')}</p>
         </div>
         <div className="flex gap-2 w-full sm:w-auto">
           <button onClick={() => exportLeaveIcs()} className="btn-secondary w-full sm:w-auto">
-            <Download className="w-4 h-4" /> Export .ics
+            <Download className="w-4 h-4" /> {t('portal.leave.exportIcs')}
           </button>
           <button onClick={() => setShowApply(true)} className="btn-primary w-full sm:w-auto">
-            <Plus className="w-4 h-4" /> Apply for Leave
+            <Plus className="w-4 h-4" /> {t('portal.leave.apply')}
           </button>
         </div>
       </div>
@@ -234,8 +245,8 @@ export function Leave() {
       {/* Tabs */}
       <div className="flex gap-1 border-b border-gray-200 overflow-x-auto">
         {[
-          { key: 'balances' as const, label: 'Leave Entitlement' },
-          { key: 'requests' as const, label: 'Activities' },
+          { key: 'balances' as const, label: t('portal.leave.tabs.balances') },
+          { key: 'requests' as const, label: t('portal.leave.tabs.requests') },
         ].map((t) => (
           <button
             key={t.key}
@@ -254,22 +265,22 @@ export function Leave() {
           columns={getBalanceColumns(profile)}
           data={balances ?? []}
           perPage={10}
-          emptyMessage="No leave entitlements found"
-          summaryTitle={(b) => `${b.leave_type_name} — Leave Balance`}
+          emptyMessage={t('portal.leave.emptyBalances')}
+          summaryTitle={(b) => t('portal.leave.balanceSummaryTitle', { type: b.leave_type_name })}
           renderSummary={(b) => {
             const balance = Number(b.entitled_days) + Number(b.carried_forward) - Number(b.taken_days) - Number(b.pending_days);
             return (
               <div className="grid grid-cols-2 gap-4">
-                <SummaryField label="Leave Type" value={b.leave_type_name} />
-                <SummaryField label="Year" value={String(b.year)} />
-                <SummaryField label="Entitled" value={String(Number(b.entitled_days))} />
-                <SummaryField label="Carried Forward" value={String(Number(b.carried_forward))} />
-                <SummaryField label="Taken" value={String(Number(b.taken_days))} />
-                <SummaryField label="Pending" value={String(Number(b.pending_days))} />
+                <SummaryField label={t('portal.leave.cols.type')} value={b.leave_type_name} />
+                <SummaryField label={t('common.year')} value={String(b.year)} />
+                <SummaryField label={t('portal.leave.cols.entitled')} value={String(Number(b.entitled_days))} />
+                <SummaryField label={t('portal.leave.cols.carriedForward')} value={String(Number(b.carried_forward))} />
+                <SummaryField label={t('portal.leave.cols.taken')} value={String(Number(b.taken_days))} />
+                <SummaryField label={t('portal.leave.cols.pending')} value={String(Number(b.pending_days))} />
                 <div className="col-span-2 pt-2 border-t border-gray-100">
-                  <p className="text-xs text-gray-400 uppercase tracking-wide">Balance</p>
+                  <p className="text-xs text-gray-400 uppercase tracking-wide">{t('portal.leave.cols.balance')}</p>
                   <p className={`text-lg font-bold mt-0.5 ${balance > 0 ? 'text-emerald-600' : balance < 0 ? 'text-red-600' : 'text-gray-600'}`}>
-                    {balance} day(s)
+                    {t('portal.leave.days', { count: balance })}
                   </p>
                 </div>
               </div>
@@ -281,12 +292,12 @@ export function Leave() {
           {selectedLeaveIds.length > 0 && (
             <div className="space-y-2">
               <div className="flex flex-col gap-2 rounded-xl border border-gray-200 bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-                <span className="text-sm font-medium text-gray-700">{selectedLeaveIds.length} selected</span>
+                <span className="text-sm font-medium text-gray-700">{t('common.selected', { count: selectedLeaveIds.length })}</span>
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
                     onClick={() => {
-                      if (confirm(`Cancel ${selectedCancelableLeaveIds.length} selected leave request(s)?`)) {
+                      if (confirm(t('portal.leave.bulkCancelConfirm', { count: selectedCancelableLeaveIds.length }))) {
                         setBulkError('');
                         bulkCancelMutation.mutate(selectedCancelableLeaveIds);
                       }
@@ -295,12 +306,12 @@ export function Leave() {
                     className="btn-secondary !py-2 text-sm disabled:opacity-50"
                   >
                     <X className="w-4 h-4" />
-                    {bulkCancelMutation.isPending ? 'Cancelling...' : 'Cancel Selected'}
+                    {bulkCancelMutation.isPending ? t('common.cancelling') : t('common.cancelSelected')}
                   </button>
                   <button
                     type="button"
                     onClick={() => {
-                      if (confirm(`Permanently delete ${selectedDeletableLeaveIds.length} cancelled leave request(s)?`)) {
+                      if (confirm(t('portal.leave.bulkDeleteConfirm', { count: selectedDeletableLeaveIds.length }))) {
                         setBulkError('');
                         bulkDeleteMutation.mutate(selectedDeletableLeaveIds);
                       }
@@ -309,7 +320,7 @@ export function Leave() {
                     className="btn-secondary !py-2 text-sm text-red-600 hover:!bg-red-50 disabled:opacity-50"
                   >
                     <Trash2 className="w-4 h-4" />
-                    {bulkDeleteMutation.isPending ? 'Deleting...' : 'Delete Selected'}
+                    {bulkDeleteMutation.isPending ? t('common.deleting') : t('common.deleteSelected')}
                   </button>
                 </div>
               </div>
@@ -321,16 +332,16 @@ export function Leave() {
             </div>
           )}
           <DataTable
-            columns={requestColumns}
+            columns={getRequestColumns()}
             data={requests ?? []}
             perPage={10}
-            emptyMessage="No leave requests yet"
+            emptyMessage={t('portal.leave.emptyRequests')}
             emptyIcon={<Calendar className="w-10 h-10 opacity-40" />}
             selectable
             selectedRowKeys={selectedLeaveIds}
             onSelectedRowKeysChange={setSelectedLeaveIds}
             rowKey={(request) => request.id}
-            summaryTitle={(r) => `${r.leave_type_name} — Leave Request`}
+            summaryTitle={(r) => t('portal.leave.requestSummaryTitle', { type: r.leave_type_name })}
             renderSummary={(r) => (
             <div className="space-y-5">
               {/* Header */}
@@ -341,23 +352,23 @@ export function Leave() {
 
               {/* Details */}
               <div className="grid grid-cols-2 gap-4 bg-gray-50 rounded-lg p-4">
-                <SummaryField label="Start Date" value={formatDate(r.start_date)} />
-                <SummaryField label="End Date" value={formatDate(r.end_date)} />
-                <SummaryField label="Duration" value={`${Number(r.days)} day(s)`} />
-                <SummaryField label="Submitted" value={formatDate(r.created_at)} />
+                <SummaryField label={t('portal.leave.fields.startDate')} value={formatDate(r.start_date)} />
+                <SummaryField label={t('portal.leave.fields.endDate')} value={formatDate(r.end_date)} />
+                <SummaryField label={t('portal.leave.fields.duration')} value={t('portal.leave.days', { count: Number(r.days) })} />
+                <SummaryField label={t('portal.leave.fields.submitted')} value={formatDate(r.created_at)} />
               </div>
 
               {/* Reason */}
               {r.reason && (
                 <div>
-                  <SummaryField label="Reason" value={r.reason} />
+                  <SummaryField label={t('common.reason')} value={r.reason} />
                 </div>
               )}
 
               {/* Attachment preview */}
               {r.attachment_url && (
                 <div>
-                  <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Attachment</p>
+                  <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">{t('common.attachment')}</p>
                   <AttachmentPreview url={r.attachment_url} name={r.attachment_name} />
                 </div>
               )}
@@ -365,9 +376,9 @@ export function Leave() {
               {/* Review notes */}
               {r.review_notes && (
                 <div className="bg-amber-50 border border-amber-100 rounded-lg p-4">
-                  <SummaryField label="Review Notes" value={r.review_notes} />
+                  <SummaryField label={t('portal.leave.fields.reviewNotes')} value={r.review_notes} />
                   {r.reviewed_at && (
-                    <p className="text-xs text-gray-400 mt-1">Reviewed on {formatDate(r.reviewed_at)}</p>
+                    <p className="text-xs text-gray-400 mt-1">{t('portal.leave.reviewedOn', { date: formatDate(r.reviewed_at) })}</p>
                   )}
                 </div>
               )}
@@ -379,7 +390,7 @@ export function Leave() {
                 {canCancelLeave(r) && (
                   <button
                     onClick={() => {
-                      if (confirm('Cancel this leave request?')) {
+                      if (confirm(t('portal.leave.cancelConfirm'))) {
                         cancelMutation.mutate(r.id, { onSuccess: close });
                       }
                     }}
@@ -387,13 +398,13 @@ export function Leave() {
                     className="flex items-center gap-2 px-4 py-2.5 bg-white border border-red-200 text-red-600 text-sm font-medium rounded-lg hover:bg-red-50 hover:border-red-300 disabled:opacity-50 transition-colors"
                   >
                     <X className="w-4 h-4" />
-                    {cancelMutation.isPending ? 'Cancelling...' : 'Cancel Request'}
+                    {cancelMutation.isPending ? t('common.cancelling') : t('portal.leave.cancelRequest')}
                   </button>
                 )}
                 {canDeleteLeave(r) && (
                   <button
                     onClick={() => {
-                      if (confirm('Permanently delete this cancelled leave request?')) {
+                      if (confirm(t('portal.leave.deleteConfirm'))) {
                         deleteMutation.mutate(r.id, { onSuccess: close });
                       }
                     }}
@@ -401,7 +412,7 @@ export function Leave() {
                     className="flex items-center gap-2 px-4 py-2.5 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 disabled:opacity-50 transition-colors"
                   >
                     <Trash2 className="w-4 h-4" />
-                    {deleteMutation.isPending ? 'Deleting...' : 'Delete Permanently'}
+                    {deleteMutation.isPending ? t('common.deleting') : t('portal.leave.deletePermanently')}
                   </button>
                 )}
               </div>
@@ -412,21 +423,21 @@ export function Leave() {
               {canCancelLeave(r) && (
                 <button
                   onClick={() => {
-                    if (confirm('Cancel this leave request?')) cancelMutation.mutate(r.id);
+                    if (confirm(t('portal.leave.cancelConfirm'))) cancelMutation.mutate(r.id);
                   }}
                   className="text-xs text-red-500 hover:text-red-700 font-medium"
                 >
-                  Cancel
+                  {t('common.cancel')}
                 </button>
               )}
               {canDeleteLeave(r) && (
                 <button
                   onClick={() => {
-                    if (confirm('Permanently delete this cancelled leave request?')) deleteMutation.mutate(r.id);
+                    if (confirm(t('portal.leave.deleteConfirm'))) deleteMutation.mutate(r.id);
                   }}
                   className="text-xs text-red-500 hover:text-red-700 font-medium"
                 >
-                  Delete
+                  {t('common.delete')}
                 </button>
               )}
               {r.review_notes && (
@@ -452,6 +463,7 @@ function SummaryField({ label, value }: { label: string; value: string }) {
 
 /* ───────────── Full-page Leave Application Form ───────────── */
 function ApplyLeaveForm({ leaveTypes, onClose }: { leaveTypes: LeaveType[]; onClose: () => void }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [form, setForm] = useState({
     leave_type_id: '',
@@ -495,7 +507,7 @@ function ApplyLeaveForm({ leaveTypes, onClose }: { leaveTypes: LeaveType[]; onCl
       setTimeout(() => onClose(), 1200);
     },
     onError: (err: unknown) => {
-      setError(getErrorMessage(err, 'Failed to submit leave request. Please try again.'));
+      setError(getErrorMessage(err, t('portal.leave.submitFailed')));
     },
   });
 
@@ -517,10 +529,10 @@ function ApplyLeaveForm({ leaveTypes, onClose }: { leaveTypes: LeaveType[]; onCl
 
   const handleSubmit = () => {
     setError('');
-    if (!form.leave_type_id) { setError('Please select a leave type'); return; }
-    if (!form.start_date || !form.end_date) { setError('Please select start and end dates'); return; }
-    if (new Date(form.end_date) < new Date(form.start_date)) { setError('End date must be after start date'); return; }
-    if (form.days <= 0) { setError('Number of days must be greater than 0'); return; }
+    if (!form.leave_type_id) { setError(t('portal.leave.typeRequired')); return; }
+    if (!form.start_date || !form.end_date) { setError(t('portal.leave.datesRequired')); return; }
+    if (new Date(form.end_date) < new Date(form.start_date)) { setError(t('portal.leave.endAfterStart')); return; }
+    if (form.days <= 0) { setError(t('portal.leave.daysPositive')); return; }
     mutation.mutate(form);
   };
 
@@ -531,28 +543,28 @@ function ApplyLeaveForm({ leaveTypes, onClose }: { leaveTypes: LeaveType[]; onCl
           <ArrowLeft className="w-4 h-4" />
         </button>
         <div className="page-header">
-          <h1 className="page-title">Apply for Leave</h1>
-          <p className="page-subtitle">Fill in the details below to submit your leave request</p>
+          <h1 className="page-title">{t('portal.leave.apply')}</h1>
+          <p className="page-subtitle">{t('portal.leave.applySubtitle')}</p>
         </div>
       </div>
 
       {error && <div className="p-4 bg-red-50 text-red-700 text-sm rounded-xl border border-red-100">{error}</div>}
-      {success && <div className="p-4 bg-emerald-50 text-emerald-700 text-sm rounded-xl border border-emerald-100">Leave request submitted successfully!</div>}
+      {success && <div className="p-4 bg-emerald-50 text-emerald-700 text-sm rounded-xl border border-emerald-100">{t('portal.leave.submitted')}</div>}
 
       <div className="bg-white rounded-2xl shadow divide-y divide-gray-100">
         <div className="p-6 lg:p-8">
           <div className="section-header">
             <span className="section-number">1</span>
-            <span className="section-title">Leave Type</span>
+            <span className="section-title">{t('portal.leave.sections.type')}</span>
           </div>
           <div className="max-w-md">
-            <label className="form-label">Select leave type *</label>
+            <label className="form-label">{t('portal.leave.selectType')} *</label>
             <select
               value={form.leave_type_id}
               onChange={(e) => setForm((prev) => ({ ...prev, leave_type_id: e.target.value }))}
               className="form-input"
             >
-              <option value="">Choose a leave type...</option>
+              <option value="">{t('portal.leave.chooseType')}</option>
               {leaveTypes.map((lt) => (
                 <option key={lt.id} value={lt.id}>{lt.name}</option>
               ))}
@@ -563,11 +575,11 @@ function ApplyLeaveForm({ leaveTypes, onClose }: { leaveTypes: LeaveType[]; onCl
         <div className="p-6 lg:p-8">
           <div className="section-header">
             <span className="section-number">2</span>
-            <span className="section-title">Leave Period</span>
+            <span className="section-title">{t('portal.leave.sections.period')}</span>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-2xl">
             <div>
-              <label className="form-label">Start Date *</label>
+              <label className="form-label">{t('portal.leave.fields.startDate')} *</label>
               <input
                 type="date"
                 value={form.start_date}
@@ -579,7 +591,7 @@ function ApplyLeaveForm({ leaveTypes, onClose }: { leaveTypes: LeaveType[]; onCl
               />
             </div>
             <div>
-              <label className="form-label">End Date *</label>
+              <label className="form-label">{t('portal.leave.fields.endDate')} *</label>
               <input
                 type="date"
                 value={form.end_date}
@@ -591,7 +603,7 @@ function ApplyLeaveForm({ leaveTypes, onClose }: { leaveTypes: LeaveType[]; onCl
               />
             </div>
             <div>
-              <label className="form-label">Number of Days</label>
+              <label className="form-label">{t('portal.leave.fields.numDays')}</label>
               <input
                 type="number"
                 step="0.5"
@@ -607,25 +619,25 @@ function ApplyLeaveForm({ leaveTypes, onClose }: { leaveTypes: LeaveType[]; onCl
         <div className="p-6 lg:p-8">
           <div className="section-header">
             <span className="section-number">3</span>
-            <span className="section-title">Additional Details</span>
+            <span className="section-title">{t('portal.leave.sections.details')}</span>
           </div>
           <div className="space-y-5 max-w-2xl">
             <div>
-              <label className="form-label">Reason</label>
+              <label className="form-label">{t('common.reason')}</label>
               <textarea
                 value={form.reason}
                 onChange={(e) => setForm((prev) => ({ ...prev, reason: e.target.value }))}
                 rows={3}
                 className="form-input"
-                placeholder="Optional reason for leave..."
+                placeholder={t('portal.leave.reasonPlaceholder')}
               />
             </div>
             <div>
-              <label className="form-label">Attachment</label>
+              <label className="form-label">{t('common.attachment')}</label>
               <div className="flex items-center gap-3">
                 <label className="flex items-center gap-2 px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-100 cursor-pointer transition-all-fast">
                   <Paperclip className="w-4 h-4" />
-                  <span>{form.attachment_name || 'Choose file...'}</span>
+                  <span>{form.attachment_name || t('common.chooseFile')}</span>
                   <input type="file" onChange={handleFileChange} accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" className="hidden" />
                 </label>
                 {form.attachment_name && (
@@ -634,16 +646,16 @@ function ApplyLeaveForm({ leaveTypes, onClose }: { leaveTypes: LeaveType[]; onCl
                   </button>
                 )}
               </div>
-              <p className="text-xs text-gray-400 mt-1.5">PDF, JPG, PNG, DOC (optional supporting document)</p>
+              <p className="text-xs text-gray-400 mt-1.5">{t('portal.leave.attachmentHint')}</p>
             </div>
           </div>
         </div>
       </div>
 
       <div className="flex justify-end gap-3">
-        <button onClick={onClose} className="btn-secondary">Cancel</button>
+        <button onClick={onClose} className="btn-secondary">{t('common.cancel')}</button>
         <button onClick={handleSubmit} disabled={mutation.isPending || success} className="btn-primary">
-          {mutation.isPending ? 'Submitting...' : success ? 'Submitted!' : 'Submit Leave Request'}
+          {mutation.isPending ? t('common.submitting') : success ? t('portal.leave.submittedShort') : t('portal.leave.submit')}
         </button>
       </div>
     </div>

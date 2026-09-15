@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
+import { useTranslation } from 'react-i18next';
 import { useAuth } from '@/context/AuthContext';
 import { hasOnlyEmployeeRole } from '@/lib/roles';
 import { TwoFactorPrompt } from '@/components/TwoFactorPrompt';
@@ -35,6 +36,7 @@ function takeCallbackParams(): URLSearchParams {
 
 export function OAuth2Callback() {
   const navigate = useNavigate();
+  const { t } = useTranslation();
   const { setSession } = useAuth();
   const [error, setError] = useState('');
   const [mfaToken, setMfaToken] = useState<string | null>(null);
@@ -60,7 +62,7 @@ export function OAuth2Callback() {
     }
 
     if (!token || !userStr) {
-      setError('OAuth2 login failed. Missing authentication data.');
+      setError(t('auth.oauth.missingData'));
       return;
     }
 
@@ -70,9 +72,9 @@ export function OAuth2Callback() {
       setSession(token, user);
       navigate(hasOnlyEmployeeRole(user) ? '/portal' : '/', { replace: true });
     } catch {
-      setError('Failed to process OAuth2 response.');
+      setError(t('auth.oauth.processFailed'));
     }
-  }, [navigate, setSession]);
+  }, [navigate, setSession, t]);
 
   const goPostLogin = (user: User) => {
     navigate(hasOnlyEmployeeRole(user) ? '/portal' : '/', { replace: true });
@@ -89,7 +91,7 @@ export function OAuth2Callback() {
           </div>
           <p className="text-sm text-gray-600">{error}</p>
           <a href="/login" className="inline-block text-sm text-black font-medium hover:underline">
-            Back to login
+            {t('auth.backToLogin')}
           </a>
         </div>
       </div>
@@ -113,7 +115,7 @@ export function OAuth2Callback() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-100">
-      <div className="text-gray-500">Completing sign in...</div>
+      <div className="text-gray-500">{t('auth.oauth.completing')}</div>
     </div>
   );
 }

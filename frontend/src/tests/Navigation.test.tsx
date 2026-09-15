@@ -175,7 +175,7 @@ describe('Sidebar user panel', () => {
     renderWithProviders(<Sidebar />);
 
     expect(screen.getByText('Aisyah Rahman')).toBeInTheDocument();
-    expect(screen.getByText('payroll admin, finance')).toBeInTheDocument();
+    expect(screen.getByText('Payroll Admin, Finance')).toBeInTheDocument();
     expect(screen.getByText('A')).toBeInTheDocument();
   });
 

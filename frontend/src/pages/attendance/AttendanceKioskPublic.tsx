@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams } from 'react-router';
+import { useTranslation } from 'react-i18next';
 import { RefreshCw, Wifi, Clock, ShieldAlert } from 'lucide-react';
 import QRCode from 'qrcode';
 import { fetchKioskQr } from '@/api/kiosk';
 import { BrandLogo } from '@/components/ui/BrandLogo';
+import { formatTimeSeconds, formatDateLong } from '@/lib/format';
 
 type Status =
   | { kind: 'loading' }
@@ -28,6 +30,7 @@ const GUARD_SECONDS = 5;
 const MIN_MINT_INTERVAL_MS = 5_000;
 
 export function AttendanceKioskPublic() {
+  const { t } = useTranslation();
   const { kioskKey = '' } = useParams<{ kioskKey: string }>();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [status, setStatus] = useState<Status>({ kind: 'loading' });
@@ -113,7 +116,7 @@ export function AttendanceKioskPublic() {
       if (code === 401) {
         setStatus({
           kind: 'fatal',
-          message: 'This kiosk has been disconnected. Ask an admin to issue a new link.',
+          message: t('attendance.kiosk.disconnected'),
         });
         return;
       }
@@ -121,12 +124,12 @@ export function AttendanceKioskPublic() {
       backoffRef.current = Math.min(MAX_BACKOFF_MS, backoffRef.current * 2);
       const note =
         code === 429
-          ? `Rate limited. Retrying in ${Math.round(wait / 1000)}s…`
-          : `Network problem. Retrying in ${Math.round(wait / 1000)}s…`;
+          ? t('attendance.kiosk.rateLimited', { secs: Math.round(wait / 1000) })
+          : t('attendance.kiosk.networkProblem', { secs: Math.round(wait / 1000) });
       setStatus({ kind: 'transient', message: note });
       scheduleMint(wait);
     }
-  }, [kioskKey, scheduleMint]); // eslint-disable-line react-hooks/exhaustive-deps -- Babel cannot identify setStatus as a stable React setter.
+  }, [kioskKey, scheduleMint, t]); // eslint-disable-line react-hooks/exhaustive-deps -- Babel cannot identify setStatus as a stable React setter.
 
   useEffect(() => {
     fetchTokenRef.current = fetchToken;
@@ -165,30 +168,21 @@ export function AttendanceKioskPublic() {
   }, [status]);
 
   const effectiveStatus: Status = !kioskKey
-    ? { kind: 'fatal', message: 'Missing kiosk credential in URL.' }
+    ? { kind: 'fatal', message: t('attendance.kiosk.missingCredential') }
     : status;
   const ttl = effectiveStatus.kind === 'ok' ? effectiveStatus.ttl : FALLBACK_TTL;
   const pctLeft = ttl > 0 ? Math.max(0, (timeLeft / ttl) * 100) : 0;
   const isLow = timeLeft <= 10;
 
-  const timeStr = now.toLocaleTimeString('en-MY', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
-  const dateStr = now.toLocaleDateString('en-MY', {
-    weekday: 'long',
-    day: 'numeric',
-    month: 'long',
-    year: 'numeric',
-  });
+  const timeStr = formatTimeSeconds(now);
+  const dateStr = formatDateLong(now);
 
   return (
     <div className="min-h-screen bg-gray-950 flex flex-col items-center justify-center p-6 select-none">
       <div className="mb-8 text-center">
         <BrandLogo variant="lockup-light" className="h-10 w-auto mx-auto mb-2" />
         <p className="text-gray-400 text-sm font-medium uppercase tracking-wider">
-          Attendance Kiosk
+          {t('attendance.kiosk.title')}
         </p>
       </div>
 
@@ -230,12 +224,12 @@ export function AttendanceKioskPublic() {
             <div className="flex items-center justify-between text-xs mb-2">
               <div className="flex items-center gap-1.5 text-gray-500">
                 <RefreshCw className="w-3 h-3" />
-                Refreshes in
+                {t('attendance.kiosk.refreshesIn')}
               </div>
               <span
                 className={`font-bold tabular-nums text-base ${isLow ? 'text-red-400 animate-pulse' : 'text-white'}`}
               >
-                {timeLeft}s
+                {t('attendance.kiosk.secondsShort', { count: timeLeft })}
               </span>
             </div>
             <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
@@ -248,15 +242,10 @@ export function AttendanceKioskPublic() {
         )}
 
         <div className="w-full bg-gray-800/60 rounded-2xl p-4 space-y-2">
-          {[
-            '1. Open PayrollMY on your phone',
-            '2. Tap "Attendance" in the portal',
-            '3. Scan the QR code above',
-            '4. Confirm your location',
-          ].map((step) => (
+          {[1, 2, 3, 4].map((step) => (
             <div key={step} className="text-gray-300 text-sm flex items-start gap-2">
               <span className="text-emerald-400 shrink-0">›</span>
-              <span>{step}</span>
+              <span>{t(`attendance.kiosk.steps.${step}`)}</span>
             </div>
           ))}
         </div>
@@ -264,7 +253,7 @@ export function AttendanceKioskPublic() {
 
       <div className="mt-8 flex items-center gap-2 text-gray-600 text-xs">
         <Clock className="w-3.5 h-3.5" />
-        <span>QR code regenerates automatically</span>
+        <span>{t('attendance.kiosk.autoRegen')}</span>
       </div>
     </div>
   );

@@ -338,6 +338,11 @@ pub struct PayrollDiagnostic {
     /// matching on prose.
     pub code: String,
     pub message: String,
+    /// Structured interpolation payload for a localized rendering of `code`
+    /// (period strings, counts, sen totals, ...), so a localized client does
+    /// not have to parse `message` to recompose the text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub params: Option<std::collections::BTreeMap<String, String>>,
     pub employee_id: Option<Uuid>,
     pub employee_number: Option<String>,
     pub employee_name: Option<String>,
@@ -348,6 +353,7 @@ impl PayrollDiagnostic {
         Self {
             code: code.into(),
             message: message.into(),
+            params: None,
             employee_id: None,
             employee_number: None,
             employee_name: None,
@@ -364,10 +370,21 @@ impl PayrollDiagnostic {
         Self {
             code: code.into(),
             message: message.into(),
+            params: None,
             employee_id: Some(employee_id),
             employee_number: Some(employee_number.into()),
             employee_name: Some(employee_name.into()),
         }
+    }
+
+    pub fn with_params(mut self, params: &[(&str, String)]) -> Self {
+        self.params = Some(
+            params
+                .iter()
+                .map(|(k, v)| ((*k).to_string(), v.clone()))
+                .collect(),
+        );
+        self
     }
 }
 
@@ -756,6 +773,11 @@ pub struct PayrollActionItem {
     pub severity: String,
     pub count: i64,
     pub message: String,
+    /// Structured interpolation payload for a localized rendering of `code`
+    /// (e.g. the payroll group name on run-level items), so a localized client
+    /// does not have to parse `message` to recompose the text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
     /// Frontend route the operator is sent to (`/employees`, `/approvals`,
     /// `/payroll/{id}`, ...). `None` when there is nothing to click.
     pub link: Option<String>,

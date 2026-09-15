@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
+import { useTranslation } from 'react-i18next';
 import { useAuth } from '@/context/AuthContext';
 import { linkGoogleAccount } from '@/api/oauth2';
 import { getErrorMessage, safeRedirectPath } from '@/lib/utils';
@@ -28,6 +29,7 @@ function takeLinkParams(): URLSearchParams {
 
 export function OAuth2Link() {
   const navigate = useNavigate();
+  const { t } = useTranslation();
   const { isAuthenticated, isLoading } = useAuth();
   const [error, setError] = useState('');
 
@@ -47,21 +49,21 @@ export function OAuth2Link() {
     if (providerError) {
       setError(
         providerError === 'access_denied'
-          ? 'Google sign-in was cancelled. The account was not linked.'
-          : 'Google could not complete the sign-in. The account was not linked.',
+          ? t('auth.oauthLink.cancelled')
+          : t('auth.oauthLink.failed'),
       );
       return;
     }
 
     if (!isAuthenticated) {
-      setError('Your session could not be restored. Please sign in and try linking again.');
+      setError(t('auth.oauthLink.sessionLost'));
       return;
     }
 
     const code = params.get('code');
     const state = params.get('state');
     if (!code || !state) {
-      setError('Google account linking failed. Missing authentication data.');
+      setError(t('auth.oauthLink.missingData'));
       return;
     }
 
@@ -71,9 +73,9 @@ export function OAuth2Link() {
         navigate(returnTo ?? '/', { replace: true });
       })
       .catch((err: unknown) => {
-        setError(getErrorMessage(err, 'Could not link the Google account.'));
+        setError(getErrorMessage(err, t('auth.oauthLink.linkFailed')));
       });
-  }, [isLoading, isAuthenticated, navigate, returnTo]);
+  }, [isLoading, isAuthenticated, navigate, returnTo, t]);
 
   if (error) {
     return (
@@ -86,7 +88,7 @@ export function OAuth2Link() {
           </div>
           <p className="text-sm text-gray-600">{error}</p>
           <a href={returnTo ?? '/'} className="inline-block text-sm text-black font-medium hover:underline">
-            Go back
+            {t('common.goBack')}
           </a>
         </div>
       </div>
@@ -97,7 +99,7 @@ export function OAuth2Link() {
     <div className="min-h-screen flex items-center justify-center bg-gray-100">
       <div className="text-center space-y-4">
         <BrandLogo variant="lockup-dark" className="h-12 w-auto mx-auto" />
-        <div className="text-gray-500">Linking your Google account...</div>
+        <div className="text-gray-500">{t('auth.oauthLink.linking')}</div>
       </div>
     </div>
   );

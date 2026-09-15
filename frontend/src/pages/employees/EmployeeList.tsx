@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { Trans, useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Search, Edit, DollarSign, Shield, MapPin, TrendingUp, TrendingDown, Pencil, Trash2, AlertTriangle, Upload, UserCheck, X } from 'lucide-react';
 import { useNavigate } from 'react-router';
@@ -19,10 +20,10 @@ const BANKS = [
   'Bank Muamalat', 'MBSB Bank', 'Al Rajhi Bank',
 ];
 
-const columns: Column<Employee>[] = [
+const getColumns = (t: (key: string) => string): Column<Employee>[] => [
   {
     key: 'employee',
-    header: 'Employee',
+    header: t('employees.columns.employee'),
     render: (emp) => (
       <div>
         <div className="font-medium">{emp.full_name}</div>
@@ -38,28 +39,28 @@ const columns: Column<Employee>[] = [
   },
   {
     key: 'department',
-    header: 'Department',
+    header: t('employees.columns.department'),
     render: (emp) => <span className="text-gray-600">{emp.department || '-'}</span>,
   },
   {
     key: 'designation',
-    header: 'Designation',
+    header: t('employees.columns.designation'),
     render: (emp) => <span className="text-gray-600">{emp.designation || '-'}</span>,
   },
   {
     key: 'joined',
-    header: 'Joined',
+    header: t('employees.columns.joined'),
     render: (emp) => <span className="text-gray-600">{formatDate(emp.date_joined)}</span>,
   },
   {
     key: 'salary',
-    header: 'Basic Salary',
+    header: t('employees.columns.salary'),
     align: 'right',
     render: (emp) => <span className="font-medium">{formatMYR(emp.basic_salary)}</span>,
   },
   {
     key: 'status',
-    header: 'Status',
+    header: t('employees.columns.status'),
     align: 'center',
     render: (emp) => (
       <span
@@ -67,13 +68,14 @@ const columns: Column<Employee>[] = [
           emp.is_active ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
         }`}
       >
-        {emp.is_active ? 'Active' : 'Inactive'}
+        {emp.is_active ? t('common.active') : t('common.inactive')}
       </span>
     ),
   },
 ];
 
 export function EmployeeList() {
+  const { t } = useTranslation();
   const { user } = useAuth();
   const navigate = useNavigate();
   const canViewPayroll = canAccessPayrollData(user);
@@ -86,8 +88,11 @@ export function EmployeeList() {
   const perPage = 20;
 
   const filteredColumns = useMemo(
-    () => canViewPayroll ? columns : columns.filter((c) => c.key !== 'salary'),
-    [canViewPayroll],
+    () => {
+      const cols = getColumns(t);
+      return canViewPayroll ? cols : cols.filter((c) => c.key !== 'salary');
+    },
+    [canViewPayroll, t],
   );
 
   const { data, isLoading } = useQuery({
@@ -106,7 +111,7 @@ export function EmployeeList() {
   return (
     <div>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-6">
-        <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Employees</h1>
+        <h1 className="text-xl sm:text-2xl font-bold text-gray-900">{t('employees.title')}</h1>
         <div className="flex gap-2">
           {canViewPayroll && (
             <button
@@ -114,7 +119,7 @@ export function EmployeeList() {
               className="flex items-center justify-center gap-2 border border-gray-300 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium w-full sm:w-auto min-h-[44px]"
             >
               <Upload className="w-4 h-4" />
-              Import
+              {t('common.import')}
             </button>
           )}
           <button
@@ -122,7 +127,7 @@ export function EmployeeList() {
             className="flex items-center justify-center gap-2 bg-black text-white px-4 py-2 rounded-lg hover:bg-gray-800 transition-colors text-sm font-medium w-full sm:w-auto min-h-[44px]"
           >
             <Plus className="w-4 h-4" />
-            Add Employee
+            {t('employees.add')}
           </button>
         </div>
       </div>
@@ -132,7 +137,7 @@ export function EmployeeList() {
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
         <input
           type="text"
-          placeholder="Search by name or employee number..."
+          placeholder={t('employees.pickerPlaceholder')}
           value={search}
           onChange={(e) => { setSearch(e.target.value); setPage(1); }}
           className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
@@ -147,7 +152,7 @@ export function EmployeeList() {
         onPageChange={setPage}
         perPage={perPage}
         isLoading={isLoading}
-        emptyMessage="No employees found"
+        emptyMessage={t('employees.empty')}
         summaryTitle={(emp) => emp.full_name}
         renderSummary={(emp) => <EmployeeProfile employeeId={emp.id} />}
         renderSummaryFooter={(emp, close) => (
@@ -160,7 +165,7 @@ export function EmployeeList() {
               className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition-colors"
             >
               <Trash2 className="w-4 h-4" />
-              Delete
+              {t('common.delete')}
             </button>
             <button
               onClick={() => {
@@ -170,7 +175,7 @@ export function EmployeeList() {
               className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-black hover:bg-gray-800 rounded-lg transition-colors"
             >
               <Pencil className="w-4 h-4" />
-              Edit Employee
+              {t('employees.editEmployee')}
             </button>
           </div>
         )}
@@ -195,7 +200,7 @@ export function EmployeeList() {
       <Modal
         open={deletingEmployee !== null}
         onClose={() => setDeletingEmployee(null)}
-        title="Delete Employee"
+        title={t('employees.deleteTitle')}
       >
         {deletingEmployee && (
           <div className="space-y-5">
@@ -204,10 +209,13 @@ export function EmployeeList() {
                 <AlertTriangle className="w-5 h-5 text-red-600" />
               </div>
               <div>
-                <p className="text-sm font-semibold text-red-800">This action cannot be undone</p>
+                <p className="text-sm font-semibold text-red-800">{t('employees.deleteWarning')}</p>
                 <p className="text-sm text-red-600 mt-1.5 leading-relaxed">
-                  You are about to permanently delete <span className="font-semibold">{deletingEmployee.full_name}</span> ({deletingEmployee.employee_number}).
-                  All associated records may be affected.
+                  <Trans
+                    i18nKey="employees.deleteBody"
+                    values={{ name: deletingEmployee.full_name, number: deletingEmployee.employee_number }}
+                    components={{ b: <span className="font-semibold" /> }}
+                  />
                 </p>
               </div>
             </div>
@@ -217,14 +225,14 @@ export function EmployeeList() {
                 onClick={() => setDeletingEmployee(null)}
                 className="px-5 py-2.5 text-sm text-gray-600 hover:bg-gray-100 rounded-lg font-medium border border-gray-200 transition-colors"
               >
-                Cancel
+                {t('common.cancel')}
               </button>
               <button
                 onClick={() => deleteMutation.mutate(deletingEmployee.id)}
                 disabled={deleteMutation.isPending}
                 className="px-5 py-2.5 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 font-medium shadow-sm transition-colors"
               >
-                {deleteMutation.isPending ? 'Deleting...' : 'Delete Employee'}
+                {deleteMutation.isPending ? t('common.deleting') : t('employees.deleteTitle')}
               </button>
             </div>
           </div>
@@ -248,6 +256,7 @@ function InfoField({ label, value }: { label: string; value: string | null | und
 /* ───────────── Employee Profile (read-only, shown in DataTable modal) ───────────── */
 
 function EmployeeProfile({ employeeId }: { employeeId: string }) {
+  const { t } = useTranslation();
   const { user } = useAuth();
   const canViewPayroll = canAccessPayrollData(user);
   const { data: employee, isLoading } = useQuery({
@@ -276,28 +285,28 @@ function EmployeeProfile({ employeeId }: { employeeId: string }) {
         <div>
           <h3 className="text-lg font-bold text-gray-900">{employee.full_name}</h3>
           <p className="text-sm text-gray-500">
-            {employee.employee_number} &middot; {employee.department || 'No Department'} &middot; {employee.designation || 'No Designation'}
+            {employee.employee_number} &middot; {employee.department || t('employees.noDepartment')} &middot; {employee.designation || t('employees.noDesignation')}
           </p>
         </div>
         <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-medium ${employee.is_active ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
-          {employee.is_active ? 'Active' : 'Inactive'}
+          {employee.is_active ? t('common.active') : t('common.inactive')}
         </span>
       </div>
 
       {/* Personal */}
       <section>
         <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-4 flex items-center gap-2">
-          <Edit className="w-3.5 h-3.5" /> Personal
+          <Edit className="w-3.5 h-3.5" /> {t('employees.sections.personal')}
         </h4>
         <div className="grid grid-cols-2 gap-x-8 gap-y-4">
-          <InfoField label="NRIC" value={employee.ic_number} />
-          <InfoField label="Date of Birth" value={employee.date_of_birth ? formatDate(employee.date_of_birth) : null} />
-          <InfoField label="Gender" value={employee.gender} />
-          <InfoField label="Race" value={employee.race} />
-          <InfoField label="Nationality" value={employee.nationality} />
-          <InfoField label="Marital Status" value={employee.marital_status} />
-          <InfoField label="Email" value={employee.email} />
-          <InfoField label="Phone" value={employee.phone} />
+          <InfoField label={t('employees.fields.nric')} value={employee.ic_number} />
+          <InfoField label={t('employees.fields.dateOfBirth')} value={employee.date_of_birth ? formatDate(employee.date_of_birth) : null} />
+          <InfoField label={t('employees.fields.gender')} value={employee.gender ? t(`enums.gender.${employee.gender}`, { defaultValue: employee.gender }) : null} />
+          <InfoField label={t('employees.fields.race')} value={employee.race ? t(`enums.race.${employee.race}`, { defaultValue: employee.race }) : null} />
+          <InfoField label={t('employees.fields.nationality')} value={employee.nationality} />
+          <InfoField label={t('employees.fields.maritalStatus')} value={employee.marital_status ? t(`enums.maritalStatus.${employee.marital_status}`, { defaultValue: employee.marital_status }) : null} />
+          <InfoField label={t('employees.fields.email')} value={employee.email} />
+          <InfoField label={t('employees.fields.phone')} value={employee.phone} />
         </div>
       </section>
 
@@ -305,7 +314,7 @@ function EmployeeProfile({ employeeId }: { employeeId: string }) {
       {(employee.address_line1 || employee.city || employee.state) && (
         <section>
           <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-4 flex items-center gap-2">
-            <MapPin className="w-3.5 h-3.5" /> Address
+            <MapPin className="w-3.5 h-3.5" /> {t('employees.sections.address')}
           </h4>
           <p className="text-sm text-gray-900">
             {[employee.address_line1, employee.address_line2, employee.city, employee.state, employee.postcode]
@@ -318,40 +327,40 @@ function EmployeeProfile({ employeeId }: { employeeId: string }) {
       {/* Employment & Salary */}
       <section>
         <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-4 flex items-center gap-2">
-          <DollarSign className="w-3.5 h-3.5" /> Employment & Salary
+          <DollarSign className="w-3.5 h-3.5" /> {t('employees.sections.employment')}
         </h4>
         <div className="grid grid-cols-2 gap-x-8 gap-y-4">
-          <InfoField label="Employment Type" value={employee.employment_type?.replace('_', ' ')} />
-          <InfoField label="Date Joined" value={formatDate(employee.date_joined)} />
-          <InfoField label="Confirmation Date" value={employee.confirmation_date ? formatDate(employee.confirmation_date) : null} />
-          {canViewPayroll && <InfoField label="Basic Salary" value={formatMYR(employee.basic_salary)} />}
-          <InfoField label="Bank" value={employee.bank_name} />
-          <InfoField label="Account No" value={employee.bank_account_number} />
-          <InfoField label="Cost Centre" value={employee.cost_centre} />
-          <InfoField label="Branch" value={employee.branch} />
+          <InfoField label={t('employees.fields.employmentType')} value={employee.employment_type ? t(`enums.employmentType.${employee.employment_type}`, { defaultValue: employee.employment_type.replaceAll('_', ' ') }) : null} />
+          <InfoField label={t('employees.fields.dateJoined')} value={formatDate(employee.date_joined)} />
+          <InfoField label={t('employees.fields.confirmationDate')} value={employee.confirmation_date ? formatDate(employee.confirmation_date) : null} />
+          {canViewPayroll && <InfoField label={t('employees.fields.basicSalary')} value={formatMYR(employee.basic_salary)} />}
+          <InfoField label={t('employees.fields.bank')} value={employee.bank_name} />
+          <InfoField label={t('employees.fields.accountNo')} value={employee.bank_account_number} />
+          <InfoField label={t('employees.fields.costCentre')} value={employee.cost_centre} />
+          <InfoField label={t('employees.fields.branch')} value={employee.branch} />
         </div>
       </section>
 
       {canViewPayroll && (
         <section>
           <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-4 flex items-center gap-2">
-            <Shield className="w-3.5 h-3.5" /> Statutory
+            <Shield className="w-3.5 h-3.5" /> {t('employees.sections.statutory')}
           </h4>
           <div className="grid grid-cols-2 gap-x-8 gap-y-4">
-            <InfoField label="TIN" value={employee.tax_identification_number} />
-            <InfoField label="EPF Number" value={employee.epf_number} />
-            <InfoField label="EPF Category" value={employee.epf_category} />
-            <InfoField label="SOCSO Number" value={employee.socso_number} />
-            <InfoField label="EIS Number" value={employee.eis_number} />
-            <InfoField label="Residency" value={employee.residency_status?.replace('_', ' ')} />
-            <InfoField label="Working Spouse" value={employee.working_spouse ? 'Yes' : 'No'} />
-            <InfoField label="Children" value={String(employee.num_children ?? 0)} />
-            <InfoField label="Muslim" value={employee.is_muslim ? 'Yes' : 'No'} />
+            <InfoField label={t('employees.fields.tin')} value={employee.tax_identification_number} />
+            <InfoField label={t('employees.fields.epfNumber')} value={employee.epf_number} />
+            <InfoField label={t('employees.fields.epfCategory')} value={employee.epf_category ? t(`enums.epfCategory.${employee.epf_category}`, { defaultValue: employee.epf_category }) : null} />
+            <InfoField label={t('employees.fields.socsoNumber')} value={employee.socso_number} />
+            <InfoField label={t('employees.fields.eisNumber')} value={employee.eis_number} />
+            <InfoField label={t('employees.fields.residency')} value={employee.residency_status ? t(`enums.residency.${employee.residency_status}`, { defaultValue: employee.residency_status.replaceAll('_', ' ') }) : null} />
+            <InfoField label={t('employees.fields.workingSpouse')} value={employee.working_spouse ? t('common.yes') : t('common.no')} />
+            <InfoField label={t('employees.fields.children')} value={String(employee.num_children ?? 0)} />
+            <InfoField label={t('employees.fields.muslim')} value={employee.is_muslim ? t('common.yes') : t('common.no')} />
             {employee.zakat_eligible && (
-              <InfoField label="Zakat (Monthly)" value={formatMYR(employee.zakat_monthly_amount ?? 0)} />
+              <InfoField label={t('employees.fields.zakatMonthly')} value={formatMYR(employee.zakat_monthly_amount ?? 0)} />
             )}
             {(employee.ptptn_monthly_amount ?? 0) > 0 && (
-              <InfoField label="PTPTN (Monthly)" value={formatMYR(employee.ptptn_monthly_amount!)} />
+              <InfoField label={t('employees.fields.ptptnMonthly')} value={formatMYR(employee.ptptn_monthly_amount!)} />
             )}
           </div>
         </section>
@@ -361,17 +370,17 @@ function EmployeeProfile({ employeeId }: { employeeId: string }) {
       {canViewPayroll && salaryHistory && salaryHistory.length > 0 && (
         <section>
           <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-4 flex items-center gap-2">
-            <DollarSign className="w-3.5 h-3.5" /> Salary History
+            <DollarSign className="w-3.5 h-3.5" /> {t('employees.sections.salaryHistory')}
           </h4>
           <div className="rounded-2xl shadow overflow-hidden">
             <table className="w-full text-sm">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="text-left px-4 py-2 text-xs font-medium text-gray-500 uppercase">Date</th>
-                  <th className="text-right px-4 py-2 text-xs font-medium text-gray-500 uppercase">Old</th>
-                  <th className="text-right px-4 py-2 text-xs font-medium text-gray-500 uppercase">New</th>
-                  <th className="text-right px-4 py-2 text-xs font-medium text-gray-500 uppercase">Change</th>
-                  <th className="text-left px-4 py-2 text-xs font-medium text-gray-500 uppercase">Reason</th>
+                  <th className="text-left px-4 py-2 text-xs font-medium text-gray-500 uppercase">{t('employees.salaryTable.date')}</th>
+                  <th className="text-right px-4 py-2 text-xs font-medium text-gray-500 uppercase">{t('employees.salaryTable.old')}</th>
+                  <th className="text-right px-4 py-2 text-xs font-medium text-gray-500 uppercase">{t('employees.salaryTable.new')}</th>
+                  <th className="text-right px-4 py-2 text-xs font-medium text-gray-500 uppercase">{t('employees.salaryTable.change')}</th>
+                  <th className="text-left px-4 py-2 text-xs font-medium text-gray-500 uppercase">{t('employees.salaryTable.reason')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -464,6 +473,7 @@ function EmployeeFormModal({ mode, employeeId, onClose }: {
   employeeId?: string;
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
   const { user } = useAuth();
   const canViewPayroll = canAccessPayrollData(user);
   const queryClient = useQueryClient();
@@ -483,7 +493,7 @@ function EmployeeFormModal({ mode, employeeId, onClose }: {
   const isReady = mode === 'create' || !!existingEmployee;
 
   return (
-    <Modal open onClose={onClose} title={mode === 'create' ? 'Add New Employee' : 'Edit Employee'} maxWidth="max-w-3xl">
+    <Modal open onClose={onClose} title={mode === 'create' ? t('employees.createTitle') : t('employees.editTitle')} maxWidth="max-w-3xl">
       {!isReady || loadingEmployee ? (
         <div className="flex items-center justify-center py-12">
           <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-gray-900" />
@@ -512,6 +522,7 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
   queryClient: ReturnType<typeof useQueryClient>;
   canViewPayroll?: boolean;
 }) {
+  const { t } = useTranslation();
   const defaults = initialData
     ? employeeToForm(initialData)
     : null;
@@ -590,27 +601,27 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
     <form onSubmit={handleSubmit} className="space-y-8">
       {mutation.isError && (
         <div className="bg-red-50 text-red-600 text-sm px-4 py-3 rounded-xl border border-red-100">
-          {getErrorMessage(mutation.error, `Failed to ${mode} employee`)}
+          {getErrorMessage(mutation.error, t(mode === 'create' ? 'employees.createFailed' : 'employees.updateFailed'))}
         </div>
       )}
 
       {/* Personal Information */}
       <section className="bg-gray-50 rounded-xl border border-gray-100 p-6">
-        <h3 className={sectionTitleClass}>Personal Information</h3>
+        <h3 className={sectionTitleClass}>{t('employees.form.personalInfo')}</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-5">
           <div>
-            <label className={labelClass}>Employee Number *</label>
+            <label className={labelClass}>{t('employees.form.employeeNumber')} *</label>
             <input
               type="text"
               value={form.employee_number}
               onChange={(e) => updateField('employee_number', e.target.value)}
               className={inputClass}
               required
-              placeholder="e.g., EMP001"
+              placeholder={t('employees.form.employeeNumberPlaceholder')}
             />
           </div>
           <div>
-            <label className={labelClass}>Full Name (as per NRIC) *</label>
+            <label className={labelClass}>{t('employees.form.fullName')} *</label>
             <input
               type="text"
               value={form.full_name}
@@ -620,17 +631,17 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
             />
           </div>
           <div>
-            <label className={labelClass}>NRIC / IC Number</label>
+            <label className={labelClass}>{t('employees.form.icNumber')}</label>
             <input
               type="text"
               value={form.ic_number || ''}
               onChange={(e) => updateField('ic_number', e.target.value)}
               className={inputClass}
-              placeholder="e.g., 900101-14-5678"
+              placeholder={t('employees.form.icNumberPlaceholder')}
             />
           </div>
           <div>
-            <label className={labelClass}>Date of Birth</label>
+            <label className={labelClass}>{t('employees.fields.dateOfBirth')}</label>
             <input
               type="date"
               value={form.date_of_birth || ''}
@@ -639,47 +650,47 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
             />
           </div>
           <div>
-            <label className={labelClass}>Gender</label>
+            <label className={labelClass}>{t('employees.fields.gender')}</label>
             <select
               value={form.gender || ''}
               onChange={(e) => updateField('gender', e.target.value || undefined)}
               className={inputClass}
             >
-              <option value="">Select</option>
-              <option value="male">Male</option>
-              <option value="female">Female</option>
+              <option value="">{t('common.select')}</option>
+              <option value="male">{t('enums.gender.male')}</option>
+              <option value="female">{t('enums.gender.female')}</option>
             </select>
           </div>
           <div>
-            <label className={labelClass}>Race</label>
+            <label className={labelClass}>{t('employees.fields.race')}</label>
             <select
               value={form.race || ''}
               onChange={(e) => updateField('race', e.target.value || undefined)}
               className={inputClass}
             >
-              <option value="">Select</option>
-              <option value="malay">Malay</option>
-              <option value="chinese">Chinese</option>
-              <option value="indian">Indian</option>
-              <option value="other">Other</option>
+              <option value="">{t('common.select')}</option>
+              <option value="malay">{t('enums.race.malay')}</option>
+              <option value="chinese">{t('enums.race.chinese')}</option>
+              <option value="indian">{t('enums.race.indian')}</option>
+              <option value="other">{t('enums.race.other')}</option>
             </select>
           </div>
           <div>
-            <label className={labelClass}>Marital Status</label>
+            <label className={labelClass}>{t('employees.fields.maritalStatus')}</label>
             <select
               value={form.marital_status || ''}
               onChange={(e) => updateField('marital_status', e.target.value || undefined)}
               className={inputClass}
             >
-              <option value="">Select</option>
-              <option value="single">Single</option>
-              <option value="married">Married</option>
-              <option value="divorced">Divorced</option>
-              <option value="widowed">Widowed</option>
+              <option value="">{t('common.select')}</option>
+              <option value="single">{t('enums.maritalStatus.single')}</option>
+              <option value="married">{t('enums.maritalStatus.married')}</option>
+              <option value="divorced">{t('enums.maritalStatus.divorced')}</option>
+              <option value="widowed">{t('enums.maritalStatus.widowed')}</option>
             </select>
           </div>
           <div>
-            <label className={labelClass}>Email</label>
+            <label className={labelClass}>{t('common.email')}</label>
             <input
               type="email"
               value={form.email || ''}
@@ -688,7 +699,7 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
             />
           </div>
           <div>
-            <label className={labelClass}>Phone</label>
+            <label className={labelClass}>{t('employees.fields.phone')}</label>
             <input
               type="tel"
               value={form.phone || ''}
@@ -701,10 +712,10 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
 
       {/* Address */}
       <section className="bg-gray-50 rounded-xl border border-gray-100 p-6">
-        <h3 className={sectionTitleClass}>Address</h3>
+        <h3 className={sectionTitleClass}>{t('employees.sections.address')}</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-5">
           <div className="md:col-span-2">
-            <label className={labelClass}>Address Line 1</label>
+            <label className={labelClass}>{t('employees.form.addressLine1')}</label>
             <input
               type="text"
               value={form.address_line1 || ''}
@@ -713,7 +724,7 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
             />
           </div>
           <div className="md:col-span-2">
-            <label className={labelClass}>Address Line 2</label>
+            <label className={labelClass}>{t('employees.form.addressLine2')}</label>
             <input
               type="text"
               value={form.address_line2 || ''}
@@ -722,7 +733,7 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
             />
           </div>
           <div>
-            <label className={labelClass}>City</label>
+            <label className={labelClass}>{t('employees.form.city')}</label>
             <input
               type="text"
               value={form.city || ''}
@@ -731,7 +742,7 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
             />
           </div>
           <div>
-            <label className={labelClass}>State</label>
+            <label className={labelClass}>{t('employees.form.state')}</label>
             <input
               type="text"
               value={form.state || ''}
@@ -740,7 +751,7 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
             />
           </div>
           <div>
-            <label className={labelClass}>Postcode</label>
+            <label className={labelClass}>{t('employees.form.postcode')}</label>
             <input
               type="text"
               value={form.postcode || ''}
@@ -753,10 +764,10 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
 
       {/* Employment Details */}
       <section className="bg-gray-50 rounded-xl border border-gray-100 p-6">
-        <h3 className={sectionTitleClass}>Employment Details</h3>
+        <h3 className={sectionTitleClass}>{t('employees.form.employmentDetails')}</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-5">
           <div>
-            <label className={labelClass}>Department</label>
+            <label className={labelClass}>{t('employees.fields.department')}</label>
             <input
               type="text"
               value={form.department || ''}
@@ -765,7 +776,7 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
             />
           </div>
           <div>
-            <label className={labelClass}>Designation</label>
+            <label className={labelClass}>{t('employees.fields.designation')}</label>
             <input
               type="text"
               value={form.designation || ''}
@@ -774,22 +785,22 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
             />
           </div>
           <div>
-            <label className={labelClass}>Employment Type</label>
+            <label className={labelClass}>{t('employees.fields.employmentType')}</label>
             <select
               value={form.employment_type || 'permanent'}
               onChange={(e) => updateField('employment_type', e.target.value)}
               className={inputClass}
             >
-              <option value="permanent">Permanent</option>
-              <option value="contract">Contract</option>
-              <option value="part_time">Part Time</option>
-              <option value="intern">Intern</option>
-              <option value="daily_rated">Daily Rated</option>
-              <option value="hourly_rated">Hourly Rated</option>
+              <option value="permanent">{t('enums.employmentType.permanent')}</option>
+              <option value="contract">{t('enums.employmentType.contract')}</option>
+              <option value="part_time">{t('enums.employmentType.part_time')}</option>
+              <option value="intern">{t('enums.employmentType.intern')}</option>
+              <option value="daily_rated">{t('enums.employmentType.daily_rated')}</option>
+              <option value="hourly_rated">{t('enums.employmentType.hourly_rated')}</option>
             </select>
           </div>
           <div>
-            <label className={labelClass}>Date Joined *</label>
+            <label className={labelClass}>{t('employees.fields.dateJoined')} *</label>
             <input
               type="date"
               value={form.date_joined}
@@ -801,7 +812,7 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
           {canViewPayroll && (
             <>
               <div>
-                <label className={labelClass}>Basic Salary (RM) *</label>
+                <label className={labelClass}>{t('employees.form.basicSalaryRm')} *</label>
                 <input
                   type="number"
                   step="0.01"
@@ -809,17 +820,17 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
                   onChange={(e) => handleSalaryChange(e.target.value)}
                   className={inputClass}
                   required
-                  placeholder="e.g., 3000.00"
+                  placeholder={t('employees.form.salaryPlaceholder')}
                 />
               </div>
               <div>
-                <label className={labelClass}>Payroll Group</label>
+                <label className={labelClass}>{t('employees.form.payrollGroup')}</label>
                 <select
                   value={form.payroll_group_id || ''}
                   onChange={(e) => updateField('payroll_group_id', e.target.value || undefined)}
                   className={inputClass}
                 >
-                  <option value="">Select</option>
+                  <option value="">{t('common.select')}</option>
                   {payrollGroups?.map((g) => (
                     <option key={g.id} value={g.id}>{g.name}</option>
                   ))}
@@ -828,7 +839,7 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
             </>
           )}
           <div>
-            <label className={labelClass}>Cost Centre</label>
+            <label className={labelClass}>{t('employees.fields.costCentre')}</label>
             <input
               type="text"
               value={form.cost_centre || ''}
@@ -837,7 +848,7 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
             />
           </div>
           <div>
-            <label className={labelClass}>Branch</label>
+            <label className={labelClass}>{t('employees.fields.branch')}</label>
             <input
               type="text"
               value={form.branch || ''}
@@ -848,14 +859,14 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
           {mode === 'edit' && (
             <>
               <div>
-                <label className={labelClass}>Status</label>
+                <label className={labelClass}>{t('common.status')}</label>
                 <select
                   value={form.is_active ? 'active' : 'inactive'}
                   onChange={(e) => updateField('is_active', e.target.value === 'active')}
                   className={inputClass}
                 >
-                  <option value="active">Active</option>
-                  <option value="inactive">Inactive</option>
+                  <option value="active">{t('common.active')}</option>
+                  <option value="inactive">{t('common.inactive')}</option>
                 </select>
                 {/*
                   Warn, do not block: an HR admin must still be able to represent
@@ -866,15 +877,13 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
                   <p className="mt-1.5 text-xs text-amber-700 flex items-start gap-1.5">
                     <AlertTriangle className="w-3.5 h-3.5 mt-px shrink-0" />
                     <span>
-                      Inactive with no resignation date. Payroll runs will refuse to process this
-                      group until a resignation date is set, the employee is re-activated, or they
-                      are removed from the payroll group.
+                      {t('employees.form.inactiveNoResignWarning')}
                     </span>
                   </p>
                 )}
               </div>
               <div>
-                <label className={labelClass}>Date Resigned</label>
+                <label className={labelClass}>{t('employees.fields.dateResigned')}</label>
                 <input
                   type="date"
                   value={form.date_resigned || ''}
@@ -883,11 +892,11 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
                   className={inputClass}
                 />
                 <p className="mt-1.5 text-xs text-gray-500">
-                  The final month is paid pro rata to this date. Clear it to un-terminate.
+                  {t('employees.form.dateResignedHint')}
                 </p>
               </div>
               <div>
-                <label className={labelClass}>Resignation Reason</label>
+                <label className={labelClass}>{t('employees.fields.resignationReason')}</label>
                 <input
                   type="text"
                   value={form.resignation_reason || ''}
@@ -905,23 +914,23 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
           that cannot save them only produces a 403 on the whole request. */}
       {canViewPayroll && (
         <section className="bg-gray-50 rounded-xl border border-gray-100 p-6">
-          <h3 className={sectionTitleClass}>Banking Details</h3>
+          <h3 className={sectionTitleClass}>{t('employees.form.bankingDetails')}</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-5">
             <div>
-              <label className={labelClass}>Bank Name</label>
+              <label className={labelClass}>{t('employees.form.bankName')}</label>
               <select
                 value={form.bank_name || ''}
                 onChange={(e) => updateField('bank_name', e.target.value || undefined)}
                 className={inputClass}
               >
-                <option value="">Select Bank</option>
+                <option value="">{t('employees.form.selectBank')}</option>
                 {BANKS.map((b) => (
                   <option key={b} value={b}>{b}</option>
                 ))}
               </select>
             </div>
             <div>
-              <label className={labelClass}>Account Number</label>
+              <label className={labelClass}>{t('employees.form.accountNumber')}</label>
               <input
                 type="text"
                 value={form.bank_account_number || ''}
@@ -935,10 +944,10 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
 
       {canViewPayroll && (
         <section className="bg-gray-50 rounded-xl border border-gray-100 p-6">
-          <h3 className={sectionTitleClass}>Statutory & Tax</h3>
+          <h3 className={sectionTitleClass}>{t('employees.form.statutoryTax')}</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-5">
           <div>
-            <label className={labelClass}>TIN</label>
+            <label className={labelClass}>{t('employees.fields.tin')}</label>
             <input
               type="text"
               value={form.tax_identification_number || ''}
@@ -947,7 +956,7 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
             />
           </div>
           <div>
-            <label className={labelClass}>EPF Number</label>
+            <label className={labelClass}>{t('employees.fields.epfNumber')}</label>
             <input
               type="text"
               value={form.epf_number || ''}
@@ -956,7 +965,7 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
             />
           </div>
           <div>
-            <label className={labelClass}>SOCSO Number</label>
+            <label className={labelClass}>{t('employees.fields.socsoNumber')}</label>
             <input
               type="text"
               value={form.socso_number || ''}
@@ -965,7 +974,7 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
             />
           </div>
           <div>
-            <label className={labelClass}>EIS Number</label>
+            <label className={labelClass}>{t('employees.fields.eisNumber')}</label>
             <input
               type="text"
               value={form.eis_number || ''}
@@ -974,43 +983,43 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
             />
           </div>
           <div>
-            <label className={labelClass}>EPF Category</label>
+            <label className={labelClass}>{t('employees.fields.epfCategory')}</label>
             <select
               value={form.epf_category || 'A'}
               onChange={(e) => updateField('epf_category', e.target.value)}
               className={inputClass}
             >
-              <option value="A">A - Citizen/PR below 60</option>
-              <option value="B">B - Elected 9% (KWSP 17A)</option>
-              <option value="C">C - PR 60 and above</option>
-              <option value="D">D - Citizen 60 and above</option>
+              <option value="A">{t('enums.epfCategory.A')}</option>
+              <option value="B">{t('enums.epfCategory.B')}</option>
+              <option value="C">{t('enums.epfCategory.C')}</option>
+              <option value="D">{t('enums.epfCategory.D')}</option>
             </select>
           </div>
           <div>
-            <label className={labelClass}>Residency Status</label>
+            <label className={labelClass}>{t('employees.fields.residency')}</label>
             <select
               value={form.residency_status || 'citizen'}
               onChange={(e) => updateField('residency_status', e.target.value)}
               className={inputClass}
             >
-              <option value="citizen">Malaysian Citizen</option>
-              <option value="permanent_resident">Permanent Resident</option>
-              <option value="foreigner">Foreigner</option>
+              <option value="citizen">{t('enums.residency.citizen')}</option>
+              <option value="permanent_resident">{t('enums.residency.permanent_resident')}</option>
+              <option value="foreigner">{t('enums.residency.foreigner')}</option>
             </select>
           </div>
           <div>
-            <label className={labelClass}>Working Spouse</label>
+            <label className={labelClass}>{t('employees.fields.workingSpouse')}</label>
             <select
               value={form.working_spouse ? 'yes' : 'no'}
               onChange={(e) => updateField('working_spouse', e.target.value === 'yes')}
               className={inputClass}
             >
-              <option value="no">No</option>
-              <option value="yes">Yes</option>
+              <option value="no">{t('common.no')}</option>
+              <option value="yes">{t('common.yes')}</option>
             </select>
           </div>
           <div>
-            <label className={labelClass}>Number of Children</label>
+            <label className={labelClass}>{t('employees.form.numChildren')}</label>
             <input
               type="number"
               min="0"
@@ -1033,7 +1042,7 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
                   }}
                   className="rounded border-gray-200 w-4 h-4 text-gray-900 focus:ring-black"
                 />
-                <span className="text-sm font-medium text-gray-700">Muslim</span>
+                <span className="text-sm font-medium text-gray-700">{t('employees.fields.muslim')}</span>
               </label>
               {form.is_muslim && (
                 <label className="flex items-center gap-2.5 cursor-pointer">
@@ -1043,7 +1052,7 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
                     onChange={(e) => updateField('zakat_eligible', e.target.checked)}
                     className="rounded border-gray-200 w-4 h-4 text-gray-900 focus:ring-black"
                   />
-                  <span className="text-sm font-medium text-gray-700">Zakat Eligible</span>
+                  <span className="text-sm font-medium text-gray-700">{t('employees.form.zakatEligible')}</span>
                 </label>
               )}
             </div>
@@ -1058,7 +1067,7 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
           onClick={onClose}
           className="px-5 py-2.5 text-sm text-gray-600 hover:bg-gray-100 rounded-lg font-medium border border-gray-200 transition-colors"
         >
-          Cancel
+          {t('common.cancel')}
         </button>
         <button
           type="submit"
@@ -1066,8 +1075,8 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
           className="px-6 py-2.5 text-sm bg-black text-white rounded-lg hover:bg-gray-800 disabled:opacity-50 font-medium shadow-sm transition-colors"
         >
           {mutation.isPending
-            ? (mode === 'create' ? 'Creating...' : 'Saving...')
-            : (mode === 'create' ? 'Create Employee' : 'Save Changes')
+            ? (mode === 'create' ? t('common.creating') : t('common.saving'))
+            : (mode === 'create' ? t('employees.createSubmit') : t('common.saveChanges'))
           }
         </button>
       </div>
@@ -1084,7 +1093,7 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
                   <AlertTriangle className="w-5 h-5 text-amber-500" />
                 )}
                 <h2 className="text-lg font-semibold text-gray-900">
-                  {accountDialog.created ? 'User Account Created' : 'Account Notice'}
+                  {accountDialog.created ? t('employees.account.createdTitle') : t('employees.account.noticeTitle')}
                 </h2>
               </div>
               <button onClick={() => { setAccountDialog(null); onClose(); }} className="text-gray-400 hover:text-gray-700">
@@ -1095,24 +1104,24 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
               {accountDialog.created ? (
                 <>
                   <p className="text-sm text-gray-600">
-                    A user account has been created and a welcome email has been sent to the employee.
+                    {t('employees.account.createdBody')}
                   </p>
                   <div className="bg-gray-50 rounded-xl p-4 space-y-3">
                     <div className="flex justify-between text-sm">
-                      <span className="text-gray-500">Email</span>
+                      <span className="text-gray-500">{t('common.email')}</span>
                       <span className="font-medium text-gray-900">{accountDialog.email}</span>
                     </div>
                     <div className="flex justify-between text-sm">
-                      <span className="text-gray-500">Role</span>
-                      <span className="font-medium text-gray-900 capitalize">{accountDialog.role}</span>
+                      <span className="text-gray-500">{t('employees.account.role')}</span>
+                      <span className="font-medium text-gray-900">{t(`roles.${accountDialog.role}`, { defaultValue: accountDialog.role })}</span>
                     </div>
                     <div className="flex justify-between text-sm">
-                      <span className="text-gray-500">Default Password</span>
+                      <span className="text-gray-500">{t('employees.account.defaultPassword')}</span>
                       <span className="font-mono font-medium text-gray-900">{accountDialog.default_password}</span>
                     </div>
                   </div>
                   <p className="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2">
-                    Please advise the employee to change their password upon first login.
+                    {t('employees.account.adviseChange')}
                   </p>
                 </>
               ) : (
@@ -1123,7 +1132,7 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
             </div>
             <div className="flex justify-end p-6 border-t border-gray-100">
               <button onClick={() => { setAccountDialog(null); onClose(); }} className="btn-primary">
-                Done
+                {t('common.done')}
               </button>
             </div>
           </div>

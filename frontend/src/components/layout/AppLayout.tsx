@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Outlet, Navigate } from 'react-router';
 import { Menu } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
+import { useTranslation } from 'react-i18next';
 import { Sidebar } from './Sidebar';
 import { BrandLogo } from '@/components/ui/BrandLogo';
 import { PageTransition } from '@/components/ui/PageTransition';
@@ -9,6 +10,7 @@ import { hasOnlyEmployeeRole } from '@/lib/roles';
 
 export function AppLayout() {
   const { user, isAuthenticated, isLoading } = useAuth();
+  const { t } = useTranslation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   if (isLoading) {
@@ -54,7 +56,7 @@ export function AppLayout() {
           <BrandLogo variant="lockup-dark" className="h-7 w-auto" />
           <span className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-indigo-200/60 bg-indigo-50/80 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-indigo-600">
             <span className="glow-dot" />
-            Admin
+            {t('nav.adminBadge')}
           </span>
         </div>
 

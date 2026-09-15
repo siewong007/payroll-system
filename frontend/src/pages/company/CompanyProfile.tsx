@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import i18n from '@/i18n';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -11,6 +13,7 @@ import {
 } from 'lucide-react';
 import { getCompany, updateCompany, getCompanyStats } from '@/api/company';
 import { getErrorMessage } from '@/lib/utils';
+import { formatDateLong } from '@/lib/format';
 import type { UpdateCompanyRequest } from '@/types';
 import { useAuth } from '@/context/AuthContext';
 import { canAccessPayrollData } from '@/lib/roles';
@@ -20,7 +23,7 @@ const renderRow = (label: string, value: string | null | undefined) => (
   <div className="flex justify-between py-2.5 border-b border-gray-100 last:border-none text-sm">
     <span className="text-gray-500">{label}</span>
     <span className="font-medium text-gray-800">
-      {value || <span className="italic text-gray-400">Not provided</span>}
+      {value || <span className="italic text-gray-400">{i18n.t('common.notProvided')}</span>}
     </span>
   </div>
 );
@@ -70,6 +73,7 @@ export function CompanyProfile() {
 }
 
 function CompanyDetails() {
+  const { t } = useTranslation();
   const { user } = useAuth();
   const canViewPayroll = canAccessPayrollData(user);
   const queryClient = useQueryClient();
@@ -94,7 +98,7 @@ function CompanyDetails() {
       closeModal();
     },
     onError: (err: unknown) => {
-      setError(getErrorMessage(err, 'Failed to update company settings. Please try again.'));
+      setError(getErrorMessage(err, t('companyProfile.updateFailed')));
     },
   });
 
@@ -158,7 +162,7 @@ function CompanyDetails() {
   }
 
   if (!company) {
-    return <div className="text-center text-gray-500 py-12">Company not found</div>;
+    return <div className="text-center text-gray-500 py-12">{t('companyProfile.notFound')}</div>;
   }
 
 
@@ -166,11 +170,11 @@ function CompanyDetails() {
     <div>
       {/* Page Header */}
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Company Profile</h1>
+        <h1 className="text-2xl font-bold text-gray-900">{t('companyProfile.title')}</h1>
         <p className="text-gray-500 text-sm mt-1">
           {canViewPayroll
-            ? 'Manage your company information and statutory details'
-            : 'Manage your company information'}
+            ? t('companyProfile.subtitleFull')
+            : t('companyProfile.subtitleBasic')}
         </p>
       </div>
 
@@ -184,7 +188,7 @@ function CompanyDetails() {
               </div>
               <div>
                 <p className="text-2xl font-bold text-gray-900">{stats.total_employees}</p>
-                <p className="text-xs text-gray-500">Active Employees</p>
+                <p className="text-xs text-gray-500">{t('companyProfile.activeEmployees')}</p>
               </div>
             </div>
           </div>
@@ -195,7 +199,7 @@ function CompanyDetails() {
               </div>
               <div>
                 <p className="text-2xl font-bold text-gray-900">{stats.total_departments}</p>
-                <p className="text-xs text-gray-500">Departments</p>
+                <p className="text-xs text-gray-500">{t('companyProfile.departments')}</p>
               </div>
             </div>
           </div>
@@ -211,15 +215,15 @@ function CompanyDetails() {
         >
           <div className="flex justify-between items-center mb-3">
             <h2 className="font-semibold text-gray-800 flex items-center gap-2">
-              <Building2 className="w-5 h-5 text-gray-600" /> Company Information
+              <Building2 className="w-5 h-5 text-gray-600" /> {t('companyProfile.infoSection')}
             </h2>
-            <span className="text-xs text-gray-400">Click to edit</span>
+            <span className="text-xs text-gray-400">{t('common.clickToEdit')}</span>
           </div>
-          {renderRow('Company Name', company.name)}
-          {renderRow('Registration No.', company.registration_number)}
-          {renderRow('Tax No.', company.tax_number)}
-          {renderRow('Phone', company.phone)}
-          {renderRow('Email', company.email)}
+          {renderRow(t('companies.name'), company.name)}
+          {renderRow(t('companies.regNo'), company.registration_number)}
+          {renderRow(t('companies.taxNo'), company.tax_number)}
+          {renderRow(t('companies.phone'), company.phone)}
+          {renderRow(t('common.email'), company.email)}
         </div>
 
         {canViewPayroll && (
@@ -229,22 +233,22 @@ function CompanyDetails() {
           >
             <div className="flex justify-between items-center mb-3">
               <h2 className="font-semibold text-gray-800 flex items-center gap-2">
-                <Shield className="w-5 h-5 text-gray-600" /> Statutory Details
+                <Shield className="w-5 h-5 text-gray-600" /> {t('portal.profile.statutoryDetails')}
               </h2>
-              <span className="text-xs text-gray-400">Click to edit</span>
+              <span className="text-xs text-gray-400">{t('common.clickToEdit')}</span>
             </div>
-            {renderRow('EPF No.', company.epf_number)}
-            {renderRow('SOCSO Code', company.socso_code)}
-            {renderRow('EIS Code', company.eis_code)}
-            {renderRow('HRDF No.', company.hrdf_number)}
+            {renderRow(t('companyProfile.epfNo'), company.epf_number)}
+            {renderRow(t('companies.socsoCode'), company.socso_code)}
+            {renderRow(t('companies.eisCode'), company.eis_code)}
+            {renderRow(t('companyProfile.hrdfNo'), company.hrdf_number)}
             <div className="flex justify-between py-2.5 border-b border-gray-100 last:border-none text-sm">
-              <span className="text-gray-500">HRDF Enabled</span>
+              <span className="text-gray-500">{t('companyProfile.hrdfEnabled')}</span>
               <span
                 className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
                   company.hrdf_enabled ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'
                 }`}
               >
-                {company.hrdf_enabled ? 'Yes' : 'No'}
+                {company.hrdf_enabled ? t('common.yes') : t('common.no')}
               </span>
             </div>
           </div>
@@ -257,16 +261,16 @@ function CompanyDetails() {
         >
           <div className="flex justify-between items-center mb-3">
             <h2 className="font-semibold text-gray-800 flex items-center gap-2">
-              <MapPin className="w-5 h-5 text-gray-600" /> Address
+              <MapPin className="w-5 h-5 text-gray-600" /> {t('portal.profile.address')}
             </h2>
-            <span className="text-xs text-gray-400">Click to edit</span>
+            <span className="text-xs text-gray-400">{t('common.clickToEdit')}</span>
           </div>
-          {renderRow('Address Line 1', company.address_line1)}
-          {renderRow('Address Line 2', company.address_line2)}
-          {renderRow('City', company.city)}
-          {renderRow('State', company.state)}
-          {renderRow('Postcode', company.postcode)}
-          {renderRow('Country', company.country)}
+          {renderRow(t('employees.form.addressLine1'), company.address_line1)}
+          {renderRow(t('employees.form.addressLine2'), company.address_line2)}
+          {renderRow(t('employees.form.city'), company.city)}
+          {renderRow(t('employees.form.state'), company.state)}
+          {renderRow(t('employees.form.postcode'), company.postcode)}
+          {renderRow(t('employees.form.country'), company.country)}
         </div>
 
         {canViewPayroll && (
@@ -276,14 +280,14 @@ function CompanyDetails() {
           >
             <div className="flex justify-between items-center mb-3">
               <h2 className="font-semibold text-gray-800 flex items-center gap-2">
-                <Calculator className="w-5 h-5 text-gray-600" /> Payroll Configuration
+                <Calculator className="w-5 h-5 text-gray-600" /> {t('companyProfile.payrollSection')}
               </h2>
-              <span className="text-xs text-gray-400">Click to edit</span>
+              <span className="text-xs text-gray-400">{t('common.clickToEdit')}</span>
             </div>
-            {renderRow('Unpaid Leave Divisor', String(company.unpaid_leave_divisor ?? 26))}
-            {renderRow('Status', company.is_active ? 'Active' : 'Inactive')}
-            {renderRow('Created', new Date(company.created_at).toLocaleDateString('en-MY', { day: 'numeric', month: 'long', year: 'numeric' }))}
-            {renderRow('Last Updated', new Date(company.updated_at).toLocaleDateString('en-MY', { day: 'numeric', month: 'long', year: 'numeric' }))}
+            {renderRow(t('companyProfile.unpaidLeaveDivisor'), String(company.unpaid_leave_divisor ?? 26))}
+            {renderRow(t('common.status'), company.is_active ? t('common.active') : t('common.inactive'))}
+            {renderRow(t('companyProfile.created'), formatDateLong(company.created_at))}
+            {renderRow(t('companyProfile.lastUpdated'), formatDateLong(company.updated_at))}
           </div>
         )}
       </div>
@@ -317,10 +321,10 @@ function CompanyDetails() {
                 onClick={(e) => e.stopPropagation()}
               >
               <h2 className="text-lg font-semibold mb-4">
-                {activeSection === 'info' && 'Edit Company Information'}
-                {activeSection === 'statutory' && 'Edit Statutory Details'}
-                {activeSection === 'address' && 'Edit Address'}
-                {activeSection === 'payroll' && 'Edit Payroll Configuration'}
+                {activeSection === 'info' && t('companyProfile.editInfo')}
+                {activeSection === 'statutory' && t('companyProfile.editStatutory')}
+                {activeSection === 'address' && t('companyProfile.editAddress')}
+                {activeSection === 'payroll' && t('companyProfile.editPayroll')}
               </h2>
 
               {error && (
@@ -330,22 +334,22 @@ function CompanyDetails() {
               <div className="flex flex-col gap-3 max-h-[60vh] overflow-auto">
                 {activeSection === 'info' && (
                   <>
-                    <FieldInput label="Company Name" value={form.name ?? ''} onChange={(v) => updateField('name', v)} />
-                    <FieldInput label="Registration No. (SSM)" value={form.registration_number ?? ''} onChange={(v) => updateField('registration_number', v)} />
-                    <FieldInput label="Tax No. (LHDN)" value={form.tax_number ?? ''} onChange={(v) => updateField('tax_number', v)} />
-                    <FieldInput label="Phone" value={form.phone ?? ''} onChange={(v) => updateField('phone', v)} />
-                    <FieldInput label="Email" value={form.email ?? ''} onChange={(v) => updateField('email', v)} />
+                    <FieldInput label={t('companies.name')} value={form.name ?? ''} onChange={(v) => updateField('name', v)} />
+                    <FieldInput label={t('companies.regNoSsm')} value={form.registration_number ?? ''} onChange={(v) => updateField('registration_number', v)} />
+                    <FieldInput label={t('companies.taxNoLhdn')} value={form.tax_number ?? ''} onChange={(v) => updateField('tax_number', v)} />
+                    <FieldInput label={t('companies.phone')} value={form.phone ?? ''} onChange={(v) => updateField('phone', v)} />
+                    <FieldInput label={t('common.email')} value={form.email ?? ''} onChange={(v) => updateField('email', v)} />
                   </>
                 )}
 
                 {activeSection === 'statutory' && (
                   <>
-                    <FieldInput label="EPF No. (KWSP)" value={form.epf_number ?? ''} onChange={(v) => updateField('epf_number', v)} />
-                    <FieldInput label="SOCSO Code (PERKESO)" value={form.socso_code ?? ''} onChange={(v) => updateField('socso_code', v)} />
-                    <FieldInput label="EIS Code" value={form.eis_code ?? ''} onChange={(v) => updateField('eis_code', v)} />
-                    <FieldInput label="HRDF No." value={form.hrdf_number ?? ''} onChange={(v) => updateField('hrdf_number', v)} />
+                    <FieldInput label={t('companyProfile.epfNoKwsp')} value={form.epf_number ?? ''} onChange={(v) => updateField('epf_number', v)} />
+                    <FieldInput label={t('companyProfile.socsoCodePerkeso')} value={form.socso_code ?? ''} onChange={(v) => updateField('socso_code', v)} />
+                    <FieldInput label={t('companies.eisCode')} value={form.eis_code ?? ''} onChange={(v) => updateField('eis_code', v)} />
+                    <FieldInput label={t('companyProfile.hrdfNo')} value={form.hrdf_number ?? ''} onChange={(v) => updateField('hrdf_number', v)} />
                     <div>
-                      <label className="block text-sm text-gray-500 mb-1">HRDF Enabled</label>
+                      <label className="block text-sm text-gray-500 mb-1">{t('companyProfile.hrdfEnabled')}</label>
                       <label className="relative inline-flex items-center cursor-pointer">
                         <input
                           type="checkbox"
@@ -361,31 +365,31 @@ function CompanyDetails() {
 
                 {activeSection === 'address' && (
                   <>
-                    <FieldInput label="Address Line 1" value={form.address_line1 ?? ''} onChange={(v) => updateField('address_line1', v)} />
-                    <FieldInput label="Address Line 2" value={form.address_line2 ?? ''} onChange={(v) => updateField('address_line2', v)} />
-                    <FieldInput label="City" value={form.city ?? ''} onChange={(v) => updateField('city', v)} />
+                    <FieldInput label={t('employees.form.addressLine1')} value={form.address_line1 ?? ''} onChange={(v) => updateField('address_line1', v)} />
+                    <FieldInput label={t('employees.form.addressLine2')} value={form.address_line2 ?? ''} onChange={(v) => updateField('address_line2', v)} />
+                    <FieldInput label={t('employees.form.city')} value={form.city ?? ''} onChange={(v) => updateField('city', v)} />
                     <div>
-                      <label className="block text-sm text-gray-500 mb-1">State</label>
+                      <label className="block text-sm text-gray-500 mb-1">{t('employees.form.state')}</label>
                       <select
                         value={form.state ?? ''}
                         onChange={(e) => updateField('state', e.target.value)}
                         className="w-full border p-2 rounded-lg text-sm focus:border-black outline-none transition-colors"
                       >
-                        <option value="">Select State</option>
+                        <option value="">{t('companyProfile.selectState')}</option>
                         {STATES.map((s) => (
                           <option key={s} value={s}>{s}</option>
                         ))}
                       </select>
                     </div>
-                    <FieldInput label="Postcode" value={form.postcode ?? ''} onChange={(v) => updateField('postcode', v)} />
-                    <FieldInput label="Country" value={form.country ?? ''} onChange={(v) => updateField('country', v)} />
+                    <FieldInput label={t('employees.form.postcode')} value={form.postcode ?? ''} onChange={(v) => updateField('postcode', v)} />
+                    <FieldInput label={t('employees.form.country')} value={form.country ?? ''} onChange={(v) => updateField('country', v)} />
                   </>
                 )}
 
                 {activeSection === 'payroll' && (
                   <>
                     <div>
-                      <label className="block text-sm text-gray-500 mb-1">Unpaid Leave Divisor</label>
+                      <label className="block text-sm text-gray-500 mb-1">{t('companyProfile.unpaidLeaveDivisor')}</label>
                       <input
                         type="number"
                         value={form.unpaid_leave_divisor ?? ''}
@@ -393,7 +397,7 @@ function CompanyDetails() {
                         className="w-full border p-2 rounded-lg text-sm focus:border-black outline-none transition-colors"
                       />
                       <p className="text-xs text-gray-400 mt-1.5">
-                        Number of working days used to calculate daily rate for unpaid leave deductions (typically 26 or 30)
+                        {t('companyProfile.divisorHint')}
                       </p>
                     </div>
                   </>
@@ -406,13 +410,13 @@ function CompanyDetails() {
                   disabled={mutation.isPending}
                   className="flex-1 bg-black text-white py-2 rounded-xl font-medium hover:bg-gray-800 disabled:opacity-50 transition-colors"
                 >
-                  {mutation.isPending ? 'Saving...' : 'Save'}
+                  {mutation.isPending ? t('common.saving') : t('common.save')}
                 </button>
                 <button
                   onClick={closeModal}
                   className="flex-1 border py-2 rounded-xl font-medium text-gray-600 hover:bg-gray-50 transition-colors"
                 >
-                  Cancel
+                  {t('common.cancel')}
                 </button>
               </div>
             </motion.div>

@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useSearchParams } from 'react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -18,43 +19,20 @@ import { SettingsNav, type SettingsNavItem } from './SettingsNav';
 import { CompanyCategorySection } from './CompanyCategorySection';
 import { SecuritySection } from './SecuritySection';
 
-const SECTION_META: Record<string, { label: string; icon: LucideIcon; description: string }> = {
-  system: {
-    label: 'General',
-    icon: SlidersHorizontal,
-    description: 'Core workspace preferences',
-  },
-  payroll: {
-    label: 'Payroll',
-    icon: Calculator,
-    description: 'Payroll calculation and payslip defaults',
-  },
-  statutory: {
-    label: 'Statutory',
-    icon: Landmark,
-    description: 'Statutory contribution behavior',
-  },
-  notifications: {
-    label: 'Notifications',
-    icon: Bell,
-    description: 'Workspace notification defaults',
-  },
-  security: {
-    label: 'Security',
-    icon: ShieldCheck,
-    description: 'Your sign-in credentials and account protection',
-  },
-  sessions: {
-    label: 'Sessions',
-    icon: MonitorSmartphone,
-    description: 'Devices signed in to your account',
-  },
+const SECTION_ICONS: Record<string, LucideIcon> = {
+  system: SlidersHorizontal,
+  payroll: Calculator,
+  statutory: Landmark,
+  notifications: Bell,
+  security: ShieldCheck,
+  sessions: MonitorSmartphone,
 };
 
 const WORKSPACE_ORDER = ['system', 'payroll', 'statutory', 'notifications'];
 const ACCOUNT_SECTIONS = ['security', 'sessions'];
 
 export function SettingsPage() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const [edits, setEdits] = useState<Record<string, unknown>>({});
@@ -77,18 +55,18 @@ export function SettingsPage() {
     () => [
       ...WORKSPACE_ORDER.filter((c) => grouped[c]?.length).map((c) => ({
         id: c,
-        label: SECTION_META[c].label,
-        icon: SECTION_META[c].icon,
+        label: t(`settings.sections.${c}.label`),
+        icon: SECTION_ICONS[c],
         group: 'Workspace' as const,
       })),
       ...ACCOUNT_SECTIONS.map((id) => ({
         id,
-        label: SECTION_META[id].label,
-        icon: SECTION_META[id].icon,
+        label: t(`settings.sections.${id}.label`),
+        icon: SECTION_ICONS[id],
         group: 'Account' as const,
       })),
     ],
-    [grouped],
+    [grouped, t],
   );
 
   const requested = searchParams.get('section');
@@ -138,12 +116,12 @@ export function SettingsPage() {
     <div>
       <div className="page-header flex items-center justify-between mb-6">
         <div>
-          <h1 className="page-title">Settings</h1>
-          <p className="page-subtitle">Manage workspace and account preferences</p>
+          <h1 className="page-title">{t('settings.title')}</h1>
+          <p className="page-subtitle">{t('settings.subtitle')}</p>
         </div>
         {saved && (
           <span className="flex items-center gap-1 text-sm text-green-600 font-medium">
-            <Check className="w-4 h-4" /> Saved
+            <Check className="w-4 h-4" /> {t('common.saved')}
           </span>
         )}
       </div>
@@ -158,8 +136,8 @@ export function SettingsPage() {
         <div key={active} className="mt-4 lg:mt-0 animate-fade-up">
           {isWorkspace ? (
             <CompanyCategorySection
-              title={SECTION_META[active].label}
-              description={SECTION_META[active].description}
+              title={t(`settings.sections.${active}.label`)}
+              description={t(`settings.sections.${active}.description`)}
               settings={grouped[active] ?? []}
               edits={edits}
               onEdit={(s, v) => setEdits((prev) => ({ ...prev, [`${s.category}/${s.key}`]: v }))}
@@ -169,8 +147,8 @@ export function SettingsPage() {
             />
           ) : (
             <>
-              <h2 className="section-title">{SECTION_META[active].label}</h2>
-              <p className="text-sm text-gray-500 mt-1 mb-4">{SECTION_META[active].description}</p>
+              <h2 className="section-title">{t(`settings.sections.${active}.label`)}</h2>
+              <p className="text-sm text-gray-500 mt-1 mb-4">{t(`settings.sections.${active}.description`)}</p>
               {active === 'security' ? <SecuritySection /> : <SessionManagement />}
             </>
           )}

@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link2 } from 'lucide-react';
 import {
@@ -13,6 +14,7 @@ import { Modal } from '@/components/ui/Modal';
 import { TurnstileWidget, type TurnstileWidgetRef } from '@/components/TurnstileWidget';
 
 export function LinkedAccounts() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [error, setError] = useState('');
   const [confirmingUnlink, setConfirmingUnlink] = useState(false);
@@ -39,7 +41,7 @@ export function LinkedAccounts() {
       setConfirmingUnlink(false);
       queryClient.invalidateQueries({ queryKey: ['oauth2-accounts'] });
     },
-    onError: (err) => setError(getErrorMessage(err, 'Could not unlink the account')),
+    onError: (err) => setError(getErrorMessage(err, t('auth.linkedAccounts.unlinkFailed'))),
   });
 
   const startLink = async () => {
@@ -53,7 +55,7 @@ export function LinkedAccounts() {
     } catch (err) {
       sessionStorage.removeItem('oauth2_link_return');
       turnstileRef.current?.reset();
-      setError(getErrorMessage(err, 'Google sign-in is not available'));
+      setError(getErrorMessage(err, t('auth.googleUnavailable')));
     }
   };
 
@@ -69,13 +71,13 @@ export function LinkedAccounts() {
       <div className="section-header">
         <div className="flex items-center gap-2">
           <Link2 className="w-4 h-4 text-gray-400" />
-          <span className="section-title">Linked accounts</span>
+          <span className="section-title">{t('auth.linkedAccounts.title')}</span>
         </div>
-        {google && <span className="badge badge-approved ml-auto">Linked</span>}
+        {google && <span className="badge badge-approved ml-auto">{t('auth.linkedAccounts.linkedBadge')}</span>}
       </div>
 
       <p className="text-sm text-gray-500 mb-4">
-        Sign in faster by connecting an external account.
+        {t('auth.linkedAccounts.description')}
       </p>
 
       {error && (
@@ -91,13 +93,15 @@ export function LinkedAccounts() {
           <GoogleIcon />
         )}
         <div className="min-w-0 flex-1">
-          <span className="text-sm font-medium text-gray-900">Google</span>
+          <span className="text-sm font-medium text-gray-900">Google</span>{/* i18n-ok: brand name */}
           <p className="text-xs text-gray-500 mt-1">
             {isLoading
-              ? 'Loading…'
+              ? t('common.loading')
               : google
-                ? `Linked${google.provider_email ? ` as ${google.provider_email}` : ''}`
-                : 'Not linked'}
+                ? google.provider_email
+                  ? t('auth.linkedAccounts.linkedAs', { email: google.provider_email })
+                  : t('auth.linkedAccounts.linked')
+                : t('auth.linkedAccounts.notLinked')}
           </p>
         </div>
         {google ? (
@@ -107,7 +111,7 @@ export function LinkedAccounts() {
             disabled={unlink.isPending}
             className="text-sm font-medium text-red-600 hover:text-red-700 disabled:opacity-50 whitespace-nowrap"
           >
-            {unlink.isPending ? 'Unlinking…' : 'Unlink'}
+            {unlink.isPending ? t('auth.linkedAccounts.unlinking') : t('auth.linkedAccounts.unlink')}
           </button>
         ) : (
           googleEnabled && (
@@ -129,7 +133,7 @@ export function LinkedAccounts() {
                 onClick={startLink}
                 className="text-sm font-medium text-black hover:underline whitespace-nowrap"
               >
-                Link account
+                {t('auth.linkedAccounts.linkAccount')}
               </button>
             </div>
           )
@@ -139,12 +143,12 @@ export function LinkedAccounts() {
       <Modal
         open={confirmingUnlink}
         onClose={() => setConfirmingUnlink(false)}
-        title="Unlink Google account?"
+        title={t('auth.linkedAccounts.unlinkTitle')}
         maxWidth="max-w-md"
         footer={
           <div className="flex justify-end gap-2">
             <button type="button" className="btn-secondary !min-h-0 !py-2" onClick={() => setConfirmingUnlink(false)}>
-              Cancel
+              {t('common.cancel')}
             </button>
             <button
               type="button"
@@ -152,13 +156,13 @@ export function LinkedAccounts() {
               disabled={unlink.isPending}
               className="btn-primary !min-h-0 !py-2 !bg-none !bg-red-600 hover:!bg-red-700"
             >
-              {unlink.isPending ? 'Unlinking…' : 'Unlink account'}
+              {unlink.isPending ? t('auth.linkedAccounts.unlinking') : t('auth.linkedAccounts.unlinkSubmit')}
             </button>
           </div>
         }
       >
         <p className="text-sm text-gray-600">
-          You can link your Google account again later. Make sure you have another way to sign in.
+          {t('auth.linkedAccounts.unlinkBody')}
         </p>
       </Modal>
     </section>

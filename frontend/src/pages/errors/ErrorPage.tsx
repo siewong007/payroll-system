@@ -1,5 +1,6 @@
 import { ArrowLeft, Home, LockKeyhole, SearchX } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router';
+import { useTranslation } from 'react-i18next';
 import { BrandLogo } from '@/components/ui/BrandLogo';
 import { useAuth } from '@/context/AuthContext';
 import { hasOnlyEmployeeRole, hasAnyRole, SUPER_ADMIN_ROLES } from '@/lib/roles';
@@ -30,6 +31,7 @@ const errorStyles = {
 
 export function ErrorPage({ status, title, description, homePath, path }: ErrorPageProps) {
   const navigate = useNavigate();
+  const { t } = useTranslation();
   const { icon: Icon, iconClassName } = errorStyles[status];
 
   return (
@@ -45,7 +47,7 @@ export function ErrorPage({ status, title, description, homePath, path }: ErrorP
           <Icon className="h-7 w-7" aria-hidden="true" />
         </div>
 
-        <p className="text-sm font-semibold tracking-[0.2em] text-gray-500">ERROR {status}</p>
+        <p className="text-sm font-semibold tracking-[0.2em] text-gray-500">{t('errors.label', { status })}</p>
         <h1 id="error-title" className="mt-3 text-3xl font-bold tracking-tight text-gray-950 sm:text-4xl">
           {title}
         </h1>
@@ -60,11 +62,11 @@ export function ErrorPage({ status, title, description, homePath, path }: ErrorP
         <div className="mt-8 flex flex-col-reverse justify-center gap-3 sm:flex-row">
           <button type="button" onClick={() => navigate(-1)} className="btn-secondary">
             <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-            Go back
+            {t('common.goBack')}
           </button>
           <Link to={homePath} className="btn-primary">
             <Home className="h-4 w-4" aria-hidden="true" />
-            Go to home
+            {t('common.goHome')}
           </Link>
         </div>
       </section>
@@ -84,13 +86,14 @@ function useHomePath() {
 export function ForbiddenPage() {
   const location = useLocation();
   const homePath = useHomePath();
+  const { t } = useTranslation();
   const from = (location.state as { from?: string } | null)?.from;
 
   return (
     <ErrorPage
       status={403}
-      title="Access denied"
-      description="You do not have permission to view this page. If you believe this is a mistake, contact your administrator."
+      title={t('errors.forbidden.title')}
+      description={t('errors.forbidden.body')}
       homePath={homePath}
       path={from}
     />
@@ -100,12 +103,13 @@ export function ForbiddenPage() {
 export function NotFoundPage() {
   const location = useLocation();
   const homePath = useHomePath();
+  const { t } = useTranslation();
 
   return (
     <ErrorPage
       status={404}
-      title="Page not found"
-      description="The page you are looking for may have moved, been deleted, or never existed."
+      title={t('errors.notFound.title')}
+      description={t('errors.notFound.body')}
       homePath={homePath}
       path={location.pathname}
     />

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import { AlertCircle, Flashlight, Keyboard, Loader2, X } from 'lucide-react';
 import { parseScanToken } from '@/lib/attendance';
@@ -26,6 +27,7 @@ interface QrScanSheetProps {
  * had been in the React Query cache seconds earlier.
  */
 export function QrScanSheet({ onClose, onToken, onCameraReady, busy, errorText }: QrScanSheetProps) {
+  const { t } = useTranslation();
   // html5-qrcode addresses its mount point by id, so give each instance its own.
   const readerId = `qr-reader-${useId().replace(/:/g, '')}`;
 
@@ -107,7 +109,7 @@ export function QrScanSheet({ onClose, onToken, onCameraReady, busy, errorText }
         if (cancelled) return;
         setPhase('failed');
         setCameraError(
-          getErrorMessage(err, 'Could not start the camera. Check camera permission for this site in your browser settings.')
+          getErrorMessage(err, t('attendance.qr.cameraFailed'))
         );
       }
     };
@@ -129,6 +131,7 @@ export function QrScanSheet({ onClose, onToken, onCameraReady, busy, errorText }
         }
       }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- t is stable; adding it would restart the camera
   }, [readerId]);
 
   // A rejected token must be scannable again.
@@ -164,16 +167,16 @@ export function QrScanSheet({ onClose, onToken, onCameraReady, busy, errorText }
   const message = errorText || scanError;
 
   return (
-    <div className="fixed inset-0 z-[60] bg-black text-white flex flex-col" role="dialog" aria-modal="true" aria-label="Scan attendance QR code">
+    <div className="fixed inset-0 z-[60] bg-black text-white flex flex-col" role="dialog" aria-modal="true" aria-label={t('attendance.qr.ariaLabel')}>
       {/* Header */}
       <div className="flex items-center justify-between px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-3 shrink-0">
         <div>
-          <p className="text-sm font-semibold">Scan to check in</p>
-          <p className="text-xs text-white/60">Point at the code on the kiosk screen</p>
+          <p className="text-sm font-semibold">{t('attendance.qr.title')}</p>
+          <p className="text-xs text-white/60">{t('attendance.qr.subtitle')}</p>
         </div>
         <button
           onClick={onClose}
-          aria-label="Close scanner"
+          aria-label={t('attendance.qr.close')}
           className="w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors"
         >
           <X className="w-5 h-5" />
@@ -187,7 +190,7 @@ export function QrScanSheet({ onClose, onToken, onCameraReady, busy, errorText }
         {phase === 'starting' && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black">
             <Loader2 className="w-8 h-8 animate-spin text-white/70" />
-            <p className="text-sm text-white/70">Starting camera…</p>
+            <p className="text-sm text-white/70">{t('attendance.qr.starting')}</p>
           </div>
         )}
 
@@ -199,7 +202,7 @@ export function QrScanSheet({ onClose, onToken, onCameraReady, busy, errorText }
               onClick={() => setManualOpen(true)}
               className="px-4 py-2.5 rounded-xl bg-white text-gray-900 text-sm font-semibold"
             >
-              Enter the code instead
+              {t('attendance.qr.enterCode')}
             </button>
           </div>
         )}
@@ -223,7 +226,7 @@ export function QrScanSheet({ onClose, onToken, onCameraReady, busy, errorText }
         {busy && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/80 backdrop-blur-sm">
             <Loader2 className="w-9 h-9 animate-spin text-emerald-400" />
-            <p className="text-sm font-medium">Checking you in…</p>
+            <p className="text-sm font-medium">{t('attendance.qr.checkingIn')}</p>
           </div>
         )}
       </div>
@@ -243,8 +246,8 @@ export function QrScanSheet({ onClose, onToken, onCameraReady, busy, errorText }
               value={manualCode}
               onChange={(e) => setManualCode(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') submitManual(); }}
-              placeholder="Paste or type the code"
-              aria-label="Attendance code"
+              placeholder={t('attendance.qr.codePlaceholder')}
+              aria-label={t('attendance.qr.codeAria')}
               autoComplete="off"
               autoCapitalize="none"
               spellCheck={false}
@@ -255,7 +258,7 @@ export function QrScanSheet({ onClose, onToken, onCameraReady, busy, errorText }
               disabled={!manualCode.trim() || busy}
               className="px-4 rounded-xl bg-white text-gray-900 text-sm font-semibold disabled:opacity-40"
             >
-              Go
+              {t('attendance.qr.go')}
             </button>
           </div>
         ) : (
@@ -269,7 +272,7 @@ export function QrScanSheet({ onClose, onToken, onCameraReady, busy, errorText }
                 }`}
               >
                 <Flashlight className="w-4 h-4" />
-                Torch
+                {t('attendance.qr.torch')}
               </button>
             )}
             <button
@@ -277,7 +280,7 @@ export function QrScanSheet({ onClose, onToken, onCameraReady, busy, errorText }
               className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/10 text-white text-sm font-medium hover:bg-white/20 transition-colors"
             >
               <Keyboard className="w-4 h-4" />
-              Enter code
+              {t('attendance.qr.enterCodeShort')}
             </button>
           </div>
         )}

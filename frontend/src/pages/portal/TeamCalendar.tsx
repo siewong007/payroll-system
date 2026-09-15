@@ -1,13 +1,10 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
 import { getTeamCalendar, getPortalHolidays } from '@/api/portal';
 import type { Holiday, TeamLeaveEntry } from '@/types';
-
-const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-const MONTH_NAMES = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-];
+import { formatDateDayMonth } from '@/lib/format';
+import { intlLocale } from '@/i18n';
 
 // Generate a consistent color for an employee name
 function nameColor(name: string): string {
@@ -29,7 +26,38 @@ function nameColor(name: string): string {
 }
 
 export function TeamCalendar() {
+  const { t, i18n } = useTranslation();
   const now = new Date();
+
+  // 2020-06-07 was a Sunday: day i of this week yields weekday i.
+  const dayNames = useMemo(
+    () =>
+      Array.from({ length: 7 }, (_, i) =>
+        new Intl.DateTimeFormat(intlLocale(), { weekday: 'long' }).format(new Date(2020, 5, 7 + i))),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [i18n.language],
+  );
+  const dayNamesShort = useMemo(
+    () =>
+      Array.from({ length: 7 }, (_, i) =>
+        new Intl.DateTimeFormat(intlLocale(), { weekday: 'short' }).format(new Date(2020, 5, 7 + i))),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [i18n.language],
+  );
+  const monthNames = useMemo(
+    () =>
+      Array.from({ length: 12 }, (_, i) =>
+        new Intl.DateTimeFormat(intlLocale(), { month: 'long' }).format(new Date(2020, i, 1))),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [i18n.language],
+  );
+  const monthNamesShort = useMemo(
+    () =>
+      Array.from({ length: 12 }, (_, i) =>
+        new Intl.DateTimeFormat(intlLocale(), { month: 'short' }).format(new Date(2020, i, 1))),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [i18n.language],
+  );
   const [selectedYear, setSelectedYear] = useState(now.getFullYear());
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth() + 1);
   const [activeTab, setActiveTab] = useState<'calendar' | 'holidays'>('calendar');
@@ -135,7 +163,7 @@ export function TeamCalendar() {
             <div
               key={entry.id}
               className={`text-[10px] px-1 py-0.5 rounded truncate mb-0.5 ${nameColor(entry.employee_name)}`}
-              title={`${entry.employee_name} - ${entry.leave_type_name}`}
+              title={t('portal.teamCalendar.leaveTitle', { name: entry.employee_name, type: entry.leave_type_name })}
             >
               {entry.employee_name.split(' ')[0]} - {entry.leave_type_name}
             </div>
@@ -146,9 +174,9 @@ export function TeamCalendar() {
 
     return (
       <div className="grid grid-cols-7 gap-0">
-        {DAY_NAMES.map((name) => (
+        {dayNamesShort.map((name) => (
           <div key={name} className="text-center text-xs font-medium text-gray-500 py-2 bg-gray-50 border border-gray-100">
-            {name.slice(0, 3)}
+            {name}
           </div>
         ))}
         {cells}
@@ -162,15 +190,15 @@ export function TeamCalendar() {
   return (
     <div className="space-y-6">
       <div className="page-header">
-        <h1 className="page-title">Team Calendar</h1>
-        <p className="page-subtitle">View holidays and your team's leave schedule</p>
+        <h1 className="page-title">{t('portal.teamCalendar.title')}</h1>
+        <p className="page-subtitle">{t('portal.teamCalendar.subtitle')}</p>
       </div>
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-gray-200">
         {[
-          { key: 'calendar' as const, label: 'Team Calendar' },
-          { key: 'holidays' as const, label: 'Public Holidays' },
+          { key: 'calendar' as const, label: t('portal.teamCalendar.tabs.calendar') },
+          { key: 'holidays' as const, label: t('portal.teamCalendar.tabs.holidays') },
         ].map((t) => (
           <button
             key={t.key}
@@ -192,11 +220,11 @@ export function TeamCalendar() {
               <button onClick={prevMonth} className="p-2 hover:bg-gray-100 rounded-lg">&larr;</button>
               <div className="text-center">
                 <h2 className="text-lg font-semibold">
-                  {MONTH_NAMES[selectedMonth - 1]} {selectedYear}
+                  {monthNames[selectedMonth - 1]} {selectedYear}
                 </h2>
                 {teamLeaves.length > 0 && (
                   <p className="text-sm text-gray-500">
-                    {uniqueMembers.length} team member{uniqueMembers.length !== 1 ? 's' : ''} on leave
+                    {t('portal.teamCalendar.membersOnLeave', { count: uniqueMembers.length })}
                   </p>
                 )}
               </div>
@@ -206,7 +234,7 @@ export function TeamCalendar() {
             {/* Legend */}
             <div className="flex flex-wrap gap-3 mt-4 text-xs text-gray-500">
               <span className="flex items-center gap-1">
-                <span className="w-3 h-3 rounded bg-red-100 border border-red-200" /> Holiday
+                <span className="w-3 h-3 rounded bg-red-100 border border-red-200" /> {t('portal.teamCalendar.holiday')}
               </span>
               {uniqueMembers.map((name) => (
                 <span key={name} className="flex items-center gap-1">
@@ -220,7 +248,7 @@ export function TeamCalendar() {
           {teamLeaves.length > 0 && (
             <div className="bg-white rounded-2xl border border-gray-200">
               <div className="px-6 py-4 border-b border-gray-100">
-                <h3 className="text-sm font-semibold text-gray-900">Team Leave This Month</h3>
+                <h3 className="text-sm font-semibold text-gray-900">{t('portal.teamCalendar.leaveThisMonth')}</h3>
               </div>
               <div className="divide-y divide-gray-100">
                 {teamLeaves.map((entry) => (
@@ -236,12 +264,12 @@ export function TeamCalendar() {
                     </div>
                     <div className="text-right">
                       <p className="text-sm text-gray-700">
-                        {new Date(entry.start_date).toLocaleDateString('en-MY', { day: 'numeric', month: 'short' })}
+                        {formatDateDayMonth(entry.start_date)}
                         {entry.start_date !== entry.end_date && (
-                          <> &ndash; {new Date(entry.end_date).toLocaleDateString('en-MY', { day: 'numeric', month: 'short' })}</>
+                          <> &ndash; {formatDateDayMonth(entry.end_date)}</>
                         )}
                       </p>
-                      <p className="text-xs text-gray-400">{Number(entry.days)} day{Number(entry.days) !== 1 ? 's' : ''}</p>
+                      <p className="text-xs text-gray-400">{t('portal.teamCalendar.days', { count: Number(entry.days) })}</p>
                     </div>
                   </div>
                 ))}
@@ -254,7 +282,7 @@ export function TeamCalendar() {
       {activeTab === 'holidays' && (
         <div className="bg-white rounded-2xl border border-gray-200">
           <div className="p-4 border-b border-gray-100 flex items-center gap-3">
-            <label className="text-sm font-medium text-gray-700">Year:</label>
+            <label className="text-sm font-medium text-gray-700">{t('common.year')}:</label>
             <select
               value={selectedYear}
               onChange={(e) => setSelectedYear(Number(e.target.value))}
@@ -268,7 +296,7 @@ export function TeamCalendar() {
           <div className="divide-y divide-gray-100">
             {holidays.length === 0 && (
               <div className="p-8 text-center text-sm text-gray-400">
-                No holidays for {selectedYear}
+                {t('portal.teamCalendar.noHolidays', { year: selectedYear })}
               </div>
             )}
             {holidays.map((h) => {
@@ -278,14 +306,14 @@ export function TeamCalendar() {
                 <div key={h.id} className={`flex items-center gap-4 px-6 py-4 ${isPast ? 'opacity-50' : ''}`}>
                   <div className="text-center min-w-[50px]">
                     <div className="text-xs text-gray-400 uppercase">
-                      {MONTH_NAMES[d.getMonth()].slice(0, 3)}
+                      {monthNamesShort[d.getMonth()]}
                     </div>
                     <div className="text-xl font-bold text-gray-900">{d.getDate()}</div>
                   </div>
                   <div className="flex-1">
                     <p className="text-sm font-medium text-gray-900">{h.name}</p>
                     <p className="text-xs text-gray-400">
-                      {DAY_NAMES[d.getDay()]}
+                      {dayNames[d.getDay()]}
                       {h.description ? ` \u2022 ${h.description}` : ''}
                     </p>
                   </div>
@@ -298,7 +326,7 @@ export function TeamCalendar() {
                       ? 'bg-yellow-100 text-yellow-700'
                       : 'bg-green-100 text-green-700'
                   }`}>
-                    {h.holiday_type.replace('_', ' ')}
+                    {t(`enums.holidayType.${h.holiday_type}`, { defaultValue: h.holiday_type })}
                   </span>
                 </div>
               );

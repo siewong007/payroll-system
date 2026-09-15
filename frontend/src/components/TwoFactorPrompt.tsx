@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { ShieldCheck } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { getErrorMessage } from '@/lib/utils';
@@ -13,6 +14,7 @@ interface TwoFactorPromptProps {
 // Second step of login when the account has TOTP 2FA enabled — shared by
 // the password-login flow (Login.tsx) and the Google OAuth callback.
 export function TwoFactorPrompt({ mfaToken, onSuccess, onBack }: TwoFactorPromptProps) {
+  const { t } = useTranslation();
   const [code, setCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -26,7 +28,7 @@ export function TwoFactorPrompt({ mfaToken, onSuccess, onBack }: TwoFactorPrompt
       const user = await completeTwoFactorLogin(mfaToken, code.trim());
       onSuccess(user);
     } catch (err: unknown) {
-      setError(getErrorMessage(err, 'Invalid or expired code'));
+      setError(getErrorMessage(err, t('auth.twoFactor.invalidOrExpired')));
     } finally {
       setLoading(false);
     }
@@ -38,9 +40,9 @@ export function TwoFactorPrompt({ mfaToken, onSuccess, onBack }: TwoFactorPrompt
         <div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-3">
           <ShieldCheck className="w-6 h-6 text-gray-500" />
         </div>
-        <p className="text-sm font-medium text-gray-900">Two-factor authentication</p>
+        <p className="text-sm font-medium text-gray-900">{t('auth.twoFactor.title')}</p>
         <p className="text-sm text-gray-500 mt-1">
-          Enter the 6-digit code from your authenticator app, or a backup code.
+          {t('auth.twoFactor.prompt')}
         </p>
       </div>
 
@@ -66,7 +68,7 @@ export function TwoFactorPrompt({ mfaToken, onSuccess, onBack }: TwoFactorPrompt
           disabled={loading || !code.trim()}
           className="w-full bg-black text-white py-2.5 rounded-xl font-semibold hover:bg-gray-800 disabled:opacity-50 transition-all"
         >
-          {loading ? 'Verifying...' : 'Verify'}
+          {loading ? t('auth.twoFactor.verifying') : t('auth.twoFactor.verify')}
         </button>
 
         {onBack && (
@@ -75,7 +77,7 @@ export function TwoFactorPrompt({ mfaToken, onSuccess, onBack }: TwoFactorPrompt
             onClick={onBack}
             className="w-full text-center text-sm text-gray-500 hover:text-gray-700"
           >
-            Back to login
+            {t('auth.backToLogin')}
           </button>
         )}
       </form>

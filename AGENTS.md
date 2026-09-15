@@ -85,6 +85,7 @@ Key design decisions to be aware of:
 - `context/AuthContext.tsx` — on mount, calls `/auth/refresh` to restore the session from the cookie; `user` is mirrored to `localStorage` for fast paint only, never for auth.
 - `pages/` mirrors feature areas; `api/*.ts` has one file per backend module.
 - React Query defaults: `retry: 1`, `staleTime: 30s`, no refetch-on-focus.
+- **i18n**: four first-class locales (`en`, `ms`, `zh-CN`, `zh-TW`) via i18next. All user-facing strings go through `t()` with keys in `src/i18n/locales/en.ts`; the other three locales must mirror its exact shape (`Messages = typeof en` enforces this at compile time). Server `AppError` literals translate via `src/i18n/serverErrorMap.ts` → `serverErrors.*` keys. Dates/numbers use `lib/format.ts` helpers backed by `intlLocale()` — never pin a locale into `toLocale*`. `src/tests/i18n.test.ts` enforces key parity, interpolation parity, no en-residue, and zh script purity; `node scripts/i18n-scan.mjs --ci` (wired into CI) gates hardcoded strings — `// i18n-ok` marks intentional literals (template bodies, statutory CSV headers). See `docs/i18n/README.md` for the workflow and terminology dictionary.
 
 ### Infra
 `infra/` holds Terraform for AWS (RDS + EC2 + ECR + CloudFront + ACM + Route53 + S3 uploads). Production builds the backend from the repository root with `infra/Dockerfile`; the frontend build is served from S3/CloudFront.

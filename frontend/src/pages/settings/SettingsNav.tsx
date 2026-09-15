@@ -1,4 +1,5 @@
 import { motion } from 'framer-motion';
+import { useTranslation } from 'react-i18next';
 import type { LucideIcon } from 'lucide-react';
 
 export interface SettingsNavItem {
@@ -19,9 +20,10 @@ export function SettingsNav({
   active: string;
   onSelect: (id: string) => void;
 }) {
+  const { t } = useTranslation();
   return (
     <nav
-      aria-label="Settings sections"
+      aria-label={t('settings.navLabel')}
       className="flex gap-1 overflow-x-auto lg:flex-col lg:gap-0.5 lg:sticky lg:top-6"
     >
       {GROUPS.map((group) => {
@@ -30,7 +32,7 @@ export function SettingsNav({
         return (
           <div key={group} className="contents lg:block">
             <p className="hidden lg:block px-3 pt-4 pb-1.5 first:pt-0 text-[10px] font-semibold uppercase tracking-widest text-gray-400">
-              {group}
+              {t(`settings.groups.${group.toLowerCase()}`)}
             </p>
             {items.map((item) => {
               const isActive = item.id === active;

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback, useId } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useTranslation } from 'react-i18next';
 import { X } from 'lucide-react';
 
 interface ModalProps {
@@ -14,6 +15,7 @@ interface ModalProps {
 const FOCUSABLE = 'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 export function Modal({ open, onClose, title, children, footer, maxWidth = 'max-w-2xl' }: ModalProps) {
+  const { t } = useTranslation();
   const dialogRef = useRef<HTMLDivElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const titleId = useId();
@@ -126,7 +128,7 @@ export function Modal({ open, onClose, title, children, footer, maxWidth = 'max-
                   </h2>
                   <button
                     onClick={onClose}
-                    aria-label="Close dialog"
+                    aria-label={t('a11y.closeDialog')}
                     className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
                   >
                     <X className="w-5 h-5" />

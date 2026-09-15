@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   CheckCircle,
@@ -50,6 +51,7 @@ import { useAuth } from '@/context/AuthContext';
 import { runBulk, summarizeBulkFailure } from '@/lib/bulk';
 import { formatEmployeeLabel } from '@/lib/employeeFields';
 import { formatDate, getErrorMessage, isImageUrl, todayLocalDate } from '@/lib/utils';
+import { formatMYR } from '@/lib/format';
 import { OT_DEFAULT_END, OT_DEFAULT_HOURS, OT_DEFAULT_START, calculateOvertimeHours } from '@/lib/overtime';
 import type {
   AdminCreateClaimRequest,
@@ -63,9 +65,10 @@ import type {
   UpdateOvertimeRequest,
 } from '@/types';
 
-const fmt = (sen: number) => `RM ${(sen / 100).toFixed(2)}`;
+const fmt = formatMYR;
 
-const statusBadge = (status: string) => {
+function RequestStatusBadge({ status }: { status: string }) {
+  const { t } = useTranslation();
   const cls: Record<string, string> = {
     pending: 'badge-pending',
     approved: 'badge-approved',
@@ -74,8 +77,14 @@ const statusBadge = (status: string) => {
     draft: 'badge-draft',
     processed: 'badge-processed',
   };
-  return <span className={`badge ${cls[status] || 'badge-draft'}`}>{status}</span>;
-};
+  return (
+    <span className={`badge ${cls[status] || 'badge-draft'}`}>
+      {t(`enums.requestStatus.${status}`, { defaultValue: status })}
+    </span>
+  );
+}
+
+const statusBadge = (status: string) => <RequestStatusBadge status={status} />;
 
 function SummaryField({ label, value, children }: { label: string; value?: string; children?: React.ReactNode }) {
   return (
@@ -105,6 +114,7 @@ function ActionButtons({
   onCancel?: () => void;
   onDelete?: () => void;
 }) {
+  const { t } = useTranslation();
   if (!onEdit && !onCancel && !onDelete) {
     return <span className="text-gray-300">—</span>;
   }
@@ -116,7 +126,7 @@ function ActionButtons({
           type="button"
           onClick={onEdit}
           className="p-1.5 rounded-lg text-gray-500 hover:text-black hover:bg-gray-100 transition-colors"
-          title="Edit"
+          title={t('common.edit')}
         >
           <Pencil className="w-4 h-4" />
         </button>
@@ -126,7 +136,7 @@ function ActionButtons({
           type="button"
           onClick={onDelete}
           className="p-1.5 rounded-lg text-red-500 hover:text-red-700 hover:bg-red-50 transition-colors"
-          title="Delete"
+          title={t('common.delete')}
         >
           <Trash2 className="w-4 h-4" />
         </button>
@@ -136,7 +146,7 @@ function ActionButtons({
           type="button"
           onClick={onCancel}
           className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
-          title="Cancel"
+          title={t('common.cancel')}
         >
           <X className="w-4 h-4" />
         </button>
@@ -149,6 +159,7 @@ function ActionButtons({
 const PER_PAGE = 20;
 
 export function Approvals() {
+  const { t } = useTranslation();
   const { user } = useAuth();
   const [tab, setTab] = useState<'leave' | 'claims' | 'overtime'>('leave');
   const [statusFilter, setStatusFilter] = useState<string>('pending');
@@ -295,7 +306,7 @@ export function Approvals() {
       setSelectedApprovalIds(outcome.failed.map((failure) => failure.id));
       setBulkError(summarizeBulkFailure(outcome, 'cancelled'));
     },
-    onError: (err: unknown) => setBulkError(getErrorMessage(err, 'Failed to cancel the selected items')),
+    onError: (err: unknown) => setBulkError(getErrorMessage(err, t('approvals.bulkCancelFailed'))),
     onSettled: refreshAll,
   });
 
@@ -306,18 +317,11 @@ export function Approvals() {
       setSelectedApprovalIds(outcome.failed.map((failure) => failure.id));
       setBulkError(summarizeBulkFailure(outcome, 'deleted'));
     },
-    onError: (err: unknown) => setBulkError(getErrorMessage(err, 'Failed to delete the selected items')),
+    onError: (err: unknown) => setBulkError(getErrorMessage(err, t('approvals.bulkDeleteFailed'))),
     onSettled: refreshAll,
   });
 
-  const otTypeLabel = (type: string) => {
-    const labels: Record<string, string> = {
-      normal: 'Normal Day',
-      rest_day: 'Rest Day',
-      public_holiday: 'Public Holiday',
-    };
-    return labels[type] || type;
-  };
+  const otTypeLabel = (type: string) => t(`enums.otType.${type}`, { defaultValue: type });
 
   const otTypeMultiplier = (type: string) => {
     const multipliers: Record<string, string> = {
@@ -359,7 +363,7 @@ export function Approvals() {
   const leaveColumns: Column<LeaveRequestWithEmployee>[] = [
     {
       key: 'employee',
-      header: 'Employee',
+      header: t('common.employee'),
       render: (request) => (
         <div>
           <div className="font-semibold text-gray-900">{request.employee_name}</div>
@@ -368,30 +372,30 @@ export function Approvals() {
       ),
       primary: true,
     },
-    { key: 'type', header: 'Leave Type', render: (request) => request.leave_type_name || '\u2014', primary: true },
-    { key: 'period', header: 'Period', render: (request) => <span className="text-gray-500">{request.start_date} → {request.end_date}</span> },
-    { key: 'days', header: 'Days', render: (request) => Number(request.days) },
-    { key: 'reason', header: 'Reason', render: (request) => <span className="text-gray-400 max-w-[180px] truncate block">{request.reason || '\u2014'}</span> },
+    { key: 'type', header: t('approvals.leaveType'), render: (request) => request.leave_type_name || '\u2014', primary: true },
+    { key: 'period', header: t('approvals.period'), render: (request) => <span className="text-gray-500">{request.start_date} → {request.end_date}</span> },
+    { key: 'days', header: t('approvals.days'), render: (request) => Number(request.days) },
+    { key: 'reason', header: t('common.reason'), render: (request) => <span className="text-gray-400 max-w-[180px] truncate block">{request.reason || '\u2014'}</span> },
     {
       key: 'attachment',
-      header: 'Attachment',
+      header: t('approvals.attachment'),
       render: (request) =>
         request.attachment_url ? (
           <span className="inline-flex items-center gap-1 text-gray-900 text-sm">
             <Paperclip className="w-3 h-3" />
-            <span className="truncate max-w-[80px]">{request.attachment_name || 'File'}</span>
+            <span className="truncate max-w-[80px]">{request.attachment_name || t('approvals.file')}</span>
           </span>
         ) : (
           <span className="text-gray-300">\u2014</span>
         ),
     },
-    { key: 'status', header: 'Status', render: (request) => statusBadge(request.status) },
+    { key: 'status', header: t('common.status'), render: (request) => statusBadge(request.status) },
   ];
 
   const claimColumns: Column<ClaimWithEmployee>[] = [
     {
       key: 'employee',
-      header: 'Employee',
+      header: t('common.employee'),
       render: (claim) => (
         <div>
           <div className="font-semibold text-gray-900">{claim.employee_name}</div>
@@ -402,7 +406,7 @@ export function Approvals() {
     },
     {
       key: 'title',
-      header: 'Title',
+      header: t('common.title'),
       render: (claim) => (
         <div>
           <div className="font-medium">{claim.title}</div>
@@ -411,12 +415,12 @@ export function Approvals() {
       ),
       primary: true,
     },
-    { key: 'category', header: 'Category', render: (claim) => claim.category || '\u2014' },
-    { key: 'amount', header: 'Amount', align: 'right', render: (claim) => <span className="font-semibold">{fmt(claim.amount)}</span> },
-    { key: 'date', header: 'Date', render: (claim) => <span className="text-gray-500">{claim.expense_date}</span> },
+    { key: 'category', header: t('common.category'), render: (claim) => claim.category || '\u2014' },
+    { key: 'amount', header: t('common.amount'), align: 'right', render: (claim) => <span className="font-semibold">{fmt(claim.amount)}</span> },
+    { key: 'date', header: t('common.date'), render: (claim) => <span className="text-gray-500">{claim.expense_date}</span> },
     {
       key: 'receipt',
-      header: 'Receipt',
+      header: t('approvals.receipt'),
       render: (claim) =>
         claim.receipt_url ? (
           <AttachmentLink
@@ -424,20 +428,20 @@ export function Approvals() {
             className="inline-flex items-center gap-1 text-gray-900 hover:text-black text-sm"
           >
             {isImageUrl(claim.receipt_url) ? <Image className="w-3 h-3" /> : <Paperclip className="w-3 h-3" />}
-            <span className="truncate max-w-[80px]">{claim.receipt_file_name || 'Receipt'}</span>
+            <span className="truncate max-w-[80px]">{claim.receipt_file_name || t('approvals.receipt')}</span>
             <ExternalLink className="w-3 h-3" />
           </AttachmentLink>
         ) : (
           <span className="text-gray-300">\u2014</span>
         ),
     },
-    { key: 'status', header: 'Status', render: (claim) => statusBadge(claim.status) },
+    { key: 'status', header: t('common.status'), render: (claim) => statusBadge(claim.status) },
   ];
 
   const overtimeColumns: Column<OvertimeWithEmployee>[] = [
     {
       key: 'employee',
-      header: 'Employee',
+      header: t('common.employee'),
       render: (overtime) => (
         <div>
           <div className="font-semibold text-gray-900">{overtime.employee_name}</div>
@@ -446,10 +450,10 @@ export function Approvals() {
       ),
       primary: true,
     },
-    { key: 'date', header: 'Date', render: (overtime) => <span className="text-gray-700">{overtime.ot_date}</span>, primary: true },
+    { key: 'date', header: t('common.date'), render: (overtime) => <span className="text-gray-700">{overtime.ot_date}</span>, primary: true },
     {
       key: 'type',
-      header: 'Type',
+      header: t('common.type'),
       render: (overtime) => (
         <span
           className={`text-xs px-2 py-0.5 rounded-full font-medium ${
@@ -466,27 +470,27 @@ export function Approvals() {
     },
     {
       key: 'time',
-      header: 'Time',
+      header: t('common.time'),
       render: (overtime) => <span className="text-gray-500">{overtime.start_time?.slice(0, 5)} — {overtime.end_time?.slice(0, 5)}</span>,
     },
-    { key: 'hours', header: 'Hours', align: 'right', render: (overtime) => <span className="font-semibold">{Number(overtime.hours)}h</span> },
-    { key: 'reason', header: 'Reason', render: (overtime) => <span className="text-gray-400 max-w-[180px] truncate block">{overtime.reason || '\u2014'}</span> },
-    { key: 'status', header: 'Status', render: (overtime) => statusBadge(overtime.status) },
+    { key: 'hours', header: t('common.hours'), align: 'right', render: (overtime) => <span className="font-semibold">{Number(overtime.hours)}h</span> },
+    { key: 'reason', header: t('common.reason'), render: (overtime) => <span className="text-gray-400 max-w-[180px] truncate block">{overtime.reason || '\u2014'}</span> },
+    { key: 'status', header: t('common.status'), render: (overtime) => statusBadge(overtime.status) },
   ];
 
   const headerButtonLabel = useMemo(() => {
-    if (tab === 'leave') return 'Add Leave';
-    if (tab === 'claims') return 'Add Claim';
-    return 'Add Overtime';
-  }, [tab]);
+    if (tab === 'leave') return t('approvals.addLeave');
+    if (tab === 'claims') return t('approvals.addClaim');
+    return t('approvals.addOvertime');
+  }, [tab, t]);
 
   return (
     <>
       <div className="space-y-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="page-header">
-            <h1 className="page-title">Approvals</h1>
-            <p className="page-subtitle">Review requests and manage leave, claims, and overtime for your company.</p>
+            <h1 className="page-title">{t('approvals.title')}</h1>
+            <p className="page-subtitle">{t('approvals.subtitle')}</p>
           </div>
           <button onClick={openCreateModal} className="btn-primary w-full sm:w-auto">
             <Plus className="w-4 h-4" /> {headerButtonLabel}
@@ -508,7 +512,7 @@ export function Approvals() {
                 tab === itemTab ? 'border-black text-gray-900' : 'border-transparent text-gray-400 hover:text-gray-700'
               }`}
             >
-              {itemTab === 'leave' ? 'Leave Requests' : itemTab === 'claims' ? 'Expense Claims' : 'Overtime'}
+              {t(`approvals.tabs.${itemTab}`)}
             </button>
           ))}
         </div>
@@ -530,7 +534,7 @@ export function Approvals() {
                   : 'bg-white text-gray-500 border border-gray-200 hover:border-gray-300'
               }`}
             >
-              {status || 'All'}
+              {status ? t(`enums.requestStatus.${status}`) : t('common.all')}
             </button>
           ))}
         </div>
@@ -538,12 +542,12 @@ export function Approvals() {
         {selectedApprovalIds.length > 0 && (
           <div className="space-y-2">
             <div className="flex flex-col gap-2 rounded-xl border border-gray-200 bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-              <span className="text-sm font-medium text-gray-700">{selectedApprovalIds.length} selected</span>
+              <span className="text-sm font-medium text-gray-700">{t('common.selectedCount', { count: selectedApprovalIds.length })}</span>
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
                   onClick={() => {
-                    if (confirm(`Cancel ${selectedCancelableIds.length} selected item(s)?`)) {
+                    if (confirm(t('approvals.bulkCancelConfirm', { count: selectedCancelableIds.length }))) {
                       setBulkError('');
                       bulkCancelM.mutate({ ids: selectedCancelableIds, target: tab });
                     }
@@ -552,12 +556,12 @@ export function Approvals() {
                   className="btn-secondary !py-2 text-sm disabled:opacity-50"
                 >
                   <X className="w-4 h-4" />
-                  {bulkCancelM.isPending ? 'Cancelling...' : 'Cancel Selected'}
+                  {bulkCancelM.isPending ? t('common.cancelling') : t('common.cancelSelected')}
                 </button>
                 <button
                   type="button"
                   onClick={() => {
-                    if (confirm(`Permanently delete ${selectedDeletableIds.length} selected item(s)?`)) {
+                    if (confirm(t('approvals.bulkDeleteConfirm', { count: selectedDeletableIds.length }))) {
                       setBulkError('');
                       bulkDeleteM.mutate({ ids: selectedDeletableIds, target: tab });
                     }
@@ -566,7 +570,7 @@ export function Approvals() {
                   className="btn-secondary !py-2 text-sm text-red-600 hover:!bg-red-50 disabled:opacity-50"
                 >
                   <Trash2 className="w-4 h-4" />
-                  {bulkDeleteM.isPending ? 'Deleting...' : 'Delete Selected'}
+                  {bulkDeleteM.isPending ? t('common.deleting') : t('common.deleteSelected')}
                 </button>
               </div>
             </div>
@@ -589,7 +593,7 @@ export function Approvals() {
             onPageChange={setPage}
             perPage={PER_PAGE}
             isLoading={leaveQuery.isLoading}
-            emptyMessage="No leave requests found"
+            emptyMessage={t('approvals.noLeaveRequests')}
             emptyIcon={<Clock className="w-8 h-8 text-gray-200" />}
             selectable
             selectedRowKeys={selectedApprovalIds}
@@ -602,18 +606,18 @@ export function Approvals() {
                   setShowLeaveModal(true);
                 } : undefined}
                 onCancel={canCancelLeave(request) ? () => {
-                  if (confirm('Cancel this leave request?')) {
+                  if (confirm(t('approvals.cancelLeaveConfirm'))) {
                     cancelLeaveM.mutate(request.id);
                   }
                 } : undefined}
                 onDelete={canDeleteLeave(request) ? () => {
-                  if (confirm('Permanently delete this cancelled leave request?')) {
+                  if (confirm(t('approvals.deleteLeaveConfirm'))) {
                     deleteLeaveM.mutate(request.id);
                   }
                 } : undefined}
               />
             )}
-            summaryTitle={(request) => `${request.employee_name} — Leave Request`}
+            summaryTitle={(request) => t('approvals.summaryTitle', { name: request.employee_name, type: t('approvals.leaveRequest') })}
             renderSummary={(request) => (
               <div className="space-y-5">
                 <div className="flex items-start justify-between">
@@ -630,33 +634,33 @@ export function Approvals() {
                 </div>
 
                 <div className="grid grid-cols-2 gap-4 bg-gray-50 rounded-lg p-4">
-                  <SummaryField label="Leave Type" value={request.leave_type_name || '\u2014'} />
-                  <SummaryField label="Duration" value={`${Number(request.days)} day(s)`} />
-                  <SummaryField label="Start Date" value={formatDate(request.start_date)} />
-                  <SummaryField label="End Date" value={formatDate(request.end_date)} />
+                  <SummaryField label={t('approvals.leaveType')} value={request.leave_type_name || '\u2014'} />
+                  <SummaryField label={t('approvals.duration')} value={t('approvals.daysCount', { count: Number(request.days) })} />
+                  <SummaryField label={t('common.startDate')} value={formatDate(request.start_date)} />
+                  <SummaryField label={t('common.endDate')} value={formatDate(request.end_date)} />
                 </div>
 
-                {request.reason && <SummaryField label="Reason" value={request.reason} />}
+                {request.reason && <SummaryField label={t('common.reason')} value={request.reason} />}
 
                 {request.attachment_url && (
                   <div>
-                    <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Attachment</p>
+                    <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">{t('approvals.attachment')}</p>
                     <AttachmentPreview url={request.attachment_url} name={request.attachment_name} />
                   </div>
                 )}
 
                 {request.review_notes && (
                   <div className="bg-amber-50 border border-amber-100 rounded-lg p-4">
-                    <SummaryField label="Review Notes" value={request.review_notes} />
-                    {request.reviewed_at && <p className="text-xs text-gray-400 mt-1">Reviewed on {formatDate(request.reviewed_at)}</p>}
+                    <SummaryField label={t('approvals.reviewNotes')} value={request.review_notes} />
+                    {request.reviewed_at && <p className="text-xs text-gray-400 mt-1">{t('approvals.reviewedOn', { date: formatDate(request.reviewed_at) })}</p>}
                   </div>
                 )}
 
                 {request.status === 'pending' && (
                   <div>
-                    <label className="text-xs text-gray-400 uppercase tracking-wide block mb-1">Review Notes</label>
+                    <label className="text-xs text-gray-400 uppercase tracking-wide block mb-1">{t('approvals.reviewNotes')}</label>
                     <textarea
-                      placeholder="Add notes for your decision (optional)..."
+                      placeholder={t('approvals.notesPlaceholder')}
                       value={reviewNotes[request.id] || ''}
                       onChange={(event) => setReviewNotes((prev) => ({ ...prev, [request.id]: event.target.value }))}
                       rows={2}
@@ -675,11 +679,11 @@ export function Approvals() {
                       className="flex items-center gap-2 px-4 py-2.5 bg-white border border-red-200 text-red-600 text-sm font-medium rounded-lg hover:bg-red-50 hover:border-red-300 disabled:opacity-50 transition-colors"
                     >
                       <XCircle className="w-4 h-4" />
-                      {rejectLeaveM.isPending ? 'Rejecting...' : 'Reject'}
+                      {rejectLeaveM.isPending ? t('common.rejecting') : t('common.reject')}
                     </button>
                     {isSelfApproval(request.employee_id) ? (
                       <p className="text-sm text-gray-500 max-w-xs text-right">
-                        You cannot approve your own leave request. Ask another approver, or a super admin, to review it.
+                        {t('approvals.selfApprovalLeave')}
                       </p>
                     ) : (
                     <button
@@ -688,7 +692,7 @@ export function Approvals() {
                       className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 text-white text-sm font-medium rounded-lg hover:bg-emerald-700 disabled:opacity-50 transition-colors shadow-sm"
                     >
                       <CheckCircle className="w-4 h-4" />
-                      {approveLeaveM.isPending ? 'Approving...' : 'Approve'}
+                      {approveLeaveM.isPending ? t('common.approving') : t('common.approve')}
                     </button>
                     )}
                 </div>
@@ -706,7 +710,7 @@ export function Approvals() {
             onPageChange={setPage}
             perPage={PER_PAGE}
             isLoading={claimsQuery.isLoading}
-            emptyMessage="No claims found"
+            emptyMessage={t('approvals.noClaims')}
             emptyIcon={<Clock className="w-8 h-8 text-gray-200" />}
             selectable
             selectedRowKeys={selectedApprovalIds}
@@ -719,21 +723,21 @@ export function Approvals() {
                   setShowClaimModal(true);
                 } : undefined}
                 onCancel={canCancelClaim(claim) ? () => {
-                  if (confirm('Cancel this claim?')) {
+                  if (confirm(t('approvals.cancelClaimConfirm'))) {
                     cancelClaimM.mutate(claim.id);
                   }
                 } : undefined}
                 onDelete={canDeleteClaim(claim) ? () => {
                   const message = claim.status === 'cancelled'
-                    ? 'Permanently delete this cancelled claim?'
-                    : 'Delete this draft claim?';
+                    ? t('approvals.deleteCancelledClaimConfirm')
+                    : t('approvals.deleteDraftClaimConfirm');
                   if (confirm(message)) {
                     deleteClaimM.mutate(claim.id);
                   }
                 } : undefined}
               />
             )}
-            summaryTitle={(claim) => `${claim.employee_name} — Expense Claim`}
+            summaryTitle={(claim) => t('approvals.summaryTitle', { name: claim.employee_name, type: t('approvals.expenseClaim') })}
             renderSummary={(claim) => (
               <div className="space-y-5">
                 <div className="flex items-start justify-between">
@@ -752,41 +756,41 @@ export function Approvals() {
                 <div className="bg-gray-50 rounded-lg p-4 space-y-4">
                   <div className="flex items-center justify-between">
                     <div>
-                      <p className="text-xs text-gray-400 uppercase tracking-wide">Claim Title</p>
+                      <p className="text-xs text-gray-400 uppercase tracking-wide">{t('approvals.claimTitle')}</p>
                       <p className="text-base font-semibold text-gray-900 mt-0.5">{claim.title}</p>
                     </div>
                     <div className="text-right">
-                      <p className="text-xs text-gray-400 uppercase tracking-wide">Amount</p>
+                      <p className="text-xs text-gray-400 uppercase tracking-wide">{t('common.amount')}</p>
                       <p className="text-xl font-bold text-gray-900 mt-0.5">{fmt(claim.amount)}</p>
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-4 pt-3 border-t border-gray-200">
-                    <SummaryField label="Category" value={claim.category || '\u2014'} />
-                    <SummaryField label="Expense Date" value={formatDate(claim.expense_date)} />
+                    <SummaryField label={t('common.category')} value={claim.category || '\u2014'} />
+                    <SummaryField label={t('approvals.expenseDate')} value={formatDate(claim.expense_date)} />
                   </div>
                 </div>
 
-                {claim.description && <SummaryField label="Description" value={claim.description} />}
+                {claim.description && <SummaryField label={t('common.description')} value={claim.description} />}
 
                 {claim.receipt_url && (
                   <div>
-                    <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Receipt</p>
+                    <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">{t('approvals.receipt')}</p>
                     <AttachmentPreview url={claim.receipt_url} name={claim.receipt_file_name} />
                   </div>
                 )}
 
                 {claim.review_notes && (
                   <div className="bg-amber-50 border border-amber-100 rounded-lg p-4">
-                    <SummaryField label="Review Notes" value={claim.review_notes} />
-                    {claim.reviewed_at && <p className="text-xs text-gray-400 mt-1">Reviewed on {formatDate(claim.reviewed_at)}</p>}
+                    <SummaryField label={t('approvals.reviewNotes')} value={claim.review_notes} />
+                    {claim.reviewed_at && <p className="text-xs text-gray-400 mt-1">{t('approvals.reviewedOn', { date: formatDate(claim.reviewed_at) })}</p>}
                   </div>
                 )}
 
                 {claim.status === 'pending' && (
                   <div>
-                    <label className="text-xs text-gray-400 uppercase tracking-wide block mb-1">Review Notes</label>
+                    <label className="text-xs text-gray-400 uppercase tracking-wide block mb-1">{t('approvals.reviewNotes')}</label>
                     <textarea
-                      placeholder="Add notes for your decision (optional)..."
+                      placeholder={t('approvals.notesPlaceholder')}
                       value={reviewNotes[claim.id] || ''}
                       onChange={(event) => setReviewNotes((prev) => ({ ...prev, [claim.id]: event.target.value }))}
                       rows={2}
@@ -805,11 +809,11 @@ export function Approvals() {
                       className="flex items-center gap-2 px-4 py-2.5 bg-white border border-red-200 text-red-600 text-sm font-medium rounded-lg hover:bg-red-50 hover:border-red-300 disabled:opacity-50 transition-colors"
                     >
                       <XCircle className="w-4 h-4" />
-                      {rejectClaimM.isPending ? 'Rejecting...' : 'Reject'}
+                      {rejectClaimM.isPending ? t('common.rejecting') : t('common.reject')}
                     </button>
                     {isSelfApproval(claim.employee_id) ? (
                       <p className="text-sm text-gray-500 max-w-xs text-right">
-                        You cannot approve your own claim. Ask another approver, or a super admin, to review it.
+                        {t('approvals.selfApprovalClaim')}
                       </p>
                     ) : (
                     <button
@@ -818,7 +822,7 @@ export function Approvals() {
                       className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 text-white text-sm font-medium rounded-lg hover:bg-emerald-700 disabled:opacity-50 transition-colors shadow-sm"
                     >
                       <CheckCircle className="w-4 h-4" />
-                      {approveClaimM.isPending ? 'Approving...' : 'Approve'}
+                      {approveClaimM.isPending ? t('common.approving') : t('common.approve')}
                     </button>
                     )}
                 </div>
@@ -836,7 +840,7 @@ export function Approvals() {
             onPageChange={setPage}
             perPage={PER_PAGE}
             isLoading={overtimeQuery.isLoading}
-            emptyMessage="No overtime applications found"
+            emptyMessage={t('approvals.noOvertime')}
             emptyIcon={<Clock className="w-8 h-8 text-gray-200" />}
             selectable
             selectedRowKeys={selectedApprovalIds}
@@ -849,18 +853,18 @@ export function Approvals() {
                   setShowOvertimeModal(true);
                 } : undefined}
                 onCancel={canCancelOvertime(overtime) ? () => {
-                  if (confirm('Cancel this overtime application?')) {
+                  if (confirm(t('approvals.cancelOvertimeConfirm'))) {
                     cancelOvertimeM.mutate(overtime.id);
                   }
                 } : undefined}
                 onDelete={canDeleteOvertime(overtime) ? () => {
-                  if (confirm('Permanently delete this cancelled overtime application?')) {
+                  if (confirm(t('approvals.deleteOvertimeConfirm'))) {
                     deleteOvertimeM.mutate(overtime.id);
                   }
                 } : undefined}
               />
             )}
-            summaryTitle={(overtime) => `${overtime.employee_name} — Overtime Application`}
+            summaryTitle={(overtime) => t('approvals.summaryTitle', { name: overtime.employee_name, type: t('approvals.overtimeApplication') })}
             renderSummary={(overtime) => (
               <div className="space-y-5">
                 <div className="flex items-start justify-between">
@@ -877,8 +881,8 @@ export function Approvals() {
                 </div>
 
                 <div className="grid grid-cols-2 gap-4 bg-gray-50 rounded-lg p-4">
-                  <SummaryField label="Date" value={formatDate(overtime.ot_date)} />
-                  <SummaryField label="Type">
+                  <SummaryField label={t('common.date')} value={formatDate(overtime.ot_date)} />
+                  <SummaryField label={t('common.type')}>
                     <span
                       className={`text-sm font-medium mt-0.5 inline-block ${
                         overtime.ot_type === 'public_holiday'
@@ -891,24 +895,24 @@ export function Approvals() {
                       {otTypeLabel(overtime.ot_type)} ({otTypeMultiplier(overtime.ot_type)})
                     </span>
                   </SummaryField>
-                  <SummaryField label="Time" value={`${overtime.start_time?.slice(0, 5)} — ${overtime.end_time?.slice(0, 5)}`} />
-                  <SummaryField label="Duration" value={`${Number(overtime.hours)} hours`} />
+                  <SummaryField label={t('common.time')} value={`${overtime.start_time?.slice(0, 5)} — ${overtime.end_time?.slice(0, 5)}`} />
+                  <SummaryField label={t('approvals.duration')} value={t('approvals.hoursCount', { count: Number(overtime.hours) })} />
                 </div>
 
-                {overtime.reason && <SummaryField label="Reason" value={overtime.reason} />}
+                {overtime.reason && <SummaryField label={t('common.reason')} value={overtime.reason} />}
 
                 {overtime.review_notes && (
                   <div className="bg-amber-50 border border-amber-100 rounded-lg p-4">
-                    <SummaryField label="Review Notes" value={overtime.review_notes} />
-                    {overtime.reviewed_at && <p className="text-xs text-gray-400 mt-1">Reviewed on {formatDate(overtime.reviewed_at)}</p>}
+                    <SummaryField label={t('approvals.reviewNotes')} value={overtime.review_notes} />
+                    {overtime.reviewed_at && <p className="text-xs text-gray-400 mt-1">{t('approvals.reviewedOn', { date: formatDate(overtime.reviewed_at) })}</p>}
                   </div>
                 )}
 
                 {overtime.status === 'pending' && (
                   <div>
-                    <label className="text-xs text-gray-400 uppercase tracking-wide block mb-1">Review Notes</label>
+                    <label className="text-xs text-gray-400 uppercase tracking-wide block mb-1">{t('approvals.reviewNotes')}</label>
                     <textarea
-                      placeholder="Add notes for your decision (optional)..."
+                      placeholder={t('approvals.notesPlaceholder')}
                       value={reviewNotes[overtime.id] || ''}
                       onChange={(event) => setReviewNotes((prev) => ({ ...prev, [overtime.id]: event.target.value }))}
                       rows={2}
@@ -927,11 +931,11 @@ export function Approvals() {
                       className="flex items-center gap-2 px-4 py-2.5 bg-white border border-red-200 text-red-600 text-sm font-medium rounded-lg hover:bg-red-50 hover:border-red-300 disabled:opacity-50 transition-colors"
                     >
                       <XCircle className="w-4 h-4" />
-                      {rejectOvertimeM.isPending ? 'Rejecting...' : 'Reject'}
+                      {rejectOvertimeM.isPending ? t('common.rejecting') : t('common.reject')}
                     </button>
                     {isSelfApproval(overtime.employee_id) ? (
                       <p className="text-sm text-gray-500 max-w-xs text-right">
-                        You cannot approve your own overtime. Ask another approver, or a super admin, to review it.
+                        {t('approvals.selfApprovalOvertime')}
                       </p>
                     ) : (
                     <button
@@ -940,7 +944,7 @@ export function Approvals() {
                       className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 text-white text-sm font-medium rounded-lg hover:bg-emerald-700 disabled:opacity-50 transition-colors shadow-sm"
                     >
                       <CheckCircle className="w-4 h-4" />
-                      {approveOvertimeM.isPending ? 'Approving...' : 'Approve'}
+                      {approveOvertimeM.isPending ? t('common.approving') : t('common.approve')}
                     </button>
                     )}
                 </div>
@@ -1009,6 +1013,7 @@ function LeaveCrudModal({
   leaveTypes: LeaveType[];
   onSaved: () => void;
 }) {
+  const { t } = useTranslation();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [form, setForm] = useState<AdminCreateLeaveRequest>({
     employee_id: '',
@@ -1023,8 +1028,8 @@ function LeaveCrudModal({
   const [error, setError] = useState('');
   const [uploading, setUploading] = useState(false);
   const modalTitle = item
-    ? `Edit Leave Request${item.employee_name ? ` - ${item.employee_name}` : ''}`
-    : 'Create Leave Request';
+    ? t('approvals.editLeaveTitle') + (item.employee_name ? ` - ${item.employee_name}` : '')
+    : t('approvals.createLeaveTitle');
 
   useEffect(() => {
     if (!open) {
@@ -1064,13 +1069,13 @@ function LeaveCrudModal({
   const createMutation = useMutation({
     mutationFn: createLeaveRequest,
     onSuccess: onSaved,
-    onError: (err: unknown) => setError(getErrorMessage(err, 'Failed to create leave request')),
+    onError: (err: unknown) => setError(getErrorMessage(err, t('approvals.createLeaveFailed'))),
   });
 
   const updateMutation = useMutation({
     mutationFn: ({ id, payload }: { id: string; payload: UpdateLeaveRequest }) => updateLeaveRequest(id, payload),
     onSuccess: onSaved,
-    onError: (err: unknown) => setError(getErrorMessage(err, 'Failed to update leave request')),
+    onError: (err: unknown) => setError(getErrorMessage(err, t('approvals.updateLeaveFailed'))),
   });
 
   const handleUpload = async (file: File) => {
@@ -1084,7 +1089,7 @@ function LeaveCrudModal({
         attachment_name: result.file_name,
       }));
     } catch (err: unknown) {
-      setError(getErrorMessage(err, 'Failed to upload attachment'));
+      setError(getErrorMessage(err, t('approvals.uploadAttachmentFailed')));
     } finally {
       setUploading(false);
     }
@@ -1092,7 +1097,7 @@ function LeaveCrudModal({
 
   const submit = () => {
     if (!form.employee_id || !form.leave_type_id || !form.start_date || !form.end_date || form.days <= 0) {
-      setError('Employee, leave type, dates, and days are required.');
+      setError(t('approvals.leaveRequired'));
       return;
     }
 
@@ -1128,13 +1133,13 @@ function LeaveCrudModal({
       title={modalTitle}
       footer={
         <div className="flex justify-end gap-3">
-          <button onClick={onClose} className="btn-secondary">Cancel</button>
+          <button onClick={onClose} className="btn-secondary">{t('common.cancel')}</button>
           <button
             onClick={submit}
             disabled={createMutation.isPending || updateMutation.isPending || uploading}
             className="btn-primary"
           >
-            {createMutation.isPending || updateMutation.isPending ? 'Saving...' : item ? 'Save Changes' : 'Create Request'}
+            {createMutation.isPending || updateMutation.isPending ? t('common.saving') : item ? t('common.saveChanges') : t('approvals.createRequest')}
           </button>
         </div>
       }
@@ -1143,7 +1148,7 @@ function LeaveCrudModal({
         {error && <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
 
         <div>
-          <label className="form-label">Employee *</label>
+          <label className="form-label">{t('common.employee')} *</label>
           {/* Keyed on the record so reopening the modal for a different request
               inside the exit animation cannot leave the previous name on screen. */}
           <EmployeePicker
@@ -1155,13 +1160,13 @@ function LeaveCrudModal({
         </div>
 
         <div>
-          <label className="form-label">Leave Type *</label>
+          <label className="form-label">{t('approvals.leaveType')} *</label>
           <select
             value={form.leave_type_id}
             onChange={(event) => setForm((prev) => ({ ...prev, leave_type_id: event.target.value }))}
             className="form-input"
           >
-            <option value="">Select leave type</option>
+            <option value="">{t('approvals.selectLeaveType')}</option>
             {leaveTypes.map((leaveType) => (
               <option key={leaveType.id} value={leaveType.id}>{leaveType.name}</option>
             ))}
@@ -1170,7 +1175,7 @@ function LeaveCrudModal({
 
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="form-label">Start Date *</label>
+            <label className="form-label">{t('common.startDate')} *</label>
             <input
               type="date"
               value={form.start_date}
@@ -1179,7 +1184,7 @@ function LeaveCrudModal({
             />
           </div>
           <div>
-            <label className="form-label">End Date *</label>
+            <label className="form-label">{t('common.endDate')} *</label>
             <input
               type="date"
               value={form.end_date}
@@ -1190,7 +1195,7 @@ function LeaveCrudModal({
         </div>
 
         <div>
-          <label className="form-label">Days *</label>
+          <label className="form-label">{t('approvals.days')} *</label>
           <input
             type="number"
             min="0.5"
@@ -1202,7 +1207,7 @@ function LeaveCrudModal({
         </div>
 
         <div>
-          <label className="form-label">Reason</label>
+          <label className="form-label">{t('common.reason')}</label>
           <textarea
             value={form.reason}
             onChange={(event) => setForm((prev) => ({ ...prev, reason: event.target.value }))}
@@ -1212,7 +1217,7 @@ function LeaveCrudModal({
         </div>
 
         <div>
-          <label className="form-label">Attachment</label>
+          <label className="form-label">{t('approvals.attachment')}</label>
           <input
             ref={fileInputRef}
             type="file"
@@ -1231,7 +1236,7 @@ function LeaveCrudModal({
               className="btn-secondary"
               disabled={uploading}
             >
-              <Upload className="w-4 h-4" /> {uploading ? 'Uploading...' : 'Upload File'}
+              <Upload className="w-4 h-4" /> {uploading ? t('common.uploading') : t('approvals.uploadFile')}
             </button>
             {form.attachment_name && (
               <button
@@ -1261,6 +1266,7 @@ function ClaimCrudModal({
   item: ClaimWithEmployee | null;
   onSaved: () => void;
 }) {
+  const { t } = useTranslation();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
   const [form, setForm] = useState<AdminCreateClaimRequest>({
@@ -1276,8 +1282,8 @@ function ClaimCrudModal({
   const [error, setError] = useState('');
   const [uploading, setUploading] = useState(false);
   const modalTitle = item
-    ? `Edit Claim${item.employee_name ? ` - ${item.employee_name}` : ''}`
-    : 'Create Claim';
+    ? t('approvals.editClaimTitle') + (item.employee_name ? ` - ${item.employee_name}` : '')
+    : t('approvals.createClaimTitle');
 
   useEffect(() => {
     if (!open) {
@@ -1315,7 +1321,7 @@ function ClaimCrudModal({
   const createMutation = useMutation({
     mutationFn: createClaim,
     onSuccess: onSaved,
-    onError: (err: unknown) => setError(getErrorMessage(err, 'Failed to create claim')),
+    onError: (err: unknown) => setError(getErrorMessage(err, t('approvals.createClaimFailed'))),
   });
 
   const updateMutation = useMutation({
@@ -1338,7 +1344,7 @@ function ClaimCrudModal({
       await queryClient.refetchQueries({ queryKey: ['approvals-claims'] });
       onSaved();
     },
-    onError: (err: unknown) => setError(getErrorMessage(err, 'Failed to update claim')),
+    onError: (err: unknown) => setError(getErrorMessage(err, t('approvals.updateClaimFailed'))),
   });
 
   const handleUpload = async (file: File) => {
@@ -1352,7 +1358,7 @@ function ClaimCrudModal({
         receipt_file_name: result.file_name,
       }));
     } catch (err: unknown) {
-      setError(getErrorMessage(err, 'Failed to upload receipt'));
+      setError(getErrorMessage(err, t('approvals.uploadReceiptFailed')));
     } finally {
       setUploading(false);
     }
@@ -1360,7 +1366,7 @@ function ClaimCrudModal({
 
   const submit = () => {
     if (!form.employee_id || !form.title || !form.expense_date || form.amount <= 0) {
-      setError('Employee, title, amount, and expense date are required.');
+      setError(t('approvals.claimRequired'));
       return;
     }
 
@@ -1398,13 +1404,13 @@ function ClaimCrudModal({
       title={modalTitle}
       footer={
         <div className="flex justify-end gap-3">
-          <button onClick={onClose} className="btn-secondary">Cancel</button>
+          <button onClick={onClose} className="btn-secondary">{t('common.cancel')}</button>
           <button
             onClick={submit}
             disabled={createMutation.isPending || updateMutation.isPending || uploading}
             className="btn-primary"
           >
-            {createMutation.isPending || updateMutation.isPending ? 'Saving...' : item ? 'Save Changes' : 'Create Claim'}
+            {createMutation.isPending || updateMutation.isPending ? t('common.saving') : item ? t('common.saveChanges') : t('approvals.createClaim')}
           </button>
         </div>
       }
@@ -1413,7 +1419,7 @@ function ClaimCrudModal({
         {error && <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
 
         <div>
-          <label className="form-label">Employee *</label>
+          <label className="form-label">{t('common.employee')} *</label>
           <EmployeePicker
             key={item?.id ?? 'new'}
             value={form.employee_id}
@@ -1423,7 +1429,7 @@ function ClaimCrudModal({
         </div>
 
         <div>
-          <label className="form-label">Title *</label>
+          <label className="form-label">{t('common.title')} *</label>
           <input
             type="text"
             value={form.title}
@@ -1434,7 +1440,7 @@ function ClaimCrudModal({
 
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="form-label">Amount (RM) *</label>
+            <label className="form-label">{t('approvals.amountRm')} *</label>
             <input
               type="number"
               min="0.01"
@@ -1445,7 +1451,7 @@ function ClaimCrudModal({
             />
           </div>
           <div>
-            <label className="form-label">Expense Date *</label>
+            <label className="form-label">{t('approvals.expenseDate')} *</label>
             <input
               type="date"
               value={form.expense_date}
@@ -1456,7 +1462,7 @@ function ClaimCrudModal({
         </div>
 
         <div>
-          <label className="form-label">Category</label>
+          <label className="form-label">{t('common.category')}</label>
           <input
             type="text"
             value={form.category}
@@ -1466,7 +1472,7 @@ function ClaimCrudModal({
         </div>
 
         <div>
-          <label className="form-label">Description</label>
+          <label className="form-label">{t('common.description')}</label>
           <textarea
             value={form.description}
             onChange={(event) => setForm((prev) => ({ ...prev, description: event.target.value }))}
@@ -1476,7 +1482,7 @@ function ClaimCrudModal({
         </div>
 
         <div>
-          <label className="form-label">Receipt</label>
+          <label className="form-label">{t('approvals.receipt')}</label>
           <input
             ref={fileInputRef}
             type="file"
@@ -1495,7 +1501,7 @@ function ClaimCrudModal({
               className="btn-secondary"
               disabled={uploading}
             >
-              <Upload className="w-4 h-4" /> {uploading ? 'Uploading...' : 'Upload Receipt'}
+              <Upload className="w-4 h-4" /> {uploading ? t('common.uploading') : t('approvals.uploadReceipt')}
             </button>
             {form.receipt_file_name && (
               <button
@@ -1525,6 +1531,7 @@ function OvertimeCrudModal({
   item: OvertimeWithEmployee | null;
   onSaved: () => void;
 }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [form, setForm] = useState<AdminCreateOvertimeRequest>({
     employee_id: '',
@@ -1537,8 +1544,8 @@ function OvertimeCrudModal({
   });
   const [error, setError] = useState('');
   const modalTitle = item
-    ? `Edit Overtime Request${item.employee_name ? ` - ${item.employee_name}` : ''}`
-    : 'Create Overtime Request';
+    ? t('approvals.editOvertimeTitle') + (item.employee_name ? ` - ${item.employee_name}` : '')
+    : t('approvals.createOvertimeTitle');
 
   useEffect(() => {
     if (!open) {
@@ -1577,7 +1584,7 @@ function OvertimeCrudModal({
   const createMutation = useMutation({
     mutationFn: createOvertimeRequest,
     onSuccess: onSaved,
-    onError: (err: unknown) => setError(getErrorMessage(err, 'Failed to create overtime request')),
+    onError: (err: unknown) => setError(getErrorMessage(err, t('approvals.createOvertimeFailed'))),
   });
 
   const updateMutation = useMutation({
@@ -1601,7 +1608,7 @@ function OvertimeCrudModal({
       await queryClient.refetchQueries({ queryKey: ['approvals-overtime'] });
       onSaved();
     },
-    onError: (err: unknown) => setError(getErrorMessage(err, 'Failed to update overtime request')),
+    onError: (err: unknown) => setError(getErrorMessage(err, t('approvals.updateOvertimeFailed'))),
   });
 
   const updateTime = (field: 'start_time' | 'end_time', value: string) => {
@@ -1617,11 +1624,11 @@ function OvertimeCrudModal({
 
   const submit = () => {
     if (!form.employee_id || !form.ot_date) {
-      setError('Employee and OT date are required.');
+      setError(t('approvals.overtimeRequired'));
       return;
     }
     if (!form.start_time || !form.end_time || form.hours <= 0) {
-      setError('Start and end time must differ.');
+      setError(t('approvals.timesMustDiffer'));
       return;
     }
 
@@ -1654,13 +1661,13 @@ function OvertimeCrudModal({
       title={modalTitle}
       footer={
         <div className="flex justify-end gap-3">
-          <button onClick={onClose} className="btn-secondary">Cancel</button>
+          <button onClick={onClose} className="btn-secondary">{t('common.cancel')}</button>
           <button
             onClick={submit}
             disabled={createMutation.isPending || updateMutation.isPending}
             className="btn-primary"
           >
-            {createMutation.isPending || updateMutation.isPending ? 'Saving...' : item ? 'Save Changes' : 'Create Overtime'}
+            {createMutation.isPending || updateMutation.isPending ? t('common.saving') : item ? t('common.saveChanges') : t('approvals.createOvertime')}
           </button>
         </div>
       }
@@ -1669,7 +1676,7 @@ function OvertimeCrudModal({
         {error && <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
 
         <div>
-          <label className="form-label">Employee *</label>
+          <label className="form-label">{t('common.employee')} *</label>
           <EmployeePicker
             key={item?.id ?? 'new'}
             value={form.employee_id}
@@ -1679,7 +1686,7 @@ function OvertimeCrudModal({
         </div>
 
         <div>
-          <label className="form-label">OT Date *</label>
+          <label className="form-label">{t('approvals.otDate')} *</label>
           <input
             type="date"
             value={form.ot_date}
@@ -1689,7 +1696,7 @@ function OvertimeCrudModal({
         </div>
 
         <div>
-          <label className="form-label">OT Type *</label>
+          <label className="form-label">{t('approvals.otType')} *</label>
           <div className="grid grid-cols-3 gap-2">
             {(['normal', 'rest_day', 'public_holiday'] as const).map((type) => (
               <label
@@ -1710,7 +1717,7 @@ function OvertimeCrudModal({
                   onChange={() => setForm((prev) => ({ ...prev, ot_type: type }))}
                   className="sr-only"
                 />
-                <span className="text-xs font-medium">{type === 'normal' ? 'Normal Day' : type === 'rest_day' ? 'Rest Day' : 'Public Holiday'}</span>
+                <span className="text-xs font-medium">{t(`enums.otType.${type}`)}</span>
                 <span className="text-[10px] text-gray-400">{type === 'normal' ? '1.5x' : type === 'rest_day' ? '2.0x' : '3.0x'}</span>
               </label>
             ))}
@@ -1719,12 +1726,12 @@ function OvertimeCrudModal({
 
         <div className="grid grid-cols-2 gap-4">
           <TimeSelector
-            label="Start Time *"
+            label={`${t('common.startTime')} *`}
             value={form.start_time}
             onChange={(value) => updateTime('start_time', value)}
           />
           <TimeSelector
-            label="End Time *"
+            label={`${t('common.endTime')} *`}
             value={form.end_time}
             onChange={(value) => updateTime('end_time', value)}
           />
@@ -1733,12 +1740,12 @@ function OvertimeCrudModal({
         {form.hours > 0 && (
           <div className="bg-gray-50 rounded-lg p-3 text-center">
             <span className="text-2xl font-bold text-gray-900">{form.hours}</span>
-            <span className="text-sm text-gray-400 ml-1">hours</span>
+            <span className="text-sm text-gray-400 ml-1">{t('common.hours')}</span>
           </div>
         )}
 
         <div>
-          <label className="form-label">Reason</label>
+          <label className="form-label">{t('common.reason')}</label>
           <textarea
             value={form.reason}
             onChange={(event) => setForm((prev) => ({ ...prev, reason: event.target.value }))}

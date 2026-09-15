@@ -1,4 +1,5 @@
 import { ExternalLink, FileText } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 import { useAuthorizedFile } from '@/lib/useAuthorizedFile';
 import { isImageUrl } from '@/lib/utils';
@@ -29,7 +30,8 @@ function UnavailableAttachment({ displayName, detail }: { displayName: string; d
 }
 
 export function AttachmentPreview({ url, name }: { url: string; name: string | null }) {
-  const displayName = name || 'Attachment';
+  const { t } = useTranslation();
+  const displayName = name || t('common.attachment');
   // Called unconditionally — a `blob:` URL resolves straight through, and the
   // placeholder below is chosen from the raw URL rather than by skipping it.
   const file = useAuthorizedFile(url);
@@ -38,7 +40,7 @@ export function AttachmentPreview({ url, name }: { url: string; name: string | n
     return (
       <UnavailableAttachment
         displayName={displayName}
-        detail="File unavailable — was not uploaded properly"
+        detail={t('common.fileUnavailableUpload')}
       />
     );
   }
@@ -47,7 +49,7 @@ export function AttachmentPreview({ url, name }: { url: string; name: string | n
     return (
       <UnavailableAttachment
         displayName={displayName}
-        detail="File unavailable — you may not have access to it"
+        detail={t('common.fileUnavailableAccess')}
       />
     );
   }
@@ -60,7 +62,7 @@ export function AttachmentPreview({ url, name }: { url: string; name: string | n
         </div>
         <div className="min-w-0 flex-1">
           <div className="text-sm font-medium text-gray-500 truncate">{displayName}</div>
-          <div className="text-xs text-gray-400">Loading…</div>
+          <div className="text-xs text-gray-400">{t('common.loading')}</div>
         </div>
       </div>
     );
@@ -86,7 +88,7 @@ export function AttachmentPreview({ url, name }: { url: string; name: string | n
             className="inline-flex items-center gap-1.5 text-sm text-gray-900 hover:text-black"
           >
             <ExternalLink className="w-3.5 h-3.5" />
-            Open full size
+            {t('common.openFullSize')}
           </a>
         </div>
       ) : (
@@ -101,7 +103,7 @@ export function AttachmentPreview({ url, name }: { url: string; name: string | n
           </div>
           <div className="min-w-0 flex-1">
             <div className="text-sm font-medium text-gray-700 group-hover:text-gray-900 truncate">{displayName}</div>
-            <div className="text-xs text-gray-400">Click to open</div>
+            <div className="text-xs text-gray-400">{t('common.clickToOpen')}</div>
           </div>
           <ExternalLink className="w-4 h-4 text-gray-400 group-hover:text-gray-700 shrink-0" />
         </a>

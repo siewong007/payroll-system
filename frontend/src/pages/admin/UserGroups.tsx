@@ -1,4 +1,5 @@
 import { Fragment, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, Trash2, Users, X } from 'lucide-react';
 import { permissionsApi, type PermissionDescriptor, type PermissionKey } from '@/api/permissions';
@@ -15,6 +16,7 @@ import { userGroupsApi, type UserGroup } from '@/api/userGroups';
  * always a union and never an ordering.
  */
 export function UserGroups() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState<UserGroup | null>(null);
   const [creating, setCreating] = useState(false);
@@ -44,10 +46,10 @@ export function UserGroups() {
   const labelFor = useMemo(() => {
     const labels = new Map<string, string>();
     for (const permission of matrix.data?.permissions ?? []) {
-      labels.set(permission.key, permission.label);
+      labels.set(permission.key, t(`permissions.labels.${permission.key}`, { defaultValue: permission.label }));
     }
     return labels;
-  }, [matrix.data]);
+  }, [matrix.data, t]);
 
   if (groups.isLoading || matrix.isLoading) {
     return (
@@ -60,7 +62,7 @@ export function UserGroups() {
   if (groups.isError) {
     return (
       <div className="card p-5">
-        <p className="text-sm text-red-600">Could not load user groups.</p>
+        <p className="text-sm text-red-600">{t('userGroups.loadFailed')}</p>
       </div>
     );
   }
@@ -69,14 +71,14 @@ export function UserGroups() {
     <div className="space-y-6">
       <div className="page-header flex items-start justify-between gap-4">
         <div>
-          <h1 className="page-title">User Groups</h1>
+          <h1 className="page-title">{t('userGroups.title')}</h1>
           <p className="page-subtitle">
-            Grant extra permissions to a set of users, on top of whatever their roles already allow
+            {t('userGroups.subtitle')}
           </p>
         </div>
         <button className="btn-primary shrink-0" onClick={() => setCreating(true)}>
           <Plus className="w-4 h-4" />
-          New group
+          {t('userGroups.newGroup')}
         </button>
       </div>
 
@@ -84,8 +86,7 @@ export function UserGroups() {
         <div className="card p-8 text-center">
           <Users className="w-8 h-8 mx-auto text-gray-300" />
           <p className="mt-3 text-sm text-gray-500">
-            No groups yet. Roles cover most cases — add a group when you need to give specific
-            people one extra capability.
+            {t('userGroups.empty')}
           </p>
         </div>
       )}
@@ -103,16 +104,16 @@ export function UserGroups() {
               <div className="flex items-center gap-2 shrink-0">
                 {!group.is_active && (
                   <span className="text-[10px] uppercase tracking-wider font-semibold text-amber-600">
-                    Suspended
+                    {t('userGroups.suspended')}
                   </span>
                 )}
                 <button
                   className="p-1.5 text-gray-400 hover:text-red-600 rounded-lg hover:bg-red-50"
-                  aria-label={`Delete ${group.name}`}
+                  aria-label={t('userGroups.deleteGroup', { name: group.name })}
                   onClick={() => {
                     // Deleting cascades to membership, revoking access from
                     // everyone who held it — worth one confirmation.
-                    if (window.confirm(`Delete "${group.name}"? Members lose these permissions.`)) {
+                    if (window.confirm(t('userGroups.deleteConfirm', { name: group.name }))) {
                       remove.mutate(group.id);
                     }
                   }}
@@ -124,7 +125,7 @@ export function UserGroups() {
 
             <div className="flex flex-wrap gap-1.5">
               {group.permissions.length === 0 ? (
-                <span className="text-xs text-gray-400">Grants nothing yet</span>
+                <span className="text-xs text-gray-400">{t('userGroups.grantsNothing')}</span>
               ) : (
                 group.permissions.map((key) => (
                   <span
@@ -139,10 +140,10 @@ export function UserGroups() {
 
             <div className="flex items-center justify-between pt-1">
               <span className="text-xs text-gray-500">
-                {group.member_count} member{group.member_count === 1 ? '' : 's'}
+                {t('teams.memberCount', { count: group.member_count })}
               </span>
               <button className="btn-secondary text-xs" onClick={() => setEditing(group)}>
-                Edit
+                {t('common.edit')}
               </button>
             </div>
           </div>
@@ -179,6 +180,7 @@ function GroupEditor({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const { t } = useTranslation();
   const [name, setName] = useState(group?.name ?? '');
   const [description, setDescription] = useState(group?.description ?? '');
   const [selected, setSelected] = useState<PermissionKey[]>(group?.permissions ?? []);
@@ -197,7 +199,7 @@ function GroupEditor({
     },
     onSuccess: onSaved,
     onError: (err: { rateLimitMessage?: string; response?: { data?: { error?: string } } }) => {
-      setError(err.rateLimitMessage ?? err.response?.data?.error ?? 'Could not save the group.');
+      setError(err.rateLimitMessage ?? err.response?.data?.error ?? t('userGroups.saveFailed'));
     },
   });
 
@@ -211,8 +213,8 @@ function GroupEditor({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="bg-white rounded-xl w-full max-w-2xl max-h-[85vh] flex flex-col">
         <div className="flex items-center justify-between p-5 border-b border-gray-100">
-          <h2 className="font-semibold text-gray-900">{group ? 'Edit group' : 'New group'}</h2>
-          <button onClick={onClose} aria-label="Close" className="p-1 text-gray-400 hover:text-gray-600">
+          <h2 className="font-semibold text-gray-900">{group ? t('userGroups.editGroup') : t('userGroups.newGroup')}</h2>
+          <button onClick={onClose} aria-label={t('common.close')} className="p-1 text-gray-400 hover:text-gray-600">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -222,7 +224,7 @@ function GroupEditor({
 
           <div>
             <label htmlFor="group-name" className="block text-xs font-medium text-gray-500 mb-1">
-              Name
+              {t('common.name')}
             </label>
             <input
               id="group-name"
@@ -234,7 +236,7 @@ function GroupEditor({
 
           <div>
             <label htmlFor="group-desc" className="block text-xs font-medium text-gray-500 mb-1">
-              Description
+              {t('common.description')}
             </label>
             <input
               id="group-desc"
@@ -245,11 +247,11 @@ function GroupEditor({
           </div>
 
           <div className="space-y-3">
-            <p className="text-xs font-medium text-gray-500">Permissions granted</p>
+            <p className="text-xs font-medium text-gray-500">{t('userGroups.permissionsGranted')}</p>
             {[...permissionsByGroup.entries()].map(([groupName, permissions]) => (
               <Fragment key={groupName}>
                 <p className="text-[10px] uppercase tracking-wider font-semibold text-gray-400">
-                  {groupName}
+                  {t(`permissions.groups.${groupName.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`, { defaultValue: groupName })}
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
                   {permissions.map((permission) => (
@@ -262,7 +264,7 @@ function GroupEditor({
                         checked={selected.includes(permission.key)}
                         onChange={() => toggle(permission.key)}
                       />
-                      {permission.label}
+                      {t(`permissions.labels.${permission.key}`, { defaultValue: permission.label })}
                     </label>
                   ))}
                 </div>
@@ -273,7 +275,7 @@ function GroupEditor({
 
         <div className="flex justify-end gap-2 p-5 border-t border-gray-100">
           <button className="btn-secondary" onClick={onClose}>
-            Cancel
+            {t('common.cancel')}
           </button>
           <button
             className="btn-primary"
@@ -283,7 +285,7 @@ function GroupEditor({
               save.mutate();
             }}
           >
-            {save.isPending ? 'Saving…' : 'Save'}
+            {save.isPending ? t('common.saving') : t('common.save')}
           </button>
         </div>
       </div>

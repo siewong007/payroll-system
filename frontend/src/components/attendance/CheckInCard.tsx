@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
+import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
@@ -32,6 +33,7 @@ type Feedback = { tone: 'success' | 'error' | 'info'; text: string; href?: strin
  * access token survives and the attendance-method fetch is served from cache.
  */
 export function CheckInCard() {
+  const { t } = useTranslation();
   const { user } = useAuth();
   const queryClient = useQueryClient();
 
@@ -99,13 +101,19 @@ export function CheckInCard() {
 
   /** Turn a server message into the recovery the employee can actually act on. */
   const explain = useCallback((err: unknown, fallback: string): Feedback => {
+    // classify on the raw server prose — the translated text cannot match the
+    // English phrase patterns — then show the localized version.
+    const raw =
+      typeof err === 'object' && err !== null && 'response' in err
+        ? ((err as { response?: { data?: { error?: string } } }).response?.data?.error ?? '')
+        : '';
     const message = getErrorMessage(err, fallback);
-    switch (classifyCheckInError(message)) {
+    switch (classifyCheckInError(raw || message)) {
       case 'already-checked-in':
         refreshAttendance();
-        return { tone: 'info', text: "You're already checked in today — nothing more to do." };
+        return { tone: 'info', text: t('attendance.checkin.alreadyIn') };
       case 'stale-session':
-        return { tone: 'error', text: message, href: '/portal/attendance', hrefLabel: 'View history' };
+        return { tone: 'error', text: message, href: '/portal/attendance', hrefLabel: t('attendance.checkin.viewHistory') };
       case 'outside-geofence':
         return { tone: 'error', text: message };
       case 'offsite-network':
@@ -115,16 +123,16 @@ export function CheckInCard() {
         // so name that explicitly.
         return {
           tone: 'error',
-          text: `${message} Check you're on Wi-Fi and not mobile data.`,
+          text: t('attendance.checkin.offsiteSuffix', { message }),
         };
       case 'location-permission':
-        return { tone: 'error', text: 'Location is required to check in. Allow location for this site, then tap again.' };
+        return { tone: 'error', text: t('attendance.checkin.locationRequired') };
       case 'no-passkey':
-        return { tone: 'error', text: message, href: '/portal/profile', hrefLabel: 'Add a passkey' };
+        return { tone: 'error', text: message, href: '/portal/profile', hrefLabel: t('attendance.checkin.addPasskey') };
       default:
         return { tone: 'error', text: message };
     }
-  }, [refreshAttendance]);
+  }, [refreshAttendance, t]);
 
   const faceIdMut = useMutation({
     mutationFn: async () => {
@@ -135,10 +143,10 @@ export function CheckInCard() {
       const coords = await getGeolocation(needsLocation);
       return checkInFaceId(challenge_id, credential, coords?.latitude, coords?.longitude);
     },
-    onSuccess: (rec) => succeed(`Checked in at ${formatZonedTime(rec.check_in_at, tz)}`),
+    onSuccess: (rec) => succeed(t('attendance.checkin.checkedInAt', { time: formatZonedTime(rec.check_in_at, tz) })),
     onError: (err) => {
       buzz(120);
-      setFeedback(explain(err, 'Face ID check-in failed.'));
+      setFeedback(explain(err, t('attendance.checkin.faceIdFailed')));
     },
   });
 
@@ -150,11 +158,11 @@ export function CheckInCard() {
     onSuccess: (rec) => {
       setScanning(false);
       setScanErrorText('');
-      succeed(`Checked in at ${formatZonedTime(rec.check_in_at, tz)}`);
+      succeed(t('attendance.checkin.checkedInAt', { time: formatZonedTime(rec.check_in_at, tz) }));
     },
     onError: (err) => {
       buzz(120);
-      const detail = explain(err, 'Check-in failed.');
+      const detail = explain(err, t('attendance.scan.checkInFailed'));
       // "Already checked in" means attendance IS recorded — close the camera
       // rather than leaving them pointing it at a code that cannot help.
       if (detail.tone === 'info') {
@@ -175,13 +183,13 @@ export function CheckInCard() {
     onSuccess: (rec) => {
       setConfirmingOut(false);
       buzz([18, 40, 18]);
-      setFeedback({ tone: 'success', text: `Checked out at ${formatZonedTime(rec.check_out_at, tz)}` });
+      setFeedback({ tone: 'success', text: t('attendance.checkin.checkedOutAt', { time: formatZonedTime(rec.check_out_at, tz) }) });
       refreshAttendance();
     },
     onError: (err) => {
       setConfirmingOut(false);
       buzz(120);
-      setFeedback({ tone: 'error', text: getErrorMessage(err, 'Check-out failed.') });
+      setFeedback({ tone: 'error', text: getErrorMessage(err, t('attendance.checkin.checkOutFailed')) });
     },
   });
 
@@ -214,7 +222,7 @@ export function CheckInCard() {
     ? formatDuration(now.getTime() - new Date(record.check_in_at).getTime())
     : null;
 
-  const methodLabel = method?.method === 'face_id' ? 'Face ID' : 'QR code';
+  const methodLabel = method?.method === 'face_id' ? t('attendance.checkin.faceId') : t('attendance.checkin.qrCode');
   const MethodIcon = method?.method === 'face_id' ? Fingerprint : QrCode;
 
   // ── Blocking states ────────────────────────────────────────────────────────
@@ -225,9 +233,9 @@ export function CheckInCard() {
         <div className="flex items-start gap-3">
           <AlertCircle className="w-5 h-5 text-amber-300 shrink-0 mt-0.5" />
           <div>
-            <h2 className="font-semibold">Attendance isn't set up for your account</h2>
+            <h2 className="font-semibold">{t('attendance.checkin.notSetUpTitle')}</h2>
             <p className="text-sm text-white/70 mt-1">
-              Your login isn't linked to an employee profile yet. Contact HR and they can connect it.
+              {t('attendance.checkin.notSetUpBody')}
             </p>
           </div>
         </div>
@@ -243,14 +251,14 @@ export function CheckInCard() {
         <div className="flex items-start gap-3 mb-4">
           <AlertCircle className="w-5 h-5 text-amber-300 shrink-0 mt-0.5" />
           <div>
-            <h2 className="font-semibold">Couldn't load today's status</h2>
+            <h2 className="font-semibold">{t('attendance.checkin.loadFailedTitle')}</h2>
             <p className="text-sm text-white/70 mt-1">
-              We didn't want to show a check-in button without knowing whether you already checked in.
+              {t('attendance.checkin.loadFailedBody')}
             </p>
           </div>
         </div>
         <button onClick={() => void refetchToday()} className="w-full min-h-14 rounded-2xl bg-white text-teal-900 font-semibold flex items-center justify-center gap-2 active:scale-[0.98] transition-transform">
-          <RefreshCw className="w-4 h-4" /> Retry
+          <RefreshCw className="w-4 h-4" /> {t('common.retry')}
         </button>
       </Shell>
     );
@@ -275,30 +283,30 @@ export function CheckInCard() {
             <>
               <p className="text-4xl sm:text-5xl font-bold tabular-nums leading-none">{elapsed}</p>
               <p className="text-sm text-white/70 mt-2">
-                On the clock since {formatZonedTime(record?.check_in_at, tz)}
-                {record?.status === 'late' && <span className="text-amber-300"> · marked late</span>}
+                {t('attendance.checkin.onTheClockSince', { time: formatZonedTime(record?.check_in_at, tz) })}
+                {record?.status === 'late' && <span className="text-amber-300"> · {t('attendance.checkin.markedLate')}</span>}
               </p>
             </>
           ) : (
             <>
-              <p className="text-4xl sm:text-5xl font-bold tabular-nums leading-none" aria-label={`Current time ${clock}`}>
+              <p className="text-4xl sm:text-5xl font-bold tabular-nums leading-none" aria-label={t('attendance.checkin.currentTime', { time: clock })}>
                 {clock}
               </p>
               <p className="text-sm text-white/70 mt-2">
                 {state === 'checked-out' ? (
                   <>
                     {formatZonedTime(record?.check_in_at, tz)} – {formatZonedTime(record?.check_out_at, tz)}
-                    {record?.hours_worked && <> · {record.hours_worked}h</>}
+                    {record?.hours_worked && <> · {t('attendance.checkin.hoursShort', { count: record.hours_worked })}</>}
                   </>
                 ) : startLabel && standing.kind !== 'unknown' ? (
                   <>
-                    Shift starts {startLabel}
+                    {t('attendance.checkin.shiftStarts', { time: startLabel })}
                     {standing.kind === 'late'
-                      ? <span className="text-amber-300"> · {formatDuration(standing.minutes * 60_000)} past grace</span>
-                      : <span className="text-emerald-300"> · you're on time</span>}
+                      ? <span className="text-amber-300"> · {t('attendance.checkin.pastGrace', { duration: formatDuration(standing.minutes * 60_000) })}</span>
+                      : <span className="text-emerald-300"> · {t('attendance.checkin.onTime')}</span>}
                   </>
                 ) : (
-                  'Ready when you are'
+                  t('attendance.checkin.ready')
                 )}
               </p>
             </>
@@ -309,7 +317,7 @@ export function CheckInCard() {
         {state === 'absent' && (
           <div className="mt-4 flex items-start gap-2 rounded-2xl bg-amber-400/15 border border-amber-300/30 px-3 py-2.5 text-sm text-amber-100">
             <TriangleAlert className="w-4 h-4 mt-0.5 shrink-0" />
-            <span>You were marked absent today. Checking in now replaces that.</span>
+            <span>{t('attendance.checkin.absentNotice')}</span>
           </div>
         )}
 
@@ -324,14 +332,14 @@ export function CheckInCard() {
               }`}
             >
               {checkOutMut.isPending
-                ? <><Spinner /> Checking out…</>
+                ? <><Spinner /> {t('attendance.checkin.checkingOut')}</>
                 : confirmingOut
-                  ? <><LogOut className="w-5 h-5" /> Tap again to confirm</>
-                  : <><LogOut className="w-5 h-5" /> Check out</>}
+                  ? <><LogOut className="w-5 h-5" /> {t('attendance.checkin.tapToConfirm')}</>
+                  : <><LogOut className="w-5 h-5" /> {t('attendance.checkin.checkOut')}</>}
             </button>
           ) : state === 'checked-out' ? (
             <div className="w-full min-h-14 rounded-2xl bg-white/10 border border-white/20 flex items-center justify-center gap-2 text-sm font-medium text-white/80">
-              <CheckCircle2 className="w-5 h-5 text-emerald-300" /> All done for today
+              <CheckCircle2 className="w-5 h-5 text-emerald-300" /> {t('attendance.checkin.allDone')}
             </div>
           ) : (
             <button
@@ -340,12 +348,12 @@ export function CheckInCard() {
               className="w-full min-h-14 rounded-2xl bg-white text-teal-900 text-base font-bold flex items-center justify-center gap-2.5 shadow-lg shadow-black/20 transition-all active:scale-[0.98] disabled:opacity-60 disabled:active:scale-100"
             >
               {faceIdMut.isPending
-                ? <><Spinner dark /> Checking in…</>
+                ? <><Spinner dark /> {t('attendance.checkin.checkingIn')}</>
                 : !method || todayLoading
-                  ? <><Spinner dark /> Loading…</>
+                  ? <><Spinner dark /> {t('common.loading')}</>
                   : method.method === 'face_id'
-                    ? <><Fingerprint className="w-5 h-5" /> Check in with Face ID</>
-                    : <><ScanLine className="w-5 h-5" /> Check in</>}
+                    ? <><Fingerprint className="w-5 h-5" /> {t('attendance.checkin.checkInFaceId')}</>
+                    : <><ScanLine className="w-5 h-5" /> {t('attendance.checkin.checkIn')}</>}
             </button>
           )}
         </div>
@@ -354,8 +362,8 @@ export function CheckInCard() {
           <p className="mt-3 flex items-center justify-center gap-1.5 text-[11px] text-white/50">
             <MapPin className="w-3 h-3" />
             {method?.geofence_mode === 'enforce'
-              ? 'Location is checked against your office'
-              : 'Your location is recorded with the check-in'}
+              ? t('attendance.checkin.locationEnforced')
+              : t('attendance.checkin.locationRecorded')}
           </p>
         )}
       </Shell>

@@ -1,4 +1,5 @@
 import type { AttendanceRecord } from '@/api/attendance';
+import i18n, { intlLocale } from '@/i18n';
 
 /**
  * Shared attendance helpers.
@@ -83,16 +84,16 @@ const BARE_TOKEN = /^[0-9a-f]{16,}$/i;
  */
 export function parseScanToken(decoded: string): { token: string } | { error: string } {
   const raw = decoded.trim();
-  if (!raw) return { error: 'Nothing was scanned. Try again.' };
+  if (!raw) return { error: i18n.t('attendance.qr.nothingScanned') };
 
   if (BARE_TOKEN.test(raw)) return { token: raw };
 
   try {
     const token = new URL(raw).searchParams.get('token')?.trim();
     if (token) return { token };
-    return { error: "That's a valid QR code, but not an attendance one. Scan the code on the kiosk screen." };
+    return { error: i18n.t('attendance.qr.notAttendance') };
   } catch {
-    return { error: "That doesn't look like an attendance QR code. Scan the code on the kiosk screen." };
+    return { error: i18n.t('attendance.qr.invalid') };
   }
 }
 
@@ -131,6 +132,7 @@ export function getGeolocation(needed: boolean): Promise<GeolocationCoordinates 
  */
 export function zonedParts(date: Date, timeZone: string): { hour: number; minute: number; second: number } {
   try {
+    // i18n-ok: en-GB is internal numeric parsing (hour 0-23), never displayed.
     const parts = new Intl.DateTimeFormat('en-GB', {
       timeZone,
       hour12: false,
@@ -158,27 +160,27 @@ export function formatZonedClock(date: Date, timeZone: string): string {
 export function formatZonedTime(iso: string | null | undefined, timeZone: string): string {
   if (!iso) return '—';
   try {
-    return new Date(iso).toLocaleTimeString('en-MY', {
+    return new Date(iso).toLocaleTimeString(intlLocale(), {
       timeZone,
       hour: 'numeric',
       minute: '2-digit',
     });
   } catch {
-    return new Date(iso).toLocaleTimeString('en-MY', { hour: 'numeric', minute: '2-digit' });
+    return new Date(iso).toLocaleTimeString(intlLocale(), { hour: 'numeric', minute: '2-digit' });
   }
 }
 
 /** "Monday, 27 July" in the company's timezone — for the date line. */
 export function formatZonedDateLine(date: Date, timeZone: string): string {
   try {
-    return date.toLocaleDateString('en-MY', {
+    return date.toLocaleDateString(intlLocale(), {
       timeZone,
       weekday: 'long',
       day: 'numeric',
       month: 'long',
     });
   } catch {
-    return date.toLocaleDateString('en-MY', { weekday: 'long', day: 'numeric', month: 'long' });
+    return date.toLocaleDateString(intlLocale(), { weekday: 'long', day: 'numeric', month: 'long' });
   }
 }
 
@@ -186,11 +188,13 @@ export function formatZonedDateLine(date: Date, timeZone: string): string {
 
 /** "3h 12m" / "48m" / "just now" — the elapsed-session readout. */
 export function formatDuration(ms: number): string {
-  if (!Number.isFinite(ms) || ms < 60_000) return 'just now';
+  if (!Number.isFinite(ms) || ms < 60_000) return i18n.t('time.justNow');
   const totalMinutes = Math.floor(ms / 60_000);
   const hours = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
-  return hours > 0 ? `${hours}h ${pad(minutes)}m` : `${minutes}m`;
+  return hours > 0
+    ? i18n.t('time.hoursMinutes', { hours, minutes: pad(minutes) })
+    : i18n.t('time.minutesShort', { count: minutes });
 }
 
 // ─── Shift schedule ───────────────────────────────────────────────────────────
@@ -215,7 +219,7 @@ export function formatScheduleTime(hms: string | null | undefined): string | nul
   // The date is irrelevant — a schedule is a wall-clock time — so any date
   // carrying those local hours reads back correctly.
   return new Date(2000, 0, 1, Math.floor(minutes / 60), minutes % 60)
-    .toLocaleTimeString('en-MY', { hour: 'numeric', minute: '2-digit' });
+    .toLocaleTimeString(intlLocale(), { hour: 'numeric', minute: '2-digit' });
 }
 
 export type ShiftStanding =

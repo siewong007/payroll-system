@@ -1,4 +1,5 @@
 import { useParams, useNavigate } from 'react-router';
+import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, Edit, DollarSign, Shield } from 'lucide-react';
 import { getEmployee, getSalaryHistory } from '@/api/employees';
@@ -16,6 +17,7 @@ const InfoField = ({ label, value }: { label: string; value: string | null | und
 export function EmployeeDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { t } = useTranslation();
   const { user } = useAuth();
   const canViewPayroll = canAccessPayrollData(user);
 
@@ -40,8 +42,15 @@ export function EmployeeDetail() {
   }
 
   if (!employee) {
-    return <div className="text-center text-gray-500 py-12">Employee not found</div>;
+    return <div className="text-center text-gray-500 py-12">{t('employees.notFound')}</div>;
   }
+
+  const empType = employee.employment_type
+    ? t(`enums.employmentType.${employee.employment_type}`, { defaultValue: employee.employment_type.replaceAll('_', ' ') })
+    : null;
+  const residency = employee.residency_status
+    ? t(`enums.residency.${employee.residency_status}`, { defaultValue: employee.residency_status.replaceAll('_', ' ') })
+    : null;
 
   return (
     <div>
@@ -49,7 +58,7 @@ export function EmployeeDetail() {
         onClick={() => navigate('/employees')}
         className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700 mb-4"
       >
-        <ArrowLeft className="w-4 h-4" /> Back to Employees
+        <ArrowLeft className="w-4 h-4" /> {t('employees.backToList')}
       </button>
 
       {/* Header */}
@@ -57,8 +66,8 @@ export function EmployeeDetail() {
         <div>
           <h1 className="text-xl sm:text-2xl font-bold text-gray-900">{employee.full_name}</h1>
           <p className="text-gray-500">
-            {employee.employee_number} &middot; {employee.department || 'No Department'} &middot;{' '}
-            {employee.designation || 'No Designation'}
+            {employee.employee_number} &middot; {employee.department || t('employees.noDepartment')} &middot;{' '}
+            {employee.designation || t('employees.noDesignation')}
           </p>
         </div>
         <span
@@ -66,7 +75,7 @@ export function EmployeeDetail() {
             employee.is_active ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
           }`}
         >
-          {employee.is_active ? 'Active' : 'Inactive'}
+          {employee.is_active ? t('common.active') : t('common.inactive')}
         </span>
       </div>
 
@@ -74,63 +83,63 @@ export function EmployeeDetail() {
         {/* Personal Info */}
         <div className="bg-white rounded-2xl shadow p-6">
           <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-            <Edit className="w-4 h-4" /> Personal
+            <Edit className="w-4 h-4" /> {t('employees.sections.personal')}
           </h2>
           <div className="space-y-3">
-            <InfoField label="NRIC" value={employee.ic_number} />
-            <InfoField label="Date of Birth" value={employee.date_of_birth ? formatDate(employee.date_of_birth) : null} />
-            <InfoField label="Gender" value={employee.gender} />
-            <InfoField label="Race" value={employee.race} />
-            <InfoField label="Nationality" value={employee.nationality} />
-            <InfoField label="Marital Status" value={employee.marital_status} />
-            <InfoField label="Email" value={employee.email} />
-            <InfoField label="Phone" value={employee.phone} />
+            <InfoField label={t('employees.fields.nric')} value={employee.ic_number} />
+            <InfoField label={t('employees.fields.dateOfBirth')} value={employee.date_of_birth ? formatDate(employee.date_of_birth) : null} />
+            <InfoField label={t('employees.fields.gender')} value={employee.gender ? t(`enums.gender.${employee.gender}`, { defaultValue: employee.gender }) : null} />
+            <InfoField label={t('employees.fields.race')} value={employee.race ? t(`enums.race.${employee.race}`, { defaultValue: employee.race }) : null} />
+            <InfoField label={t('employees.fields.nationality')} value={employee.nationality} />
+            <InfoField label={t('employees.fields.maritalStatus')} value={employee.marital_status ? t(`enums.maritalStatus.${employee.marital_status}`, { defaultValue: employee.marital_status }) : null} />
+            <InfoField label={t('employees.fields.email')} value={employee.email} />
+            <InfoField label={t('employees.fields.phone')} value={employee.phone} />
           </div>
         </div>
 
         {/* Employment & Salary */}
         <div className="bg-white rounded-2xl shadow p-6">
           <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-            <DollarSign className="w-4 h-4" /> Employment & Salary
+            <DollarSign className="w-4 h-4" /> {t('employees.sections.employment')}
           </h2>
           <div className="space-y-3">
-            <InfoField label="Employment Type" value={employee.employment_type?.replace('_', ' ')} />
-            <InfoField label="Date Joined" value={formatDate(employee.date_joined)} />
-            <InfoField label="Confirmation Date" value={employee.confirmation_date ? formatDate(employee.confirmation_date) : null} />
+            <InfoField label={t('employees.fields.employmentType')} value={empType} />
+            <InfoField label={t('employees.fields.dateJoined')} value={formatDate(employee.date_joined)} />
+            <InfoField label={t('employees.fields.confirmationDate')} value={employee.confirmation_date ? formatDate(employee.confirmation_date) : null} />
             {/* A termination should be visible without opening the edit modal —
                 it decides whether payroll still owes them a final payslip. */}
-            <InfoField label="Date Resigned" value={employee.date_resigned ? formatDate(employee.date_resigned) : null} />
+            <InfoField label={t('employees.fields.dateResigned')} value={employee.date_resigned ? formatDate(employee.date_resigned) : null} />
             {employee.resignation_reason && (
-              <InfoField label="Resignation Reason" value={employee.resignation_reason} />
+              <InfoField label={t('employees.fields.resignationReason')} value={employee.resignation_reason} />
             )}
-            {canViewPayroll && <InfoField label="Basic Salary" value={formatMYR(employee.basic_salary)} />}
-            <InfoField label="Bank" value={employee.bank_name} />
-            <InfoField label="Account No" value={employee.bank_account_number} />
-            <InfoField label="Cost Centre" value={employee.cost_centre} />
-            <InfoField label="Branch" value={employee.branch} />
+            {canViewPayroll && <InfoField label={t('employees.fields.basicSalary')} value={formatMYR(employee.basic_salary)} />}
+            <InfoField label={t('employees.fields.bank')} value={employee.bank_name} />
+            <InfoField label={t('employees.fields.accountNo')} value={employee.bank_account_number} />
+            <InfoField label={t('employees.fields.costCentre')} value={employee.cost_centre} />
+            <InfoField label={t('employees.fields.branch')} value={employee.branch} />
           </div>
         </div>
 
         {canViewPayroll && (
           <div className="bg-white rounded-2xl shadow p-6">
             <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-              <Shield className="w-4 h-4" /> Statutory
+              <Shield className="w-4 h-4" /> {t('employees.sections.statutory')}
             </h2>
             <div className="space-y-3">
-              <InfoField label="TIN" value={employee.tax_identification_number} />
-              <InfoField label="EPF Number" value={employee.epf_number} />
-              <InfoField label="EPF Category" value={employee.epf_category} />
-              <InfoField label="SOCSO Number" value={employee.socso_number} />
-              <InfoField label="EIS Number" value={employee.eis_number} />
-              <InfoField label="Residency" value={employee.residency_status?.replace('_', ' ')} />
-              <InfoField label="Working Spouse" value={employee.working_spouse ? 'Yes' : 'No'} />
-              <InfoField label="Children" value={String(employee.num_children ?? 0)} />
-              <InfoField label="Muslim" value={employee.is_muslim ? 'Yes' : 'No'} />
+              <InfoField label={t('employees.fields.tin')} value={employee.tax_identification_number} />
+              <InfoField label={t('employees.fields.epfNumber')} value={employee.epf_number} />
+              <InfoField label={t('employees.fields.epfCategory')} value={employee.epf_category} />
+              <InfoField label={t('employees.fields.socsoNumber')} value={employee.socso_number} />
+              <InfoField label={t('employees.fields.eisNumber')} value={employee.eis_number} />
+              <InfoField label={t('employees.fields.residency')} value={residency} />
+              <InfoField label={t('employees.fields.workingSpouse')} value={employee.working_spouse ? t('common.yes') : t('common.no')} />
+              <InfoField label={t('employees.fields.children')} value={String(employee.num_children ?? 0)} />
+              <InfoField label={t('employees.fields.muslim')} value={employee.is_muslim ? t('common.yes') : t('common.no')} />
               {employee.zakat_eligible && (
-                <InfoField label="Zakat (Monthly)" value={formatMYR(employee.zakat_monthly_amount ?? 0)} />
+                <InfoField label={t('employees.fields.zakatMonthly')} value={formatMYR(employee.zakat_monthly_amount ?? 0)} />
               )}
               {(employee.ptptn_monthly_amount ?? 0) > 0 && (
-                <InfoField label="PTPTN (Monthly)" value={formatMYR(employee.ptptn_monthly_amount!)} />
+                <InfoField label={t('employees.fields.ptptnMonthly')} value={formatMYR(employee.ptptn_monthly_amount!)} />
               )}
             </div>
           </div>
@@ -141,16 +150,16 @@ export function EmployeeDetail() {
       {canViewPayroll && salaryHistory && salaryHistory.length > 0 && (
         <div className="bg-white rounded-2xl shadow p-6 mt-6">
           <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-            <DollarSign className="w-4 h-4" /> Salary History
+            <DollarSign className="w-4 h-4" /> {t('employees.sections.salaryHistory')}
           </h2>
           <table className="w-full">
             <thead className="bg-gray-50">
               <tr>
-                <th className="text-left px-4 py-2 text-xs font-medium text-gray-500 uppercase">Date</th>
-                <th className="text-right px-4 py-2 text-xs font-medium text-gray-500 uppercase">Old Salary</th>
-                <th className="text-right px-4 py-2 text-xs font-medium text-gray-500 uppercase">New Salary</th>
-                <th className="text-right px-4 py-2 text-xs font-medium text-gray-500 uppercase">Change</th>
-                <th className="text-left px-4 py-2 text-xs font-medium text-gray-500 uppercase">Reason</th>
+                <th className="text-left px-4 py-2 text-xs font-medium text-gray-500 uppercase">{t('employees.salaryTable.date')}</th>
+                <th className="text-right px-4 py-2 text-xs font-medium text-gray-500 uppercase">{t('employees.salaryTable.oldSalary')}</th>
+                <th className="text-right px-4 py-2 text-xs font-medium text-gray-500 uppercase">{t('employees.salaryTable.newSalary')}</th>
+                <th className="text-right px-4 py-2 text-xs font-medium text-gray-500 uppercase">{t('employees.salaryTable.change')}</th>
+                <th className="text-left px-4 py-2 text-xs font-medium text-gray-500 uppercase">{t('employees.salaryTable.reason')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">

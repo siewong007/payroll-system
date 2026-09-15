@@ -1,4 +1,5 @@
 import { Save } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import type { CompanySetting } from '@/types';
 
 export function CompanyCategorySection({
@@ -20,6 +21,7 @@ export function CompanyCategorySection({
   onDiscard: () => void;
   saving: boolean;
 }) {
+  const { t } = useTranslation();
   const dirtyCount = settings.filter((s) => `${s.category}/${s.key}` in edits).length;
 
   return (
@@ -41,11 +43,11 @@ export function CompanyCategorySection({
       {dirtyCount > 0 && (
         <div className="sticky bottom-0 flex items-center justify-between gap-3 px-6 py-3.5 border-t border-gray-200/80 bg-white/85 backdrop-blur">
           <span className="text-sm text-gray-500">
-            {dirtyCount} unsaved change{dirtyCount === 1 ? '' : 's'}
+            {t('settings.unsavedChanges', { count: dirtyCount })}
           </span>
           <div className="flex gap-2">
             <button type="button" className="btn-secondary !min-h-0 !py-2" onClick={onDiscard}>
-              Discard
+              {t('common.discard')}
             </button>
             <button
               type="button"
@@ -53,7 +55,7 @@ export function CompanyCategorySection({
               onClick={onSave}
               disabled={saving}
             >
-              <Save className="w-4 h-4" /> {saving ? 'Saving…' : 'Save changes'}
+              <Save className="w-4 h-4" /> {saving ? t('common.saving') : t('settings.saveChanges')}
             </button>
           </div>
         </div>
@@ -71,6 +73,7 @@ function SettingField({
   value: unknown;
   onChange: (val: unknown) => void;
 }) {
+  const { t } = useTranslation();
   const isBool = typeof setting.value === 'boolean';
   const isNumber = typeof setting.value === 'number' || (typeof setting.value === 'string' && !isNaN(Number(setting.value)));
 
@@ -92,7 +95,7 @@ function SettingField({
             step="15"
             className="px-3 py-2 border border-gray-300 rounded-lg text-sm text-right focus:ring-1 focus:ring-black outline-none w-24"
           />
-          <span className="text-sm text-gray-500">min</span>
+          <span className="text-sm text-gray-500">{t('settings.units.min')}</span>
         </div>
       </div>
     );
@@ -116,7 +119,7 @@ function SettingField({
             step="0.5"
             className="px-3 py-2 border border-gray-300 rounded-lg text-sm text-right focus:ring-1 focus:ring-black outline-none w-24"
           />
-          <span className="text-sm text-gray-500">hrs</span>
+          <span className="text-sm text-gray-500">{t('settings.units.hrs')}</span>
         </div>
       </div>
     );
@@ -135,9 +138,9 @@ function SettingField({
           onChange={(e) => onChange(e.target.value)}
           className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-1 focus:ring-black outline-none w-40"
         >
-          <option value="nearest">Nearest</option>
-          <option value="up">Round Up</option>
-          <option value="down">Round Down</option>
+          <option value="nearest">{t('settings.rounding.nearest')}</option>
+          <option value="up">{t('settings.rounding.up')}</option>
+          <option value="down">{t('settings.rounding.down')}</option>
         </select>
       </div>
     );
@@ -156,9 +159,9 @@ function SettingField({
           onChange={(e) => onChange(e.target.value)}
           className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-1 focus:ring-black outline-none w-40"
         >
-          <option value="default">Default</option>
-          <option value="detailed">Detailed</option>
-          <option value="compact">Compact</option>
+          <option value="default">{t('common.default')}</option>
+          <option value="detailed">{t('settings.template.detailed')}</option>
+          <option value="compact">{t('settings.template.compact')}</option>
         </select>
       </div>
     );

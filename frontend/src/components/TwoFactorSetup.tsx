@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ShieldCheck, ShieldOff, Copy, Download, Check, X } from 'lucide-react';
 import {
@@ -13,6 +14,7 @@ import { getErrorMessage } from '@/lib/utils';
 type View = 'idle' | 'setting_up' | 'backup_codes' | 'disabling' | 'regenerating';
 
 export function TwoFactorSetup() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [view, setView] = useState<View>('idle');
   const [confirmCode, setConfirmCode] = useState('');
@@ -33,7 +35,7 @@ export function TwoFactorSetup() {
       setError('');
       setView('setting_up');
     },
-    onError: (err: unknown) => setError(getErrorMessage(err, 'Failed to start 2FA setup')),
+    onError: (err: unknown) => setError(getErrorMessage(err, t('auth.twoFactor.setupFailed'))),
   });
 
   const confirmMutation = useMutation({
@@ -45,7 +47,7 @@ export function TwoFactorSetup() {
       setConfirmCode('');
       queryClient.invalidateQueries({ queryKey: ['totp-status'] });
     },
-    onError: (err: unknown) => setError(getErrorMessage(err, 'Invalid code')),
+    onError: (err: unknown) => setError(getErrorMessage(err, t('auth.twoFactor.invalidCode'))),
   });
 
   const disableMutation = useMutation({
@@ -54,11 +56,11 @@ export function TwoFactorSetup() {
       setError('');
       setPassword('');
       setView('idle');
-      setSuccess('2FA disabled');
+      setSuccess(t('auth.twoFactor.disabled'));
       setTimeout(() => setSuccess(''), 3000);
       queryClient.invalidateQueries({ queryKey: ['totp-status'] });
     },
-    onError: (err: unknown) => setError(getErrorMessage(err, 'Failed to disable 2FA')),
+    onError: (err: unknown) => setError(getErrorMessage(err, t('auth.twoFactor.disableFailed'))),
   });
 
   const regenerateMutation = useMutation({
@@ -69,7 +71,7 @@ export function TwoFactorSetup() {
       setBackupCodes(data.backup_codes);
       setView('backup_codes');
     },
-    onError: (err: unknown) => setError(getErrorMessage(err, 'Failed to regenerate backup codes')),
+    onError: (err: unknown) => setError(getErrorMessage(err, t('auth.twoFactor.regenFailed'))),
   });
 
   const handleCopyBackupCodes = () => {
@@ -103,17 +105,17 @@ export function TwoFactorSetup() {
       <div className="section-header">
         <div className="flex items-center gap-2">
           <ShieldCheck className="w-4 h-4 text-gray-400" />
-          <span className="section-title">Two-Factor Authentication</span>
+          <span className="section-title">{t('auth.twoFactor.setupTitle')}</span>
         </div>
         {status?.enabled ? (
-          <span className="badge badge-approved ml-auto">Enabled</span>
+          <span className="badge badge-approved ml-auto">{t('auth.twoFactor.enabledBadge')}</span>
         ) : (
-          <span className="badge badge-cancelled ml-auto">Off</span>
+          <span className="badge badge-cancelled ml-auto">{t('auth.twoFactor.offBadge')}</span>
         )}
       </div>
 
       <p className="text-sm text-gray-500 mb-4">
-        Add an extra layer of security using an authenticator app (Google Authenticator, Authy, 1Password, etc.).
+        {t('auth.twoFactor.description')}
       </p>
 
       {error && (
@@ -126,8 +128,7 @@ export function TwoFactorSetup() {
       {view === 'backup_codes' && (
         <div className="space-y-4">
           <div className="bg-amber-50 text-amber-800 text-sm px-4 py-3 rounded-xl">
-            Save these backup codes somewhere safe. Each can be used once to sign in if you lose access
-            to your authenticator app. They won't be shown again.
+            {t('auth.twoFactor.backupWarning')}
           </div>
           <div className="grid grid-cols-2 gap-2 p-4 bg-gray-50 rounded-xl font-mono text-sm">
             {backupCodes.map((code) => (
@@ -141,7 +142,7 @@ export function TwoFactorSetup() {
               className="flex items-center gap-2 text-sm font-medium text-gray-700 hover:text-gray-900 border border-gray-300 rounded-lg px-3 py-2"
             >
               {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-              {copied ? 'Copied' : 'Copy'}
+              {copied ? t('auth.twoFactor.copied') : t('auth.twoFactor.copy')}
             </button>
             <button
               type="button"
@@ -149,7 +150,7 @@ export function TwoFactorSetup() {
               className="flex items-center gap-2 text-sm font-medium text-gray-700 hover:text-gray-900 border border-gray-300 rounded-lg px-3 py-2"
             >
               <Download className="w-4 h-4" />
-              Download
+              {t('auth.twoFactor.download')}
             </button>
           </div>
           <button
@@ -157,7 +158,7 @@ export function TwoFactorSetup() {
             onClick={() => setView('idle')}
             className="w-full bg-black text-white py-2.5 rounded-xl font-semibold hover:bg-gray-800 transition-all"
           >
-            I've saved these codes
+            {t('auth.twoFactor.savedCodes')}
           </button>
         </div>
       )}
@@ -167,18 +168,18 @@ export function TwoFactorSetup() {
           <div className="flex justify-center">
             <img
               src={`data:image/png;base64,${beginMutation.data.qr_code_base64}`}
-              alt="2FA setup QR code"
+              alt={t('auth.twoFactor.qrAlt')}
               className="rounded-xl border border-gray-200"
               width={200}
               height={200}
             />
           </div>
           <p className="text-xs text-gray-500 text-center">
-            Can't scan? Enter this code manually:{' '}
+            {t('auth.twoFactor.manualEntry')}{' '}
             <span className="font-mono text-gray-700">{beginMutation.data.secret}</span>
           </p>
           <div>
-            <label className="form-label">Enter the 6-digit code to confirm</label>
+            <label className="form-label">{t('auth.twoFactor.confirmLabel')}</label>
             <input
               type="text"
               inputMode="numeric"
@@ -197,7 +198,7 @@ export function TwoFactorSetup() {
               disabled={!confirmCode.trim() || confirmMutation.isPending}
               className="flex-1 bg-black text-white py-2.5 rounded-xl font-semibold hover:bg-gray-800 disabled:opacity-50 transition-all"
             >
-              {confirmMutation.isPending ? 'Verifying...' : 'Confirm & Enable'}
+              {confirmMutation.isPending ? t('auth.twoFactor.verifying') : t('auth.twoFactor.confirmEnable')}
             </button>
             <button
               type="button"
@@ -208,7 +209,7 @@ export function TwoFactorSetup() {
               }}
               className="px-4 py-2.5 text-sm font-medium text-gray-500 hover:text-gray-700"
             >
-              Cancel
+              {t('common.cancel')}
             </button>
           </div>
         </div>
@@ -216,13 +217,13 @@ export function TwoFactorSetup() {
 
       {(view === 'disabling' || view === 'regenerating') && (
         <div className="space-y-3">
-          <label className="form-label">Confirm your password to continue</label>
+          <label className="form-label">{t('auth.twoFactor.confirmPasswordPrompt')}</label>
           <input
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             className="border p-2.5 rounded-lg w-full text-sm outline-none focus:border-black transition-colors"
-            placeholder="Current password"
+            placeholder={t('auth.twoFactor.currentPasswordPlaceholder')}
             autoFocus
           />
           <div className="flex gap-2">
@@ -236,7 +237,7 @@ export function TwoFactorSetup() {
               disabled={!password || disableMutation.isPending || regenerateMutation.isPending}
               className="flex-1 bg-black text-white py-2.5 rounded-xl font-semibold hover:bg-gray-800 disabled:opacity-50 transition-all"
             >
-              {disableMutation.isPending || regenerateMutation.isPending ? 'Confirming...' : 'Confirm'}
+              {disableMutation.isPending || regenerateMutation.isPending ? t('auth.twoFactor.confirming') : t('auth.twoFactor.confirm')}
             </button>
             <button
               type="button"
@@ -259,7 +260,7 @@ export function TwoFactorSetup() {
             <div className="space-y-3">
               <div className="flex items-center gap-2 text-sm text-green-700 bg-green-50 px-4 py-3 rounded-xl">
                 <ShieldCheck className="w-4 h-4 shrink-0" />
-                Two-factor authentication is enabled
+                {t('auth.twoFactor.enabledBanner')}
               </div>
               <div className="flex flex-wrap gap-2">
                 <button
@@ -267,7 +268,7 @@ export function TwoFactorSetup() {
                   onClick={() => setView('regenerating')}
                   className="text-sm font-medium text-gray-700 hover:text-gray-900 border border-gray-300 rounded-lg px-3 py-2"
                 >
-                  Regenerate backup codes
+                  {t('auth.twoFactor.regenerate')}
                 </button>
                 <button
                   type="button"
@@ -275,7 +276,7 @@ export function TwoFactorSetup() {
                   className="flex items-center gap-2 text-sm font-medium text-red-600 hover:text-red-700 border border-gray-300 rounded-lg px-3 py-2"
                 >
                   <ShieldOff className="w-4 h-4" />
-                  Disable 2FA
+                  {t('auth.twoFactor.disable')}
                 </button>
               </div>
             </div>
@@ -287,7 +288,7 @@ export function TwoFactorSetup() {
               className="flex items-center gap-2 text-sm font-medium text-black hover:text-gray-600 transition-colors"
             >
               <ShieldCheck className="w-4 h-4" />
-              {beginMutation.isPending ? 'Starting...' : 'Enable 2FA'}
+              {beginMutation.isPending ? t('auth.twoFactor.starting') : t('auth.twoFactor.enable')}
             </button>
           )}
         </>

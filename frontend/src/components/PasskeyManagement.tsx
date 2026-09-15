@@ -1,13 +1,15 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Fingerprint, Plus, Trash2, Pencil, Check, X } from 'lucide-react';
 import { listPasskeys, deletePasskey, renamePasskey, passkeyRegisterBegin, passkeyRegisterComplete } from '@/api/passkey';
 import type { PasskeyInfo } from '@/api/passkey';
 import { createPasskeyCredential, isWebAuthnSupported } from '@/lib/webauthn';
-import { formatDate } from '@/lib/utils';
+import { formatDate, getErrorMessage } from '@/lib/utils';
 import { Modal } from '@/components/ui/Modal';
 
 export function PasskeyManagement() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [registering, setRegistering] = useState(false);
   const [newName, setNewName] = useState('');
@@ -28,7 +30,7 @@ export function PasskeyManagement() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['passkeys'] });
       setDeletingId(null);
-      setSuccess('Passkey deleted');
+      setSuccess(t('auth.passkeys.deleted'));
       setTimeout(() => setSuccess(''), 3000);
     },
   });
@@ -56,24 +58,17 @@ export function PasskeyManagement() {
       const credential = await createPasskeyCredential(options.publicKey);
 
       // Step 3: Send credential to server
-      const name = newName.trim() || 'My Passkey';
+      const name = newName.trim() || t('auth.passkeys.defaultName');
       await passkeyRegisterComplete(challenge_id, credential, name);
 
       queryClient.invalidateQueries({ queryKey: ['passkeys'] });
       setShowNameInput(false);
       setNewName('');
-      setSuccess('Passkey registered successfully!');
+      setSuccess(t('auth.passkeys.registered'));
       setTimeout(() => setSuccess(''), 3000);
     } catch (err: unknown) {
       console.error('Passkey registration error:', err);
-      let msg = 'Failed to register passkey';
-      if (err instanceof Error) msg = err.message;
-      // Handle axios error if necessary
-      if (typeof err === 'object' && err !== null && 'response' in err) {
-        const axiosErr = err as { response: { data: { error?: string } } };
-        if (axiosErr.response?.data?.error) msg = axiosErr.response.data.error;
-      }
-      setError(msg);
+      setError(getErrorMessage(err, t('auth.passkeys.registerFailed')));
     } finally {
       setRegistering(false);
     }
@@ -84,7 +79,7 @@ export function PasskeyManagement() {
       <div className="section-header">
         <div className="flex items-center gap-2">
           <Fingerprint className="w-4 h-4 text-gray-400" />
-          <span className="section-title">Passkeys</span>
+          <span className="section-title">{t('auth.passkeys.title')}</span>
         </div>
         {passkeys && passkeys.length > 0 && (
           <span className="badge badge-cancelled ml-auto">{passkeys.length}</span>
@@ -92,7 +87,7 @@ export function PasskeyManagement() {
       </div>
 
       <p className="text-sm text-gray-500 mb-4">
-        Use passkeys for faster, passwordless sign-in with your fingerprint, face, or device PIN.
+        {t('auth.passkeys.description')}
       </p>
 
       {error && (
@@ -109,7 +104,7 @@ export function PasskeyManagement() {
       ) : (
         <div className="space-y-2 mb-4">
           {(!passkeys || passkeys.length === 0) ? (
-            <p className="text-sm text-gray-400 py-4 text-center">No passkeys registered yet.</p>
+            <p className="text-sm text-gray-400 py-4 text-center">{t('auth.passkeys.empty')}</p>
           ) : (
             passkeys.map((pk: PasskeyInfo) => (
               <div
@@ -144,8 +139,8 @@ export function PasskeyManagement() {
                     <>
                       <p className="text-sm font-medium text-gray-900 truncate">{pk.credential_name}</p>
                       <p className="text-xs text-gray-400">
-                        Added {formatDate(pk.created_at)}
-                        {pk.last_used_at && ` \u00b7 Last used ${formatDate(pk.last_used_at)}`}
+                        {t('auth.passkeys.added', { date: formatDate(pk.created_at) })}
+                        {pk.last_used_at && ` \u00b7 ${t('auth.passkeys.lastUsed', { date: formatDate(pk.last_used_at) })}`}
                       </p>
                     </>
                   )}
@@ -155,14 +150,14 @@ export function PasskeyManagement() {
                     <button
                       onClick={() => { setEditingId(pk.id); setEditName(pk.credential_name); }}
                       className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg"
-                      title="Rename"
+                      title={t('auth.passkeys.rename')}
                     >
                       <Pencil className="w-3.5 h-3.5" />
                     </button>
                     <button
                       onClick={() => setDeletingId(pk.id)}
                       className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg"
-                      title="Delete"
+                      title={t('auth.passkeys.delete')}
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
@@ -181,7 +176,7 @@ export function PasskeyManagement() {
             type="text"
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
-            placeholder="Passkey name (e.g., MacBook, iPhone)"
+            placeholder={t('auth.passkeys.namePlaceholder')}
             className="border px-3 py-2 rounded-lg text-sm flex-1 outline-none focus:border-black"
             autoFocus
           />
@@ -190,7 +185,7 @@ export function PasskeyManagement() {
             disabled={registering}
             className="bg-black text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-800 disabled:opacity-50 transition-colors"
           >
-            {registering ? 'Registering...' : 'Register'}
+            {registering ? t('auth.passkeys.registering') : t('auth.passkeys.register')}
           </button>
           <button
             onClick={() => { setShowNameInput(false); setNewName(''); }}
@@ -205,19 +200,19 @@ export function PasskeyManagement() {
           className="flex items-center gap-2 text-sm font-medium text-black hover:text-gray-600 transition-colors"
         >
           <Plus className="w-4 h-4" />
-          Add a passkey
+          {t('auth.passkeys.add')}
         </button>
       )}
 
       <Modal
         open={deletingId !== null}
         onClose={() => setDeletingId(null)}
-        title="Delete this passkey?"
+        title={t('auth.passkeys.deleteTitle')}
         maxWidth="max-w-md"
         footer={
           <div className="flex justify-end gap-2">
             <button type="button" className="btn-secondary !min-h-0 !py-2" onClick={() => setDeletingId(null)}>
-              Cancel
+              {t('common.cancel')}
             </button>
             <button
               type="button"
@@ -225,13 +220,13 @@ export function PasskeyManagement() {
               disabled={deleteMutation.isPending}
               className="btn-primary !min-h-0 !py-2 !bg-none !bg-red-600 hover:!bg-red-700"
             >
-              {deleteMutation.isPending ? 'Deleting…' : 'Delete passkey'}
+              {deleteMutation.isPending ? t('auth.passkeys.deleting') : t('auth.passkeys.deleteSubmit')}
             </button>
           </div>
         }
       >
         <p className="text-sm text-gray-600">
-          You won&apos;t be able to use this passkey to sign in anymore.
+          {t('auth.passkeys.deleteBody')}
         </p>
       </Modal>
     </div>

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Trans, useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertCircle, AlertTriangle, CheckCircle2, Info, Plus, ShieldCheck, Sparkles, Trash2, Wifi,
@@ -9,13 +10,6 @@ import {
   type CompanyNetwork, type NetworkCandidate, type NetworkMode,
 } from '@/api/attendanceNetworks';
 
-const MODE_OPTIONS: { value: NetworkMode; label: string; desc: string }[] = [
-  { value: 'none', label: 'Off', desc: 'No network check on check-in' },
-  { value: 'learn', label: 'Learn', desc: 'Watch which networks are used — never blocks' },
-  { value: 'warn', label: 'Warn', desc: 'Allow check-in but flag it if off-network' },
-  { value: 'enforce', label: 'Enforce', desc: 'Block check-in from outside approved networks' },
-];
-
 const QUERY_KEYS = {
   networks: ['attendance-networks'],
   mode: ['attendance-network-mode'],
@@ -23,9 +17,16 @@ const QUERY_KEYS = {
   whoami: ['attendance-network-whoami'],
 };
 
-function errorText(e: unknown, fallback: string): string {
-  const err = e as { response?: { data?: { error?: string } } };
-  return err.response?.data?.error || fallback;
+import { getErrorMessage, translateServerMessage } from '@/lib/utils';
+import type { TFunction } from 'i18next';
+
+const MODE_VALUES: NetworkMode[] = ['none', 'learn', 'warn', 'enforce'];
+
+function modeLabel(mode: NetworkMode, t: TFunction) {
+  return t(`attendance.network.modes.${mode}.label`, { defaultValue: mode });
+}
+function modeDesc(mode: NetworkMode, t: TFunction) {
+  return t(`attendance.network.modes.${mode}.desc`, { defaultValue: '' });
 }
 
 /**
@@ -37,9 +38,10 @@ function errorText(e: unknown, fallback: string): string {
  * is visible immediately instead of silently trusting a private address.
  */
 function WhoamiPanel() {
+  const { t } = useTranslation();
   const { data, isLoading } = useQuery({ queryKey: QUERY_KEYS.whoami, queryFn: getNetworkWhoami });
   const queryClient = useQueryClient();
-  const [label, setLabel] = useState('This network');
+  const [label, setLabel] = useState(t('attendance.network.thisNetwork'));
   const [error, setError] = useState('');
 
   const approve = useMutation({
@@ -49,7 +51,7 @@ function WhoamiPanel() {
       void queryClient.invalidateQueries({ queryKey: QUERY_KEYS.networks });
       void queryClient.invalidateQueries({ queryKey: QUERY_KEYS.whoami });
     },
-    onError: (e) => setError(errorText(e, 'Could not approve this network')),
+    onError: (e) => setError(getErrorMessage(e, t('attendance.network.approveFailed'))),
   });
 
   if (isLoading || !data) {
@@ -67,18 +69,18 @@ function WhoamiPanel() {
     <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 space-y-3">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-xs font-medium text-gray-500">This browser reaches the server as</p>
+          <p className="text-xs font-medium text-gray-500">{t('attendance.network.reachesAs')}</p>
           <p className="text-sm font-mono font-semibold text-gray-900 truncate">
-            {data.client_ip ?? 'unknown'}
+            {data.client_ip ?? t('attendance.network.unknown')}
           </p>
         </div>
         {data.is_approved ? (
           <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-medium text-emerald-700 shrink-0">
-            <CheckCircle2 className="w-3 h-3" /> {data.matched_label ?? 'Approved'}
+            <CheckCircle2 className="w-3 h-3" /> {data.matched_label ?? t('attendance.network.approved')}
           </span>
         ) : (
           <span className="inline-flex items-center gap-1 rounded-full bg-gray-200 px-2.5 py-1 text-[11px] font-medium text-gray-600 shrink-0">
-            Not approved
+            {t('attendance.network.notApproved')}
           </span>
         )}
       </div>
@@ -87,9 +89,10 @@ function WhoamiPanel() {
         <p className="flex items-start gap-1.5 text-xs text-red-600">
           <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
           <span>
-            That is a private address, so the server is seeing its own proxy rather than the
-            employee. Approving it would let anyone check in from anywhere. Check that requests
-            reach the API only through CloudFront and that <code>TRUST_PROXY_HEADERS</code> matches.
+            <Trans
+              i18nKey="attendance.network.privateWarning"
+              components={{ code: <code /> }}
+            />
           </span>
         </p>
       )}
@@ -97,14 +100,13 @@ function WhoamiPanel() {
       {!data.is_approved && data.suggested_cidr && !looksMisconfigured && (
         <div className="space-y-2">
           <p className="text-xs text-gray-500">
-            If you are on the office Wi-Fi right now, approve{' '}
-            <span className="font-mono">{data.suggested_cidr}</span>.
+            {t('attendance.network.approveHint', { cidr: data.suggested_cidr })}
           </p>
           <div className="flex gap-2">
             <input
               value={label}
               onChange={e => setLabel(e.target.value)}
-              placeholder="Name (e.g. HQ Wi-Fi)"
+              placeholder={t('attendance.network.namePlaceholder')}
               className="flex-1 min-w-0 px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-1 focus:ring-black"
             />
             <button
@@ -112,7 +114,7 @@ function WhoamiPanel() {
               disabled={!label.trim() || approve.isPending}
               className="px-3 py-2 bg-black text-white rounded-lg text-sm font-medium hover:bg-gray-800 disabled:opacity-40 shrink-0"
             >
-              {approve.isPending ? 'Approving…' : 'Approve this'}
+              {approve.isPending ? t('attendance.network.approving') : t('attendance.network.approveThis')}
             </button>
           </div>
         </div>
@@ -128,6 +130,7 @@ function WhoamiPanel() {
 }
 
 function AddNetworkForm({ onClose }: { onClose: () => void }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [form, setForm] = useState({ label: '', cidr: '' });
   const [error, setError] = useState('');
@@ -138,30 +141,32 @@ function AddNetworkForm({ onClose }: { onClose: () => void }) {
       void queryClient.invalidateQueries({ queryKey: QUERY_KEYS.networks });
       onClose();
     },
-    onError: (e) => setError(errorText(e, 'Failed to add network')),
+    onError: (e) => setError(getErrorMessage(e, t('attendance.network.addFailed'))),
   });
 
   return (
     <div className="border border-gray-200 rounded-xl p-4 space-y-3 bg-gray-50">
       <div className="flex justify-between items-center">
-        <p className="text-sm font-semibold text-gray-700">Add Office Network</p>
+        <p className="text-sm font-semibold text-gray-700">{t('attendance.network.addTitle')}</p>
         <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg leading-none">&times;</button>
       </div>
       <input
-        placeholder="Name (e.g. HQ Wi-Fi)"
+        placeholder={t('attendance.network.namePlaceholder')}
         value={form.label}
         onChange={e => setForm(p => ({ ...p, label: e.target.value }))}
         className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-1 focus:ring-black"
       />
       <input
-        placeholder="Public address or range (e.g. 203.0.113.5 or 203.0.113.0/24)"
+        placeholder={t('attendance.network.cidrPlaceholder')}
         value={form.cidr}
         onChange={e => setForm(p => ({ ...p, cidr: e.target.value }))}
         className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono outline-none focus:ring-1 focus:ring-black"
       />
       <p className="text-xs text-gray-500">
-        This is the office&rsquo;s <strong>public</strong> address as seen from the internet — not
-        192.168.x.x. Ask your IT provider, or use the panel above while on the office Wi-Fi.
+        <Trans
+          i18nKey="attendance.network.publicHint"
+          components={{ strong: <strong /> }}
+        />
       </p>
       {error && (
         <p className="text-sm text-red-600 flex items-center gap-1">
@@ -171,14 +176,14 @@ function AddNetworkForm({ onClose }: { onClose: () => void }) {
       <div className="flex gap-2">
         <button onClick={onClose}
           className="flex-1 py-2 border border-gray-300 rounded-lg text-sm text-gray-600 hover:bg-gray-100">
-          Cancel
+          {t('common.cancel')}
         </button>
         <button
           onClick={() => mutation.mutate()}
           disabled={!form.label.trim() || !form.cidr.trim() || mutation.isPending}
           className="flex-1 py-2 bg-black text-white rounded-lg text-sm font-medium hover:bg-gray-800 disabled:opacity-40"
         >
-          {mutation.isPending ? 'Adding...' : 'Add'}
+          {mutation.isPending ? t('common.adding') : t('common.add')}
         </button>
       </div>
     </div>
@@ -186,6 +191,7 @@ function AddNetworkForm({ onClose }: { onClose: () => void }) {
 }
 
 function NetworkRow({ net }: { net: CompanyNetwork }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const deleteMut = useMutation({
     mutationFn: () => deleteNetwork(net.id),
@@ -199,21 +205,21 @@ function NetworkRow({ net }: { net: CompanyNetwork }) {
         <p className="text-sm font-medium text-gray-900 truncate">
           {net.label}
           {net.learned_from_observation && (
-            <span className="ml-1.5 text-[10px] font-normal text-gray-400">learned</span>
+            <span className="ml-1.5 text-[10px] font-normal text-gray-400">{t('attendance.network.learned')}</span>
           )}
         </p>
         <p className="text-xs text-gray-400 font-mono">{toCidr(net)}</p>
       </div>
       {deleteMut.isError && (
         <span className="text-[11px] text-red-600 max-w-[45%] text-right">
-          {errorText(deleteMut.error, 'Could not remove')}
+          {getErrorMessage(deleteMut.error, t('attendance.network.removeFailed'))}
         </span>
       )}
       <button
         onClick={() => deleteMut.mutate()}
         disabled={deleteMut.isPending}
         className="text-gray-300 hover:text-red-500 p-1 transition-colors"
-        title="Remove network"
+        title={t('attendance.network.remove')}
       >
         <Trash2 className="w-4 h-4" />
       </button>
@@ -222,6 +228,7 @@ function NetworkRow({ net }: { net: CompanyNetwork }) {
 }
 
 function CandidateRow({ candidate }: { candidate: NetworkCandidate }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const cidr = toCidr(candidate);
   const [label, setLabel] = useState('');
@@ -236,12 +243,12 @@ function CandidateRow({ candidate }: { candidate: NetworkCandidate }) {
   const approve = useMutation({
     mutationFn: () => approveCandidate({ cidr, label }),
     onSuccess: () => { setApproving(false); refresh(); },
-    onError: (e) => setError(errorText(e, 'Could not approve')),
+    onError: (e) => setError(getErrorMessage(e, t('attendance.network.approveFailedShort'))),
   });
   const dismiss = useMutation({
     mutationFn: () => dismissCandidate(cidr),
     onSuccess: refresh,
-    onError: (e) => setError(errorText(e, 'Could not dismiss')),
+    onError: (e) => setError(getErrorMessage(e, t('attendance.network.dismissFailed'))),
   });
 
   return (
@@ -251,14 +258,15 @@ function CandidateRow({ candidate }: { candidate: NetworkCandidate }) {
         <div className="flex-1 min-w-0">
           <p className="text-sm font-mono font-medium text-gray-900 truncate">{cidr}</p>
           <p className="text-xs text-gray-500">
-            {candidate.distinct_employees} employee{candidate.distinct_employees === 1 ? '' : 's'}
-            {' · '}{candidate.observation_count} check-in{candidate.observation_count === 1 ? '' : 's'}
+            {t('attendance.network.employees', { count: candidate.distinct_employees })}
+            {' · '}
+            {t('attendance.network.checkins', { count: candidate.observation_count })}
             {candidate.anchored_count > 0 && (
-              <span className="text-emerald-600"> · {candidate.anchored_count} corroborated</span>
+              <span className="text-emerald-600"> · {t('attendance.network.corroborated', { count: candidate.anchored_count })}</span>
             )}
           </p>
           {candidate.blocked_reason && (
-            <p className="text-[11px] text-gray-400 mt-0.5">{candidate.blocked_reason}</p>
+            <p className="text-[11px] text-gray-400 mt-0.5">{translateServerMessage(candidate.blocked_reason)}</p>
           )}
         </div>
         {candidate.is_proposable && !approving && (
@@ -266,16 +274,16 @@ function CandidateRow({ candidate }: { candidate: NetworkCandidate }) {
             onClick={() => setApproving(true)}
             className="text-xs font-medium text-gray-700 hover:text-black bg-gray-100 hover:bg-gray-200 px-2.5 py-1.5 rounded-lg shrink-0"
           >
-            Approve
+            {t('attendance.network.approve')}
           </button>
         )}
         <button
           onClick={() => dismiss.mutate()}
           disabled={dismiss.isPending}
           className="text-xs text-gray-400 hover:text-gray-700 px-1.5 py-1.5 shrink-0"
-          title="Never suggest this network again"
+          title={t('attendance.network.dismissTitle')}
         >
-          Dismiss
+          {t('attendance.network.dismiss')}
         </button>
       </div>
 
@@ -285,7 +293,7 @@ function CandidateRow({ candidate }: { candidate: NetworkCandidate }) {
             autoFocus
             value={label}
             onChange={e => setLabel(e.target.value)}
-            placeholder="Name this network"
+            placeholder={t('attendance.network.nameThis')}
             className="flex-1 min-w-0 px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-1 focus:ring-black"
           />
           <button
@@ -293,7 +301,7 @@ function CandidateRow({ candidate }: { candidate: NetworkCandidate }) {
             disabled={!label.trim() || approve.isPending}
             className="px-3 py-2 bg-black text-white rounded-lg text-sm font-medium hover:bg-gray-800 disabled:opacity-40 shrink-0"
           >
-            {approve.isPending ? 'Saving…' : 'Save'}
+            {approve.isPending ? t('common.saving') : t('common.save')}
           </button>
         </div>
       )}
@@ -308,6 +316,7 @@ function CandidateRow({ candidate }: { candidate: NetworkCandidate }) {
 }
 
 export function NetworkCard() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [showAdd, setShowAdd] = useState(false);
   const [modeError, setModeError] = useState('');
@@ -328,7 +337,7 @@ export function NetworkCard() {
     // The server refuses Enforce with an empty allow-list. Surfacing that
     // verbatim is the whole point — silently leaving the toggle unmoved would
     // read as a UI glitch.
-    onError: (e) => setModeError(errorText(e, 'Could not change the mode')),
+    onError: (e) => setModeError(getErrorMessage(e, t('attendance.network.modeFailed'))),
   });
 
   // Unknown mode falls back to off: an unrecognised value must never start
@@ -341,11 +350,10 @@ export function NetworkCard() {
       <div className="p-5 sm:p-6 border-b border-gray-100">
         <div className="flex items-center gap-2 mb-1">
           <ShieldCheck className="w-5 h-5 text-gray-700" />
-          <h2 className="font-semibold text-gray-900">Office Network</h2>
+          <h2 className="font-semibold text-gray-900">{t('attendance.network.title')}</h2>
         </div>
         <p className="text-sm text-gray-500">
-          Require employees to be on the company network to check in. The check uses the address
-          the server sees, which a phone cannot fake — not the Wi-Fi name, which it can.
+          {t('attendance.network.body')}
         </p>
       </div>
 
@@ -353,19 +361,19 @@ export function NetworkCard() {
         <WhoamiPanel />
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">Enforcement Mode</label>
+          <label className="block text-sm font-medium text-gray-700 mb-2">{t('attendance.geofence.modeLabel')}</label>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            {MODE_OPTIONS.map(opt => (
+            {MODE_VALUES.map(mode => (
               <button
-                key={opt.value}
-                onClick={() => modeMut.mutate(opt.value)}
+                key={mode}
+                onClick={() => modeMut.mutate(mode)}
                 className={`relative p-3 rounded-xl border-2 text-left transition-all ${
-                  currentMode === opt.value ? 'border-black bg-gray-50' : 'border-gray-200 hover:border-gray-300'
+                  currentMode === mode ? 'border-black bg-gray-50' : 'border-gray-200 hover:border-gray-300'
                 }`}
               >
-                <p className="text-sm font-semibold text-gray-900 pr-5">{opt.label}</p>
-                <p className="text-xs text-gray-500 mt-0.5">{opt.desc}</p>
-                {currentMode === opt.value && (
+                <p className="text-sm font-semibold text-gray-900 pr-5">{modeLabel(mode, t)}</p>
+                <p className="text-xs text-gray-500 mt-0.5">{modeDesc(mode, t)}</p>
+                {currentMode === mode && (
                   <CheckCircle2 className="w-3.5 h-3.5 text-black absolute top-3 right-3" />
                 )}
               </button>
@@ -378,8 +386,7 @@ export function NetworkCard() {
           )}
           {currentMode === 'learn' && (
             <p className="mt-2 text-xs text-gray-500">
-              Learning. Nobody is blocked or flagged — run this for a week or two, then approve
-              what it finds below.
+              {t('attendance.network.learnHint')}
             </p>
           )}
           {/* Shown against Enforce specifically: this is the moment somebody
@@ -389,12 +396,10 @@ export function NetworkCard() {
             <div className="mt-2 flex items-start gap-1.5 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
               <Info className="w-3.5 h-3.5 mt-0.5 shrink-0 text-gray-400" />
               <span>
-                <strong className="font-medium text-gray-700">What this proves.</strong> That the
-                check-in reached us over your office&rsquo;s internet connection — not that the
-                person was in the building. Anyone running a VPN or SSH tunnel back to the office
-                will pass, and a company-wide VPN would let everyone pass from home. Treat it as
-                a deterrent against casual remote check-in and as evidence for review, not as
-                proof of attendance.
+                <Trans
+                  i18nKey="attendance.network.enforceProof"
+                  components={{ strong: <strong className="font-medium text-gray-700" /> }}
+                />
               </span>
             </div>
           )}
@@ -402,9 +407,9 @@ export function NetworkCard() {
 
         {candidates.length > 0 && (
           <div>
-            <label className="text-sm font-medium text-gray-700">Suggested Networks</label>
+            <label className="text-sm font-medium text-gray-700">{t('attendance.network.suggestedTitle')}</label>
             <p className="text-xs text-gray-500 mb-1">
-              Seen in use, not yet trusted. Approving one is always your decision.
+              {t('attendance.network.suggestedBody')}
             </p>
             <div className="divide-y divide-gray-100">
               {candidates.map(c => <CandidateRow key={toCidr(c)} candidate={c} />)}
@@ -414,12 +419,12 @@ export function NetworkCard() {
 
         <div>
           <div className="flex items-center justify-between mb-2">
-            <label className="text-sm font-medium text-gray-700">Approved Networks</label>
+            <label className="text-sm font-medium text-gray-700">{t('attendance.network.approvedTitle')}</label>
             <button
               onClick={() => setShowAdd(true)}
               className="flex items-center gap-1 text-xs text-gray-600 hover:text-black font-medium bg-gray-100 hover:bg-gray-200 px-2.5 py-1.5 rounded-lg transition-colors"
             >
-              <Plus className="w-3.5 h-3.5" /> Add
+              <Plus className="w-3.5 h-3.5" /> {t('common.add')}
             </button>
           </div>
 
@@ -427,8 +432,8 @@ export function NetworkCard() {
 
           {networks.length === 0 && !showAdd ? (
             <p className="text-xs text-gray-400 py-4 text-center">
-              No approved networks yet.
-              {currentMode !== 'none' && ' Until you approve one, check-ins are not restricted.'}
+              {t('attendance.network.empty')}
+              {currentMode !== 'none' && ` ${t('attendance.network.emptyHint')}`}
             </p>
           ) : (
             <div className="divide-y divide-gray-100">
@@ -439,8 +444,7 @@ export function NetworkCard() {
           {currentMode === 'enforce' && activeCount === 1 && (
             <p className="mt-2 flex items-start gap-1.5 text-xs text-amber-700">
               <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-              Only one approved network while enforcing. If the office address changes, nobody will
-              be able to check in until you add the new one.
+              {t('attendance.network.singleEnforceWarning')}
             </p>
           )}
         </div>

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Users, Trash2, UserPlus, ChevronRight, Search, Tag } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
@@ -21,6 +22,7 @@ function getTagStyle(tag: string) {
 }
 
 export function TeamsPage() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -154,7 +156,7 @@ export function TeamsPage() {
   };
 
   const handleDelete = (team: TeamWithCount) => {
-    if (confirm(`Delete team "${team.name}"? All members will be removed.`)) {
+    if (confirm(t('teams.deleteConfirm', { name: team.name }))) {
       deleteMutation.mutate(team.id);
     }
   };
@@ -174,12 +176,12 @@ export function TeamsPage() {
     <div className="space-y-6">
       <div className="page-header flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="page-title">Teams</h1>
-          <p className="page-subtitle">Organize employees into teams</p>
+          <h1 className="page-title">{t('teams.title')}</h1>
+          <p className="page-subtitle">{t('teams.subtitle')}</p>
         </div>
         <button onClick={openCreate} className="btn-primary flex items-center gap-2 w-full sm:w-auto">
           <Plus className="w-4 h-4" />
-          New Team
+          {t('teams.newTeam')}
         </button>
       </div>
 
@@ -188,13 +190,13 @@ export function TeamsPage() {
         <div className="lg:col-span-1">
           <div className="bg-white rounded-2xl border border-gray-200">
             <div className="px-5 py-4 border-b border-gray-100">
-              <h3 className="text-sm font-semibold text-gray-900">All Teams ({teams.length})</h3>
+              <h3 className="text-sm font-semibold text-gray-900">{t('teams.allTeams', { count: teams.length })}</h3>
             </div>
             {isLoading ? (
-              <div className="p-8 text-center text-sm text-gray-400">Loading...</div>
+              <div className="p-8 text-center text-sm text-gray-400">{t('common.loading')}</div>
             ) : teams.length === 0 ? (
               <div className="p-8 text-center text-sm text-gray-400">
-                No teams yet. Create one to get started.
+                {t('teams.empty')}
               </div>
             ) : (
               <div className="divide-y divide-gray-100">
@@ -217,11 +219,11 @@ export function TeamsPage() {
                         <div className="min-w-0">
                           <p className="text-sm font-medium text-gray-900 truncate">{team.name}</p>
                           <p className="text-xs text-gray-400">
-                            {team.member_count || 0} member{(team.member_count || 0) !== 1 ? 's' : ''}
+                            {t('teams.memberCount', { count: team.member_count || 0 })}
                             <span className={`ml-1.5 ${tagStyle.text}`}>
                               {team.tag}
                             </span>
-                            {!team.is_active && <span className="ml-1 text-amber-500">(inactive)</span>}
+                            {!team.is_active && <span className="ml-1 text-amber-500">{t('teams.inactiveParen')}</span>}
                           </p>
                         </div>
                       </div>
@@ -259,10 +261,10 @@ export function TeamsPage() {
                       <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
                         selectedTeam.is_active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
                       }`}>
-                        {selectedTeam.is_active ? 'Active' : 'Inactive'}
+                        {selectedTeam.is_active ? t('common.active') : t('common.inactive')}
                       </span>
                       <span className="text-xs text-gray-400">
-                        {selectedTeam.member_count || 0} members
+                        {t('teams.memberCount', { count: selectedTeam.member_count || 0 })}
                       </span>
                     </div>
                   </div>
@@ -271,13 +273,13 @@ export function TeamsPage() {
                       onClick={() => openEdit(selectedTeam)}
                       className="text-sm px-3 py-1.5 rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50"
                     >
-                      Edit
+                      {t('common.edit')}
                     </button>
                     <button
                       onClick={() => handleDelete(selectedTeam)}
                       className="text-sm px-3 py-1.5 rounded-lg border border-red-200 text-red-600 hover:bg-red-50"
                     >
-                      Delete
+                      {t('common.delete')}
                     </button>
                   </div>
                 </div>
@@ -286,20 +288,20 @@ export function TeamsPage() {
               {/* Members */}
               <div className="bg-white rounded-2xl border border-gray-200">
                 <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-                  <h3 className="text-sm font-semibold text-gray-900">Members</h3>
+                  <h3 className="text-sm font-semibold text-gray-900">{t('teams.members')}</h3>
                   <button
                     onClick={() => { setMemberSearch(''); setShowAddMemberModal(true); }}
                     className="text-sm flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-900 text-white hover:bg-gray-800"
                   >
                     <UserPlus className="w-3.5 h-3.5" />
-                    Add Member
+                    {t('teams.addMember')}
                   </button>
                 </div>
                 {loadingMembers ? (
-                  <div className="p-8 text-center text-sm text-gray-400">Loading...</div>
+                  <div className="p-8 text-center text-sm text-gray-400">{t('common.loading')}</div>
                 ) : members.length === 0 ? (
                   <div className="p-8 text-center text-sm text-gray-400">
-                    No members yet. Add employees to this team.
+                    {t('teams.noMembers')}
                   </div>
                 ) : (
                   <div className="divide-y divide-gray-100">
@@ -323,7 +325,7 @@ export function TeamsPage() {
           ) : (
             <div className="bg-white rounded-2xl border border-gray-200 p-12 text-center">
               <Users className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-              <p className="text-sm text-gray-400">Select a team to view details and manage members</p>
+              <p className="text-sm text-gray-400">{t('teams.selectTeam')}</p>
             </div>
           )}
         </div>
@@ -333,45 +335,45 @@ export function TeamsPage() {
       <Modal
         open={showCreateModal}
         onClose={() => setShowCreateModal(false)}
-        title="Create Team"
+        title={t('teams.createTitle')}
         footer={
           <div className="flex justify-end gap-3">
-            <button onClick={() => setShowCreateModal(false)} className="btn-secondary">Cancel</button>
+            <button onClick={() => setShowCreateModal(false)} className="btn-secondary">{t('common.cancel')}</button>
             <button onClick={handleCreate} disabled={!teamName.trim() || createMutation.isPending} className="btn-primary">
-              {createMutation.isPending ? 'Creating...' : 'Create Team'}
+              {createMutation.isPending ? t('common.creating') : t('teams.createTitle')}
             </button>
           </div>
         }
       >
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Team Name *</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('teams.teamName')} *</label>
             <input
               type="text"
               value={teamName}
               onChange={(e) => setTeamName(e.target.value)}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
-              placeholder="e.g. Backend Squad, Sales Team"
+              placeholder={t('teams.teamNamePlaceholder')}
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.description')}</label>
             <textarea
               value={teamDescription}
               onChange={(e) => setTeamDescription(e.target.value)}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
               rows={3}
-              placeholder="Optional description"
+              placeholder={t('teams.descriptionPlaceholder')}
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Tag</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('teams.tag')}</label>
             <input
               type="text"
               value={teamTag}
               onChange={(e) => setTeamTag(e.target.value)}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
-              placeholder="e.g. engineering, sales, project"
+              placeholder={t('teams.tagPlaceholder')}
             />
             {existingTags.length > 0 && (
               <div className="flex flex-wrap gap-1.5 mt-2">
@@ -394,7 +396,7 @@ export function TeamsPage() {
             )}
           </div>
           {createMutation.isError && (
-            <p className="text-sm text-red-600">{(createMutation.error as Error).message || 'Failed to create team'}</p>
+            <p className="text-sm text-red-600">{(createMutation.error as Error).message || t('teams.createFailed')}</p>
           )}
         </div>
       </Modal>
@@ -403,19 +405,19 @@ export function TeamsPage() {
       <Modal
         open={showEditModal}
         onClose={() => setShowEditModal(false)}
-        title="Edit Team"
+        title={t('teams.editTitle')}
         footer={
           <div className="flex justify-end gap-3">
-            <button onClick={() => setShowEditModal(false)} className="btn-secondary">Cancel</button>
+            <button onClick={() => setShowEditModal(false)} className="btn-secondary">{t('common.cancel')}</button>
             <button onClick={handleUpdate} disabled={!teamName.trim() || updateMutation.isPending} className="btn-primary">
-              {updateMutation.isPending ? 'Saving...' : 'Save Changes'}
+              {updateMutation.isPending ? t('common.saving') : t('common.saveChanges')}
             </button>
           </div>
         }
       >
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Team Name *</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('teams.teamName')} *</label>
             <input
               type="text"
               value={teamName}
@@ -424,7 +426,7 @@ export function TeamsPage() {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.description')}</label>
             <textarea
               value={teamDescription}
               onChange={(e) => setTeamDescription(e.target.value)}
@@ -433,13 +435,13 @@ export function TeamsPage() {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Tag</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('teams.tag')}</label>
             <input
               type="text"
               value={teamTag}
               onChange={(e) => setTeamTag(e.target.value)}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
-              placeholder="e.g. engineering, sales, project"
+              placeholder={t('teams.tagPlaceholder')}
             />
             {existingTags.length > 0 && (
               <div className="flex flex-wrap gap-1.5 mt-2">
@@ -469,10 +471,10 @@ export function TeamsPage() {
               onChange={(e) => setTeamIsActive(e.target.checked)}
               className="rounded border-gray-300"
             />
-            <label htmlFor="team-active" className="text-sm text-gray-700">Active</label>
+            <label htmlFor="team-active" className="text-sm text-gray-700">{t('common.active')}</label>
           </div>
           {updateMutation.isError && (
-            <p className="text-sm text-red-600">{(updateMutation.error as Error).message || 'Failed to update team'}</p>
+            <p className="text-sm text-red-600">{(updateMutation.error as Error).message || t('teams.updateFailed')}</p>
           )}
         </div>
       </Modal>
@@ -481,7 +483,7 @@ export function TeamsPage() {
       <Modal
         open={showAddMemberModal}
         onClose={() => setShowAddMemberModal(false)}
-        title={`Add Member to ${selectedTeam?.name || 'Team'}`}
+        title={t('teams.addMemberTo', { name: selectedTeam?.name || t('teams.title') })}
         maxWidth="max-w-lg"
       >
         <div className="space-y-3">
@@ -492,18 +494,18 @@ export function TeamsPage() {
               value={memberSearch}
               onChange={(e) => setMemberSearch(e.target.value)}
               className="w-full border border-gray-300 rounded-lg pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
-              placeholder="Search employees..."
+              placeholder={t('teams.searchEmployees')}
             />
           </div>
           {searchTruncated && (
             <p className="text-xs text-gray-400">
-              Showing {employeesData?.data.length} of {employeeTotal} — keep typing to narrow
+              {t('employees.showingPartial', { shown: employeesData?.data.length, total: employeeTotal })}
             </p>
           )}
           <div className="max-h-80 overflow-y-auto divide-y divide-gray-100 border border-gray-200 rounded-lg">
             {availableEmployees.length === 0 ? (
               <div className="p-6 text-center text-sm text-gray-400">
-                {memberSearch ? 'No matching employees' : 'All employees are already in this team'}
+                {memberSearch ? t('employees.noMatch') : t('teams.allInTeam')}
               </div>
             ) : (
               availableEmployees.map((emp) => (
@@ -528,7 +530,7 @@ export function TeamsPage() {
                       disabled={addMemberMutation.isPending}
                       className="text-xs px-2 py-1 rounded border border-gray-200 text-gray-600 hover:bg-gray-100"
                     >
-                      Add as Lead
+                      {t('teams.addAsLead')}
                     </button>
                     <button
                       onClick={() => {
@@ -541,7 +543,7 @@ export function TeamsPage() {
                       disabled={addMemberMutation.isPending}
                       className="text-xs px-2.5 py-1 rounded bg-gray-900 text-white hover:bg-gray-800"
                     >
-                      Add
+                      {t('common.add')}
                     </button>
                   </div>
                 </div>
@@ -563,6 +565,7 @@ function MemberRow({
   onRemove: () => void;
   isRemoving: boolean;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="flex items-center justify-between px-6 py-3">
       <div className="flex items-center gap-3">
@@ -570,7 +573,7 @@ function MemberRow({
           {(member.employee_name || '?')[0]}
         </div>
         <div>
-          <p className="text-sm font-medium text-gray-900">{member.employee_name || 'Unknown'}</p>
+          <p className="text-sm font-medium text-gray-900">{member.employee_name || t('common.unknown')}</p>
           <p className="text-xs text-gray-400">
             {member.employee_number}
             {member.department ? ` \u2022 ${member.department}` : ''}
@@ -582,13 +585,13 @@ function MemberRow({
         <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
           member.role === 'lead' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-600'
         }`}>
-          {member.role}
+          {t(`teams.roles.${member.role}`, { defaultValue: member.role })}
         </span>
         <button
           onClick={onRemove}
           disabled={isRemoving}
           className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
-          title="Remove member"
+          title={t('teams.removeMember')}
         >
           <Trash2 className="w-4 h-4" />
         </button>

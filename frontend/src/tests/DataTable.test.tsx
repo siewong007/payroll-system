@@ -64,7 +64,7 @@ describe('DataTable rendering', () => {
   it('shows the loading state instead of rows or the empty message', () => {
     render(<DataTable columns={columns} data={[]} isLoading emptyMessage="No employees" />);
 
-    expect(screen.getAllByText('Loading...').length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Loading/).length).toBeGreaterThan(0);
     expect(screen.queryByText('No employees')).not.toBeInTheDocument();
   });
 

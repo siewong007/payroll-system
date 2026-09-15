@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
+import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Calculator, Pencil, Plus, Trash2, X } from 'lucide-react';
 import {
@@ -14,17 +15,12 @@ import {
 import { EmployeePicker } from '@/components/employees/EmployeePicker';
 import { formatEmployeeLabel } from '@/lib/employeeFields';
 import { formatMYR, getErrorMessage } from '@/lib/utils';
+import { formatPeriod, monthName } from '@/lib/format';
 import { PayrollPreviewPanel } from './PayrollPreviewPanel';
 import type { PayrollEntryWithEmployee } from '@/types';
+import type { TFunction } from 'i18next';
 
-const MONTHS = [
-  { value: 1, label: 'January' }, { value: 2, label: 'February' },
-  { value: 3, label: 'March' }, { value: 4, label: 'April' },
-  { value: 5, label: 'May' }, { value: 6, label: 'June' },
-  { value: 7, label: 'July' }, { value: 8, label: 'August' },
-  { value: 9, label: 'September' }, { value: 10, label: 'October' },
-  { value: 11, label: 'November' }, { value: 12, label: 'December' },
-];
+const MONTH_VALUES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 
 type EntryKind = 'monthly_allowance' | 'other_earning' | 'deduction';
 
@@ -35,14 +31,12 @@ function getEntryKind(entry: Pick<PayrollEntryWithEmployee, 'category' | 'item_t
   return entry.category === 'deduction' ? 'deduction' : 'other_earning';
 }
 
-function getEntryKindLabel(entry: Pick<PayrollEntryWithEmployee, 'category' | 'item_type'>) {
-  const kind = getEntryKind(entry);
-  if (kind === 'monthly_allowance') return 'Monthly allowance';
-  if (kind === 'deduction') return 'Deduction';
-  return 'Other earning';
+function getEntryKindLabel(entry: Pick<PayrollEntryWithEmployee, 'category' | 'item_type'>, t: TFunction) {
+  return t(`payroll.process.entryKinds.${getEntryKind(entry)}`);
 }
 
 export function PayrollProcess() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const now = new Date();
@@ -61,7 +55,7 @@ export function PayrollProcess() {
     employee_label: '',
     category: 'earning' as 'earning' | 'deduction',
     item_type: 'monthly_allowance',
-    description: 'Monthly allowance',
+    description: t('payroll.process.defaultDescription'),
     amount: '',
     quantity: '',
     rate: '',
@@ -83,7 +77,7 @@ export function PayrollProcess() {
   const previewMutation = useMutation({
     mutationFn: previewPayroll,
     onError: (err: unknown) => {
-      setProcessError(getErrorMessage(err, 'Failed to preview payroll'));
+      setProcessError(getErrorMessage(err, t('payroll.process.previewFailed')));
     },
     onSuccess: () => setProcessError(''),
   });
@@ -95,7 +89,7 @@ export function PayrollProcess() {
       navigate(`/payroll/${run.id}`);
     },
     onError: (err: unknown) => {
-      setProcessError(getErrorMessage(err, 'Failed to process payroll'));
+      setProcessError(getErrorMessage(err, t('payroll.process.processFailed')));
     },
   });
 
@@ -127,7 +121,7 @@ export function PayrollProcess() {
       resetEntryForm();
     },
     onError: (err: unknown) => {
-      setEntryError(getErrorMessage(err, 'Failed to save payroll entry'));
+      setEntryError(getErrorMessage(err, t('payroll.process.saveEntryFailed')));
     },
   });
 
@@ -172,7 +166,7 @@ export function PayrollProcess() {
       employee_label: '',
       category: 'earning',
       item_type: 'monthly_allowance',
-      description: 'Monthly allowance',
+      description: t('payroll.process.defaultDescription'),
       amount: '',
       quantity: '',
       rate: '',
@@ -199,11 +193,11 @@ export function PayrollProcess() {
   const handleSaveEntry = () => {
     setEntryError('');
     if (!entryForm.employee_id || !entryForm.description || !entryForm.amount) {
-      setEntryError('Employee, description, and amount are required');
+      setEntryError(t('payroll.process.entryRequired'));
       return;
     }
     if (Number(entryForm.amount) <= 0) {
-      setEntryError('Amount must be greater than zero');
+      setEntryError(t('payroll.process.amountPositive'));
       return;
     }
     saveEntryMutation.mutate();
@@ -217,10 +211,10 @@ export function PayrollProcess() {
         onClick={() => navigate('/payroll')}
         className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700 mb-4"
       >
-        <ArrowLeft className="w-4 h-4" /> Back to Payroll
+        <ArrowLeft className="w-4 h-4" /> {t('payroll.process.backToPayroll')}
       </button>
 
-      <h1 className="text-2xl font-bold text-gray-900 mb-6">Process Monthly Payroll</h1>
+      <h1 className="text-2xl font-bold text-gray-900 mb-6">{t('payroll.process.title')}</h1>
 
       {preview && (
         <PayrollPreviewPanel
@@ -239,7 +233,7 @@ export function PayrollProcess() {
 
       <div className={`bg-white rounded-2xl shadow border border-gray-200 p-6 space-y-6 max-w-2xl ${preview ? 'hidden' : ''}`}>
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Payroll Group *</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">{t('employees.form.payrollGroup')} *</label>
           <select
             value={groupId}
             onChange={(e) => {
@@ -248,10 +242,10 @@ export function PayrollProcess() {
             }}
             className="w-full border border-gray-200 p-2 rounded-lg focus:ring-1 focus:ring-black outline-none"
           >
-            <option value="">Select payroll group</option>
+            <option value="">{t('payroll.process.selectGroup')}</option>
             {groups?.map((g) => (
               <option key={g.id} value={g.id}>
-                {g.name} (cutoff: day {g.cutoff_day}, pay: day {g.payment_day})
+                {t('payroll.process.groupOption', { name: g.name, cutoff: g.cutoff_day, pay: g.payment_day })}
               </option>
             ))}
           </select>
@@ -259,7 +253,7 @@ export function PayrollProcess() {
 
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Year *</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('payroll.process.year')} *</label>
             <select
               value={year}
               onChange={(e) => {
@@ -274,7 +268,7 @@ export function PayrollProcess() {
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Month *</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('payroll.process.month')} *</label>
             <select
               value={month}
               onChange={(e) => {
@@ -283,28 +277,26 @@ export function PayrollProcess() {
               }}
               className="w-full border border-gray-200 p-2 rounded-lg focus:ring-1 focus:ring-black outline-none"
             >
-              {MONTHS.map((m) => (
-                <option key={m.value} value={m.value}>{m.label}</option>
+              {MONTH_VALUES.map((m) => (
+                <option key={m} value={m}>{monthName(m)}</option>
               ))}
             </select>
           </div>
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Notes (optional)</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">{t('payroll.process.notesLabel')}</label>
           <textarea
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
             rows={3}
             className="w-full border border-gray-200 p-2 rounded-lg focus:ring-1 focus:ring-black outline-none"
-            placeholder="Any notes for this payroll run..."
+            placeholder={t('payroll.process.notesPlaceholder')}
           />
         </div>
 
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-800">
-          This calculates EPF, SOCSO, EIS, PCB, and all deductions for every active employee in the
-          selected payroll group. You will see every payslip and any problems before anything is
-          saved.
+          {t('payroll.process.previewNotice')}
         </div>
 
         <button
@@ -313,28 +305,28 @@ export function PayrollProcess() {
           className="flex items-center gap-2 bg-black text-white px-6 py-2.5 rounded-lg font-medium hover:bg-gray-800 disabled:opacity-50 transition-colors"
         >
           <Calculator className="w-4 h-4" />
-          {previewMutation.isPending ? 'Calculating...' : 'Review Payroll'}
+          {previewMutation.isPending ? t('payroll.process.calculating') : t('payroll.process.reviewButton')}
         </button>
       </div>
 
       <div className="bg-white rounded-2xl shadow border border-gray-200 overflow-hidden">
         <div className="flex flex-col gap-2 border-b border-gray-100 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h2 className="font-semibold text-gray-900">Monthly Allowances & Payroll Adjustments</h2>
+            <h2 className="font-semibold text-gray-900">{t('payroll.process.adjustmentsTitle')}</h2>
             <p className="text-sm text-gray-500">
-              Create employee-specific allowances for this month, or add other one-off earnings and deductions before processing payroll.
+              {t('payroll.process.adjustmentsBody')}
             </p>
           </div>
           {editingEntry && (
             <button type="button" onClick={resetEntryForm} className="btn-secondary !py-2 text-sm">
-              <X className="w-4 h-4" /> Cancel Edit
+              <X className="w-4 h-4" /> {t('payroll.process.cancelEdit')}
             </button>
           )}
         </div>
 
         <div className="grid grid-cols-1 gap-4 border-b border-gray-100 p-6 lg:grid-cols-6">
           <div className="lg:col-span-2">
-            <label className="form-label">Employee *</label>
+            <label className="form-label">{t('employees.columns.employee')} *</label>
             {/* Keyed on the entry so switching between two edits cannot leave the
                 previous employee's name in the box. */}
             <EmployeePicker
@@ -345,7 +337,7 @@ export function PayrollProcess() {
             />
           </div>
           <div>
-            <label className="form-label">Entry Kind *</label>
+            <label className="form-label">{t('payroll.process.entryKind')} *</label>
             <select
               value={selectedEntryKind}
               onChange={(e) => {
@@ -359,19 +351,19 @@ export function PayrollProcess() {
                       ? 'manual_deduction'
                       : 'other_earning',
                   description: kind === 'monthly_allowance' && !prev.description
-                    ? 'Monthly allowance'
+                    ? t('payroll.process.entryKinds.monthly_allowance')
                     : prev.description,
                 }));
               }}
               className="form-input"
             >
-              <option value="monthly_allowance">Monthly Allowance</option>
-              <option value="other_earning">Other Earning</option>
-              <option value="deduction">Deduction</option>
+              <option value="monthly_allowance">{t('payroll.process.entryKinds.monthly_allowance')}</option>
+              <option value="other_earning">{t('payroll.process.entryKinds.other_earning')}</option>
+              <option value="deduction">{t('payroll.process.entryKinds.deduction')}</option>
             </select>
           </div>
           <div>
-            <label className="form-label">Item Type *</label>
+            <label className="form-label">{t('payroll.process.itemType')} *</label>
             <input
               value={entryForm.item_type}
               onChange={(e) => setEntryForm((prev) => ({ ...prev, item_type: e.target.value }))}
@@ -381,7 +373,7 @@ export function PayrollProcess() {
             />
           </div>
           <div>
-            <label className="form-label">Amount (RM) *</label>
+            <label className="form-label">{t('payroll.process.amountRm')} *</label>
             <input
               type="number"
               min="0"
@@ -400,20 +392,20 @@ export function PayrollProcess() {
               className="btn-primary w-full"
             >
               <Plus className="w-4 h-4" />
-              {saveEntryMutation.isPending ? 'Saving...' : editingEntry ? 'Update' : 'Add'}
+              {saveEntryMutation.isPending ? t('common.saving') : editingEntry ? t('common.update') : t('common.add')}
             </button>
           </div>
           <div className="lg:col-span-3">
-            <label className="form-label">Description *</label>
+            <label className="form-label">{t('payroll.process.description')} *</label>
             <input
               value={entryForm.description}
               onChange={(e) => setEntryForm((prev) => ({ ...prev, description: e.target.value }))}
               className="form-input"
-              placeholder="e.g., Performance bonus"
+              placeholder={t('payroll.process.descriptionPlaceholder')}
             />
           </div>
           <div>
-            <label className="form-label">Quantity</label>
+            <label className="form-label">{t('payroll.process.quantity')}</label>
             <input
               type="number"
               min="0"
@@ -424,7 +416,7 @@ export function PayrollProcess() {
             />
           </div>
           <div>
-            <label className="form-label">Rate (RM)</label>
+            <label className="form-label">{t('payroll.process.rateRm')}</label>
             <input
               type="number"
               min="0"
@@ -441,7 +433,7 @@ export function PayrollProcess() {
               onChange={(e) => setEntryForm((prev) => ({ ...prev, is_taxable: e.target.checked }))}
               className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-900"
             />
-            Taxable
+            {t('payroll.process.taxable')}
           </label>
           {entryError && (
             <div className="lg:col-span-6 rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -454,19 +446,19 @@ export function PayrollProcess() {
           <table className="w-full">
             <thead className="bg-gray-50 text-left">
               <tr>
-                <th className="px-6 py-3 text-xs font-medium uppercase tracking-wide text-gray-500">Employee</th>
-                <th className="px-6 py-3 text-xs font-medium uppercase tracking-wide text-gray-500">Type</th>
-                <th className="px-6 py-3 text-xs font-medium uppercase tracking-wide text-gray-500">Description</th>
-                <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Amount</th>
-                <th className="px-6 py-3 text-center text-xs font-medium uppercase tracking-wide text-gray-500">Taxable</th>
-                <th className="px-6 py-3 text-center text-xs font-medium uppercase tracking-wide text-gray-500">Actions</th>
+                <th className="px-6 py-3 text-xs font-medium uppercase tracking-wide text-gray-500">{t('employees.columns.employee')}</th>
+                <th className="px-6 py-3 text-xs font-medium uppercase tracking-wide text-gray-500">{t('payroll.process.colType')}</th>
+                <th className="px-6 py-3 text-xs font-medium uppercase tracking-wide text-gray-500">{t('payroll.process.description')}</th>
+                <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">{t('common.amount')}</th>
+                <th className="px-6 py-3 text-center text-xs font-medium uppercase tracking-wide text-gray-500">{t('payroll.process.taxable')}</th>
+                <th className="px-6 py-3 text-center text-xs font-medium uppercase tracking-wide text-gray-500">{t('common.actions')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {entries.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-6 py-10 text-center text-sm text-gray-400">
-                    No adjustments for {MONTHS.find((item) => item.value === month)?.label} {year}.
+                    {t('payroll.process.noAdjustments', { period: formatPeriod(year, month) })}
                   </td>
                 </tr>
               ) : entries.map((entry) => (
@@ -477,31 +469,31 @@ export function PayrollProcess() {
                   </td>
                   <td className="px-6 py-4 text-sm">
                     <span className={`badge ${entry.category === 'earning' ? 'badge-approved' : 'badge-rejected'}`}>
-                      {getEntryKindLabel(entry)}
+                      {getEntryKindLabel(entry, t)}
                     </span>
                     <div className="mt-1 text-xs text-gray-400">{entry.item_type}</div>
                   </td>
                   <td className="px-6 py-4 text-sm text-gray-600">{entry.description}</td>
                   <td className="px-6 py-4 text-right text-sm font-semibold">{formatMYR(entry.amount)}</td>
-                  <td className="px-6 py-4 text-center text-sm text-gray-500">{entry.is_taxable ? 'Yes' : 'No'}</td>
+                  <td className="px-6 py-4 text-center text-sm text-gray-500">{entry.is_taxable ? t('common.yes') : t('common.no')}</td>
                   <td className="px-6 py-4 text-center">
                     <div className="flex items-center justify-center gap-2">
                       <button
                         type="button"
                         onClick={() => startEditEntry(entry)}
                         className="rounded-lg p-1.5 text-gray-500 hover:bg-gray-100 hover:text-black"
-                        title="Edit"
+                        title={t('common.edit')}
                       >
                         <Pencil className="w-4 h-4" />
                       </button>
                       <button
                         type="button"
                         onClick={() => {
-                          if (confirm('Delete this payroll adjustment?')) deleteEntryMutation.mutate(entry.id);
+                          if (confirm(t('payroll.process.deleteEntryConfirm'))) deleteEntryMutation.mutate(entry.id);
                         }}
                         disabled={deleteEntryMutation.isPending}
                         className="rounded-lg p-1.5 text-red-500 hover:bg-red-50 hover:text-red-700 disabled:opacity-50"
-                        title="Delete"
+                        title={t('common.delete')}
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>

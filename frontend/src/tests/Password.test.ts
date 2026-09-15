@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PASSWORD_MIN_LENGTH, PASSWORD_POLICY_HINT, validatePassword } from '@/lib/password';
+import { PASSWORD_MIN_LENGTH, passwordPolicyHint, validatePassword } from '@/lib/password';
 
 describe('password policy (mirrors backend validate_password_strength)', () => {
   it('accepts a compliant password', () => {
@@ -29,6 +29,6 @@ describe('password policy (mirrors backend validate_password_strength)', () => {
    */
   it('states the real minimum length in the hint shown to users', () => {
     expect(PASSWORD_MIN_LENGTH).toBe(10);
-    expect(PASSWORD_POLICY_HINT).toContain('10 characters');
+    expect(passwordPolicyHint()).toContain('10 characters');
   });
 });

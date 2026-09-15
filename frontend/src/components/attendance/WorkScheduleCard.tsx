@@ -1,8 +1,10 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Clock, CheckCircle2, AlertCircle } from 'lucide-react';
 import { getDefaultSchedule, upsertDefaultSchedule } from '@/api/workSchedule';
 import { TimeSelector } from '@/components/ui/TimeSelector';
+import { Trans } from 'react-i18next';
 
 const TIMEZONES = [
   'Asia/Kuala_Lumpur',
@@ -28,6 +30,7 @@ function timeToHHMM(t: string | undefined): string {
 }
 
 export function WorkScheduleCard() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [toast, setToast] = useState('');
   const [toastType, setToastType] = useState<'success' | 'error'>('success');
@@ -67,12 +70,12 @@ export function WorkScheduleCard() {
     }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['work-schedule-default'] });
-      setToast('Work schedule saved');
+      setToast(t('attendance.schedule.saved'));
       setToastType('success');
       setTimeout(() => setToast(''), 3000);
     },
     onError: () => {
-      setToast('Failed to save schedule');
+      setToast(t('attendance.schedule.saveFailed'));
       setToastType('error');
       setTimeout(() => setToast(''), 3000);
     },
@@ -91,10 +94,10 @@ export function WorkScheduleCard() {
       <div className="p-5 sm:p-6 border-b border-gray-100">
         <div className="flex items-center gap-2 mb-1">
           <Clock className="w-5 h-5 text-gray-700" />
-          <h2 className="font-semibold text-gray-900">Work Schedule</h2>
+          <h2 className="font-semibold text-gray-900">{t('attendance.schedule.title')}</h2>
         </div>
         <p className="text-sm text-gray-500">
-          Set work hours and grace period. Employees checking in after start time + grace will be marked <strong>Late</strong>.
+          <Trans i18nKey="attendance.schedule.body" components={{ strong: <strong /> }} />
         </p>
       </div>
 
@@ -103,13 +106,13 @@ export function WorkScheduleCard() {
             side left no room for the values. */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <TimeSelector
-            label="Start Time"
+            label={t('attendance.schedule.startTime')}
             value={form.start_time}
             onChange={(value) => setForm(p => ({ ...p, start_time: value }))}
             minuteStep={15}
           />
           <TimeSelector
-            label="End Time"
+            label={t('attendance.schedule.endTime')}
             value={form.end_time}
             onChange={(value) => setForm(p => ({ ...p, end_time: value }))}
             minuteStep={15}
@@ -119,7 +122,7 @@ export function WorkScheduleCard() {
         {/* Grace period */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            Grace Period (minutes)
+            {t('attendance.schedule.gracePeriod')}
           </label>
           <input
             type="number"
@@ -130,13 +133,13 @@ export function WorkScheduleCard() {
             className="w-32 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-1 focus:ring-black outline-none"
           />
           <p className="text-xs text-gray-400 mt-1">
-            Employees arriving within {form.grace_minutes} minutes after {form.start_time} are still marked Present.
+            {t('attendance.schedule.graceHint', { minutes: form.grace_minutes, start: form.start_time })}
           </p>
         </div>
 
         {/* Timezone */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Timezone</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">{t('attendance.schedule.timezone')}</label>
           <select
             value={form.timezone}
             onChange={e => setForm(p => ({ ...p, timezone: e.target.value }))}
@@ -166,7 +169,7 @@ export function WorkScheduleCard() {
           disabled={mutation.isPending}
           className="shrink-0 whitespace-nowrap bg-black text-white px-5 py-2 rounded-xl text-sm font-medium hover:bg-gray-800 transition-colors disabled:opacity-50"
         >
-          {mutation.isPending ? 'Saving...' : 'Save Schedule'}
+          {mutation.isPending ? t('common.saving') : t('attendance.schedule.save')}
         </button>
       </div>
     </div>

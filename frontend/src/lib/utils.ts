@@ -1,27 +1,21 @@
 import { type ClassValue, clsx } from 'clsx';
+import i18n from '@/i18n';
+import { SERVER_ERROR_KEYS, SERVER_ERROR_PATTERNS } from '@/i18n/serverErrorMap';
+import { formatDate as formatDateLocalized, formatMYR as formatMYRLocalized, formatRelativeTime as formatRelativeTimeLocalized } from '@/lib/format';
 
 // Simple cn utility without tailwind-merge for now
 export function cn(...inputs: ClassValue[]) {
   return clsx(inputs);
 }
 
-/** Format sen (cents) to MYR display: "RM 1,234.56" */
+/** Format sen (cents) to MYR display: "RM 1,234.56" (locale-aware digits). */
 export function formatMYR(sen: number): string {
-  const ringgit = sen / 100;
-  return `RM ${ringgit.toLocaleString('en-MY', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
+  return formatMYRLocalized(sen);
 }
 
-/** Format date to DD/MM/YYYY */
+/** Format date to the active locale's short form (en: DD/MM/YYYY). */
 export function formatDate(date: string | Date): string {
-  const d = new Date(date);
-  return d.toLocaleDateString('en-GB', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-  });
+  return formatDateLocalized(date);
 }
 /**
  * Format an instant for a `datetime-local` input, which expects local wall time.
@@ -70,25 +64,44 @@ export function isImageUrl(url: string): boolean {
   return /\.(jpg|jpeg|png|gif|webp|bmp|svg)(\?|$)/i.test(url);
 }
 
-/** Extract error message from Axios-style or standard Error objects */
-export function getErrorMessage(err: unknown, fallback = 'Action failed'): string {
-  if (typeof err === 'object' && err !== null && 'response' in err) {
-    const axiosErr = err as { response: { data?: { error?: string } } };
-    if (axiosErr.response?.data?.error) return axiosErr.response.data.error;
+/**
+ * Extract error message from Axios-style or standard Error objects.
+ *
+ * A `response.data.error` string emitted by the backend is first looked up in
+ * SERVER_ERROR_KEYS (exact English literal → i18n key) so stable server
+ * messages render in the active locale; unrecognized server text passes
+ * through verbatim rather than being replaced by a vaguer local fallback.
+ * The `fallback` argument should already be a translated string from `t()`.
+ */
+/**
+ * Translate a raw server-emitted message through SERVER_ERROR_KEYS /
+ * SERVER_ERROR_PATTERNS. Unknown text passes through verbatim.
+ */
+export function translateServerMessage(msg: string): string {
+  const key = SERVER_ERROR_KEYS[msg];
+  if (key) return i18n.t(key);
+  for (const { re, key: pKey, args } of SERVER_ERROR_PATTERNS) {
+    const m = msg.match(re);
+    if (m) {
+      const vars = Object.fromEntries(args.map((a, i) => [a, m[i + 1]]));
+      return i18n.t(pKey, vars);
+    }
   }
-  if (err instanceof Error) return err.message;
-  return fallback;
+  return msg;
 }
 
-/** "just now", "5 min ago", "3 hr ago", "2 days ago", then the absolute date. */
+export function getErrorMessage(err: unknown, fallback?: string): string {
+  const resolvedFallback = fallback ?? i18n.t('errors.actionFailed');
+  if (typeof err === 'object' && err !== null && 'response' in err) {
+    const axiosErr = err as { response: { data?: { error?: string } } };
+    const serverMsg = axiosErr.response?.data?.error;
+    if (serverMsg) return translateServerMessage(serverMsg);
+  }
+  if (err instanceof Error) return err.message;
+  return resolvedFallback;
+}
+
+/** "just now" / localized relative time via Intl.RelativeTimeFormat. */
 export function formatRelativeTime(date: string | Date): string {
-  const seconds = Math.max(0, Math.floor((Date.now() - new Date(date).getTime()) / 1000));
-  if (seconds < 60) return 'just now';
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes} min ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours} hr ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${days} day${days === 1 ? '' : 's'} ago`;
-  return formatDate(date);
+  return formatRelativeTimeLocalized(date);
 }

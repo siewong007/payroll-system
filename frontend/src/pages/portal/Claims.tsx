@@ -1,19 +1,24 @@
 import { useEffect, useState, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, ArrowLeft, Send, Trash2, Receipt, Upload, X, FileText, Image, Paperclip, ExternalLink } from 'lucide-react';
 import { listMyClaims, createClaim, cancelClaim, deleteClaim, submitClaim, uploadFile } from '@/api/claims';
 import { AttachmentLink } from '@/components/ui/AttachmentPreview';
 import { runBulk, summarizeBulkFailure } from '@/lib/bulk';
 import { formatMYR, formatDate, getErrorMessage, todayLocalDate } from '@/lib/utils';
+import i18n from '@/i18n';
+
+const claimCategoryLabel = (category: string) =>
+  i18n.t(`enums.claimCategory.${category}`, { defaultValue: category });
 
 const STATUS_TABS = [
-  { key: null, label: 'All' },
-  { key: 'draft', label: 'Draft' },
-  { key: 'pending', label: 'Pending' },
-  { key: 'approved', label: 'Approved' },
-  { key: 'rejected', label: 'Rejected' },
-  { key: 'cancelled', label: 'Cancelled' },
-  { key: 'processed', label: 'Processed' },
+  { key: null, labelKey: 'common.all' },
+  { key: 'draft', labelKey: 'enums.requestStatus.draft' },
+  { key: 'pending', labelKey: 'enums.requestStatus.pending' },
+  { key: 'approved', labelKey: 'enums.requestStatus.approved' },
+  { key: 'rejected', labelKey: 'enums.requestStatus.rejected' },
+  { key: 'cancelled', labelKey: 'enums.requestStatus.cancelled' },
+  { key: 'processed', labelKey: 'enums.requestStatus.processed' },
 ] as const;
 
 const CATEGORIES = [
@@ -22,6 +27,7 @@ const CATEGORIES = [
 ];
 
 export function Claims() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const selectAllRef = useRef<HTMLInputElement>(null);
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
@@ -59,7 +65,7 @@ export function Claims() {
       setSelectedClaimIds(outcome.failed.map((failure) => failure.id));
       setBulkError(summarizeBulkFailure(outcome, 'cancelled'));
     },
-    onError: (err: unknown) => setBulkError(getErrorMessage(err, 'Failed to cancel the selected claims')),
+    onError: (err: unknown) => setBulkError(getErrorMessage(err, t('portal.claims.bulkCancelFailed'))),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ['my-claims'] }),
   });
 
@@ -69,7 +75,7 @@ export function Claims() {
       setSelectedClaimIds(outcome.failed.map((failure) => failure.id));
       setBulkError(summarizeBulkFailure(outcome, 'deleted'));
     },
-    onError: (err: unknown) => setBulkError(getErrorMessage(err, 'Failed to delete the selected claims')),
+    onError: (err: unknown) => setBulkError(getErrorMessage(err, t('portal.claims.bulkDeleteFailed'))),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ['my-claims'] }),
   });
 
@@ -78,7 +84,11 @@ export function Claims() {
       draft: 'badge-draft', pending: 'badge-pending', approved: 'badge-approved',
       rejected: 'badge-rejected', processed: 'badge-processed', cancelled: 'badge-cancelled',
     };
-    return <span className={`badge ${cls[status] || 'badge-draft'}`}>{status}</span>;
+    return (
+      <span className={`badge ${cls[status] || 'badge-draft'}`}>
+        {t(`enums.requestStatus.${status}`, { defaultValue: status })}
+      </span>
+    );
   };
 
   const statusCount = (key: string) => claims?.filter((c) => c.status === key).length ?? 0;
@@ -130,26 +140,26 @@ export function Claims() {
       {/* Page Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="page-header">
-          <h1 className="page-title">Claims</h1>
-          <p className="page-subtitle">Submit and track your expense claims</p>
+          <h1 className="page-title">{t('portal.claims.title')}</h1>
+          <p className="page-subtitle">{t('portal.claims.subtitle')}</p>
         </div>
         <button onClick={() => setShowCreate(true)} className="btn-primary w-full sm:w-auto">
-          <Plus className="w-4 h-4" /> Add Expense
+          <Plus className="w-4 h-4" /> {t('portal.claims.addExpense')}
         </button>
       </div>
 
       {/* Status Filter Tabs */}
       <div className="flex gap-2 flex-wrap">
-        {STATUS_TABS.map((t) => {
-          const isActive = statusFilter === t.key;
-          const count = t.key ? statusCount(t.key) : claims?.length ?? 0;
+        {STATUS_TABS.map((tab) => {
+          const isActive = statusFilter === tab.key;
+          const count = tab.key ? statusCount(tab.key) : claims?.length ?? 0;
           return (
             <button
-              key={t.key ?? 'all'}
+              key={tab.key ?? 'all'}
               onClick={() => {
                 setSelectedClaimIds([]);
                 setBulkError('');
-                setStatusFilter(t.key);
+                setStatusFilter(tab.key);
               }}
               className={`px-4 py-1.5 rounded-full text-sm font-medium transition-all-fast ${
                 isActive
@@ -157,7 +167,7 @@ export function Claims() {
                   : 'bg-white text-gray-500 border border-gray-200 hover:border-gray-300 hover:text-gray-700'
               }`}
             >
-              {t.label} {count > 0 && <span className="ml-1 opacity-70">{count}</span>}
+              {t(tab.labelKey)} {count > 0 && <span className="ml-1 opacity-70">{count}</span>}
             </button>
           );
         })}
@@ -168,19 +178,19 @@ export function Claims() {
         {!claims || claims.length === 0 ? (
           <div className="text-center py-16 text-gray-400">
             <Receipt className="w-10 h-10 mx-auto mb-3 opacity-40" />
-            <p>No expense claims found</p>
+            <p>{t('portal.claims.empty')}</p>
           </div>
         ) : (
           <>
             {selectedClaimIds.length > 0 && (
               <div className="border-b border-gray-100 bg-gray-50">
                 <div className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-                  <span className="text-sm font-medium text-gray-700">{selectedClaimIds.length} selected</span>
+                  <span className="text-sm font-medium text-gray-700">{t('common.selected', { count: selectedClaimIds.length })}</span>
                   <div className="flex flex-wrap gap-2">
                     <button
                       type="button"
                       onClick={() => {
-                        if (confirm(`Cancel ${selectedCancelableClaimIds.length} selected claim(s)?`)) {
+                        if (confirm(t('portal.claims.bulkCancelConfirm', { count: selectedCancelableClaimIds.length }))) {
                           setBulkError('');
                           bulkCancelMutation.mutate(selectedCancelableClaimIds);
                         }
@@ -189,12 +199,12 @@ export function Claims() {
                       className="btn-secondary !py-2 text-sm disabled:opacity-50"
                     >
                       <X className="w-4 h-4" />
-                      {bulkCancelMutation.isPending ? 'Cancelling...' : 'Cancel Selected'}
+                      {bulkCancelMutation.isPending ? t('common.cancelling') : t('common.cancelSelected')}
                     </button>
                     <button
                       type="button"
                       onClick={() => {
-                        if (confirm(`Delete ${selectedDeletableClaimIds.length} selected draft/cancelled claim(s)?`)) {
+                        if (confirm(t('portal.claims.bulkDeleteConfirm', { count: selectedDeletableClaimIds.length }))) {
                           setBulkError('');
                           bulkDeleteMutation.mutate(selectedDeletableClaimIds);
                         }
@@ -203,7 +213,7 @@ export function Claims() {
                       className="btn-secondary !py-2 text-sm text-red-600 hover:!bg-red-50 disabled:opacity-50"
                     >
                       <Trash2 className="w-4 h-4" />
-                      {bulkDeleteMutation.isPending ? 'Deleting...' : 'Delete Selected'}
+                      {bulkDeleteMutation.isPending ? t('common.deleting') : t('common.deleteSelected')}
                     </button>
                   </div>
                 </div>
@@ -222,16 +232,16 @@ export function Claims() {
                       checked={allDisplayedSelected}
                       onChange={toggleAllDisplayedClaims}
                       className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-900"
-                      aria-label="Select all claims"
+                      aria-label={t('portal.claims.selectAll')}
                     />
                   </th>
-                  <th>Expense / Transaction</th>
-                  <th className="text-right">Amount</th>
-                  <th>Category</th>
-                  <th>Date</th>
-                  <th>Receipt</th>
-                  <th className="text-center">Status</th>
-                  <th className="text-center">Actions</th>
+                  <th>{t('portal.claims.cols.expense')}</th>
+                  <th className="text-right">{t('common.amount')}</th>
+                  <th>{t('portal.claims.cols.category')}</th>
+                  <th>{t('common.date')}</th>
+                  <th>{t('portal.claims.cols.receipt')}</th>
+                  <th className="text-center">{t('common.status')}</th>
+                  <th className="text-center">{t('common.actions')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -243,7 +253,7 @@ export function Claims() {
                         checked={selectedClaimIds.includes(c.id)}
                         onChange={() => toggleClaimSelection(c.id)}
                         className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-900"
-                        aria-label={`Select ${c.title}`}
+                        aria-label={t('portal.claims.selectAria', { title: c.title })}
                       />
                     </td>
                     <td>
@@ -251,20 +261,20 @@ export function Claims() {
                     {c.description && <p className="text-xs text-gray-400 mt-0.5 truncate max-w-xs">{c.description}</p>}
                     </td>
                     <td className="text-right"><span className="font-bold text-gray-900">{formatMYR(c.amount)}</span></td>
-                    <td className="text-gray-500">{c.category || '—'}</td>
+                    <td className="text-gray-500">{c.category ? claimCategoryLabel(c.category) : '—'}</td>
                     <td className="text-gray-500">{formatDate(c.expense_date)}</td>
                     <td>
                     {c.receipt_url ? (
                       c.receipt_url.startsWith('blob:') ? (
                         <span className="inline-flex items-center gap-1 text-red-400 text-sm">
                           <Paperclip className="w-3 h-3" />
-                          <span className="truncate max-w-[100px]">Unavailable</span>
+                          <span className="truncate max-w-[100px]">{t('common.unavailable')}</span>
                         </span>
                       ) : (
                         <AttachmentLink url={c.receipt_url}
                           className="inline-flex items-center gap-1 text-gray-900 hover:text-black text-sm">
                           <Paperclip className="w-3 h-3" />
-                          <span className="truncate max-w-[100px]">{c.receipt_file_name || 'View'}</span>
+                          <span className="truncate max-w-[100px]">{c.receipt_file_name || t('common.view')}</span>
                           <ExternalLink className="w-3 h-3" />
                         </AttachmentLink>
                       )
@@ -275,18 +285,18 @@ export function Claims() {
                     <div className="flex items-center justify-center gap-2">
                       {c.status === 'draft' && (
                         <>
-                        <button onClick={() => submitMutation.mutate(c.id)} title="Submit for approval" className="p-1.5 text-gray-900 hover:text-black hover:bg-gray-100 rounded-lg transition-all-fast">
+                        <button onClick={() => submitMutation.mutate(c.id)} title={t('portal.claims.submitForApproval')} className="p-1.5 text-gray-900 hover:text-black hover:bg-gray-100 rounded-lg transition-all-fast">
                           <Send className="w-4 h-4" />
                         </button>
-                        <button onClick={() => { if (confirm('Delete this claim?')) deleteMutation.mutate(c.id); }} title="Delete" className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-all-fast">
+                        <button onClick={() => { if (confirm(t('portal.claims.deleteConfirm'))) deleteMutation.mutate(c.id); }} title={t('common.delete')} className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-all-fast">
                           <Trash2 className="w-4 h-4" />
                         </button>
                         </>
                       )}
                       {canCancel(c.status) && (
                         <button
-                          onClick={() => { if (confirm('Cancel this claim?')) cancelMutation.mutate(c.id); }}
-                          title="Cancel"
+                          onClick={() => { if (confirm(t('portal.claims.cancelConfirm'))) cancelMutation.mutate(c.id); }}
+                          title={t('common.cancel')}
                           className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all-fast"
                         >
                           <X className="w-4 h-4" />
@@ -294,8 +304,8 @@ export function Claims() {
                       )}
                       {c.status === 'cancelled' && (
                         <button
-                          onClick={() => { if (confirm('Permanently delete this cancelled claim?')) deleteMutation.mutate(c.id); }}
-                          title="Delete permanently"
+                          onClick={() => { if (confirm(t('portal.claims.deletePermanentlyConfirm'))) deleteMutation.mutate(c.id); }}
+                          title={t('common.deletePermanently')}
                           className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-all-fast"
                         >
                           <Trash2 className="w-4 h-4" />
@@ -316,6 +326,7 @@ export function Claims() {
 
 /* ───────────── Full-page Create Claim Form ───────────── */
 function CreateClaimForm({ onClose }: { onClose: () => void }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [form, setForm] = useState({
@@ -334,7 +345,7 @@ function CreateClaimForm({ onClose }: { onClose: () => void }) {
       onClose();
     },
     onError: (err: unknown) => {
-      setError(getErrorMessage(err, 'Failed to create claim'));
+      setError(getErrorMessage(err, t('portal.claims.createFailed')));
     },
   });
 
@@ -344,7 +355,7 @@ function CreateClaimForm({ onClose }: { onClose: () => void }) {
 
     // Client-side size check (10 MB)
     if (file.size > 10 * 1024 * 1024) {
-      setError('File too large. Maximum size is 10 MB.');
+      setError(t('portal.claims.fileTooLarge'));
       return;
     }
 
@@ -364,7 +375,7 @@ function CreateClaimForm({ onClose }: { onClose: () => void }) {
       const result = await uploadFile(file);
       setForm((prev) => ({ ...prev, receipt_url: result.url, receipt_file_name: result.file_name }));
     } catch (err: unknown) {
-      setError(getErrorMessage(err, 'Failed to upload file'));
+      setError(getErrorMessage(err, t('portal.claims.uploadFailed')));
       setUploadPreview(null);
     } finally {
       setUploading(false);
@@ -379,11 +390,11 @@ function CreateClaimForm({ onClose }: { onClose: () => void }) {
 
   const handleSubmit = () => {
     if (!form.title || !form.amount || !form.expense_date) {
-      setError('Title, amount, and expense date are required');
+      setError(t('portal.claims.requiredFields'));
       return;
     }
     if (!form.receipt_url) {
-      setError('Please upload a receipt before submitting');
+      setError(t('portal.claims.receiptRequired'));
       return;
     }
     mutation.mutate({
@@ -405,8 +416,8 @@ function CreateClaimForm({ onClose }: { onClose: () => void }) {
           <ArrowLeft className="w-4 h-4" />
         </button>
         <div className="page-header">
-          <h1 className="page-title">Add Expense Claim</h1>
-          <p className="page-subtitle">Submit a new expense for reimbursement</p>
+          <h1 className="page-title">{t('portal.claims.createTitle')}</h1>
+          <p className="page-subtitle">{t('portal.claims.createSubtitle')}</p>
         </div>
       </div>
 
@@ -417,26 +428,26 @@ function CreateClaimForm({ onClose }: { onClose: () => void }) {
         <div className="p-6 lg:p-8">
           <div className="section-header">
             <span className="section-number">1</span>
-            <span className="section-title">Expense Details</span>
+            <span className="section-title">{t('portal.claims.sections.details')}</span>
           </div>
           <div className="space-y-5 max-w-2xl">
             <div>
-              <label className="form-label">Title *</label>
+              <label className="form-label">{t('common.title')} *</label>
               <input
                 value={form.title}
                 onChange={(e) => setForm((prev) => ({ ...prev, title: e.target.value }))}
                 className="form-input"
-                placeholder="e.g., Medical Claim - Clinic Visit"
+                placeholder={t('portal.claims.titlePlaceholder')}
               />
             </div>
             <div>
-              <label className="form-label">Description</label>
+              <label className="form-label">{t('common.description')}</label>
               <textarea
                 value={form.description}
                 onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))}
                 rows={2}
                 className="form-input"
-                placeholder="Add details about this expense..."
+                placeholder={t('portal.claims.descriptionPlaceholder')}
               />
             </div>
           </div>
@@ -446,11 +457,11 @@ function CreateClaimForm({ onClose }: { onClose: () => void }) {
         <div className="p-6 lg:p-8">
           <div className="section-header">
             <span className="section-number">2</span>
-            <span className="section-title">Amount & Category</span>
+            <span className="section-title">{t('portal.claims.sections.amount')}</span>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-2xl">
             <div>
-              <label className="form-label">Amount (RM) *</label>
+              <label className="form-label">{t('portal.claims.amountMyr')} *</label>
               <input
                 type="number" step="0.01" min="0"
                 value={form.amount}
@@ -459,18 +470,18 @@ function CreateClaimForm({ onClose }: { onClose: () => void }) {
               />
             </div>
             <div>
-              <label className="form-label">Category</label>
+              <label className="form-label">{t('portal.claims.cols.category')}</label>
               <select
                 value={form.category}
                 onChange={(e) => setForm((prev) => ({ ...prev, category: e.target.value }))}
                 className="form-input"
               >
-                <option value="">Select...</option>
-                {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                <option value="">{t('common.select')}</option>
+                {CATEGORIES.map((c) => <option key={c} value={c}>{claimCategoryLabel(c)}</option>)}
               </select>
             </div>
             <div>
-              <label className="form-label">Expense Date *</label>
+              <label className="form-label">{t('portal.claims.expenseDate')} *</label>
               <input
                 type="date"
                 value={form.expense_date}
@@ -485,10 +496,10 @@ function CreateClaimForm({ onClose }: { onClose: () => void }) {
         <div className="p-6 lg:p-8">
           <div className="section-header">
             <span className="section-number">3</span>
-            <span className="section-title">Receipt / Proof *</span>
+            <span className="section-title">{t('portal.claims.sections.receipt')} *</span>
           </div>
           <div className="max-w-2xl">
-            <label className="form-label">Upload Receipt *</label>
+            <label className="form-label">{t('portal.claims.uploadReceipt')} *</label>
             <input
               ref={fileInputRef}
               type="file"
@@ -511,14 +522,14 @@ function CreateClaimForm({ onClose }: { onClose: () => void }) {
                 {uploading ? (
                   <>
                     <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 mb-3" />
-                    <p className="text-sm font-medium text-gray-700">Uploading...</p>
+                    <p className="text-sm font-medium text-gray-700">{t('common.uploading')}</p>
                   </>
                 ) : (
                   <>
                     <Upload className="w-8 h-8 text-gray-400 mb-3" />
-                    <p className="text-sm font-medium text-gray-700">Click to upload receipt</p>
+                    <p className="text-sm font-medium text-gray-700">{t('portal.claims.clickUpload')}</p>
                     <p className="text-xs text-gray-400 mt-1">
-                      JPG, PNG, PDF, DOC, XLS up to 10 MB
+                      {t('portal.claims.uploadHint')}
                     </p>
                   </>
                 )}
@@ -531,7 +542,7 @@ function CreateClaimForm({ onClose }: { onClose: () => void }) {
                   {uploadPreview ? (
                     <img
                       src={uploadPreview}
-                      alt="Receipt preview"
+                      alt={t('portal.claims.receiptPreview')}
                       className="w-20 h-20 object-cover rounded-lg border border-gray-200"
                     />
                   ) : (
@@ -550,14 +561,14 @@ function CreateClaimForm({ onClose }: { onClose: () => void }) {
                     <p className="text-sm font-medium text-gray-900 truncate">
                       {form.receipt_file_name}
                     </p>
-                    <p className="text-xs text-green-600 mt-1">Uploaded successfully</p>
+                    <p className="text-xs text-green-600 mt-1">{t('portal.claims.uploadedOk')}</p>
                   </div>
 
                   <button
                     type="button"
                     onClick={handleRemoveFile}
                     className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                    title="Remove file"
+                    title={t('common.removeFile')}
                   >
                     <X className="w-4 h-4" />
                   </button>
@@ -570,9 +581,9 @@ function CreateClaimForm({ onClose }: { onClose: () => void }) {
 
       {/* Actions */}
       <div className="flex justify-end gap-3">
-        <button onClick={onClose} className="btn-secondary">Cancel</button>
+        <button onClick={onClose} className="btn-secondary">{t('common.cancel')}</button>
         <button onClick={handleSubmit} disabled={mutation.isPending || uploading} className="btn-primary">
-          {mutation.isPending ? 'Creating...' : 'Create Claim'}
+          {mutation.isPending ? t('common.creating') : t('portal.claims.createButton')}
         </button>
       </div>
     </div>

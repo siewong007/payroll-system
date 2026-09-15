@@ -4,10 +4,12 @@ import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useAuth } from '@/context/AuthContext';
+import { useTranslation } from 'react-i18next';
 import { getMyCompanies } from '@/api/admin';
 
 export function CompanySwitcher() {
   const { user, switchCompany } = useAuth();
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [switching, setSwitching] = useState(false);
@@ -58,7 +60,7 @@ export function CompanySwitcher() {
       >
         <Building2 className="w-4 h-4 text-indigo-300 shrink-0" />
         <span className="text-sm font-medium text-slate-200 truncate flex-1">
-          {switching ? 'Switching...' : current?.name || 'Select Company'}
+          {switching ? t('common.switching') : current?.name || t('common.selectCompany')}
         </span>
         <ChevronDown
           className={`w-4 h-4 text-slate-400 transition-transform duration-200 ${open ? 'rotate-180' : ''}`}

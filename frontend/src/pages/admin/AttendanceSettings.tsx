@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Trans, useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { QrCode, Fingerprint, Shield, CheckCircle2, AlertCircle, Info, Building2 } from 'lucide-react';
 import { getPlatformAttendanceMethod, setPlatformAttendanceMethod } from '@/api/attendance';
@@ -7,6 +8,7 @@ import { hasAnyRole } from '@/lib/roles';
 import { Navigate } from 'react-router';
 
 export function AttendanceSettings() {
+  const { t } = useTranslation();
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const [saved, setSaved] = useState(false);
@@ -31,7 +33,7 @@ export function AttendanceSettings() {
       setTimeout(() => setSaved(false), 3000);
     },
     onError: () => {
-      setError('Failed to save settings. Please try again.');
+      setError(t('attendanceSettings.saveFailed'));
     },
   });
 
@@ -62,8 +64,8 @@ export function AttendanceSettings() {
           <Shield className="w-5 h-5 text-white" />
         </div>
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Attendance Settings</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Control how all companies record attendance</p>
+          <h1 className="text-2xl font-bold text-gray-900">{t('attendanceSettings.title')}</h1>
+          <p className="text-sm text-gray-500 mt-0.5">{t('attendanceSettings.subtitle')}</p>
         </div>
       </div>
 
@@ -72,9 +74,9 @@ export function AttendanceSettings() {
         {/* Method Selection */}
         <div className="bg-white rounded-2xl shadow divide-y divide-gray-100">
           <div className="p-6">
-            <h2 className="font-semibold text-gray-900 mb-1">Global Attendance Method</h2>
+            <h2 className="font-semibold text-gray-900 mb-1">{t('attendanceSettings.methodTitle')}</h2>
             <p className="text-sm text-gray-500 mb-5">
-              Set the default check-in method for all companies. This applies to every company unless you allow per-company overrides.
+              {t('attendanceSettings.methodDescription')}
             </p>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -93,14 +95,14 @@ export function AttendanceSettings() {
                   <QrCode className={`w-6 h-6 ${method === 'qr_code' ? 'text-violet-600' : 'text-gray-400'}`} />
                 </div>
                 <div>
-                  <p className="font-semibold text-gray-900">QR Code</p>
+                  <p className="font-semibold text-gray-900">{t('attendanceSettings.qrTitle')}</p>
                   <p className="text-xs text-gray-500 mt-0.5">
-                    Admin displays a rotating QR on the kiosk. Employees scan with their phone.
+                    {t('attendanceSettings.qrDescription')}
                   </p>
                 </div>
                 {method === 'qr_code' && (
                   <div className="flex items-center gap-1.5 text-violet-600 text-xs font-medium">
-                    <CheckCircle2 className="w-3.5 h-3.5" /> Selected
+                    <CheckCircle2 className="w-3.5 h-3.5" /> {t('common.selectedState')}
                   </div>
                 )}
               </button>
@@ -120,9 +122,9 @@ export function AttendanceSettings() {
                   <Fingerprint className={`w-6 h-6 ${method === 'face_id' ? 'text-sky-600' : 'text-gray-400'}`} />
                 </div>
                 <div>
-                  <p className="font-semibold text-gray-900">Face ID / Passkey</p>
+                  <p className="font-semibold text-gray-900">{t('attendanceSettings.faceIdTitle')}</p>
                   <p className="text-xs text-gray-500 mt-0.5">
-                    Employees use biometric (Face ID, Touch ID, Windows Hello) on their device.
+                    {t('attendanceSettings.faceIdDescription')}
                   </p>
                 </div>
                 {method === 'face_id' && (
@@ -138,8 +140,7 @@ export function AttendanceSettings() {
               <div className="mt-4 flex items-start gap-2.5 bg-sky-50 border border-sky-100 rounded-xl p-4 text-sm text-sky-700">
                 <Info className="w-4 h-4 shrink-0 mt-0.5" />
                 <span>
-                  Employees must have a registered passkey (Face ID, Touch ID, Windows Hello) to use this method.
-                  They can register one from <strong>Settings → Security Keys</strong>.
+                  <Trans i18nKey="attendanceSettings.faceIdNote" components={{ b: <strong /> }} />
                 </span>
               </div>
             )}
@@ -153,9 +154,9 @@ export function AttendanceSettings() {
                   <Building2 className="w-5 h-5 text-gray-400" />
                 </div>
                 <div>
-                  <p className="font-medium text-gray-900">Allow Company-Level Override</p>
+                  <p className="font-medium text-gray-900">{t('attendanceSettings.overrideTitle')}</p>
                   <p className="text-sm text-gray-500 mt-0.5">
-                    When enabled, individual company admins can choose a different method for their company.
+                    {t('attendanceSettings.overrideDescription')}
                   </p>
                 </div>
               </div>
@@ -178,7 +179,7 @@ export function AttendanceSettings() {
             <div className="h-5">
               {saved && (
                 <span className="flex items-center gap-1.5 text-sm text-emerald-600 font-medium">
-                  <CheckCircle2 className="w-4 h-4" /> Settings saved
+                  <CheckCircle2 className="w-4 h-4" /> {t('attendanceSettings.saved')}
                 </span>
               )}
               {error && (
@@ -192,7 +193,7 @@ export function AttendanceSettings() {
               disabled={mutation.isPending}
               className="flex items-center gap-2 bg-black text-white px-5 py-2 rounded-xl text-sm font-medium hover:bg-gray-800 transition-colors disabled:opacity-50"
             >
-              {mutation.isPending ? 'Saving…' : 'Save Changes'}
+              {mutation.isPending ? t('common.saving') : t('common.saveChanges')}
             </button>
           </div>
         </div>
@@ -202,12 +203,12 @@ export function AttendanceSettings() {
           <div className="flex items-start gap-2.5">
             <Info className="w-4 h-4 shrink-0 mt-0.5 text-amber-600" />
             <div>
-              <p className="font-semibold mb-1">How this works</p>
+              <p className="font-semibold mb-1">{t('attendanceSettings.howItWorks')}</p>
               <ul className="space-y-1 text-amber-700">
-                <li>• The global method applies to <strong>all companies</strong> immediately.</li>
-                <li>• If "Allow Company Override" is on, a company admin can switch their own method on the <strong>Attendance</strong> page.</li>
-                <li>• A displayed QR code lasts <strong>5 minutes</strong>. Everyone present can scan the same code during that window; generating a new one retires the previous code on that screen.</li>
-                <li>• Face ID requires employees to register a passkey first. Each check-in runs a fresh passkey challenge that the server verifies.</li>
+                <li>• <Trans i18nKey="attendanceSettings.note1" components={{ b: <strong /> }} /></li>
+                <li>• <Trans i18nKey="attendanceSettings.note2" components={{ b: <strong /> }} /></li>
+                <li>• <Trans i18nKey="attendanceSettings.note3" components={{ b: <strong /> }} /></li>
+                <li>• <Trans i18nKey="attendanceSettings.note4" components={{ b: <strong /> }} /></li>
               </ul>
             </div>
           </div>
