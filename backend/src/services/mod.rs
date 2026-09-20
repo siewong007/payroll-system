@@ -16,6 +16,7 @@ pub mod employee_import_service;
 pub mod employee_service;
 pub mod epf_service;
 pub mod geofence_service;
+pub mod job_service;
 pub mod leave_rules;
 pub mod notification_service;
 pub mod oauth2_service;

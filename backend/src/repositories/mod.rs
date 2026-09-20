@@ -14,6 +14,7 @@ pub mod attendance_network_observations;
 pub mod attendance_qr_tokens;
 pub mod attendance_records;
 pub mod audit_logs;
+pub mod background_jobs;
 pub mod backup;
 pub mod bulk_import_sessions;
 pub mod claims;

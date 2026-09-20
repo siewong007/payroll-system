@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -12,9 +12,10 @@ import {
   processPayroll,
   updatePayrollEntry,
 } from '@/api/payroll';
+import { getJob } from '@/api/jobs';
 import { EmployeePicker } from '@/components/employees/EmployeePicker';
 import { formatEmployeeLabel } from '@/lib/employeeFields';
-import { formatMYR, getErrorMessage } from '@/lib/utils';
+import { formatMYR, getErrorMessage, translateServerMessage } from '@/lib/utils';
 import { formatPeriod, monthName } from '@/lib/format';
 import { PayrollPreviewPanel } from './PayrollPreviewPanel';
 import type { PayrollEntryWithEmployee } from '@/types';
@@ -82,16 +83,51 @@ export function PayrollProcess() {
     onSuccess: () => setProcessError(''),
   });
 
+  // Processing is detached: submit returns a job, and this poll follows it to
+  // the terminal state — `result.run_id` on success, `error` on failure.
+  const [jobId, setJobId] = useState<string | null>(null);
   const mutation = useMutation({
     mutationFn: processPayroll,
-    onSuccess: (run) => {
-      queryClient.invalidateQueries({ queryKey: ['payrollRuns'] });
-      navigate(`/payroll/${run.id}`);
+    onSuccess: (job) => {
+      setProcessError('');
+      setJobId(job.id);
     },
     onError: (err: unknown) => {
       setProcessError(getErrorMessage(err, t('payroll.process.processFailed')));
     },
   });
+
+  const { data: processJob } = useQuery({
+    queryKey: ['payrollProcessJob', jobId],
+    queryFn: () => getJob(jobId as string),
+    enabled: jobId !== null,
+    refetchInterval: (query) =>
+      query.state.data?.status === 'pending' || query.state.data?.status === 'running'
+        ? 1_000
+        : false,
+  });
+
+  const jobRunning =
+    jobId !== null &&
+    processJob?.status !== 'succeeded' &&
+    processJob?.status !== 'failed';
+
+  useEffect(() => {
+    if (!processJob) return;
+    if (processJob.status === 'succeeded') {
+      const runId = (processJob.result as { run_id?: string } | null)?.run_id;
+      queryClient.invalidateQueries({ queryKey: ['payrollRuns'] });
+      setJobId(null);
+      if (runId) navigate(`/payroll/${runId}`);
+    } else if (processJob.status === 'failed') {
+      setProcessError(
+        processJob.error
+          ? translateServerMessage(processJob.error)
+          : t('payroll.process.processFailed'),
+      );
+      setJobId(null);
+    }
+  }, [processJob, navigate, queryClient, t]);
 
   const preview = previewMutation.data;
 
@@ -221,7 +257,15 @@ export function PayrollProcess() {
           preview={preview}
           onProcess={handleProcess}
           onBack={() => previewMutation.reset()}
-          isProcessing={mutation.isPending}
+          isProcessing={mutation.isPending || jobRunning}
+          processingNote={
+            jobRunning && processJob?.progress_total
+              ? t('payroll.process.progressLine', {
+                  done: processJob.progress_done,
+                  total: processJob.progress_total,
+                })
+              : undefined
+          }
         />
       )}
 

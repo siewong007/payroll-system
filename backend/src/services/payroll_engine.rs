@@ -938,6 +938,37 @@ pub async fn process_payroll(
     notes: Option<String>,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<PayrollRun> {
+    process_payroll_inner(
+        pool,
+        company_id,
+        payroll_group_id,
+        year,
+        month,
+        pay_date,
+        processed_by,
+        notes,
+        audit_meta,
+        None,
+    )
+    .await
+}
+
+/// `process_payroll` with an optional progress reporter — the job executor
+/// passes one so a polled status can show the run advancing; tests and the
+/// synchronous path pass `None`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn process_payroll_inner(
+    pool: &PgPool,
+    company_id: Uuid,
+    payroll_group_id: Uuid,
+    year: i32,
+    month: i32,
+    pay_date: NaiveDate,
+    processed_by: Uuid,
+    notes: Option<String>,
+    audit_meta: Option<&AuditRequestMeta>,
+    progress: Option<&crate::services::job_service::JobProgress>,
+) -> AppResult<PayrollRun> {
     // Check for existing run
     let existing =
         payroll_runs::count_active_for_period(pool, company_id, payroll_group_id, year, month)
@@ -1101,12 +1132,19 @@ pub async fn process_payroll(
         return Err(AppError::BadRequest(format_failures(&failures)));
     }
 
+    if let Some(p) = progress {
+        p.set_total(inputs.employees.len() as i32).await;
+    }
+
     let mut totals = RunTotals::default();
-    for (emp, payslip) in inputs.employees.iter().zip(&computed) {
+    for (i, (emp, payslip)) in inputs.employees.iter().zip(&computed).enumerate() {
         let emp_span = info_span!("payroll.employee", employee_id = %emp.id);
         let item = persist_payslip(&mut tx, run_id, emp, &period, payslip)
             .instrument(emp_span)
             .await?;
+        if let Some(p) = progress {
+            p.tick(i as i32 + 1).await;
+        }
         totals.add(&item);
     }
 

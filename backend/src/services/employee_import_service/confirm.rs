@@ -123,6 +123,20 @@ pub async fn confirm_import(
     req: ImportConfirmRequest,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<ImportConfirmResponse> {
+    confirm_import_inner(pool, company_id, user_id, req, audit_meta, None).await
+}
+
+/// `confirm_import` with an optional progress reporter — the job executor
+/// ticks once per attempted row and once per provisioning step, so a polled
+/// status shows a large import moving instead of sitting at 0 until done.
+pub(crate) async fn confirm_import_inner(
+    pool: &PgPool,
+    company_id: Uuid,
+    user_id: Uuid,
+    req: ImportConfirmRequest,
+    audit_meta: Option<&AuditRequestMeta>,
+    progress: Option<&crate::services::job_service::JobProgress>,
+) -> AppResult<ImportConfirmResponse> {
     let session = bulk_import_sessions::get(pool, req.session_id)
         .await?
         .ok_or_else(|| AppError::NotFound("Import session not found".into()))?;
@@ -165,7 +179,12 @@ pub async fn confirm_import(
         )));
     }
 
+    if let Some(p) = progress {
+        p.set_total(valid_rows.len() as i32).await;
+    }
+
     let mut imported_count = 0;
+    let mut processed_count = 0i32;
     let mut failed_rows = Vec::new();
     // Employees this import committed, held for post-commit provisioning:
     // portal account + first-year leave balances. The realistic first act of a
@@ -240,6 +259,11 @@ pub async fn confirm_import(
                 }
             }
         }
+
+        processed_count += 1;
+        if let Some(p) = progress {
+            p.tick(processed_count).await;
+        }
     }
 
     // Claim the session inside the same transaction as the employees. Doing this
@@ -281,6 +305,13 @@ pub async fn confirm_import(
     // reported per row instead of failing an import that already committed.
     // `create_user_for_employee_fields` deliberately refuses to adopt foreign
     // or privileged accounts, so re-importing over existing staff is inert.
+    // Phase two covers the provisioning loop: the denominator grows by the
+    // committed row count so progress stays monotonic across both phases.
+    if let Some(p) = progress {
+        p.set_total(processed_count + to_provision.len() as i32)
+            .await;
+    }
+
     let current_year = chrono::Utc::now().year();
     let mut portal_accounts_created = 0usize;
     let mut leave_balances_created = 0usize;
@@ -330,6 +361,11 @@ pub async fn confirm_import(
                 "Row {row_number}: leave balances not initialised: {}",
                 e.client_response().1
             )),
+        }
+
+        processed_count += 1;
+        if let Some(p) = progress {
+            p.tick(processed_count).await;
         }
     }
 

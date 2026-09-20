@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE background_jobs\n        SET status = 'failed', error = $2, finished_at = now()\n        WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "9c1ca5078783c50b2d7342367dc852f9022d6fd295404bf17f7f6b46d51cd6e4"
+}

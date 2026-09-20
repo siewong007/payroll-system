@@ -113,6 +113,10 @@ fn known_constraint(constraint: &str) -> Option<(StatusCode, &'static str)> {
             StatusCode::CONFLICT,
             "A payroll run already exists for this group and period.",
         ),
+        "background_jobs_one_active_payroll_run" => (
+            StatusCode::CONFLICT,
+            "A payroll run is already being processed for this group and period.",
+        ),
         "document_categories_company_id_name_key" => (
             StatusCode::CONFLICT,
             "A document category with that name already exists.",

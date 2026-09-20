@@ -18,11 +18,13 @@ export function PayrollPreviewPanel({
   onProcess,
   onBack,
   isProcessing,
+  processingNote,
 }: {
   preview: PayrollPreview;
   onProcess: () => void;
   onBack: () => void;
   isProcessing: boolean;
+  processingNote?: string;
 }) {
   const { t } = useTranslation();
   const failedCount = preview.employee_count - preview.payable_count;
@@ -172,6 +174,9 @@ export function PayrollPreviewPanel({
           <CheckCircle2 className="h-4 w-4" />
           {isProcessing ? t('payroll.preview.processing') : t('payroll.preview.confirmButton')}
         </button>
+        {isProcessing && processingNote && (
+          <p className="self-center text-sm text-gray-500">{processingNote}</p>
+        )}
         <button
           type="button"
           onClick={onBack}

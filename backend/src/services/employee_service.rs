@@ -180,8 +180,14 @@ pub async fn create_user_for_employee_fields(
     }
 
     // Default password: IC number or "Welcome@123" if no IC
-    let default_password = ic_number.unwrap_or("Welcome@123");
-    let password_hash = bcrypt::hash(default_password, 12)
+    let default_password = ic_number.unwrap_or("Welcome@123").to_string();
+    // bcrypt at cost 12 is ~250ms of blocking CPU. In the bulk-import path this
+    // runs once per imported employee, so off the async worker it must go —
+    // the same spawn_blocking auth_service already uses for login hashing.
+    let hash_input = default_password.clone();
+    let password_hash = tokio::task::spawn_blocking(move || bcrypt::hash(&hash_input, 12))
+        .await
+        .map_err(|e| AppError::Internal(format!("Password hashing task failed: {}", e)))?
         .map_err(|e| AppError::Internal(format!("Failed to hash password: {}", e)))?;
 
     let user_id = Uuid::now_v7();

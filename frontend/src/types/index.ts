@@ -1130,3 +1130,17 @@ export interface JournalPreview {
   balanced: boolean;
   notes: string[];
 }
+
+// ─── Background jobs (POST /payroll/run, /employees/import/confirm → 202) ───
+
+export interface BackgroundJob {
+  id: string;
+  job_type: string;
+  status: 'pending' | 'running' | 'succeeded' | 'failed';
+  progress_done: number;
+  progress_total: number;
+  result: unknown;
+  error: string | null;
+  created_at: string;
+  finished_at: string | null;
+}

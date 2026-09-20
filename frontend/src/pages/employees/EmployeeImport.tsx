@@ -1,9 +1,11 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router';
 import { Upload, Download, CheckCircle, XCircle, AlertTriangle, ArrowLeft, FileSpreadsheet, Loader2 } from 'lucide-react';
 import { downloadImportTemplate, validateImport, confirmImport } from '@/api/employees';
+import { getJob } from '@/api/jobs';
+import { translateServerMessage } from '@/lib/utils';
 import type { ImportValidationResponse, ImportConfirmResponse } from '@/types';
 
 type Step = 'upload' | 'preview' | 'confirm';
@@ -26,13 +28,49 @@ export function EmployeeImport() {
     },
   });
 
+  // The confirm runs detached — whole-headcount imports cannot fit in a
+  // request. Submit returns the job; this poll follows it to a terminal state.
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [jobError, setJobError] = useState('');
   const confirmMutation = useMutation({
     mutationFn: confirmImport,
-    onSuccess: (data) => {
-      setResult(data);
-      setStep('confirm');
+    onSuccess: (job) => {
+      setJobError('');
+      setJobId(job.id);
     },
   });
+
+  const { data: importJob } = useQuery({
+    queryKey: ['importJob', jobId],
+    queryFn: () => getJob(jobId as string),
+    enabled: jobId !== null,
+    refetchInterval: (query) =>
+      query.state.data?.status === 'pending' || query.state.data?.status === 'running'
+        ? 1_000
+        : false,
+  });
+
+  const importing =
+    confirmMutation.isPending ||
+    (jobId !== null &&
+      importJob?.status !== 'succeeded' &&
+      importJob?.status !== 'failed');
+
+  useEffect(() => {
+    if (!importJob) return;
+    if (importJob.status === 'succeeded') {
+      setResult(importJob.result as ImportConfirmResponse);
+      setStep('confirm');
+      setJobId(null);
+    } else if (importJob.status === 'failed') {
+      setJobError(
+        importJob.error
+          ? translateServerMessage(importJob.error)
+          : t('employees.import.importFailed'),
+      );
+      setJobId(null);
+    }
+  }, [importJob, t]);
 
   const handleDownloadTemplate = async (format: 'csv' | 'xlsx') => {
     try {
@@ -295,9 +333,9 @@ export function EmployeeImport() {
             </label>
           )}
 
-          {confirmMutation.error && (
+          {(confirmMutation.error || jobError) && (
             <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
-              {(confirmMutation.error as Error).message || t('employees.import.importFailed')}
+              {jobError || (confirmMutation.error as Error).message || t('employees.import.importFailed')}
             </div>
           )}
 
@@ -310,10 +348,10 @@ export function EmployeeImport() {
             </button>
             <button
               onClick={handleConfirm}
-              disabled={validation.valid_rows === 0 || confirmMutation.isPending}
+              disabled={validation.valid_rows === 0 || importing}
               className="flex items-center gap-2 bg-black text-white px-6 py-2 rounded-lg hover:bg-gray-800 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {confirmMutation.isPending ? (
+              {importing ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
                   {t('employees.import.importing')}

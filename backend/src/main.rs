@@ -100,6 +100,10 @@ async fn main() -> anyhow::Result<()> {
     services::totp_service::reencrypt_all(&pool, &config.totp_encryption_key, &config.jwt_secret)
         .await?;
 
+    // Fail every job the previous process left in-flight — the executor is
+    // in-memory, so nothing else will ever finish them.
+    services::job_service::recover_stale(&pool).await;
+
     tracing::info!("Database connected; schema and reference data applied");
 
     // CORS — restrict to configured frontend origin

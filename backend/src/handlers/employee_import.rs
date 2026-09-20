@@ -131,22 +131,28 @@ pub async fn validate_import(
     Ok(Json(response))
 }
 
+/// Submit a confirmed import session for background processing.
+///
+/// Row inserts plus per-employee provisioning (portal account, bcrypt hash,
+/// leave balances) run detached: a whole-headcount import cannot fit in the
+/// 30s request budget. The answer is 202 + a `background_jobs` row; the job's
+/// `result` carries the same `ImportConfirmResponse` this used to return.
 pub async fn confirm_import(
     State(state): State<AppState>,
     auth: AuthUser,
     audit_meta: crate::services::audit_service::AuditRequestMeta,
     Json(req): Json<ImportConfirmRequest>,
-) -> AppResult<Json<crate::models::employee_import::ImportConfirmResponse>> {
+) -> AppResult<impl IntoResponse> {
     let (company_id, user_id) = require_payroll_admin(&auth)?;
 
-    let response = employee_import_service::confirm_import(
+    let job = crate::services::job_service::submit_employee_import(
         &state.pool,
         company_id,
         user_id,
         req,
-        Some(&audit_meta),
+        audit_meta,
     )
     .await?;
 
-    Ok(Json(response))
+    Ok((axum::http::StatusCode::ACCEPTED, Json(job)))
 }

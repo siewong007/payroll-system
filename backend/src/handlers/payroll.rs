@@ -1,7 +1,7 @@
 use axum::{
     Json,
     extract::{Path, Query, State},
-    http::header,
+    http::{StatusCode, header},
     response::IntoResponse,
 };
 use uuid::Uuid;
@@ -44,12 +44,19 @@ fn default_pay_date(req: &ProcessPayrollRequest) -> AppResult<chrono::NaiveDate>
         .ok_or_else(|| AppError::BadRequest(format!("Invalid period year: {}", req.period_year)))
 }
 
+/// Submit a payroll run for background processing.
+///
+/// The run used to execute inside this request, bounded by the 30s
+/// TimeoutLayer — a group big enough to need minutes could never finish.
+/// Now the request only enqueues: the answer is 202 + a `background_jobs`
+/// row, and `GET /api/jobs/{id}` reports progress until `succeeded` carries
+/// `{run_id}` in `result`. The engine itself still commits all-or-nothing.
 pub async fn process(
     State(state): State<AppState>,
     auth: AuthUser,
     audit_meta: AuditRequestMeta,
     Json(req): Json<ProcessPayrollRequest>,
-) -> AppResult<Json<PayrollRun>> {
+) -> AppResult<impl IntoResponse> {
     auth.require_permission(Permission::ManagePayrollDraft)?;
     let company_id = auth
         .0
@@ -57,20 +64,17 @@ pub async fn process(
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
     let pay_date = default_pay_date(&req)?;
 
-    let run = payroll_engine::process_payroll(
+    let job = crate::services::job_service::submit_payroll_run(
         &state.pool,
         company_id,
-        req.payroll_group_id,
-        req.period_year,
-        req.period_month,
-        pay_date,
         auth.0.sub,
-        req.notes,
-        Some(&audit_meta),
+        req,
+        pay_date,
+        audit_meta,
     )
     .await?;
 
-    Ok(Json(run))
+    Ok((StatusCode::ACCEPTED, Json(job)))
 }
 
 /// Dry-run the same calculation `process` would commit.

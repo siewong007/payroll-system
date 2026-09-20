@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE background_jobs\n        SET status = 'failed', error = 'The server restarted before this job finished.', finished_at = now()\n        WHERE status IN ('pending', 'running')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "fe0a7843c87e348535e4316d9b746be25d0b6909d35e487eb802eb0d501acb57"
+}

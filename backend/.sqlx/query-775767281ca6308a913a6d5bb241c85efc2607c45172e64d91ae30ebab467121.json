@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE background_jobs\n        SET status = 'succeeded', result = $2, finished_at = now()\n        WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "775767281ca6308a913a6d5bb241c85efc2607c45172e64d91ae30ebab467121"
+}

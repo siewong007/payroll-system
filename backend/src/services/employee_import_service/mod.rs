@@ -10,6 +10,7 @@ mod validation;
 mod values;
 
 pub use confirm::confirm_import;
+pub(crate) use confirm::confirm_import_inner;
 pub use parsing::{parse_csv, parse_xlsx};
 pub use template::{generate_template_csv, generate_template_xlsx};
 pub use validation::validate_file;

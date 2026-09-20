@@ -1,6 +1,7 @@
 import api from './client';
 import type {
   AuditLog,
+  BackgroundJob,
   CreatePayrollEntryRequest,
   JournalPreview,
   PayrollOverview,
@@ -40,7 +41,10 @@ export async function deletePayrollRun(id: string): Promise<void> {
   await api.delete(`/payroll/runs/${id}`);
 }
 
-export async function processPayroll(req: ProcessPayrollRequest): Promise<PayrollRun> {
+/// Submits the run for background processing — the response is the job, not
+/// the run. Poll `getJob` until it leaves `pending`/`running`; `result.run_id`
+/// then names the committed run.
+export async function processPayroll(req: ProcessPayrollRequest): Promise<BackgroundJob> {
   const { data } = await api.post('/payroll/run', req);
   return data;
 }

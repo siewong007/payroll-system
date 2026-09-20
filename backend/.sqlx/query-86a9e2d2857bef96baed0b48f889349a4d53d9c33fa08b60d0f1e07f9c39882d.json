@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE background_jobs\n        SET status = 'running', started_at = now()\n        WHERE id = $1 AND status = 'pending'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "86a9e2d2857bef96baed0b48f889349a4d53d9c33fa08b60d0f1e07f9c39882d"
+}

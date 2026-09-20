@@ -1,5 +1,5 @@
 import api from './client';
-import type { Employee, PaginatedResponse, CreateEmployeeRequest, UpdateEmployeeRequest, SalaryHistory, ImportValidationResponse, ImportConfirmRequest, ImportConfirmResponse } from '@/types';
+import type { BackgroundJob, Employee, PaginatedResponse, CreateEmployeeRequest, UpdateEmployeeRequest, SalaryHistory, ImportValidationResponse, ImportConfirmRequest } from '@/types';
 
 export async function getEmployees(params?: {
   search?: string;
@@ -68,7 +68,9 @@ export async function validateImport(file: File): Promise<ImportValidationRespon
   return data;
 }
 
-export async function confirmImport(req: ImportConfirmRequest): Promise<ImportConfirmResponse> {
+/// Runs detached — returns the job; poll `getJob` until terminal and read
+/// `result` for the same body the synchronous endpoint used to return.
+export async function confirmImport(req: ImportConfirmRequest): Promise<BackgroundJob> {
   const { data } = await api.post('/employees/import/confirm', req);
   return data;
 }

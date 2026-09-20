@@ -29,34 +29,47 @@ pub async fn generate_bulk_payslips(
     payroll_run_id: Uuid,
     company_id: Uuid,
 ) -> AppResult<Vec<u8>> {
-    let items = payslip_reads::run_payslip_item_refs(pool, payroll_run_id, company_id).await?;
-
-    if items.is_empty() {
+    // Three round trips total: every payslip row, the company header once
+    // (a run is company-scoped — the per-employee lookup fetched the same row
+    // N times), and every breakdown line. The loop this replaced was ~3N.
+    let payslips = payslip_reads::payslips_for_run(pool, payroll_run_id, company_id).await?;
+    if payslips.is_empty() {
         return Err(AppError::NotFound("No payroll items found".into()));
     }
+    let company = payslip_reads::company_by_id(pool, company_id).await?;
 
-    // Generate individual PDFs and merge using append_document
-    let mut main_doc = PdfDocument::new("Payslips");
+    let item_ids: Vec<Uuid> = payslips.iter().map(|(id, _)| *id).collect();
+    let mut lines_by_item: std::collections::HashMap<Uuid, Vec<PayrollItemDetail>> =
+        std::collections::HashMap::new();
+    for line in payroll_item_details::list_for_items(pool, &item_ids).await? {
+        lines_by_item
+            .entry(line.payroll_item_id)
+            .or_default()
+            .push(line);
+    }
 
-    for item in &items {
-        let data = payslip_reads::payslip_for_run_item(pool, item.id, item.employee_id).await?;
-        let company = payslip_reads::company_for_employee(pool, item.employee_id).await?;
-
-        if let Some(slip) = data {
-            let lines = payroll_item_details::list_for_item(pool, item.id).await?;
-            let font = PdfFontHandle::Builtin(BuiltinFont::Helvetica);
-            let bold = PdfFontHandle::Builtin(BuiltinFont::HelveticaBold);
-            let page = render_payslip_ops(&slip, &company, &lines, &font, &bold);
-            main_doc.pages.push(page);
+    // printpdf is synchronous CPU work — rendering N pages inline would hold a
+    // tokio worker thread (and the request's share of the 30s budget) hostage,
+    // so the render runs on the blocking pool.
+    let bytes = tokio::task::spawn_blocking(move || {
+        let mut main_doc = PdfDocument::new("Payslips");
+        let font = PdfFontHandle::Builtin(BuiltinFont::Helvetica);
+        let bold = PdfFontHandle::Builtin(BuiltinFont::HelveticaBold);
+        for (item_id, slip) in &payslips {
+            let lines = lines_by_item.get(item_id).map_or(&[][..], Vec::as_slice);
+            main_doc
+                .pages
+                .push(render_payslip_ops(slip, &company, lines, &font, &bold));
         }
-    }
+        if main_doc.pages.is_empty() {
+            return Err(AppError::NotFound("No payslips generated".into()));
+        }
+        let mut warnings = Vec::new();
+        Ok(main_doc.save(&PdfSaveOptions::default(), &mut warnings))
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("Payslip render task failed: {}", e)))??;
 
-    if main_doc.pages.is_empty() {
-        return Err(AppError::NotFound("No payslips generated".into()));
-    }
-
-    let mut warnings = Vec::new();
-    let bytes = main_doc.save(&PdfSaveOptions::default(), &mut warnings);
     Ok(bytes)
 }
 

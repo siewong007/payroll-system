@@ -65,6 +65,32 @@ pub async fn list_for_item(
     Ok(rows)
 }
 
+/// Breakdown lines for many payslips in one round trip — the bulk PDF path.
+///
+/// Ordering matches `list_for_item` within each item (`payroll_item_id` first so
+/// the caller can group sequentially), keeping the printed rows identical to
+/// the single-payslip render.
+pub async fn list_for_items(
+    executor: impl Executor<'_, Database = Postgres>,
+    payroll_item_ids: &[Uuid],
+) -> AppResult<Vec<PayrollItemDetail>> {
+    if payroll_item_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let rows = sqlx::query_as!(
+        PayrollItemDetail,
+        r#"SELECT id, payroll_item_id, category, item_type, description, amount,
+                  is_taxable, is_statutory, created_at
+        FROM payroll_item_details
+        WHERE payroll_item_id = ANY($1)
+        ORDER BY payroll_item_id, category DESC, is_statutory, id"#,
+        payroll_item_ids,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(rows)
+}
+
 /// Replace one payslip's PCB line so the stored breakdown matches an edited
 /// `payroll_items.pcb_amount`.
 ///

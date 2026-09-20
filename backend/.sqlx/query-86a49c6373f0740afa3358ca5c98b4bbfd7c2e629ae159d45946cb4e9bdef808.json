@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE background_jobs\n        SET progress_done = $2, progress_total = $3\n        WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "86a49c6373f0740afa3358ca5c98b4bbfd7c2e629ae159d45946cb4e9bdef808"
+}

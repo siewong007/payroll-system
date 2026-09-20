@@ -303,6 +303,12 @@ pub async fn delete_company_data(conn: &mut sqlx::PgConnection, company_id: Uuid
     )
     .execute(&mut *conn)
     .await?;
+    sqlx::query!(
+        "DELETE FROM background_jobs WHERE company_id = $1",
+        company_id,
+    )
+    .execute(&mut *conn)
+    .await?;
 
     sqlx::query!(
         "DELETE FROM team_members WHERE team_id IN (SELECT id FROM teams WHERE company_id = $1)",

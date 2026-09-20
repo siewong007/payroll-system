@@ -3,6 +3,7 @@ pub mod attendance;
 pub mod attendance_kiosk;
 pub mod audit;
 pub mod audit_filter;
+pub mod background_job;
 pub mod backup;
 pub mod calendar;
 pub mod company;

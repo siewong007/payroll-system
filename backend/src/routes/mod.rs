@@ -11,8 +11,9 @@ use crate::core::app_state::AppState;
 use crate::core::rate_limit_key::{ClientIpKeyExtractor, SessionOrIpKeyExtractor};
 use crate::handlers::{
     admin, approval, attendance, attendance_network, audit, auth, backup, calendar, company,
-    dashboard, document, email, employee, employee_import, geofence, health, notification, oauth2,
-    passkey, payroll, permission, portal, report, settings, team, totp, user_group, work_schedule,
+    dashboard, document, email, employee, employee_import, geofence, health, job, notification,
+    oauth2, passkey, payroll, permission, portal, report, settings, team, totp, user_group,
+    work_schedule,
 };
 
 pub fn create_router(state: AppState) -> Router {
@@ -349,6 +350,9 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route("/payroll/runs/{id}/lock", put(payroll::lock_run))
         .route("/payroll/runs/{id}/reverse", put(payroll::reverse_run))
+        // Background jobs — the 202 status poll for /payroll/run,
+        // /employees/import/confirm and any future detached work.
+        .route("/jobs/{id}", get(job::status))
         // Documents (static routes before {id})
         .route("/documents", get(document::list).post(document::create))
         .route(

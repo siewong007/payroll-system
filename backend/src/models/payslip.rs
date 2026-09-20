@@ -1,5 +1,3 @@
-use uuid::Uuid;
-
 #[derive(Debug, sqlx::FromRow)]
 pub struct PayslipData {
     pub employee_name: String,
@@ -55,10 +53,4 @@ pub struct CompanyInfo {
     pub city: Option<String>,
     pub state: Option<String>,
     pub postcode: Option<String>,
-}
-
-#[derive(Debug)]
-pub struct PayslipItemRef {
-    pub id: Uuid,
-    pub employee_id: Uuid,
 }
