@@ -244,8 +244,10 @@ jobs:
           fi
           # /api/health/ready already proves DB + config. This proves routing,
           # rate limiting and the auth surface are live: a login attempt for a
-          # nonexistent account must be REFUSED with 401/422/429 — never 200,
-          # never a bare "ok", never a 500.
+          # nonexistent account must be REFUSED — never 200, never a bare "ok",
+          # never a 500. 401/422 answer a credential check; 400/403 are the
+          # Turnstile gate refusing a request that carries no token; 429 is the
+          # login rate limiter.
           code=$(curl --silent --output /dev/null --write-out '%{http_code}' \
             --max-time 20 \
             -X POST https://api.payrollmy.com/api/auth/login \
@@ -253,7 +255,7 @@ jobs:
             -d '{"email":"smoke-probe@example.invalid","password":"wrong"}')
           echo "login probe answered $code"
           case "$code" in
-            401|422|429) ;;
+            400|401|403|422|429) ;;
             *) echo "unexpected login probe status: $code"; exit 1 ;;
           esac
 
