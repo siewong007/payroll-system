@@ -66,9 +66,9 @@ export function Modal({ open, onClose, title, children, footer, maxWidth = 'max-
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [open, onClose]);
 
-  // Auto-focus first focusable element
+  // Auto-focus first focusable element, unless the user already moved focus inside
   const handleAnimationComplete = useCallback(() => {
-    if (open && dialogRef.current) {
+    if (open && dialogRef.current && !dialogRef.current.contains(document.activeElement)) {
       const firstFocusable = dialogRef.current.querySelector<HTMLElement>(FOCUSABLE);
       (firstFocusable ?? dialogRef.current).focus();
     }

@@ -36,7 +36,7 @@ export function AttendanceScanPage() {
     if (!token) return;
 
     // Ask the server whether coordinates matter before paying for a fix.
-    let needsLocation = false;
+    let needsLocation: boolean;
     try {
       const method = await getAttendanceMethod();
       needsLocation = method.geofence_mode !== 'none';
