@@ -130,14 +130,14 @@
       ]
     },
     "nullable": [
+      false,
+      false,
       true,
       true,
+      false,
       true,
-      true,
-      true,
-      true,
-      true,
-      true,
+      false,
+      false,
       true,
       true,
       null,
@@ -146,12 +146,12 @@
       true,
       true,
       true,
-      true,
-      true,
-      true,
-      true,
       false,
-      false
+      false,
+      true,
+      true,
+      true,
+      true
     ]
   },
   "hash": "dc3e61dd643e46adf58a9cfae6fe979d1bf78f3d4e7af0b6e356d26c73e33870"

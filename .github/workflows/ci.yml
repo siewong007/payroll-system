@@ -139,8 +139,13 @@ jobs:
           # printpdf 0.10 pins lopdf 0.39. RUSTSEC-2026-0187 only affects
           # parsing untrusted PDFs; this application uses printpdf for
           # document generation and never calls lopdf's load entry points.
-          # Re-review both ignores at least quarterly (next: 2026-10).
-          ignore: RUSTSEC-2023-0071,RUSTSEC-2026-0187
+          # RUSTSEC-2026-0235 flags rkyv 0.7.46 in Cargo.lock, but rkyv is a
+          # lockfile-only entry: it is an optional dependency of rust_decimal
+          # behind the `rkyv` feature, which nothing enables (`cargo tree -i
+          # rkyv` is empty — the crate is never compiled). No patched 0.7.x
+          # exists; the fix is 0.8.17, which rust_decimal does not offer.
+          # Re-review all ignores at least quarterly (next: 2026-12).
+          ignore: RUSTSEC-2023-0071,RUSTSEC-2026-0187,RUSTSEC-2026-0235
 
   frontend-lint:
     name: Frontend Lint & Type Check
@@ -251,6 +256,8 @@ jobs:
           # database that already contains tenant rows, then apply again —
           # this is exactly what next month's release will do to production.
           docker exec pg-migrate psql -U payroll -d payroll_db -c             "INSERT INTO companies (name) VALUES ('CI forward-migration tenant')"
-          second=$(cargo sqlx migrate run 2>&1 | tail -1)
+          # sqlx-cli prints nothing at all when there is nothing to apply, so
+          # assert on the absence of "Applied" lines rather than a summary line.
+          second=$(cargo sqlx migrate run 2>&1) || { echo "$second"; echo "migrate re-run failed"; exit 1; }
           echo "$second"
-          echo "$second" | grep -qi "applied 0" || { echo "re-run was not a no-op"; exit 1; }
+          if echo "$second" | grep -q "Applied"; then echo "re-run was not a no-op"; exit 1; fi
