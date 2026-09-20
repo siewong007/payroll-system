@@ -221,18 +221,37 @@ jobs:
           fetch-depth: 0
 
       - name: Enforce migration immutability (plan item 34)
+        env:
+          PUSH_BEFORE: ${{ github.event.before }}
         run: |
-          git fetch origin main
-          status=$(git diff --name-status origin/main...HEAD -- backend/migrations || true)
+          # On push events origin/main IS the pushed tip, so diffing against it
+          # compares HEAD to itself and the gate is vacuous — an in-place edit
+          # pushed straight to main would sail through. Diff the pre-push tip
+          # instead; PR events keep the merge-base comparison.
+          if [ "${{ github.event_name }}" = "push" ] && \
+             [ -n "$PUSH_BEFORE" ] && \
+             [ "$PUSH_BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            base="$PUSH_BEFORE"
+          else
+            git fetch origin main
+            base=origin/main
+          fi
+          status=$(git diff --name-status "$base"...HEAD -- backend/migrations || true)
           echo "$status"
           # Only ADDITIONS are freely allowed. Modifying or renaming an
           # installed migration breaks every deployed database; squashing is a
           # deliberate rebaseline and must land as deletions + additions in a
-          # commit that says so.
+          # commit that says so. A deliberate in-place restore (e.g. recovering
+          # a file edited after it was installed) goes through only when a
+          # commit in the range carries the [migration-override] marker.
           bad=$(echo "$status" | grep -E '^(M|R|C)[0-9]*\s' || true)
           if [ -n "$bad" ]; then
-            echo "::error::Installed migrations were modified/renamed: $bad"
-            exit 1
+            if git log --format=%B "$base"..HEAD | grep -qF '[migration-override]'; then
+              echo "::warning::Installed migrations modified under [migration-override]: $bad"
+            else
+              echo "::error::Installed migrations were modified/renamed: $bad"
+              exit 1
+            fi
           fi
 
       - name: Start PostgreSQL 19 Beta 2
