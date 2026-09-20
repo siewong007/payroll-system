@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-09-20
+
+### Added
+
+- **Background jobs** — payroll processing and whole-headcount employee imports
+  now run as background jobs (`background_jobs` table): the endpoints enqueue a
+  row and answer 202, an in-process executor writes throttled progress and the
+  result for `GET /api/jobs/{id}` to poll, a partial unique index dedups
+  concurrent submissions of the same (company, group, period) into a friendly
+  409, and stale pending/running rows are marked failed at boot.
+
+### Fixed
+
+- **Deploy pipeline** — restored `1025_payroll_ops.sql` to the bytes production
+  installed and moved the post-merge edit's intent into
+  `1027_cancelled_run_timestamp_backfill.sql` (legacy cancelled runs get
+  `cancelled_at` backfilled from `updated_at`; the consistency check now
+  requires the timestamp only). The in-place edit had changed the installed
+  checksum, so every post-merge deploy panicked on `VersionMismatch(1025)` —
+  and, having applied the out-of-order `1024` first, crash-looped the rollback
+  image too, taking the production API down.
+- **CI migration gate** — the immutability check diffed `origin/main...HEAD`,
+  which on `push` events compares the pushed commit to itself; it now diffs the
+  pre-push tip on pushes and supports an explicit `[migration-override]`
+  commit-message marker for deliberate restores.
+- **Deploy smoke** — the post-deploy login probe now also accepts 400/403,
+  the fail-closed statuses of the Turnstile gate for a token-less request.
+
 ## [0.1.0] - 2026-09-20
 
 First release.
@@ -45,4 +73,5 @@ First release.
   payroll fails closed, and automatic PCB stays disabled until the calculator
   passes LHDN computerised-MTD conformance.
 
+[0.2.0]: https://github.com/siewong007/payroll-system/releases/tag/v0.2.0
 [0.1.0]: https://github.com/siewong007/payroll-system/releases/tag/v0.1.0
