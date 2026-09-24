@@ -11,7 +11,7 @@ tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "trace", "compression-gzip", "catch-panic", "timeout", "request-id"] }
 
 # Database
-sqlx = { version = "0.8", default-features = false, features = [
+sqlx = { version = "0.9", default-features = false, features = [
     "macros",
     "runtime-tokio",
     "tls-rustls",
