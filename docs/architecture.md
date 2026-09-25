@@ -9,7 +9,7 @@ system. Feature completeness and known UI gaps are tracked separately in
 
 ```mermaid
 flowchart LR
-    Browser["Browser / employee device / kiosk"] --> Edge["Vite proxy or CloudFront"]
+    Browser["Browser / employee device / kiosk"] --> Edge["Vite proxy or Cloudflare + Caddy"]
     Edge --> API["Axum API /api/*"]
     API --> Handlers["Handlers"]
     Handlers --> Services["Domain services"]
@@ -21,8 +21,8 @@ flowchart LR
 ```
 
 The React single-page application calls one Axum API. During development Vite
-proxies `/api`; the AWS design serves the frontend through CloudFront and runs
-the API separately. All backend routes are declared in
+proxies `/api`; in production Cloudflare fronts the VPS, where host Caddy
+serves the built frontend and reverse-proxies `/api` to the API container. All backend routes are declared in
 `backend/src/routes/mod.rs`.
 
 ## Backend boundaries
@@ -210,17 +210,15 @@ migration. It uses native UUIDv7 identifiers, targeted partial/covering/trigram
 indexes, relational constraints, and multicolumn optimizer statistics. See
 [database.md](database.md) for exact compatibility and verification rules.
 
-Docker Compose and CI pin PostgreSQL 19 Beta 2. The Terraform in `infra/`
-provisions only the frontend delivery path and the deploy identity: an S3
-bucket (private, versioned, public access blocked), a CloudFront distribution
-with an origin access control and response-headers policy, an ACM certificate,
-Route53 records, and an IAM OIDC provider plus deploy role. There is no VPC,
-EC2, ECR, Secrets Manager or RDS module in this repository — the API and
-database run as containers on the Lightsail host, whose deployment record is in
+Docker Compose and CI pin PostgreSQL 19 Beta 2. There is no cloud
+infrastructure code in this repository: the AWS frontend path (S3, CloudFront,
+ACM, Route53, OIDC deploy role) was retired in the 2026-09-07 cutover and
+deleted on 2026-09-25, and `infra/` now holds only the backend `Dockerfile`.
+The API, the database and the built frontend all run on the AIC VPS behind
+Cloudflare. The earlier Lightsail deployment record is kept for history in
 [lightsail-pg19-beta2-upgrade-record.md](lightsail-pg19-beta2-upgrade-record.md).
 
-Uploads are written to the API container's local `uploads/` directory; there is
-no S3 upload bucket. SMTP, OAuth2, WebAuthn origins, and cloud services require
+Uploads are written to the API container's local `uploads/` directory. SMTP, OAuth2, WebAuthn origins, and cloud services require
 environment-specific configuration.
 
 ## Architectural invariants

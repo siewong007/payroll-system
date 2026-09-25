@@ -1,5 +1,5 @@
 [Unit]
-Description=Payroll nightly encrypted database backup schedule
+Description=Payroll nightly local database backup schedule
 
 [Timer]
 # 01:30 Malaysia time, after midnight rollover and well before the 12:30

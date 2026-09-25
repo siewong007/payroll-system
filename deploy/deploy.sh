@@ -77,7 +77,7 @@ done
 ) || die "release checksum verification failed"
 
 ensure_host_runtime() {
-  [[ $(uname -m) == x86_64 ]] || die "this release targets the confirmed x86-64 Lightsail host"
+  [[ $(uname -m) == x86_64 ]] || die "this release targets the confirmed x86-64 production host"
 
   local packages=()
   command -v curl >/dev/null 2>&1 || packages+=(ca-certificates curl)
@@ -158,27 +158,16 @@ ensure_secrets() {
     export TOTP_ENCRYPTION_KEY="$totp_key"
   fi
 
-  # The nightly off-host backup needs four more values that only the operator
-  # can mint (see payroll-backup.sh header). Missing ones must not block a
-  # release, but they are called out here — loudly — because the backup job
-  # itself can only log its complaint where nobody is looking.
-  if [[ -z "${BACKUP_S3_BUCKET:-}" || -z "${AGE_RECIPIENT:-}" \
-        || -z "${BACKUP_AWS_ACCESS_KEY_ID:-}" ]]; then
-    echo "WARNING: off-host backups are NOT configured (BACKUP_S3_BUCKET / AGE_RECIPIENT / BACKUP_AWS_* missing from $SECRETS_FILE)." >&2
-    echo "         The payroll-backup.timer will fail every night until they are set." >&2
-  fi
 }
 
 install_release_files() {
   install -m 0644 "$RELEASE_DIR/docker-compose.prod.yml" "$COMPOSE_FILE"
   install -m 0750 "$RELEASE_DIR/deploy.sh" "$APP_DIR/deploy.sh"
 
-  # Nightly encrypted off-host backup: the script runs from APP_DIR (the
-  # release directory is wiped by cleanup_old_releases), and the timer is
-  # enabled idempotently on every deploy so a fresh host or a drifted unit
-  # self-heals. Until the operator finishes the one-time setup documented in
-  # the script header, each run logs a FATAL line naming the missing piece —
-  # visible, but never blocking a release.
+  # Nightly local backup: the script runs from APP_DIR (the release directory
+  # is wiped by cleanup_old_releases), and the timer is enabled idempotently on
+  # every deploy so a fresh host or a drifted unit self-heals. It needs no
+  # operator setup; failures land in /opt/payroll/logs/backup.log and journald.
   install -m 0750 "$RELEASE_DIR/payroll-backup.sh" "$APP_DIR/payroll-backup.sh"
   install -m 0644 "$RELEASE_DIR/payroll-backup.service" /etc/systemd/system/payroll-backup.service
   install -m 0644 "$RELEASE_DIR/payroll-backup.timer" /etc/systemd/system/payroll-backup.timer

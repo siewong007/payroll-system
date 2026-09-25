@@ -6,10 +6,10 @@
 | --- | --- | --- |
 | Docker Compose | PostgreSQL 19 Beta 2 | Pinned by image tag |
 | GitHub Actions database tests | PostgreSQL 19 Beta 2 | Pinned by image tag |
-| Lightsail deployment | PostgreSQL 19 Beta 2 | Explicit beta deployment; see the sanitized upgrade record |
+| Production (AIC VPS) | PostgreSQL 19 Beta 2 | Explicit beta deployment; see the sanitized upgrade record |
 
-There is no RDS module in `infra/` — the Terraform covers only S3/CloudFront,
-ACM, Route53 and the IAM OIDC deploy role. The PostgreSQL 18 allowance in
+There is no Terraform or managed-database module in this repository (the AWS
+frontend resources were deleted on 2026-09-25). The PostgreSQL 18 allowance in
 `1000_schema.sql` remains documented for a managed-Postgres target that does not
 yet offer a production PostgreSQL 19 engine, should one be adopted later.
 
