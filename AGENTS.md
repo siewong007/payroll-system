@@ -47,7 +47,7 @@ Tailwind CSS v4 is wired via `@tailwindcss/vite`. Path alias `@/*` → `src/*`.
 ## Architecture
 
 ### Request flow
-Browser → Vite dev proxy (or CloudFront in prod) → Axum at `/api/*` → handler → service → sqlx → Postgres. All routes are defined in one place: `backend/src/routes/mod.rs`. Everything is nested under `/api`.
+Browser → Vite dev proxy (or Cloudflare → host Caddy in prod) → Axum at `/api/*` → handler → service → sqlx → Postgres. All routes are defined in one place: `backend/src/routes/mod.rs`. Everything is nested under `/api`.
 
 ### Backend layering (strict, enforced by convention)
 - `handlers/` — thin HTTP glue. Extract `AuthUser`, parse JSON, call a service, map to JSON response. Do not put business logic here.
@@ -88,7 +88,7 @@ Key design decisions to be aware of:
 - **i18n**: four first-class locales (`en`, `ms`, `zh-CN`, `zh-TW`) via i18next. All user-facing strings go through `t()` with keys in `src/i18n/locales/en.ts`; the other three locales must mirror its exact shape (`Messages = typeof en` enforces this at compile time). Server `AppError` literals translate via `src/i18n/serverErrorMap.ts` → `serverErrors.*` keys. Dates/numbers use `lib/format.ts` helpers backed by `intlLocale()` — never pin a locale into `toLocale*`. `src/tests/i18n.test.ts` enforces key parity, interpolation parity, no en-residue, and zh script purity; `node scripts/i18n-scan.mjs --ci` (wired into CI) gates hardcoded strings — `// i18n-ok` marks intentional literals (template bodies, statutory CSV headers). See `docs/i18n/README.md` for the workflow and terminology dictionary.
 
 ### Infra
-`infra/` holds Terraform for AWS (RDS + EC2 + ECR + CloudFront + ACM + Route53 + S3 uploads). Production builds the backend from the repository root with `infra/Dockerfile`; the frontend build is served from S3/CloudFront.
+`infra/` holds only `infra/Dockerfile`, which builds the production backend image from the repository root. There is no Terraform: the AWS resources it described (S3/CloudFront/ACM/Route53/OIDC deploy role) were deleted on 2026-09-25. Production — API, database and the built frontend — runs on the AIC VPS behind Cloudflare; host Caddy serves the SPA from `/opt/payrollmy-site`. Uploads go to the API container's local `uploads/`.
 
 ## Conventions specific to this repo
 

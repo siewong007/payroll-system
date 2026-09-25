@@ -63,8 +63,7 @@ with real employee data:
 - Employee onboarding still uses a predictable initial-password fallback and
   permits the forced-password-change state to be skipped.
 - Uploaded files are stored on local API disk and served through unguessable
-  capability URLs without per-user download authorization. The provisioned S3
-  bucket is not integrated.
+  capability URLs without per-user download authorization.
 - Backup file restoration and document cleanup require stronger canonical-path
   containment checks before accepting untrusted backup/document metadata.
 - Calendar import from a remote ICS URL needs outbound destination, redirect,

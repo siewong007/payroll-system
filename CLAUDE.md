@@ -47,7 +47,7 @@ Tailwind CSS v4 is wired via `@tailwindcss/vite`. Path alias `@/*` → `src/*`.
 ## Architecture
 
 ### Request flow
-Browser → Vite dev proxy (or CloudFront in prod) → Axum at `/api/*` → handler → service → sqlx → Postgres. All routes are defined in one place: `backend/src/routes/mod.rs`. Everything is nested under `/api`.
+Browser → Vite dev proxy (or Cloudflare → host Caddy in prod) → Axum at `/api/*` → handler → service → sqlx → Postgres. All routes are defined in one place: `backend/src/routes/mod.rs`. Everything is nested under `/api`.
 
 ### Backend layering (strict, enforced by convention)
 - `handlers/` — thin HTTP glue. Extract `AuthUser`, parse JSON, call a service, map to JSON response. Do not put business logic here.
@@ -62,7 +62,7 @@ Auth: JWT in `Authorization: Bearer`, refresh token in httpOnly cookie. `AuthUse
 
 The audit trail also covers the credential lifecycle: login success (written once at the `issue_session` chokepoint, labelled with the method), login failures, logout, password change/reset (completions audited inside the rotation transaction) and TOTP enable/disable. These rows are company-scoped so they appear in the tenant's own audit view; a locked-out user is recovered by `POST /api/admin/users/{id}/2fa/reset` — super_admin-only, password re-confirmed, self-reset refused, session-revoking and audited in-transaction — never by direct SQL.
 
-Rate limiting is applied per-route group in `routes/mod.rs` via `tower_governor` — tighter limits on `/auth/login`, `/auth/forgot-password`, and OAuth2 endpoints. All limiters use `SmartIpKeyExtractor` (X-Forwarded-For / X-Real-IP, falling back to the TCP peer): behind CloudFront the default peer-IP key collapsed every client into one shared bucket, so a fleet of kiosks rate-limited each other.
+Rate limiting is applied per-route group in `routes/mod.rs` via `tower_governor` — tighter limits on `/auth/login`, `/auth/forgot-password`, and OAuth2 endpoints. All limiters use `SmartIpKeyExtractor` (X-Forwarded-For / X-Real-IP, falling back to the TCP peer): behind a reverse proxy (then CloudFront, now Cloudflare + Caddy) the default peer-IP key collapsed every client into one shared bucket, so a fleet of kiosks rate-limited each other.
 
 Bot protection is Cloudflare Turnstile (managed widget), enforced by `core::turnstile::verify` at the top of each unauthenticated, credential-free handler: `/auth/login`, `/auth/forgot-password`, `/auth/reset-password`, `/auth/passkey/check`, `/auth/passkey/{authenticate,discoverable}/begin`, and `/auth/oauth2/google/authorize`. Requests carry `turnstile_token` (body field; query param on the authorize GET). When `TURNSTILE_SECRET_KEY` is unset verification is skipped entirely — that is the intended dev/CI state; production sets it via `deploy/docker-compose.prod.yml` and the frontend gets `VITE_TURNSTILE_SITE_KEY` at build time. Failure modes are fail-closed: missing token 400, rejected token 403, Cloudflare unreachable 502. Deliberately NOT on `2fa/verify`, `validate-reset-token`, `refresh`, `kiosk/qr`, the passkey `complete` calls, or the OAuth callback — each is already credential-gated, downstream of a protected call, or cannot carry a token.
 
@@ -110,7 +110,7 @@ Key structure to preserve when changing the engine:
 - React Query defaults: `retry: 1`, `staleTime: 30s`, no refetch-on-focus.
 
 ### Infra
-`infra/` holds Terraform for the frontend delivery path and deploy identity only: S3 + CloudFront + ACM + Route53 + an IAM OIDC provider/deploy role. There is no RDS, EC2, ECR, Secrets Manager or VPC module, and no S3 uploads bucket (uploads go to the API container's local `uploads/`). Production runs the backend and database as containers on the Lightsail host, built from the repository root with `infra/Dockerfile`; the frontend build is served from S3/CloudFront.
+`infra/` holds only `infra/Dockerfile`, which builds the production backend image from the repository root. There is no Terraform: the AWS resources it described (S3/CloudFront/ACM/Route53/OIDC deploy role) were deleted on 2026-09-25. Production — API, database and the built frontend — runs on the AIC VPS behind Cloudflare; host Caddy serves the SPA from `/opt/payrollmy-site`. Uploads go to the API container's local `uploads/`.
 
 ## Conventions specific to this repo
 

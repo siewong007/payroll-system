@@ -113,14 +113,13 @@ repository.
 | Liveness and database-readiness probes | End to end | Readiness checks connectivity and migration presence |
 | PostgreSQL schema/reference migrations | End to end | Exactly two current SQL scripts; no demo credentials |
 | Docker Compose and GitHub Actions | End to end | Both pin PostgreSQL 19 Beta 2 |
-| AWS Terraform | Conditional | RDS stays on 18.4 until a standard production PostgreSQL 19 engine is offered |
 
 ## Explicit non-features
 
 - The product has no published OpenAPI contract.
 - The Face ID label is not a biometric identity service.
 - The static role page is not a customizable authorization engine.
-- The S3 uploads bucket is provisioned but not used by application upload code.
+- There is no object storage; uploads live on the API container's local disk.
 - Redis is not part of the application runtime.
 - Statutory reference data is not automatically synchronized with Malaysian
   authorities and must be reviewed before real use.

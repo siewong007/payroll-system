@@ -1,10 +1,9 @@
 [Unit]
-Description=Payroll nightly encrypted database backup
+Description=Payroll nightly local database backup
 Documentation=file:///opt/payroll/deploy/payroll-backup.sh
-# The dump needs the database container; the upload needs outbound network.
+# The dump needs the database container.
 Requires=docker.service
-After=network-online.target docker.service
-Wants=network-online.target
+After=docker.service
 
 [Service]
 Type=oneshot

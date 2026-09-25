@@ -32,7 +32,7 @@ Many SMEs manage payroll, attendance, leave, claims, and statutory records acros
 - Model payroll calculations with effective-dated EPF, SOCSO, EIS, and PCB data, guarded so unverified statutory rules cannot silently reach a production payroll run.
 - Provide employee self-service features for payslips, leave, claims, overtime, attendance, and notifications.
 - Record operational events through audit logs and approval states.
-- Demonstrate a maintainable full-stack architecture using Rust, React, PostgreSQL, Docker, and Terraform.
+- Demonstrate a maintainable full-stack architecture using Rust, React, PostgreSQL, and Docker.
 
 ## Key Features ✨
 
@@ -48,7 +48,7 @@ Many SMEs manage payroll, attendance, leave, claims, and statutory records acros
 | Approvals | Leave, claims, overtime, and payroll lifecycle approval actions |
 | Documents and letters | Document records, categories, expiry tracking, email/letter templates, preview, sending logs |
 | Reporting and audit | Dashboard summaries, payroll reports, leave/claims/statutory reports, audit trail |
-| Operations | PostgreSQL 19 baseline/reference migrations, secure administrator bootstrap, Docker Compose, CI, and Terraform modules |
+| Operations | PostgreSQL 19 baseline/reference migrations, secure administrator bootstrap, Docker Compose, and CI |
 
 See the [implemented feature catalogue](docs/features.md) for end-to-end status,
 configuration requirements, and known UI/security limitations.
@@ -62,13 +62,13 @@ configuration requirements, and known UI/security limitations.
 | Database | PostgreSQL 19 Beta 2 |
 | Auth and security | JWT, bcrypt, httpOnly cookies, WebAuthn, OAuth2, route-level rate limiting |
 | Documents and exports | printpdf, rust_xlsxwriter, calamine, csv, lettre |
-| DevOps | Docker Compose, GitHub Actions, Terraform, AWS-oriented infrastructure modules |
+| DevOps | Docker Compose, GitHub Actions, Caddy on a single VPS behind Cloudflare |
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    Browser["Browser / Employee kiosk"] --> Frontend["React SPA\nVite dev server or CloudFront"]
+    Browser["Browser / Employee kiosk"] --> Frontend["React SPA\nVite dev server or host Caddy"]
     Frontend --> Api["Axum API\n/api/*"]
     Api --> Handlers["Handlers\nHTTP extraction and response mapping"]
     Handlers --> Services["Services\nBusiness workflows"]
@@ -83,7 +83,7 @@ flowchart LR
 ### Request Flow
 
 ```text
-Browser -> Vite proxy or CloudFront -> Axum /api -> handler -> service -> repository -> PostgreSQL
+Browser -> Vite proxy or Cloudflare + Caddy -> Axum /api -> handler -> service -> repository -> PostgreSQL
 ```
 
 Handlers are intended to stay thin. Business rules live in services, while database access is organized in repositories and SQLx-backed read modules.
@@ -200,10 +200,9 @@ flowchart LR
     Push["Push to main"] --> CI["GitHub Actions CI"]
     CI -->|Successful latest main commit| Frontend["Build React frontend"]
     CI -->|Successful latest main commit| Backend["Build linux/amd64 backend image"]
-    Frontend --> S3["Sync to private S3 bucket"]
-    S3 --> CloudFront["Invalidate and serve through CloudFront"]
+    Frontend --> Site["Upload over SSH to /opt/payrollmy-site\nserved by host Caddy"]
     Backend --> Bundle["Checksummed release bundle"]
-    Bundle --> SSH["Pinned-host-key SSH to Lightsail"]
+    Bundle --> SSH["Pinned-host-key SSH to the AIC VPS"]
     SSH --> Compose["Load image and deploy with Docker Compose"]
     Compose --> Health["Database, local API, and public HTTPS health checks"]
     Health -->|Failure| Rollback["Protected rollback path"]
@@ -212,8 +211,9 @@ flowchart LR
 Production cannot be deployed manually from an untested revision. Separate
 frontend and backend workflows run only after successful push-triggered CI on
 `main`, reject superseded commits, and deploy the exact tested SHA. The frontend
-uses S3 and CloudFront. The backend image is transferred directly to the
-Lightsail VPS—there is no registry in this path—then started beside PostgreSQL
+is uploaded over SSH to `/opt/payrollmy-site` and served by the host Caddy
+behind Cloudflare. The backend image is transferred directly to the same AIC
+VPS—there is no registry in this path—then started beside PostgreSQL
 19 Beta 2 with Docker Compose. The host reverse proxy is the only public route
 to Axum; PostgreSQL is not exposed on a host port.
 
@@ -249,7 +249,7 @@ payroll-system/
 │       ├── pages/               # route-level feature screens
 │       ├── tests/               # frontend tests
 │       └── types/               # TypeScript domain types
-├── infra/                       # Terraform and deployment assets
+├── infra/                       # backend Dockerfile
 ├── docs/                        # project documentation
 ├── docker-compose.yml           # local PostgreSQL
 ├── README.md
@@ -446,7 +446,7 @@ All backend endpoints are nested under `/api`. Most endpoints require `Authoriza
 - Strengthen Face ID attendance with stricter server-side WebAuthn assertion verification.
 - Improve accessibility testing and keyboard navigation coverage.
 - Add Malay/English localization support.
-- Add more detailed deployment documentation for non-AWS environments.
+- Add more detailed deployment documentation.
 - Add dashboard analytics for payroll cost trends and attendance exceptions.
 
 ## Limitations
