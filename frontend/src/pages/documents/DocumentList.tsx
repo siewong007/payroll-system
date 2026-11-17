@@ -1,10 +1,13 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Search, Plus, FileText, AlertTriangle, Trash2, X, Lock, User, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Search, Plus, FileText, AlertTriangle, Trash2, Lock, User, ChevronLeft, ChevronRight } from 'lucide-react';
 import { getDocuments, getDocumentCategories, createDocument, deleteDocument } from '@/api/documents';
 import { getEmployees } from '@/api/employees';
 import { AttachmentLink } from '@/components/ui/AttachmentPreview';
+import { Modal } from '@/components/ui/Modal';
+import { FormField } from '@/components/ui/FormField';
+import { useConfirm } from '@/lib/confirm';
 import { EmployeePicker } from '@/components/employees/EmployeePicker';
 import { useAuth } from '@/context/AuthContext';
 import { formatDate } from '@/lib/utils';
@@ -180,6 +183,7 @@ function EmployeeDocumentsModal({
   onClose: () => void;
 }) {
   const { t } = useTranslation();
+  const confirmDialog = useConfirm();
   const queryClient = useQueryClient();
   const [showCreate, setShowCreate] = useState(false);
   const [page, setPage] = useState(1);
@@ -204,63 +208,74 @@ function EmployeeDocumentsModal({
 
   const categoryMap = new Map(categories?.map(c => [c.id, c.name]) ?? []);
 
+  const dialogTitle = `${employeeName} (${employeeNumber})`;
+
   return (
     <>
-      {/* Overlay */}
-      <div className="fixed top-0 left-0 z-50 w-screen h-screen bg-black/50 backdrop-blur-sm" onClick={onClose} />
-
-      {/* Centering container */}
-      <div className="fixed top-0 left-0 z-50 w-screen h-screen grid place-items-center p-4 pointer-events-none">
-        <div
-          className="bg-white rounded-2xl shadow-2xl shadow-black/10 w-full max-w-4xl max-h-[85vh] flex flex-col pointer-events-auto"
-          onClick={(e) => e.stopPropagation()}
-        >
-        {/* Header */}
-        <div className="flex items-center justify-between px-8 py-5 border-b border-gray-200 bg-gray-50/60 shrink-0 rounded-t-2xl">
-          <div className="flex items-center gap-4">
-            <div className="w-11 h-11 rounded-full bg-gray-100 flex items-center justify-center text-gray-900 font-semibold text-sm ring-2 ring-gray-200">
-              {employeeName.split(' ').map(n => n[0]).slice(0, 2).join('')}
-            </div>
-            <div>
-              <h2 className="text-lg font-bold text-gray-900">{employeeName}</h2>
-              <p className="text-sm text-gray-400">{employeeNumber}</p>
+      <Modal
+        open
+        onClose={onClose}
+        title={dialogTitle}
+        maxWidth="max-w-4xl"
+        footer={
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-sm text-gray-500 dark:text-slate-400">
+              {data && data.total > 0 ? t('documents.count', { count: data.total }) : ''}
+            </span>
+            <div className="flex items-center gap-2">
+              {data && data.total > PER_PAGE && (
+                <div className="flex items-center gap-2 mr-2">
+                  <button
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    disabled={page <= 1}
+                    className="p-1.5 rounded-lg border border-gray-200 dark:border-slate-700 disabled:opacity-40 hover:bg-white dark:hover:bg-slate-800"
+                    aria-label={t('common.previousPage')}
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                  <span className="text-sm text-gray-500 dark:text-slate-400">{t('common.pageOf', { page, total: totalPages })}</span>
+                  <button
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={page >= totalPages}
+                    className="p-1.5 rounded-lg border border-gray-200 dark:border-slate-700 disabled:opacity-40 hover:bg-white dark:hover:bg-slate-800"
+                    aria-label={t('common.nextPage')}
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+              <button
+                onClick={() => setShowCreate(true)}
+                className="btn-primary !py-2 !min-h-9"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                {t('documents.add')}
+              </button>
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => setShowCreate(true)}
-              className="flex items-center gap-1.5 bg-black text-white px-4 py-2 rounded-lg hover:bg-gray-800 transition-colors text-sm font-medium shadow-sm"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              {t('documents.add')}
-            </button>
-            <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-xl transition-colors">
-              <X className="w-5 h-5 text-gray-400" />
-            </button>
-          </div>
-        </div>
-
-        {/* Documents */}
-        <div className="overflow-y-auto flex-1">
+        }
+      >
+        <div>
           {isLoading ? (
             <div className="flex items-center justify-center py-12">
-              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-black" />
+              <div className="spinner" />
             </div>
           ) : !data || data.data.length === 0 ? (
             <div className="text-center py-12 text-gray-400">
-              <FileText className="w-8 h-8 mx-auto mb-2 text-gray-300" />
+              <FileText className="w-8 h-8 mx-auto mb-2 opacity-40" />
               <p className="text-sm">{t('documents.emptyForEmployee')}</p>
             </div>
           ) : (
-            <table className="w-full">
-              <thead className="bg-gray-50 border-b border-gray-200 sticky top-0">
-                <tr>
-                  <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase">{t('documents.cols.title')}</th>
-                  <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase">{t('documents.cols.category')}</th>
-                  <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase">{t('documents.cols.file')}</th>
-                  <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase">{t('documents.cols.issueDate')}</th>
-                  <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase">{t('documents.cols.expiry')}</th>
-                  <th className="text-center px-6 py-3 text-xs font-medium text-gray-500 uppercase">{t('common.status')}</th>
+            <div className="overflow-x-auto -mx-6">
+              <table className="w-full">
+                <thead className="bg-gray-50 dark:bg-slate-900/60 border-b border-gray-200 dark:border-slate-800">
+                  <tr>
+                    <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase">{t('documents.cols.title')}</th>
+                    <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase">{t('documents.cols.category')}</th>
+                    <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase">{t('documents.cols.file')}</th>
+                    <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase">{t('documents.cols.issueDate')}</th>
+                    <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase">{t('documents.cols.expiry')}</th>
+                    <th className="text-center px-6 py-3 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase">{t('common.status')}</th>
                   <th className="text-center px-6 py-3 text-xs font-medium text-gray-500 uppercase w-16"></th>
                 </tr>
               </thead>
@@ -308,8 +323,12 @@ function EmployeeDocumentsModal({
                     </td>
                     <td className="px-6 py-3 text-center">
                       <button
-                        onClick={() => {
-                          if (confirm(t('documents.deleteConfirm'))) deleteMutation.mutate(doc.id);
+                        onClick={async () => {
+                          const ok = await confirmDialog({
+                            description: t('documents.deleteConfirm'),
+                            variant: 'danger',
+                          });
+                          if (ok) deleteMutation.mutate(doc.id);
                         }}
                         className="p-1.5 text-gray-400 hover:text-red-600 rounded hover:bg-red-50 transition-colors"
                       >
@@ -320,51 +339,23 @@ function EmployeeDocumentsModal({
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </div>
+      </Modal>
 
-        {/* Footer */}
-        {data && data.total > 0 && (
-          <div className="flex items-center justify-between px-8 py-3.5 border-t border-gray-200 text-sm text-gray-400 shrink-0 bg-gray-50/60 rounded-b-2xl">
-            <span>{t('documents.count', { count: data.total })}</span>
-            {data.total > PER_PAGE && (
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  disabled={page <= 1}
-                  className="p-1.5 rounded-lg border border-gray-200 disabled:opacity-40 hover:bg-white"
-                  aria-label={t('common.previousPage')}
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                </button>
-                <span className="text-gray-500">{t('common.pageOf', { page, total: totalPages })}</span>
-                <button
-                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                  disabled={page >= totalPages}
-                  className="p-1.5 rounded-lg border border-gray-200 disabled:opacity-40 hover:bg-white"
-                  aria-label={t('common.nextPage')}
-                >
-                  <ChevronRight className="w-4 h-4" />
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Nested Create Modal */}
-        {showCreate && (
-          <CreateDocumentModal
-            defaultEmployeeId={employeeId}
-            defaultEmployeeLabel={`${employeeName} (${employeeNumber})`}
-            onClose={() => setShowCreate(false)}
-            onCreated={() => {
-              setShowCreate(false);
-              queryClient.invalidateQueries({ queryKey: ['documents'] });
-            }}
-          />
-        )}
-        </div>
-      </div>
+      {/* Nested Create Modal */}
+      {showCreate && (
+        <CreateDocumentModal
+          defaultEmployeeId={employeeId}
+          defaultEmployeeLabel={`${employeeName} (${employeeNumber})`}
+          onClose={() => setShowCreate(false)}
+          onCreated={() => {
+            setShowCreate(false);
+            queryClient.invalidateQueries({ queryKey: ['documents'] });
+          }}
+        />
+      )}
     </>
   );
 }
@@ -421,154 +412,145 @@ function CreateDocumentModal({
   };
 
   return (
-    <>
-      {/* Overlay */}
-      <div className="fixed top-0 left-0 z-[60] w-screen h-screen bg-black/50 backdrop-blur-sm" />
+    <Modal open onClose={onClose} title={t('documents.add')} maxWidth="max-w-xl">
+      <form onSubmit={handleSubmit} className="space-y-5">
+        {error && <div className="text-sm text-red-600 dark:text-red-300 bg-red-50 dark:bg-red-500/10 p-4 rounded-xl border border-red-100 dark:border-red-500/25">{error}</div>}
 
-      {/* Centering container */}
-      <div className="fixed top-0 left-0 z-[60] w-screen h-screen grid place-items-center p-4 pointer-events-none">
-        <div className="bg-white rounded-2xl shadow-2xl shadow-black/10 w-full max-w-xl max-h-[90vh] flex flex-col pointer-events-auto">
-        <div className="flex items-center justify-between px-8 py-5 border-b border-gray-200 bg-gray-50/60 shrink-0 rounded-t-2xl">
-          <h2 className="text-lg font-bold text-gray-900">{t('documents.add')}</h2>
-          <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-xl transition-colors">
-            <X className="w-5 h-5 text-gray-400" />
-          </button>
-        </div>
-        <form onSubmit={handleSubmit} className="overflow-y-auto flex-1 px-8 py-6 space-y-6">
-          {error && <div className="text-sm text-red-600 bg-red-50 p-4 rounded-xl border border-red-100">{error}</div>}
-
-          {/* Document Info */}
-          <section className="bg-gray-50/50 rounded-xl border border-gray-100 p-5 space-y-5">
-            <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider">{t('documents.details')}</h3>
-            <div>
-              <label className="block text-sm font-medium text-gray-600 mb-1.5">{t('documents.cols.title')} *</label>
+        <section className="rounded-xl border border-gray-100 dark:border-slate-800 p-4 space-y-4">
+          <h3 className="text-xs font-bold text-gray-500 dark:text-slate-400 uppercase tracking-wider">{t('documents.details')}</h3>
+          <FormField label={t('documents.cols.title')} required>
+            {(aria) => (
               <input
+                {...aria}
                 type="text"
                 value={form.title}
                 onChange={(e) => setForm(f => ({ ...f, title: e.target.value }))}
-                className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-black focus:border-black outline-none text-sm bg-white transition-colors"
+                className="form-input"
                 placeholder={t('documents.titlePlaceholder')}
               />
-            </div>
+            )}
+          </FormField>
 
-            <div className="grid grid-cols-2 gap-5">
-              <div>
-                <label className="block text-sm font-medium text-gray-600 mb-1.5">{t('common.employee')}</label>
-                {/* `isActive={null}` — a leaver's contract or termination letter
-                    is exactly the kind of document filed after they go. */}
-                <EmployeePicker
-                  value={employeeId}
-                  onChange={(id) => setEmployeeId(id)}
-                  isActive={null}
-                  initialLabel={defaultEmployeeLabel}
-                  placeholder={t('documents.companyWide')}
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-600 mb-1.5">{t('documents.cols.category')}</label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <span className="form-label">{t('common.employee')}</span>
+              <EmployeePicker
+                value={employeeId}
+                onChange={(id) => setEmployeeId(id)}
+                isActive={null}
+                initialLabel={defaultEmployeeLabel}
+                placeholder={t('documents.companyWide')}
+              />
+            </div>
+            <FormField label={t('documents.cols.category')}>
+              {(aria) => (
                 <select
+                  {...aria}
                   value={form.category_id}
                   onChange={(e) => setForm(f => ({ ...f, category_id: e.target.value }))}
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-black focus:border-black outline-none text-sm bg-white transition-colors"
+                  className="form-input"
                 >
                   <option value="">{t('documents.noCategory')}</option>
                   {categories?.map(c => (
                     <option key={c.id} value={c.id}>{c.name}</option>
                   ))}
                 </select>
-              </div>
-            </div>
+              )}
+            </FormField>
+          </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-600 mb-1.5">{t('common.description')}</label>
+          <FormField label={t('common.description')}>
+            {(aria) => (
               <textarea
+                {...aria}
                 value={form.description}
                 onChange={(e) => setForm(f => ({ ...f, description: e.target.value }))}
-                className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-black focus:border-black outline-none text-sm bg-white transition-colors"
+                className="form-input"
                 rows={2}
               />
-            </div>
-          </section>
+            )}
+          </FormField>
+        </section>
 
-          {/* File Info */}
-          <section className="bg-gray-50/50 rounded-xl border border-gray-100 p-5 space-y-5">
-            <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider">{t('documents.fileInfo')}</h3>
-            <div className="grid grid-cols-2 gap-5">
-              <div>
-                <label className="block text-sm font-medium text-gray-600 mb-1.5">{t('documents.fileName')} *</label>
+        <section className="rounded-xl border border-gray-100 dark:border-slate-800 p-4 space-y-4">
+          <h3 className="text-xs font-bold text-gray-500 dark:text-slate-400 uppercase tracking-wider">{t('documents.fileInfo')}</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <FormField label={t('documents.fileName')} required>
+              {(aria) => (
                 <input
+                  {...aria}
                   type="text"
                   value={form.file_name}
                   onChange={(e) => setForm(f => ({ ...f, file_name: e.target.value }))}
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-black focus:border-black outline-none text-sm bg-white transition-colors"
+                  className="form-input"
                   // i18n-ok: filename example, not prose copy
                   placeholder="document.pdf"
                 />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-600 mb-1.5">{t('documents.fileUrl')} *</label>
+              )}
+            </FormField>
+            <FormField label={t('documents.fileUrl')} required hint={t('documents.fileUrlHint')}>
+              {(aria) => (
                 <input
+                  {...aria}
                   type="text"
                   value={form.file_url}
                   onChange={(e) => setForm(f => ({ ...f, file_url: e.target.value }))}
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-black focus:border-black outline-none text-sm bg-white transition-colors"
+                  className="form-input"
                   placeholder="/api/uploads/document.pdf"
                 />
-                {/* The server accepts only these two shapes. The old placeholder
-                    suggested a bare /uploads/... path, which is now rejected. */}
-                <p className="text-xs text-gray-400 mt-1.5">
-                  {t('documents.fileUrlHint')}
-                </p>
-              </div>
-            </div>
+              )}
+            </FormField>
+          </div>
 
-            <div className="grid grid-cols-2 gap-5">
-              <div>
-                <label className="block text-sm font-medium text-gray-600 mb-1.5">{t('documents.cols.issueDate')}</label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <FormField label={t('documents.cols.issueDate')}>
+              {(aria) => (
                 <input
+                  {...aria}
                   type="date"
                   value={form.issue_date}
                   onChange={(e) => setForm(f => ({ ...f, issue_date: e.target.value }))}
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-black focus:border-black outline-none text-sm bg-white transition-colors"
+                  className="form-input"
                 />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-600 mb-1.5">{t('documents.expiryDate')}</label>
+              )}
+            </FormField>
+            <FormField label={t('documents.expiryDate')}>
+              {(aria) => (
                 <input
+                  {...aria}
                   type="date"
                   value={form.expiry_date}
                   onChange={(e) => setForm(f => ({ ...f, expiry_date: e.target.value }))}
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-black focus:border-black outline-none text-sm bg-white transition-colors"
+                  className="form-input"
                 />
-              </div>
-            </div>
-
-            <label className="flex items-center gap-2.5 cursor-pointer pt-1">
-              <input
-                type="checkbox"
-                checked={form.is_confidential}
-                onChange={(e) => setForm(f => ({ ...f, is_confidential: e.target.checked }))}
-                className="rounded border-gray-300 w-4 h-4 text-gray-900 focus:ring-black"
-              />
-              <span className="text-sm font-medium text-gray-700">{t('documents.confidentialDoc')}</span>
-            </label>
-          </section>
-
-          <div className="flex justify-end gap-3 pt-1">
-            <button type="button" onClick={onClose} className="px-5 py-2.5 text-sm text-gray-600 hover:bg-gray-100 rounded-lg font-medium border border-gray-300 transition-colors">
-              {t('common.cancel')}
-            </button>
-            <button
-              type="submit"
-              disabled={mutation.isPending}
-              className="px-6 py-2.5 text-sm bg-black text-white rounded-lg hover:bg-gray-800 disabled:opacity-50 font-medium shadow-sm transition-colors"
-            >
-              {mutation.isPending ? t('common.creating') : t('documents.create')}
-            </button>
+              )}
+            </FormField>
           </div>
-        </form>
+
+          <label className="flex items-center gap-2.5 cursor-pointer pt-1">
+            <input
+              type="checkbox"
+              checked={form.is_confidential}
+              onChange={(e) => setForm(f => ({ ...f, is_confidential: e.target.checked }))}
+              className="rounded border-gray-300 w-4 h-4 text-[var(--accent-1)] focus:ring-[var(--ring)]"
+            />
+            <span className="text-sm font-medium text-gray-700 dark:text-slate-200">{t('documents.confidentialDoc')}</span>
+          </label>
+        </section>
+
+        <div className="flex justify-end gap-3 pt-1">
+          <button type="button" onClick={onClose} className="btn-secondary">
+            {t('common.cancel')}
+          </button>
+          <button
+            type="submit"
+            disabled={mutation.isPending}
+            className="btn-primary"
+          >
+            {mutation.isPending ? t('common.creating') : t('documents.create')}
+          </button>
         </div>
-      </div>
-    </>
+      </form>
+    </Modal>
   );
 }

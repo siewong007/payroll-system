@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { ScrollText, Search, X, ChevronLeft, ChevronRight } from 'lucide-react';
 import { getAuditFilterOptions, getAuditLogs } from '@/api/audit';
+import { Modal } from '@/components/ui/Modal';
 import type { AuditLog } from '@/types';
 import { formatDateTime } from '@/lib/format';
 
@@ -338,73 +339,59 @@ function AuditDetailModal({
 }) {
   const { t } = useTranslation();
   return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div
-        className="bg-white rounded-2xl max-w-2xl w-full max-h-[80vh] overflow-hidden flex flex-col"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between p-5 border-b border-gray-100">
+    <Modal open onClose={onClose} title={t('audit.detailTitle')} maxWidth="max-w-2xl">
+      <div className="space-y-4">
+        <p className="text-xs text-gray-400 dark:text-slate-500 -mt-2">{formatDateTime(log.created_at)}</p>
+        <div className="grid grid-cols-2 gap-4 text-sm">
           <div>
-            <h2 className="text-lg font-semibold text-gray-900">{t('audit.detailTitle')}</h2>
-            <p className="text-sm text-gray-500">{formatDateTime(log.created_at)}</p>
+            <p className="text-gray-500 dark:text-slate-400">{t('audit.user')}</p>
+            <p className="font-medium text-gray-900 dark:text-slate-100">{log.user_full_name || '-'}</p>
+            <p className="text-xs text-gray-400">{log.user_email}</p>
           </div>
-          <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-lg">
-            <X className="w-5 h-5 text-gray-400" />
-          </button>
+          <div>
+            <p className="text-gray-500 dark:text-slate-400">{t('audit.ipAddress')}</p>
+            <p className="font-medium text-gray-900 dark:text-slate-100">{log.ip_address || '-'}</p>
+          </div>
+          <div>
+            <p className="text-gray-500 dark:text-slate-400">{t('audit.entityType')}</p>
+            <p className="font-medium text-gray-900 dark:text-slate-100">{entityLabel ?? formatEntityType(log.entity_type)}</p>
+          </div>
+          <div>
+            <p className="text-gray-500 dark:text-slate-400">{t('audit.action')}</p>
+            <ActionBadge action={log.action} label={actionLabel} />
+          </div>
+          <div className="col-span-2">
+            <p className="text-gray-500 dark:text-slate-400">{t('audit.entityId')}</p>
+            <p className="font-mono text-xs text-gray-800 dark:text-slate-200">{log.entity_id || '-'}</p>
+          </div>
+          <div className="col-span-2">
+            <p className="text-gray-500 dark:text-slate-400">{t('common.description')}</p>
+            <p className="font-medium text-gray-900 dark:text-slate-100">{log.description || '-'}</p>
+          </div>
+          <div className="col-span-2">
+            <p className="text-gray-500 dark:text-slate-400">{t('audit.userAgent')}</p>
+            <p className="text-xs text-gray-600 dark:text-slate-300 break-all">{log.user_agent || '-'}</p>
+          </div>
         </div>
 
-        <div className="p-5 overflow-y-auto space-y-4">
-          <div className="grid grid-cols-2 gap-4 text-sm">
-            <div>
-              <p className="text-gray-500">{t('audit.user')}</p>
-              <p className="font-medium">{log.user_full_name || '-'}</p>
-              <p className="text-xs text-gray-400">{log.user_email}</p>
-            </div>
-            <div>
-              <p className="text-gray-500">{t('audit.ipAddress')}</p>
-              <p className="font-medium">{log.ip_address || '-'}</p>
-            </div>
-            <div>
-              <p className="text-gray-500">{t('audit.entityType')}</p>
-              <p className="font-medium">{entityLabel ?? formatEntityType(log.entity_type)}</p>
-            </div>
-            <div>
-              <p className="text-gray-500">{t('audit.action')}</p>
-              <ActionBadge action={log.action} label={actionLabel} />
-            </div>
-            <div className="col-span-2">
-              <p className="text-gray-500">{t('audit.entityId')}</p>
-              <p className="font-mono text-xs">{log.entity_id || '-'}</p>
-            </div>
-            <div className="col-span-2">
-              <p className="text-gray-500">{t('common.description')}</p>
-              <p className="font-medium">{log.description || '-'}</p>
-            </div>
-            <div className="col-span-2">
-              <p className="text-gray-500">{t('audit.userAgent')}</p>
-              <p className="text-xs text-gray-600 break-all">{log.user_agent || '-'}</p>
-            </div>
+        {log.old_values && Object.keys(log.old_values).length > 0 && (
+          <div>
+            <h3 className="text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">{t('audit.previousValues')}</h3>
+            <pre className="bg-red-50 dark:bg-red-500/10 text-red-900 dark:text-red-200 rounded-lg p-3 text-xs overflow-x-auto max-h-48">
+              {JSON.stringify(log.old_values, null, 2)}
+            </pre>
           </div>
+        )}
 
-          {log.old_values && Object.keys(log.old_values).length > 0 && (
-            <div>
-              <h3 className="text-sm font-medium text-gray-700 mb-2">{t('audit.previousValues')}</h3>
-              <pre className="bg-red-50 text-red-900 rounded-lg p-3 text-xs overflow-x-auto max-h-48">
-                {JSON.stringify(log.old_values, null, 2)}
-              </pre>
-            </div>
-          )}
-
-          {log.new_values && Object.keys(log.new_values).length > 0 && (
-            <div>
-              <h3 className="text-sm font-medium text-gray-700 mb-2">{t('audit.newValues')}</h3>
-              <pre className="bg-green-50 text-green-900 rounded-lg p-3 text-xs overflow-x-auto max-h-48">
-                {JSON.stringify(log.new_values, null, 2)}
-              </pre>
-            </div>
-          )}
-        </div>
+        {log.new_values && Object.keys(log.new_values).length > 0 && (
+          <div>
+            <h3 className="text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">{t('audit.newValues')}</h3>
+            <pre className="bg-green-50 dark:bg-emerald-500/10 text-green-900 dark:text-emerald-200 rounded-lg p-3 text-xs overflow-x-auto max-h-48">
+              {JSON.stringify(log.new_values, null, 2)}
+            </pre>
+          </div>
+        )}
       </div>
-    </div>
+    </Modal>
   );
 }

@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
 
 :root {
   --background: #f3f4f6;
@@ -50,6 +51,107 @@
   --accent-soft: rgba(13, 148, 136, 0.1);
   --glow: rgba(13, 148, 136, 0.4);
   --ring: #0d9488;
+}
+
+/* ── Dark appearance overrides ──────────────────────────────── */
+.dark {
+  color-scheme: dark;
+  --background: #0b1120;
+  --foreground: #f1f5f9;
+  --card: #111827;
+  --card-foreground: #f1f5f9;
+  --secondary: #1e293b;
+  --secondary-foreground: #e2e8f0;
+  --muted: #1e293b;
+  --muted-foreground: #94a3b8;
+  --border: rgba(148, 163, 184, 0.18);
+  --input: #0f172a;
+}
+
+.dark .theme-admin {
+  --background: #0b1020;
+  --accent-soft: rgba(99, 102, 241, 0.18);
+  --glow: rgba(99, 102, 241, 0.35);
+}
+
+.dark .theme-portal {
+  --background: #081717;
+  --accent-soft: rgba(20, 184, 166, 0.18);
+  --glow: rgba(20, 184, 166, 0.32);
+}
+
+.dark .card {
+  background: rgba(15, 23, 42, 0.78);
+  border-color: rgba(148, 163, 184, 0.16);
+  color: #f1f5f9;
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 0.3),
+    0 14px 34px -16px rgb(0 0 0 / 0.55);
+}
+
+.dark .glass-nav {
+  background: rgba(15, 23, 42, 0.78);
+  border-bottom-color: rgba(148, 163, 184, 0.14);
+}
+
+.dark .glass-menu {
+  background: rgba(15, 23, 42, 0.92);
+  border-color: rgba(148, 163, 184, 0.18);
+  color: #f1f5f9;
+}
+
+.dark .form-input {
+  background-color: rgba(15, 23, 42, 0.85);
+  border-color: rgba(148, 163, 184, 0.24);
+  color: #f8fafc;
+}
+
+.dark .form-input::placeholder {
+  color: #64748b;
+}
+
+.dark .form-label {
+  color: #cbd5e1;
+}
+
+.dark .btn-secondary {
+  background-color: rgba(30, 41, 59, 0.85);
+  border-color: rgba(148, 163, 184, 0.24);
+  color: #e2e8f0;
+}
+
+.dark .btn-secondary:hover {
+  background-color: rgba(51, 65, 85, 0.95);
+}
+
+.dark .page-title,
+.dark .section-title {
+  color: #f8fafc;
+}
+
+.dark .page-subtitle {
+  color: #94a3b8;
+}
+
+.dark .section-header {
+  border-bottom-color: rgba(148, 163, 184, 0.16);
+}
+
+.dark .data-table thead {
+  background-color: rgba(15, 23, 42, 0.65);
+  border-bottom-color: rgba(148, 163, 184, 0.16);
+}
+
+.dark .data-table th {
+  color: #94a3b8;
+}
+
+.dark .data-table td {
+  color: #e2e8f0;
+}
+
+.dark .data-table tbody tr {
+  border-bottom-color: rgba(148, 163, 184, 0.12);
 }
 
 body {
@@ -457,5 +559,32 @@ body {
   .hover-lift:hover,
   .btn-primary:hover {
     transform: none;
+  }
+}
+
+/* ── Print stylesheet (Payslips, Reports, Letters) ───────────── */
+@media print {
+  header,
+  aside,
+  nav,
+  .glass-nav,
+  .ambient-blob,
+  .no-print {
+    display: none !important;
+  }
+
+  body,
+  .theme-admin,
+  .theme-portal {
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  .card {
+    background: #ffffff !important;
+    border: 1px solid #d1d5db !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    break-inside: avoid;
   }
 }

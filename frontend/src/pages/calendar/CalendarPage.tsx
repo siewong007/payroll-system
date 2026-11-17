@@ -15,6 +15,7 @@ import {
   importIcsFile,
 } from '@/api/calendar';
 import { Modal } from '@/components/ui/Modal';
+import { useConfirm } from '@/lib/confirm';
 import { getErrorMessage } from '@/lib/utils';
 import { monthName, weekdayName } from '@/lib/format';
 import type { Holiday, CreateHolidayRequest } from '@/types';
@@ -24,6 +25,7 @@ const HOLIDAY_TYPE_VALUES = ['public_holiday', 'company_holiday', 'replacement_l
 
 export function CalendarPage() {
   const { t } = useTranslation();
+  const confirmDialog = useConfirm();
   const now = new Date();
   const [selectedYear, setSelectedYear] = useState(now.getFullYear());
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth() + 1);
@@ -348,8 +350,12 @@ export function CalendarPage() {
                     {t('common.edit')}
                   </button>
                   <button
-                    onClick={() => {
-                      if (confirm(t('calendar.deleteConfirm', { name: h.name }))) {
+                    onClick={async () => {
+                      const ok = await confirmDialog({
+                        description: t('calendar.deleteConfirm', { name: h.name }),
+                        variant: 'danger',
+                      });
+                      if (ok) {
                         deleteMutation.mutate(h.id);
                       }
                     }}

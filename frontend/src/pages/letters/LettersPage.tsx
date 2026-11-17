@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Mail, Send, Eye, Plus, FileText, Clock, CheckCircle, XCircle, X, Users, AtSign } from 'lucide-react';
+import { Mail, Send, Eye, Plus, FileText, Clock, CheckCircle, XCircle, Users, AtSign } from 'lucide-react';
 import { getEmailTemplates, createEmailTemplate, sendLetter, previewLetter, getEmailLogs } from '@/api/email';
 import { getEmployee } from '@/api/employees';
 import { EmployeePicker } from '@/components/employees/EmployeePicker';
+import { Modal } from '@/components/ui/Modal';
+import { FormField } from '@/components/ui/FormField';
 import { formatDate, getErrorMessage } from '@/lib/utils';
 import type { LetterType, EmailTemplate, PreviewLetterResponse } from '@/types';
 
@@ -485,133 +487,112 @@ export function LettersPage() {
       )}
 
       {/* ── Preview Modal ── */}
-      {showPreview && preview && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between p-6 border-b border-gray-100">
-              <h2 className="text-lg font-semibold">{t('letters.reviewTitle')}</h2>
-              <button onClick={() => setShowPreview(false)} className="text-gray-400 hover:text-gray-600">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <div className="p-6 space-y-4">
-              <div>
-                <p className="text-xs text-gray-400 uppercase font-medium">{t('common.to')}</p>
-                <p className="text-sm">
-                  {preview.recipient_name
-                    ? `${preview.recipient_name} <${preview.recipient_email}>`
-                    : preview.recipient_email}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs text-gray-400 uppercase font-medium">{t('letters.subject')}</p>
-                <p className="text-sm font-medium">{preview.subject}</p>
-              </div>
-              <div>
-                <p className="text-xs text-gray-400 uppercase font-medium mb-2">{t('letters.body')}</p>
-                {/*
-                  Render the server-rendered letter HTML inside a sandboxed
-                  iframe. The sandbox attribute (no `allow-scripts`) neutralizes
-                  any script/event-handler that may have been injected via
-                  employee-controlled merge fields, so the preview cannot run
-                  code in the admin's session. Replaces dangerouslySetInnerHTML.
-                */}
-                <iframe
-                  title={t('letters.previewTitle')}
-                  sandbox=""
-                  className="w-full min-h-[16rem] border border-gray-200 rounded-lg bg-white"
-                  srcDoc={preview.body_html}
-                />
-              </div>
-
-              {/*
-                `getErrorMessage` reads the API's own text out of the axios
-                error. Rendering `error.message` gave "Request failed with
-                status code 502" and left the operator none the wiser about
-                which mail server refused what.
-              */}
-              {sendMutation.isError && (
-                <div className="bg-red-50 text-red-600 text-sm px-4 py-3 rounded-lg">
-                  {getErrorMessage(sendMutation.error, t('letters.sendFailed'))}
-                </div>
-              )}
-              {sendMutation.data && sendMutation.data.status !== 'sent' && (
-                <div className="bg-red-50 text-red-600 text-sm px-4 py-3 rounded-lg">
-                  {sendMutation.data.error_message || t('letters.recordedNotSent')}
-                </div>
-              )}
-            </div>
-            <div className="flex justify-end gap-3 p-6 border-t border-gray-100">
-              <button
-                onClick={() => setShowPreview(false)}
-                className="px-4 py-2.5 rounded-lg text-sm font-medium text-gray-700 border border-gray-200 hover:bg-gray-50 transition-colors"
-              >
-                {t('common.cancel')}
-              </button>
-              <button
-                onClick={handleSend}
-                disabled={sendMutation.isPending}
-                className="flex items-center gap-2 bg-black text-white px-6 py-2.5 rounded-lg font-medium hover:bg-gray-800 disabled:opacity-50 transition-colors text-sm"
-              >
-                <Send className="w-4 h-4" />
-                {sendMutation.isPending ? t('common.sending') : t('letters.sendEmail')}
-              </button>
-            </div>
+      <Modal
+        open={showPreview && preview !== null}
+        onClose={() => setShowPreview(false)}
+        title={t('letters.reviewTitle')}
+        maxWidth="max-w-2xl"
+        footer={
+          <div className="flex justify-end gap-3">
+            <button onClick={() => setShowPreview(false)} className="btn-secondary">
+              {t('common.cancel')}
+            </button>
+            <button
+              onClick={handleSend}
+              disabled={sendMutation.isPending}
+              className="btn-primary"
+            >
+              <Send className="w-4 h-4" />
+              {sendMutation.isPending ? t('common.sending') : t('letters.sendEmail')}
+            </button>
           </div>
-        </div>
-      )}
-
-      {/* ── Save Template Modal ── */}
-      {showSaveTemplate && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full">
-            <div className="flex items-center justify-between p-6 border-b border-gray-100">
-              <h2 className="text-lg font-semibold">{t('letters.saveAsTemplate')}</h2>
-              <button onClick={() => setShowSaveTemplate(false)} className="text-gray-400 hover:text-gray-600">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <div className="p-6 space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">{t('letters.templateName')}</label>
-                <input
-                  type="text"
-                  value={templateName}
-                  onChange={(e) => setTemplateName(e.target.value)}
-                  placeholder={t('letters.templateNamePlaceholder')}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
-                />
-              </div>
-              <p className="text-sm text-gray-500">
-                {t('letters.type')}: <span className="font-medium">{t(`letters.types.${selectedType}`)}</span>
+        }
+      >
+        {preview && (
+          <div className="space-y-4">
+            <div>
+              <p className="text-xs text-gray-400 uppercase font-medium">{t('common.to')}</p>
+              <p className="text-sm text-gray-900 dark:text-slate-100">
+                {preview.recipient_name
+                  ? `${preview.recipient_name} <${preview.recipient_email}>`
+                  : preview.recipient_email}
               </p>
             </div>
-            <div className="flex justify-end gap-3 p-6 border-t border-gray-100">
-              <button
-                onClick={() => setShowSaveTemplate(false)}
-                className="px-4 py-2.5 rounded-lg text-sm font-medium text-gray-700 border border-gray-200 hover:bg-gray-50 transition-colors"
-              >
-                {t('common.cancel')}
-              </button>
-              <button
-                onClick={() => {
-                  if (!templateName.trim()) return;
-                  saveTemplateMutation.mutate({
-                    name: templateName,
-                    letter_type: selectedType,
-                    subject,
-                    body_html: bodyHtml,
-                  });
-                }}
-                disabled={!templateName.trim() || saveTemplateMutation.isPending}
-                className="bg-black text-white px-6 py-2.5 rounded-lg font-medium hover:bg-gray-800 disabled:opacity-50 transition-colors text-sm"
-              >
-                {saveTemplateMutation.isPending ? t('common.saving') : t('letters.saveTemplate')}
-              </button>
+            <div>
+              <p className="text-xs text-gray-400 uppercase font-medium">{t('letters.subject')}</p>
+              <p className="text-sm font-medium text-gray-900 dark:text-slate-100">{preview.subject}</p>
             </div>
+            <div>
+              <p className="text-xs text-gray-400 uppercase font-medium mb-2">{t('letters.body')}</p>
+              <iframe
+                title={t('letters.previewTitle')}
+                sandbox=""
+                className="w-full min-h-[16rem] border border-gray-200 dark:border-slate-800 rounded-lg bg-white"
+                srcDoc={preview.body_html}
+              />
+            </div>
+
+            {sendMutation.isError && (
+              <div className="bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-300 text-sm px-4 py-3 rounded-lg">
+                {getErrorMessage(sendMutation.error, t('letters.sendFailed'))}
+              </div>
+            )}
+            {sendMutation.data && sendMutation.data.status !== 'sent' && (
+              <div className="bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-300 text-sm px-4 py-3 rounded-lg">
+                {sendMutation.data.error_message || t('letters.recordedNotSent')}
+              </div>
+            )}
           </div>
+        )}
+      </Modal>
+
+      {/* ── Save Template Modal ── */}
+      <Modal
+        open={showSaveTemplate}
+        onClose={() => setShowSaveTemplate(false)}
+        title={t('letters.saveAsTemplate')}
+        maxWidth="max-w-md"
+        footer={
+          <div className="flex justify-end gap-3">
+            <button onClick={() => setShowSaveTemplate(false)} className="btn-secondary">
+              {t('common.cancel')}
+            </button>
+            <button
+              onClick={() => {
+                if (!templateName.trim()) return;
+                saveTemplateMutation.mutate({
+                  name: templateName,
+                  letter_type: selectedType,
+                  subject,
+                  body_html: bodyHtml,
+                });
+              }}
+              disabled={!templateName.trim() || saveTemplateMutation.isPending}
+              className="btn-primary"
+            >
+              {saveTemplateMutation.isPending ? t('common.saving') : t('letters.saveTemplate')}
+            </button>
+          </div>
+        }
+      >
+        <div className="space-y-4">
+          <FormField label={t('letters.templateName')}>
+            {(aria) => (
+              <input
+                {...aria}
+                type="text"
+                value={templateName}
+                onChange={(e) => setTemplateName(e.target.value)}
+                placeholder={t('letters.templateNamePlaceholder')}
+                className="form-input"
+              />
+            )}
+          </FormField>
+          <p className="text-sm text-gray-500 dark:text-slate-400">
+            {t('letters.type')}: <span className="font-medium text-gray-900 dark:text-slate-100">{t(`letters.types.${selectedType}`)}</span>
+          </p>
         </div>
-      )}
+      </Modal>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
+import type { Html5Qrcode as Html5QrcodeInstance } from 'html5-qrcode';
 import { AlertCircle, Flashlight, Keyboard, Loader2, X } from 'lucide-react';
 import { parseScanToken } from '@/lib/attendance';
 import { getErrorMessage } from '@/lib/utils';
@@ -39,7 +39,7 @@ export function QrScanSheet({ onClose, onToken, onCameraReady, busy, errorText }
   const [manualOpen, setManualOpen] = useState(false);
   const [manualCode, setManualCode] = useState('');
 
-  const scannerRef = useRef<Html5Qrcode | null>(null);
+  const scannerRef = useRef<Html5QrcodeInstance | null>(null);
   // The success callback fires repeatedly while the code stays in frame.
   const claimedRef = useRef(false);
   // Hold the latest callbacks so the camera effect can stay mounted across the
@@ -54,14 +54,6 @@ export function QrScanSheet({ onClose, onToken, onCameraReady, busy, errorText }
 
   useEffect(() => {
     let cancelled = false;
-    const scanner = new Html5Qrcode(readerId, {
-      verbose: false,
-      // Decoding only QR is markedly faster than sweeping every barcode family,
-      // and the native detector (where present) beats the JS decoder outright.
-      formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
-      useBarCodeDetectorIfSupported: true,
-    });
-    scannerRef.current = scanner;
 
     const handleDecoded = (decodedText: string) => {
       if (claimedRef.current) return;
@@ -78,6 +70,17 @@ export function QrScanSheet({ onClose, onToken, onCameraReady, busy, errorText }
 
     const start = async () => {
       try {
+        const { Html5Qrcode, Html5QrcodeSupportedFormats } = await import('html5-qrcode');
+        if (cancelled) return;
+        const scanner = new Html5Qrcode(readerId, {
+          verbose: false,
+          // Decoding only QR is markedly faster than sweeping every barcode family,
+          // and the native detector (where present) beats the JS decoder outright.
+          formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
+          useBarCodeDetectorIfSupported: true,
+        });
+        scannerRef.current = scanner;
+
         await scanner.start(
           { facingMode: 'environment' },
           {

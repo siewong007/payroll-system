@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
+import { useConfirm } from '@/lib/confirm';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   CheckCircle,
@@ -160,8 +162,23 @@ const PER_PAGE = 20;
 
 export function Approvals() {
   const { t } = useTranslation();
+  const confirmDialog = useConfirm();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuth();
-  const [tab, setTab] = useState<'leave' | 'claims' | 'overtime'>('leave');
+  const urlTabParam = searchParams.get('tab');
+  const resolvedUrlTab: 'leave' | 'claims' | 'overtime' =
+    urlTabParam === 'claims' || urlTabParam === 'overtime' ? urlTabParam : 'leave';
+  const [tab, setTabState] = useState<'leave' | 'claims' | 'overtime'>(resolvedUrlTab);
+  const setTab = (next: 'leave' | 'claims' | 'overtime') => {
+    setTabState(next);
+    const params = new URLSearchParams(searchParams);
+    if (next === 'leave') params.delete('tab');
+    else params.set('tab', next);
+    setSearchParams(params, { replace: true });
+  };
+  useEffect(() => {
+    setTabState((current) => (current === resolvedUrlTab ? current : resolvedUrlTab));
+  }, [resolvedUrlTab]);
   const [statusFilter, setStatusFilter] = useState<string>('pending');
   const [page, setPage] = useState(1);
   const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
@@ -497,7 +514,7 @@ export function Approvals() {
           </button>
         </div>
 
-        <div className="flex gap-1 border-b border-gray-200 overflow-x-auto">
+        <div className="flex gap-1 border-b border-gray-200 dark:border-slate-800 overflow-x-auto">
           {(['leave', 'claims', 'overtime'] as const).map((itemTab) => (
             <button
               key={itemTab}
@@ -509,7 +526,9 @@ export function Approvals() {
                 setBulkError('');
               }}
               className={`px-5 py-2.5 text-sm font-medium border-b-2 transition-all-fast ${
-                tab === itemTab ? 'border-black text-gray-900' : 'border-transparent text-gray-400 hover:text-gray-700'
+                tab === itemTab
+                  ? 'border-[var(--accent-1)] text-gray-900 dark:text-slate-100'
+                  : 'border-transparent text-gray-400 hover:text-gray-700 dark:text-slate-400 dark:hover:text-slate-200'
               }`}
             >
               {t(`approvals.tabs.${itemTab}`)}
@@ -517,8 +536,8 @@ export function Approvals() {
           ))}
         </div>
 
-        <div className="flex items-center gap-2">
-          <Filter className="w-4 h-4 text-gray-300" />
+        <div className="flex flex-wrap items-center gap-2">
+          <Filter className="w-4 h-4 text-gray-300 dark:text-slate-500" />
           {['pending', 'approved', 'rejected', 'cancelled', ''].map((status) => (
             <button
               key={status}
@@ -530,8 +549,8 @@ export function Approvals() {
               }}
               className={`px-3.5 py-1.5 text-xs font-medium rounded-full transition-all-fast ${
                 statusFilter === status
-                  ? 'bg-black text-white shadow-sm'
-                  : 'bg-white text-gray-500 border border-gray-200 hover:border-gray-300'
+                  ? 'bg-[var(--accent-1)] text-white shadow-sm'
+                  : 'bg-white dark:bg-slate-900 text-gray-500 dark:text-slate-400 border border-gray-200 dark:border-slate-700 hover:border-gray-300 dark:hover:border-slate-600'
               }`}
             >
               {status ? t(`enums.requestStatus.${status}`) : t('common.all')}
@@ -541,13 +560,18 @@ export function Approvals() {
 
         {selectedApprovalIds.length > 0 && (
           <div className="space-y-2">
-            <div className="flex flex-col gap-2 rounded-xl border border-gray-200 bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-              <span className="text-sm font-medium text-gray-700">{t('common.selectedCount', { count: selectedApprovalIds.length })}</span>
+            <div className="flex flex-col gap-2 rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <span className="text-sm font-medium text-gray-700 dark:text-slate-200">{t('common.selectedCount', { count: selectedApprovalIds.length })}</span>
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
-                  onClick={() => {
-                    if (confirm(t('approvals.bulkCancelConfirm', { count: selectedCancelableIds.length }))) {
+                  onClick={async () => {
+                    const ok = await confirmDialog({
+                      description: t('approvals.bulkCancelConfirm', { count: selectedCancelableIds.length }),
+                      confirmLabel: t('common.cancelSelected'),
+                      variant: 'warning',
+                    });
+                    if (ok) {
                       setBulkError('');
                       bulkCancelM.mutate({ ids: selectedCancelableIds, target: tab });
                     }
@@ -560,8 +584,12 @@ export function Approvals() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    if (confirm(t('approvals.bulkDeleteConfirm', { count: selectedDeletableIds.length }))) {
+                  onClick={async () => {
+                    const ok = await confirmDialog({
+                      description: t('approvals.bulkDeleteConfirm', { count: selectedDeletableIds.length }),
+                      variant: 'danger',
+                    });
+                    if (ok) {
                       setBulkError('');
                       bulkDeleteM.mutate({ ids: selectedDeletableIds, target: tab });
                     }
@@ -605,13 +633,22 @@ export function Approvals() {
                   setLeaveEditor(request);
                   setShowLeaveModal(true);
                 } : undefined}
-                onCancel={canCancelLeave(request) ? () => {
-                  if (confirm(t('approvals.cancelLeaveConfirm'))) {
+                onCancel={canCancelLeave(request) ? async () => {
+                  const ok = await confirmDialog({
+                    description: t('approvals.cancelLeaveConfirm'),
+                    confirmLabel: t('common.cancel'),
+                    variant: 'warning',
+                  });
+                  if (ok) {
                     cancelLeaveM.mutate(request.id);
                   }
                 } : undefined}
-                onDelete={canDeleteLeave(request) ? () => {
-                  if (confirm(t('approvals.deleteLeaveConfirm'))) {
+                onDelete={canDeleteLeave(request) ? async () => {
+                  const ok = await confirmDialog({
+                    description: t('approvals.deleteLeaveConfirm'),
+                    variant: 'danger',
+                  });
+                  if (ok) {
                     deleteLeaveM.mutate(request.id);
                   }
                 } : undefined}
@@ -722,16 +759,25 @@ export function Approvals() {
                   setClaimEditor(claim);
                   setShowClaimModal(true);
                 } : undefined}
-                onCancel={canCancelClaim(claim) ? () => {
-                  if (confirm(t('approvals.cancelClaimConfirm'))) {
+                onCancel={canCancelClaim(claim) ? async () => {
+                  const ok = await confirmDialog({
+                    description: t('approvals.cancelClaimConfirm'),
+                    confirmLabel: t('common.cancel'),
+                    variant: 'warning',
+                  });
+                  if (ok) {
                     cancelClaimM.mutate(claim.id);
                   }
                 } : undefined}
-                onDelete={canDeleteClaim(claim) ? () => {
+                onDelete={canDeleteClaim(claim) ? async () => {
                   const message = claim.status === 'cancelled'
                     ? t('approvals.deleteCancelledClaimConfirm')
                     : t('approvals.deleteDraftClaimConfirm');
-                  if (confirm(message)) {
+                  const ok = await confirmDialog({
+                    description: message,
+                    variant: 'danger',
+                  });
+                  if (ok) {
                     deleteClaimM.mutate(claim.id);
                   }
                 } : undefined}
@@ -852,13 +898,22 @@ export function Approvals() {
                   setOvertimeEditor(overtime);
                   setShowOvertimeModal(true);
                 } : undefined}
-                onCancel={canCancelOvertime(overtime) ? () => {
-                  if (confirm(t('approvals.cancelOvertimeConfirm'))) {
+                onCancel={canCancelOvertime(overtime) ? async () => {
+                  const ok = await confirmDialog({
+                    description: t('approvals.cancelOvertimeConfirm'),
+                    confirmLabel: t('common.cancel'),
+                    variant: 'warning',
+                  });
+                  if (ok) {
                     cancelOvertimeM.mutate(overtime.id);
                   }
                 } : undefined}
-                onDelete={canDeleteOvertime(overtime) ? () => {
-                  if (confirm(t('approvals.deleteOvertimeConfirm'))) {
+                onDelete={canDeleteOvertime(overtime) ? async () => {
+                  const ok = await confirmDialog({
+                    description: t('approvals.deleteOvertimeConfirm'),
+                    variant: 'danger',
+                  });
+                  if (ok) {
                     deleteOvertimeM.mutate(overtime.id);
                   }
                 } : undefined}

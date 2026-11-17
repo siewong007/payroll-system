@@ -1,4 +1,6 @@
+import { useState } from 'react';
 import { Link, useLocation } from 'react-router';
+import { useQuery } from '@tanstack/react-query';
 import {
   Building2,
   Users,
@@ -18,35 +20,38 @@ import {
   X,
   ScanLine,
   UserCheck,
+  LayoutDashboard,
+  Sparkles,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Search,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useTranslation } from 'react-i18next';
 import { CompanySwitcher } from './CompanySwitcher';
 import { LanguageSwitcher } from '@/components/ui/LanguageSwitcher';
+import { AppearanceSwitcher } from '@/components/ui/AppearanceSwitcher';
+import { openCommandPalette } from '@/lib/commandPalette';
 import { AnimatePresence, motion } from 'framer-motion';
 import { BrandLogo } from '@/components/ui/BrandLogo';
+import { getAccessToken } from '@/api/client';
+import { getDashboardSummary } from '@/api/dashboard';
 import { hasAnyRole, roleList, type AppRole } from '@/lib/roles';
 import { userCan } from '@/lib/usePermissions';
 import type { PermissionKey } from '@/api/permissions';
 
-/**
- * `requires` is the permission the destination route enforces, so a link is
- * shown exactly when following it will work. Hand-maintained role lists here had
- * drifted from the routes twice over: `Backup` was offered to `admin`, which the
- * API grants to `super_admin` alone, and `Reports` was offered to `employee`.
- *
- * `hideFor` is a separate, presentational rule and stays role-based: `super_admin`
- * holds every permission but works from the Administration section, so the
- * company workspace links are suppressed for it rather than being unauthorized.
- *
- * `requiresEmployeeProfile` gates self-service links, which no permission covers
- * — every authenticated user may act on their own record. It keys on the
- * employee link rather than on holding the `employee` role: the link is what
- * self-service actually needs, so a supervisor whose account carries a second
- * role still gets the entry, and an admin login with nothing to check into
- * never sees a link to a page that can only tell them to contact HR.
- */
+const SIDEBAR_COLLAPSED_KEY = 'payroll-sidebar-collapsed';
+
+function readCollapsed(): boolean {
+  try {
+    return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
 const navigation = [
+  { nameKey: 'nav.dashboard', href: '/dashboard', icon: LayoutDashboard, hideFor: ['super_admin'], section: 'workspace' },
   { nameKey: 'nav.company', href: '/company', icon: Building2, hideFor: ['super_admin'], section: 'workspace' },
   { nameKey: 'nav.employees', href: '/employees', icon: Users, requires: 'view_employees', hideFor: ['super_admin'], section: 'workspace' },
   { nameKey: 'nav.payroll', href: '/payroll', icon: Calculator, requires: 'view_payroll', section: 'workspace' },
@@ -54,16 +59,12 @@ const navigation = [
   { nameKey: 'nav.calendar', href: '/calendar', icon: CalendarDays, requires: 'view_calendar', hideFor: ['super_admin'], section: 'workspace' },
   { nameKey: 'nav.attendance', href: '/attendance', icon: ScanLine, requires: 'view_attendance', hideFor: ['super_admin'], section: 'workspace' },
   { nameKey: 'nav.approvals', href: '/approvals', icon: ClipboardCheck, requires: 'view_approvals', hideFor: ['super_admin'], section: 'workspace' },
-  // No `hideFor`: super_admin keeps Reports and Payroll, as it did before —
-  // these are the two platform-wide entries in the workspace section.
   { nameKey: 'nav.reports', href: '/reports', icon: BarChart3, requires: 'view_reports', section: 'workspace' },
   { nameKey: 'nav.documents', href: '/documents', icon: FileText, requires: 'view_documents', hideFor: ['super_admin'], section: 'workspace' },
   { nameKey: 'nav.letters', href: '/letters', icon: Mail, requires: 'view_email_logs', hideFor: ['super_admin'], section: 'workspace' },
   { nameKey: 'nav.settings', href: '/settings', icon: Settings, requires: 'manage_company_settings', hideFor: ['super_admin'], section: 'workspace' },
-  // Own attendance, not the company's. `AppLayout` redirects only *sole-role*
-  // employees to the portal, so staff holding a second role are held in this
-  // shell with no route to their own check-in but a hand-typed URL.
   { nameKey: 'nav.myAttendance', href: '/my/attendance', icon: UserCheck, requiresEmployeeProfile: true, section: 'personal' },
+  { nameKey: 'nav.myPortal', href: '/portal/profile', icon: Sparkles, requiresEmployeeProfile: true, section: 'personal' },
   { nameKey: 'nav.companies', href: '/companies', icon: Building2, requires: 'manage_companies', section: 'admin' },
   { nameKey: 'nav.users', href: '/users', icon: UserCog, requires: 'manage_users', section: 'admin' },
   { nameKey: 'nav.roles', href: '/roles', icon: Shield, requires: 'manage_users', section: 'admin' },
@@ -81,9 +82,6 @@ const navigation = [
   section: string;
 }>;
 
-// Own-record links sit in their own group: under Workspace, "My Attendance"
-// reads as a variant of the company-wide "Attendance" list two rows above it,
-// and the two go to very different places.
 const sections = [
   { key: 'workspace', labelKey: 'nav.section.workspace' },
   { key: 'personal', labelKey: 'nav.section.personal' },
@@ -95,7 +93,15 @@ interface SidebarProps {
   onClose?: () => void;
 }
 
-function SidebarContent({ onClose }: { onClose?: () => void }) {
+function SidebarContent({
+  onClose,
+  collapsed = false,
+  onToggleCollapse,
+}: {
+  onClose?: () => void;
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
+}) {
   const location = useLocation();
   const { user, logout } = useAuth();
   const { t } = useTranslation();
@@ -107,8 +113,32 @@ function SidebarContent({ onClose }: { onClose?: () => void }) {
     return true;
   });
 
+  const canSeeApprovalsBadge =
+    Boolean(getAccessToken()) &&
+    Boolean(user?.company_id) &&
+    userCan(user, 'view_approvals') &&
+    !hasAnyRole(user, ['super_admin']);
+
+  const { data: dashSummary } = useQuery({
+    queryKey: ['dashboard-summary', 7],
+    queryFn: () => getDashboardSummary(7),
+    enabled: canSeeApprovalsBadge,
+    staleTime: 60_000,
+    refetchInterval: 60_000,
+  });
+
+  const pendingApprovals = dashSummary
+    ? dashSummary.needs_attention.pending_leave +
+      dashSummary.needs_attention.pending_claims +
+      dashSummary.needs_attention.pending_overtime
+    : 0;
+
   return (
-    <aside className="relative flex flex-col w-64 h-full overflow-hidden bg-slate-950 text-slate-100 border-r border-white/10">
+    <aside
+      className={`relative flex flex-col h-full overflow-hidden bg-slate-950 text-slate-100 border-r border-white/10 transition-[width] duration-200 ${
+        collapsed ? 'w-[76px]' : 'w-64'
+      }`}
+    >
       {/* Aurora glow inside the rail */}
       <div aria-hidden className="pointer-events-none absolute inset-0">
         <div className="absolute -top-24 -left-16 h-64 w-64 rounded-full bg-indigo-600/25 blur-3xl animate-float-a" />
@@ -116,18 +146,32 @@ function SidebarContent({ onClose }: { onClose?: () => void }) {
         <div className="absolute -bottom-20 left-6 h-56 w-56 rounded-full bg-fuchsia-600/10 blur-3xl" />
       </div>
 
-      {/* Logo */}
-      <div className="relative p-6 border-b border-white/10 flex items-center justify-between">
-        <div className="min-w-0">
-          <BrandLogo variant="lockup-light" className="h-8 w-auto brightness-125 drop-shadow-md" />
-          <span className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-indigo-200">
-            <span className="glow-dot" />
-            {t('nav.adminConsoleBadge')}
-          </span>
-        </div>
+      {/* Logo + collapse / close */}
+      <div className={`relative border-b border-white/10 flex items-center justify-between ${collapsed ? 'p-3.5 justify-center' : 'p-5'}`}>
+        {!collapsed && (
+          <div className="min-w-0">
+            <BrandLogo variant="lockup-light" className="h-8 w-auto brightness-125 drop-shadow-md" />
+            <span className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-indigo-200">
+              <span className="glow-dot" />
+              {t('nav.adminConsoleBadge')}
+            </span>
+          </div>
+        )}
+        {onToggleCollapse && !onClose && (
+          <button
+            type="button"
+            onClick={onToggleCollapse}
+            title={collapsed ? t('nav.expandSidebar') : t('nav.collapseSidebar')}
+            aria-label={collapsed ? t('nav.expandSidebar') : t('nav.collapseSidebar')}
+            className="hidden md:inline-flex p-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-all-fast shrink-0"
+          >
+            {collapsed ? <PanelLeftOpen className="w-4 h-4" /> : <PanelLeftClose className="w-4 h-4" />}
+          </button>
+        )}
         {onClose && (
           <button
             onClick={onClose}
+            aria-label={t('a11y.closeMenu')}
             className="md:hidden p-2 -mr-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-all-fast"
           >
             <X className="w-5 h-5" />
@@ -135,10 +179,27 @@ function SidebarContent({ onClose }: { onClose?: () => void }) {
         )}
       </div>
 
-      {/* Company Switcher */}
-      <div className="relative">
-        <CompanySwitcher />
-      </div>
+      {/* Company Switcher + Quick Search */}
+      {!collapsed && (
+        <div className="relative">
+          <CompanySwitcher />
+          <div className="px-3 pt-2">
+            <button
+              type="button"
+              onClick={openCommandPalette}
+              className="flex w-full items-center justify-between rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-slate-400 transition-all hover:border-indigo-400/30 hover:bg-white/[0.08] hover:text-slate-200"
+            >
+              <span className="inline-flex items-center gap-2 truncate">
+                <Search className="h-3.5 w-3.5 shrink-0 text-indigo-300" aria-hidden="true" />
+                <span className="truncate">{t('nav.quickSearch')}</span>
+              </span>
+              <kbd className="rounded border border-white/10 bg-white/5 px-1.5 py-0.5 text-[10px] font-semibold text-slate-400">
+                ⌘K
+              </kbd>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Navigation */}
       <nav className="relative flex-1 py-3 px-3 overflow-y-auto scrollbar-thin">
@@ -147,42 +208,64 @@ function SidebarContent({ onClose }: { onClose?: () => void }) {
           if (items.length === 0) return null;
           return (
             <div key={key}>
-              <p className="px-3 pt-3 pb-1.5 text-[10px] font-semibold uppercase tracking-widest text-slate-500">
+              <p
+                className={`px-3 pt-3 pb-1.5 text-[10px] font-semibold uppercase tracking-widest text-slate-500 ${
+                  collapsed ? 'sr-only' : ''
+                }`}
+              >
                 {t(labelKey)}
               </p>
               <div className="space-y-0.5">
                 {items.map((item) => {
-                  const isActive = location.pathname === item.href ||
-                    (item.href !== '/' && location.pathname.startsWith(item.href));
+                  const isActive =
+                    location.pathname === item.href ||
+                    (item.href !== '/' &&
+                      !item.href.startsWith('/portal') &&
+                      location.pathname.startsWith(item.href));
+                  const label = t(item.nameKey);
                   return (
                     <Link
                       key={item.nameKey}
                       to={item.href}
                       onClick={onClose}
-                      className={`group relative flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all-fast ${
+                      title={collapsed ? label : undefined}
+                      className={`group relative flex items-center ${
+                        collapsed ? 'justify-center px-2 py-2.5' : 'gap-3 px-3 py-2.5'
+                      } rounded-xl text-sm font-medium transition-all-fast ${
                         isActive ? 'text-white' : 'text-slate-400 hover:text-slate-100 hover:bg-white/5'
                       }`}
                     >
                       {isActive && (
                         <motion.span
-                          layoutId="admin-nav-active"
+                          layoutId={onClose ? 'admin-nav-active-mobile' : 'admin-nav-active'}
                           className="absolute inset-0 rounded-xl bg-white/10 ring-1 ring-white/15 shadow-[0_0_20px_-6px_var(--glow)]"
                           transition={{ type: 'spring', stiffness: 420, damping: 34 }}
                         />
                       )}
                       {isActive && (
                         <motion.span
-                          layoutId="admin-nav-bar"
+                          layoutId={onClose ? 'admin-nav-bar-mobile' : 'admin-nav-bar'}
                           className="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-[3px] rounded-full bg-gradient-to-b from-indigo-400 to-violet-400 shadow-[0_0_10px_var(--glow)]"
                           transition={{ type: 'spring', stiffness: 420, damping: 34 }}
                         />
                       )}
                       <item.icon
-                        className={`relative w-[18px] h-[18px] transition-colors ${
+                        className={`relative w-[18px] h-[18px] shrink-0 transition-colors ${
                           isActive ? 'text-indigo-300' : 'text-slate-500 group-hover:text-slate-300'
                         }`}
                       />
-                      <span className="relative">{t(item.nameKey)}</span>
+                      <span className={collapsed ? 'sr-only' : 'relative truncate flex-1'}>{label}</span>
+                      {item.href === '/approvals' && pendingApprovals > 0 && (
+                        <span
+                          aria-hidden="true"
+                          data-badge={pendingApprovals > 99 ? '99+' : String(pendingApprovals)}
+                          className={
+                            collapsed
+                              ? 'absolute right-2 top-2 h-2 w-2 rounded-full bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.7)]'
+                              : 'relative ml-auto inline-flex min-w-[20px] h-5 items-center justify-center rounded-full bg-amber-500/20 px-1.5 text-[10px] font-bold text-amber-300 ring-1 ring-amber-400/30 after:content-[attr(data-badge)]'
+                          }
+                        />
+                      )}
                     </Link>
                   );
                 })}
@@ -192,19 +275,22 @@ function SidebarContent({ onClose }: { onClose?: () => void }) {
         })}
       </nav>
 
-      {/* User */}
+      {/* User & Preferences */}
       <div
         className="relative p-4 border-t border-white/10 bg-white/[0.03] shrink-0"
         style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}
       >
-        <div className="mb-3">
-          <LanguageSwitcher dark />
-        </div>
-        <div className="flex items-center gap-3">
+        {!collapsed && (
+          <div className="mb-3 space-y-2">
+            <AppearanceSwitcher darkRail />
+            <LanguageSwitcher dark />
+          </div>
+        )}
+        <div className={`flex items-center ${collapsed ? 'flex-col gap-2' : 'gap-3'}`}>
           <div className="w-9 h-9 rounded-full bg-gradient-to-br from-indigo-500 to-violet-500 ring-2 ring-white/15 shadow-[0_0_16px_-4px_var(--glow)] flex items-center justify-center text-sm font-semibold text-white shrink-0">
             {user?.full_name?.[0] || 'U'}
           </div>
-          <div className="flex-1 min-w-0">
+          <div className={collapsed ? 'sr-only' : 'flex-1 min-w-0'}>
             <p className="text-sm font-semibold text-white truncate">{user?.full_name || t('common.user')}</p>
             <p className="text-xs text-slate-400 truncate capitalize">
               {roleList(user).map((role) => t(`roles.${role}`)).join(', ')}
@@ -225,11 +311,25 @@ function SidebarContent({ onClose }: { onClose?: () => void }) {
 }
 
 export function Sidebar({ open, onClose }: SidebarProps) {
+  const [collapsed, setCollapsed] = useState<boolean>(() => readCollapsed());
+
+  const toggleCollapse = () => {
+    setCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(next));
+      } catch {
+        // Ignore storage errors.
+      }
+      return next;
+    });
+  };
+
   return (
     <>
       {/* Desktop sidebar */}
       <div className="hidden md:flex">
-        <SidebarContent />
+        <SidebarContent collapsed={collapsed} onToggleCollapse={toggleCollapse} />
       </div>
 
       {/* Mobile drawer */}

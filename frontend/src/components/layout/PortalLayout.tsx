@@ -1,5 +1,5 @@
 import { Outlet, Link, useLocation, Navigate } from 'react-router';
-import { User, FileText, Calendar, Receipt, LogOut, ChevronDown, Bell, Users, Clock, MoreHorizontal, ScanLine, Sparkles, LayoutDashboard } from 'lucide-react';
+import { User, FileText, Calendar, Receipt, LogOut, ChevronDown, Bell, Users, Clock, MoreHorizontal, ScanLine, Sparkles, LayoutDashboard, Search } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { canUseAdminConsole } from '@/lib/roles';
 import { useEffect, useRef, useState } from 'react';
@@ -8,6 +8,8 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { getNotificationCount } from '@/api/notifications';
 import { BrandLogo } from '@/components/ui/BrandLogo';
 import { LanguageSwitcher } from '@/components/ui/LanguageSwitcher';
+import { AppearanceSwitcher } from '@/components/ui/AppearanceSwitcher';
+import { openCommandPalette } from '@/lib/commandPalette';
 import { PageTransition } from '@/components/ui/PageTransition';
 import { useTranslation } from 'react-i18next';
 
@@ -147,8 +149,16 @@ export function PortalLayout() {
             </nav>
           </div>
 
-          {/* Right: Mobile notification bell + User dropdown */}
+          {/* Right: Quick search + Mobile notification bell + User dropdown */}
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={openCommandPalette}
+              aria-label={t('nav.quickSearch')}
+              className="p-2 text-gray-500 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white hover:bg-white/60 dark:hover:bg-slate-800 rounded-lg transition-all-fast"
+            >
+              <Search className="w-4 h-4" />
+            </button>
             {/* Mobile notification bell */}
             <Link
               to="/portal/notifications"
@@ -206,7 +216,8 @@ export function PortalLayout() {
                         <LayoutDashboard className="w-4 h-4" /> {t('nav.adminConsole')}
                       </Link>
                     )}
-                    <div className="px-4 py-2 border-b border-gray-200/60">
+                    <div className="px-4 py-2.5 space-y-2 border-b border-gray-200/60 dark:border-slate-800">
+                      <AppearanceSwitcher />
                       <LanguageSwitcher />
                     </div>
                     <button
@@ -234,7 +245,7 @@ export function PortalLayout() {
       </main>
 
       {/* Mobile Bottom Tab Bar */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 safe-area-bottom bg-white/80 backdrop-blur-xl border-t border-white/60 shadow-[0_-4px_24px_-12px_var(--glow)]">
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 safe-area-bottom bg-white/80 dark:bg-slate-900/85 backdrop-blur-xl border-t border-white/60 dark:border-slate-800 shadow-[0_-4px_24px_-12px_var(--glow)]">
         <div className="flex items-stretch">
           {mobileTabNav.map((item) => {
             const isActive =

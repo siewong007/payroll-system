@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, ArrowLeft, Send, Trash2, Receipt, Upload, X, FileText, Image, Paperclip, ExternalLink } from 'lucide-react';
 import { listMyClaims, createClaim, cancelClaim, deleteClaim, submitClaim, uploadFile } from '@/api/claims';
 import { AttachmentLink } from '@/components/ui/AttachmentPreview';
+import { useConfirm } from '@/lib/confirm';
 import { runBulk, summarizeBulkFailure } from '@/lib/bulk';
 import { formatMYR, formatDate, getErrorMessage, todayLocalDate } from '@/lib/utils';
 import i18n from '@/i18n';
@@ -28,6 +29,7 @@ const CATEGORIES = [
 
 export function Claims() {
   const { t } = useTranslation();
+  const confirmDialog = useConfirm();
   const queryClient = useQueryClient();
   const selectAllRef = useRef<HTMLInputElement>(null);
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
@@ -189,8 +191,13 @@ export function Claims() {
                   <div className="flex flex-wrap gap-2">
                     <button
                       type="button"
-                      onClick={() => {
-                        if (confirm(t('portal.claims.bulkCancelConfirm', { count: selectedCancelableClaimIds.length }))) {
+                      onClick={async () => {
+                        const ok = await confirmDialog({
+                          description: t('portal.claims.bulkCancelConfirm', { count: selectedCancelableClaimIds.length }),
+                          confirmLabel: t('common.cancelSelected'),
+                          variant: 'warning',
+                        });
+                        if (ok) {
                           setBulkError('');
                           bulkCancelMutation.mutate(selectedCancelableClaimIds);
                         }
@@ -203,8 +210,12 @@ export function Claims() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => {
-                        if (confirm(t('portal.claims.bulkDeleteConfirm', { count: selectedDeletableClaimIds.length }))) {
+                      onClick={async () => {
+                        const ok = await confirmDialog({
+                          description: t('portal.claims.bulkDeleteConfirm', { count: selectedDeletableClaimIds.length }),
+                          variant: 'danger',
+                        });
+                        if (ok) {
                           setBulkError('');
                           bulkDeleteMutation.mutate(selectedDeletableClaimIds);
                         }
@@ -288,14 +299,31 @@ export function Claims() {
                         <button onClick={() => submitMutation.mutate(c.id)} title={t('portal.claims.submitForApproval')} className="p-1.5 text-gray-900 hover:text-black hover:bg-gray-100 rounded-lg transition-all-fast">
                           <Send className="w-4 h-4" />
                         </button>
-                        <button onClick={() => { if (confirm(t('portal.claims.deleteConfirm'))) deleteMutation.mutate(c.id); }} title={t('common.delete')} className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-all-fast">
+                        <button
+                          onClick={async () => {
+                            const ok = await confirmDialog({
+                              description: t('portal.claims.deleteConfirm'),
+                              variant: 'danger',
+                            });
+                            if (ok) deleteMutation.mutate(c.id);
+                          }}
+                          title={t('common.delete')}
+                          className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-all-fast"
+                        >
                           <Trash2 className="w-4 h-4" />
                         </button>
                         </>
                       )}
                       {canCancel(c.status) && (
                         <button
-                          onClick={() => { if (confirm(t('portal.claims.cancelConfirm'))) cancelMutation.mutate(c.id); }}
+                          onClick={async () => {
+                            const ok = await confirmDialog({
+                              description: t('portal.claims.cancelConfirm'),
+                              confirmLabel: t('common.cancel'),
+                              variant: 'warning',
+                            });
+                            if (ok) cancelMutation.mutate(c.id);
+                          }}
                           title={t('common.cancel')}
                           className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all-fast"
                         >
@@ -304,7 +332,13 @@ export function Claims() {
                       )}
                       {c.status === 'cancelled' && (
                         <button
-                          onClick={() => { if (confirm(t('portal.claims.deletePermanentlyConfirm'))) deleteMutation.mutate(c.id); }}
+                          onClick={async () => {
+                            const ok = await confirmDialog({
+                              description: t('portal.claims.deletePermanentlyConfirm'),
+                              variant: 'danger',
+                            });
+                            if (ok) deleteMutation.mutate(c.id);
+                          }}
                           title={t('common.deletePermanently')}
                           className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-all-fast"
                         >

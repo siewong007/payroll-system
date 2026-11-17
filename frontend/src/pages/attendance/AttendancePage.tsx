@@ -1,12 +1,17 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useSearchParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
+import { useConfirm } from '@/lib/confirm';
+import { useToast } from '@/lib/toast';
+import { Modal } from '@/components/ui/Modal';
+import { FormField } from '@/components/ui/FormField';
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import {
   QrCode, RefreshCw, Clock, CheckCircle2,
   Filter, Plus, MapPin, Fingerprint,
   AlertCircle, Calendar, User, LogIn, LogOut, MoreVertical,
   ChevronLeft, ChevronRight, Pencil, AlertTriangle, Timer, Download,
-  Link2, Copy, Trash2, ShieldCheck, X, ListChecks, Eye, EyeOff,
+  Link2, Copy, Trash2, ShieldCheck, ListChecks, Eye, EyeOff,
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import {
@@ -100,6 +105,7 @@ function formatDateTime(iso: string | null) {
 
 function KioskCredentialsModal({ onClose }: { onClose: () => void }) {
   const { t } = useTranslation();
+  const confirmDialog = useConfirm();
   const queryClient = useQueryClient();
   const [label, setLabel] = useState('');
   const [created, setCreated] = useState<CreateKioskCredentialResponse | null>(null);
@@ -141,41 +147,31 @@ function KioskCredentialsModal({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
-        <div className="flex items-start justify-between mb-1">
-          <div>
-            <h3 className="font-semibold text-gray-900">{t('attendance.kioskModal.title')}</h3>
-            <p className="text-sm text-gray-500">
-              {t('attendance.kioskModal.body')}
-            </p>
-          </div>
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
+    <Modal open onClose={onClose} title={t('attendance.kioskModal.title')} maxWidth="max-w-2xl">
+      <div>
+        <p className="text-sm text-gray-500 dark:text-slate-400">
+          {t('attendance.kioskModal.body')}
+        </p>
 
         {/* One-time URL display after creation */}
         {created && (
-          <div className="mt-5 border border-emerald-200 bg-emerald-50 rounded-xl p-4">
+          <div className="mt-5 border border-emerald-200 dark:border-emerald-500/30 bg-emerald-50 dark:bg-emerald-500/10 rounded-xl p-4">
             <div className="flex items-start gap-2">
-              <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+              <ShieldCheck className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-emerald-900">
+                <p className="text-sm font-medium text-emerald-900 dark:text-emerald-100">
                   {t('attendance.kioskModal.copyNow')}
                 </p>
-                <p className="text-xs text-emerald-700 mt-0.5">
+                <p className="text-xs text-emerald-700 dark:text-emerald-300 mt-0.5">
                   {t('attendance.kioskModal.treatLikePassword')}
                 </p>
                 <div className="mt-3 flex items-center gap-2">
                   <input
                     readOnly
                     value={created.public_url}
+                    aria-label={t('attendance.kioskModal.copyNow')}
                     onFocus={(e) => e.currentTarget.select()}
-                    className="flex-1 px-3 py-2 bg-white border border-emerald-300 rounded-lg text-xs font-mono text-gray-800 outline-none truncate"
+                    className="flex-1 px-3 py-2 bg-white dark:bg-slate-900 border border-emerald-300 dark:border-emerald-500/40 rounded-lg text-xs font-mono text-gray-800 dark:text-slate-100 outline-none truncate"
                   />
                   <button
                     onClick={() => copyUrl(created.public_url)}
@@ -187,7 +183,7 @@ function KioskCredentialsModal({ onClose }: { onClose: () => void }) {
                 </div>
                 <button
                   onClick={() => setCreated(null)}
-                  className="mt-3 text-xs text-emerald-800 hover:underline"
+                  className="mt-3 text-xs text-emerald-800 dark:text-emerald-300 hover:underline"
                 >
                   {t('attendance.kioskModal.doneHide')}
                 </button>
@@ -214,13 +210,14 @@ function KioskCredentialsModal({ onClose }: { onClose: () => void }) {
               value={label}
               onChange={(e) => setLabel(e.target.value)}
               placeholder={t('attendance.kioskModal.namePlaceholder')}
+              aria-label={t('attendance.kioskModal.namePlaceholder')}
               maxLength={100}
-              className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-1 focus:ring-black outline-none"
+              className="form-input flex-1"
             />
             <button
               type="submit"
               disabled={createMut.isPending}
-              className="flex items-center gap-1.5 px-4 py-2 bg-black hover:bg-gray-800 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
+              className="btn-primary !py-2 !min-h-9"
             >
               <Plus className="w-4 h-4" />
               {createMut.isPending ? t('common.creating') : t('attendance.kioskModal.createLink')}
@@ -228,19 +225,19 @@ function KioskCredentialsModal({ onClose }: { onClose: () => void }) {
           </form>
         )}
         {error && (
-          <p className="mt-2 text-sm text-red-600 flex items-center gap-1">
+          <p className="mt-2 text-sm text-red-600 dark:text-red-400 flex items-center gap-1">
             <AlertCircle className="w-3.5 h-3.5" /> {error}
           </p>
         )}
 
         {/* List */}
         <div className="mt-6">
-          <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+          <h4 className="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider mb-2">
             {t('attendance.kioskModal.existing')}
           </h4>
           {isLoading ? (
             <div className="flex items-center justify-center h-24">
-              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-black" />
+              <div className="spinner" />
             </div>
           ) : listError ? (
             // Must not read as "no links yet" — a 403 or network failure is a
@@ -298,8 +295,12 @@ function KioskCredentialsModal({ onClose }: { onClose: () => void }) {
                         <td className="px-3 py-2.5 text-right">
                           {!revoked && (
                             <button
-                              onClick={() => {
-                                if (confirm(t('attendance.kioskModal.revokeConfirm', { label: c.label }))) {
+                              onClick={async () => {
+                                const ok = await confirmDialog({
+                                  description: t('attendance.kioskModal.revokeConfirm', { label: c.label }),
+                                  variant: 'danger',
+                                });
+                                if (ok) {
                                   revokeMut.mutate(c.id);
                                 }
                               }}
@@ -320,7 +321,7 @@ function KioskCredentialsModal({ onClose }: { onClose: () => void }) {
           )}
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -820,68 +821,67 @@ function ManualEntryModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
-        <h3 className="font-semibold text-gray-900 mb-5">{t('attendance.manual.title')}</h3>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.employee')}</label>
-            {presetEmployee ? (
-              <div className="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-800">
-                {presetEmployee.label}
-              </div>
-            ) : (
-              <EmployeePicker
-                value={form.employee_id}
-                onChange={(id) => setForm(p => ({ ...p, employee_id: id }))}
-              />
-            )}
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">{t('attendance.manual.checkIn')}</label>
-            <input type="datetime-local" value={form.check_in_at}
+    <Modal open onClose={onClose} title={t('attendance.manual.title')} maxWidth="max-w-md">
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <span className="form-label">{t('common.employee')}</span>
+          {presetEmployee ? (
+            <div className="px-3 py-2 bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg text-sm text-gray-800 dark:text-slate-100">
+              {presetEmployee.label}
+            </div>
+          ) : (
+            <EmployeePicker
+              value={form.employee_id}
+              onChange={(id) => setForm(p => ({ ...p, employee_id: id }))}
+            />
+          )}
+        </div>
+        <FormField label={t('attendance.manual.checkIn')}>
+          {(aria) => (
+            <input {...aria} type="datetime-local" value={form.check_in_at}
               onChange={e => setForm(p => ({ ...p, check_in_at: e.target.value }))}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-1 focus:ring-black outline-none"
+              className="form-input"
             />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">{t('attendance.manual.checkOutOptional')}</label>
-            <input type="datetime-local" value={form.check_out_at}
+          )}
+        </FormField>
+        <FormField label={t('attendance.manual.checkOutOptional')}>
+          {(aria) => (
+            <input {...aria} type="datetime-local" value={form.check_out_at}
               onChange={e => setForm(p => ({ ...p, check_out_at: e.target.value }))}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-1 focus:ring-black outline-none"
+              className="form-input"
             />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.status')}</label>
-            <select value={form.status} onChange={e => setForm(p => ({ ...p, status: e.target.value as keyof typeof STATUS_COLORS }))}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-1 focus:ring-black outline-none"
+          )}
+        </FormField>
+        <FormField label={t('common.status')}>
+          {(aria) => (
+            <select {...aria} value={form.status} onChange={e => setForm(p => ({ ...p, status: e.target.value as keyof typeof STATUS_COLORS }))}
+              className="form-input"
             >
               <option value="present">{attStatusLabel('present')}</option>
               <option value="late">{attStatusLabel('late')}</option>
               <option value="absent">{attStatusLabel('absent')}</option>
               <option value="half_day">{attStatusLabel('half_day')}</option>
             </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">{t('attendance.manual.notesOptional')}</label>
-            <textarea value={form.notes} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))}
-              rows={2} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-1 focus:ring-black outline-none resize-none"
+          )}
+        </FormField>
+        <FormField label={t('attendance.manual.notesOptional')}>
+          {(aria) => (
+            <textarea {...aria} value={form.notes} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))}
+              rows={2} className="form-input resize-none"
             />
-          </div>
-          {error && <p className="text-sm text-red-600 flex items-center gap-1"><AlertCircle className="w-3.5 h-3.5" />{error}</p>}
-          <div className="flex gap-3 pt-2">
-            <button type="button" onClick={onClose}
-              className="flex-1 py-2 border border-gray-300 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors">
-              {t('common.cancel')}
-            </button>
-            <button type="submit" disabled={mutation.isPending}
-              className="flex-1 py-2 bg-black text-white rounded-xl text-sm font-medium hover:bg-gray-800 transition-colors disabled:opacity-50">
-              {mutation.isPending ? t('common.saving') : t('common.save')}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+          )}
+        </FormField>
+        {error && <p className="text-sm text-red-600 dark:text-red-400 flex items-center gap-1"><AlertCircle className="w-3.5 h-3.5" />{error}</p>}
+        <div className="flex gap-3 pt-2">
+          <button type="button" onClick={onClose} className="btn-secondary flex-1">
+            {t('common.cancel')}
+          </button>
+          <button type="submit" disabled={mutation.isPending} className="btn-primary flex-1">
+            {mutation.isPending ? t('common.saving') : t('common.save')}
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 
@@ -933,77 +933,75 @@ function EditAttendanceModal({ record, onClose }: { record: AttendanceRecordWith
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto">
-        <h3 className="font-semibold text-gray-900 mb-1">{t('attendance.edit.title')}</h3>
-        <p className="text-sm text-gray-500 mb-5">{record.full_name} ({record.employee_number})</p>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">{t('attendance.manual.checkIn')}</label>
-            <input type="datetime-local" value={form.check_in_at}
+    <Modal open onClose={onClose} title={t('attendance.edit.title')} maxWidth="max-w-md">
+      <p className="text-sm text-gray-500 dark:text-slate-400 -mt-2 mb-4">{record.full_name} ({record.employee_number})</p>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <FormField label={t('attendance.manual.checkIn')}>
+          {(aria) => (
+            <input {...aria} type="datetime-local" value={form.check_in_at}
               onChange={e => setForm(p => ({ ...p, check_in_at: e.target.value }))}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-1 focus:ring-black outline-none"
+              className="form-input"
             />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">{t('attendance.manual.checkOut')}</label>
-            <input type="datetime-local" value={form.check_out_at}
-              onChange={e => setForm(p => ({ ...p, check_out_at: e.target.value }))}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-1 focus:ring-black outline-none"
-            />
-            {hadCheckOut && !form.check_out_at && (
-              <p className="mt-1 text-xs text-amber-600 flex items-center gap-1">
-                <AlertTriangle className="w-3 h-3" />
-                {t('attendance.edit.reopenWarning')}
-              </p>
+          )}
+        </FormField>
+        <div>
+          <FormField label={t('attendance.manual.checkOut')}>
+            {(aria) => (
+              <input {...aria} type="datetime-local" value={form.check_out_at}
+                onChange={e => setForm(p => ({ ...p, check_out_at: e.target.value }))}
+                className="form-input"
+              />
             )}
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.status')}</label>
-            <select value={form.status} onChange={e => setForm(p => ({ ...p, status: e.target.value as keyof typeof STATUS_COLORS }))}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-1 focus:ring-black outline-none">
+          </FormField>
+          {hadCheckOut && !form.check_out_at && (
+            <p className="mt-1 text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
+              <AlertTriangle className="w-3 h-3" />
+              {t('attendance.edit.reopenWarning')}
+            </p>
+          )}
+        </div>
+        <FormField label={t('common.status')}>
+          {(aria) => (
+            <select {...aria} value={form.status} onChange={e => setForm(p => ({ ...p, status: e.target.value as keyof typeof STATUS_COLORS }))}
+              className="form-input">
               <option value="present">{attStatusLabel('present')}</option>
               <option value="late">{attStatusLabel('late')}</option>
               <option value="absent">{attStatusLabel('absent')}</option>
               <option value="half_day">{attStatusLabel('half_day')}</option>
             </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.notes')}</label>
-            <textarea value={form.notes} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))}
-              rows={2} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-1 focus:ring-black outline-none resize-none"
+          )}
+        </FormField>
+        <FormField label={t('common.notes')}>
+          {(aria) => (
+            <textarea {...aria} value={form.notes} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))}
+              rows={2} className="form-input resize-none"
             />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              {t('attendance.edit.reason')} <span className="text-red-500">*</span>
-            </label>
+          )}
+        </FormField>
+        <FormField label={t('attendance.edit.reason')} required hint={t('attendance.edit.reasonNote')}>
+          {(aria) => (
             <input
+              {...aria}
               type="text"
               value={form.reason}
               onChange={e => setForm(p => ({ ...p, reason: e.target.value }))}
               placeholder={t('attendance.edit.reasonPlaceholder')}
               maxLength={400}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-1 focus:ring-black outline-none"
+              className="form-input"
             />
-            <p className="mt-1 text-xs text-gray-400">
-              {t('attendance.edit.reasonNote')}
-            </p>
-          </div>
-          {error && <p className="text-sm text-red-600 flex items-center gap-1"><AlertCircle className="w-3.5 h-3.5" />{error}</p>}
-          <div className="flex gap-3 pt-2">
-            <button type="button" onClick={onClose}
-              className="flex-1 py-2 border border-gray-300 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors">
-              {t('common.cancel')}
-            </button>
-            <button type="submit" disabled={mutation.isPending}
-              className="flex-1 py-2 bg-black text-white rounded-xl text-sm font-medium hover:bg-gray-800 transition-colors disabled:opacity-50">
-              {mutation.isPending ? t('common.saving') : t('common.saveChanges')}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+          )}
+        </FormField>
+        {error && <p className="text-sm text-red-600 dark:text-red-400 flex items-center gap-1"><AlertCircle className="w-3.5 h-3.5" />{error}</p>}
+        <div className="flex gap-3 pt-2">
+          <button type="button" onClick={onClose} className="btn-secondary flex-1">
+            {t('common.cancel')}
+          </button>
+          <button type="submit" disabled={mutation.isPending} className="btn-primary flex-1">
+            {mutation.isPending ? t('common.saving') : t('common.saveChanges')}
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 
@@ -1120,11 +1118,37 @@ const NO_FILTERS = {
 
 export function AttendancePage() {
   const { t } = useTranslation();
+  const toast = useToast();
+  const [searchParams] = useSearchParams();
   const { user } = useAuth();
   const queryClient = useQueryClient();
+  const urlStatus = searchParams.get('status') ?? '';
+  const urlOpenOnly = searchParams.get('open_only') === '1';
+  const urlOutsideGeofence = searchParams.get('outside_geofence') === '1';
+
   const [tab, setTab] = useState<'records' | 'summary'>('records');
-  const [filters, setFilters] = useState(NO_FILTERS);
+  const [filters, setFilters] = useState(() => ({
+    ...NO_FILTERS,
+    status: urlStatus,
+    open_only: urlOpenOnly,
+    outside_geofence_only: urlOutsideGeofence,
+  }));
   const [page, setPage] = useState(1);
+
+  const prevUrlFilterKey = useRef(`${urlStatus}|${urlOpenOnly}|${urlOutsideGeofence}`);
+  useEffect(() => {
+    const nextKey = `${urlStatus}|${urlOpenOnly}|${urlOutsideGeofence}`;
+    if (prevUrlFilterKey.current === nextKey) return;
+    prevUrlFilterKey.current = nextKey;
+    setTab('records');
+    setFilters((prev) => ({
+      ...prev,
+      status: urlStatus,
+      open_only: urlOpenOnly,
+      outside_geofence_only: urlOutsideGeofence,
+    }));
+    setPage(1);
+  }, [urlStatus, urlOpenOnly, urlOutsideGeofence]);
   const [showManual, setShowManual] = useState(false);
   const [editRecord, setEditRecord] = useState<AttendanceRecordWithEmployee | null>(null);
   const [exporting, setExporting] = useState(false);
@@ -1194,7 +1218,7 @@ export function AttendancePage() {
       queryClient.invalidateQueries({ queryKey: ['attendance-summary'] });
       setPageError('');
       setBackfillDate('');
-      alert(t('attendance.page.backfillDone', { count: res.marked, date: res.date }));
+      toast.success(t('attendance.page.backfillDone', { count: res.marked, date: res.date }));
     },
     onError: (e) => setPageError(getErrorMessage(e, t('attendance.page.backfillFailed'))),
   });

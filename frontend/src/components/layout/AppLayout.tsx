@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { Outlet, Navigate } from 'react-router';
-import { Menu } from 'lucide-react';
+import { Menu, Search } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useTranslation } from 'react-i18next';
 import { Sidebar } from './Sidebar';
 import { BrandLogo } from '@/components/ui/BrandLogo';
 import { PageTransition } from '@/components/ui/PageTransition';
+import { openCommandPalette } from '@/lib/commandPalette';
 import { hasOnlyEmployeeRole } from '@/lib/roles';
 
 export function AppLayout() {
@@ -49,15 +50,26 @@ export function AppLayout() {
         <div className="md:hidden glass-nav sticky top-0 z-30 flex items-center gap-3 px-4 py-3">
           <button
             onClick={() => setSidebarOpen(true)}
-            className="p-2 -ml-2 text-gray-600 hover:text-gray-900 hover:bg-white/60 rounded-lg transition-all-fast"
+            aria-label={t('a11y.openMenu')}
+            className="p-2 -ml-2 text-gray-600 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white hover:bg-white/60 dark:hover:bg-slate-800 rounded-lg transition-all-fast"
           >
             <Menu className="w-5 h-5" />
           </button>
-          <BrandLogo variant="lockup-dark" className="h-7 w-auto" />
-          <span className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-indigo-200/60 bg-indigo-50/80 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-indigo-600">
-            <span className="glow-dot" />
-            {t('nav.adminBadge')}
-          </span>
+          <BrandLogo variant="lockup-dark" className="h-7 w-auto dark:brightness-125" />
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              type="button"
+              onClick={openCommandPalette}
+              aria-label={t('nav.quickSearch')}
+              className="p-2 text-gray-500 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white hover:bg-white/60 dark:hover:bg-slate-800 rounded-lg transition-all-fast"
+            >
+              <Search className="w-4 h-4" />
+            </button>
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-indigo-200/60 dark:border-indigo-400/30 bg-indigo-50/80 dark:bg-indigo-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-indigo-600 dark:text-indigo-300">
+              <span className="glow-dot" />
+              {t('nav.adminBadge')}
+            </span>
+          </div>
         </div>
 
         <main className="flex-1 overflow-auto">

@@ -1,13 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Modal } from './Modal';
+import { Skeleton } from './Skeleton';
 
 export interface Column<T> {
   key: string;
   header: string;
   align?: 'left' | 'center' | 'right';
   render: (row: T) => React.ReactNode;
+  /** Optional value extractor enabling client-side sorting on this column. */
+  sortValue?: (row: T) => string | number | null | undefined;
   /** Used in the summary modal. If omitted, render() is used. */
   summaryRender?: (row: T) => React.ReactNode;
   /** Hide this column from the summary modal */
@@ -31,6 +34,8 @@ interface DataTableProps<T> {
   emptyMessage?: string;
   /** Custom icon shown when the table is empty */
   emptyIcon?: React.ReactNode;
+  /** Optional action rendered beneath emptyMessage (e.g. Clear filters or Create CTA) */
+  emptyAction?: React.ReactNode;
   /** Key extractor for each row. Defaults to (row as any).id */
   rowKey?: (row: T, index: number) => string;
   /** Title shown on the summary modal. Can be a function that receives the row. */
@@ -63,6 +68,7 @@ export function DataTable<T>({
   isLoading,
   emptyMessage,
   emptyIcon,
+  emptyAction,
   rowKey,
   summaryTitle,
   renderSummary,
@@ -77,6 +83,7 @@ export function DataTable<T>({
   const { t } = useTranslation();
   const [selectedRow, setSelectedRow] = useState<T | null>(null);
   const [internalPage, setInternalPage] = useState(1);
+  const [sortState, setSortState] = useState<{ key: string; dir: 'asc' | 'desc' } | null>(null);
   const selectAllRef = useRef<HTMLInputElement>(null);
   const resolvedEmptyMessage = emptyMessage ?? t('common.noResults');
   const resolvedSummaryTitle = summaryTitle ?? t('common.recordDetails');
@@ -85,23 +92,36 @@ export function DataTable<T>({
   const currentPage = isServerSide ? controlledPage : internalPage;
   const setCurrentPage = isServerSide ? onPageChange! : setInternalPage;
 
-  const totalItems = isServerSide ? (total ?? data.length) : data.length;
+  const sortedData = useMemo(() => {
+    if (isServerSide || !sortState) return data;
+    const col = columns.find((c) => c.key === sortState.key);
+    if (!col?.sortValue) return data;
+    const copy = [...data];
+    copy.sort((a, b) => {
+      const av = col.sortValue!(a);
+      const bv = col.sortValue!(b);
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      const cmp =
+        typeof av === 'number' && typeof bv === 'number'
+          ? av - bv
+          : String(av).localeCompare(String(bv), undefined, { numeric: true, sensitivity: 'base' });
+      return sortState.dir === 'asc' ? cmp : -cmp;
+    });
+    return copy;
+  }, [columns, data, isServerSide, sortState]);
+
+  const totalItems = isServerSide ? (total ?? data.length) : sortedData.length;
   const totalPages = Math.ceil(totalItems / perPage);
-  // Clamp before slicing so no frame is ever blank. Filtering 30 rows down to 8
-  // while sitting on page 3 used to slice [20,30) out of an eight-row array,
-  // render "No data found", and unmount the pager — leaving no control to get
-  // back to the rows that do match.
+  // Clamp before slicing so no frame is ever blank.
   const safePage = Math.min(Math.max(1, currentPage), Math.max(1, totalPages));
   const displayData = isServerSide
     ? data
-    : data.slice((safePage - 1) * perPage, safePage * perPage);
+    : sortedData.slice((safePage - 1) * perPage, safePage * perPage);
 
   const colCount = columns.length + (renderActions ? 1 : 0) + (selectable ? 1 : 0);
 
-  // Clamping fixes the frame; this fixes the state. Keyed on the derived page
-  // count and not on `data`, because Approvals, Reports and portal Leave all
-  // pass an inline `data={query.data ?? []}` — a `[data]` dependency would see a
-  // new array identity every render and pin those tables to page 1 forever.
   useEffect(() => {
     if (isServerSide) return;
     if (internalPage > totalPages) {
@@ -109,10 +129,6 @@ export function DataTable<T>({
     }
   }, [internalPage, isServerSide, totalPages]);
 
-  // Server-side the parent owns the page, so only correct it once the server has
-  // actually told us the size. The `total !== undefined` guard matters:
-  // `totalItems` falls back to `data.length` while a page is in flight, which
-  // would otherwise clamp the parent to page 1 on every refetch.
   useEffect(() => {
     if (!isServerSide || total === undefined || isLoading) return;
     const lastPage = Math.max(1, totalPages);
@@ -129,6 +145,22 @@ export function DataTable<T>({
 
   const handleRowClick = (row: T) => {
     if (!disableRowClick) setSelectedRow(row);
+  };
+
+  const handleRowKeyDown = (e: React.KeyboardEvent<HTMLElement>, row: T) => {
+    if (disableRowClick || e.target !== e.currentTarget) return;
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      handleRowClick(row);
+    }
+  };
+
+  const toggleSort = (key: string) => {
+    setSortState((prev) => {
+      if (!prev || prev.key !== key) return { key, dir: 'asc' };
+      if (prev.dir === 'asc') return { key, dir: 'desc' };
+      return null;
+    });
   };
 
   const selectedKeySet = new Set(selectedRowKeys);
@@ -193,10 +225,8 @@ export function DataTable<T>({
     ? resolvedSummaryTitle(selectedRow)
     : (resolvedSummaryTitle as string);
 
-  // Split columns into primary (shown prominently on mobile cards) and secondary
   const primaryColumns = columns.filter((col) => col.primary);
   const secondaryColumns = columns.filter((col) => !col.primary);
-  // If no columns are marked primary, use first 2 as primary
   const mobilePrimary = primaryColumns.length > 0 ? primaryColumns : columns.slice(0, 2);
   const mobileSecondary = primaryColumns.length > 0 ? secondaryColumns : columns.slice(2);
 
@@ -212,29 +242,41 @@ export function DataTable<T>({
     return pages;
   };
 
+  const skeletonRows = Math.min(perPage, 5);
+
   return (
     <>
-      <div className="bg-white rounded-2xl shadow overflow-hidden">
+      <div className="card !p-0 overflow-hidden">
         {/* Mobile card view */}
         <div className="md:hidden">
           {isLoading ? (
-            <div className="px-4 py-12 text-center text-gray-400">
-              <div className="flex items-center justify-center gap-2">
-                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-gray-900" />
-                <span>{t('common.loading')}</span>
-              </div>
+            <div className="divide-y divide-gray-100 dark:divide-slate-800 p-4 space-y-3" role="status">
+              <span className="sr-only">{t('common.loading')}</span>
+              {Array.from({ length: skeletonRows }, (_, idx) => (
+                <div key={idx} className="pt-3 first:pt-0 space-y-2">
+                  <Skeleton className="h-4 w-2/3" />
+                  <Skeleton className="h-3 w-1/2" />
+                </div>
+              ))}
             </div>
           ) : displayData.length === 0 ? (
-            <div className="px-4 py-12 text-center text-gray-400">
+            <div className="px-4 py-12 text-center text-gray-400 dark:text-slate-400">
               {emptyIcon && <div className="flex justify-center mb-2">{emptyIcon}</div>}
-              {resolvedEmptyMessage}
+              <p>{resolvedEmptyMessage}</p>
+              {emptyAction && <div className="mt-3 flex justify-center">{emptyAction}</div>}
             </div>
           ) : (
-            <div className="divide-y divide-gray-100">
+            <div className="divide-y divide-gray-100 dark:divide-slate-800">
               {displayData.map((row, idx) => (
                 <div
                   key={getKey(row, idx)}
-                  className={`p-4 ${!disableRowClick ? 'cursor-pointer active:bg-gray-50' : ''}`}
+                  tabIndex={!disableRowClick ? 0 : undefined}
+                  onKeyDown={(e) => handleRowKeyDown(e, row)}
+                  className={`p-4 transition-colors ${
+                    !disableRowClick
+                      ? 'cursor-pointer active:bg-[var(--accent-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ring)]'
+                      : ''
+                  }`}
                   onClick={() => handleRowClick(row)}
                 >
                   {/* Primary fields */}
@@ -246,14 +288,14 @@ export function DataTable<T>({
                           checked={selectedKeySet.has(getKey(row, idx))}
                           disabled={!(isRowSelectable?.(row) ?? true)}
                           onChange={() => toggleRowSelection(row, idx)}
-                          className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-900 disabled:opacity-40"
+                          className="h-4 w-4 rounded border-gray-300 text-[var(--accent-1)] focus:ring-[var(--ring)] disabled:opacity-40"
                           aria-label={t('common.selectRow')}
                         />
                       </div>
                     )}
                     <div className="flex-1 min-w-0 space-y-0.5">
                       {mobilePrimary.map((col) => (
-                        <div key={col.key} className="text-sm text-gray-900">
+                        <div key={col.key} className="text-sm text-gray-900 dark:text-slate-100">
                           {col.render(row)}
                         </div>
                       ))}
@@ -269,8 +311,8 @@ export function DataTable<T>({
                     <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1.5">
                       {mobileSecondary.map((col) => (
                         <div key={col.key} className="min-w-0">
-                          <span className="text-[10px] font-medium text-gray-400 uppercase tracking-wider">{col.header}</span>
-                          <div className="text-xs text-gray-600 truncate">{col.render(row)}</div>
+                          <span className="text-[10px] font-medium text-gray-400 dark:text-slate-500 uppercase tracking-wider">{col.header}</span>
+                          <div className="text-xs text-gray-600 dark:text-slate-300 truncate">{col.render(row)}</div>
                         </div>
                       ))}
                     </div>
@@ -284,7 +326,7 @@ export function DataTable<T>({
         {/* Desktop table view */}
         <div className="hidden md:block overflow-x-auto">
           <table className="w-full">
-            <thead className="bg-gray-50 text-left">
+            <thead className="bg-gray-50/80 dark:bg-slate-900/60 text-left border-b border-gray-100 dark:border-slate-800">
               <tr>
                 {selectable && (
                   <th className="w-12 px-6 py-3">
@@ -294,48 +336,93 @@ export function DataTable<T>({
                       checked={allDisplayRowsSelected}
                       disabled={!hasSelectableRows}
                       onChange={toggleDisplaySelection}
-                      className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-900 disabled:opacity-40"
+                      className="h-4 w-4 rounded border-gray-300 text-[var(--accent-1)] focus:ring-[var(--ring)] disabled:opacity-40"
                       aria-label={t('common.selectAllRows')}
                     />
                   </th>
                 )}
-                {columns.map((col) => (
-                  <th
-                    key={col.key}
-                    className={`px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide ${
-                      col.align === 'right' ? 'text-right' : col.align === 'center' ? 'text-center' : 'text-left'
-                    }`}
-                  >
-                    {col.header}
-                  </th>
-                ))}
+                {columns.map((col) => {
+                  const canSort = !isServerSide && Boolean(col.sortValue);
+                  const activeSort = sortState?.key === col.key ? sortState.dir : null;
+                  const ariaSort = canSort
+                    ? activeSort === 'asc'
+                      ? 'ascending'
+                      : activeSort === 'desc'
+                        ? 'descending'
+                        : 'none'
+                    : undefined;
+                  return (
+                    <th
+                      key={col.key}
+                      aria-sort={ariaSort}
+                      className={`px-6 py-3 text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide ${
+                        col.align === 'right' ? 'text-right' : col.align === 'center' ? 'text-center' : 'text-left'
+                      }`}
+                    >
+                      {canSort ? (
+                        <button
+                          type="button"
+                          onClick={() => toggleSort(col.key)}
+                          aria-label={t('ux.table.sortBy', { column: col.header })}
+                          className={`inline-flex items-center gap-1 rounded hover:text-gray-900 dark:hover:text-slate-100 transition-colors ${
+                            col.align === 'right' ? 'ml-auto' : col.align === 'center' ? 'mx-auto' : ''
+                          }`}
+                        >
+                          <span>{col.header}</span>
+                          {activeSort === 'asc' ? (
+                            <ArrowUp className="h-3.5 w-3.5 text-[var(--accent-1)]" aria-hidden="true" />
+                          ) : activeSort === 'desc' ? (
+                            <ArrowDown className="h-3.5 w-3.5 text-[var(--accent-1)]" aria-hidden="true" />
+                          ) : (
+                            <ArrowUpDown className="h-3.5 w-3.5 opacity-40" aria-hidden="true" />
+                          )}
+                        </button>
+                      ) : (
+                        col.header
+                      )}
+                    </th>
+                  );
+                })}
                 {renderActions && (
-                  <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase text-center">{t('common.actions')}</th>
+                  <th className="px-6 py-3 text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase text-center">{t('common.actions')}</th>
                 )}
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100">
+            <tbody className="divide-y divide-gray-100 dark:divide-slate-800/80">
               {isLoading ? (
                 <tr>
-                  <td colSpan={colCount} className="px-6 py-12 text-center text-gray-400">
-                    <div className="flex items-center justify-center gap-2">
-                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-gray-900" />
-                      <span>{t('common.loading')}</span>
+                  <td colSpan={colCount} className="px-6 py-5">
+                    <span className="sr-only">{t('common.loading')}</span>
+                    <div className="space-y-3">
+                      {Array.from({ length: skeletonRows }, (_, idx) => (
+                        <div key={idx} className="flex items-center gap-4">
+                          <Skeleton className="h-4 w-1/4" />
+                          <Skeleton className="h-4 w-1/3" />
+                          <Skeleton className="h-4 w-1/5 ml-auto" />
+                        </div>
+                      ))}
                     </div>
                   </td>
                 </tr>
               ) : displayData.length === 0 ? (
                 <tr>
-                  <td colSpan={colCount} className="px-6 py-12 text-center text-gray-400">
+                  <td colSpan={colCount} className="px-6 py-12 text-center text-gray-400 dark:text-slate-400">
                     {emptyIcon && <div className="flex justify-center mb-2">{emptyIcon}</div>}
                     {resolvedEmptyMessage}
+                    {emptyAction && <div className="mt-3 flex justify-center">{emptyAction}</div>}
                   </td>
                 </tr>
               ) : (
                 displayData.map((row, idx) => (
                   <tr
                     key={getKey(row, idx)}
-                    className={`hover:bg-gray-50 transition-colors ${!disableRowClick ? 'cursor-pointer' : ''}`}
+                    tabIndex={!disableRowClick ? 0 : undefined}
+                    onKeyDown={(e) => handleRowKeyDown(e, row)}
+                    className={`hover:bg-[var(--accent-soft)] transition-colors ${
+                      !disableRowClick
+                        ? 'cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ring)]'
+                        : ''
+                    }`}
                     onClick={() => handleRowClick(row)}
                   >
                     {selectable && (
@@ -345,7 +432,7 @@ export function DataTable<T>({
                           checked={selectedKeySet.has(getKey(row, idx))}
                           disabled={!(isRowSelectable?.(row) ?? true)}
                           onChange={() => toggleRowSelection(row, idx)}
-                          className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-900 disabled:opacity-40"
+                          className="h-4 w-4 rounded border-gray-300 text-[var(--accent-1)] focus:ring-[var(--ring)] disabled:opacity-40"
                           aria-label={t('common.selectRow')}
                         />
                       </td>
@@ -353,7 +440,7 @@ export function DataTable<T>({
                     {columns.map((col) => (
                       <td
                         key={col.key}
-                        className={`px-6 py-4 text-sm ${
+                        className={`px-6 py-4 text-sm text-gray-800 dark:text-slate-200 ${
                           col.align === 'right' ? 'text-right' : col.align === 'center' ? 'text-center' : 'text-left'
                         }`}
                       >
@@ -373,27 +460,23 @@ export function DataTable<T>({
         </div>
 
         {/* Pagination */}
-        {/* `currentPage > 1` keeps a control on screen in the transitional frame
-            where a filter has just collapsed the set to a single page and the
-            reset effect has not run yet. */}
         {(totalPages > 1 || currentPage > 1) && !isLoading && (
-          <div className="flex flex-col gap-2 sm:flex-row items-center justify-between px-4 sm:px-6 py-3 border-t border-gray-100 bg-gray-50">
-            <span className="text-sm text-gray-500">
+          <div className="flex flex-col gap-2 sm:flex-row items-center justify-between px-4 sm:px-6 py-3 border-t border-gray-100 dark:border-slate-800 bg-gray-50/70 dark:bg-slate-900/50">
+            <span className="text-sm text-gray-500 dark:text-slate-400">
               {t('common.showing', { from: (safePage - 1) * perPage + 1, to: Math.min(safePage * perPage, totalItems), total: totalItems })}
             </span>
             <div className="flex items-center gap-1">
               <button
                 onClick={() => setCurrentPage(Math.max(1, safePage - 1))}
                 disabled={safePage === 1}
-                className="p-2 sm:p-1.5 rounded-lg hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                aria-label={t('a11y.previousPage')}
+                className="p-2 sm:p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
                 <ChevronLeft className="w-4 h-4" />
               </button>
-              {/* Simplified pagination on mobile: just page count */}
-              <span className="sm:hidden text-sm text-gray-600 px-2">
+              <span className="sm:hidden text-sm text-gray-600 dark:text-slate-300 px-2">
                 {safePage} / {Math.max(1, totalPages)}
               </span>
-              {/* Full pagination on desktop */}
               <div className="hidden sm:flex items-center gap-1">
                 {getPageNumbers().map((p, i) =>
                   p === 'ellipsis' ? (
@@ -402,10 +485,10 @@ export function DataTable<T>({
                     <button
                       key={p}
                       onClick={() => setCurrentPage(p)}
-                      className={`min-w-[32px] h-8 rounded-lg text-sm font-medium transition-colors ${
+                      className={`min-w-[32px] h-8 rounded-lg text-sm font-medium transition-all ${
                         p === safePage
-                          ? 'bg-black text-white'
-                          : 'text-gray-600 hover:bg-gray-200'
+                          ? 'bg-gradient-to-br from-[var(--accent-1)] to-[var(--accent-2)] text-white shadow-sm'
+                          : 'text-gray-600 dark:text-slate-300 hover:bg-gray-200/80 dark:hover:bg-slate-800'
                       }`}
                     >
                       {p}
@@ -416,7 +499,8 @@ export function DataTable<T>({
               <button
                 onClick={() => setCurrentPage(Math.min(Math.max(1, totalPages), safePage + 1))}
                 disabled={safePage >= Math.max(1, totalPages)}
-                className="p-2 sm:p-1.5 rounded-lg hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                aria-label={t('a11y.nextPage')}
+                className="p-2 sm:p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
                 <ChevronRight className="w-4 h-4" />
               </button>
@@ -441,8 +525,8 @@ export function DataTable<T>({
                 .filter((col) => !col.hideInSummary)
                 .map((col) => (
                   <div key={col.key} className="flex flex-col gap-1.5">
-                    <span className="text-xs font-medium text-gray-400 uppercase tracking-wider">{col.header}</span>
-                    <div className="text-sm text-gray-900">
+                    <span className="text-xs font-medium text-gray-400 dark:text-slate-500 uppercase tracking-wider">{col.header}</span>
+                    <div className="text-sm text-gray-900 dark:text-slate-100">
                       {col.summaryRender ? col.summaryRender(selectedRow) : col.render(selectedRow)}
                     </div>
                   </div>

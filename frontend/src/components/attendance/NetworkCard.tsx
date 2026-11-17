@@ -107,12 +107,13 @@ function WhoamiPanel() {
               value={label}
               onChange={e => setLabel(e.target.value)}
               placeholder={t('attendance.network.namePlaceholder')}
-              className="flex-1 min-w-0 px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-1 focus:ring-black"
+              aria-label={t('attendance.network.namePlaceholder')}
+              className="form-input flex-1 min-w-0"
             />
             <button
               onClick={() => approve.mutate()}
               disabled={!label.trim() || approve.isPending}
-              className="px-3 py-2 bg-black text-white rounded-lg text-sm font-medium hover:bg-gray-800 disabled:opacity-40 shrink-0"
+              className="btn-primary !py-2 !min-h-9 shrink-0"
             >
               {approve.isPending ? t('attendance.network.approving') : t('attendance.network.approveThis')}
             </button>
@@ -145,43 +146,45 @@ function AddNetworkForm({ onClose }: { onClose: () => void }) {
   });
 
   return (
-    <div className="border border-gray-200 rounded-xl p-4 space-y-3 bg-gray-50">
+    <div className="border border-gray-200 dark:border-slate-800 rounded-xl p-4 space-y-3 bg-gray-50/70 dark:bg-slate-900/60">
       <div className="flex justify-between items-center">
-        <p className="text-sm font-semibold text-gray-700">{t('attendance.network.addTitle')}</p>
-        <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg leading-none">&times;</button>
+        <p className="text-sm font-semibold text-gray-700 dark:text-slate-200">{t('attendance.network.addTitle')}</p>
+        <button onClick={onClose} aria-label={t('common.close')} className="text-gray-400 hover:text-gray-600 text-lg leading-none">&times;</button>
       </div>
       <input
         placeholder={t('attendance.network.namePlaceholder')}
+        aria-label={t('attendance.network.namePlaceholder')}
         value={form.label}
         onChange={e => setForm(p => ({ ...p, label: e.target.value }))}
-        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-1 focus:ring-black"
+        className="form-input"
       />
       <input
         placeholder={t('attendance.network.cidrPlaceholder')}
+        aria-label={t('attendance.network.cidrPlaceholder')}
         value={form.cidr}
         onChange={e => setForm(p => ({ ...p, cidr: e.target.value }))}
-        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono outline-none focus:ring-1 focus:ring-black"
+        className="form-input font-mono"
       />
-      <p className="text-xs text-gray-500">
+      <p className="text-xs text-gray-500 dark:text-slate-400">
         <Trans
           i18nKey="attendance.network.publicHint"
           components={{ strong: <strong /> }}
         />
       </p>
       {error && (
-        <p className="text-sm text-red-600 flex items-center gap-1">
+        <p className="text-sm text-red-600 dark:text-red-400 flex items-center gap-1">
           <AlertCircle className="w-3.5 h-3.5" />{error}
         </p>
       )}
       <div className="flex gap-2">
         <button onClick={onClose}
-          className="flex-1 py-2 border border-gray-300 rounded-lg text-sm text-gray-600 hover:bg-gray-100">
+          className="btn-secondary flex-1 !py-2">
           {t('common.cancel')}
         </button>
         <button
           onClick={() => mutation.mutate()}
           disabled={!form.label.trim() || !form.cidr.trim() || mutation.isPending}
-          className="flex-1 py-2 bg-black text-white rounded-lg text-sm font-medium hover:bg-gray-800 disabled:opacity-40"
+          className="btn-primary flex-1 !py-2"
         >
           {mutation.isPending ? t('common.adding') : t('common.add')}
         </button>
@@ -294,12 +297,13 @@ function CandidateRow({ candidate }: { candidate: NetworkCandidate }) {
             value={label}
             onChange={e => setLabel(e.target.value)}
             placeholder={t('attendance.network.nameThis')}
-            className="flex-1 min-w-0 px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-1 focus:ring-black"
+            aria-label={t('attendance.network.nameThis')}
+            className="form-input flex-1 min-w-0"
           />
           <button
             onClick={() => approve.mutate()}
             disabled={!label.trim() || approve.isPending}
-            className="px-3 py-2 bg-black text-white rounded-lg text-sm font-medium hover:bg-gray-800 disabled:opacity-40 shrink-0"
+            className="btn-primary !py-2 !min-h-9 shrink-0"
           >
             {approve.isPending ? t('common.saving') : t('common.save')}
           </button>
@@ -346,13 +350,13 @@ export function NetworkCard() {
   const activeCount = networks.filter(n => n.is_active).length;
 
   return (
-    <div className="bg-white rounded-2xl shadow">
-      <div className="p-5 sm:p-6 border-b border-gray-100">
+    <div className="card !p-0 overflow-hidden">
+      <div className="p-5 sm:p-6 border-b border-gray-100 dark:border-slate-800">
         <div className="flex items-center gap-2 mb-1">
-          <ShieldCheck className="w-5 h-5 text-gray-700" />
-          <h2 className="font-semibold text-gray-900">{t('attendance.network.title')}</h2>
+          <ShieldCheck className="w-5 h-5 text-[var(--accent-1)]" />
+          <h2 className="font-semibold text-gray-900 dark:text-slate-100">{t('attendance.network.title')}</h2>
         </div>
-        <p className="text-sm text-gray-500">
+        <p className="text-sm text-gray-500 dark:text-slate-400">
           {t('attendance.network.body')}
         </p>
       </div>
@@ -361,20 +365,22 @@ export function NetworkCard() {
         <WhoamiPanel />
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">{t('attendance.geofence.modeLabel')}</label>
+          <p className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">{t('attendance.geofence.modeLabel')}</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             {MODE_VALUES.map(mode => (
               <button
                 key={mode}
                 onClick={() => modeMut.mutate(mode)}
                 className={`relative p-3 rounded-xl border-2 text-left transition-all ${
-                  currentMode === mode ? 'border-black bg-gray-50' : 'border-gray-200 hover:border-gray-300'
+                  currentMode === mode
+                    ? 'border-[var(--accent-1)] bg-[var(--accent-soft)]'
+                    : 'border-gray-200 dark:border-slate-800 hover:border-gray-300 dark:hover:border-slate-700'
                 }`}
               >
-                <p className="text-sm font-semibold text-gray-900 pr-5">{modeLabel(mode, t)}</p>
-                <p className="text-xs text-gray-500 mt-0.5">{modeDesc(mode, t)}</p>
+                <p className="text-sm font-semibold text-gray-900 dark:text-slate-100 pr-5">{modeLabel(mode, t)}</p>
+                <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">{modeDesc(mode, t)}</p>
                 {currentMode === mode && (
-                  <CheckCircle2 className="w-3.5 h-3.5 text-black absolute top-3 right-3" />
+                  <CheckCircle2 className="w-3.5 h-3.5 text-[var(--accent-1)] absolute top-3 right-3" />
                 )}
               </button>
             ))}

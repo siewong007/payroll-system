@@ -1,4 +1,5 @@
 import { useEffect, useRef, useCallback, useId } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import { X } from 'lucide-react';
@@ -12,31 +13,61 @@ interface ModalProps {
   maxWidth?: string;
 }
 
-const FOCUSABLE = 'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+const FOCUSABLE =
+  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+// Tracks open Modal instances in mount order so nested modals (e.g. ConfirmDialog
+// opened over EmployeeDocumentsModal or DataTable summary) layer cleanly, keep
+// body scroll locked until the last modal closes, and route Escape / Tab focus
+// trapping exclusively to the topmost dialog.
+const openModalStack: string[] = [];
+
+function syncBodyScrollLock() {
+  document.body.style.overflow = openModalStack.length > 0 ? 'hidden' : '';
+}
 
 export function Modal({ open, onClose, title, children, footer, maxWidth = 'max-w-2xl' }: ModalProps) {
   const { t } = useTranslation();
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
-  const titleId = useId();
+  const instanceId = useId();
+  const titleId = `${instanceId}-title`;
 
-  // Body scroll lock
+  // Stack registration + ref-counted body scroll lock + focus restoration
   useEffect(() => {
-    if (open) {
-      previousFocusRef.current = document.activeElement as HTMLElement;
-      document.body.style.overflow = 'hidden';
-    } else {
-      document.body.style.overflow = '';
-      previousFocusRef.current?.focus();
-    }
-    return () => { document.body.style.overflow = ''; };
-  }, [open]);
+    if (!open) return;
 
-  // Focus trapping
+    previousFocusRef.current = document.activeElement as HTMLElement | null;
+    if (!openModalStack.includes(instanceId)) {
+      openModalStack.push(instanceId);
+    }
+    const mountedIdx = Math.max(0, openModalStack.indexOf(instanceId));
+    const mountedZ = 50 + mountedIdx * 2;
+    if (overlayRef.current) overlayRef.current.style.zIndex = String(mountedZ);
+    if (containerRef.current) containerRef.current.style.zIndex = String(mountedZ + 1);
+    syncBodyScrollLock();
+
+    return () => {
+      const idx = openModalStack.indexOf(instanceId);
+      if (idx !== -1) {
+        openModalStack.splice(idx, 1);
+      }
+      syncBodyScrollLock();
+      previousFocusRef.current?.focus?.();
+    };
+  }, [instanceId, open]);
+
+  // Topmost-only Escape dismissal & Tab focus trapping
   useEffect(() => {
     if (!open) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (openModalStack[openModalStack.length - 1] !== instanceId) {
+        return;
+      }
+
       if (e.key === 'Escape') {
         e.stopPropagation();
         onClose();
@@ -48,7 +79,10 @@ export function Modal({ open, onClose, title, children, footer, maxWidth = 'max-
       if (!dialog) return;
 
       const focusableEls = dialog.querySelectorAll<HTMLElement>(FOCUSABLE);
-      if (focusableEls.length === 0) { e.preventDefault(); return; }
+      if (focusableEls.length === 0) {
+        e.preventDefault();
+        return;
+      }
 
       const first = focusableEls[0];
       const last = focusableEls[focusableEls.length - 1];
@@ -64,23 +98,33 @@ export function Modal({ open, onClose, title, children, footer, maxWidth = 'max-
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [open, onClose]);
+  }, [instanceId, open, onClose]);
 
-  // Auto-focus first focusable element, unless the user already moved focus inside
   const handleAnimationComplete = useCallback(() => {
-    if (open && dialogRef.current && !dialogRef.current.contains(document.activeElement)) {
+    if (
+      open &&
+      openModalStack[openModalStack.length - 1] === instanceId &&
+      dialogRef.current &&
+      !dialogRef.current.contains(document.activeElement)
+    ) {
       const firstFocusable = dialogRef.current.querySelector<HTMLElement>(FOCUSABLE);
       (firstFocusable ?? dialogRef.current).focus();
     }
-  }, [open]);
+  }, [instanceId, open]);
 
-  return (
+  const existingIndex = openModalStack.indexOf(instanceId);
+  const stackIndex = open ? (existingIndex !== -1 ? existingIndex : openModalStack.length) : 0;
+  const zIndex = 50 + stackIndex * 2;
+
+  const content = (
     <AnimatePresence>
       {open && (
         <>
           {/* Overlay — covers viewport via w-screen h-screen */}
           <motion.div
-            className="fixed top-0 left-0 z-50 w-screen h-screen bg-slate-950/50 backdrop-blur-md"
+            ref={overlayRef}
+            style={{ zIndex }}
+            className="fixed top-0 left-0 w-screen h-screen bg-slate-950/50 backdrop-blur-md"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -92,7 +136,9 @@ export function Modal({ open, onClose, title, children, footer, maxWidth = 'max-
 
           {/* Centering container — grid places modal in center */}
           <motion.div
-            className="fixed top-0 left-0 z-50 w-screen h-[100dvh] grid place-items-end sm:place-items-center p-0 sm:p-4 pointer-events-none"
+            ref={containerRef}
+            style={{ zIndex: zIndex + 1 }}
+            className="fixed top-0 left-0 w-screen h-[100dvh] grid place-items-end sm:place-items-center p-0 sm:p-4 pointer-events-none"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -106,7 +152,7 @@ export function Modal({ open, onClose, title, children, footer, maxWidth = 'max-
               aria-labelledby={title ? titleId : undefined}
               tabIndex={-1}
               className={`
-                relative bg-white/95 backdrop-blur-2xl ring-1 ring-black/5 w-full ${maxWidth} outline-none flex flex-col
+                relative bg-white/95 dark:bg-slate-900/95 backdrop-blur-2xl ring-1 ring-black/5 dark:ring-white/10 w-full ${maxWidth} outline-none flex flex-col
                 shadow-2xl pointer-events-auto
                 rounded-t-2xl sm:rounded-2xl
                 max-h-[95dvh] sm:max-h-[85vh]
@@ -120,16 +166,16 @@ export function Modal({ open, onClose, title, children, footer, maxWidth = 'max-
             >
               {/* Header */}
               {title && (
-                <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
-                  {/* Mobile drag indicator */}
-                  <div className="absolute top-2 left-1/2 -translate-x-1/2 w-10 h-1 rounded-full bg-gray-300 sm:hidden" />
-                  <h2 id={titleId} className="text-lg font-semibold text-gray-900 pr-8">
+                <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-slate-800 shrink-0">
+                  <div className="absolute top-2 left-1/2 -translate-x-1/2 w-10 h-1 rounded-full bg-gray-300 dark:bg-slate-700 sm:hidden" />
+                  <h2 id={titleId} className="text-lg font-semibold text-gray-900 dark:text-slate-100 pr-8">
                     {title}
                   </h2>
                   <button
+                    type="button"
                     onClick={onClose}
                     aria-label={t('a11y.closeDialog')}
-                    className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+                    className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:text-slate-200 dark:hover:bg-slate-800 transition-colors"
                   >
                     <X className="w-5 h-5" />
                   </button>
@@ -141,7 +187,7 @@ export function Modal({ open, onClose, title, children, footer, maxWidth = 'max-
 
               {/* Sticky footer */}
               {footer && (
-                <div className="px-6 py-4 border-t border-gray-200/70 shrink-0 bg-gray-50/80 rounded-b-2xl">
+                <div className="px-6 py-4 border-t border-gray-200/70 dark:border-slate-800 shrink-0 bg-gray-50/80 dark:bg-slate-950/60 rounded-b-2xl">
                   {footer}
                 </div>
               )}
@@ -151,4 +197,9 @@ export function Modal({ open, onClose, title, children, footer, maxWidth = 'max-
       )}
     </AnimatePresence>
   );
+
+  if (typeof document === 'undefined') {
+    return content;
+  }
+  return createPortal(content, document.body);
 }

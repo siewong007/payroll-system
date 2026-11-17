@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Clock, X, Trash2 } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
 import { TimeSelector } from '@/components/ui/TimeSelector';
+import { useConfirm } from '@/lib/confirm';
 import { getOvertimeApplications, createOvertimeApplication, cancelOvertimeApplication, deleteOvertimeApplication } from '@/api/portal';
 import { runBulk, summarizeBulkFailure } from '@/lib/bulk';
 import { formatDate, getErrorMessage } from '@/lib/utils';
@@ -34,6 +35,7 @@ const otTypeMultiplier = (t: string) => {
 
 export function Overtime() {
   const { t } = useTranslation();
+  const confirmDialog = useConfirm();
   const queryClient = useQueryClient();
   const selectAllRef = useRef<HTMLInputElement>(null);
   const [showModal, setShowModal] = useState(false);
@@ -139,14 +141,23 @@ export function Overtime() {
     });
   };
 
-  const handleCancel = (app: OvertimeApplication) => {
-    if (confirm(t('portal.overtime.cancelConfirm'))) {
+  const handleCancel = async (app: OvertimeApplication) => {
+    const ok = await confirmDialog({
+      description: t('portal.overtime.cancelConfirm'),
+      confirmLabel: t('common.cancel'),
+      variant: 'warning',
+    });
+    if (ok) {
       cancelMutation.mutate(app.id);
     }
   };
 
-  const handleDelete = (app: OvertimeApplication) => {
-    if (confirm(t('portal.overtime.deleteConfirm'))) {
+  const handleDelete = async (app: OvertimeApplication) => {
+    const ok = await confirmDialog({
+      description: t('portal.overtime.deleteConfirm'),
+      variant: 'danger',
+    });
+    if (ok) {
       deleteMutation.mutate(app.id);
     }
   };
@@ -220,8 +231,13 @@ export function Overtime() {
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
-                  onClick={() => {
-                    if (confirm(t('portal.overtime.bulkCancelConfirm', { count: selectedCancelableIds.length }))) {
+                  onClick={async () => {
+                    const ok = await confirmDialog({
+                      description: t('portal.overtime.bulkCancelConfirm', { count: selectedCancelableIds.length }),
+                      confirmLabel: t('common.cancelSelected'),
+                      variant: 'warning',
+                    });
+                    if (ok) {
                       setBulkError('');
                       bulkCancelMutation.mutate(selectedCancelableIds);
                     }
@@ -234,8 +250,12 @@ export function Overtime() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    if (confirm(t('portal.overtime.bulkDeleteConfirm', { count: selectedDeletableIds.length }))) {
+                  onClick={async () => {
+                    const ok = await confirmDialog({
+                      description: t('portal.overtime.bulkDeleteConfirm', { count: selectedDeletableIds.length }),
+                      variant: 'danger',
+                    });
+                    if (ok) {
                       setBulkError('');
                       bulkDeleteMutation.mutate(selectedDeletableIds);
                     }

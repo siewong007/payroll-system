@@ -6,20 +6,22 @@ import { getPayrollOverview } from '@/api/payroll';
 import { formatMYR } from '@/lib/utils';
 import { formatPeriod } from '@/lib/format';
 import { PAYROLL_STATUS_STYLES, payrollStatusLabel } from './statusMeta';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { KpiSkeletonGrid } from '@/components/ui/Skeleton';
 import type { PayrollActionItem } from '@/types';
 
 const SEVERITY_STYLES: Record<string, { badge: string; icon: typeof AlertTriangle }> = {
-  blocking: { badge: 'bg-red-50 text-red-700 border-red-100', icon: Ban },
-  warning: { badge: 'bg-amber-50 text-amber-700 border-amber-100', icon: AlertTriangle },
-  info: { badge: 'bg-blue-50 text-blue-700 border-blue-100', icon: Info },
+  blocking: { badge: 'bg-red-50 text-red-700 border-red-100 dark:bg-red-500/10 dark:text-red-200 dark:border-red-500/25', icon: Ban },
+  warning: { badge: 'bg-amber-50 text-amber-700 border-amber-100 dark:bg-amber-500/10 dark:text-amber-200 dark:border-amber-500/25', icon: AlertTriangle },
+  info: { badge: 'bg-blue-50 text-blue-700 border-blue-100 dark:bg-blue-500/10 dark:text-blue-200 dark:border-blue-500/25', icon: Info },
 };
 
 function KpiCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
-    <div className="bg-white rounded-2xl shadow border border-gray-200 p-4">
-      <p className="text-xs text-gray-400">{label}</p>
-      <p className="text-lg font-bold mt-1 tabular-nums">{value}</p>
-      {sub && <p className="text-xs text-gray-400 mt-0.5">{sub}</p>}
+    <div className="card hover-lift !p-4">
+      <p className="text-xs text-gray-500 dark:text-slate-400">{label}</p>
+      <p className="text-lg font-bold mt-1 tabular-nums text-gray-900 dark:text-slate-100">{value}</p>
+      {sub && <p className="text-xs text-gray-400 dark:text-slate-500 mt-0.5">{sub}</p>}
     </div>
   );
 }
@@ -62,8 +64,9 @@ export function PayrollOverview() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-black" />
+      <div className="space-y-6">
+        <PageHeader title={t('payroll.overview.title')} />
+        <KpiSkeletonGrid count={4} />
       </div>
     );
   }
@@ -77,34 +80,31 @@ export function PayrollOverview() {
 
   return (
     <div>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-6">
-        <div>
-          <h1 className="text-xl sm:text-2xl font-bold text-gray-900">{t('payroll.overview.title')}</h1>
-          {current && (
-            <p className="text-gray-500 text-sm">
-              {current.run_count > 1
-                ? t('payroll.overview.latestPeriodRuns', { period: formatPeriod(current.period_year, current.period_month), count: current.run_count })
-                : t('payroll.overview.latestPeriod', { period: formatPeriod(current.period_year, current.period_month) })}
-            </p>
-          )}
-        </div>
-        <Link
-          to="/payroll/runs"
-          className="flex items-center justify-center gap-2 bg-black text-white px-4 py-2 rounded-lg hover:bg-gray-800 transition-colors text-sm font-medium w-full sm:w-auto min-h-[44px]"
-        >
-          {t('payroll.overview.allRuns')} <ArrowRight className="w-4 h-4" />
-        </Link>
-      </div>
+      <PageHeader
+        title={t('payroll.overview.title')}
+        subtitle={
+          current
+            ? current.run_count > 1
+              ? t('payroll.overview.latestPeriodRuns', { period: formatPeriod(current.period_year, current.period_month), count: current.run_count })
+              : t('payroll.overview.latestPeriod', { period: formatPeriod(current.period_year, current.period_month) })
+            : undefined
+        }
+        actions={
+          <Link to="/payroll/runs" className="btn-primary w-full sm:w-auto">
+            {t('payroll.overview.allRuns')} <ArrowRight className="w-4 h-4" />
+          </Link>
+        }
+      />
 
       {!current ? (
-        <div className="bg-white rounded-2xl shadow border border-gray-200 p-8 text-center">
-          <p className="text-gray-700 font-medium">{t('payroll.overview.emptyTitle')}</p>
-          <p className="text-gray-500 text-sm mt-1">
+        <div className="card p-8 text-center">
+          <p className="text-gray-700 dark:text-slate-200 font-medium">{t('payroll.overview.emptyTitle')}</p>
+          <p className="text-gray-500 dark:text-slate-400 text-sm mt-1">
             {t('payroll.overview.emptyBody')}
           </p>
           <Link
             to="/payroll/runs"
-            className="inline-flex items-center gap-2 mt-4 text-sm font-medium text-gray-900 underline"
+            className="inline-flex items-center gap-2 mt-4 btn-secondary"
           >
             {t('payroll.overview.goToRuns')} <ArrowRight className="w-4 h-4" />
           </Link>

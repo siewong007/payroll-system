@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Building2, X, Pencil, Trash2 } from 'lucide-react';
+import { Plus, Building2, Pencil, Trash2 } from 'lucide-react';
 import { listCompanies, createCompany, updateCompanyAdmin, deleteCompany } from '@/api/admin';
+import { Modal } from '@/components/ui/Modal';
+import { FormField } from '@/components/ui/FormField';
 import { getErrorMessage } from '@/lib/utils';
 import type { Company, CreateCompanyRequest, UpdateCompanyRequest } from '@/types';
 
@@ -129,116 +131,123 @@ export function CompanyManagement() {
       </div>
 
       {/* Create Company Modal */}
-      {showCreate && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg mx-4">
-            <div className="flex items-center justify-between p-6 border-b border-gray-100">
-              <h2 className="text-lg font-semibold text-gray-900">{t('companies.createTitle')}</h2>
-              <button onClick={() => { setShowCreate(false); setError(''); }} className="text-gray-400 hover:text-gray-700">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <div className="p-6 space-y-4">
-              {error && <div className="p-3 bg-red-50 text-red-700 text-sm rounded-lg border border-red-100">{error}</div>}
-              <div>
-                <label className="form-label">{t('companies.name')} *</label>
+      <Modal
+        open={showCreate}
+        onClose={() => { setShowCreate(false); setError(''); }}
+        title={t('companies.createTitle')}
+        maxWidth="max-w-lg"
+        footer={
+          <div className="flex justify-end gap-3">
+            <button onClick={() => { setShowCreate(false); setError(''); }} className="btn-secondary">{t('common.cancel')}</button>
+            <button onClick={handleSubmit} disabled={createMutation.isPending} className="btn-primary">
+              {createMutation.isPending ? t('common.creating') : t('companies.createTitle')}
+            </button>
+          </div>
+        }
+      >
+        <div className="space-y-4">
+          {error && <div className="p-3 bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-300 text-sm rounded-lg border border-red-100 dark:border-red-500/25">{error}</div>}
+          <FormField label={t('companies.name')} required>
+            {(aria) => (
+              <input
+                {...aria}
+                value={form.name}
+                onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
+                className="form-input"
+                placeholder={t('companies.namePlaceholder')}
+              />
+            )}
+          </FormField>
+          <div className="grid grid-cols-2 gap-4">
+            <FormField label={t('companies.regNoSsm')}>
+              {(aria) => (
                 <input
-                  value={form.name}
-                  onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
+                  {...aria}
+                  value={form.registration_number || ''}
+                  onChange={(e) => setForm((p) => ({ ...p, registration_number: e.target.value || undefined }))}
                   className="form-input"
-                  placeholder={t('companies.namePlaceholder')}
+                  placeholder={t('companies.regNoPlaceholder')}
                 />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="form-label">{t('companies.regNoSsm')}</label>
-                  <input
-                    value={form.registration_number || ''}
-                    onChange={(e) => setForm((p) => ({ ...p, registration_number: e.target.value || undefined }))}
-                    className="form-input"
-                    placeholder={t('companies.regNoPlaceholder')}
-                  />
-                </div>
-                <div>
-                  <label className="form-label">{t('companies.taxNoLhdn')}</label>
-                  <input
-                    value={form.tax_number || ''}
-                    onChange={(e) => setForm((p) => ({ ...p, tax_number: e.target.value || undefined }))}
-                    className="form-input"
-                    placeholder={t('companies.taxNoPlaceholder')}
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="form-label">{t('common.email')}</label>
-                  <input
-                    value={form.email || ''}
-                    onChange={(e) => setForm((p) => ({ ...p, email: e.target.value || undefined }))}
-                    className="form-input"
-                    placeholder={t('companies.emailPlaceholder')}
-                  />
-                </div>
-                <div>
-                  <label className="form-label">{t('companies.phone')}</label>
-                  <input
-                    value={form.phone || ''}
-                    onChange={(e) => setForm((p) => ({ ...p, phone: e.target.value || undefined }))}
-                    className="form-input"
-                    placeholder={t('companies.phonePlaceholder')}
-                  />
-                </div>
-              </div>
-            </div>
-            <div className="flex justify-end gap-3 p-6 border-t border-gray-100">
-              <button onClick={() => { setShowCreate(false); setError(''); }} className="btn-secondary">{t('common.cancel')}</button>
-              <button onClick={handleSubmit} disabled={createMutation.isPending} className="btn-primary">
-                {createMutation.isPending ? t('common.creating') : t('companies.createTitle')}
-              </button>
-            </div>
+              )}
+            </FormField>
+            <FormField label={t('companies.taxNoLhdn')}>
+              {(aria) => (
+                <input
+                  {...aria}
+                  value={form.tax_number || ''}
+                  onChange={(e) => setForm((p) => ({ ...p, tax_number: e.target.value || undefined }))}
+                  className="form-input"
+                  placeholder={t('companies.taxNoPlaceholder')}
+                />
+              )}
+            </FormField>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <FormField label={t('common.email')}>
+              {(aria) => (
+                <input
+                  {...aria}
+                  value={form.email || ''}
+                  onChange={(e) => setForm((p) => ({ ...p, email: e.target.value || undefined }))}
+                  className="form-input"
+                  placeholder={t('companies.emailPlaceholder')}
+                />
+              )}
+            </FormField>
+            <FormField label={t('companies.phone')}>
+              {(aria) => (
+                <input
+                  {...aria}
+                  value={form.phone || ''}
+                  onChange={(e) => setForm((p) => ({ ...p, phone: e.target.value || undefined }))}
+                  className="form-input"
+                  placeholder={t('companies.phonePlaceholder')}
+                />
+              )}
+            </FormField>
           </div>
         </div>
-      )}
+      </Modal>
 
       {/* Delete Company Confirmation Modal */}
-      {deleteTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4">
-            <div className="flex items-center justify-between p-6 border-b border-gray-100">
-              <h2 className="text-lg font-semibold text-red-600">{t('companies.deleteTitle')}</h2>
-              <button onClick={() => { setDeleteTarget(null); setDeleteConfirmName(''); }} className="text-gray-400 hover:text-gray-700">
-                <X className="w-5 h-5" />
-              </button>
+      <Modal
+        open={deleteTarget !== null}
+        onClose={() => { setDeleteTarget(null); setDeleteConfirmName(''); }}
+        title={t('companies.deleteTitle')}
+        maxWidth="max-w-md"
+        footer={
+          <div className="flex justify-end gap-3">
+            <button onClick={() => { setDeleteTarget(null); setDeleteConfirmName(''); }} className="btn-secondary">{t('common.cancel')}</button>
+            <button
+              onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
+              disabled={!deleteTarget || deleteConfirmName !== deleteTarget.name || deleteMutation.isPending}
+              className="px-4 py-2 min-h-[44px] text-sm font-semibold text-white bg-red-600 rounded-xl hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {deleteMutation.isPending ? t('common.deleting') : t('companies.deleteTitle')}
+            </button>
+          </div>
+        }
+      >
+        {deleteTarget && (
+          <div className="space-y-4">
+            <div className="p-3 bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-300 text-sm rounded-lg border border-red-100 dark:border-red-500/25">
+              <Trans i18nKey="companies.deleteWarning" values={{ name: deleteTarget.name }} components={{ b: <strong /> }} />
             </div>
-            <div className="p-6 space-y-4">
-              <div className="p-3 bg-red-50 text-red-700 text-sm rounded-lg border border-red-100">
-                <Trans i18nKey="companies.deleteWarning" values={{ name: deleteTarget.name }} components={{ b: <strong /> }} />
-              </div>
-              <div>
-                <label className="form-label">
-                  <Trans i18nKey="companies.deleteConfirmLabel" values={{ name: deleteTarget.name }} components={{ b: <strong /> }} />
-                </label>
-                <input
-                  value={deleteConfirmName}
-                  onChange={(e) => setDeleteConfirmName(e.target.value)}
-                  className="form-input"
-                  placeholder={deleteTarget.name}
-                />
-              </div>
-            </div>
-            <div className="flex justify-end gap-3 p-6 border-t border-gray-100">
-              <button onClick={() => { setDeleteTarget(null); setDeleteConfirmName(''); }} className="btn-secondary">{t('common.cancel')}</button>
-              <button
-                onClick={() => deleteMutation.mutate(deleteTarget.id)}
-                disabled={deleteConfirmName !== deleteTarget.name || deleteMutation.isPending}
-                className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {deleteMutation.isPending ? t('common.deleting') : t('companies.deleteTitle')}
-              </button>
+            <div>
+              <label htmlFor="delete-company-confirm" className="form-label">
+                <Trans i18nKey="companies.deleteConfirmLabel" values={{ name: deleteTarget.name }} components={{ b: <strong /> }} />
+              </label>
+              <input
+                id="delete-company-confirm"
+                value={deleteConfirmName}
+                onChange={(e) => setDeleteConfirmName(e.target.value)}
+                className="form-input"
+                placeholder={deleteTarget.name}
+              />
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </Modal>
 
       {/* Edit Company Modal */}
       {editCompany && (
@@ -295,107 +304,92 @@ function EditCompanyModal({
     setForm((p) => ({ ...p, [key]: value || undefined }));
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between p-6 border-b border-gray-100">
-          <h2 className="text-lg font-semibold text-gray-900">{t('companies.editTitle')}</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-700">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-        <div className="p-6 space-y-5">
-          {error && <div className="p-3 bg-red-50 text-red-700 text-sm rounded-lg border border-red-100">{error}</div>}
-
-          {/* Basic Info */}
-          <div>
-            <h3 className="text-sm font-semibold text-gray-900 mb-3">{t('companies.basicInfo')}</h3>
-            <div className="space-y-4">
-              <div>
-                <label className="form-label">{t('companies.name')} *</label>
-                <input value={form.name || ''} onChange={(e) => set('name', e.target.value)} className="form-input" />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="form-label">{t('companies.regNoSsm')}</label>
-                  <input value={form.registration_number || ''} onChange={(e) => set('registration_number', e.target.value)} className="form-input" />
-                </div>
-                <div>
-                  <label className="form-label">{t('companies.taxNoLhdn')}</label>
-                  <input value={form.tax_number || ''} onChange={(e) => set('tax_number', e.target.value)} className="form-input" />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="form-label">{t('common.email')}</label>
-                  <input value={form.email || ''} onChange={(e) => set('email', e.target.value)} className="form-input" />
-                </div>
-                <div>
-                  <label className="form-label">{t('companies.phone')}</label>
-                  <input value={form.phone || ''} onChange={(e) => set('phone', e.target.value)} className="form-input" />
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Statutory */}
-          <div>
-            <h3 className="text-sm font-semibold text-gray-900 mb-3">{t('companies.statutoryNumbers')}</h3>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="form-label">{t('employees.fields.epfNumber')}</label>
-                <input value={form.epf_number || ''} onChange={(e) => set('epf_number', e.target.value)} className="form-input" />
-              </div>
-              <div>
-                <label className="form-label">{t('companies.socsoCode')}</label>
-                <input value={form.socso_code || ''} onChange={(e) => set('socso_code', e.target.value)} className="form-input" />
-              </div>
-              <div>
-                <label className="form-label">{t('companies.eisCode')}</label>
-                <input value={form.eis_code || ''} onChange={(e) => set('eis_code', e.target.value)} className="form-input" />
-              </div>
-              <div>
-                <label className="form-label">{t('companies.hrdfNumber')}</label>
-                <input value={form.hrdf_number || ''} onChange={(e) => set('hrdf_number', e.target.value)} className="form-input" />
-              </div>
-            </div>
-          </div>
-
-          {/* Address */}
-          <div>
-            <h3 className="text-sm font-semibold text-gray-900 mb-3">{t('portal.profile.address')}</h3>
-            <div className="space-y-4">
-              <div>
-                <label className="form-label">{t('employees.form.addressLine1')}</label>
-                <input value={form.address_line1 || ''} onChange={(e) => set('address_line1', e.target.value)} className="form-input" />
-              </div>
-              <div>
-                <label className="form-label">{t('employees.form.addressLine2')}</label>
-                <input value={form.address_line2 || ''} onChange={(e) => set('address_line2', e.target.value)} className="form-input" />
-              </div>
-              <div className="grid grid-cols-3 gap-4">
-                <div>
-                  <label className="form-label">{t('employees.form.city')}</label>
-                  <input value={form.city || ''} onChange={(e) => set('city', e.target.value)} className="form-input" />
-                </div>
-                <div>
-                  <label className="form-label">{t('employees.form.state')}</label>
-                  <input value={form.state || ''} onChange={(e) => set('state', e.target.value)} className="form-input" />
-                </div>
-                <div>
-                  <label className="form-label">{t('employees.form.postcode')}</label>
-                  <input value={form.postcode || ''} onChange={(e) => set('postcode', e.target.value)} className="form-input" />
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-        <div className="flex justify-end gap-3 p-6 border-t border-gray-100">
+    <Modal
+      open
+      onClose={onClose}
+      title={t('companies.editTitle')}
+      maxWidth="max-w-2xl"
+      footer={
+        <div className="flex justify-end gap-3">
           <button onClick={onClose} className="btn-secondary">{t('common.cancel')}</button>
           <button onClick={() => mutation.mutate()} disabled={mutation.isPending} className="btn-primary">
             {mutation.isPending ? t('common.saving') : t('common.saveChanges')}
           </button>
         </div>
+      }
+    >
+      <div className="space-y-5">
+        {error && <div className="p-3 bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-300 text-sm rounded-lg border border-red-100 dark:border-red-500/25">{error}</div>}
+
+        {/* Basic Info */}
+        <div>
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-slate-100 mb-3">{t('companies.basicInfo')}</h3>
+          <div className="space-y-4">
+            <FormField label={t('companies.name')} required>
+              {(aria) => <input {...aria} value={form.name || ''} onChange={(e) => set('name', e.target.value)} className="form-input" />}
+            </FormField>
+            <div className="grid grid-cols-2 gap-4">
+              <FormField label={t('companies.regNoSsm')}>
+                {(aria) => <input {...aria} value={form.registration_number || ''} onChange={(e) => set('registration_number', e.target.value)} className="form-input" />}
+              </FormField>
+              <FormField label={t('companies.taxNoLhdn')}>
+                {(aria) => <input {...aria} value={form.tax_number || ''} onChange={(e) => set('tax_number', e.target.value)} className="form-input" />}
+              </FormField>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <FormField label={t('common.email')}>
+                {(aria) => <input {...aria} value={form.email || ''} onChange={(e) => set('email', e.target.value)} className="form-input" />}
+              </FormField>
+              <FormField label={t('companies.phone')}>
+                {(aria) => <input {...aria} value={form.phone || ''} onChange={(e) => set('phone', e.target.value)} className="form-input" />}
+              </FormField>
+            </div>
+          </div>
+        </div>
+
+        {/* Statutory */}
+        <div>
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-slate-100 mb-3">{t('companies.statutoryNumbers')}</h3>
+          <div className="grid grid-cols-2 gap-4">
+            <FormField label={t('employees.fields.epfNumber')}>
+              {(aria) => <input {...aria} value={form.epf_number || ''} onChange={(e) => set('epf_number', e.target.value)} className="form-input" />}
+            </FormField>
+            <FormField label={t('companies.socsoCode')}>
+              {(aria) => <input {...aria} value={form.socso_code || ''} onChange={(e) => set('socso_code', e.target.value)} className="form-input" />}
+            </FormField>
+            <FormField label={t('companies.eisCode')}>
+              {(aria) => <input {...aria} value={form.eis_code || ''} onChange={(e) => set('eis_code', e.target.value)} className="form-input" />}
+            </FormField>
+            <FormField label={t('companies.hrdfNumber')}>
+              {(aria) => <input {...aria} value={form.hrdf_number || ''} onChange={(e) => set('hrdf_number', e.target.value)} className="form-input" />}
+            </FormField>
+          </div>
+        </div>
+
+        {/* Address */}
+        <div>
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-slate-100 mb-3">{t('portal.profile.address')}</h3>
+          <div className="space-y-4">
+            <FormField label={t('employees.form.addressLine1')}>
+              {(aria) => <input {...aria} value={form.address_line1 || ''} onChange={(e) => set('address_line1', e.target.value)} className="form-input" />}
+            </FormField>
+            <FormField label={t('employees.form.addressLine2')}>
+              {(aria) => <input {...aria} value={form.address_line2 || ''} onChange={(e) => set('address_line2', e.target.value)} className="form-input" />}
+            </FormField>
+            <div className="grid grid-cols-3 gap-4">
+              <FormField label={t('employees.form.city')}>
+                {(aria) => <input {...aria} value={form.city || ''} onChange={(e) => set('city', e.target.value)} className="form-input" />}
+              </FormField>
+              <FormField label={t('employees.form.state')}>
+                {(aria) => <input {...aria} value={form.state || ''} onChange={(e) => set('state', e.target.value)} className="form-input" />}
+              </FormField>
+              <FormField label={t('employees.form.postcode')}>
+                {(aria) => <input {...aria} value={form.postcode || ''} onChange={(e) => set('postcode', e.target.value)} className="form-input" />}
+              </FormField>
+            </div>
+          </div>
+        </div>
       </div>
-    </div>
+    </Modal>
   );
 }

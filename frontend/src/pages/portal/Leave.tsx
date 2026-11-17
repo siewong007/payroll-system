@@ -7,6 +7,7 @@ import { runBulk, summarizeBulkFailure } from '@/lib/bulk';
 import { formatDate, getErrorMessage } from '@/lib/utils';
 import { AttachmentLink, AttachmentPreview } from '@/components/ui/AttachmentPreview';
 import { DataTable, type Column } from '@/components/ui/DataTable';
+import { useConfirm } from '@/lib/confirm';
 import type { Employee, LeaveBalance, LeaveRequest, LeaveType } from '@/types';
 import i18n from '@/i18n';
 
@@ -137,6 +138,7 @@ const canDeleteLeave = (request: LeaveRequest) => request.status === 'cancelled'
 
 export function Leave() {
   const { t } = useTranslation();
+  const confirmDialog = useConfirm();
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<'balances' | 'requests'>('balances');
   const [showApply, setShowApply] = useState(false);
@@ -296,8 +298,13 @@ export function Leave() {
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
-                    onClick={() => {
-                      if (confirm(t('portal.leave.bulkCancelConfirm', { count: selectedCancelableLeaveIds.length }))) {
+                    onClick={async () => {
+                      const ok = await confirmDialog({
+                        description: t('portal.leave.bulkCancelConfirm', { count: selectedCancelableLeaveIds.length }),
+                        confirmLabel: t('common.cancelSelected'),
+                        variant: 'warning',
+                      });
+                      if (ok) {
                         setBulkError('');
                         bulkCancelMutation.mutate(selectedCancelableLeaveIds);
                       }
@@ -310,8 +317,12 @@ export function Leave() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => {
-                      if (confirm(t('portal.leave.bulkDeleteConfirm', { count: selectedDeletableLeaveIds.length }))) {
+                    onClick={async () => {
+                      const ok = await confirmDialog({
+                        description: t('portal.leave.bulkDeleteConfirm', { count: selectedDeletableLeaveIds.length }),
+                        variant: 'danger',
+                      });
+                      if (ok) {
                         setBulkError('');
                         bulkDeleteMutation.mutate(selectedDeletableLeaveIds);
                       }
@@ -389,8 +400,13 @@ export function Leave() {
               <div className="flex items-center justify-end gap-2">
                 {canCancelLeave(r) && (
                   <button
-                    onClick={() => {
-                      if (confirm(t('portal.leave.cancelConfirm'))) {
+                    onClick={async () => {
+                      const ok = await confirmDialog({
+                        description: t('portal.leave.cancelConfirm'),
+                        confirmLabel: t('portal.leave.cancelRequest'),
+                        variant: 'warning',
+                      });
+                      if (ok) {
                         cancelMutation.mutate(r.id, { onSuccess: close });
                       }
                     }}
@@ -403,8 +419,12 @@ export function Leave() {
                 )}
                 {canDeleteLeave(r) && (
                   <button
-                    onClick={() => {
-                      if (confirm(t('portal.leave.deleteConfirm'))) {
+                    onClick={async () => {
+                      const ok = await confirmDialog({
+                        description: t('portal.leave.deleteConfirm'),
+                        variant: 'danger',
+                      });
+                      if (ok) {
                         deleteMutation.mutate(r.id, { onSuccess: close });
                       }
                     }}
@@ -422,8 +442,13 @@ export function Leave() {
             <>
               {canCancelLeave(r) && (
                 <button
-                  onClick={() => {
-                    if (confirm(t('portal.leave.cancelConfirm'))) cancelMutation.mutate(r.id);
+                  onClick={async () => {
+                    const ok = await confirmDialog({
+                      description: t('portal.leave.cancelConfirm'),
+                      confirmLabel: t('common.cancel'),
+                      variant: 'warning',
+                    });
+                    if (ok) cancelMutation.mutate(r.id);
                   }}
                   className="text-xs text-red-500 hover:text-red-700 font-medium"
                 >
@@ -432,8 +457,12 @@ export function Leave() {
               )}
               {canDeleteLeave(r) && (
                 <button
-                  onClick={() => {
-                    if (confirm(t('portal.leave.deleteConfirm'))) deleteMutation.mutate(r.id);
+                  onClick={async () => {
+                    const ok = await confirmDialog({
+                      description: t('portal.leave.deleteConfirm'),
+                      variant: 'danger',
+                    });
+                    if (ok) deleteMutation.mutate(r.id);
                   }}
                   className="text-xs text-red-500 hover:text-red-700 font-medium"
                 >

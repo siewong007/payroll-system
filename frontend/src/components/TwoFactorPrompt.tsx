@@ -57,7 +57,8 @@ export function TwoFactorPrompt({ mfaToken, onSuccess, onBack }: TwoFactorPrompt
           autoComplete="one-time-code"
           value={code}
           onChange={(e) => setCode(e.target.value)}
-          className="border p-2.5 rounded-lg w-full text-sm text-center tracking-widest outline-none focus:border-black transition-colors"
+          aria-label={t('auth.twoFactor.title')}
+          className="form-input !p-2.5 text-center tracking-widest"
           placeholder="123456"
           autoFocus
           required
@@ -66,7 +67,7 @@ export function TwoFactorPrompt({ mfaToken, onSuccess, onBack }: TwoFactorPrompt
         <button
           type="submit"
           disabled={loading || !code.trim()}
-          className="w-full bg-black text-white py-2.5 rounded-xl font-semibold hover:bg-gray-800 disabled:opacity-50 transition-all"
+          className="btn-primary w-full"
         >
           {loading ? t('auth.twoFactor.verifying') : t('auth.twoFactor.verify')}
         </button>

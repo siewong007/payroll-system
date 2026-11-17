@@ -3,11 +3,18 @@ import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-route
 import { MutationCache, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from '@/context/AuthProvider';
 import { useAuth } from '@/context/AuthContext';
+import { ThemeProvider } from '@/context/ThemeProvider';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { PortalLayout } from '@/components/layout/PortalLayout';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { ToastProvider } from '@/components/ui/Toast';
+import { ConfirmProvider } from '@/components/ui/ConfirmDialog';
+import { PromptProvider } from '@/components/ui/PromptDialog';
+import { CommandPalette } from '@/components/ui/CommandPalette';
+import { toast } from '@/lib/toast';
 import { ForbiddenPage, NotFoundPage } from '@/pages/errors/ErrorPage';
 import { SUPER_ADMIN_ROLES, hasAnyRole } from '@/lib/roles';
+import { getErrorMessage } from '@/lib/utils';
 import { userCanAny } from '@/lib/usePermissions';
 import type { PermissionKey } from '@/api/permissions';
 
@@ -24,6 +31,7 @@ const OAuth2Link = lazyNamed(() => import('@/pages/auth/OAuth2Link'), 'OAuth2Lin
 const ForgotPassword = lazyNamed(() => import('@/pages/auth/ForgotPassword'), 'ForgotPassword');
 const ResetPassword = lazyNamed(() => import('@/pages/auth/ResetPassword'), 'ResetPassword');
 const ChangePassword = lazyNamed(() => import('@/pages/auth/ChangePassword'), 'ChangePassword');
+const DashboardPage = lazyNamed(() => import('@/pages/dashboard/DashboardPage'), 'DashboardPage');
 const EmployeeList = lazyNamed(() => import('@/pages/employees/EmployeeList'), 'EmployeeList');
 const EmployeeCreate = lazyNamed(() => import('@/pages/employees/EmployeeCreate'), 'EmployeeCreate');
 const EmployeeDetail = lazyNamed(() => import('@/pages/employees/EmployeeDetail'), 'EmployeeDetail');
@@ -103,7 +111,7 @@ function HomeRedirect() {
   if (hasAnyRole(user, SUPER_ADMIN_ROLES)) {
     return <Navigate to="/companies" replace />;
   }
-  return <Navigate to="/company" replace />;
+  return <Navigate to="/dashboard" replace />;
 }
 
 const queryClient = new QueryClient({
@@ -114,16 +122,13 @@ const queryClient = new QueryClient({
       refetchOnWindowFocus: false,
     },
   },
-  // Safety net only. A mutation with no `onError` used to fail in complete
-  // silence at every level, so a rejected bulk action looked identical to a
-  // successful one. This deliberately renders nothing — there is no global
-  // notification surface in this app, and adding one is a separate change —
-  // but it guarantees the failure reaches the console. Every user-triggered
-  // mutation should still carry its own `onError`.
+  // Safety net: surface unhandled mutation errors globally via ToastProvider
+  // while still logging to console for diagnostics.
   mutationCache: new MutationCache({
     onError: (error, _variables, _context, mutation) => {
       if (!mutation.options.onError) {
         console.error('Unhandled mutation error', error);
+        toast.error(getErrorMessage(error));
       }
     },
   }),
@@ -143,28 +148,34 @@ function RouteErrorBoundary({ children }: { children: ReactNode }) {
 
 export default function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <AuthProvider>
-          <RouteErrorBoundary>
-            <Suspense fallback={<RouteFallback />}>
-              <Routes>
-                <Route path="/login" element={<Login />} />
-                <Route path="/oauth2/callback" element={<OAuth2Callback />} />
-                <Route path="/oauth2/link" element={<OAuth2Link />} />
-                <Route path="/forgot-password" element={<ForgotPassword />} />
-                <Route path="/reset-password" element={<ResetPassword />} />
-                <Route path="/change-password" element={<ChangePassword />} />
-                {/* The kiosk display is /kiosk/:kioskKey below — it needs no user
-                    session, so a wall-mounted tablet never falls back to a login
-                    screen. The old session-backed /attendance/kiosk is gone. */}
-                <Route path="/attendance/scan" element={<AttendanceScanPage />} />
-                <Route path="/kiosk/:kioskKey" element={<AttendanceKioskPublic />} />
-                <Route path="/403" element={<ForbiddenPage />} />
+    <ThemeProvider>
+      <QueryClientProvider client={queryClient}>
+        <BrowserRouter>
+          <AuthProvider>
+            <ToastProvider>
+              <ConfirmProvider>
+                <PromptProvider>
+                  <CommandPalette />
+                  <RouteErrorBoundary>
+                  <Suspense fallback={<RouteFallback />}>
+                    <Routes>
+                      <Route path="/login" element={<Login />} />
+                      <Route path="/oauth2/callback" element={<OAuth2Callback />} />
+                      <Route path="/oauth2/link" element={<OAuth2Link />} />
+                      <Route path="/forgot-password" element={<ForgotPassword />} />
+                      <Route path="/reset-password" element={<ResetPassword />} />
+                      <Route path="/change-password" element={<ChangePassword />} />
+                      {/* The kiosk display is /kiosk/:kioskKey below — it needs no user
+                          session, so a wall-mounted tablet never falls back to a login
+                          screen. The old session-backed /attendance/kiosk is gone. */}
+                      <Route path="/attendance/scan" element={<AttendanceScanPage />} />
+                      <Route path="/kiosk/:kioskKey" element={<AttendanceKioskPublic />} />
+                      <Route path="/403" element={<ForbiddenPage />} />
 
-                <Route element={<AppLayout />}>
-                  <Route path="/" element={<HomeRedirect />} />
-                  <Route path="/company" element={<CompanyProfile />} />
+                      <Route element={<AppLayout />}>
+                        <Route path="/" element={<HomeRedirect />} />
+                        <Route path="/dashboard" element={<DashboardPage />} />
+                        <Route path="/company" element={<CompanyProfile />} />
                   <Route
                     path="/employees"
                     element={(
@@ -364,12 +375,16 @@ export default function App() {
                   <Route path="/portal/attendance" element={<MyAttendance />} />
                 </Route>
 
-                <Route path="*" element={<NotFoundPage />} />
-              </Routes>
-            </Suspense>
-          </RouteErrorBoundary>
-        </AuthProvider>
-      </BrowserRouter>
-    </QueryClientProvider>
+                      <Route path="*" element={<NotFoundPage />} />
+                    </Routes>
+                  </Suspense>
+                </RouteErrorBoundary>
+                </PromptProvider>
+              </ConfirmProvider>
+            </ToastProvider>
+          </AuthProvider>
+        </BrowserRouter>
+      </QueryClientProvider>
+    </ThemeProvider>
   );
 }

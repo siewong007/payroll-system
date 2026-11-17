@@ -1144,3 +1144,38 @@ export interface BackgroundJob {
   created_at: string;
   finished_at: string | null;
 }
+
+// ─── Workspace Dashboard (GET /dashboard/summary) ───
+
+export interface DashboardDepartmentCount {
+  department: string;
+  count: number;
+}
+
+export interface DashboardNeedsAttention {
+  window_days: number;
+  late_count: number;
+  absent_count: number;
+  open_session_count: number;
+  outside_geofence_count: number;
+  manual_entry_count: number;
+  pending_leave: number;
+  pending_claims: number;
+  pending_overtime: number;
+  all_clear: boolean;
+}
+
+export interface DashboardSummary {
+  total_employees: number;
+  active_employees: number;
+  last_payroll_period: string | null;
+  last_payroll_total_net: number | null;
+  last_payroll_total_gross: number | null;
+  last_payroll_employee_count: number | null;
+  ytd_total_gross: number;
+  ytd_total_epf_employer: number;
+  ytd_total_socso_employer: number;
+  ytd_total_eis_employer: number;
+  departments: DashboardDepartmentCount[];
+  needs_attention: DashboardNeedsAttention;
+}

@@ -2,16 +2,19 @@ import { useState, useCallback, useEffect } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router';
-import { Upload, Download, CheckCircle, XCircle, AlertTriangle, ArrowLeft, FileSpreadsheet, Loader2 } from 'lucide-react';
+import { Upload, Download, CheckCircle, XCircle, AlertTriangle, FileSpreadsheet, Loader2 } from 'lucide-react';
 import { downloadImportTemplate, validateImport, confirmImport } from '@/api/employees';
 import { getJob } from '@/api/jobs';
 import { translateServerMessage } from '@/lib/utils';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { useToast } from '@/lib/toast';
 import type { ImportValidationResponse, ImportConfirmResponse } from '@/types';
 
 type Step = 'upload' | 'preview' | 'confirm';
 
 export function EmployeeImport() {
   const { t } = useTranslation();
+  const toast = useToast();
   const navigate = useNavigate();
   const [step, setStep] = useState<Step>('upload');
   const [file, setFile] = useState<File | null>(null);
@@ -90,11 +93,11 @@ export function EmployeeImport() {
     const validExts = ['.csv', '.xlsx', '.xls'];
     const ext = selectedFile.name.substring(selectedFile.name.lastIndexOf('.')).toLowerCase();
     if (!validExts.includes(ext)) {
-      alert(t('employees.import.invalidFile'));
+      toast.error(t('employees.import.invalidFile'));
       return;
     }
     setFile(selectedFile);
-  }, [t]);
+  }, [t, toast]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -121,24 +124,22 @@ export function EmployeeImport() {
 
   return (
     <div>
-      <div className="flex items-center gap-3 mb-6">
-        <button
-          onClick={() => navigate('/employees')}
-          className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-        >
-          <ArrowLeft className="w-5 h-5" />
-        </button>
-        <h1 className="text-xl sm:text-2xl font-bold text-gray-900">{t('employees.import.title')}</h1>
-      </div>
+      <PageHeader
+        title={t('employees.import.title')}
+        breadcrumbs={[
+          { label: t('nav.employees'), href: '/employees' },
+          { label: t('employees.import.title') },
+        ]}
+      />
 
       {/* Steps indicator */}
       <div className="flex items-center gap-2 mb-8">
         {(['upload', 'preview', 'confirm'] as Step[]).map((s, i) => (
           <div key={s} className="flex items-center gap-2">
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${
-              step === s ? 'bg-black text-white' :
-              (i < ['upload', 'preview', 'confirm'].indexOf(step)) ? 'bg-green-100 text-green-700' :
-              'bg-gray-100 text-gray-400'
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold ${
+              step === s ? 'bg-gradient-to-br from-[var(--accent-1)] to-[var(--accent-2)] text-white shadow-sm' :
+              (i < ['upload', 'preview', 'confirm'].indexOf(step)) ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300' :
+              'bg-gray-100 text-gray-400 dark:bg-slate-800 dark:text-slate-500'
             }`}>
               {i + 1}
             </div>

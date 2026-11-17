@@ -2,12 +2,15 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, UserCheck, AlertTriangle, X } from 'lucide-react';
 import { createEmployee } from '@/api/employees';
 import type { EmployeeAccountInfo } from '@/api/employees';
 import { getPayrollGroups } from '@/api/payroll';
 import { getErrorMessage, todayLocalDate } from '@/lib/utils';
 import { stripPayrollFields } from '@/lib/employeeFields';
+import { Modal } from '@/components/ui/Modal';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { UnsavedChangesBar } from '@/components/ui/UnsavedChangesBar';
+import { useUnsavedChanges } from '@/lib/useUnsavedChanges';
 import type { CreateEmployeeRequest } from '@/types';
 import { useAuth } from '@/context/AuthContext';
 import { canAccessPayrollData } from '@/lib/roles';
@@ -54,6 +57,12 @@ export function EmployeeCreate() {
     },
   });
 
+  const isDirty =
+    Boolean(form.employee_number.trim() || form.full_name.trim() || salaryDisplay.trim()) &&
+    accountDialog === null &&
+    !mutation.isSuccess;
+  useUnsavedChanges(isDirty);
+
   const updateField = (field: string, value: unknown) => {
     setForm((prev) => ({ ...prev, [field]: value }));
   };
@@ -79,14 +88,13 @@ export function EmployeeCreate() {
 
   return (
     <div>
-      <button
-        onClick={() => navigate('/employees')}
-        className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700 mb-4"
-      >
-        <ArrowLeft className="w-4 h-4" /> {t('employees.backToList')}
-      </button>
-
-      <h1 className="text-2xl font-bold text-gray-900 mb-6">{t('employees.createTitle')}</h1>
+      <PageHeader
+        title={t('employees.createTitle')}
+        breadcrumbs={[
+          { label: t('nav.employees'), href: '/employees' },
+          { label: t('employees.createTitle') },
+        ]}
+      />
 
       <form onSubmit={handleSubmit} className="space-y-8 max-w-4xl">
         {mutation.isError && (
@@ -431,83 +439,75 @@ export function EmployeeCreate() {
           <button
             type="submit"
             disabled={mutation.isPending}
-            className="bg-black text-white px-6 py-2.5 rounded-lg font-medium hover:bg-gray-800 disabled:opacity-50 transition-colors"
+            className="btn-primary"
           >
             {mutation.isPending ? t('common.creating') : t('employees.createSubmit')}
           </button>
           <button
             type="button"
             onClick={() => navigate('/employees')}
-            className="bg-white text-gray-700 px-6 py-2.5 rounded-lg font-medium border border-gray-200 hover:bg-gray-50 transition-colors"
+            className="btn-secondary"
           >
             {t('common.cancel')}
           </button>
         </div>
+
+        <UnsavedChangesBar
+          isDirty={isDirty}
+          onDiscard={() => navigate('/employees')}
+          submitForm
+          saveLabel={t('employees.createSubmit')}
+          isSaving={mutation.isPending}
+        />
       </form>
 
       {/* Account Created Dialog */}
-      {accountDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4">
-            <div className="flex items-center justify-between p-6 border-b border-gray-100">
-              <div className="flex items-center gap-2">
-                {accountDialog.created ? (
-                  <UserCheck className="w-5 h-5 text-green-600" />
-                ) : (
-                  <AlertTriangle className="w-5 h-5 text-amber-500" />
-                )}
-                <h2 className="text-lg font-semibold text-gray-900">
-                  {accountDialog.created ? t('employees.account.createdTitle') : t('employees.account.noticeTitle')}
-                </h2>
-              </div>
-              <button
-                onClick={() => navigate('/employees')}
-                className="text-gray-400 hover:text-gray-700"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <div className="p-6 space-y-4">
-              {accountDialog.created ? (
-                <>
-                  <p className="text-sm text-gray-600">
-                    {t('employees.account.createdBody')}
-                  </p>
-                  <div className="bg-gray-50 rounded-xl p-4 space-y-3">
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-500">{t('common.email')}</span>
-                      <span className="font-medium text-gray-900">{accountDialog.email}</span>
-                    </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-500">{t('employees.account.role')}</span>
-                      <span className="font-medium text-gray-900">{t(`roles.${accountDialog.role}`, { defaultValue: accountDialog.role })}</span>
-                    </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-500">{t('employees.account.defaultPassword')}</span>
-                      <span className="font-mono font-medium text-gray-900">{accountDialog.default_password}</span>
-                    </div>
-                  </div>
-                  <p className="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2">
-                    {t('employees.account.adviseChange')}
-                  </p>
-                </>
-              ) : (
-                <div className="bg-amber-50 rounded-xl p-4">
-                  <p className="text-sm text-amber-800">{accountDialog.message}</p>
-                </div>
-              )}
-            </div>
-            <div className="flex justify-end p-6 border-t border-gray-100">
-              <button
-                onClick={() => navigate('/employees')}
-                className="btn-primary"
-              >
-                {t('common.done')}
-              </button>
-            </div>
+      <Modal
+        open={accountDialog !== null}
+        onClose={() => navigate('/employees')}
+        title={accountDialog?.created ? t('employees.account.createdTitle') : t('employees.account.noticeTitle')}
+        maxWidth="max-w-md"
+        footer={
+          <div className="flex justify-end">
+            <button onClick={() => navigate('/employees')} className="btn-primary">
+              {t('common.done')}
+            </button>
           </div>
-        </div>
-      )}
+        }
+      >
+        {accountDialog && (
+          <div className="space-y-4">
+            {accountDialog.created ? (
+              <>
+                <p className="text-sm text-gray-600 dark:text-slate-300">
+                  {t('employees.account.createdBody')}
+                </p>
+                <div className="bg-gray-50 dark:bg-slate-950/60 rounded-xl p-4 space-y-3">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-500 dark:text-slate-400">{t('common.email')}</span>
+                    <span className="font-medium text-gray-900 dark:text-slate-100">{accountDialog.email}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-500 dark:text-slate-400">{t('employees.account.role')}</span>
+                    <span className="font-medium text-gray-900 dark:text-slate-100">{t(`roles.${accountDialog.role}`, { defaultValue: accountDialog.role })}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-500 dark:text-slate-400">{t('employees.account.defaultPassword')}</span>
+                    <span className="font-mono font-medium text-gray-900 dark:text-slate-100">{accountDialog.default_password}</span>
+                  </div>
+                </div>
+                <p className="text-xs text-amber-600 dark:text-amber-300 bg-amber-50 dark:bg-amber-500/10 rounded-lg px-3 py-2">
+                  {t('employees.account.adviseChange')}
+                </p>
+              </>
+            ) : (
+              <div className="bg-amber-50 dark:bg-amber-500/10 rounded-xl p-4">
+                <p className="text-sm text-amber-800 dark:text-amber-200">{accountDialog.message}</p>
+              </div>
+            )}
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }

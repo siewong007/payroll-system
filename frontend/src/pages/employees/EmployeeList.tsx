@@ -1,14 +1,15 @@
 import { useState, useMemo } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, Edit, DollarSign, Shield, MapPin, TrendingUp, TrendingDown, Pencil, Trash2, AlertTriangle, Upload, UserCheck, X } from 'lucide-react';
-import { useNavigate } from 'react-router';
+import { Plus, Search, Edit, DollarSign, Shield, MapPin, TrendingUp, TrendingDown, Pencil, Trash2, AlertTriangle, Upload, X } from 'lucide-react';
+import { useNavigate, useSearchParams } from 'react-router';
 import { getEmployees, createEmployee, updateEmployee, deleteEmployee, getEmployee, getSalaryHistory } from '@/api/employees';
 import { getPayrollGroups } from '@/api/payroll';
 import { formatMYR, formatDate, getErrorMessage, todayLocalDate } from '@/lib/utils';
 import { stripPayrollFields } from '@/lib/employeeFields';
 import { DataTable, type Column } from '@/components/ui/DataTable';
 import { Modal } from '@/components/ui/Modal';
+import { PageHeader } from '@/components/ui/PageHeader';
 import type { Employee, CreateEmployeeRequest, UpdateEmployeeRequest } from '@/types';
 import { useAuth } from '@/context/AuthContext';
 import { canAccessPayrollData } from '@/lib/roles';
@@ -78,14 +79,35 @@ export function EmployeeList() {
   const { t } = useTranslation();
   const { user } = useAuth();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const canViewPayroll = canAccessPayrollData(user);
   const queryClient = useQueryClient();
-  const [search, setSearch] = useState('');
-  const [page, setPage] = useState(1);
+  const [search, setSearchState] = useState(() => searchParams.get('q') ?? '');
+  const [page, setPageState] = useState(() => Math.max(1, Number(searchParams.get('page')) || 1));
   const [showCreate, setShowCreate] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
   const [deletingEmployee, setDeletingEmployee] = useState<Employee | null>(null);
   const perPage = 20;
+
+  const syncUrl = (nextQuery: string, nextPage: number) => {
+    const params = new URLSearchParams(searchParams);
+    if (nextQuery) params.set('q', nextQuery);
+    else params.delete('q');
+    if (nextPage > 1) params.set('page', String(nextPage));
+    else params.delete('page');
+    setSearchParams(params, { replace: true });
+  };
+
+  const setSearch = (val: string) => {
+    setSearchState(val);
+    setPageState(1);
+    syncUrl(val, 1);
+  };
+
+  const setPage = (p: number) => {
+    setPageState(p);
+    syncUrl(search, p);
+  };
 
   const filteredColumns = useMemo(
     () => {
@@ -110,38 +132,51 @@ export function EmployeeList() {
 
   return (
     <div>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-6">
-        <h1 className="text-xl sm:text-2xl font-bold text-gray-900">{t('employees.title')}</h1>
-        <div className="flex gap-2">
-          {canViewPayroll && (
+      <PageHeader
+        title={t('employees.title')}
+        actions={
+          <>
+            {canViewPayroll && (
+              <button
+                onClick={() => navigate('/employees/import')}
+                className="btn-secondary w-full sm:w-auto"
+              >
+                <Upload className="w-4 h-4" />
+                {t('common.import')}
+              </button>
+            )}
             <button
-              onClick={() => navigate('/employees/import')}
-              className="flex items-center justify-center gap-2 border border-gray-300 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium w-full sm:w-auto min-h-[44px]"
+              onClick={() => setShowCreate(true)}
+              className="btn-primary w-full sm:w-auto"
             >
-              <Upload className="w-4 h-4" />
-              {t('common.import')}
+              <Plus className="w-4 h-4" />
+              {t('employees.add')}
             </button>
-          )}
-          <button
-            onClick={() => setShowCreate(true)}
-            className="flex items-center justify-center gap-2 bg-black text-white px-4 py-2 rounded-lg hover:bg-gray-800 transition-colors text-sm font-medium w-full sm:w-auto min-h-[44px]"
-          >
-            <Plus className="w-4 h-4" />
-            {t('employees.add')}
-          </button>
-        </div>
-      </div>
+          </>
+        }
+      />
 
       {/* Search */}
       <div className="relative mb-6">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+        <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
         <input
           type="text"
           placeholder={t('employees.pickerPlaceholder')}
+          aria-label={t('employees.pickerPlaceholder')}
           value={search}
-          onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-          className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
+          onChange={(e) => setSearch(e.target.value)}
+          className="form-input !pl-10 !pr-9 !py-2.5"
         />
+        {search && (
+          <button
+            type="button"
+            onClick={() => setSearch('')}
+            aria-label={t('common.clear')}
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-slate-200"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        )}
       </div>
 
       <DataTable
@@ -1072,7 +1107,7 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
         <button
           type="submit"
           disabled={mutation.isPending}
-          className="px-6 py-2.5 text-sm bg-black text-white rounded-lg hover:bg-gray-800 disabled:opacity-50 font-medium shadow-sm transition-colors"
+          className="btn-primary"
         >
           {mutation.isPending
             ? (mode === 'create' ? t('common.creating') : t('common.saving'))
@@ -1082,62 +1117,52 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
       </div>
 
       {/* Account Created Dialog */}
-      {accountDialog && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4">
-            <div className="flex items-center justify-between p-6 border-b border-gray-100">
-              <div className="flex items-center gap-2">
-                {accountDialog.created ? (
-                  <UserCheck className="w-5 h-5 text-green-600" />
-                ) : (
-                  <AlertTriangle className="w-5 h-5 text-amber-500" />
-                )}
-                <h2 className="text-lg font-semibold text-gray-900">
-                  {accountDialog.created ? t('employees.account.createdTitle') : t('employees.account.noticeTitle')}
-                </h2>
-              </div>
-              <button onClick={() => { setAccountDialog(null); onClose(); }} className="text-gray-400 hover:text-gray-700">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <div className="p-6 space-y-4">
-              {accountDialog.created ? (
-                <>
-                  <p className="text-sm text-gray-600">
-                    {t('employees.account.createdBody')}
-                  </p>
-                  <div className="bg-gray-50 rounded-xl p-4 space-y-3">
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-500">{t('common.email')}</span>
-                      <span className="font-medium text-gray-900">{accountDialog.email}</span>
-                    </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-500">{t('employees.account.role')}</span>
-                      <span className="font-medium text-gray-900">{t(`roles.${accountDialog.role}`, { defaultValue: accountDialog.role })}</span>
-                    </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-500">{t('employees.account.defaultPassword')}</span>
-                      <span className="font-mono font-medium text-gray-900">{accountDialog.default_password}</span>
-                    </div>
-                  </div>
-                  <p className="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2">
-                    {t('employees.account.adviseChange')}
-                  </p>
-                </>
-              ) : (
-                <div className="bg-amber-50 rounded-xl p-4">
-                  <p className="text-sm text-amber-800">{accountDialog.message}</p>
-                </div>
-              )}
-            </div>
-            <div className="flex justify-end p-6 border-t border-gray-100">
-              <button onClick={() => { setAccountDialog(null); onClose(); }} className="btn-primary">
-                {t('common.done')}
-              </button>
-            </div>
+      <Modal
+        open={accountDialog !== null}
+        onClose={() => { setAccountDialog(null); onClose(); }}
+        title={accountDialog?.created ? t('employees.account.createdTitle') : t('employees.account.noticeTitle')}
+        maxWidth="max-w-md"
+        footer={
+          <div className="flex justify-end">
+            <button type="button" onClick={() => { setAccountDialog(null); onClose(); }} className="btn-primary">
+              {t('common.done')}
+            </button>
           </div>
-        </div>
-      )}
+        }
+      >
+        {accountDialog && (
+          <div className="space-y-4">
+            {accountDialog.created ? (
+              <>
+                <p className="text-sm text-gray-600 dark:text-slate-300">
+                  {t('employees.account.createdBody')}
+                </p>
+                <div className="bg-gray-50 dark:bg-slate-950/60 rounded-xl p-4 space-y-3">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-500 dark:text-slate-400">{t('common.email')}</span>
+                    <span className="font-medium text-gray-900 dark:text-slate-100">{accountDialog.email}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-500 dark:text-slate-400">{t('employees.account.role')}</span>
+                    <span className="font-medium text-gray-900 dark:text-slate-100">{t(`roles.${accountDialog.role}`, { defaultValue: accountDialog.role })}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-500 dark:text-slate-400">{t('employees.account.defaultPassword')}</span>
+                    <span className="font-mono font-medium text-gray-900 dark:text-slate-100">{accountDialog.default_password}</span>
+                  </div>
+                </div>
+                <p className="text-xs text-amber-600 dark:text-amber-300 bg-amber-50 dark:bg-amber-500/10 rounded-lg px-3 py-2">
+                  {t('employees.account.adviseChange')}
+                </p>
+              </>
+            ) : (
+              <div className="bg-amber-50 dark:bg-amber-500/10 rounded-xl p-4">
+                <p className="text-sm text-amber-800 dark:text-amber-200">{accountDialog.message}</p>
+              </div>
+            )}
+          </div>
+        )}
+      </Modal>
     </form>
   );
 }

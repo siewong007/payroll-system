@@ -8,6 +8,9 @@ import { deletePayrollRun, getPayrollGroups, getPayrollRuns } from '@/api/payrol
 import { formatMYR, getErrorMessage } from '@/lib/utils';
 import { formatPeriod } from '@/lib/format';
 import { DataTable, type Column } from '@/components/ui/DataTable';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { useConfirm } from '@/lib/confirm';
+import { useToast } from '@/lib/toast';
 import { useAuth } from '@/context/AuthContext';
 import { canPreparePayroll } from '@/lib/roles';
 import type { PayrollRun } from '@/types';
@@ -72,6 +75,8 @@ const buildColumns = (groupName: (id: string) => string, t: TFunction): Column<P
 export function PayrollList() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const confirmDialog = useConfirm();
+  const toast = useToast();
   const { user } = useAuth();
   const canPrepare = canPreparePayroll(user);
   const [statusFilter, setStatusFilter] = useState('');
@@ -104,36 +109,43 @@ export function PayrollList() {
     mutationFn: deletePayrollRun,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['payrollRuns'] }),
     onError: (error: unknown) => {
-      alert(getErrorMessage(error, t('payroll.deleteFailed')));
+      toast.error(getErrorMessage(error, t('payroll.deleteFailed')));
     },
   });
 
-  const handleDelete = (run: PayrollRun) => {
-    if (confirm(t('payroll.deleteConfirm', { period: formatPeriod(run.period_year, run.period_month) }))) {
+  const handleDelete = async (run: PayrollRun) => {
+    const ok = await confirmDialog({
+      description: t('payroll.deleteConfirm', { period: formatPeriod(run.period_year, run.period_month) }),
+      variant: 'danger',
+    });
+    if (ok) {
       deleteMutation.mutate(run.id);
     }
   };
 
   return (
     <div>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-6">
-        <h1 className="text-xl sm:text-2xl font-bold text-gray-900">{t('payroll.listTitle')}</h1>
-        {canPrepare && (
-          <Link
-            to="/payroll/process"
-            className="flex items-center justify-center gap-2 bg-black text-white px-4 py-2 rounded-lg hover:bg-gray-800 transition-colors text-sm font-medium w-full sm:w-auto min-h-[44px]"
-          >
-            <Plus className="w-4 h-4" />
-            {t('payroll.processButton')}
-          </Link>
-        )}
-      </div>
+      <PageHeader
+        title={t('payroll.listTitle')}
+        breadcrumbs={[
+          { label: t('nav.payroll'), href: '/payroll' },
+          { label: t('payroll.listTitle') },
+        ]}
+        actions={
+          canPrepare ? (
+            <Link to="/payroll/process" className="btn-primary w-full sm:w-auto">
+              <Plus className="w-4 h-4" />
+              {t('payroll.processButton')}
+            </Link>
+          ) : undefined
+        }
+      />
 
       <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
         <select
           value={groupFilter}
           onChange={(e) => setGroupFilter(e.target.value)}
-          className="w-full rounded-lg border border-gray-200 p-2 text-sm outline-none focus:ring-1 focus:ring-black"
+          className="form-input"
           aria-label={t('payroll.filterByGroup')}
         >
           <option value="">{t('payroll.allGroups')}</option>
@@ -144,7 +156,7 @@ export function PayrollList() {
         <select
           value={yearFilter}
           onChange={(e) => setYearFilter(e.target.value)}
-          className="w-full rounded-lg border border-gray-200 p-2 text-sm outline-none focus:ring-1 focus:ring-black"
+          className="form-input"
           aria-label={t('payroll.filterByYear')}
         >
           <option value="">{t('payroll.allYears')}</option>
@@ -155,7 +167,7 @@ export function PayrollList() {
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
-          className="w-full rounded-lg border border-gray-200 p-2 text-sm outline-none focus:ring-1 focus:ring-black"
+          className="form-input"
           aria-label={t('payroll.filterByStatus')}
         >
           <option value="">{t('payroll.allStatuses')}</option>

@@ -96,23 +96,23 @@ function AddLocationForm({ onClose }: { onClose: () => void }) {
           type="number"
           value={form.radius_meters}
           onChange={e => setForm(p => ({ ...p, radius_meters: e.target.value }))}
-          className="w-32 px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-1 focus:ring-black"
+          className="form-input !w-32"
         />
       </div>
       {error && (
-        <p className="text-sm text-red-600 flex items-center gap-1">
+        <p className="text-sm text-red-600 dark:text-red-400 flex items-center gap-1">
           <AlertCircle className="w-3.5 h-3.5" />{error}
         </p>
       )}
       <div className="flex gap-2">
         <button onClick={onClose}
-          className="flex-1 py-2 border border-gray-300 rounded-lg text-sm text-gray-600 hover:bg-gray-100">
+          className="btn-secondary flex-1 !py-2">
           {t('common.cancel')}
         </button>
         <button
           onClick={() => mutation.mutate()}
           disabled={!form.name || !form.latitude || !form.longitude || mutation.isPending}
-          className="flex-1 py-2 bg-black text-white rounded-lg text-sm font-medium hover:bg-gray-800 disabled:opacity-40"
+          className="btn-primary flex-1 !py-2"
         >
           {mutation.isPending ? t('common.adding') : t('common.add')}
         </button>
@@ -173,22 +173,20 @@ export function GeofenceCard() {
   const currentMode = modeData?.mode ?? 'none';
 
   return (
-    <div className="bg-white rounded-2xl shadow">
-      <div className="p-5 sm:p-6 border-b border-gray-100">
+    <div className="card !p-0 overflow-hidden">
+      <div className="p-5 sm:p-6 border-b border-gray-100 dark:border-slate-800">
         <div className="flex items-center gap-2 mb-1">
-          <Shield className="w-5 h-5 text-gray-700" />
-          <h2 className="font-semibold text-gray-900">{t('attendance.geofence.title')}</h2>
+          <Shield className="w-5 h-5 text-[var(--accent-1)]" />
+          <h2 className="font-semibold text-gray-900 dark:text-slate-100">{t('attendance.geofence.title')}</h2>
         </div>
-        <p className="text-sm text-gray-500">
+        <p className="text-sm text-gray-500 dark:text-slate-400">
           {t('attendance.geofence.body')}
         </p>
       </div>
 
       <div className="p-5 sm:p-6 space-y-5">
-        {/* Mode selector — one per row on phones; a third of 343px cannot hold
-            a sentence of description without shredding it into single words. */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">{t('attendance.geofence.modeLabel')}</label>
+          <p className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">{t('attendance.geofence.modeLabel')}</p>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
             {MODE_VALUES.map(mode => (
               <button
@@ -196,14 +194,14 @@ export function GeofenceCard() {
                 onClick={() => modeMut.mutate(mode)}
                 className={`relative p-3 rounded-xl border-2 text-left transition-all ${
                   currentMode === mode
-                    ? 'border-black bg-gray-50'
-                    : 'border-gray-200 hover:border-gray-300'
+                    ? 'border-[var(--accent-1)] bg-[var(--accent-soft)]'
+                    : 'border-gray-200 dark:border-slate-800 hover:border-gray-300 dark:hover:border-slate-700'
                 }`}
               >
-                <p className="text-sm font-semibold text-gray-900 pr-5">{modeLabel(mode, t)}</p>
-                <p className="text-xs text-gray-500 mt-0.5">{modeDesc(mode, t)}</p>
+                <p className="text-sm font-semibold text-gray-900 dark:text-slate-100 pr-5">{modeLabel(mode, t)}</p>
+                <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">{modeDesc(mode, t)}</p>
                 {currentMode === mode && (
-                  <CheckCircle2 className="w-3.5 h-3.5 text-black absolute top-3 right-3 sm:static sm:mt-1.5" />
+                  <CheckCircle2 className="w-3.5 h-3.5 text-[var(--accent-1)] absolute top-3 right-3 sm:static sm:mt-1.5" />
                 )}
               </button>
             ))}
@@ -213,10 +211,10 @@ export function GeofenceCard() {
         {/* Locations */}
         <div>
           <div className="flex items-center justify-between mb-2">
-            <label className="text-sm font-medium text-gray-700">{t('attendance.geofence.locationsLabel')}</label>
+            <span className="text-sm font-medium text-gray-700 dark:text-slate-300">{t('attendance.geofence.locationsLabel')}</span>
             <button
               onClick={() => setShowAdd(true)}
-              className="flex items-center gap-1 text-xs text-gray-600 hover:text-black font-medium bg-gray-100 hover:bg-gray-200 px-2.5 py-1.5 rounded-lg transition-colors"
+              className="btn-secondary !py-1.5 !px-2.5 !min-h-8 text-xs"
             >
               <Plus className="w-3.5 h-3.5" /> {t('common.add')}
             </button>

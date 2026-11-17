@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Calculator, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { Calculator, Pencil, Plus, Trash2, X } from 'lucide-react';
 import {
   createPayrollEntry,
   deletePayrollEntry,
@@ -18,6 +18,9 @@ import { formatEmployeeLabel } from '@/lib/employeeFields';
 import { formatMYR, getErrorMessage, translateServerMessage } from '@/lib/utils';
 import { formatPeriod, monthName } from '@/lib/format';
 import { PayrollPreviewPanel } from './PayrollPreviewPanel';
+import { PayrollLifecycleStepper } from './PayrollLifecycleStepper';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { useConfirm } from '@/lib/confirm';
 import type { PayrollEntryWithEmployee } from '@/types';
 import type { TFunction } from 'i18next';
 
@@ -38,6 +41,7 @@ function getEntryKindLabel(entry: Pick<PayrollEntryWithEmployee, 'category' | 'i
 
 export function PayrollProcess() {
   const { t } = useTranslation();
+  const confirmDialog = useConfirm();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const now = new Date();
@@ -243,14 +247,15 @@ export function PayrollProcess() {
 
   return (
     <div className="max-w-6xl space-y-6">
-      <button
-        onClick={() => navigate('/payroll')}
-        className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700 mb-4"
-      >
-        <ArrowLeft className="w-4 h-4" /> {t('payroll.process.backToPayroll')}
-      </button>
+      <PageHeader
+        title={t('payroll.process.title')}
+        breadcrumbs={[
+          { label: t('nav.payroll'), href: '/payroll' },
+          { label: t('payroll.process.title') },
+        ]}
+      />
 
-      <h1 className="text-2xl font-bold text-gray-900 mb-6">{t('payroll.process.title')}</h1>
+      <PayrollLifecycleStepper status="draft" />
 
       {preview && (
         <PayrollPreviewPanel
@@ -532,8 +537,12 @@ export function PayrollProcess() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => {
-                          if (confirm(t('payroll.process.deleteEntryConfirm'))) deleteEntryMutation.mutate(entry.id);
+                        onClick={async () => {
+                          const ok = await confirmDialog({
+                            description: t('payroll.process.deleteEntryConfirm'),
+                            variant: 'danger',
+                          });
+                          if (ok) deleteEntryMutation.mutate(entry.id);
                         }}
                         disabled={deleteEntryMutation.isPending}
                         className="rounded-lg p-1.5 text-red-500 hover:bg-red-50 hover:text-red-700 disabled:opacity-50"

@@ -92,10 +92,26 @@ export function translateServerMessage(msg: string): string {
 
 export function getErrorMessage(err: unknown, fallback?: string): string {
   const resolvedFallback = fallback ?? i18n.t('errors.actionFailed');
-  if (typeof err === 'object' && err !== null && 'response' in err) {
-    const axiosErr = err as { response: { data?: { error?: string } } };
-    const serverMsg = axiosErr.response?.data?.error;
-    if (serverMsg) return translateServerMessage(serverMsg);
+  if (typeof err === 'object' && err !== null) {
+    if ('rateLimitMessage' in err) {
+      const rl = (err as { rateLimitMessage?: unknown }).rateLimitMessage;
+      if (typeof rl === 'string' && rl.length > 0) {
+        return rl;
+      }
+    }
+    if ('response' in err) {
+      const axiosErr = err as {
+        response?: { status?: number; headers?: Record<string, unknown>; data?: { error?: string } };
+      };
+      const serverMsg = axiosErr.response?.data?.error;
+      if (serverMsg) return translateServerMessage(serverMsg);
+      if (axiosErr.response?.status === 429) {
+        const retryAfter = Number(axiosErr.response?.headers?.['retry-after']);
+        return Number.isFinite(retryAfter) && retryAfter > 0
+          ? i18n.t('ux.rateLimit.tooManyWait', { seconds: retryAfter })
+          : i18n.t('ux.rateLimit.tooManyShort');
+      }
+    }
   }
   if (err instanceof Error) return err.message;
   return resolvedFallback;

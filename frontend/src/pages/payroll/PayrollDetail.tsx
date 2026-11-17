@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Ban, CheckCircle, Clock, Download, FileText, Lock, Pencil, RotateCcw, Save, Send, Trash2, X } from 'lucide-react';
+import { Ban, CheckCircle, Clock, Download, FileText, Lock, Pencil, RotateCcw, Save, Send, Trash2, X } from 'lucide-react';
 import {
   cancelPayrollRun,
   downloadPaymentFile,
@@ -24,6 +24,10 @@ import { useAuth } from '@/context/AuthContext';
 import { canApprovePayroll, canPreparePayroll } from '@/lib/roles';
 import { userCan } from '@/lib/usePermissions';
 import { Modal } from '@/components/ui/Modal';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { useConfirm } from '@/lib/confirm';
+import { usePrompt } from '@/lib/prompt';
+import { PayrollLifecycleStepper } from './PayrollLifecycleStepper';
 import type { JournalPreview } from '@/types';
 import type { TFunction } from 'i18next';
 import i18n from '@/i18n';
@@ -40,6 +44,8 @@ const canCancelAsApprover = (status: string) => ['pending_approval', 'approved']
 
 export function PayrollDetail() {
   const { t } = useTranslation();
+  const confirmDialog = useConfirm();
+  const promptDialog = usePrompt();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -202,72 +208,75 @@ export function PayrollDetail() {
 
   return (
     <div>
-      <button
-        onClick={() => navigate('/payroll')}
-        className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700 mb-4"
-      >
-        <ArrowLeft className="w-4 h-4" /> {t('payroll.process.backToPayroll')}
-      </button>
-
-      {/* Header */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-6">
-        <div>
-          <h1 className="text-xl sm:text-2xl font-bold text-gray-900">
-            {t('payroll.detail.title', { period: formatPeriod(run.period_year, run.period_month) })}
-          </h1>
-          <p className="text-gray-500">{t('payroll.detail.employeesProcessed', { count: run.employee_count })}</p>
-        </div>
-        <div className="flex items-center gap-3">
-          {canDownloadPayslips(run.status) && (
-            <button
-              onClick={() => downloadRunPayslips(id!)}
-              className="flex items-center gap-2 bg-white border border-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-50 text-sm font-medium"
-            >
-              <Download className="w-4 h-4" /> {t('payroll.detail.downloadPayslips')}
-            </button>
-          )}
-          {canPrepare && canDeletePayrollRun(run.status) && (
-            <button
-              onClick={() => {
-                if (confirm(t('payroll.deleteConfirm', { period: formatPeriod(run.period_year, run.period_month) }))) {
-                  deleteMutation.mutate();
-                }
-              }}
-              disabled={deleteMutation.isPending}
-              className="flex items-center gap-2 bg-white border border-red-200 text-red-600 px-4 py-2 rounded-lg hover:bg-red-50 disabled:opacity-50 text-sm font-medium"
-            >
-              <Trash2 className="w-4 h-4" />
-              {deleteMutation.isPending ? t('common.deleting') : t('common.delete')}
-            </button>
-          )}
-          {canPrepare && run.status === 'processed' && (
-            <button
-              onClick={() => submitMutation.mutate()}
-              disabled={submitMutation.isPending}
-              className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm font-medium"
-            >
-              <Send className="w-4 h-4" />
-              {submitMutation.isPending ? t('payroll.detail.submitting') : t('payroll.detail.submitForApproval')}
-            </button>
-          )}
-          {canApprove && run.status === 'pending_approval' && (
-            <>
+      <PageHeader
+        title={t('payroll.detail.title', { period: formatPeriod(run.period_year, run.period_month) })}
+        subtitle={t('payroll.detail.employeesProcessed', { count: run.employee_count })}
+        breadcrumbs={[
+          { label: t('nav.payroll'), href: '/payroll' },
+          { label: t('payroll.listTitle'), href: '/payroll/runs' },
+          { label: formatPeriod(run.period_year, run.period_month) },
+        ]}
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            {canDownloadPayslips(run.status) && (
               <button
-                onClick={() => {
-                  const reason = prompt(t('payroll.detail.returnPrompt'))?.trim();
-                  if (reason !== undefined) returnMutation.mutate(reason || undefined);
-                }}
-                disabled={returnMutation.isPending}
-                className="flex items-center gap-2 bg-white border border-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-50 disabled:opacity-50 text-sm font-medium"
+                onClick={() => downloadRunPayslips(id!)}
+                className="btn-secondary"
               >
-                <RotateCcw className="w-4 h-4" />
-                {returnMutation.isPending ? t('payroll.detail.returning') : t('payroll.detail.return')}
+                <Download className="w-4 h-4" /> {t('payroll.detail.downloadPayslips')}
               </button>
+            )}
+            {canPrepare && canDeletePayrollRun(run.status) && (
               <button
-                onClick={() => approveMutation.mutate()}
-                disabled={approveMutation.isPending}
-                className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 disabled:opacity-50 text-sm font-medium"
+                onClick={async () => {
+                  const ok = await confirmDialog({
+                    description: t('payroll.deleteConfirm', { period: formatPeriod(run.period_year, run.period_month) }),
+                    variant: 'danger',
+                  });
+                  if (ok) {
+                    deleteMutation.mutate();
+                  }
+                }}
+                disabled={deleteMutation.isPending}
+                className="flex items-center gap-2 bg-white dark:bg-slate-900 border border-red-200 dark:border-red-500/30 text-red-600 dark:text-red-400 px-4 py-2 min-h-[44px] rounded-xl hover:bg-red-50 dark:hover:bg-red-500/10 disabled:opacity-50 text-sm font-medium transition-colors"
               >
+                <Trash2 className="w-4 h-4" />
+                {deleteMutation.isPending ? t('common.deleting') : t('common.delete')}
+              </button>
+            )}
+            {canPrepare && run.status === 'processed' && (
+              <button
+                onClick={() => submitMutation.mutate()}
+                disabled={submitMutation.isPending}
+                className="btn-primary"
+              >
+                <Send className="w-4 h-4" />
+                {submitMutation.isPending ? t('payroll.detail.submitting') : t('payroll.detail.submitForApproval')}
+              </button>
+            )}
+            {canApprove && run.status === 'pending_approval' && (
+              <>
+                <button
+                  onClick={async () => {
+                    const reason = await promptDialog({
+                      title: t('payroll.detail.return'),
+                      description: t('payroll.detail.returnPrompt'),
+                      confirmLabel: t('payroll.detail.return'),
+                      variant: 'warning',
+                    });
+                    if (reason !== null) returnMutation.mutate(reason || undefined);
+                  }}
+                  disabled={returnMutation.isPending}
+                  className="btn-secondary"
+                >
+                  <RotateCcw className="w-4 h-4" />
+                  {returnMutation.isPending ? t('payroll.detail.returning') : t('payroll.detail.return')}
+                </button>
+                <button
+                  onClick={() => approveMutation.mutate()}
+                  disabled={approveMutation.isPending}
+                  className="flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 min-h-[44px] rounded-xl hover:bg-emerald-700 disabled:opacity-50 text-sm font-semibold transition-colors"
+                >
                 <CheckCircle className="w-4 h-4" />
                 {approveMutation.isPending ? t('payroll.detail.approving') : t('payroll.detail.approve')}
               </button>
@@ -277,7 +286,7 @@ export function PayrollDetail() {
             <button
               onClick={() => lockMutation.mutate()}
               disabled={lockMutation.isPending}
-              className="flex items-center gap-2 bg-black text-white px-4 py-2 rounded-lg hover:bg-gray-800 disabled:opacity-50 text-sm font-medium"
+              className="btn-primary"
             >
               <Lock className="w-4 h-4" />
               {lockMutation.isPending ? t('payroll.detail.locking') : t('payroll.detail.lockMarkPaid')}
@@ -287,14 +296,14 @@ export function PayrollDetail() {
             <>
               <button
                 onClick={() => downloadPaymentFile(id!)}
-                className="flex items-center gap-2 bg-white border border-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-50 text-sm font-medium"
+                className="btn-secondary"
               >
                 <Download className="w-4 h-4" /> {t('payroll.detail.paymentFile')}
               </button>
               <button
                 onClick={() => journalMutation.mutate()}
                 disabled={journalMutation.isPending}
-                className="flex items-center gap-2 bg-white border border-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-50 disabled:opacity-50 text-sm font-medium"
+                className="btn-secondary"
               >
                 <FileText className="w-4 h-4" />
                 {journalMutation.isPending ? t('common.loading') : t('payroll.detail.journalPreview')}
@@ -303,27 +312,36 @@ export function PayrollDetail() {
           )}
           {showCancel && (
             <button
-              onClick={() => {
-                const reason = prompt(t('payroll.detail.cancelPrompt'))?.trim();
+              onClick={async () => {
+                const reason = await promptDialog({
+                  title: t('payroll.detail.cancelRun'),
+                  description: t('payroll.detail.cancelPrompt'),
+                  confirmLabel: t('payroll.detail.cancelRun'),
+                  required: true,
+                  variant: 'danger',
+                });
                 if (reason) cancelMutation.mutate(reason);
               }}
               disabled={cancelMutation.isPending}
-              className="flex items-center gap-2 bg-white border border-red-200 text-red-600 px-4 py-2 rounded-lg hover:bg-red-50 disabled:opacity-50 text-sm font-medium"
+              className="flex items-center gap-2 bg-white dark:bg-slate-900 border border-red-200 dark:border-red-500/30 text-red-600 dark:text-red-400 px-4 py-2 min-h-[44px] rounded-xl hover:bg-red-50 dark:hover:bg-red-500/10 disabled:opacity-50 text-sm font-medium transition-colors"
             >
               <Ban className="w-4 h-4" />
               {cancelMutation.isPending ? t('payroll.detail.cancelling') : t('payroll.detail.cancelRun')}
             </button>
           )}
           <span className={`px-3 py-1 rounded-full text-sm font-medium ${
-            run.status === 'paid' ? 'bg-emerald-50 text-emerald-700' :
-            run.status === 'approved' ? 'bg-green-50 text-green-700' :
-            run.status === 'pending_approval' ? 'bg-blue-50 text-blue-700' :
-            'bg-gray-100 text-gray-900'
+            run.status === 'paid' ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300' :
+            run.status === 'approved' ? 'bg-green-50 text-green-700 dark:bg-green-500/15 dark:text-green-300' :
+            run.status === 'pending_approval' ? 'bg-blue-50 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300' :
+            'bg-gray-100 text-gray-900 dark:bg-slate-800 dark:text-slate-200'
           }`}>
             {payrollStatusLabel(run.status)}
           </span>
-        </div>
-      </div>
+          </div>
+        }
+      />
+
+      <PayrollLifecycleStepper status={run.status} />
       {lifecycleError && (
         <div className="mb-6 rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">
           {lifecycleError}

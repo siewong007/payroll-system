@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Users, Trash2, UserPlus, ChevronRight, Search, Tag } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
+import { useConfirm } from '@/lib/confirm';
 import { getTeams, createTeam, updateTeam, deleteTeam, getTeamMembers, addTeamMember, removeTeamMember } from '@/api/teams';
 import { getEmployees } from '@/api/employees';
 import type { TeamWithCount, TeamMember, CreateTeamRequest, UpdateTeamRequest } from '@/types';
@@ -23,6 +24,7 @@ function getTagStyle(tag: string) {
 
 export function TeamsPage() {
   const { t } = useTranslation();
+  const confirmDialog = useConfirm();
   const queryClient = useQueryClient();
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -155,8 +157,12 @@ export function TeamsPage() {
     });
   };
 
-  const handleDelete = (team: TeamWithCount) => {
-    if (confirm(t('teams.deleteConfirm', { name: team.name }))) {
+  const handleDelete = async (team: TeamWithCount) => {
+    const ok = await confirmDialog({
+      description: t('teams.deleteConfirm', { name: team.name }),
+      variant: 'danger',
+    });
+    if (ok) {
       deleteMutation.mutate(team.id);
     }
   };

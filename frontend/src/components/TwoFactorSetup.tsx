@@ -9,6 +9,7 @@ import {
   totpDisable,
   totpRegenerateBackupCodes,
 } from '@/api/totp';
+import { FormField } from '@/components/ui/FormField';
 import { getErrorMessage } from '@/lib/utils';
 
 type View = 'idle' | 'setting_up' | 'backup_codes' | 'disabling' | 'regenerating';
@@ -156,7 +157,7 @@ export function TwoFactorSetup() {
           <button
             type="button"
             onClick={() => setView('idle')}
-            className="w-full bg-black text-white py-2.5 rounded-xl font-semibold hover:bg-gray-800 transition-all"
+            className="btn-primary w-full"
           >
             {t('auth.twoFactor.savedCodes')}
           </button>
@@ -169,34 +170,36 @@ export function TwoFactorSetup() {
             <img
               src={`data:image/png;base64,${beginMutation.data.qr_code_base64}`}
               alt={t('auth.twoFactor.qrAlt')}
-              className="rounded-xl border border-gray-200"
+              className="rounded-xl border border-gray-200 bg-white p-1"
               width={200}
               height={200}
             />
           </div>
-          <p className="text-xs text-gray-500 text-center">
+          <p className="text-xs text-gray-500 dark:text-slate-400 text-center">
             {t('auth.twoFactor.manualEntry')}{' '}
-            <span className="font-mono text-gray-700">{beginMutation.data.secret}</span>
+            <span className="font-mono text-gray-700 dark:text-slate-200">{beginMutation.data.secret}</span>
           </p>
-          <div>
-            <label className="form-label">{t('auth.twoFactor.confirmLabel')}</label>
-            <input
-              type="text"
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              value={confirmCode}
-              onChange={(e) => setConfirmCode(e.target.value)}
-              className="border p-2.5 rounded-lg w-full text-sm text-center tracking-widest outline-none focus:border-black transition-colors"
-              placeholder="123456"
-              autoFocus
-            />
-          </div>
+          <FormField label={t('auth.twoFactor.confirmLabel')}>
+            {(aria) => (
+              <input
+                {...aria}
+                type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                value={confirmCode}
+                onChange={(e) => setConfirmCode(e.target.value)}
+                className="form-input !p-2.5 text-center tracking-widest"
+                placeholder="123456"
+                autoFocus
+              />
+            )}
+          </FormField>
           <div className="flex gap-2">
             <button
               type="button"
               onClick={() => confirmMutation.mutate(confirmCode.trim())}
               disabled={!confirmCode.trim() || confirmMutation.isPending}
-              className="flex-1 bg-black text-white py-2.5 rounded-xl font-semibold hover:bg-gray-800 disabled:opacity-50 transition-all"
+              className="btn-primary flex-1"
             >
               {confirmMutation.isPending ? t('auth.twoFactor.verifying') : t('auth.twoFactor.confirmEnable')}
             </button>
@@ -207,7 +210,7 @@ export function TwoFactorSetup() {
                 setConfirmCode('');
                 setError('');
               }}
-              className="px-4 py-2.5 text-sm font-medium text-gray-500 hover:text-gray-700"
+              className="btn-secondary"
             >
               {t('common.cancel')}
             </button>
@@ -217,15 +220,19 @@ export function TwoFactorSetup() {
 
       {(view === 'disabling' || view === 'regenerating') && (
         <div className="space-y-3">
-          <label className="form-label">{t('auth.twoFactor.confirmPasswordPrompt')}</label>
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="border p-2.5 rounded-lg w-full text-sm outline-none focus:border-black transition-colors"
-            placeholder={t('auth.twoFactor.currentPasswordPlaceholder')}
-            autoFocus
-          />
+          <FormField label={t('auth.twoFactor.confirmPasswordPrompt')}>
+            {(aria) => (
+              <input
+                {...aria}
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="form-input !p-2.5"
+                placeholder={t('auth.twoFactor.currentPasswordPlaceholder')}
+                autoFocus
+              />
+            )}
+          </FormField>
           <div className="flex gap-2">
             <button
               type="button"
@@ -235,7 +242,7 @@ export function TwoFactorSetup() {
                   : regenerateMutation.mutate(password)
               }
               disabled={!password || disableMutation.isPending || regenerateMutation.isPending}
-              className="flex-1 bg-black text-white py-2.5 rounded-xl font-semibold hover:bg-gray-800 disabled:opacity-50 transition-all"
+              className="btn-primary flex-1"
             >
               {disableMutation.isPending || regenerateMutation.isPending ? t('auth.twoFactor.confirming') : t('auth.twoFactor.confirm')}
             </button>

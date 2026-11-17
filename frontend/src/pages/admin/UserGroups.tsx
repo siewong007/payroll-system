@@ -1,9 +1,11 @@
 import { Fragment, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, Users, X } from 'lucide-react';
+import { Plus, Trash2, Users } from 'lucide-react';
 import { permissionsApi, type PermissionDescriptor, type PermissionKey } from '@/api/permissions';
 import { userGroupsApi, type UserGroup } from '@/api/userGroups';
+import { Modal } from '@/components/ui/Modal';
+import { useConfirm } from '@/lib/confirm';
 
 /**
  * User groups grant permissions on top of roles.
@@ -17,6 +19,7 @@ import { userGroupsApi, type UserGroup } from '@/api/userGroups';
  */
 export function UserGroups() {
   const { t } = useTranslation();
+  const confirmDialog = useConfirm();
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState<UserGroup | null>(null);
   const [creating, setCreating] = useState(false);
@@ -110,10 +113,14 @@ export function UserGroups() {
                 <button
                   className="p-1.5 text-gray-400 hover:text-red-600 rounded-lg hover:bg-red-50"
                   aria-label={t('userGroups.deleteGroup', { name: group.name })}
-                  onClick={() => {
+                  onClick={async () => {
                     // Deleting cascades to membership, revoking access from
                     // everyone who held it — worth one confirmation.
-                    if (window.confirm(t('userGroups.deleteConfirm', { name: group.name }))) {
+                    const ok = await confirmDialog({
+                      description: t('userGroups.deleteConfirm', { name: group.name }),
+                      variant: 'danger',
+                    });
+                    if (ok) {
                       remove.mutate(group.id);
                     }
                   }}
@@ -210,70 +217,13 @@ function GroupEditor({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="bg-white rounded-xl w-full max-w-2xl max-h-[85vh] flex flex-col">
-        <div className="flex items-center justify-between p-5 border-b border-gray-100">
-          <h2 className="font-semibold text-gray-900">{group ? t('userGroups.editGroup') : t('userGroups.newGroup')}</h2>
-          <button onClick={onClose} aria-label={t('common.close')} className="p-1 text-gray-400 hover:text-gray-600">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        <div className="p-5 space-y-4 overflow-y-auto">
-          {error && <p className="text-sm text-red-600">{error}</p>}
-
-          <div>
-            <label htmlFor="group-name" className="block text-xs font-medium text-gray-500 mb-1">
-              {t('common.name')}
-            </label>
-            <input
-              id="group-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm"
-            />
-          </div>
-
-          <div>
-            <label htmlFor="group-desc" className="block text-xs font-medium text-gray-500 mb-1">
-              {t('common.description')}
-            </label>
-            <input
-              id="group-desc"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm"
-            />
-          </div>
-
-          <div className="space-y-3">
-            <p className="text-xs font-medium text-gray-500">{t('userGroups.permissionsGranted')}</p>
-            {[...permissionsByGroup.entries()].map(([groupName, permissions]) => (
-              <Fragment key={groupName}>
-                <p className="text-[10px] uppercase tracking-wider font-semibold text-gray-400">
-                  {t(`permissions.groups.${groupName.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`, { defaultValue: groupName })}
-                </p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                  {permissions.map((permission) => (
-                    <label
-                      key={permission.key}
-                      className="flex items-center gap-2 text-sm text-gray-700"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selected.includes(permission.key)}
-                        onChange={() => toggle(permission.key)}
-                      />
-                      {t(`permissions.labels.${permission.key}`, { defaultValue: permission.label })}
-                    </label>
-                  ))}
-                </div>
-              </Fragment>
-            ))}
-          </div>
-        </div>
-
-        <div className="flex justify-end gap-2 p-5 border-t border-gray-100">
+    <Modal
+      open
+      onClose={onClose}
+      title={group ? t('userGroups.editGroup') : t('userGroups.newGroup')}
+      maxWidth="max-w-2xl"
+      footer={
+        <div className="flex justify-end gap-2">
           <button className="btn-secondary" onClick={onClose}>
             {t('common.cancel')}
           </button>
@@ -288,7 +238,62 @@ function GroupEditor({
             {save.isPending ? t('common.saving') : t('common.save')}
           </button>
         </div>
+      }
+    >
+      <div className="space-y-4">
+        {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+
+        <div>
+          <label htmlFor="group-name" className="form-label">
+            {t('common.name')}
+          </label>
+          <input
+            id="group-name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="form-input"
+          />
+        </div>
+
+        <div>
+          <label htmlFor="group-desc" className="form-label">
+            {t('common.description')}
+          </label>
+          <input
+            id="group-desc"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            className="form-input"
+          />
+        </div>
+
+        <div className="space-y-3">
+          <p className="text-xs font-medium text-gray-500 dark:text-slate-400">{t('userGroups.permissionsGranted')}</p>
+          {[...permissionsByGroup.entries()].map(([groupName, permissions]) => (
+            <Fragment key={groupName}>
+              <p className="text-[10px] uppercase tracking-wider font-semibold text-gray-400 dark:text-slate-500">
+                {t(`permissions.groups.${groupName.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`, { defaultValue: groupName })}
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                {permissions.map((permission) => (
+                  <label
+                    key={permission.key}
+                    className="flex items-center gap-2 text-sm text-gray-700 dark:text-slate-200"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selected.includes(permission.key)}
+                      onChange={() => toggle(permission.key)}
+                      className="rounded border-gray-300 text-[var(--accent-1)] focus:ring-[var(--ring)]"
+                    />
+                    {t(`permissions.labels.${permission.key}`, { defaultValue: permission.label })}
+                  </label>
+                ))}
+              </div>
+            </Fragment>
+          ))}
+        </div>
       </div>
-    </div>
+    </Modal>
   );
 }
