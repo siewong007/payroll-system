@@ -1,0 +1,9 @@
+node_modules/
+dist/
+target/
+coverage/
+backend/.sqlx/
+backend/migrations/
+graphify-out/
+*.lock
+frontend/src/i18n/locales/

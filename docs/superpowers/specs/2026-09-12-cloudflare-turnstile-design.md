@@ -41,7 +41,7 @@ pub async fn verify(
 
 - Secret unset → `Ok(())` (skip; dev/CI path).
 - Secret set, token absent/empty → `AppError::BadRequest("Human verification
-  required")`.
+required")`.
 - POST form `secret` / `response` / `remoteip` (remoteip omitted when
   unknown) via the existing `reqwest` dep, ~5 s timeout.
 - `success == false` → `AppError::Forbidden("Human verification failed")`;
@@ -53,15 +53,15 @@ pub async fn verify(
 
 Add `#[serde(default)] pub turnstile_token: Option<String>` to:
 
-| Endpoint | DTO (file) |
-|---|---|
-| `POST /auth/login` | `LoginRequest` (`models/user.rs`) |
-| `POST /auth/forgot-password` | `ForgotPasswordRequest` (`models/session.rs`) |
-| `POST /auth/reset-password` | `ResetPasswordRequest` (`models/session.rs`) |
-| `POST /auth/passkey/check` | `CheckPasskeyRequest` (`models/passkey.rs`) |
-| `POST /auth/passkey/authenticate/begin` | `AuthBeginRequest` (`models/passkey.rs`) |
+| Endpoint                                | DTO (file)                                                                                        |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `POST /auth/login`                      | `LoginRequest` (`models/user.rs`)                                                                 |
+| `POST /auth/forgot-password`            | `ForgotPasswordRequest` (`models/session.rs`)                                                     |
+| `POST /auth/reset-password`             | `ResetPasswordRequest` (`models/session.rs`)                                                      |
+| `POST /auth/passkey/check`              | `CheckPasskeyRequest` (`models/passkey.rs`)                                                       |
+| `POST /auth/passkey/authenticate/begin` | `AuthBeginRequest` (`models/passkey.rs`)                                                          |
 | `POST /auth/passkey/discoverable/begin` | new `DiscoverableAuthBeginRequest` in `models/passkey.rs` (currently body-less — add a JSON body) |
-| `GET /auth/oauth2/google/authorize` | `OAuth2AuthorizeQuery` (`models/oauth2.rs`) gains `turnstile_token: Option<String>` |
+| `GET /auth/oauth2/google/authorize`     | `OAuth2AuthorizeQuery` (`models/oauth2.rs`) gains `turnstile_token: Option<String>`               |
 
 In each handler, first statement after extraction:
 
@@ -111,7 +111,7 @@ Hand-rolled, no new dependency:
   `https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit`
   once (guard on an existing script tag / `window.turnstile`), `onload`
   then `turnstile.render(div, { sitekey, callback, 'error-callback',
-  'expired-callback' })`; cleanup removes the widget via
+'expired-callback' })`; cleanup removes the widget via
   `turnstile.remove(widgetId)`.
 - Props: `onVerify(token: string)`, `onStateChange?(state)`; exposes a
   `reset()` via forwarded ref (tokens are single-use — parent must reset
@@ -141,7 +141,7 @@ Hand-rolled, no new dependency:
   commented as test-only.
 - `frontend/.env.production`: `VITE_TURNSTILE_SITE_KEY=` placeholder line.
 - `deploy/docker-compose.prod.yml`: `TURNSTILE_SECRET_KEY:
-  "${TURNSTILE_SECRET_KEY:-}"` alongside the `GOOGLE_CLIENT_*` optional vars
+"${TURNSTILE_SECRET_KEY:-}"` alongside the `GOOGLE_CLIENT_*` optional vars
   (empty default = verification off, matching the skip-when-unset design).
 
 ## Testing
@@ -152,7 +152,7 @@ Hand-rolled, no new dependency:
   point `turnstile_verify_url` at it, assert 403 / pass. No new dev-deps.
 - Frontend Vitest: Login renders no widget without the env key; POST body
   contains `turnstile_token` when a token is set (mock the widget/`window
-  .turnstile`).
+.turnstile`).
 - `cargo fmt --check`, `cargo clippy -- -D warnings`, `bun run lint`,
   `bun run typecheck`, `bun run test` must stay green.
 - No `.sqlx` regeneration needed — no query macros change.

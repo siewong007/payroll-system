@@ -19,6 +19,7 @@
 ## 2. Roles and Multi-Tenant Responsibilities
 
 2.1 **Employer Tenant ("Data Controller"):** Each subscribing or self-hosting employer entity configured in the Platform (`companies`) is solely responsible for:
+
 - Determining the lawful basis for collecting and processing employee records under the **Personal Data Protection Act 2010 (Act 709)** as amended by the **Personal Data Protection (Amendment) Act 2024 (Act A1727)** (**"PDPA"**);
 - Ensuring accuracy of employee master data (full legal name per NRIC/passport, date of birth, residency status, marital/child declarations, bank account details, salary, allowances, and statutory registration numbers);
 - Importing, verifying, and approving authoritative statutory schedules (`statutory_rule_sets`) before enabling live payroll runs;
@@ -68,6 +69,7 @@
 ## 6. Acceptable Use Restrictions
 
 Users must **not**:
+
 - Attempt to bypass tenant isolation (`company_id` scoping), role/permission guards, Cloudflare Turnstile bot protection, or rate limits;
 - Upload malware, executable scripts, disguised file extensions, or files exceeding permitted size and magic-byte content checks;
 - Submit internal, loopback, link-local, or private-network URLs to calendar import endpoints (SSRF probing);

@@ -63,6 +63,5 @@ payroll-system.amd64
 
 # Tooling
 .husky/_/
-.lintstagedrc.json
 package-lock.json
 

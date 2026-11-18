@@ -2,12 +2,12 @@
 
 The application is a **four-locale first-class** product:
 
-| Locale | Code | Autonym |
-|---|---|---|
-| English | `en` | English |
-| Bahasa Melayu | `ms` | Bahasa Melayu |
-| Simplified Chinese | `zh-CN` | 简体中文 |
-| Traditional Chinese | `zh-TW` | 繁體中文 |
+| Locale              | Code    | Autonym       |
+| ------------------- | ------- | ------------- |
+| English             | `en`    | English       |
+| Bahasa Melayu       | `ms`    | Bahasa Melayu |
+| Simplified Chinese  | `zh-CN` | 简体中文      |
+| Traditional Chinese | `zh-TW` | 繁體中文      |
 
 `en` is the source of truth for **key structure only** — all four locales carry a
 full translation, not a fallback layer.
@@ -77,66 +77,66 @@ differing set; same-in-both chars like 需/限/零/餐 are deliberately excluded
 
 ### Malay (`ms`)
 
-| English | ms | Notes |
-|---|---|---|
-| Employee | Pekerja | not `kakitangan` |
-| Check in / out | Daftar masuk / Daftar keluar | attendance |
-| Payroll | Penggajian | |
-| Payslip | Slip gaji | |
-| Leave | Cuti | |
-| Claim | Tuntutan | expense claim |
-| Overtime | Kerja lebih masa | |
-| Approval | Kelulusan | |
-| Deduction | Potongan | |
-| Gross / Net | Kasar / Bersih | pay figures |
-| Statutory | Berkanun | EPF/SOCSO/EIS/PCB stay as acronyms |
-| Settings | Tetapan | |
-| Kiosk | Kiosk | loanword, kept |
-| Geofence | Geofencing / Pagar geo | |
-| Role | Peranan | |
-| Department | Jabatan | |
-| Team | Pasukan | |
-| Report | Laporan | |
-| Backup | Sandaran | |
-| Restore | Pulihkan | noun: pemulihan |
-| Template | Templat | |
-| Attachment | Lampiran | |
+| English        | ms                           | Notes                              |
+| -------------- | ---------------------------- | ---------------------------------- |
+| Employee       | Pekerja                      | not `kakitangan`                   |
+| Check in / out | Daftar masuk / Daftar keluar | attendance                         |
+| Payroll        | Penggajian                   |                                    |
+| Payslip        | Slip gaji                    |                                    |
+| Leave          | Cuti                         |                                    |
+| Claim          | Tuntutan                     | expense claim                      |
+| Overtime       | Kerja lebih masa             |                                    |
+| Approval       | Kelulusan                    |                                    |
+| Deduction      | Potongan                     |                                    |
+| Gross / Net    | Kasar / Bersih               | pay figures                        |
+| Statutory      | Berkanun                     | EPF/SOCSO/EIS/PCB stay as acronyms |
+| Settings       | Tetapan                      |                                    |
+| Kiosk          | Kiosk                        | loanword, kept                     |
+| Geofence       | Geofencing / Pagar geo       |                                    |
+| Role           | Peranan                      |                                    |
+| Department     | Jabatan                      |                                    |
+| Team           | Pasukan                      |                                    |
+| Report         | Laporan                      |                                    |
+| Backup         | Sandaran                     |                                    |
+| Restore        | Pulihkan                     | noun: pemulihan                    |
+| Template       | Templat                      |                                    |
+| Attachment     | Lampiran                     |                                    |
 
 ### Chinese (`zh-CN` / `zh-TW`)
 
-| English | zh-CN | zh-TW |
-|---|---|---|
-| Employee | 员工 | 員工 |
-| Check in / out | 打卡 / 签退 | 打卡 / 簽退 |
-| Payroll | 薪资 | 薪資 |
-| Payslip | 工资单 | 薪資單 |
-| Leave | 请假 / 假期 | 請假 / 假別 |
-| Claim | 报销 / 请款 | 請款 |
-| Overtime | 加班 | 加班 |
-| Approval | 审批 | 審核 |
-| Deduction | 扣款 | 扣款 |
-| Gross / Net | 应发 / 实发 | 應發 / 實發 |
-| Statutory | 法定 | 法定 |
-| Settings | 设置 | 設定 |
-| Kiosk | 自助终端 | 自助終端 / Kiosk |
-| Geofence | 地理围栏 | 地理圍欄 |
-| Role | 角色 | 角色 |
-| Department | 部门 | 部門 |
-| Team | 团队 | 團隊 |
-| Report | 报表 | 報表 |
-| Backup | 备份 | 備份 |
-| Template | 模板 | 範本 |
-| Attachment | 附件 | 附件 |
-| Save | 保存 | 儲存 |
-| Submit | 提交 | 送出 |
-| Default | 默认 | 預設 |
-| Reset | 重置 | 重設 |
-| View | 查看 | 檢視 |
-| Export | 导出 | 匯出 |
-| Search | 搜索 | 搜尋 |
-| Filter | 筛选 | 篩選 |
-| Cancel | 取消 | 取消 |
-| Confirm | 确认 | 確認 |
+| English        | zh-CN       | zh-TW            |
+| -------------- | ----------- | ---------------- |
+| Employee       | 员工        | 員工             |
+| Check in / out | 打卡 / 签退 | 打卡 / 簽退      |
+| Payroll        | 薪资        | 薪資             |
+| Payslip        | 工资单      | 薪資單           |
+| Leave          | 请假 / 假期 | 請假 / 假別      |
+| Claim          | 报销 / 请款 | 請款             |
+| Overtime       | 加班        | 加班             |
+| Approval       | 审批        | 審核             |
+| Deduction      | 扣款        | 扣款             |
+| Gross / Net    | 应发 / 实发 | 應發 / 實發      |
+| Statutory      | 法定        | 法定             |
+| Settings       | 设置        | 設定             |
+| Kiosk          | 自助终端    | 自助終端 / Kiosk |
+| Geofence       | 地理围栏    | 地理圍欄         |
+| Role           | 角色        | 角色             |
+| Department     | 部门        | 部門             |
+| Team           | 团队        | 團隊             |
+| Report         | 报表        | 報表             |
+| Backup         | 备份        | 備份             |
+| Template       | 模板        | 範本             |
+| Attachment     | 附件        | 附件             |
+| Save           | 保存        | 儲存             |
+| Submit         | 提交        | 送出             |
+| Default        | 默认        | 預設             |
+| Reset          | 重置        | 重設             |
+| View           | 查看        | 檢視             |
+| Export         | 导出        | 匯出             |
+| Search         | 搜索        | 搜尋             |
+| Filter         | 筛选        | 篩選             |
+| Cancel         | 取消        | 取消             |
+| Confirm        | 确认        | 確認             |
 
 Keep statutory acronyms (EPF, SOCSO, EIS, PCB, MTD, EA, NRIC, TIN) and product
 names (Face ID, WebAuthn, Tabung Haji) untranslated in all locales.

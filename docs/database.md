@@ -2,11 +2,11 @@
 
 ## Version policy
 
-| Environment | Version | Policy |
-| --- | --- | --- |
-| Docker Compose | PostgreSQL 19 Beta 2 | Pinned by image tag |
-| GitHub Actions database tests | PostgreSQL 19 Beta 2 | Pinned by image tag |
-| Production (AIC VPS) | PostgreSQL 19 Beta 2 | Explicit beta deployment; see the sanitized upgrade record |
+| Environment                   | Version              | Policy                                                     |
+| ----------------------------- | -------------------- | ---------------------------------------------------------- |
+| Docker Compose                | PostgreSQL 19 Beta 2 | Pinned by image tag                                        |
+| GitHub Actions database tests | PostgreSQL 19 Beta 2 | Pinned by image tag                                        |
+| Production (AIC VPS)          | PostgreSQL 19 Beta 2 | Explicit beta deployment; see the sanitized upgrade record |
 
 There is no Terraform or managed-database module in this repository (the AWS
 frontend resources were deleted on 2026-09-25). The PostgreSQL 18 allowance in

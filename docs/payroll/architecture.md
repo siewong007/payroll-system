@@ -4,13 +4,13 @@
 
 Payroll consumes operational records owned elsewhere; it does not re-own them.
 
-| Module | Owns | Payroll touches it for |
-| --- | --- | --- |
-| Employees | Identity, contact, employment status, department, position, bank details, statutory IDs | Population of a run, payment-file fields, department allocation |
-| Attendance / scheduling | Shifts, clock-in/out, worked hours, breaks, exceptions, OT records | Approved OT hours as an earnings input |
-| Leave | Requests, approvals, balances, paid/unpaid classification | Approved unpaid leave as a deduction input |
-| Claims | Claim records and their approval | Approved claims as reimbursement lines |
-| Accounting | GL, journals, payables, reconciliation | Journal **preview** only — payroll writes no ledger rows |
+| Module                  | Owns                                                                                    | Payroll touches it for                                          |
+| ----------------------- | --------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| Employees               | Identity, contact, employment status, department, position, bank details, statutory IDs | Population of a run, payment-file fields, department allocation |
+| Attendance / scheduling | Shifts, clock-in/out, worked hours, breaks, exceptions, OT records                      | Approved OT hours as an earnings input                          |
+| Leave                   | Requests, approvals, balances, paid/unpaid classification                               | Approved unpaid leave as a deduction input                      |
+| Claims                  | Claim records and their approval                                                        | Approved claims as reimbursement lines                          |
+| Accounting              | GL, journals, payables, reconciliation                                                  | Journal **preview** only — payroll writes no ledger rows        |
 
 ## Request flow
 

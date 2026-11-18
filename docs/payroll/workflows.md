@@ -8,17 +8,17 @@ draft → processing → processed → pending_approval → approved → paid
                                   cancelled
 ```
 
-| Transition | From → to | Permission | Notes |
-| --- | --- | --- | --- |
-| process | — → processing → processed | `ManagePayrollDraft` | Async via `background_jobs` (`202` + `GET /api/jobs/{id}`); transactional; snapshots statutory rule sets |
-| submit | processed → pending_approval | `SubmitPayroll` | Records `submitted_by` |
-| approve | pending_approval → approved | `ApprovePayroll` | Four-eyes: approver ≠ preparer and ≠ submitter |
-| return | pending_approval → processed | `ApprovePayroll` | Reopens for PCB edits |
-| lock / mark paid | approved → paid | `MarkPayrollPaid` | Sets `locked_*` |
-| **cancel** | draft/processed → cancelled | `ManagePayrollDraft` | Preparer withdraws own run |
-| **cancel** | pending_approval/approved → cancelled | `ApprovePayroll` | Approver cancels under review |
-| **reverse** | paid → cancelled | `ApprovePayroll` | Finance reverses a paid run with mandatory reason; reverts staged entries/claims |
-| delete | draft/processed → (removed) | `ManagePayrollDraft` | Hard delete; reverts staged inputs |
+| Transition       | From → to                             | Permission           | Notes                                                                                                    |
+| ---------------- | ------------------------------------- | -------------------- | -------------------------------------------------------------------------------------------------------- |
+| process          | — → processing → processed            | `ManagePayrollDraft` | Async via `background_jobs` (`202` + `GET /api/jobs/{id}`); transactional; snapshots statutory rule sets |
+| submit           | processed → pending_approval          | `SubmitPayroll`      | Records `submitted_by`                                                                                   |
+| approve          | pending_approval → approved           | `ApprovePayroll`     | Four-eyes: approver ≠ preparer and ≠ submitter                                                           |
+| return           | pending_approval → processed          | `ApprovePayroll`     | Reopens for PCB edits                                                                                    |
+| lock / mark paid | approved → paid                       | `MarkPayrollPaid`    | Sets `locked_*`                                                                                          |
+| **cancel**       | draft/processed → cancelled           | `ManagePayrollDraft` | Preparer withdraws own run                                                                               |
+| **cancel**       | pending_approval/approved → cancelled | `ApprovePayroll`     | Approver cancels under review                                                                            |
+| **reverse**      | paid → cancelled                      | `ApprovePayroll`     | Finance reverses a paid run with mandatory reason; reverts staged entries/claims                         |
+| delete           | draft/processed → (removed)           | `ManagePayrollDraft` | Hard delete; reverts staged inputs                                                                       |
 
 Cancellation (`PUT /payroll/runs/{id}/cancel`, migration 1025) and Paid-Run Reversal (`PUT /payroll/runs/{id}/reverse`):
 

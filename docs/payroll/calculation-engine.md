@@ -30,7 +30,7 @@ engine in handlers, jobs, or the frontend.
 5. `preview_payroll` runs the same computation without persisting and returns
    structured `blocking` and `warnings` diagnostics (including
    `missing_date_of_birth`, `epf_category_override`, `below_minimum_wage` under
-   *Minimum Wages Order 2024* RM1,700/month, `missing_earlier_period`, and
+   _Minimum Wages Order 2024_ RM1,700/month, `missing_earlier_period`, and
    `missing_bank_account`) instead of aborting on the first failure.
 
 ## Explainability

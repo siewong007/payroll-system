@@ -22,11 +22,13 @@
 ### Task 1: Backend — config + `core::turnstile` verifier
 
 **Files:**
+
 - Modify: `backend/src/core/config.rs` (add 2 fields + env reads)
 - Create: `backend/src/core/turnstile.rs`
 - Modify: `backend/src/core/mod.rs` (add `pub mod turnstile;`)
 
 **Interfaces:**
+
 - Produces: `turnstile::verify(config: &AppConfig, token: Option<&str>, remote_ip: Option<&str>) -> AppResult<()>`; `config.turnstile_secret_key: Option<String>`; `config.turnstile_verify_url: String`.
 
 - [ ] **Step 1: Write `core/turnstile.rs`**
@@ -243,10 +245,12 @@ git commit -m "feat(backend): add Turnstile siteverify helper (skip when unconfi
 ### Task 2: Backend — DTO fields + handler wiring (7 endpoints)
 
 **Files:**
+
 - Modify: `backend/src/models/user.rs` (`LoginRequest`), `models/session.rs` (`ForgotPasswordRequest`, `ResetPasswordRequest`), `models/passkey.rs` (`CheckPasskeyRequest`, `AuthBeginRequest`, + new `DiscoverableAuthBeginRequest`), `models/oauth2.rs` (`OAuth2AuthorizeQuery`)
 - Modify: `backend/src/handlers/auth.rs`, `handlers/passkey.rs`, `handlers/oauth2.rs`
 
 **Interfaces:**
+
 - Consumes: `turnstile::verify` from Task 1.
 - Produces: every protected request accepts optional `turnstile_token`.
 
@@ -320,6 +324,7 @@ git commit -m "feat(backend): require Turnstile token on unauthenticated endpoin
 ### Task 3: Env plumbing
 
 **Files:**
+
 - Modify: `.env.example` (document `TURNSTILE_SECRET_KEY` + test-only `TURNSTILE_VERIFY_URL`)
 - Modify: `deploy/docker-compose.prod.yml` — `TURNSTILE_SECRET_KEY: "${TURNSTILE_SECRET_KEY:-}"` beside `GOOGLE_CLIENT_*`
 - Modify (untracked): root `.env` — `TURNSTILE_SECRET_KEY=0x4AAAAAAExKOUIp448uo-mzWZAsPfvZvgY`
@@ -331,11 +336,13 @@ git commit -m "feat(backend): require Turnstile token on unauthenticated endpoin
 ### Task 4: Frontend — `TurnstileWidget` + site key env
 
 **Files:**
+
 - Create: `frontend/src/components/TurnstileWidget.tsx`
 - Modify: `frontend/.env.production` — add `VITE_TURNSTILE_SITE_KEY=0x4AAAAAAExKOU4xJzQjfmQR`
 - Create (gitignored): `frontend/.env.local` — same line (dev needs it once the backend secret is set)
 
 **Interfaces:**
+
 - Produces: `<TurnstileWidget ref={ref} onVerify={(t) => ...} onExpire={() => ...} onError={() => ...} />`; ref type `TurnstileWidgetRef { reset(): void }`. Renders nothing when `import.meta.env.VITE_TURNSTILE_SITE_KEY` unset.
 
 - [ ] **Step 1: Component** — inject `api.js?render=explicit` once; `turnstile.render` with `sitekey`, wire `callback`/`expired-callback`/`error-callback`; cleanup `turnstile.remove(id)`; `useImperativeHandle` → `reset()`. Ambient `Window['turnstile']` type declared in-file (no @types dep).
@@ -353,6 +360,7 @@ git commit -m "feat(frontend): add hand-rolled TurnstileWidget component"
 ### Task 5: Frontend — wire pages + API modules
 
 **Files:**
+
 - Modify: `api/admin.ts` (`forgotPassword`, `resetPassword` accept token), `api/passkey.ts` (all 3 public calls send `turnstile_token`), `api/oauth2.ts` (`getGoogleAuthorizeUrl(flow?, turnstileToken?)` → query param)
 - Modify: `context/AuthContext.ts` (`login(email, password, turnstileToken?)`), `context/AuthProvider.tsx` (send field)
 - Modify: `pages/auth/Login.tsx`, `ForgotPassword.tsx`, `ResetPassword.tsx`, `components/LinkedAccounts.tsx`

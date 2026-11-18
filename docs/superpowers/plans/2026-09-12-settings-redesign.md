@@ -26,6 +26,7 @@
 The column already exists (migration `1003`, `ip_address inet`). Every login path funnels through `auth_service::issue_session`, which already receives `audit_meta: Option<&AuditRequestMeta>` (`ip_address: Option<String>`). Refresh rotation goes through `refresh_session` → `issue_rotated` → `user_sessions::touch`.
 
 **Files:**
+
 - Modify: `backend/src/models/session.rs` — `UserSession` + `UserSessionResponse` gain `ip_address`
 - Modify: `backend/src/repositories/user_sessions.rs` — `insert`, `touch`, `list_active`
 - Modify: `backend/src/services/session_service.rs` — `create_session`, `create_refresh_token`, `issue_rotated`
@@ -34,6 +35,7 @@ The column already exists (migration `1003`, `ip_address inet`). Every login pat
 - Modify: test call sites `backend/src/tests/{totp_route_tests,route_auth_tests,session_rotation_tests,auth_audit_tests}.rs`
 
 **Interfaces:**
+
 - `create_session(pool, user_id, user_agent, ip_address: Option<IpAddr>) -> AppResult<(Uuid, String)>`
 - `refresh_session(pool, raw_token, jwt_secret, jwt_expiry, ip_address: Option<IpAddr>)`
 - `UserSessionResponse.ip_address: Option<IpAddr>` (serde serializes `IpAddr` as a string)
@@ -148,11 +150,13 @@ git add backend/src && git commit -m "feat(auth): record client IP on user sessi
 ### Task 2: Frontend — `userAgent` parser + `formatRelativeTime`
 
 **Files:**
+
 - Create: `frontend/src/lib/userAgent.ts`
 - Modify: `frontend/src/lib/utils.ts` (append `formatRelativeTime`)
 - Test: `frontend/src/tests/userAgent.test.ts`
 
 **Interfaces:**
+
 - `parseUserAgent(ua: string | null | undefined) -> { deviceType: 'desktop'|'mobile'|'tablet'|'unknown', os: string, browser: string }`
 - `deviceLabel(p: ParsedUserAgent) -> string` (e.g. `"Chrome on macOS"`, `"Unknown device"`)
 - `formatRelativeTime(date: string | Date) -> string`
@@ -164,17 +168,29 @@ import { describe, it, expect } from 'vitest';
 import { parseUserAgent, deviceLabel } from '@/lib/userAgent';
 import { formatRelativeTime } from '@/lib/utils';
 
-const CHROME_MAC = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
-const SAFARI_IPHONE = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1';
-const EDGE_WIN = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0';
-const IPAD = 'Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/604.1';
+const CHROME_MAC =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+const SAFARI_IPHONE =
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1';
+const EDGE_WIN =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0';
+const IPAD =
+  'Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/604.1';
 
 describe('parseUserAgent', () => {
   it('parses Chrome on macOS as desktop', () => {
-    expect(parseUserAgent(CHROME_MAC)).toEqual({ deviceType: 'desktop', os: 'macOS', browser: 'Chrome' });
+    expect(parseUserAgent(CHROME_MAC)).toEqual({
+      deviceType: 'desktop',
+      os: 'macOS',
+      browser: 'Chrome',
+    });
   });
   it('parses Safari on iPhone as mobile', () => {
-    expect(parseUserAgent(SAFARI_IPHONE)).toEqual({ deviceType: 'mobile', os: 'iOS', browser: 'Safari' });
+    expect(parseUserAgent(SAFARI_IPHONE)).toEqual({
+      deviceType: 'mobile',
+      os: 'iOS',
+      browser: 'Safari',
+    });
   });
   it('detects Edge before Chrome (its UA contains Chrome)', () => {
     expect(parseUserAgent(EDGE_WIN).browser).toBe('Edge');
@@ -220,26 +236,40 @@ export interface ParsedUserAgent {
 export function parseUserAgent(ua: string | null | undefined): ParsedUserAgent {
   if (!ua) return { deviceType: 'unknown', os: 'Unknown OS', browser: 'Unknown browser' };
 
-  const browser = /Edg(e|A|iOS)?\//.test(ua) ? 'Edge'
-    : /OPR\/|Opera/.test(ua) ? 'Opera'
-    : /Chrome\//.test(ua) ? 'Chrome'
-    : /Firefox\//.test(ua) ? 'Firefox'
-    : /Safari\//.test(ua) ? 'Safari'
-    : 'Unknown browser';
+  const browser = /Edg(e|A|iOS)?\//.test(ua)
+    ? 'Edge'
+    : /OPR\/|Opera/.test(ua)
+      ? 'Opera'
+      : /Chrome\//.test(ua)
+        ? 'Chrome'
+        : /Firefox\//.test(ua)
+          ? 'Firefox'
+          : /Safari\//.test(ua)
+            ? 'Safari'
+            : 'Unknown browser';
 
-  const os = /iPhone|iPad|iPod/.test(ua) ? 'iOS'
-    : /Android/.test(ua) ? 'Android'
-    : /Windows/.test(ua) ? 'Windows'
-    : /Mac OS X|Macintosh/.test(ua) ? 'macOS'
-    : /CrOS/.test(ua) ? 'ChromeOS'
-    : /Linux/.test(ua) ? 'Linux'
-    : 'Unknown OS';
+  const os = /iPhone|iPad|iPod/.test(ua)
+    ? 'iOS'
+    : /Android/.test(ua)
+      ? 'Android'
+      : /Windows/.test(ua)
+        ? 'Windows'
+        : /Mac OS X|Macintosh/.test(ua)
+          ? 'macOS'
+          : /CrOS/.test(ua)
+            ? 'ChromeOS'
+            : /Linux/.test(ua)
+              ? 'Linux'
+              : 'Unknown OS';
 
   const deviceType: DeviceType =
-    /iPad|Tablet/.test(ua) || (/Android/.test(ua) && !/Mobile/.test(ua)) ? 'tablet'
-    : /iPhone|iPod|Mobile/.test(ua) ? 'mobile'
-    : os === 'Unknown OS' && browser === 'Unknown browser' ? 'unknown'
-    : 'desktop';
+    /iPad|Tablet/.test(ua) || (/Android/.test(ua) && !/Mobile/.test(ua))
+      ? 'tablet'
+      : /iPhone|iPod|Mobile/.test(ua)
+        ? 'mobile'
+        : os === 'Unknown OS' && browser === 'Unknown browser'
+          ? 'unknown'
+          : 'desktop';
 
   return { deviceType, os, browser };
 }
@@ -278,11 +308,13 @@ export function formatRelativeTime(date: string | Date): string {
 ### Task 3: Frontend — session type + `SessionManagement` rewrite
 
 **Files:**
+
 - Modify: `frontend/src/api/sessions.ts` — `ip_address: string | null` on `UserSession`
 - Modify: `frontend/src/components/SessionManagement.tsx` — full rewrite
 - Test: `frontend/src/tests/SecurityComponents.test.tsx` — replace the `SessionManagement` describe block
 
 **Interfaces:**
+
 - Consumes: `parseUserAgent`, `deviceLabel`, `formatRelativeTime`, `formatDate` (utils), `Modal` (`@/components/ui/Modal`), `getSessions`/`revokeSession`/`revokeOtherSessions` (unchanged API).
 - Produces: `<SessionManagement />` — same name/props (none), still safe to mount in portal `MyProfile`.
 
@@ -294,7 +326,8 @@ export function formatRelativeTime(date: string | Date): string {
 const sessions = [
   {
     id: 'sess-current',
-    user_agent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+    user_agent:
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
     ip_address: '203.0.113.10',
     created_at: '2026-07-20T02:00:00Z',
     last_seen_at: new Date().toISOString(),
@@ -303,7 +336,8 @@ const sessions = [
   },
   {
     id: 'sess-phone',
-    user_agent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1',
+    user_agent:
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1',
     ip_address: null,
     created_at: '2026-07-21T02:00:00Z',
     last_seen_at: '2026-07-26T02:00:00Z',
@@ -314,6 +348,7 @@ const sessions = [
 ```
 
 Tests (same coverage, new assertions):
+
 - `labels devices as "Browser on OS" and badges the current one` → `findByText('Chrome on macOS')`, `getByText('Safari on iOS')`, `getByText('This device')`.
 - `shows IP and Active now for the current session` → `getByText(/203\.0\.113\.10/)`, `getByText('Active now')`.
 - `falls back to "Unknown device" when UA is missing`.
@@ -336,7 +371,12 @@ import { parseUserAgent, deviceLabel } from '@/lib/userAgent';
 import { formatDate, formatRelativeTime } from '@/lib/utils';
 import { Modal } from '@/components/ui/Modal';
 
-const DEVICE_ICONS = { desktop: Monitor, mobile: Smartphone, tablet: Tablet, unknown: Globe } as const;
+const DEVICE_ICONS = {
+  desktop: Monitor,
+  mobile: Smartphone,
+  tablet: Tablet,
+  unknown: Globe,
+} as const;
 
 function lastActive(session: UserSession): string {
   if (Date.now() - new Date(session.last_seen_at).getTime() < 120_000) return 'Active now';
@@ -346,12 +386,18 @@ function lastActive(session: UserSession): string {
 export function SessionManagement() {
   const queryClient = useQueryClient();
   const [confirmingOthers, setConfirmingOthers] = useState(false);
-  const { data: sessions = [], isLoading } = useQuery({ queryKey: ['sessions'], queryFn: getSessions });
+  const { data: sessions = [], isLoading } = useQuery({
+    queryKey: ['sessions'],
+    queryFn: getSessions,
+  });
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['sessions'] });
   const revoke = useMutation({ mutationFn: revokeSession, onSuccess: invalidate });
   const revokeOthers = useMutation({
     mutationFn: revokeOtherSessions,
-    onSuccess: () => { setConfirmingOthers(false); invalidate(); },
+    onSuccess: () => {
+      setConfirmingOthers(false);
+      invalidate();
+    },
   });
   const otherSessions = sessions.filter((s) => !s.current);
 
@@ -411,7 +457,8 @@ export function SessionManagement() {
                     )}
                   </div>
                   <p className="text-xs text-gray-500 mt-1">
-                    {session.ip_address ?? 'IP unknown'} · Signed in {formatDate(session.created_at)} · {lastActive(session)}
+                    {session.ip_address ?? 'IP unknown'} · Signed in{' '}
+                    {formatDate(session.created_at)} · {lastActive(session)}
                   </p>
                 </div>
                 {!session.current && (
@@ -438,7 +485,11 @@ export function SessionManagement() {
         maxWidth="max-w-md"
         footer={
           <div className="flex justify-end gap-2">
-            <button type="button" className="btn-secondary" onClick={() => setConfirmingOthers(false)}>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => setConfirmingOthers(false)}
+            >
               Cancel
             </button>
             <button
@@ -447,22 +498,22 @@ export function SessionManagement() {
               disabled={revokeOthers.isPending}
               className="btn-primary !bg-none !bg-red-600 hover:!bg-red-700"
             >
-              {revokeOthers.isPending ? 'Signing out…' : `Sign out ${otherSessions.length} session${otherSessions.length === 1 ? '' : 's'}`}
+              {revokeOthers.isPending
+                ? 'Signing out…'
+                : `Sign out ${otherSessions.length} session${otherSessions.length === 1 ? '' : 's'}`}
             </button>
           </div>
         }
       >
         <p className="text-sm text-gray-600">
-          You will stay signed in on this device. {otherSessions.length} other
-          session{otherSessions.length === 1 ? '' : 's'} will be signed out and must log in again.
+          You will stay signed in on this device. {otherSessions.length} other session
+          {otherSessions.length === 1 ? '' : 's'} will be signed out and must log in again.
         </p>
       </Modal>
     </section>
   );
 }
 ```
-
-
 
 - [ ] **Step 5: Run tests** — `bun run test -- SecurityComponents` → PASS. Then `bun run typecheck`.
 
@@ -473,10 +524,12 @@ export function SessionManagement() {
 ### Task 4: Frontend — `ChangePasswordCard`
 
 **Files:**
+
 - Create: `frontend/src/components/ChangePasswordCard.tsx`
 - Test: `frontend/src/tests/ChangePasswordCard.test.tsx`
 
 **Interfaces:**
+
 - Consumes: `api.put('/auth/change-password', { current_password, new_password })`; `validatePassword`, `PASSWORD_POLICY_HINT` from `@/lib/password`; `useAuth().logout`; `useNavigate` from `react-router` (this repo's router import is `react-router`, matching `ChangePassword.tsx`).
 - Backend behavior (verified): password change calls `user_sessions::revoke_all_for_user` + `refresh_tokens::revoke_all_for_user` — **all sessions die, including this one** — so success path = `await logout(); navigate('/login')`, same as `pages/auth/ChangePassword.tsx`.
 
@@ -497,7 +550,11 @@ vi.mock('@/context/AuthContext', () => ({ useAuth: () => ({ logout: logoutMock }
 vi.mock('react-router', () => ({ useNavigate: () => navigateMock }));
 
 describe('ChangePasswordCard', () => {
-  beforeEach(() => { putMock.mockReset(); logoutMock.mockReset(); navigateMock.mockReset(); });
+  beforeEach(() => {
+    putMock.mockReset();
+    logoutMock.mockReset();
+    navigateMock.mockReset();
+  });
 
   it('rejects mismatched confirmation without calling the API', async () => {
     const typer = userEvent.setup();
@@ -529,10 +586,12 @@ describe('ChangePasswordCard', () => {
     await typer.type(screen.getByLabelText('New password'), 'Newpass12345');
     await typer.type(screen.getByLabelText('Confirm new password'), 'Newpass12345');
     await typer.click(screen.getByRole('button', { name: 'Change password' }));
-    await waitFor(() => expect(putMock).toHaveBeenCalledWith('/auth/change-password', {
-      current_password: 'old-password-1',
-      new_password: 'Newpass12345',
-    }));
+    await waitFor(() =>
+      expect(putMock).toHaveBeenCalledWith('/auth/change-password', {
+        current_password: 'old-password-1',
+        new_password: 'Newpass12345',
+      }),
+    );
     await waitFor(() => expect(logoutMock).toHaveBeenCalled());
     expect(navigateMock).toHaveBeenCalledWith('/login');
   });
@@ -622,7 +681,9 @@ export function ChangePasswordCard() {
 
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
-          <label className="form-label" htmlFor="cp-current">Current password</label>
+          <label className="form-label" htmlFor="cp-current">
+            Current password
+          </label>
           <input
             id="cp-current"
             type="password"
@@ -634,7 +695,9 @@ export function ChangePasswordCard() {
           />
         </div>
         <div>
-          <label className="form-label" htmlFor="cp-new">New password</label>
+          <label className="form-label" htmlFor="cp-new">
+            New password
+          </label>
           <input
             id="cp-new"
             type="password"
@@ -647,7 +710,9 @@ export function ChangePasswordCard() {
           <p className="text-xs text-gray-400 mt-1">{PASSWORD_POLICY_HINT}</p>
         </div>
         <div>
-          <label className="form-label" htmlFor="cp-confirm">Confirm new password</label>
+          <label className="form-label" htmlFor="cp-confirm">
+            Confirm new password
+          </label>
           <input
             id="cp-confirm"
             type="password"
@@ -682,6 +747,7 @@ Labels above use `htmlFor`+`id` so `getByLabelText` works.
 `PasskeyManagement` and `TwoFactorSetup` already use `.card`; `LinkedAccounts` and the old `SessionManagement` used `bg-white rounded-2xl shadow`. Bring all four to the same visual language and replace remaining `window.confirm`/`confirm()` calls with `Modal`.
 
 **Files:**
+
 - Modify: `frontend/src/components/LinkedAccounts.tsx`
 - Modify: `frontend/src/components/PasskeyManagement.tsx`
 - Modify: `frontend/src/components/TwoFactorSetup.tsx`
@@ -703,6 +769,7 @@ Labels above use `htmlFor`+`id` so `getByLabelText` works.
 ### Task 6: Frontend — `SettingsPage` shell rewrite
 
 **Files:**
+
 - Rewrite: `frontend/src/pages/settings/SettingsPage.tsx`
 - Create: `frontend/src/pages/settings/SettingsNav.tsx`
 - Create: `frontend/src/pages/settings/CompanyCategorySection.tsx`
@@ -710,6 +777,7 @@ Labels above use `htmlFor`+`id` so `getByLabelText` works.
 - Test: `frontend/src/tests/SettingsPage.test.tsx` (new)
 
 **Interfaces:**
+
 - `SettingsNav({ sections, active, onSelect })` — `sections: { id: string; label: string; icon: LucideIcon; group: 'Workspace' | 'Account' }[]`
 - `CompanyCategorySection({ category, settings, edits, onEdit, onSave, onDiscard, saving, saved })`
 - `SecuritySection()` — stacks `ChangePasswordCard`, `TwoFactorSetup`, `PasskeyManagement`, `LinkedAccounts`
@@ -741,7 +809,10 @@ export function SettingsNav({
   onSelect: (id: string) => void;
 }) {
   return (
-    <nav aria-label="Settings sections" className="flex gap-1 overflow-x-auto lg:flex-col lg:gap-0.5 lg:sticky lg:top-6">
+    <nav
+      aria-label="Settings sections"
+      className="flex gap-1 overflow-x-auto lg:flex-col lg:gap-0.5 lg:sticky lg:top-6"
+    >
       {GROUPS.map((group) => {
         const items = sections.filter((s) => s.group === group);
         if (items.length === 0) return null;
@@ -759,7 +830,9 @@ export function SettingsNav({
                   onClick={() => onSelect(item.id)}
                   aria-current={isActive ? 'true' : undefined}
                   className={`relative flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm whitespace-nowrap transition-all-fast ${
-                    isActive ? 'text-gray-900 font-medium' : 'text-gray-500 hover:text-gray-800 hover:bg-black/[0.03]'
+                    isActive
+                      ? 'text-gray-900 font-medium'
+                      : 'text-gray-500 hover:text-gray-800 hover:bg-black/[0.03]'
                   }`}
                 >
                   {isActive && (
@@ -769,7 +842,9 @@ export function SettingsNav({
                       transition={{ type: 'spring', stiffness: 420, damping: 34 }}
                     />
                   )}
-                  <item.icon className={`relative w-4 h-4 ${isActive ? 'text-[var(--accent-1)]' : 'text-gray-400'}`} />
+                  <item.icon
+                    className={`relative w-4 h-4 ${isActive ? 'text-[var(--accent-1)]' : 'text-gray-400'}`}
+                  />
                   <span className="relative">{item.label}</span>
                 </button>
               );
@@ -786,7 +861,14 @@ export function SettingsNav({
 
 ```tsx
 export function CompanyCategorySection({
-  title, description, settings, edits, onEdit, onSave, onDiscard, saving,
+  title,
+  description,
+  settings,
+  edits,
+  onEdit,
+  onSave,
+  onDiscard,
+  saving,
 }: {
   title: string;
   description: string;
@@ -823,7 +905,12 @@ export function CompanyCategorySection({
             <button type="button" className="btn-secondary !min-h-0 !py-2" onClick={onDiscard}>
               Discard
             </button>
-            <button type="button" className="btn-primary !min-h-0 !py-2" onClick={onSave} disabled={saving}>
+            <button
+              type="button"
+              className="btn-primary !min-h-0 !py-2"
+              onClick={onSave}
+              disabled={saving}
+            >
               <Save className="w-4 h-4" /> {saving ? 'Saving…' : 'Save changes'}
             </button>
           </div>
@@ -861,7 +948,13 @@ import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  Bell, Calculator, Check, Landmark, MonitorSmartphone, ShieldCheck, SlidersHorizontal,
+  Bell,
+  Calculator,
+  Check,
+  Landmark,
+  MonitorSmartphone,
+  ShieldCheck,
+  SlidersHorizontal,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { getSettings, bulkUpdateSettings } from '@/api/settings';
@@ -872,12 +965,28 @@ import { SecuritySection } from './SecuritySection';
 import { SessionManagement } from '@/components/SessionManagement';
 
 const SECTION_META: Record<string, { label: string; icon: LucideIcon; description: string }> = {
-  system:        { label: 'General',       icon: SlidersHorizontal, description: 'Core workspace preferences' },
-  payroll:       { label: 'Payroll',       icon: Calculator,        description: 'Payroll calculation and payslip defaults' },
-  statutory:     { label: 'Statutory',     icon: Landmark,          description: 'Statutory contribution behavior' },
-  notifications: { label: 'Notifications', icon: Bell,              description: 'Workspace notification defaults' },
-  security:      { label: 'Security',      icon: ShieldCheck,       description: 'Your sign-in credentials and account protection' },
-  sessions:      { label: 'Sessions',      icon: MonitorSmartphone, description: 'Devices signed in to your account' },
+  system: { label: 'General', icon: SlidersHorizontal, description: 'Core workspace preferences' },
+  payroll: {
+    label: 'Payroll',
+    icon: Calculator,
+    description: 'Payroll calculation and payslip defaults',
+  },
+  statutory: { label: 'Statutory', icon: Landmark, description: 'Statutory contribution behavior' },
+  notifications: {
+    label: 'Notifications',
+    icon: Bell,
+    description: 'Workspace notification defaults',
+  },
+  security: {
+    label: 'Security',
+    icon: ShieldCheck,
+    description: 'Your sign-in credentials and account protection',
+  },
+  sessions: {
+    label: 'Sessions',
+    icon: MonitorSmartphone,
+    description: 'Devices signed in to your account',
+  },
 };
 const WORKSPACE_ORDER = ['system', 'payroll', 'statutory', 'notifications'];
 const ACCOUNT_SECTIONS = ['security', 'sessions'];
@@ -892,21 +1001,34 @@ export function SettingsPage() {
 
   const grouped = useMemo(() => {
     const map: Record<string, CompanySetting[]> = {};
-    settings?.forEach((s) => { (map[s.category] ??= []).push(s); });
+    settings?.forEach((s) => {
+      (map[s.category] ??= []).push(s);
+    });
     return map;
   }, [settings]);
 
-  const sections = useMemo<SettingsNavItem[]>(() => [
-    ...WORKSPACE_ORDER.filter((c) => grouped[c]?.length).map((c) => ({
-      id: c, label: SECTION_META[c].label, icon: SECTION_META[c].icon, group: 'Workspace' as const,
-    })),
-    ...ACCOUNT_SECTIONS.map((id) => ({
-      id, label: SECTION_META[id].label, icon: SECTION_META[id].icon, group: 'Account' as const,
-    })),
-  ], [grouped]);
+  const sections = useMemo<SettingsNavItem[]>(
+    () => [
+      ...WORKSPACE_ORDER.filter((c) => grouped[c]?.length).map((c) => ({
+        id: c,
+        label: SECTION_META[c].label,
+        icon: SECTION_META[c].icon,
+        group: 'Workspace' as const,
+      })),
+      ...ACCOUNT_SECTIONS.map((id) => ({
+        id,
+        label: SECTION_META[id].label,
+        icon: SECTION_META[id].icon,
+        group: 'Account' as const,
+      })),
+    ],
+    [grouped],
+  );
 
   const requested = searchParams.get('section');
-  const active = sections.some((s) => s.id === requested) ? requested! : (sections[0]?.id ?? 'security');
+  const active = sections.some((s) => s.id === requested)
+    ? requested!
+    : (sections[0]?.id ?? 'security');
 
   const mutation = useMutation({
     mutationFn: (updates: SettingUpdate[]) => bulkUpdateSettings(updates),
@@ -932,12 +1054,18 @@ export function SettingsPage() {
   };
 
   const handleDiscard = () =>
-    setEdits((prev) => Object.fromEntries(Object.entries(prev).filter(([k]) => !k.startsWith(active + '/'))));
+    setEdits((prev) =>
+      Object.fromEntries(Object.entries(prev).filter(([k]) => !k.startsWith(active + '/'))),
+    );
 
   const isWorkspace = WORKSPACE_ORDER.includes(active);
 
   if (isLoading) {
-    return <div className="flex items-center justify-center h-64"><div className="spinner" /></div>;
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="spinner" />
+      </div>
+    );
   }
 
   return (
