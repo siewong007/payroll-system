@@ -2,13 +2,13 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   pull_request:
-    branches: [main]
+    branches: [main, master]
   schedule:
     # Catches newly published RUSTSEC/GHSA advisories on weeks with no push,
     # independent of code changes. Non-audit jobs skip on this trigger.
-    - cron: "0 3 * * 1"
+    - cron: '0 3 * * 1'
 
 permissions:
   contents: read
@@ -23,7 +23,7 @@ env:
   # Compile-time-checked sqlx queries (query!/query_as!) are verified against the
   # committed `.sqlx/` offline cache instead of a live database. Regenerate with
   # `cargo sqlx prepare` (needs a migrated DB) whenever a macro query changes.
-  SQLX_OFFLINE: "true"
+  SQLX_OFFLINE: 'true'
 
 jobs:
   backend-lint:
@@ -71,7 +71,7 @@ jobs:
     env:
       DATABASE_URL: postgres://payroll:test_password@localhost:5432/payroll_db_test
       JWT_SECRET: ci-test-secret-not-for-production
-      JWT_EXPIRY_HOURS: "1"
+      JWT_EXPIRY_HOURS: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master (2026-07)
@@ -223,8 +223,12 @@ jobs:
              [ "$PUSH_BEFORE" != "0000000000000000000000000000000000000000" ]; then
             base="$PUSH_BEFORE"
           else
-            git fetch origin main
-            base=origin/main
+            target_branch="${{ github.base_ref || github.ref_name }}"
+            git fetch origin "$target_branch" 2>/dev/null || git fetch origin main 2>/dev/null || true
+            base="origin/$target_branch"
+            if ! git rev-parse --verify "$base" >/dev/null 2>&1; then
+              base="origin/main"
+            fi
           fi
           status=$(git diff --name-status "$base"...HEAD -- backend/migrations || true)
           echo "$status"

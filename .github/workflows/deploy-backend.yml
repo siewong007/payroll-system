@@ -21,7 +21,7 @@ on:
   workflow_run:
     workflows: [CI]
     types: [completed]
-    branches: [main]
+    branches: [main, master]
 
 permissions:
   contents: read
@@ -32,23 +32,24 @@ concurrency:
 
 env:
   VPS_HOST: 162.19.81.122
-  VPS_PORT: "20049"
+  VPS_PORT: '20049'
   VPS_USER: root
-  VPS_HOST_KEY: "[162.19.81.122]:20049 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIxenH95jfg3hxfkumJpZJyV7phwCNDrXrAL0wUXnta9"
-  PUBLIC_DNS_CUTOVER: "true"
+  VPS_HOST_KEY: '[162.19.81.122]:20049 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIxenH95jfg3hxfkumJpZJyV7phwCNDrXrAL0wUXnta9'
+  PUBLIC_DNS_CUTOVER: 'true'
 
 jobs:
   gate:
-    name: Select latest approved main commit
+    name: Select latest approved commit
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.head_branch == 'main' &&
+      (github.event.workflow_run.head_branch == 'main' || github.event.workflow_run.head_branch == 'master') &&
       github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
     outputs:
       deploy: ${{ steps.select.outputs.deploy }}
       sha: ${{ steps.select.outputs.sha }}
+      branch: ${{ steps.select.outputs.branch }}
 
     steps:
       - name: Reject superseded CI runs
@@ -56,17 +57,19 @@ jobs:
         shell: bash
         env:
           CANDIDATE_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
         run: |
           set -euo pipefail
           [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
           latest_sha=$(git ls-remote --exit-code \
-            "https://github.com/$GITHUB_REPOSITORY.git" refs/heads/main | awk '{print $1}')
+            "https://github.com/$GITHUB_REPOSITORY.git" "refs/heads/$HEAD_BRANCH" | awk '{print $1}')
           printf 'sha=%s\n' "$CANDIDATE_SHA" >> "$GITHUB_OUTPUT"
+          printf 'branch=%s\n' "$HEAD_BRANCH" >> "$GITHUB_OUTPUT"
           if [[ "$CANDIDATE_SHA" == "$latest_sha" ]]; then
             printf 'deploy=true\n' >> "$GITHUB_OUTPUT"
           else
             printf 'deploy=false\n' >> "$GITHUB_OUTPUT"
-            echo "Skipping superseded commit $CANDIDATE_SHA; main is $latest_sha."
+            echo "Skipping superseded commit $CANDIDATE_SHA; $HEAD_BRANCH is $latest_sha."
           fi
 
   deploy:
@@ -78,6 +81,7 @@ jobs:
     environment: production
     env:
       DEPLOY_SHA: ${{ needs.gate.outputs.sha }}
+      HEAD_BRANCH: ${{ needs.gate.outputs.branch }}
 
     steps:
       - name: Check out the tested commit
@@ -205,10 +209,10 @@ jobs:
           # immediately before touching production so a CI run that became
           # stale after the gate cannot deploy an older main revision.
           latest_sha=$(git ls-remote --exit-code \
-            "https://github.com/$GITHUB_REPOSITORY.git" refs/heads/main | awk '{print $1}')
+            "https://github.com/$GITHUB_REPOSITORY.git" "refs/heads/$HEAD_BRANCH" | awk '{print $1}')
           [[ "$latest_sha" =~ ^[0-9a-f]{40}$ ]]
           if [[ "$DEPLOY_SHA" != "$latest_sha" ]]; then
-            echo "Refusing stale deployment $DEPLOY_SHA; main is now $latest_sha." >&2
+            echo "Refusing stale deployment $DEPLOY_SHA; $HEAD_BRANCH is now $latest_sha." >&2
             exit 1
           fi
 

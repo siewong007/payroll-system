@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       stage:
-        description: "Migration stage to run (run in order; stop to review between each)"
+        description: 'Migration stage to run (run in order; stop to review between each)'
         required: true
         type: choice
         options:
@@ -35,13 +35,13 @@ concurrency:
 
 env:
   VPS_HOST: 162.19.81.122
-  VPS_PORT: "20049"
+  VPS_PORT: '20049'
   VPS_USER: root
-  VPS_HOST_KEY: "[162.19.81.122]:20049 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIxenH95jfg3hxfkumJpZJyV7phwCNDrXrAL0wUXnta9"
+  VPS_HOST_KEY: '[162.19.81.122]:20049 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIxenH95jfg3hxfkumJpZJyV7phwCNDrXrAL0wUXnta9'
 
 jobs:
   migrate:
-    name: "Run migration stage: ${{ inputs.stage }}"
+    name: 'Run migration stage: ${{ inputs.stage }}'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: production

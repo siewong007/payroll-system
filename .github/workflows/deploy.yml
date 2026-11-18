@@ -11,7 +11,7 @@ on:
   workflow_run:
     workflows: [CI]
     types: [completed]
-    branches: [main]
+    branches: [main, master]
 
 permissions:
   contents: read
@@ -22,20 +22,20 @@ concurrency:
 
 env:
   VPS_HOST: 162.19.81.122
-  VPS_PORT: "20049"
+  VPS_PORT: '20049'
   VPS_USER: root
-  VPS_HOST_KEY: "[162.19.81.122]:20049 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIxenH95jfg3hxfkumJpZJyV7phwCNDrXrAL0wUXnta9"
+  VPS_HOST_KEY: '[162.19.81.122]:20049 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIxenH95jfg3hxfkumJpZJyV7phwCNDrXrAL0wUXnta9'
   VITE_API_URL: https://api.payrollmy.com/api
-  PUBLIC_DNS_CUTOVER: "true"
+  PUBLIC_DNS_CUTOVER: 'true'
   SITE_DIR: /opt/payrollmy-site
 
 jobs:
   gate:
-    name: Select latest approved main commit
+    name: Select latest approved commit
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.head_branch == 'main' &&
+      (github.event.workflow_run.head_branch == 'main' || github.event.workflow_run.head_branch == 'master') &&
       github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
     outputs:
@@ -48,17 +48,18 @@ jobs:
         shell: bash
         env:
           CANDIDATE_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
         run: |
           set -euo pipefail
           [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
           latest_sha=$(git ls-remote --exit-code \
-            "https://github.com/$GITHUB_REPOSITORY.git" refs/heads/main | awk '{print $1}')
+            "https://github.com/$GITHUB_REPOSITORY.git" "refs/heads/$HEAD_BRANCH" | awk '{print $1}')
           printf 'sha=%s\n' "$CANDIDATE_SHA" >> "$GITHUB_OUTPUT"
           if [[ "$CANDIDATE_SHA" == "$latest_sha" ]]; then
             printf 'deploy=true\n' >> "$GITHUB_OUTPUT"
           else
             printf 'deploy=false\n' >> "$GITHUB_OUTPUT"
-            echo "Skipping superseded commit $CANDIDATE_SHA; main is $latest_sha."
+            echo "Skipping superseded commit $CANDIDATE_SHA; $HEAD_BRANCH is $latest_sha."
           fi
 
   deploy-frontend:
