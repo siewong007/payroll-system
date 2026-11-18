@@ -5,7 +5,7 @@
 - [x] Phase 0: Understand (Done)
 - [x] Phase 1: Tooling and standards
 - [x] Phase 2: Structure and naming
-- [ ] Phase 3: Code quality
+- [x] Phase 3: Code quality
 - [ ] Phase 4: Security, privacy and performance
 - [ ] Phase 5: Fill the gaps
 - [ ] Phase 6: Final check
@@ -19,3 +19,4 @@
 - 2026-11-18: (`docs`) Completed full-repository audit, severity inventory, and Phase 5 checklist in `docs/refactor/AUDIT.md`.
 - 2026-11-18: (`refactor`) Completed Phase 2 (Structure and naming): moved remaining SQL out of `main.rs`, `services/auth_service.rs`, and `services/statutory_rules.rs` into `repositories/` (`refresh_tokens::purge_stale`, `user_groups::user_has_any_active_permission`, `users::list_two_factor_non_compliant_emails`, `statutory_rule_sets::pcb_status_and_rule_verified`), named retention constants in `main.rs`, refreshed `backend/.sqlx/`, and centralized route constants in `frontend/src/lib/routes.ts`.
 - 2026-11-18: (`test`) Added characterization tests in `frontend/src/tests/PageModularization.test.tsx` for `Approvals`, `Reports`, and `EmployeeList` before splitting oversized page modules.
+- 2026-11-18: (`refactor`) Completed Phase 3 (Code quality): split `Approvals.tsx` (`ApprovalShared.tsx`, `approvalRules.ts`, `LeaveCrudModal.tsx`, `ClaimCrudModal.tsx`, `OvertimeCrudModal.tsx`), `AttendancePage.tsx` (`attendanceHelpers.ts`, `KioskCredentialsModal.tsx`, `QrPanel.tsx`, `AttendanceSummaryTab.tsx`, `AttendanceRecordModals.tsx`), `EmployeeList.tsx` (`EmployeeProfileDrawer.tsx`, `EmployeeFormModal.tsx`), and `Reports.tsx` (`ReportShared.tsx`, `leaveReportHelpers.ts`, `LeaveEntitlementReport.tsx`, `ClaimsSummaryReport.tsx`, `EaFormTab.tsx`); extracted welcome-email dispatch from `backend/src/handlers/employee.rs` into `backend/src/services/employee_service.rs`.

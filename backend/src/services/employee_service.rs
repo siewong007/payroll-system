@@ -445,3 +445,60 @@ pub async fn create_tp3(
     let id = Uuid::now_v7();
     tp3_records::upsert(pool, id, employee_id, company_id, &req, created_by).await
 }
+
+/// Spawn asynchronous welcome email delivery when employee creation also
+/// provisioned a brand-new user account with an email address.
+pub async fn dispatch_welcome_email_if_created(
+    config: &crate::core::config::AppConfig,
+    pool: &PgPool,
+    company_id: Uuid,
+    emp: &Employee,
+    account_info: Option<&EmployeeAccountInfo>,
+    actor_id: Uuid,
+) -> AppResult<()> {
+    let Some(info) = account_info else {
+        return Ok(());
+    };
+    if !info.created {
+        return Ok(());
+    }
+    let Some(ref email_addr) = emp.email else {
+        return Ok(());
+    };
+
+    let company = crate::services::company_service::get_company(pool, company_id).await?;
+    let config = config.clone();
+    let pool = pool.clone();
+    let company_name = company.name;
+    let emp_id = emp.id;
+    let emp_name = emp.full_name.clone();
+    let email = email_addr.clone();
+    let default_pw = info
+        .default_password
+        .clone()
+        .unwrap_or_else(|| "(your IC number)".to_string());
+
+    tokio::spawn(async move {
+        if let Err(e) = crate::services::email_service::send_welcome_email(
+            &config,
+            &pool,
+            company_id,
+            &company_name,
+            emp_id,
+            &emp_name,
+            &email,
+            &default_pw,
+            actor_id,
+        )
+        .await
+        {
+            tracing::error!(
+                "Failed to send welcome email for employee {}: {}",
+                emp_id,
+                e
+            );
+        }
+    });
+
+    Ok(())
+}

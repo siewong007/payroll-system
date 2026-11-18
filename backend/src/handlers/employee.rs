@@ -13,7 +13,7 @@ use crate::models::employee::{
 };
 use crate::models::pagination::PaginatedResponse;
 use crate::services::audit_service::AuditRequestMeta;
-use crate::services::{company_service, email_service, employee_service, portal_service};
+use crate::services::{employee_service, portal_service};
 
 fn redact_payroll_fields(employee: &mut Employee) {
     employee.basic_salary = 0;
@@ -195,45 +195,15 @@ pub async fn create(
     // Auto-send welcome email if a new user account was created. Composing it
     // is `email_service`'s job: the letter carries the account's initial
     // password and the service is what decides that the stored copy must not.
-    if let Some(ref info) = account_info
-        && info.created
-        && let Some(ref email_addr) = emp.email
-    {
-        let company = company_service::get_company(&state.pool, company_id).await?;
-
-        let config = state.config.clone();
-        let pool = state.pool.clone();
-        let company_name = company.name.clone();
-        let emp_id = emp.id;
-        let emp_name = emp.full_name.clone();
-        let email = email_addr.clone();
-        let default_pw = info
-            .default_password
-            .clone()
-            .unwrap_or_else(|| "(your IC number)".to_string());
-        let user_id = auth.0.sub;
-        tokio::spawn(async move {
-            if let Err(e) = email_service::send_welcome_email(
-                &config,
-                &pool,
-                company_id,
-                &company_name,
-                emp_id,
-                &emp_name,
-                &email,
-                &default_pw,
-                user_id,
-            )
-            .await
-            {
-                tracing::error!(
-                    "Failed to send welcome email for employee {}: {}",
-                    emp_id,
-                    e
-                );
-            }
-        });
-    }
+    employee_service::dispatch_welcome_email_if_created(
+        &state.config,
+        &state.pool,
+        company_id,
+        &emp,
+        account_info.as_ref(),
+        auth.0.sub,
+    )
+    .await?;
 
     if !auth.is_payroll_privileged() {
         redact_payroll_fields(&mut emp);
