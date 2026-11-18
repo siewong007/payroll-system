@@ -144,6 +144,7 @@ const ms: Messages = {
     action: 'Tindakan',
     generating: 'Menjana…',
     noData: 'Tiada data',
+    offlineBanner: 'Anda kini di luar talian. Perubahan mungkin tidak disimpan sehingga sambungan dipulihkan.',
   },
   a11y: {
     showPassword: 'Tunjukkan kata laluan',
@@ -161,6 +162,7 @@ const ms: Messages = {
     loading: 'Memuatkan',
     hour: 'jam',
     minute: 'minit',
+    skipToContent: 'Langkau ke kandungan utama',
   },
   nav: {
     section: {
@@ -1371,6 +1373,7 @@ const ms: Messages = {
       days_one: '{{count}} hari',
       days_other: '{{count}} hari',
       noHolidays: 'Tiada cuti untuk {{year}}',
+      loadFailed: 'Gagal memuatkan kalendar pasukan',
     },
     overtime: {
       title: 'Kerja Lebih Masa',

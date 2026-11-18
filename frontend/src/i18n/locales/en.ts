@@ -153,6 +153,7 @@ const en = {
     action: 'Action',
     generating: 'Generating…',
     noData: 'No data',
+    offlineBanner: 'You are currently offline. Changes may not be saved until your connection is restored.',
   },
   a11y: {
     showPassword: 'Show password',
@@ -170,6 +171,7 @@ const en = {
     loading: 'Loading',
     hour: 'hour',
     minute: 'minute',
+    skipToContent: 'Skip to main content',
   },
   nav: {
     section: {
@@ -1380,6 +1382,7 @@ const en = {
       days_one: '{{count}} day',
       days_other: '{{count}} days',
       noHolidays: 'No holidays for {{year}}',
+      loadFailed: 'Unable to load team calendar',
     },
     overtime: {
       title: 'Overtime',

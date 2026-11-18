@@ -144,6 +144,7 @@ const zhCN: Messages = {
     action: '操作',
     generating: '生成中…',
     noData: '暂无数据',
+    offlineBanner: '您当前处于离线状态，恢复网络连接前更改可能无法保存。',
   },
   a11y: {
     showPassword: '显示密码',
@@ -161,6 +162,7 @@ const zhCN: Messages = {
     loading: '加载中',
     hour: '小时',
     minute: '分钟',
+    skipToContent: '跳至主要内容',
   },
   nav: {
     section: {
@@ -1371,6 +1373,7 @@ const zhCN: Messages = {
       days_one: '{{count}} 天',
       days_other: '{{count}} 天',
       noHolidays: '{{year}} 年没有假期',
+      loadFailed: '无法加载团队日历',
     },
     overtime: {
       title: '加班',

@@ -23,3 +23,4 @@
 - 2026-11-18: (`fix`) Fixed `AppConfig::validate_production_secrets` in `backend/src/core/config.rs` to reject `"replace-with"` `.env.example` placeholder secrets and added `production_secrets_reject_env_example_placeholders` unit test.
 - 2026-11-18: (`fix`) Fixed `core::redact::email` multi-byte single-char masking (`chars().nth(1).is_none()`) and redacted `recipient_email` in `services/email_service.rs` `tracing` logs.
 - 2026-11-18: (`chore`) Completed Phase 4 (Security, privacy and performance): documented `RUST_ENV`, `LOG_FORMAT`, and `VITE_TURNSTILE_SITE_KEY` in `.env.example` with placeholders and descriptions.
+- 2026-11-18: (`fix`) Fixed missing loading and error/retry states in `frontend/src/pages/portal/TeamCalendar.tsx` (with 4-locale i18n keys and unit tests in `frontend/src/tests/TeamCalendarAndOffline.test.tsx`).
