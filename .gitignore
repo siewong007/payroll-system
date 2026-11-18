@@ -60,3 +60,9 @@ payroll-system.amd64
 
 # Agent-managed git worktrees (checkouts, not source)
 .claude/worktrees/
+
+# Tooling
+.husky/_/
+.lintstagedrc.json
+package-lock.json
+
