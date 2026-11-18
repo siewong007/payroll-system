@@ -299,7 +299,11 @@ pub async fn send_email_with_stored_body(
     match transport.send(email).await {
         Ok(_) => {
             let log = email_logs::mark_sent(pool, log.id).await?;
-            tracing::info!("Email sent successfully: {} to {}", log.id, recipient_email);
+            tracing::info!(
+                "Email sent successfully: {} to {}",
+                log.id,
+                crate::core::redact::email(recipient_email)
+            );
             Ok(log)
         }
         Err(e) => {
@@ -323,7 +327,7 @@ pub async fn send_system_email(
     if !config.smtp_enabled() {
         tracing::warn!(
             "SMTP not configured, skipping system email to {}",
-            recipient_email
+            crate::core::redact::email(recipient_email)
         );
         return Ok(());
     }
@@ -348,7 +352,10 @@ pub async fn send_system_email(
         .await
         .map_err(|e| AppError::Internal(format!("Failed to send email: {}", e)))?;
 
-    tracing::info!("System email sent to {}", recipient_email);
+    tracing::info!(
+        "System email sent to {}",
+        crate::core::redact::email(recipient_email)
+    );
     Ok(())
 }
 
