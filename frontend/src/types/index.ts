@@ -243,6 +243,7 @@ export interface PayrollRun {
   version: number;
   processed_by: string | null;
   processed_at: string | null;
+  submitted_by?: string | null;
   approved_by: string | null;
   approved_at: string | null;
   locked_by: string | null;

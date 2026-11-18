@@ -41,6 +41,9 @@ pub enum AppError {
     /// second one is answered by splitting the file or raising the limit.
     #[error("Payload too large: {0}")]
     PayloadTooLarge(String),
+
+    #[error("Too many requests: {0}")]
+    TooManyRequests(String),
 }
 
 impl AppError {
@@ -61,6 +64,7 @@ impl AppError {
             AppError::Validation(msg) => (StatusCode::UNPROCESSABLE_ENTITY, msg.clone()),
             AppError::BadGateway(msg) => (StatusCode::BAD_GATEWAY, msg.clone()),
             AppError::PayloadTooLarge(msg) => (StatusCode::PAYLOAD_TOO_LARGE, msg.clone()),
+            AppError::TooManyRequests(msg) => (StatusCode::TOO_MANY_REQUESTS, msg.clone()),
             AppError::Internal(msg) => {
                 tracing::error!("Internal error: {}", msg);
                 (

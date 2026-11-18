@@ -57,6 +57,7 @@ pub mod statutory_rule_sets;
 pub mod team_members;
 pub mod teams;
 pub mod tp3_records;
+pub mod uploaded_files;
 pub mod user_companies;
 pub mod user_groups;
 pub mod user_sessions;

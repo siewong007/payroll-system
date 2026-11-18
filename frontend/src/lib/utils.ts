@@ -47,21 +47,30 @@ export function todayLocalDate(): string {
  * `location.pathname + location.search`, which always satisfies the rule.
  */
 export function safeRedirectPath(raw: string | null | undefined): string | null {
-  if (!raw) return null;
-  if (!raw.startsWith('/')) return null;
-  if (raw.startsWith('//')) return null;
+  if (!raw || !raw.startsWith('/') || raw.startsWith('//') || raw.startsWith('/\\')) {
+    return null;
+  }
+  if (raw.length > 1 && /\s/.test(raw.charAt(1))) {
+    return null;
+  }
+  for (let i = 0; i < raw.length; i++) {
+    const code = raw.charCodeAt(i);
+    if (code < 0x20 || code === 0x7f) return null;
+  }
+  if (raw === '/login' || raw.startsWith('/login?') || raw.startsWith('/login#')) {
+    return null;
+  }
   return raw;
 }
 
 /**
- * Whether an attachment URL names an image, and can therefore be previewed
- * inline rather than offered as a download.
+ * Whether an attachment URL names a safe raster image, and can therefore be
+ * previewed inline rather than offered as a download.
  *
- * Matches on the stored URL, which for an API-served upload still ends in the
- * uploader's original extension even though the file is fetched as a blob.
+ * Excludes SVG so active markup files are never embedded via image preview paths.
  */
 export function isImageUrl(url: string): boolean {
-  return /\.(jpg|jpeg|png|gif|webp|bmp|svg)(\?|$)/i.test(url);
+  return /\.(jpg|jpeg|png|gif|webp)(\?|$)/i.test(url);
 }
 
 /**

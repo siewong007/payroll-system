@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use axum::{
@@ -25,50 +26,75 @@ pub fn create_router(state: AppState) -> Router {
     let ip_key = ClientIpKeyExtractor::new(state.config.trust_proxy_headers);
 
     // Rate limiter: 5 requests per 60 seconds per IP
-    let auth_rate_limit = GovernorConfigBuilder::default()
-        .key_extractor(ip_key)
-        .per_second(12)
-        .burst_size(5)
-        .finish()
-        .expect("Failed to build rate limiter");
+    let auth_rate_limit = Arc::new(
+        GovernorConfigBuilder::default()
+            .key_extractor(ip_key)
+            .per_second(12)
+            .burst_size(5)
+            .finish()
+            .expect("Failed to build rate limiter"),
+    );
 
     // Rate limiter: 3 requests per 60 seconds per IP (stricter for forgot-password)
-    let forgot_rate_limit = GovernorConfigBuilder::default()
-        .key_extractor(ip_key)
-        .period(Duration::from_secs(60))
-        .burst_size(3)
-        .finish()
-        .expect("Failed to build rate limiter");
+    let forgot_rate_limit = Arc::new(
+        GovernorConfigBuilder::default()
+            .key_extractor(ip_key)
+            .period(Duration::from_secs(60))
+            .burst_size(3)
+            .finish()
+            .expect("Failed to build rate limiter"),
+    );
 
     // Rate limiter: 10 requests per 60 seconds per IP (OAuth2 flow)
-    let oauth2_rate_limit = GovernorConfigBuilder::default()
-        .key_extractor(ip_key)
-        .per_second(6)
-        .burst_size(10)
-        .finish()
-        .expect("Failed to build rate limiter");
+    let oauth2_rate_limit = Arc::new(
+        GovernorConfigBuilder::default()
+            .key_extractor(ip_key)
+            .per_second(6)
+            .burst_size(10)
+            .finish()
+            .expect("Failed to build rate limiter"),
+    );
 
     // Public kiosk QR endpoint (~120/min/IP — comfortable for a tablet refreshing
     // every minute, far below what a guesser would need to be effective against the
     // ≥244-bit secret space).
-    let kiosk_rate_limit = GovernorConfigBuilder::default()
-        .key_extractor(ip_key)
-        .per_second(2)
-        .burst_size(10)
-        .finish()
-        .expect("Failed to build rate limiter");
+    let kiosk_rate_limit = Arc::new(
+        GovernorConfigBuilder::default()
+            .key_extractor(ip_key)
+            .per_second(2)
+            .burst_size(10)
+            .finish()
+            .expect("Failed to build rate limiter"),
+    );
 
-    // Rate-limited auth routes
+    // Rate-limited auth & passkey routes
     let rate_limited_auth = Router::new()
         .route("/auth/login", post(auth::login))
         .route("/auth/login/code", post(auth::code_login))
         .route("/auth/reset-password", post(auth::reset_password))
         .route("/auth/2fa/verify", post(totp::verify_login))
-        .layer(GovernorLayer::new(auth_rate_limit));
+        .route("/auth/passkey/check", post(passkey::check_passkey))
+        .route(
+            "/auth/passkey/authenticate/begin",
+            post(passkey::authentication_begin),
+        )
+        .route(
+            "/auth/passkey/authenticate/complete",
+            post(passkey::authentication_complete),
+        )
+        .route(
+            "/auth/passkey/discoverable/begin",
+            post(passkey::discoverable_auth_begin),
+        )
+        .route(
+            "/auth/passkey/discoverable/complete",
+            post(passkey::discoverable_auth_complete),
+        )
+        .layer(GovernorLayer::new(auth_rate_limit.clone()));
 
     let rate_limited_forgot = Router::new()
         .route("/auth/forgot-password", post(auth::forgot_password))
-        .layer(GovernorLayer::new(forgot_rate_limit));
+        .layer(GovernorLayer::new(forgot_rate_limit.clone()));
 
     let rate_limited_oauth2 = Router::new()
         .route(
@@ -76,50 +102,113 @@ pub fn create_router(state: AppState) -> Router {
             get(oauth2::google_authorize),
         )
         .route("/auth/oauth2/google/callback", get(oauth2::google_callback))
-        .layer(GovernorLayer::new(oauth2_rate_limit));
+        .layer(GovernorLayer::new(oauth2_rate_limit.clone()));
 
     let rate_limited_kiosk = Router::new()
         .route("/attendance/kiosk/qr", post(attendance::kiosk_qr))
-        .layer(GovernorLayer::new(kiosk_rate_limit));
+        .layer(GovernorLayer::new(kiosk_rate_limit.clone()));
 
     // ─── Authenticated cost controls ───
     //
     // Everything above limits unauthenticated surfaces. The expensive
     // authenticated ones were unlimited, so a valid session could run payroll
     // in a loop, re-upload until the disk filled, or drive the SMTP relay hard
-    // enough to get the sending domain blocked. These are keyed per session
-    // rather than per IP — see `SessionOrIpKeyExtractor` for why.
-    let session_key = SessionOrIpKeyExtractor::new(state.config.trust_proxy_headers);
+    // enough to get the sending domain blocked. These are keyed per verified
+    // session rather than per IP — see `SessionOrIpKeyExtractor` for why.
+    let session_key = SessionOrIpKeyExtractor::new(
+        state.config.trust_proxy_headers,
+        Arc::new(state.config.jwt_secret.clone()),
+    );
+
+    let session_auth_rate_limit = Arc::new(
+        GovernorConfigBuilder::default()
+            .key_extractor(session_key.clone())
+            .per_second(3)
+            .burst_size(20)
+            .finish()
+            .expect("Failed to build session auth rate limiter"),
+    );
 
     // Outbound mail: ~10/min sustained, bursts of 20 for a letter run. The
     // sharpest limit of the group because the damage is external and
     // irreversible — spam complaints against the sending domain outlive the
     // request.
-    let email_rate_limit = GovernorConfigBuilder::default()
-        .key_extractor(session_key)
-        .per_second(6)
-        .burst_size(20)
-        .finish()
-        .expect("Failed to build email rate limiter");
+    let email_rate_limit = Arc::new(
+        GovernorConfigBuilder::default()
+            .key_extractor(session_key.clone())
+            .per_second(6)
+            .burst_size(20)
+            .finish()
+            .expect("Failed to build email rate limiter"),
+    );
 
     // Payroll runs, previews and bulk imports: each walks every employee in
     // the company inside one transaction. ~6/min with a burst of 5 is far
     // above deliberate use and far below what makes the database suffer.
-    let heavy_job_rate_limit = GovernorConfigBuilder::default()
-        .key_extractor(session_key)
-        .per_second(10)
-        .burst_size(5)
-        .finish()
-        .expect("Failed to build heavy job rate limiter");
+    let heavy_job_rate_limit = Arc::new(
+        GovernorConfigBuilder::default()
+            .key_extractor(session_key.clone())
+            .per_second(10)
+            .burst_size(5)
+            .finish()
+            .expect("Failed to build heavy job rate limiter"),
+    );
 
     // Uploads: 10 MB apiece into the API container's local disk, with no quota
     // behind them.
-    let upload_rate_limit = GovernorConfigBuilder::default()
-        .key_extractor(session_key)
-        .per_second(4)
-        .burst_size(10)
-        .finish()
-        .expect("Failed to build upload rate limiter");
+    let upload_rate_limit = Arc::new(
+        GovernorConfigBuilder::default()
+            .key_extractor(session_key.clone())
+            .per_second(4)
+            .burst_size(10)
+            .finish()
+            .expect("Failed to build upload rate limiter"),
+    );
+
+    let import_rate_limit = Arc::new(
+        GovernorConfigBuilder::default()
+            .key_extractor(session_key)
+            .per_second(6)
+            .burst_size(15)
+            .finish()
+            .expect("Failed to build import rate limiter"),
+    );
+
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        let ip_limiters = vec![
+            auth_rate_limit.clone(),
+            forgot_rate_limit.clone(),
+            oauth2_rate_limit.clone(),
+            kiosk_rate_limit.clone(),
+        ];
+        let session_limiters = vec![
+            session_auth_rate_limit.clone(),
+            email_rate_limit.clone(),
+            heavy_job_rate_limit.clone(),
+            upload_rate_limit.clone(),
+            import_rate_limit.clone(),
+        ];
+        handle.spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(60));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                interval.tick().await;
+                for cfg in &ip_limiters {
+                    cfg.limiter().retain_recent();
+                    cfg.limiter().shrink_to_fit();
+                }
+                for cfg in &session_limiters {
+                    cfg.limiter().retain_recent();
+                    cfg.limiter().shrink_to_fit();
+                }
+            }
+        });
+    }
+
+    let rate_limited_session_auth = Router::new()
+        .route("/auth/refresh", post(auth::refresh_token))
+        .route("/auth/change-password", put(auth::change_password))
+        .layer(GovernorLayer::new(session_auth_rate_limit));
 
     let rate_limited_email = Router::new()
         .route("/email/send", post(email::send_letter))
@@ -150,6 +239,21 @@ pub fn create_router(state: AppState) -> Router {
         )
         .layer(GovernorLayer::new(upload_rate_limit));
 
+    let rate_limited_imports = Router::new()
+        .route(
+            "/employees/import/validate",
+            post(employee_import::validate_import).layer(DefaultBodyLimit::max(
+                employee_import::IMPORT_REQUEST_MAX_BYTES,
+            )),
+        )
+        .route("/calendar/import-ics", post(calendar::import_ics))
+        .route(
+            "/calendar/import-ics-file",
+            post(calendar::import_ics_file)
+                .layer(DefaultBodyLimit::max(calendar::ICS_REQUEST_MAX_BYTES)),
+        )
+        .layer(GovernorLayer::new(import_rate_limit));
+
     let api = Router::new()
         // Health check (no auth required, used by ALB)
         .route("/health", get(|| async { "ok" }))
@@ -159,12 +263,13 @@ pub fn create_router(state: AppState) -> Router {
         .merge(rate_limited_forgot)
         .merge(rate_limited_oauth2)
         .merge(rate_limited_kiosk)
+        .merge(rate_limited_session_auth)
         .merge(rate_limited_email)
         .merge(rate_limited_heavy)
         .merge(rate_limited_uploads)
+        .merge(rate_limited_imports)
         // Auth (non-rate-limited)
         .route("/auth/me", get(auth::me))
-        .route("/auth/refresh", post(auth::refresh_token))
         .route("/auth/logout", post(auth::logout))
         .route("/auth/sessions", get(auth::list_sessions))
         .route("/auth/sessions/others", delete(auth::revoke_other_sessions))
@@ -172,11 +277,6 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/auth/validate-reset-token",
             post(auth::validate_reset_token),
-        )
-        .route("/auth/change-password", put(auth::change_password))
-        .route(
-            "/auth/skip-change-password",
-            put(auth::skip_change_password),
         )
         .route("/auth/switch-company", put(auth::switch_company))
         .route("/auth/my-companies", get(auth::my_companies))
@@ -200,24 +300,7 @@ pub fn create_router(state: AppState) -> Router {
             "/user-groups/{group_id}/members/{user_id}",
             delete(user_group::remove_member),
         )
-        // Passkey (WebAuthn) — unauthenticated
-        .route("/auth/passkey/check", post(passkey::check_passkey))
-        .route(
-            "/auth/passkey/authenticate/begin",
-            post(passkey::authentication_begin),
-        )
-        .route(
-            "/auth/passkey/authenticate/complete",
-            post(passkey::authentication_complete),
-        )
-        .route(
-            "/auth/passkey/discoverable/begin",
-            post(passkey::discoverable_auth_begin),
-        )
-        .route(
-            "/auth/passkey/discoverable/complete",
-            post(passkey::discoverable_auth_complete),
-        )
+        // Passkey (WebAuthn) — unauthenticated login/check routes are rate-limited above
         // Passkey (WebAuthn) — authenticated
         .route(
             "/auth/passkey/register/begin",
@@ -288,18 +371,11 @@ pub fn create_router(state: AppState) -> Router {
             get(employee::salary_history),
         )
         .route("/employees/{id}/tp3", post(employee::create_tp3))
-        // Employee Import
+        // Employee Import (/validate and /confirm are rate-limited above)
         .route(
             "/employees/import/template",
             get(employee_import::download_template),
         )
-        .route(
-            "/employees/import/validate",
-            post(employee_import::validate_import).layer(DefaultBodyLimit::max(
-                employee_import::IMPORT_REQUEST_MAX_BYTES,
-            )),
-        )
-        // POST /employees/import/confirm is rate-limited above.
         // Payroll Groups
         .route("/payroll-groups", get(payroll::list_groups))
         // Payroll Runs (/payroll/run and /payroll/preview are rate-limited above)
@@ -468,7 +544,7 @@ pub fn create_router(state: AppState) -> Router {
             "/approvals/overtime/{id}/reject",
             put(approval::reject_overtime),
         )
-        // Calendar (admin)
+        // Calendar (/import-ics and /import-ics-file are rate-limited above)
         .route(
             "/calendar/holidays",
             get(calendar::list_holidays).post(calendar::create_holiday),
@@ -478,12 +554,6 @@ pub fn create_router(state: AppState) -> Router {
             get(calendar::get_holiday)
                 .put(calendar::update_holiday)
                 .delete(calendar::delete_holiday),
-        )
-        .route("/calendar/import-ics", post(calendar::import_ics))
-        .route(
-            "/calendar/import-ics-file",
-            post(calendar::import_ics_file)
-                .layer(DefaultBodyLimit::max(calendar::ICS_REQUEST_MAX_BYTES)),
         )
         .route(
             "/calendar/working-days",

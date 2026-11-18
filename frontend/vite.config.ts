@@ -8,7 +8,40 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, './src'),
+      '@': path.resolve(import.meta.dirname, './src'),
+    },
+  },
+  build: {
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            {
+              name(moduleId) {
+                if (moduleId.includes('/src/i18n/locales/en')) return 'locale-en'
+                if (moduleId.includes('/src/i18n/locales/ms')) return 'locale-ms'
+                if (moduleId.includes('/src/i18n/locales/zh-CN')) return 'locale-zh-cn'
+                if (moduleId.includes('/src/i18n/locales/zh-TW')) return 'locale-zh-tw'
+                if (moduleId.includes('node_modules')) {
+                  if (moduleId.includes('html5-qrcode')) return 'vendor-qr'
+                  if (moduleId.includes('framer-motion')) return 'vendor-motion'
+                  if (moduleId.includes('lucide-react')) return 'vendor-icons'
+                  if (moduleId.includes('@tanstack')) return 'vendor-tanstack'
+                  if (
+                    moduleId.includes('/react/') ||
+                    moduleId.includes('/react-dom/') ||
+                    moduleId.includes('/react-router') ||
+                    moduleId.includes('/scheduler/')
+                  ) {
+                    return 'vendor-react'
+                  }
+                }
+                return null
+              },
+            },
+          ],
+        },
+      },
     },
   },
   server: {

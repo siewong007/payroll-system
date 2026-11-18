@@ -13,8 +13,11 @@ See `../database.md` for the full schema. Payroll-specific points:
 - `payroll_entries` — staged manual earnings/deductions, consumed per-run and
   reverted on cancel/delete.
 - `payroll_groups`, `payroll_allowances` (employee_allowances), `salary_history`.
-- Statutory: `epf_rates`, `socso_rates`, `eis_rates`, `pcb_brackets`,
-  `pcb_reliefs`, `tp3_records`, `statutory_rule_sets`.
+- `background_jobs` (1026) — tracks async `payroll_run` and `employee_import`
+  executions with a partial unique index preventing concurrent runs of the same
+  `(company, group, year, month)`.
+- Statutory: `epf_rates` (`category` A–F per 1029), `socso_rates`, `eis_rates`,
+  `pcb_brackets`, `pcb_reliefs`, `tp3_records`, `statutory_rule_sets`.
 
 ## salary_history (1025)
 

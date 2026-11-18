@@ -11,7 +11,7 @@ All commands run from the repo root unless noted.
 cp .env.example .env        # first time only, from the repo root
 docker compose up -d        # Postgres 19 Beta 2 on 127.0.0.1:5434
 ```
-Requires `POSTGRES_PASSWORD` in the root `.env` (no default).
+Requires `POSTGRES_PASSWORD`, `JWT_SECRET`, and `TOTP_ENCRYPTION_KEY` (dedicated AES key for stored TOTP secrets; never reuse `JWT_SECRET`) in the root `.env`.
 
 ### Backend (Rust / Axum, edition 2024)
 ```bash
@@ -22,7 +22,7 @@ cargo clippy -- -D warnings # CI enforces -D warnings
 cargo test                  # integration tests require DATABASE_URL + JWT_SECRET
 cargo test <name>           # run a single test by substring    
 ```
-Migrations live in `backend/migrations/` and are embedded via `sqlx::migrate!` — they run on every `cargo run`. Versions `1000_schema.sql` and `1001_data.sql` are the current two-file rebaseline and become immutable once deployed. Future production changes use a new numbered migration; returning to two files requires another explicit, tested rebaseline.
+Migrations live in `backend/migrations/` and are embedded via `sqlx::migrate!` — they run on every `cargo run`. Versions `1000_schema.sql` and `1001_data.sql` form the consolidated baseline, followed by immutable numbered forward migrations (`1002_*.sql` through `1030_*.sql`). Every deployed migration is strictly immutable (enforced by CI); future production changes must add the next numbered migration file, and returning to two files requires an explicit, tested rebaseline.
 
 Some queries use the compile-time-checked `sqlx::query!`/`query_as!` macros (the payroll engine is fully migrated; other modules still use runtime `query`/`query_as` and are being migrated incrementally). These macros are verified against the committed `backend/.sqlx/` offline cache, so CI lint and the Docker build need no database (`SQLX_OFFLINE=true`). **After adding or changing a macro query, regenerate the cache** against a migrated DB and commit it:
 ```bash
@@ -64,9 +64,9 @@ Rate limiting is applied per-route group in `routes/mod.rs` via `tower_governor`
 
 Bot protection is Cloudflare Turnstile (managed widget), enforced by `core::turnstile::verify` at the top of each unauthenticated, credential-free handler: `/auth/login`, `/auth/forgot-password`, `/auth/reset-password`, `/auth/passkey/check`, `/auth/passkey/{authenticate,discoverable}/begin`, and `/auth/oauth2/google/authorize`. Requests carry `turnstile_token` (body field; query param on the authorize GET). When `TURNSTILE_SECRET_KEY` is unset verification is skipped entirely — that is the intended dev/CI state; production sets it via `deploy/docker-compose.prod.yml` and the frontend gets `VITE_TURNSTILE_SITE_KEY` at build time. Failure modes are fail-closed: missing token 400, rejected token 403, Cloudflare unreachable 502. Deliberately NOT on `2fa/verify`, `validate-reset-token`, `refresh`, `kiosk/qr`, the passkey `complete` calls, or the OAuth callback — each is already credential-gated, downstream of a protected call, or cannot carry a token.
 
-Two background tasks spawn from `main.rs`:
-1. Daily cleanup of stale `refresh_tokens` (>30 days old and expired/revoked).
-2. Hourly tick that auto-marks absent employees at ~12:30 PM Asia/Kuala_Lumpur (04:30 UTC). This cron skips employees who have an approved `leave_requests` row covering that date, and skips public holidays.
+Two background tasks spawn from `main.rs` alongside the `background_jobs` async executor (`payroll_run` and `employee_import` enqueue a row and return `202` for `GET /api/jobs/{id}` to poll):
+1. Daily PDPA-aligned retention cleanup of stale `refresh_tokens` (>30 days), unreferenced expired `attendance_qr_tokens` (>7 days), aged `attendance_network_observations`, `audit_logs` (>2,555 days / 7 years per ITA 1967 s.82), `notifications`, `email_logs`, `user_sessions`, and expired `bulk_import_sessions`.
+2. Daily catch-up auto-absent task at 12:30 PM Asia/Kuala_Lumpur (04:30 UTC via `core::schedule::next_daily_run_utc`, plus once at startup), evaluated per company timezone from the last bookmarked run while skipping approved `leave_requests`, non-working days, and public holidays.
 
 ### Attendance subsystem (`services/attendance_service.rs`)
 Key design decisions to be aware of:
@@ -76,11 +76,11 @@ Key design decisions to be aware of:
 - **Summary endpoint** `GET /api/attendance/summary?date_from=&date_to=` returns per-employee aggregates (`present_days`, `late_days`, `absent_days`, `half_days`, `total_hours`, `overtime_hours`). Uses a LEFT JOIN so employees with zero records still appear.
 - **CSV export** `GET /api/attendance/export` streams a downloadable CSV with the active filter set.
 
-### Payroll engine
-`services/payroll_engine.rs` is the entry point. It enforces one active run per `(company, payroll_group, year, month)`, preflights source-linked verified statutory rule sets, then composes `epf_service` + `socso_service` + `eis_service` + `pcb_calculator` inside a transaction. The rows shipped in `1001_data.sql` are unverified academic fixtures; production payroll fails closed, and automatic PCB remains disabled until the calculator passes LHDN computerised-MTD conformance. PDFs are produced by `payslip_pdf_service` / `pdf_helpers` (printpdf), and statutory exports (EPF/SOCSO/EIS/PCB files + EA form) by `statutory_export_service` / `ea_form_service`.
+### Payroll engine & Malaysian statutory compliance
+`services/payroll_engine.rs` is the entry point. It enforces one active run per `(company, payroll_group, year, month)`, preflights source-linked verified statutory rule sets, then composes `epf_service` (KWSP Third Schedule Parts A–F incl. Oct 2025 2% foreign-worker Part F & s.43(1) age-75 cessation) + `socso_service` + `eis_service` (RM6,000 ceiling) + `pcb_calculator` inside a transaction, surfacing `below_minimum_wage` warnings against the RM1,700/month floor (*Minimum Wages Order 2024*). The rows shipped in `1001_data.sql` are unverified academic fixtures; production payroll fails closed, and automatic PCB remains disabled until the calculator passes LHDN computerised-MTD conformance. PDFs are produced by `payslip_pdf_service` / `pdf_helpers` (printpdf), and statutory exports (EPF/SOCSO/EIS/PCB files + EA form) by `statutory_export_service` / `ea_form_service`. Legal, bilingual PDPA, and statutory references live in `docs/legal/`.
 
 ### Frontend layout
-- `App.tsx` is the router. Two shells: `AppLayout` for admin/HR, `PortalLayout` for employee self-service. `RoleGuard` wraps routes that a role must not see (e.g. `exec` is blocked from `/payroll/*` and `/reports`). `/attendance/kiosk` and `/attendance/scan` are unauthenticated public routes used by the check-in kiosk.
+- `App.tsx` is the router. Two shells: `AppLayout` for admin/HR, `PortalLayout` for employee self-service. Capability-based `PermissionGuard` wraps routes that a user lacks permission to see (e.g. `exec` holds no payroll or report permissions, and additive `user_groups` combine with role grants). `/kiosk/:kioskKey` (kiosk-secret authenticated QR display) and `/terms`, `/privacy`, `/compliance` (`LegalPage`) are public routes outside the user shells.
 - `api/client.ts` — single axios instance. Access token is kept in-memory only (never in `localStorage`); refresh uses the httpOnly cookie. A 401 on any non-auth endpoint triggers a single refresh attempt with a queue for concurrent requests, then redirects to `/login` if refresh fails. When adding API modules, always import from `@/api/client` — do not create a second axios instance.
 - `context/AuthContext.tsx` — on mount, calls `/auth/refresh` to restore the session from the cookie; `user` is mirrored to `localStorage` for fast paint only, never for auth.
 - `pages/` mirrors feature areas; `api/*.ts` has one file per backend module.

@@ -16,6 +16,22 @@ const GOOGLE_USERINFO_URL: &str = "https://www.googleapis.com/oauth2/v3/userinfo
 /// PKCE state expiry in minutes.
 const STATE_EXPIRY_MINUTES: i64 = 10;
 
+fn oauth_http_client() -> AppResult<&'static reqwest::Client> {
+    static CLIENT: std::sync::OnceLock<Result<reqwest::Client, String>> =
+        std::sync::OnceLock::new();
+    match CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .connect_timeout(std::time::Duration::from_secs(5))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|e| format!("Failed to construct OAuth HTTP client: {e}"))
+    }) {
+        Ok(c) => Ok(c),
+        Err(msg) => Err(AppError::Internal(msg.clone())),
+    }
+}
+
 fn hash_token(token: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(token.as_bytes());
@@ -219,7 +235,7 @@ pub async fn google_exchange_code(
     code: &str,
     code_verifier: &str,
 ) -> AppResult<GoogleTokenResponse> {
-    let client = reqwest::Client::new();
+    let client = oauth_http_client()?;
     let resp = client
         .post(GOOGLE_TOKEN_URL)
         .form(&[
@@ -251,7 +267,7 @@ pub async fn google_exchange_code(
 
 /// Fetch user info from Google using an access token.
 pub async fn google_user_info(access_token: &str) -> AppResult<GoogleUserInfo> {
-    let client = reqwest::Client::new();
+    let client = oauth_http_client()?;
     let resp = client
         .get(GOOGLE_USERINFO_URL)
         .bearer_auth(access_token)

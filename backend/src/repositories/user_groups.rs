@@ -212,6 +212,44 @@ pub async fn permissions_for(
     Ok(rows)
 }
 
+/// Every distinct permission granted to `user_id` by any group in `company_id`
+/// other than `exclude_group_id` (including inactive groups, so activating a
+/// group cannot violate separation of duties).
+pub async fn user_permissions_in_other_groups(
+    executor: impl Executor<'_, Database = Postgres>,
+    user_id: Uuid,
+    company_id: Uuid,
+    exclude_group_id: Uuid,
+) -> AppResult<Vec<String>> {
+    let rows = sqlx::query_scalar!(
+        r#"SELECT DISTINCT p.permission
+        FROM user_group_members m
+        JOIN user_groups g ON g.id = m.group_id
+        JOIN user_group_permissions p ON p.group_id = g.id
+        WHERE m.user_id = $1 AND g.company_id = $2 AND g.id <> $3"#,
+        user_id,
+        company_id,
+        exclude_group_id,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(rows)
+}
+
+/// User IDs belonging to `group_id`.
+pub async fn member_user_ids(
+    executor: impl Executor<'_, Database = Postgres>,
+    group_id: Uuid,
+) -> AppResult<Vec<Uuid>> {
+    let ids = sqlx::query_scalar!(
+        "SELECT user_id FROM user_group_members WHERE group_id = $1",
+        group_id
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(ids)
+}
+
 // ─── Members ───
 
 pub async fn list_members(

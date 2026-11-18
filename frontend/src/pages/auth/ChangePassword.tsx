@@ -1,13 +1,13 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router';
-import { Trans, useTranslation } from 'react-i18next';
+import { Navigate, useNavigate } from 'react-router';
+import { useTranslation } from 'react-i18next';
 import { useAuth } from '@/context/AuthContext';
 import api from '@/api/client';
+import { PASSWORD_MAX_BYTES, PASSWORD_MIN_LENGTH, passwordPolicyHint, validatePassword } from '@/lib/password';
 import { getErrorMessage } from '@/lib/utils';
-import { hasOnlyEmployeeRole } from '@/lib/roles';
 
 export function ChangePassword() {
-  const { user, logout } = useAuth();
+  const { user, logout, isAuthenticated, isLoading } = useAuth();
   const { t } = useTranslation();
   const navigate = useNavigate();
   const [currentPassword, setCurrentPassword] = useState('');
@@ -16,19 +16,17 @@ export function ChangePassword() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const handleSkip = async () => {
-    try {
-      await api.put('/auth/skip-change-password');
-      if (user) {
-        const updatedUser = { ...user, must_change_password: false };
-        localStorage.setItem('user', JSON.stringify(updatedUser));
-      }
-      navigate(hasOnlyEmployeeRole(user) ? '/portal' : '/');
-      window.location.reload();
-    } catch {
-      navigate(hasOnlyEmployeeRole(user) ? '/portal' : '/');
-    }
-  };
+  if (isLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gray-50">
+        <div className="spinner" />
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />;
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -39,8 +37,9 @@ export function ChangePassword() {
       return;
     }
 
-    if (newPassword.length < 10) {
-      setError(t('auth.change.tooShort'));
+    const policyError = validatePassword(newPassword);
+    if (policyError) {
+      setError(policyError);
       return;
     }
 
@@ -81,12 +80,8 @@ export function ChangePassword() {
             <p className="text-sm text-gray-500 mt-1">
               {t('auth.change.body')}
             </p>
-            <p className="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2 mt-3">
-              <Trans
-                i18nKey="auth.change.defaultNote"
-                values={{ code: 'Welcome@123' }}
-                components={{ code: <span className="font-mono" /> }}
-              />
+            <p className="text-xs text-gray-500 mt-2">
+              {passwordPolicyHint()}
             </p>
           </div>
 
@@ -116,7 +111,8 @@ export function ChangePassword() {
                 onChange={(e) => setNewPassword(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
                 required
-                minLength={10}
+                minLength={PASSWORD_MIN_LENGTH}
+                maxLength={PASSWORD_MAX_BYTES}
                 placeholder={t('auth.change.newPlaceholder')}
               />
             </div>
@@ -139,12 +135,6 @@ export function ChangePassword() {
               {loading ? t('auth.change.submitting') : t('auth.change.submit')}
             </button>
           </form>
-          <button
-            onClick={handleSkip}
-            className="w-full mt-3 text-sm text-gray-400 hover:text-gray-600 transition-colors"
-          >
-            {t('auth.change.skip')}
-          </button>
         </div>
       </div>
     </div>

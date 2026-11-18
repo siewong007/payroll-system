@@ -131,21 +131,15 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           working-directory: backend
-          # RUSTSEC-2023-0071 (Marvin timing sidechannel) is in rsa, pulled in
-          # by jsonwebtoken's RS*/PS* algorithm support. This backend signs and
-          # verifies JWTs with HMAC only (`EncodingKey`/`DecodingKey`
-          # `::from_secret`, `Validation::default()` => HS256), so it never
-          # performs the RSA private-key operation the sidechannel needs.
-          # printpdf 0.10 pins lopdf 0.39. RUSTSEC-2026-0187 only affects
-          # parsing untrusted PDFs; this application uses printpdf for
-          # document generation and never calls lopdf's load entry points.
-          # RUSTSEC-2026-0235 flags rkyv 0.7.46 in Cargo.lock, but rkyv is a
-          # lockfile-only entry: it is an optional dependency of rust_decimal
-          # behind the `rkyv` feature, which nothing enables (`cargo tree -i
-          # rkyv` is empty — the crate is never compiled). No patched 0.7.x
-          # exists; the fix is 0.8.17, which rust_decimal does not offer.
+          # RUSTSEC-2023-0071 (Marvin timing sidechannel) is in rsa, pulled into
+          # Cargo.lock only via sqlx-mysql (an uncompiled backend: this crate
+          # enables only sqlx's `postgres` feature, so `rsa` and `sqlx-mysql`
+          # are absent from `cargo tree -i`).
+          # RUSTSEC-2026-0459 flags libsqlite3-sys 0.30.1 in Cargo.lock via
+          # sqlx-sqlite, which is likewise never compiled (`cargo tree -i
+          # libsqlite3-sys` is empty — only Postgres is enabled).
           # Re-review all ignores at least quarterly (next: 2026-12).
-          ignore: RUSTSEC-2023-0071,RUSTSEC-2026-0187,RUSTSEC-2026-0235
+          ignore: RUSTSEC-2023-0071,RUSTSEC-2026-0459
 
   frontend-lint:
     name: Frontend Lint & Type Check
@@ -197,18 +191,14 @@ jobs:
         with:
           bun-version-file: frontend/package.json
       - run: bun ci
-        # GHSA-mh99-v99m-4gvg (brace-expansion DoS) is patched only in 5.0.8,
-        # whose CJS build exports `{ expand }` rather than `module.exports =
-        # expand`. The single path to it here is eslint 9 -> minimatch@3.1.5,
-        # which does `require('brace-expansion')` and calls the module object,
-        # so forcing 5.0.8 through `overrides` breaks `bun run lint` outright.
-        # It is dev-only and expands developer-authored config globs, never
-        # untrusted input. Drop the ignore once eslint stops pulling
-        # minimatch@3. Re-review at least quarterly (next: 2026-10).
-        #
-        # bun matches an ignore against the advisory URL, so the GHSA id is
-        # required — `--ignore CVE-2026-14257` would silently match nothing.
-      - run: bun audit --audit-level=high --ignore GHSA-mh99-v99m-4gvg
+        # GHSA-fc5q-39xc-vjpf (picomatch ReDoS via single-branch repeated
+        # extglobs) affects picomatch <=4.0.7, which is pulled in as a
+        # dev-only transitive dependency of vite/vitest (`tinyglobby` -> `fdir`
+        # -> `picomatch`). No npm release newer than 4.0.7 exists yet, and it
+        # never executes in the production browser bundle or on untrusted
+        # runtime globs. Drop this ignore once a patched picomatch release is
+        # published. Re-review at least quarterly (next: 2027-02).
+      - run: bun audit --audit-level=high --ignore GHSA-fc5q-39xc-vjpf
 
   backend-migrations:
     name: Backend Migrations Forward+Immutable

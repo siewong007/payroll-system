@@ -41,6 +41,14 @@ pub async fn update_company(
         ));
     }
 
+    crate::core::upload_path::validate_optional_file_url(req.logo_url.as_deref())?;
+    crate::services::upload_service::ensure_upload_belongs_to_company(
+        pool,
+        company_id,
+        req.logo_url.as_deref(),
+    )
+    .await?;
+
     // The company profile carries the EPF/SOCSO/EIS employer numbers and the
     // unpaid-leave divisor that every payroll run reads, so a change here moves
     // money. Capture the prior state for the before/after pair.

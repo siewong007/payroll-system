@@ -119,3 +119,99 @@ pub async fn list_filter_options(pool: &PgPool, company_id: Uuid) -> AppResult<A
         actions: actions.into_iter().map(FilterOption::new).collect(),
     })
 }
+
+fn is_payroll_audit_key(key: &str) -> bool {
+    let k = key.to_ascii_lowercase();
+    matches!(
+        k.as_str(),
+        "basic_salary"
+            | "base_salary"
+            | "old_salary"
+            | "new_salary"
+            | "previous_salary"
+            | "salary"
+            | "gross_salary"
+            | "net_salary"
+            | "hourly_rate"
+            | "daily_rate"
+            | "overtime_pay"
+            | "pcb_amount"
+            | "pcb"
+            | "tax_number"
+            | "tax_identification_number"
+            | "bank_name"
+            | "bank_account_number"
+            | "bank_account_type"
+            | "allowances"
+            | "deductions"
+            | "bonus"
+            | "commission"
+            | "salary_group"
+            | "payroll_group_id"
+    ) || k.starts_with("epf_")
+        || k.starts_with("socso_")
+        || k.starts_with("eis_")
+        || k.starts_with("hrdf_")
+        || k.starts_with("zakat")
+        || k.starts_with("ptptn")
+        || k.starts_with("tabung_haji")
+        || k.starts_with("total_")
+        || k.starts_with("ytd_")
+}
+
+fn is_personal_audit_key(key: &str) -> bool {
+    let k = key.to_ascii_lowercase();
+    matches!(
+        k.as_str(),
+        "ic_number"
+            | "passport_number"
+            | "date_of_birth"
+            | "phone"
+            | "emergency_contact_phone"
+            | "address"
+            | "address_line1"
+            | "address_line2"
+            | "postcode"
+            | "bank_name"
+            | "bank_account_number"
+            | "bank_account_type"
+    )
+}
+
+fn redact_audit_json(value: &mut serde_json::Value, hide_payroll: bool, hide_personal: bool) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (k, v) in map.iter_mut() {
+                let should_redact = (hide_payroll && is_payroll_audit_key(k))
+                    || (hide_personal && is_personal_audit_key(k));
+                if should_redact {
+                    *v = serde_json::Value::String("[REDACTED]".to_string());
+                } else {
+                    redact_audit_json(v, hide_payroll, hide_personal);
+                }
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                redact_audit_json(item, hide_payroll, hide_personal);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Redacts sensitive payroll and personal-identity JSON snapshots on returned
+/// audit rows according to the caller's privileges.
+pub fn redact_audit_logs(logs: &mut [AuditLogWithUser], hide_payroll: bool, hide_personal: bool) {
+    if !hide_payroll && !hide_personal {
+        return;
+    }
+    for row in logs {
+        if let Some(ref mut old_val) = row.old_values {
+            redact_audit_json(old_val, hide_payroll, hide_personal);
+        }
+        if let Some(ref mut new_val) = row.new_values {
+            redact_audit_json(new_val, hide_payroll, hide_personal);
+        }
+    }
+}

@@ -16,7 +16,12 @@ pub async fn list_audit_logs(
     let company_id = auth.authorize(Permission::ViewAuditLog)?;
     let page = query.page.unwrap_or(1);
     let per_page = query.per_page.unwrap_or(25);
-    let (logs, total) = audit_service::list_audit_logs(&state.pool, company_id, &query).await?;
+    let (mut logs, total) = audit_service::list_audit_logs(&state.pool, company_id, &query).await?;
+    audit_service::redact_audit_logs(
+        &mut logs,
+        !auth.is_payroll_privileged(),
+        !auth.can(Permission::ManageEmployees),
+    );
 
     Ok(Json(serde_json::json!({
         "data": logs,

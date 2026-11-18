@@ -144,12 +144,12 @@ pub async fn store_challenge(
     passkey_challenges::insert(pool, user_id, email, challenge_type, state).await
 }
 
-pub async fn get_and_delete_challenge(
+pub async fn consume_registration_challenge(
     pool: &PgPool,
     challenge_id: Uuid,
-    challenge_type: &str,
+    user_id: Uuid,
 ) -> AppResult<serde_json::Value> {
-    passkey_challenges::consume(pool, challenge_id, challenge_type)
+    passkey_challenges::consume_for_user(pool, challenge_id, "registration", user_id)
         .await?
         .ok_or_else(|| AppError::BadRequest("Challenge expired or not found".into()))
 }

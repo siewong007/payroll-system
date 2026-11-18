@@ -635,33 +635,64 @@ pub async fn preview_payroll(
             ));
         }
         // `compute_payslip` is pure and cannot emit diagnostics, so the
-        // comparison between the stored EPF category and the one derived from age
-        // and residency belongs here. The column is honoured — HR knows about
-        // pre-1998 elections the derivation cannot see — but a disagreement is
-        // worth a look, because the usual cause is a default of 'A' left on an
-        // employee who has since turned 60 and is exempt from the employee share.
+        // comparison between the stored EPF category and the one derived from age,
+        // residency, and effective date belongs here. The column is honoured — HR
+        // knows about pre-1998 elections or domestic-worker cases the derivation
+        // cannot see — but a disagreement is worth a look, because the usual
+        // cause is a default of 'A' left on an employee who has since turned 60
+        // (Part E/C) or reached 75 (exempt under EPF Act 1991 s.43(1)).
         if let (Some(dob), Some(stored)) = (emp.date_of_birth, emp.epf_category.as_deref()) {
-            let derived = epf_service::derive_category(
-                calculate_age(dob, period.effective_date),
-                emp.residency_status == "foreigner",
-            );
-            if stored.trim() != derived && !stored.trim().is_empty() {
-                warnings.push(
-                    PayrollDiagnostic::for_employee(
-                        "epf_category_override",
-                        format!(
-                            "EPF category {stored} is set on the employee record, but their age and residency resolve to Part {derived}. The record wins; clear it to use Part {derived}."
-                        ),
-                        emp.id,
-                        emp.employee_number.clone(),
-                        emp.full_name.clone(),
-                    )
-                    .with_params(&[
-                        ("stored", stored.trim().to_string()),
-                        ("derived", derived.to_string()),
-                    ]),
-                );
+            let trimmed = stored.trim();
+            if !trimmed.is_empty() {
+                let derived = epf_service::derive_category_for(
+                    calculate_age(dob, period.effective_date),
+                    &emp.residency_status,
+                    period.effective_date,
+                )
+                .unwrap_or("EXEMPT");
+                if trimmed != derived {
+                    warnings.push(
+                        PayrollDiagnostic::for_employee(
+                            "epf_category_override",
+                            format!(
+                                "EPF category {trimmed} is set on the employee record, but their age and residency resolve to Part {derived}. The record wins; clear it to use Part {derived}."
+                            ),
+                            emp.id,
+                            emp.employee_number.clone(),
+                            emp.full_name.clone(),
+                        )
+                        .with_params(&[
+                            ("stored", trimmed.to_string()),
+                            ("derived", derived.to_string()),
+                        ]),
+                    );
+                }
             }
+        }
+        // Advisory check under Minimum Wages Order 2024 [P.U. (A) 376/2024]:
+        // RM1,700/month from 1 Feb 2025 (universal from 1 Aug 2025; RM1,500 prior).
+        // Part-time and internship/apprenticeship records are excluded because
+        // MWO 2024 rates part-time by hourly floor (RM8.72/h) and exempts
+        // statutory apprenticeship contracts under EA 1955 s.2.
+        let min_wage_sen = statutory_minimum_wage_sen(period.effective_date);
+        let is_full_time_standard = !matches!(emp.employment_type.as_str(), "part_time" | "intern");
+        if is_full_time_standard && emp.basic_salary > 0 && emp.basic_salary < min_wage_sen {
+            warnings.push(
+                PayrollDiagnostic::for_employee(
+                    "below_minimum_wage",
+                    format!(
+                        "Contracted basic salary ({} sen) is below the statutory monthly minimum wage floor ({} sen) for {}. Verify whether a lawful exemption or part-time arrangement applies.",
+                        emp.basic_salary, min_wage_sen, period.effective_date
+                    ),
+                    emp.id,
+                    emp.employee_number.clone(),
+                    emp.full_name.clone(),
+                )
+                .with_params(&[
+                    ("salary", emp.basic_salary.to_string()),
+                    ("minimum", min_wage_sen.to_string()),
+                ]),
+            );
         }
         if emp
             .bank_account_number
@@ -1479,12 +1510,12 @@ fn compute_payslip(
         - wage_reduction)
         .max(0);
 
-    // EPF / SOCSO / EIS â€” resolved from the run's rule snapshot, no I/O.
+    // EPF / SOCSO / EIS — resolved from the run's rule snapshot, no I/O.
     let epf = epf_service::calculate_epf_with(
         statutory,
         statutory_epf_wage,
         age,
-        is_foreigner,
+        &emp.residency_status,
         emp.epf_category.as_deref(),
     )?;
     let socso = socso_service::calculate_socso_with(
@@ -1839,6 +1870,25 @@ fn trim_decimal(value: Decimal) -> String {
     value.normalize().to_string()
 }
 
+/// National monthly minimum wage floor in sen for `as_of`:
+/// - From `2025-02-01` onward: **RM1,700.00** (`170_000` sen) under the
+///   *Minimum Wages Order 2024 [P.U. (A) 376/2024]* (*National Wages
+///   Consultative Council Act 2011, Act 732*; universal across all employers
+///   including micro-enterprises <5 employees from `2025-08-01`).
+/// - Before `2025-02-01`: **RM1,500.00** (`150_000` sen) under the *Minimum
+///   Wages Order 2022 [P.U. (A) 140/2022]*.
+fn statutory_minimum_wage_sen(as_of: NaiveDate) -> i64 {
+    const MWO_2024_EFFECTIVE: NaiveDate = match NaiveDate::from_ymd_opt(2025, 2, 1) {
+        Some(d) => d,
+        None => unreachable!(),
+    };
+    if as_of >= MWO_2024_EFFECTIVE {
+        170_000
+    } else {
+        150_000
+    }
+}
+
 /// Takes a `NaiveDate`, not an `Option`, so the "assume 30" fallback this
 /// function used to carry is unrepresentable. The caller decides what a missing
 /// date of birth means, and for payroll it means the employee cannot be rated.
@@ -1852,11 +1902,18 @@ fn calculate_age(dob: NaiveDate, as_of: NaiveDate) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::calculate_age;
+    use super::{calculate_age, statutory_minimum_wage_sen};
     use chrono::NaiveDate;
 
     fn date(y: i32, m: u32, d: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(y, m, d).expect("valid date")
+    }
+
+    #[test]
+    fn minimum_wage_tracks_mwo_2024_effective_date() {
+        assert_eq!(statutory_minimum_wage_sen(date(2025, 1, 31)), 150_000);
+        assert_eq!(statutory_minimum_wage_sen(date(2025, 2, 1)), 170_000);
+        assert_eq!(statutory_minimum_wage_sen(date(2026, 11, 18)), 170_000);
     }
 
     #[test]
@@ -2285,15 +2342,20 @@ mod payslip_golden_tests {
         assert_eq!(c.net, 300_000 - c.total_deductions);
     }
 
-    /// A citizen past 60 derives EPF Part C, not Part A — the age/residency
-    /// derivation, pinned end to end through the engine.
+    /// A citizen past 60 derives EPF Part E and a permanent resident past 60
+    /// derives Part C, not Part A — the age/residency derivation, pinned end to
+    /// end through the engine.
     #[test]
     fn golden_over_sixty_citizen_derives_part_c() {
         let mut emp = employee(300_000, NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(), None);
         emp.date_of_birth = Some(NaiveDate::from_ymd_opt(1962, 3, 1).unwrap()); // 63 on the effective date
         let p = period(2025, 6);
-        let c = compute(&emp, &p, &empty_bulk()).expect("compute");
-        assert_eq!(c.epf.category, "C");
+        let c = compute(&emp, &p, &empty_bulk()).expect("compute citizen");
+        assert_eq!(c.epf.category, "E");
+
+        emp.residency_status = "permanent_resident".into();
+        let c_pr = compute(&emp, &p, &empty_bulk()).expect("compute permanent resident");
+        assert_eq!(c_pr.epf.category, "C");
     }
 
     /// Additional remuneration goes through the Schedule 2 differential: the

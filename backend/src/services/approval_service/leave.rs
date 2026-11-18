@@ -508,7 +508,7 @@ pub async fn approve_leave(
 
     // Resolved on the pool for the same reason as the deduction inputs, and
     // compared inside the transaction against the row the CAS returned.
-    let reviewer_employee = reviewer_employee_id(pool, &reviewer).await?;
+    let reviewer_employee = reviewer_employee_id(pool, &reviewer, company_id).await?;
 
     let mut tx = pool.begin().await?;
     let lr = leave_requests::set_approved(&mut *tx, request_id, company_id, reviewer_id, notes)

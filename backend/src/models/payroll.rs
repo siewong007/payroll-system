@@ -49,6 +49,7 @@ pub struct PayrollRun {
 
     pub processed_by: Option<Uuid>,
     pub processed_at: Option<DateTime<Utc>>,
+    pub submitted_by: Option<Uuid>,
     pub approved_by: Option<Uuid>,
     pub approved_at: Option<DateTime<Utc>>,
     pub locked_at: Option<DateTime<Utc>>,

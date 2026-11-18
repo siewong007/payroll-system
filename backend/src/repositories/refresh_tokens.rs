@@ -52,6 +52,7 @@ pub async fn consume_active(
          FROM user_sessions us \
          WHERE rt.token_hash = $1 AND rt.revoked = FALSE AND rt.expires_at > NOW() \
            AND us.id = rt.session_id AND us.revoked_at IS NULL AND us.expires_at > NOW() \
+           AND us.created_at > NOW() - INTERVAL '30 days' \
          RETURNING rt.user_id, rt.session_id",
     )
     .bind(token_hash)
@@ -140,6 +141,22 @@ pub async fn revoke_for_session(
         "UPDATE refresh_tokens SET revoked = TRUE WHERE session_id = $1 AND revoked = FALSE",
     )
     .bind(session_id)
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
+/// Revoke every active refresh token for a user outside `current_session_id`.
+pub async fn revoke_other_sessions(
+    executor: impl Executor<'_, Database = Postgres>,
+    user_id: Uuid,
+    current_session_id: Uuid,
+) -> AppResult<()> {
+    sqlx::query!(
+        "UPDATE refresh_tokens SET revoked = TRUE WHERE user_id = $1 AND session_id <> $2 AND revoked = FALSE",
+        user_id,
+        current_session_id,
+    )
     .execute(executor)
     .await?;
     Ok(())

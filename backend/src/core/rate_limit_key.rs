@@ -4,14 +4,14 @@
 //! header — lives in `core::client_ip`, shared with the audit trail so the two
 //! cannot drift apart. This module only adapts it to `tower_governor`.
 
-use std::fmt::Write;
 use std::net::{IpAddr, SocketAddr};
+use std::sync::Arc;
 
 use axum::extract::ConnectInfo;
 use axum::http::Request;
-use sha2::{Digest, Sha256};
 use tower_governor::{errors::GovernorError, key_extractor::KeyExtractor};
 
+use super::auth::verify_token;
 use super::client_ip::client_ip;
 
 /// Extracts the client IP, optionally trusting proxy headers.
@@ -47,8 +47,8 @@ impl KeyExtractor for ClientIpKeyExtractor {
     }
 }
 
-/// Keys on the caller's session when there is one, falling back to the client
-/// IP.
+/// Keys on the verified session ID (`claims.sid`) when a valid Bearer JWT is
+/// presented, falling back to the client IP otherwise.
 ///
 /// IP keying alone is the wrong shape for authenticated endpoints. A whole
 /// office behind one NAT shares a bucket, so a colleague's bulk import can
@@ -57,20 +57,21 @@ impl KeyExtractor for ClientIpKeyExtractor {
 /// work — payroll runs, bulk imports, uploads, outbound mail — belongs to the
 /// session that requested it.
 ///
-/// The key is a hash of the bearer token, not its `sub` claim: extracting a
-/// verified user id would mean decoding the JWT here, ahead of the `AuthUser`
-/// extractor that exists to do exactly that. Hashing needs no secret and no
-/// trust — an attacker can only ever change their own bucket by presenting a
-/// different token, and a token they cannot mint fails auth downstream anyway.
-/// The hash also keeps the raw credential out of the limiter's key store.
-#[derive(Debug, Clone, Copy)]
+/// Verifying the JWT signature against `jwt_secret` guarantees an unauthenticated
+/// attacker cannot escape their IP bucket by sending arbitrary/forged `Bearer`
+/// strings.
+#[derive(Debug, Clone)]
 pub struct SessionOrIpKeyExtractor {
     trust_forwarded: bool,
+    jwt_secret: Arc<String>,
 }
 
 impl SessionOrIpKeyExtractor {
-    pub fn new(trust_forwarded: bool) -> Self {
-        Self { trust_forwarded }
+    pub fn new(trust_forwarded: bool, jwt_secret: impl Into<Arc<String>>) -> Self {
+        Self {
+            trust_forwarded,
+            jwt_secret: jwt_secret.into(),
+        }
     }
 }
 
@@ -87,18 +88,10 @@ impl KeyExtractor for SessionOrIpKeyExtractor {
     type Key = String;
 
     fn extract<T>(&self, req: &Request<T>) -> Result<Self::Key, GovernorError> {
-        if let Some(token) = bearer_token(req) {
-            let mut hasher = Sha256::new();
-            hasher.update(token.as_bytes());
-            let digest = hasher.finalize();
-            // Half the digest is ample to keep distinct sessions in distinct
-            // buckets; this is a partitioning key, not a security boundary.
-            let mut key = String::with_capacity(2 + 32);
-            key.push_str("s:");
-            for byte in digest.iter().take(16) {
-                let _ = write!(key, "{byte:02x}");
-            }
-            return Ok(key);
+        if let Some(token) = bearer_token(req)
+            && let Ok(claims) = verify_token(token, &self.jwt_secret)
+        {
+            return Ok(format!("s:{}", claims.sid));
         }
         client_ip(req.headers(), peer_ip(req), self.trust_forwarded)
             .map(|ip| format!("i:{ip}"))
@@ -178,14 +171,31 @@ mod tests {
         req
     }
 
+    fn mint_jwt(secret: &str, sid: uuid::Uuid) -> String {
+        crate::core::auth::create_token(
+            uuid::Uuid::new_v4(),
+            "test@example.invalid",
+            &["admin".to_string()],
+            None,
+            None,
+            sid,
+            secret,
+            1,
+        )
+        .expect("mint test jwt")
+    }
+
     #[test]
     fn two_sessions_from_one_address_get_separate_buckets() {
-        let extractor = SessionOrIpKeyExtractor::new(false);
+        let secret = Arc::new("test-jwt-secret-at-least-32-bytes-long".to_string());
+        let extractor = SessionOrIpKeyExtractor::new(false, secret.clone());
+        let tok_a = mint_jwt(&secret, uuid::Uuid::new_v4());
+        let tok_b = mint_jwt(&secret, uuid::Uuid::new_v4());
         let a = extractor
-            .extract(&request_with_token(Some("token-a"), Some("10.0.0.7:1")))
+            .extract(&request_with_token(Some(&tok_a), Some("10.0.0.7:1")))
             .unwrap();
         let b = extractor
-            .extract(&request_with_token(Some("token-b"), Some("10.0.0.7:1")))
+            .extract(&request_with_token(Some(&tok_b), Some("10.0.0.7:1")))
             .unwrap();
         assert_ne!(
             a, b,
@@ -195,12 +205,14 @@ mod tests {
 
     #[test]
     fn one_session_from_two_addresses_shares_a_bucket() {
-        let extractor = SessionOrIpKeyExtractor::new(false);
+        let secret = Arc::new("test-jwt-secret-at-least-32-bytes-long".to_string());
+        let extractor = SessionOrIpKeyExtractor::new(false, secret.clone());
+        let tok = mint_jwt(&secret, uuid::Uuid::new_v4());
         let a = extractor
-            .extract(&request_with_token(Some("same"), Some("10.0.0.7:1")))
+            .extract(&request_with_token(Some(&tok), Some("10.0.0.7:1")))
             .unwrap();
         let b = extractor
-            .extract(&request_with_token(Some("same"), Some("192.0.2.9:1")))
+            .extract(&request_with_token(Some(&tok), Some("192.0.2.9:1")))
             .unwrap();
         assert_eq!(
             a, b,
@@ -210,19 +222,31 @@ mod tests {
 
     #[test]
     fn the_raw_token_never_appears_in_the_key() {
-        let extractor = SessionOrIpKeyExtractor::new(false);
+        let secret = Arc::new("test-jwt-secret-at-least-32-bytes-long".to_string());
+        let extractor = SessionOrIpKeyExtractor::new(false, secret.clone());
+        let tok = mint_jwt(&secret, uuid::Uuid::new_v4());
+        let key = extractor
+            .extract(&request_with_token(Some(&tok), Some("10.0.0.7:1")))
+            .unwrap();
+        assert!(!key.contains(&tok));
+    }
+
+    #[test]
+    fn forged_bearer_token_falls_back_to_client_ip() {
+        let secret = Arc::new("test-jwt-secret-at-least-32-bytes-long".to_string());
+        let extractor = SessionOrIpKeyExtractor::new(false, secret);
         let key = extractor
             .extract(&request_with_token(
-                Some("secret-token"),
+                Some("forged-token"),
                 Some("10.0.0.7:1"),
             ))
             .unwrap();
-        assert!(!key.contains("secret-token"));
+        assert_eq!(key, "i:10.0.0.7");
     }
 
     #[test]
     fn an_anonymous_request_falls_back_to_its_address() {
-        let extractor = SessionOrIpKeyExtractor::new(false);
+        let extractor = SessionOrIpKeyExtractor::new(false, Arc::new("secret".to_string()));
         let key = extractor
             .extract(&request_with_token(None, Some("10.0.0.7:1")))
             .unwrap();
@@ -233,9 +257,11 @@ mod tests {
     fn session_and_address_keys_cannot_collide() {
         // Distinct prefixes, so a crafted address can never land in the bucket
         // of a session (or the reverse).
-        let extractor = SessionOrIpKeyExtractor::new(false);
+        let secret = Arc::new("test-jwt-secret-at-least-32-bytes-long".to_string());
+        let extractor = SessionOrIpKeyExtractor::new(false, secret.clone());
+        let tok = mint_jwt(&secret, uuid::Uuid::new_v4());
         let session = extractor
-            .extract(&request_with_token(Some("t"), Some("10.0.0.7:1")))
+            .extract(&request_with_token(Some(&tok), Some("10.0.0.7:1")))
             .unwrap();
         let anonymous = extractor
             .extract(&request_with_token(None, Some("10.0.0.7:1")))
@@ -246,7 +272,7 @@ mod tests {
 
     #[test]
     fn an_empty_bearer_value_is_treated_as_anonymous() {
-        let extractor = SessionOrIpKeyExtractor::new(false);
+        let extractor = SessionOrIpKeyExtractor::new(false, Arc::new("secret".to_string()));
         let key = extractor
             .extract(&request_with_token(Some("   "), Some("10.0.0.7:1")))
             .unwrap();

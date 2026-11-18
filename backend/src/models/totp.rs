@@ -11,6 +11,9 @@ pub struct UserTotp {
     pub confirmed_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub last_used_step: Option<i64>,
+    pub failed_attempts: i32,
+    pub locked_until: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -52,7 +55,7 @@ pub struct TotpStatusResponse {
 pub struct TotpVerifyLoginRequest {
     #[validate(length(min = 1, message = "mfa_token is required"))]
     pub mfa_token: String,
-    #[validate(length(min = 6, max = 12, message = "code must be 6-12 characters"))]
+    #[validate(length(min = 6, max = 24, message = "code must be 6-24 characters"))]
     pub code: String,
 }
 

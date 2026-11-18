@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT e.id\n        FROM users u\n        JOIN employees e ON (\n            (u.employee_id IS NOT NULL AND e.id = u.employee_id AND e.company_id = $2)\n            OR (e.company_id = $2 AND e.email IS NOT NULL AND lower(btrim(e.email)) = lower(btrim(u.email)))\n        )\n        WHERE u.id = $1\n          AND u.is_active = TRUE\n          AND u.deleted_at IS NULL\n          AND e.deleted_at IS NULL\n          AND e.is_active = TRUE\n        ORDER BY (u.employee_id IS NOT NULL AND e.id = u.employee_id) DESC\n        LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "50087b04e32299390ddabbbb6ce14c8f4167616c3f2f1f80784a1245b466cafa"
+}

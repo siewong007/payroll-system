@@ -29,17 +29,21 @@ pub async fn find_references(
     // The literals are cast explicitly: an uncast string literal is `unknown` to
     // Postgres, which the query macro cannot map to a Rust type.
     let rows = sqlx::query!(
-        r#"SELECT 'claim'::text AS "kind!", employee_id AS "employee_id?"
+        r#"SELECT 'claim'::text AS "kind!", employee_id AS "employee_id?", FALSE AS "is_confidential!"
            FROM claims
            WHERE company_id = $1 AND receipt_url = $2
         UNION ALL
-        SELECT 'leave_request'::text, employee_id
+        SELECT 'leave_request'::text, employee_id, FALSE
            FROM leave_requests
            WHERE company_id = $1 AND attachment_url = $2
         UNION ALL
-        SELECT 'document'::text, employee_id
+        SELECT 'document'::text, employee_id, COALESCE(is_confidential, FALSE)
            FROM documents
-           WHERE company_id = $1 AND file_url = $2 AND deleted_at IS NULL"#,
+           WHERE company_id = $1 AND file_url = $2 AND deleted_at IS NULL
+        UNION ALL
+        SELECT 'company_logo'::text, NULL::uuid, FALSE
+           FROM companies
+           WHERE id = $1 AND logo_url = $2"#,
         company_id,
         file_url,
     )
@@ -52,6 +56,7 @@ pub async fn find_references(
             UploadReferenceKind::from_wire(&row.kind).map(|kind| UploadReference {
                 kind,
                 employee_id: row.employee_id,
+                is_confidential: row.is_confidential,
             })
         })
         .collect())

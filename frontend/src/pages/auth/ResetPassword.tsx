@@ -4,6 +4,7 @@ import { motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import { resetPassword, validateResetToken } from '@/api/admin';
 import { TurnstileWidget, type TurnstileWidgetRef } from '@/components/TurnstileWidget';
+import { PASSWORD_MAX_BYTES, PASSWORD_MIN_LENGTH, validatePassword } from '@/lib/password';
 
 export function ResetPassword() {
   const { t } = useTranslation();
@@ -34,8 +35,9 @@ export function ResetPassword() {
     e.preventDefault();
     setError('');
 
-    if (password.length < 8) {
-      setError(t('auth.reset.tooShort'));
+    const policyError = validatePassword(password);
+    if (policyError) {
+      setError(policyError);
       return;
     }
     if (password !== confirmPassword) {
@@ -126,7 +128,8 @@ export function ResetPassword() {
                   className="border p-2.5 rounded-lg w-full text-sm outline-none focus:border-black transition-colors"
                   placeholder={t('auth.reset.newPasswordPlaceholder')}
                   required
-                  minLength={8}
+                  minLength={PASSWORD_MIN_LENGTH}
+                  maxLength={PASSWORD_MAX_BYTES}
                 />
               </div>
 

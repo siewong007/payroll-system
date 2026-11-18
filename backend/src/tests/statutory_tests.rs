@@ -38,7 +38,7 @@ async fn statutory_rules_outside_verified_interval_fail_closed() {
     };
 
     let unsupported_date = NaiveDate::from_ymd_opt(2025, 1, 31).unwrap();
-    let err = epf_service::calculate_epf(&pool, 250_000, 30, false, None, unsupported_date)
+    let err = epf_service::calculate_epf(&pool, 250_000, 30, "citizen", None, unsupported_date)
         .await
         .unwrap_err();
     assert!(format!("{err:?}").contains("No verified EPF statutory rule set"));
@@ -51,7 +51,7 @@ async fn epf_category_a_table_lookup() {
     };
 
     // RM2,500/month → bracket (240001, 260000)
-    let r = epf_service::calculate_epf(&pool, 250_000, 30, false, None, test_date())
+    let r = epf_service::calculate_epf(&pool, 250_000, 30, "citizen", None, test_date())
         .await
         .unwrap();
     assert_eq!(r.employee, 27_500);
@@ -59,14 +59,14 @@ async fn epf_category_a_table_lookup() {
     assert_eq!(r.category, "A");
 
     // RM5,000/month (ceiling of the 13% employer rate)
-    let r = epf_service::calculate_epf(&pool, 500_000, 30, false, None, test_date())
+    let r = epf_service::calculate_epf(&pool, 500_000, 30, "citizen", None, test_date())
         .await
         .unwrap();
     assert_eq!(r.employee, 53_000);
     assert_eq!(r.employer, 58_000);
 
     // RM20,000/month — last row of seeded table
-    let r = epf_service::calculate_epf(&pool, 2_000_000, 30, false, None, test_date())
+    let r = epf_service::calculate_epf(&pool, 2_000_000, 30, "citizen", None, test_date())
         .await
         .unwrap();
     assert_eq!(r.employee, 214_500);
@@ -79,7 +79,7 @@ async fn epf_above_table_fails_closed() {
         return;
     };
 
-    let err = epf_service::calculate_epf(&pool, 2_500_000, 30, false, None, test_date())
+    let err = epf_service::calculate_epf(&pool, 2_500_000, 30, "citizen", None, test_date())
         .await
         .unwrap_err();
     assert!(format!("{err:?}").contains("no Part A band"));
@@ -91,10 +91,17 @@ async fn epf_unseeded_category_fails_closed() {
         return;
     };
 
-    let err = epf_service::calculate_epf(&pool, 250_000, 30, false, Some("D"), test_date())
+    let err = epf_service::calculate_epf(&pool, 250_000, 30, "citizen", Some("D"), test_date())
         .await
         .unwrap_err();
     assert!(format!("{err:?}").contains("no Part D band"));
+
+    // Part F (Oct 2025 foreign worker mandatory 2% + 2%) is also a valid
+    // category code and fails closed when no Part F band is loaded.
+    let err_f = epf_service::calculate_epf(&pool, 250_000, 30, "foreigner", Some("F"), test_date())
+        .await
+        .unwrap_err();
+    assert!(format!("{err_f:?}").contains("no Part F band"));
 }
 
 #[tokio::test]
@@ -103,7 +110,7 @@ async fn epf_invalid_category_errors() {
         return;
     };
 
-    let err = epf_service::calculate_epf(&pool, 2_500_000, 30, false, Some("Z"), test_date())
+    let err = epf_service::calculate_epf(&pool, 2_500_000, 30, "citizen", Some("Z"), test_date())
         .await
         .unwrap_err();
     // AppError::BadRequest renders via IntoResponse; here we only care that
@@ -112,20 +119,81 @@ async fn epf_invalid_category_errors() {
 }
 
 // ---------------------------------------------------------------------------
-// EPF — the Third-Schedule part is derived, not read from a dropdown.
-//
-// The column defaulted to 'A' and nothing ever changed it, so a citizen who
-// turned 60 kept a full Part A employee deduction they are exempt from. The
-// shipped fixture seeds Part A only, so anyone resolving to B/C/D now fails
-// closed — which is the point, and is why the preview surfaces it first.
+// EPF — the Third-Schedule part is derived from age, residency, and effective
+// date per KWSP EPF Act 1991 Third Schedule (Parts A–F) + s.43(1) age 75 cap.
 // ---------------------------------------------------------------------------
 
 #[test]
-fn epf_part_follows_age_and_residency() {
-    assert_eq!(epf_service::derive_category(59, false), "A");
-    assert_eq!(epf_service::derive_category(60, false), "C");
-    assert_eq!(epf_service::derive_category(59, true), "B");
-    assert_eq!(epf_service::derive_category(60, true), "D");
+fn epf_part_follows_age_residency_and_effective_date() {
+    let pre_2025 = NaiveDate::from_ymd_opt(2025, 9, 30).unwrap();
+    let post_oct_2025 = NaiveDate::from_ymd_opt(2025, 10, 1).unwrap();
+
+    // Malaysian citizens: Part A (<60), Part E (60-74), exempt at 75+
+    assert_eq!(
+        epf_service::derive_category_for(59, "citizen", post_oct_2025),
+        Some("A")
+    );
+    assert_eq!(
+        epf_service::derive_category_for(60, "citizen", post_oct_2025),
+        Some("E")
+    );
+    assert_eq!(
+        epf_service::derive_category_for(74, "citizen", post_oct_2025),
+        Some("E")
+    );
+    assert_eq!(
+        epf_service::derive_category_for(75, "citizen", post_oct_2025),
+        None
+    );
+
+    // Permanent residents: Part A (<60), Part C (60-74), exempt at 75+
+    assert_eq!(
+        epf_service::derive_category_for(59, "permanent_resident", post_oct_2025),
+        Some("A")
+    );
+    assert_eq!(
+        epf_service::derive_category_for(60, "permanent_resident", post_oct_2025),
+        Some("C")
+    );
+    assert_eq!(
+        epf_service::derive_category_for(75, "permanent_resident", post_oct_2025),
+        None
+    );
+
+    // Non-citizens: Part B (<60) / Part D (60-74) before Oct 2025; Part F (<75) from Oct 2025
+    assert_eq!(
+        epf_service::derive_category_for(59, "foreigner", pre_2025),
+        Some("B")
+    );
+    assert_eq!(
+        epf_service::derive_category_for(60, "foreigner", pre_2025),
+        Some("D")
+    );
+    assert_eq!(
+        epf_service::derive_category_for(35, "foreigner", post_oct_2025),
+        Some("F")
+    );
+    assert_eq!(
+        epf_service::derive_category_for(65, "foreigner", post_oct_2025),
+        Some("F")
+    );
+    assert_eq!(
+        epf_service::derive_category_for(75, "foreigner", post_oct_2025),
+        None
+    );
+}
+
+#[test]
+fn epf_age_75_is_exempt_unless_explicitly_overridden() {
+    let tables = StatutoryTables::for_tests(
+        NaiveDate::from_ymd_opt(2026, 6, 30).unwrap(),
+        Vec::new(),
+        HashMap::new(),
+    );
+    let r = epf_service::calculate_epf_with(&tables, 500_000, 75, "citizen", None).unwrap();
+    assert_eq!(r.employee, 0);
+    assert_eq!(r.employer, 0);
+    assert_eq!(r.category, "EXEMPT");
 }
 
 #[tokio::test]
@@ -136,7 +204,7 @@ async fn epf_under_60_citizen_is_unchanged_by_the_derivation() {
 
     // A 59-year-old citizen resolves to Part A, so their figures are byte
     // identical to what a stored 'A' produced before.
-    let derived = epf_service::calculate_epf(&pool, 500_000, 59, false, None, test_date())
+    let derived = epf_service::calculate_epf(&pool, 500_000, 59, "citizen", None, test_date())
         .await
         .unwrap();
     assert_eq!((derived.employee, derived.employer), (53_000, 58_000));
@@ -144,22 +212,32 @@ async fn epf_under_60_citizen_is_unchanged_by_the_derivation() {
 }
 
 #[tokio::test]
-async fn epf_at_60_resolves_to_part_c_and_fails_closed_on_an_a_only_schedule() {
+async fn epf_at_60_resolves_to_part_e_for_citizen_and_part_c_for_pr_and_fails_closed_on_an_a_only_schedule()
+ {
     let Some(pool) = skip_if_no_db().await else {
         return;
     };
 
-    // The stored column still says 'A' — the default nobody ever revisited —
-    // but the employee is 62, so Part C is what applies. The fixture carries no
-    // Part C, and refusing is correct: continuing would take an 11% employee
-    // deduction from someone exempt from it.
-    let err = epf_service::calculate_epf(&pool, 500_000, 62, false, None, test_date())
+    // A 62-year-old Malaysian citizen resolves to Part E (0% employee, 4%
+    // employer). The fixture carries only Part A, so refusing is correct.
+    let err_citizen = epf_service::calculate_epf(&pool, 500_000, 62, "citizen", None, test_date())
         .await
         .unwrap_err();
-    let rendered = format!("{err:?}");
+    let rendered = format!("{err_citizen:?}");
     assert!(
-        rendered.contains("Part C"),
-        "the message must name the DERIVED part, not the stored one: {rendered}"
+        rendered.contains("Part E"),
+        "citizen >=60 must resolve to Part E: {rendered}"
+    );
+
+    // A 62-year-old permanent resident resolves to Part C (5.5% employee, 6.5% employer).
+    let err_pr =
+        epf_service::calculate_epf(&pool, 500_000, 62, "permanent_resident", None, test_date())
+            .await
+            .unwrap_err();
+    let rendered_pr = format!("{err_pr:?}");
+    assert!(
+        rendered_pr.contains("Part C"),
+        "permanent resident >=60 must resolve to Part C: {rendered_pr}"
     );
 }
 
@@ -172,7 +250,7 @@ async fn an_explicit_epf_category_overrides_the_derivation() {
     // HR knows about pre-August-1998 elections and voluntary-rate cases the
     // derivation cannot see, so the column wins when it is set. `preview_payroll`
     // raises the disagreement as a warning rather than silently applying it.
-    let r = epf_service::calculate_epf(&pool, 500_000, 62, false, Some("A"), test_date())
+    let r = epf_service::calculate_epf(&pool, 500_000, 62, "citizen", Some("A"), test_date())
         .await
         .unwrap();
     assert_eq!(r.category, "A");

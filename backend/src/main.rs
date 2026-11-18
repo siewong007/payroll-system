@@ -5,9 +5,10 @@ use std::sync::Arc;
 use anyhow::Context;
 use tokio::net::TcpListener;
 
-use axum::http::{HeaderValue, Method};
+use axum::http::{HeaderName, HeaderValue, Method};
 use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::cors::CorsLayer;
+use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
@@ -67,6 +68,9 @@ async fn main() -> anyhow::Result<()> {
 
     // Load config
     let config = AppConfig::from_env();
+    config
+        .validate_production_secrets()
+        .map_err(|msg| anyhow::anyhow!(msg))?;
 
     // Retention windows for the daily cleanup task (plan item 26). Audit rows
     // default to the seven-year statutory horizon; the others are operational.
@@ -137,7 +141,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // Build router
-    let app = routes::create_router(state)
+    let mut app = routes::create_router(state)
         // Innermost of the added layers, so it wraps the handlers themselves.
         // A panic in a handler otherwise kills the task and drops the
         // connection: the client sees a reset rather than a response, and
@@ -154,6 +158,22 @@ async fn main() -> anyhow::Result<()> {
             std::time::Duration::from_secs(30),
         ))
         .layer(cors)
+        .layer(SetResponseHeaderLayer::if_not_present(
+            HeaderName::from_static("x-content-type-options"),
+            HeaderValue::from_static("nosniff"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            HeaderName::from_static("x-frame-options"),
+            HeaderValue::from_static("DENY"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            HeaderName::from_static("referrer-policy"),
+            HeaderValue::from_static("strict-origin-when-cross-origin"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            HeaderName::from_static("permissions-policy"),
+            HeaderValue::from_static("camera=(self), geolocation=(self), microphone=()"),
+        ))
         // Correlation IDs: honour an upstream x-request-id (CloudFront issues
         // one) or mint a UUID, and echo it back — so a user-reported timestamp
         // maps to exactly one log line across API and access logs.
@@ -170,7 +190,7 @@ async fn main() -> anyhow::Result<()> {
                         "http_request",
                         request_id = %request_id,
                         method = %request.method(),
-                        uri = %request.uri(),
+                        uri = %request.uri().path(),
                     )
                 })
                 .on_response(
@@ -193,6 +213,13 @@ async fn main() -> anyhow::Result<()> {
         // Outermost so it wraps the final response body.
         .layer(tower_http::compression::CompressionLayer::new());
 
+    if config.frontend_url.starts_with("https://") {
+        app = app.layer(SetResponseHeaderLayer::if_not_present(
+            HeaderName::from_static("strict-transport-security"),
+            HeaderValue::from_static("max-age=31536000; includeSubDomains"),
+        ));
+    }
+
     // Background task: clean up stale refresh tokens and expired attendance
     // QR tokens every 24 hours. Every tick logs, even when nothing is deleted,
     // so a silent log means the runtime's timers are wedged — not that the
@@ -204,6 +231,7 @@ async fn main() -> anyhow::Result<()> {
         use payroll_system::repositories::{attendance_network_observations, attendance_qr_tokens};
         use payroll_system::services::attendance_network_service;
 
+        const CLEANUP_LOCK_KEY: i64 = 7_492_026_101;
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(24 * 60 * 60));
         // After an OS sleep/wake gap, fire one delayed tick instead of a
         // catch-up burst of every tick missed while suspended.
@@ -213,6 +241,11 @@ async fn main() -> anyhow::Result<()> {
                 _ = cleanup_shutdown.changed() => break,
                 _ = interval.tick() => {}
             }
+            let Some(lock_conn) = try_advisory_lock_guard(&cleanup_pool, CLEANUP_LOCK_KEY).await
+            else {
+                tracing::info!("retention cleanup: another instance holds lock; skipping tick");
+                continue;
+            };
             tracing::info!("refresh-token cleanup: tick");
             match sqlx::query(
                 "DELETE FROM refresh_tokens \
@@ -314,6 +347,50 @@ async fn main() -> anyhow::Result<()> {
                 Ok(rows) => tracing::info!(rows, "import-session retention: completed"),
                 Err(e) => tracing::error!("Failed to purge expired import sessions: {}", e),
             }
+
+            match sqlx::query(
+                "DELETE FROM password_reset_requests \
+                 WHERE (status IN ('completed', 'expired') OR reset_token_expires_at < NOW()) \
+                   AND COALESCE(reset_token_expires_at, created_at) < NOW() - INTERVAL '30 days'",
+            )
+            .execute(&cleanup_pool)
+            .await
+            {
+                Ok(res) => tracing::info!(
+                    rows = res.rows_affected(),
+                    "password-reset cleanup: completed"
+                ),
+                Err(e) => tracing::error!("Failed to purge old password reset requests: {}", e),
+            }
+
+            match payroll_system::repositories::passkey_challenges::delete_expired(&cleanup_pool)
+                .await
+            {
+                Ok(()) => tracing::info!("passkey-challenge cleanup: completed"),
+                Err(e) => tracing::error!("Failed to clean up passkey challenges: {}", e),
+            }
+
+            match payroll_system::repositories::oauth2_states::delete_expired(&cleanup_pool).await {
+                Ok(()) => tracing::info!("oauth2-state cleanup: completed"),
+                Err(e) => tracing::error!("Failed to clean up oauth2 states: {}", e),
+            }
+
+            match sqlx::query(
+                "DELETE FROM background_jobs \
+                 WHERE status IN ('completed', 'failed') \
+                   AND COALESCE(finished_at, created_at) < NOW() - INTERVAL '30 days'",
+            )
+            .execute(&cleanup_pool)
+            .await
+            {
+                Ok(res) => tracing::info!(
+                    rows = res.rows_affected(),
+                    "background-job retention: completed"
+                ),
+                Err(e) => tracing::error!("Failed to purge old background jobs: {}", e),
+            }
+
+            release_advisory_lock(lock_conn, CLEANUP_LOCK_KEY).await;
         }
     });
 
@@ -342,10 +419,17 @@ async fn main() -> anyhow::Result<()> {
 
         const RUN_HOUR_UTC: u32 = 4;
         const RUN_MINUTE_UTC: u32 = 30;
+        const AUTO_ABSENT_LOCK_KEY: i64 = 7_492_026_102;
 
-        match attendance_service::run_auto_absent_catchup(&absent_pool).await {
-            Ok(count) => tracing::info!(marked = count, "auto-absent: startup catch-up completed"),
-            Err(e) => tracing::error!("Auto-absent startup catch-up failed: {}", e),
+        if let Some(lock_conn) = try_advisory_lock_guard(&absent_pool, AUTO_ABSENT_LOCK_KEY).await
+        {
+            match attendance_service::run_auto_absent_catchup(&absent_pool).await {
+                Ok(count) => tracing::info!(marked = count, "auto-absent: startup catch-up completed"),
+                Err(e) => tracing::error!("Auto-absent startup catch-up failed: {}", e),
+            }
+            release_advisory_lock(lock_conn, AUTO_ABSENT_LOCK_KEY).await;
+        } else {
+            tracing::info!("auto-absent: another instance holds lock; skipping startup catch-up");
         }
 
         loop {
@@ -368,10 +452,17 @@ async fn main() -> anyhow::Result<()> {
                 _ = tokio::time::sleep(delay) => {}
             }
 
-            tracing::info!("auto-absent: tick fired; marking absentees");
-            match attendance_service::run_auto_absent_catchup(&absent_pool).await {
-                Ok(count) => tracing::info!(marked = count, "auto-absent: completed"),
-                Err(e) => tracing::error!("Auto-absent marking failed: {}", e),
+            if let Some(lock_conn) =
+                try_advisory_lock_guard(&absent_pool, AUTO_ABSENT_LOCK_KEY).await
+            {
+                tracing::info!("auto-absent: tick fired; marking absentees");
+                match attendance_service::run_auto_absent_catchup(&absent_pool).await {
+                    Ok(count) => tracing::info!(marked = count, "auto-absent: completed"),
+                    Err(e) => tracing::error!("Auto-absent marking failed: {}", e),
+                }
+                release_advisory_lock(lock_conn, AUTO_ABSENT_LOCK_KEY).await;
+            } else {
+                tracing::info!("auto-absent: another instance holds lock; skipping tick");
             }
         }
     });
@@ -434,6 +525,48 @@ async fn shutdown_signal() {
     tokio::select! {
         _ = ctrl_c => tracing::info!("Received SIGINT"),
         _ = terminate => tracing::info!("Received SIGTERM"),
+    }
+}
+
+async fn try_advisory_lock_guard(
+    pool: &sqlx::PgPool,
+    lock_key: i64,
+) -> Option<sqlx::pool::PoolConnection<sqlx::Postgres>> {
+    let mut conn = match pool.acquire().await {
+        Ok(conn) => conn,
+        Err(e) => {
+            tracing::error!(
+                lock_key,
+                "Failed to acquire DB connection for advisory lock: {}",
+                e
+            );
+            return None;
+        }
+    };
+    match sqlx::query_scalar::<_, bool>("SELECT pg_try_advisory_lock($1)")
+        .bind(lock_key)
+        .fetch_one(&mut *conn)
+        .await
+    {
+        Ok(true) => Some(conn),
+        Ok(false) => None,
+        Err(e) => {
+            tracing::error!(lock_key, "Failed to acquire advisory lock: {}", e);
+            None
+        }
+    }
+}
+
+async fn release_advisory_lock(
+    mut conn: sqlx::pool::PoolConnection<sqlx::Postgres>,
+    lock_key: i64,
+) {
+    if let Err(e) = sqlx::query("SELECT pg_advisory_unlock($1)")
+        .bind(lock_key)
+        .execute(&mut *conn)
+        .await
+    {
+        tracing::warn!(lock_key, "Failed to release advisory lock cleanly: {}", e);
     }
 }
 

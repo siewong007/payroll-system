@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Legal, PDPA & 2026 Malaysian statutory compliance suite** — added
+  [docs/legal/terms-and-conditions.md](docs/legal/terms-and-conditions.md),
+  bilingual English/Bahasa Malaysia
+  [docs/legal/privacy-and-pdpa-notice.md](docs/legal/privacy-and-pdpa-notice.md)
+  (aligned with the *Personal Data Protection (Amendment) Act 2024 [Act A1727]*
+  DPO, 72-hour data breach notification, data portability, and biometric
+  WebAuthn boundaries),
+  [docs/legal/malaysian-statutory-compliance.md](docs/legal/malaysian-statutory-compliance.md),
+  and localized in-app `/terms`, `/privacy`, and `/compliance` pages across
+  `en`, `ms`, `zh-CN`, and `zh-TW`.
+- **KWSP Third Schedule Parts A–F & Minimum Wages Order 2024 alignment** —
+  expanded `epf_service` and `employees_epf_category_check` (`1029`) to support
+  Malaysian citizen Part E (aged 60–74: 0% employee / 4% employer), PR Part C
+  (aged 60–74), mandatory foreign-worker Part F (2% + 2% effective 1 October
+  2025 under *EPF Amendment Act 2025*), and statutory cessation at age 75
+  (*EPF Act 1991 s.43(1)*); added `below_minimum_wage` preview warnings for
+  full-time salaries below the RM1,700/month floor (*Minimum Wages Order 2024
+  [P.U. (A) 376/2024]*); and normalized `permanent_resident` / `epf_category`
+  validation in bulk employee imports.
+- **Workspace UX & security hardening** — enhanced workspace dashboard, dark
+  mode, global command palette, dialog UX, upload ownership registry
+  (`uploaded_files`), TOTP replay/lockout guards, and local nightly encrypted
+  backups on the AIC VPS following AWS infrastructure decommission.
+
+### Changed
+
+- Upgraded Rust backend (`calamine`, `rust_xlsxwriter`, `tower-http`) and
+  frontend (`axios`, `zod`, `tailwindcss`, `vite`, `eslint`, `vitest`)
+  dependencies and synchronized architecture, database, feature, security, and
+  payroll documentation with migrations `1000`–`1030`.
+
 ## [0.2.0] - 2026-09-20
 
 ### Added

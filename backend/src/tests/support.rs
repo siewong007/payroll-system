@@ -12,6 +12,8 @@ use uuid::Uuid;
 /// The database must already be migrated — run `sqlx migrate run` (or start
 /// the backend once) before `cargo test`.
 pub async fn test_pool() -> Option<PgPool> {
+    static FIXTURES_INITIALIZED: tokio::sync::OnceCell<()> = tokio::sync::OnceCell::const_new();
+
     // Load the repo-root .env so a bare `cargo test` from backend/ works —
     // CONTRIBUTING tells contributors to run exactly that (plan item 32).
     dotenvy::dotenv().ok();
@@ -25,90 +27,109 @@ pub async fn test_pool() -> Option<PgPool> {
     // A configured database that cannot be reached is an environment failure,
     // NOT a skip. Silently reporting `ok` for 130 integration tests is how a
     // broken local setup went unnoticed.
-    let pool = match PgPool::connect(&url).await {
+    let pool = match sqlx::postgres::PgPoolOptions::new()
+        .max_connections(8)
+        .connect(&url)
+        .await
+    {
         Ok(pool) => pool,
         Err(e) => panic!(
             "DATABASE_URL is set but PostgreSQL is unreachable: {e}. Start docker compose (`docker compose up -d`) or unset DATABASE_URL."
         ),
     };
 
-    // The repository deliberately ships only immutable, unverified academic
-    // statutory fixtures. Test builds attach those rows to distinct test-only
-    // verified datasets; production cannot promote a `legacy-prototype-*` key.
-    sqlx::query(
-        r#"
-        UPDATE statutory_rule_sets
-        SET status = 'prototype', verified_at = NULL, updated_at = NOW()
-        WHERE dataset_key LIKE 'legacy-prototype-%'
-        "#,
-    )
-    .execute(&pool)
-    .await
-    .expect("keep legacy statutory fixtures unverified");
+    // Seed global test-only statutory rule sets once per test binary under an
+    // advisory lock so parallel test tasks (and concurrent test processes)
+    // never race on `statutory_rule_sets_no_overlap` or row locks.
+    FIXTURES_INITIALIZED
+        .get_or_init(|| async {
+            let mut tx = pool.begin().await.expect("begin test fixture setup tx");
+            sqlx::query("SELECT pg_advisory_xact_lock(7492026001)")
+                .execute(&mut *tx)
+                .await
+                .expect("acquire test fixture advisory lock");
 
-    sqlx::query(
-        r#"
-        INSERT INTO statutory_rule_sets (
-            dataset_key, rule_code, effective_from, effective_to, status,
-            source_url, source_version, source_sha256,
-            verification_notes, verified_at
-        ) VALUES
-            ('test-fixture-epf-2024', 'epf', '2024-01-01', '2024-12-31', 'verified',
-             'https://example.invalid/test-statutory-fixture', 'test-only', repeat('0', 64),
-             'Enabled only by the Rust test harness', NOW()),
-            ('test-fixture-socso-2024', 'socso', '2024-01-01', '2024-12-31', 'verified',
-             'https://example.invalid/test-statutory-fixture', 'test-only', repeat('0', 64),
-             'Enabled only by the Rust test harness', NOW()),
-            ('test-fixture-eis-2024', 'eis', '2024-01-01', '2024-12-31', 'verified',
-             'https://example.invalid/test-statutory-fixture', 'test-only', repeat('0', 64),
-             'Enabled only by the Rust test harness', NOW()),
-            ('test-fixture-pcb-2024', 'pcb', '2024-01-01', '2024-12-31', 'verified',
-             'https://example.invalid/test-statutory-fixture', 'test-only', repeat('0', 64),
-             'Enabled only by the Rust test harness', NOW())
-        ON CONFLICT (dataset_key) DO UPDATE SET
-            status = EXCLUDED.status,
-            source_url = EXCLUDED.source_url,
-            source_version = EXCLUDED.source_version,
-            source_sha256 = EXCLUDED.source_sha256,
-            verification_notes = EXCLUDED.verification_notes,
-            verified_at = EXCLUDED.verified_at,
-            updated_at = NOW()
-        "#,
-    )
-    .execute(&pool)
-    .await
-    .expect("create test-only statutory rule sets");
-
-    for (table, dataset_key) in [
-        ("epf_rates", "test-fixture-epf-2024"),
-        ("socso_rates", "test-fixture-socso-2024"),
-        ("eis_rates", "test-fixture-eis-2024"),
-        ("pcb_brackets", "test-fixture-pcb-2024"),
-        ("pcb_reliefs", "test-fixture-pcb-2024"),
-    ] {
-        let statement = format!(
-            "UPDATE {table} SET rule_set_id = (SELECT id FROM statutory_rule_sets WHERE dataset_key = $1)"
-        );
-        sqlx::query(&statement)
-            .bind(dataset_key)
-            .execute(&pool)
+            // The repository deliberately ships only immutable, unverified academic
+            // statutory fixtures. Test builds attach those rows to distinct test-only
+            // verified datasets; production cannot promote a `legacy-prototype-*` key.
+            sqlx::query(
+                r#"
+                UPDATE statutory_rule_sets
+                SET status = 'prototype', verified_at = NULL, updated_at = NOW()
+                WHERE dataset_key LIKE 'legacy-prototype-%'
+                "#,
+            )
+            .execute(&mut *tx)
             .await
-            .expect("attach statutory rows to a test-only rule set");
-    }
+            .expect("keep legacy statutory fixtures unverified");
 
-    // The PCB gate is data-driven now; tests exercise the calculator through
-    // the same path production takes, so the setting is enabled here and every
-    // test inherits it.
-    sqlx::query(
-        r#"
-        INSERT INTO platform_settings (key, value)
-        VALUES ('pcb_calculator_status', 'enabled')
-        ON CONFLICT (key) DO UPDATE SET value = 'enabled', updated_at = NOW()
-        "#,
-    )
-    .execute(&pool)
-    .await
-    .expect("enable the PCB calculator for this test run");
+            sqlx::query(
+                r#"
+                INSERT INTO statutory_rule_sets (
+                    dataset_key, rule_code, effective_from, effective_to, status,
+                    source_url, source_version, source_sha256,
+                    verification_notes, verified_at
+                ) VALUES
+                    ('test-fixture-epf-2024', 'epf', '2024-01-01', '2024-12-31', 'verified',
+                     'https://example.invalid/test-statutory-fixture', 'test-only', repeat('0', 64),
+                     'Enabled only by the Rust test harness', NOW()),
+                    ('test-fixture-socso-2024', 'socso', '2024-01-01', '2024-12-31', 'verified',
+                     'https://example.invalid/test-statutory-fixture', 'test-only', repeat('0', 64),
+                     'Enabled only by the Rust test harness', NOW()),
+                    ('test-fixture-eis-2024', 'eis', '2024-01-01', '2024-12-31', 'verified',
+                     'https://example.invalid/test-statutory-fixture', 'test-only', repeat('0', 64),
+                     'Enabled only by the Rust test harness', NOW()),
+                    ('test-fixture-pcb-2024', 'pcb', '2024-01-01', '2024-12-31', 'verified',
+                     'https://example.invalid/test-statutory-fixture', 'test-only', repeat('0', 64),
+                     'Enabled only by the Rust test harness', NOW())
+                ON CONFLICT (dataset_key) DO UPDATE SET
+                    status = EXCLUDED.status,
+                    source_url = EXCLUDED.source_url,
+                    source_version = EXCLUDED.source_version,
+                    source_sha256 = EXCLUDED.source_sha256,
+                    verification_notes = EXCLUDED.verification_notes,
+                    verified_at = EXCLUDED.verified_at,
+                    updated_at = NOW()
+                "#,
+            )
+            .execute(&mut *tx)
+            .await
+            .expect("create test-only statutory rule sets");
+
+            for (table, dataset_key) in [
+                ("epf_rates", "test-fixture-epf-2024"),
+                ("socso_rates", "test-fixture-socso-2024"),
+                ("eis_rates", "test-fixture-eis-2024"),
+                ("pcb_brackets", "test-fixture-pcb-2024"),
+                ("pcb_reliefs", "test-fixture-pcb-2024"),
+            ] {
+                let statement = format!(
+                    "UPDATE {table} SET rule_set_id = (SELECT id FROM statutory_rule_sets WHERE dataset_key = $1)"
+                );
+                sqlx::query(&statement)
+                    .bind(dataset_key)
+                    .execute(&mut *tx)
+                    .await
+                    .expect("attach statutory rows to a test-only rule set");
+            }
+
+            // The PCB gate is data-driven now; tests exercise the calculator through
+            // the same path production takes, so the setting is enabled here and every
+            // test inherits it.
+            sqlx::query(
+                r#"
+                INSERT INTO platform_settings (key, value)
+                VALUES ('pcb_calculator_status', 'enabled')
+                ON CONFLICT (key) DO UPDATE SET value = 'enabled', updated_at = NOW()
+                "#,
+            )
+            .execute(&mut *tx)
+            .await
+            .expect("enable the PCB calculator for this test run");
+
+            tx.commit().await.expect("commit test fixture setup");
+        })
+        .await;
 
     Some(pool)
 }

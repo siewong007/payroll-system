@@ -116,6 +116,7 @@ function SidebarContent({
   const canSeeApprovalsBadge =
     Boolean(getAccessToken()) &&
     Boolean(user?.company_id) &&
+    !user?.must_change_password &&
     userCan(user, 'view_approvals') &&
     !hasAnyRole(user, ['super_admin']);
 
@@ -284,6 +285,19 @@ function SidebarContent({
           <div className="mb-3 space-y-2">
             <AppearanceSwitcher darkRail />
             <LanguageSwitcher dark />
+            <div className="flex flex-wrap items-center justify-center gap-2 pt-1 text-[11px] text-slate-400">
+              <Link to="/terms" onClick={onClose} className="hover:text-slate-200 transition-colors">
+                {t('legal.links.terms')}
+              </Link>
+              <span className="text-slate-600">·</span>
+              <Link to="/privacy" onClick={onClose} className="hover:text-slate-200 transition-colors">
+                {t('legal.links.privacy')}
+              </Link>
+              <span className="text-slate-600">·</span>
+              <Link to="/compliance" onClick={onClose} className="hover:text-slate-200 transition-colors">
+                {t('legal.links.compliance')}
+              </Link>
+            </div>
           </div>
         )}
         <div className={`flex items-center ${collapsed ? 'flex-col gap-2' : 'gap-3'}`}>

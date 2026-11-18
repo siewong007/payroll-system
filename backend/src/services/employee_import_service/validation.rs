@@ -105,12 +105,25 @@ fn validate_row(row: &ImportRowRaw) -> Vec<FieldError> {
     }
 
     if let Some(v) = &row.residency_status {
-        let lower = v.to_lowercase();
-        if !["citizen", "pr", "foreigner"].contains(&lower.as_str()) {
+        let lower = v.trim().to_lowercase();
+        if !["citizen", "pr", "permanent_resident", "foreigner"].contains(&lower.as_str()) {
             errors.push(FieldError {
                 field: "residency_status".into(),
                 message: format!(
-                    "Invalid residency status '{}'. Use citizen, pr, or foreigner",
+                    "Invalid residency status '{}'. Use citizen, permanent_resident (or pr), or foreigner",
+                    v
+                ),
+            });
+        }
+    }
+
+    if let Some(v) = &row.epf_category {
+        let upper = v.trim().to_uppercase();
+        if !upper.is_empty() && !["A", "B", "C", "D", "E", "F"].contains(&upper.as_str()) {
+            errors.push(FieldError {
+                field: "epf_category".into(),
+                message: format!(
+                    "Invalid EPF category '{}'. Use A, B, C, D, E, or F (or leave blank for automatic Third Schedule derivation)",
                     v
                 ),
             });
@@ -262,11 +275,16 @@ pub async fn validate_file(
     data: &[u8],
     is_xlsx: bool,
 ) -> AppResult<ImportValidationResponse> {
-    let (headers, rows) = if is_xlsx {
-        parse_xlsx(data)?
-    } else {
-        parse_csv(data)?
-    };
+    let owned = data.to_vec();
+    let (headers, rows) = tokio::task::spawn_blocking(move || {
+        if is_xlsx {
+            parse_xlsx(&owned)
+        } else {
+            parse_csv(&owned)
+        }
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("Import parsing task failed: {}", e)))??;
 
     if rows.is_empty() {
         return Err(AppError::BadRequest("File contains no data rows".into()));

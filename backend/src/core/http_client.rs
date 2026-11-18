@@ -107,11 +107,25 @@ fn is_blocked_v6(ip: Ipv6Addr) -> bool {
         return is_blocked_v4(Ipv4Addr::from(bits));
     }
 
-    // fc00::/7 unique local and fe80::/10 link local, again unstable in `std`.
+    // fc00::/7 unique local, fe80::/10 link local, fec0::/10 deprecated site-local,
+    // 2001:db8::/32 documentation, 2001:0000::/23 IETF protocol assignments
+    // (Teredo/benchmarking/ORCHIDv2; keeps 2001:4860:4860::8888 allowed),
+    // 2002::/16 6to4, 100::/64 discard, and 64:ff9b::/96 + 64:ff9b:1::/48 NAT64.
     let seg0 = segments[0];
-    let unique_or_link_local = (seg0 & 0xfe00) == 0xfc00 || (seg0 & 0xffc0) == 0xfe80;
+    let seg1 = segments[1];
+    let unique_or_link_local =
+        (seg0 & 0xfe00) == 0xfc00 || (seg0 & 0xffc0) == 0xfe80 || (seg0 & 0xffc0) == 0xfec0;
+    let special_ranges = (seg0 == 0x2001 && seg1 == 0x0db8)
+        || (seg0 == 0x2001 && seg1 < 0x0200)
+        || seg0 == 0x2002
+        || (seg0 == 0x0100 && seg1 == 0 && segments[2] == 0 && segments[3] == 0)
+        || (seg0 == 0x0064 && seg1 == 0xff9b);
 
-    unique_or_link_local || ip.is_unspecified() || ip.is_loopback() || ip.is_multicast()
+    unique_or_link_local
+        || special_ranges
+        || ip.is_unspecified()
+        || ip.is_loopback()
+        || ip.is_multicast()
 }
 
 /// Parse a tenant-supplied URL, or say precisely why it is not fetchable.
@@ -190,6 +204,10 @@ pub async fn fetch_public_text(raw: &str, max_bytes: usize) -> AppResult<String>
         return Err(unreachable_error());
     }
     if addrs.iter().any(|addr| is_blocked_ip(addr.ip())) {
+        if domain.is_some() {
+            tracing::warn!("ICS fetch: {} resolved to a blocked address", url);
+            return Err(unreachable_error());
+        }
         return Err(internal_address());
     }
 
@@ -310,7 +328,16 @@ mod tests {
             "fd12:3456::1",
             "fe80::1",
             "fe80::dead:beef",
+            "fec0::1",
             "ff02::1",
+            "2001:db8::1",
+            "2001::1",
+            "2001:2::1",
+            "2001:20::1",
+            "2002:7f00:1::1",
+            "100::1",
+            "64:ff9b::169.254.169.254",
+            "64:ff9b:1::127.0.0.1",
         ] {
             assert!(is_blocked_ip(ip(blocked)), "allowed {blocked}");
         }

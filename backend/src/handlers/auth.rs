@@ -114,7 +114,9 @@ pub async fn code_login(
 
 pub async fn me(State(state): State<AppState>, auth: AuthUser) -> AppResult<Json<UserResponse>> {
     let user = auth_service::get_user_by_id(&state.pool, auth.0.sub).await?;
-    Ok(Json(UserResponse::from(user)))
+    Ok(Json(
+        auth_service::build_user_response(&state.pool, user).await?,
+    ))
 }
 
 pub async fn my_companies(
@@ -151,7 +153,7 @@ pub async fn switch_company(
     Ok(Json(LoginResponse {
         token,
         refresh_token: None,
-        user: UserResponse::from(user),
+        user: auth_service::build_user_response(&state.pool, user).await?,
     }))
 }
 
@@ -369,16 +371,5 @@ pub async fn change_password(
 
     Ok(Json(serde_json::json!({
         "message": "Password changed successfully."
-    })))
-}
-
-pub async fn skip_change_password(
-    State(state): State<AppState>,
-    auth: AuthUser,
-) -> AppResult<Json<serde_json::Value>> {
-    auth_service::skip_change_password(&state.pool, auth.0.sub).await?;
-
-    Ok(Json(serde_json::json!({
-        "message": "Password change skipped."
     })))
 }

@@ -87,6 +87,11 @@ export function AttendanceScanPage() {
       return;
     }
 
+    if (user?.must_change_password) {
+      navigate('/change-password', { replace: true });
+      return;
+    }
+
     if (!user?.employee_id) {
       setState('error');
       setError(t('attendance.scan.noEmployeeProfile'));

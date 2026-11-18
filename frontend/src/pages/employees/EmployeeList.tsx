@@ -1020,14 +1020,17 @@ function EmployeeFormContent({ mode, employeeId, initialData, payrollGroups, onC
           <div>
             <label className={labelClass}>{t('employees.fields.epfCategory')}</label>
             <select
-              value={form.epf_category || 'A'}
-              onChange={(e) => updateField('epf_category', e.target.value)}
+              value={form.epf_category ?? ''}
+              onChange={(e) => updateField('epf_category', e.target.value || undefined)}
               className={inputClass}
             >
+              <option value="">{t('enums.epfCategory.auto')}</option>
               <option value="A">{t('enums.epfCategory.A')}</option>
               <option value="B">{t('enums.epfCategory.B')}</option>
               <option value="C">{t('enums.epfCategory.C')}</option>
               <option value="D">{t('enums.epfCategory.D')}</option>
+              <option value="E">{t('enums.epfCategory.E')}</option>
+              <option value="F">{t('enums.epfCategory.F')}</option>
             </select>
           </div>
           <div>

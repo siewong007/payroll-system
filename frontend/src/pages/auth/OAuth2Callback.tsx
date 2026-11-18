@@ -1,14 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
+import api from '@/api/client';
 import { useAuth } from '@/context/AuthContext';
 import { hasOnlyEmployeeRole } from '@/lib/roles';
 import { TwoFactorPrompt } from '@/components/TwoFactorPrompt';
 import { BrandLogo } from '@/components/ui/BrandLogo';
-import type { User } from '@/types';
+import type { LoginResponse, User } from '@/types';
 
 /**
- * The credentials arrive in the URL fragment and must be read exactly once per
+ * The callback outcome arrives in the URL fragment and must be read once per
  * page load: reading also clears the hash, so a second read sees nothing.
  *
  * This deliberately lives outside the component. StrictMode remounts it in
@@ -18,6 +19,7 @@ import type { User } from '@/types';
  * error message and the 2FA prompt.
  */
 let callbackParams: URLSearchParams | null = null;
+let inflightRefresh: Promise<LoginResponse> | null = null;
 
 function takeCallbackParams(): URLSearchParams {
   const fromHash = new URLSearchParams(window.location.hash.substring(1));
@@ -37,15 +39,25 @@ function takeCallbackParams(): URLSearchParams {
 export function OAuth2Callback() {
   const navigate = useNavigate();
   const { t } = useTranslation();
-  const { setSession } = useAuth();
+  const { user, isLoading, setSession } = useAuth();
   const [error, setError] = useState('');
   const [mfaToken, setMfaToken] = useState<string | null>(null);
+
+  const goPostLogin = useCallback(
+    (loggedInUser: User) => {
+      if (loggedInUser.must_change_password) {
+        navigate('/change-password', { replace: true });
+        return;
+      }
+      navigate(hasOnlyEmployeeRole(loggedInUser) ? '/portal' : '/', { replace: true });
+    },
+    [navigate],
+  );
 
   useEffect(() => {
     const params = takeCallbackParams();
 
-    const token = params.get('token');
-    const userStr = params.get('user');
+    const status = params.get('status');
     const pendingMfaToken = params.get('mfa_token');
     // The backend redirects here with a human-readable reason when the exchange
     // fails, rather than leaving the browser on a raw JSON error body.
@@ -61,24 +73,43 @@ export function OAuth2Callback() {
       return;
     }
 
-    if (!token || !userStr) {
+    if (status !== 'ok') {
       setError(t('auth.oauth.missingData'));
       return;
     }
 
-    try {
-      const user = JSON.parse(decodeURIComponent(userStr));
-      // Refresh token was set as httpOnly cookie by the server redirect
-      setSession(token, user);
-      navigate(hasOnlyEmployeeRole(user) ? '/portal' : '/', { replace: true });
-    } catch {
-      setError(t('auth.oauth.processFailed'));
+    if (isLoading) {
+      return;
     }
-  }, [navigate, setSession, t]);
 
-  const goPostLogin = (user: User) => {
-    navigate(hasOnlyEmployeeRole(user) ? '/portal' : '/', { replace: true });
-  };
+    if (user) {
+      goPostLogin(user);
+      return;
+    }
+
+    let cancelled = false;
+    const promise =
+      inflightRefresh ??
+      api.post<LoginResponse>('/auth/refresh', {}).then((res) => res.data);
+    inflightRefresh = promise;
+
+    promise
+      .then((data) => {
+        if (cancelled) return;
+        setSession(data.token, data.user);
+        goPostLogin(data.user);
+      })
+      .catch(() => {
+        inflightRefresh = null;
+        if (!cancelled) {
+          setError(t('auth.oauth.processFailed'));
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [goPostLogin, isLoading, setSession, t, user]);
 
   if (error) {
     return (

@@ -14,6 +14,10 @@ use crate::models::document::{
 use crate::models::pagination::PaginatedResponse;
 use crate::services::document_service;
 
+fn can_view_confidential(auth: &AuthUser) -> bool {
+    auth.can(Permission::ManageEmployees) || auth.is_payroll_privileged()
+}
+
 pub async fn list(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -36,6 +40,7 @@ pub async fn list(
         query.category_id,
         query.status.as_deref(),
         query.search.as_deref(),
+        can_view_confidential(&auth),
         per_page,
         offset,
     )
@@ -60,7 +65,9 @@ pub async fn get(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    let doc = document_service::get_document(&state.pool, id, company_id).await?;
+    let doc =
+        document_service::get_document(&state.pool, id, company_id, can_view_confidential(&auth))
+            .await?;
     Ok(Json(doc))
 }
 
@@ -75,7 +82,14 @@ pub async fn create(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    let doc = document_service::create_document(&state.pool, company_id, req, auth.0.sub).await?;
+    let doc = document_service::create_document(
+        &state.pool,
+        company_id,
+        req,
+        auth.0.sub,
+        can_view_confidential(&auth),
+    )
+    .await?;
     Ok(Json(doc))
 }
 
@@ -91,8 +105,15 @@ pub async fn update(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    let doc =
-        document_service::update_document(&state.pool, id, company_id, req, auth.0.sub).await?;
+    let doc = document_service::update_document(
+        &state.pool,
+        id,
+        company_id,
+        req,
+        auth.0.sub,
+        can_view_confidential(&auth),
+    )
+    .await?;
     Ok(Json(doc))
 }
 
@@ -107,7 +128,13 @@ pub async fn delete(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    document_service::soft_delete_document(&state.pool, id, company_id).await?;
+    document_service::soft_delete_document(
+        &state.pool,
+        id,
+        company_id,
+        can_view_confidential(&auth),
+    )
+    .await?;
     Ok(Json(serde_json::json!({"message": "Document deleted"})))
 }
 
@@ -152,6 +179,12 @@ pub async fn expiring(
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
     let days = query.days.unwrap_or(30);
-    let docs = document_service::get_expiring_documents(&state.pool, company_id, days).await?;
+    let docs = document_service::get_expiring_documents(
+        &state.pool,
+        company_id,
+        days,
+        can_view_confidential(&auth),
+    )
+    .await?;
     Ok(Json(docs))
 }

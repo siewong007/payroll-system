@@ -19,7 +19,7 @@ pub async fn find_user_by_oauth2(
             u.employee_id, u.is_active, u.must_change_password, u.last_login, u.created_at, u.updated_at
         FROM users u
         JOIN oauth2_accounts oa ON u.id = oa.user_id
-        WHERE oa.provider = $1 AND oa.provider_user_id = $2 AND u.is_active = TRUE"#,
+        WHERE oa.provider = $1 AND oa.provider_user_id = $2 AND u.is_active = TRUE AND u.deleted_at IS NULL"#,
         provider,
         provider_user_id,
     )

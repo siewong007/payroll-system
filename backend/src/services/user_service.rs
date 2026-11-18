@@ -318,6 +318,12 @@ pub async fn list_users(
         }
         for user in &mut result {
             user.companies = by_user.remove(&user.id).unwrap_or_default();
+            if !caller_is_super_admin
+                && let Some(active_cid) = user.company_id
+                && !user.companies.iter().any(|c| c.id == active_cid)
+            {
+                user.company_id = None;
+            }
         }
     }
 
@@ -430,6 +436,10 @@ pub async fn update_user(
     if roles_changed || companies_changed || deactivating {
         revoke_access(&mut tx, user_id).await?;
     }
+    if deactivating || email.as_deref().is_some_and(|e| e != existing.email) {
+        crate::repositories::password_reset_requests::expire_pending_for_user(&mut *tx, user_id)
+            .await?;
+    }
 
     audit_logs::insert(
         &mut *tx,
@@ -488,6 +498,8 @@ pub async fn delete_user(
     // Both halves of the session state, not just refresh tokens: an access token
     // outlives its refresh token and `AuthUser` checks the session row.
     revoke_access(&mut tx, user_id).await?;
+    crate::repositories::password_reset_requests::expire_pending_for_user(&mut *tx, user_id)
+        .await?;
     user_companies::delete_by_user(&mut *tx, user_id).await?;
 
     audit_logs::insert(

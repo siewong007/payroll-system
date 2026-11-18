@@ -479,7 +479,7 @@ pub async fn create_kiosk_credential(
     .await?;
 
     let public_url = format!(
-        "{}/kiosk/{}",
+        "{}/kiosk#{}",
         state.config.frontend_url.trim_end_matches('/'),
         secret
     );

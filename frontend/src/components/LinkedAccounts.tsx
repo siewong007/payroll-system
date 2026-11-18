@@ -87,8 +87,13 @@ export function LinkedAccounts() {
       )}
 
       <div className="py-4 flex items-center gap-3">
-        {google?.avatar_url ? (
-          <img src={google.avatar_url} alt="" className="w-8 h-8 rounded-full" />
+        {google?.avatar_url && /^https:\/\//i.test(google.avatar_url) ? (
+          <img
+            src={google.avatar_url}
+            alt=""
+            referrerPolicy="no-referrer"
+            className="w-8 h-8 rounded-full"
+          />
         ) : (
           <GoogleIcon />
         )}

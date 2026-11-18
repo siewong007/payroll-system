@@ -837,6 +837,8 @@ async fn absent_bookmark(pool: &sqlx::PgPool, company_id: uuid::Uuid) -> Option<
         .expect("read the auto-absent bookmark")
 }
 
+static GLOBAL_ABSENT_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// Reproduce a row written before migration 1015 existed. The trigger is the
 /// point of that migration, so planting a value it rejects means stepping
 /// around it deliberately — re-enabled even if the write fails, or every later
@@ -876,6 +878,7 @@ async fn plant_corrupt_timezone(pool: &sqlx::PgPool, company_id: uuid::Uuid, bad
 /// where the other schedule fields are already validated.
 #[tokio::test]
 async fn work_schedule_writes_reject_an_unrecognised_timezone() {
+    let _absent_guard = GLOBAL_ABSENT_TEST_LOCK.lock().await;
     let Some(pool) = skip_if_no_db().await else {
         return;
     };
@@ -962,6 +965,7 @@ async fn work_schedule_writes_reject_an_unrecognised_timezone() {
 /// row by hand — and the owed dates aged out of the backfill window meanwhile.
 #[tokio::test]
 async fn a_wedged_tenant_no_longer_halts_the_absent_run_and_heals_itself() {
+    let _absent_guard = GLOBAL_ABSENT_TEST_LOCK.lock().await;
     let Some(pool) = skip_if_no_db().await else {
         return;
     };
@@ -1065,6 +1069,7 @@ async fn a_wedged_tenant_no_longer_halts_the_absent_run_and_heals_itself() {
 /// refuses to create, and one the dashboard, summary and export all show.
 #[tokio::test]
 async fn auto_absent_uses_each_tenant_own_calendar_and_bookmark() {
+    let _absent_guard = GLOBAL_ABSENT_TEST_LOCK.lock().await;
     let Some(pool) = skip_if_no_db().await else {
         return;
     };

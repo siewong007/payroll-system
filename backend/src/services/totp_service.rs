@@ -39,18 +39,37 @@ fn generate_backup_codes() -> Vec<String> {
     (0..BACKUP_CODE_COUNT)
         .map(|_| {
             let b = *Uuid::new_v4().as_bytes();
-            format!("{:02X}{:02X}-{:02X}{:02X}", b[0], b[1], b[2], b[3])
+            // Exclude UUIDv4 version/variant bytes (6 and 8) so all 8 random bytes
+            // carry uniform OS CSPRNG entropy (64 bits per recovery code).
+            format!(
+                "{:02X}{:02X}-{:02X}{:02X}-{:02X}{:02X}-{:02X}{:02X}",
+                b[0], b[1], b[2], b[3], b[4], b[5], b[7], b[9]
+            )
         })
         .collect()
 }
 
-async fn store_backup_codes(pool: &PgPool, user_id: Uuid, codes: &[String]) -> AppResult<()> {
-    let hashes: Vec<String> = codes
-        .iter()
-        .map(|c| bcrypt::hash(c, BACKUP_CODE_BCRYPT_COST))
-        .collect::<Result<_, _>>()
-        .map_err(|_| AppError::Internal("Failed to hash backup codes".into()))?;
-    user_totp_backup_codes::insert_many(pool, user_id, &hashes).await
+async fn hash_backup_codes(codes: Vec<String>) -> AppResult<Vec<String>> {
+    tokio::task::spawn_blocking(move || {
+        codes
+            .iter()
+            .map(|c| bcrypt::hash(c, BACKUP_CODE_BCRYPT_COST))
+            .collect::<Result<Vec<_>, _>>()
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("Backup code hashing task failed: {e}")))?
+    .map_err(|_| AppError::Internal("Failed to hash backup codes".into()))
+}
+
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (&x, &y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
 }
 
 /// Verifies the current password and returns the user row, so callers that
@@ -59,7 +78,8 @@ async fn verify_password(pool: &PgPool, user_id: Uuid, password: &str) -> AppRes
     let user = auth_service::get_user_by_id(pool, user_id).await?;
     // A malformed stored hash is an authentication failure, not a server
     // fault — reporting it as one would turn a data problem into a 500.
-    let valid = bcrypt::verify(password, &user.password_hash)
+    let valid = auth_service::verify_password(password, &user.password_hash)
+        .await
         .map_err(|_| AppError::BadRequest("Current password is incorrect".into()))?;
     if !valid {
         return Err(AppError::BadRequest("Current password is incorrect".into()));
@@ -114,6 +134,19 @@ pub async fn confirm_setup(
     encryption_key: &str,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<Vec<String>> {
+    confirm_setup_with_session(pool, user_id, None, code, encryption_key, audit_meta).await
+}
+
+/// Session-aware variant used by HTTP setup confirmation so other active
+/// sessions are revoked upon 2FA enrollment without dropping the caller's own.
+pub async fn confirm_setup_with_session(
+    pool: &PgPool,
+    user_id: Uuid,
+    current_session_id: Option<Uuid>,
+    code: &str,
+    encryption_key: &str,
+    audit_meta: Option<&AuditRequestMeta>,
+) -> AppResult<Vec<String>> {
     let row = user_totp::find_by_user(pool, user_id)
         .await?
         .ok_or_else(|| AppError::BadRequest("No 2FA setup in progress".into()))?;
@@ -131,10 +164,18 @@ pub async fn confirm_setup(
         return Err(AppError::Unauthorized("Invalid authentication code".into()));
     }
 
-    user_totp::confirm(pool, user_id).await?;
-
     let backup_codes = generate_backup_codes();
-    store_backup_codes(pool, user_id, &backup_codes).await?;
+    let hashes = hash_backup_codes(backup_codes.clone()).await?;
+
+    let mut tx = pool.begin().await?;
+    user_totp::confirm(&mut *tx, user_id).await?;
+    user_totp_backup_codes::delete_for_user(&mut *tx, user_id).await?;
+    user_totp_backup_codes::insert_many(&mut *tx, user_id, &hashes).await?;
+    if let Some(sid) = current_session_id {
+        user_sessions::revoke_others(&mut *tx, user_id, sid).await?;
+        refresh_tokens::revoke_other_sessions(&mut *tx, user_id, sid).await?;
+    }
+    tx.commit().await?;
 
     // Best-effort: the enrolment succeeded; failing the request over its
     // trail row would leave the account in an ambiguous state. The company
@@ -165,15 +206,12 @@ pub async fn is_enabled(pool: &PgPool, user_id: Uuid) -> AppResult<bool> {
         .unwrap_or(false))
 }
 
+const MAX_2FA_ATTEMPTS: i32 = 5;
+const LOCK_2FA_MINUTES: i64 = 15;
+
 /// Verifies a login-time code: a current TOTP code, or (as a fallback) an
 /// unused backup code, which is consumed on success. Used only at the
 /// post-primary-auth MFA gate.
-///
-/// The TOTP attempt is tried *before* the backup-code loop but its failure
-/// never ends the check: if the stored secret cannot be decrypted (or the
-/// verification errors for any other reason) an employee presenting a valid
-/// backup code must still get in. Running decryption first and `?`-ing the
-/// error is what turned a key-management mistake into a full lockout.
 pub async fn verify_login_code(
     pool: &PgPool,
     user_id: Uuid,
@@ -185,14 +223,41 @@ pub async fn verify_login_code(
         .filter(|r| r.enabled)
         .ok_or_else(|| AppError::Unauthorized("2FA is not enabled".into()))?;
 
+    if row
+        .locked_until
+        .is_some_and(|until| until > chrono::Utc::now())
+    {
+        return Err(AppError::TooManyRequests(
+            "Too many failed 2FA attempts. Please try again later.".into(),
+        ));
+    }
+
+    let trimmed = code.trim();
+
     match crypto::decrypt_secret(&row.secret_encrypted, encryption_key)
         .and_then(|secret_b32| build_totp(secret_to_bytes(&secret_b32)?, ""))
-        .and_then(|totp| {
-            totp.check_current(code)
-                .map_err(|e| AppError::Internal(format!("Failed to check code: {e}")))
-        }) {
-        Ok(true) => return Ok(()),
-        Ok(false) => {}
+    {
+        Ok(totp) => {
+            let now_step = chrono::Utc::now().timestamp() / 30;
+            let mut matched_step: Option<i64> = None;
+            for offset in [-1i64, 0, 1] {
+                let step = now_step + offset;
+                if step >= 0 {
+                    let expected = totp.generate((step as u64) * 30);
+                    if constant_time_eq(trimmed.as_bytes(), expected.as_bytes()) {
+                        matched_step = Some(step);
+                    }
+                }
+            }
+            if let Some(step) = matched_step {
+                if user_totp::claim_totp_step(pool, user_id, step).await? {
+                    return Ok(());
+                }
+                user_totp::record_failure(pool, user_id, MAX_2FA_ATTEMPTS, LOCK_2FA_MINUTES)
+                    .await?;
+                return Err(AppError::Unauthorized("Invalid authentication code".into()));
+            }
+        }
         Err(error) => {
             tracing::warn!(
                 error = %error,
@@ -202,13 +267,30 @@ pub async fn verify_login_code(
         }
     }
 
-    for candidate in user_totp_backup_codes::find_unused(pool, user_id).await? {
-        if bcrypt::verify(code, &candidate.code_hash).unwrap_or(false) {
-            user_totp_backup_codes::mark_used(pool, candidate.id).await?;
-            return Ok(());
-        }
+    let normalized = trimmed.to_ascii_uppercase();
+    let unused = user_totp_backup_codes::find_unused(pool, user_id).await?;
+    let candidates: Vec<(Uuid, String)> = unused.into_iter().map(|c| (c.id, c.code_hash)).collect();
+
+    let matched_id = tokio::task::spawn_blocking(move || {
+        candidates.into_iter().find_map(|(id, hash)| {
+            if bcrypt::verify(&normalized, &hash).unwrap_or(false) {
+                Some(id)
+            } else {
+                None
+            }
+        })
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("Backup code verification task failed: {e}")))?;
+
+    if let Some(id) = matched_id
+        && user_totp_backup_codes::mark_used(pool, id).await?
+    {
+        user_totp::reset_failures(pool, user_id).await?;
+        return Ok(());
     }
 
+    user_totp::record_failure(pool, user_id, MAX_2FA_ATTEMPTS, LOCK_2FA_MINUTES).await?;
     Err(AppError::Unauthorized("Invalid authentication code".into()))
 }
 
@@ -220,12 +302,15 @@ pub async fn disable(
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<()> {
     let user = verify_password(pool, user_id, password).await?;
+    auth_service::require_two_factor_not_enforced(pool, &user).await?;
 
-    user_totp_backup_codes::delete_for_user(pool, user_id).await?;
-    let rows = user_totp::delete_for_user(pool, user_id).await?;
+    let mut tx = pool.begin().await?;
+    user_totp_backup_codes::delete_for_user(&mut *tx, user_id).await?;
+    let rows = user_totp::delete_for_user(&mut *tx, user_id).await?;
     if rows == 0 {
         return Err(AppError::NotFound("2FA is not enabled".into()));
     }
+    tx.commit().await?;
 
     let _ = audit_service::log_action_with_metadata(
         pool,
@@ -257,9 +342,13 @@ pub async fn regenerate_backup_codes(
         return Err(AppError::BadRequest("2FA is not enabled".into()));
     }
 
-    user_totp_backup_codes::delete_for_user(pool, user_id).await?;
     let codes = generate_backup_codes();
-    store_backup_codes(pool, user_id, &codes).await?;
+    let hashes = hash_backup_codes(codes.clone()).await?;
+
+    let mut tx = pool.begin().await?;
+    user_totp_backup_codes::delete_for_user(&mut *tx, user_id).await?;
+    user_totp_backup_codes::insert_many(&mut *tx, user_id, &hashes).await?;
+    tx.commit().await?;
 
     let _ = audit_service::log_action_with_metadata(
         pool,

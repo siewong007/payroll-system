@@ -19,11 +19,13 @@
 //! traversal defect; the stricter one won.
 
 use sqlx::PgPool;
+use uuid::Uuid;
 
 use crate::core::error::{AppError, AppResult};
 use crate::core::upload_path::{self, ALLOWED_UPLOAD_EXTENSIONS};
 use crate::models::upload::{UploadAccess, UploadReference, UploadReferenceKind};
 use crate::repositories::reads::uploads;
+use crate::repositories::uploaded_files;
 
 /// Largest upload the API will store, enforced on both entry paths.
 pub const MAX_UPLOAD_SIZE: usize = 10 * 1024 * 1024; // 10 MB
@@ -42,8 +44,8 @@ pub fn validate_magic_bytes(data: &[u8], claimed_ext: &str) -> bool {
         "pdf" => data.starts_with(b"%PDF"),
         "jpg" | "jpeg" => data.starts_with(&[0xFF, 0xD8, 0xFF]),
         "png" => data.starts_with(&[0x89, 0x50, 0x4E, 0x47]),
-        "gif" => data.starts_with(b"GIF8"),
-        "webp" => data.len() >= 12 && &data[8..12] == b"WEBP",
+        "gif" => data.starts_with(b"GIF87a") || data.starts_with(b"GIF89a"),
+        "webp" => data.len() >= 12 && data.starts_with(b"RIFF") && &data[8..12] == b"WEBP",
         "doc" | "xls" => data.starts_with(&[0xD0, 0xCF, 0x11, 0xE0]),
         "docx" | "xlsx" => data.starts_with(&[0x50, 0x4B, 0x03, 0x04]),
         _ => false,
@@ -88,6 +90,10 @@ pub fn validate_upload_bytes(filename: &str, data: &[u8]) -> AppResult<()> {
 /// on. A company-wide document (`employee_id IS NULL`) has no owner and is
 /// therefore always the permission path.
 fn permits(access: &UploadAccess, reference: &UploadReference) -> bool {
+    if reference.is_confidential && !access.can_view_confidential {
+        return false;
+    }
+
     let is_own_record =
         reference.employee_id.is_some() && reference.employee_id == access.employee_id;
     if is_own_record {
@@ -97,7 +103,34 @@ fn permits(access: &UploadAccess, reference: &UploadReference) -> bool {
     match reference.kind {
         UploadReferenceKind::Claim | UploadReferenceKind::LeaveRequest => access.can_view_approvals,
         UploadReferenceKind::Document => access.can_view_documents,
+        UploadReferenceKind::CompanyLogo => true,
     }
+}
+
+/// Reject attempts to attach another tenant's local upload path to a record.
+///
+/// Legacy SQL-seeded URLs without an `uploaded_files` row remain allowed here
+/// so seeded fixtures keep working; newly uploaded files always carry a row
+/// proving which company created them.
+pub async fn ensure_upload_belongs_to_company(
+    pool: &PgPool,
+    company_id: Uuid,
+    file_url: Option<&str>,
+) -> AppResult<()> {
+    let Some(url) = file_url else {
+        return Ok(());
+    };
+    let Some(stored_name) = url.strip_prefix(upload_path::UPLOAD_URL_PREFIX) else {
+        return Ok(());
+    };
+    upload_path::sanitize_stored_name(stored_name)?;
+
+    if let Some(owner) = uploaded_files::find_by_stored_name(pool, stored_name).await?
+        && owner.company_id != company_id
+    {
+        return Err(AppError::BadRequest("Invalid file URL".into()));
+    }
+    Ok(())
 }
 
 /// Reads an uploaded file, or fails as though it did not exist.
@@ -112,13 +145,28 @@ pub async fn read_authorized(
     access: &UploadAccess,
 ) -> AppResult<Vec<u8>> {
     let path = upload_path::stored_path(filename)?;
-    let file_url = format!("{}{}", upload_path::UPLOAD_URL_PREFIX, filename);
-
-    let references = uploads::find_references(pool, access.company_id, &file_url).await?;
-    if !references
-        .iter()
-        .any(|reference| permits(access, reference))
+    let owner = uploaded_files::find_by_stored_name(pool, filename).await?;
+    if let Some(ref record) = owner
+        && record.company_id != access.company_id
     {
+        return Err(AppError::NotFound("File not found".into()));
+    }
+
+    let file_url = format!("{}{}", upload_path::UPLOAD_URL_PREFIX, filename);
+    let references = uploads::find_references(pool, access.company_id, &file_url).await?;
+    let permitted = if references.is_empty() {
+        // Newly uploaded preview before form submission: visible only to the uploader.
+        owner
+            .as_ref()
+            .and_then(|record| record.uploaded_by)
+            .is_some_and(|uploader| uploader == access.user_id)
+    } else {
+        references
+            .iter()
+            .any(|reference| permits(access, reference))
+    };
+
+    if !permitted {
         return Err(AppError::NotFound("File not found".into()));
     }
 
@@ -135,14 +183,20 @@ mod tests {
     fn access(employee_id: Option<Uuid>, approvals: bool, documents: bool) -> UploadAccess {
         UploadAccess {
             company_id: Uuid::new_v4(),
+            user_id: Uuid::new_v4(),
             employee_id,
             can_view_approvals: approvals,
             can_view_documents: documents,
+            can_view_confidential: false,
         }
     }
 
     fn reference(kind: UploadReferenceKind, employee_id: Option<Uuid>) -> UploadReference {
-        UploadReference { kind, employee_id }
+        UploadReference {
+            kind,
+            employee_id,
+            is_confidential: false,
+        }
     }
 
     // Path-shape cases (traversal, separators, absolute, NUL, UNC, length) are
@@ -248,6 +302,30 @@ mod tests {
             &caller,
             &reference(UploadReferenceKind::Claim, Some(Uuid::new_v4()))
         ));
+    }
+
+    #[test]
+    fn confidential_documents_require_confidential_privilege() {
+        let employee = Uuid::new_v4();
+        let plain_viewer = UploadAccess {
+            company_id: Uuid::new_v4(),
+            user_id: Uuid::new_v4(),
+            employee_id: Some(employee),
+            can_view_approvals: true,
+            can_view_documents: true,
+            can_view_confidential: false,
+        };
+        let hr_viewer = UploadAccess {
+            can_view_confidential: true,
+            ..plain_viewer
+        };
+        let confidential_doc = UploadReference {
+            kind: UploadReferenceKind::Document,
+            employee_id: Some(employee),
+            is_confidential: true,
+        };
+        assert!(!permits(&plain_viewer, &confidential_doc));
+        assert!(permits(&hr_viewer, &confidential_doc));
     }
 
     #[test]

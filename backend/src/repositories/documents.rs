@@ -33,6 +33,7 @@ pub async fn count_filtered(
     category_id: Option<Uuid>,
     status: Option<&str>,
     search: Option<&str>,
+    include_confidential: bool,
 ) -> AppResult<i64> {
     let count = sqlx::query_scalar!(
         r#"SELECT COUNT(*) AS "count!" FROM documents
@@ -40,12 +41,14 @@ pub async fn count_filtered(
         AND ($2::uuid IS NULL OR employee_id = $2)
         AND ($3::uuid IS NULL OR category_id = $3)
         AND ($4::text IS NULL OR status::text = $4)
-        AND ($5::text IS NULL OR title ILIKE '%' || $5 || '%' OR file_name ILIKE '%' || $5 || '%')"#,
+        AND ($5::text IS NULL OR title ILIKE '%' || $5 || '%' OR file_name ILIKE '%' || $5 || '%')
+        AND ($6::bool OR is_confidential IS NOT TRUE)"#,
         company_id,
         employee_id,
         category_id,
         status,
         search,
+        include_confidential,
     )
     .fetch_one(executor)
     .await?;
@@ -61,6 +64,7 @@ pub async fn list_filtered(
     category_id: Option<Uuid>,
     status: Option<&str>,
     search: Option<&str>,
+    include_confidential: bool,
     limit: i64,
     offset: i64,
 ) -> AppResult<Vec<Document>> {
@@ -78,13 +82,15 @@ pub async fn list_filtered(
         AND ($3::uuid IS NULL OR d.category_id = $3)
         AND ($4::text IS NULL OR d.status::text = $4)
         AND ($5::text IS NULL OR d.title ILIKE '%' || $5 || '%' OR d.file_name ILIKE '%' || $5 || '%')
+        AND ($6::bool OR d.is_confidential IS NOT TRUE)
         ORDER BY d.created_at DESC
-        LIMIT $6 OFFSET $7"#,
+        LIMIT $7 OFFSET $8"#,
         company_id,
         employee_id,
         category_id,
         status,
         search,
+        include_confidential,
         limit,
         offset,
     )
@@ -211,22 +217,6 @@ pub async fn update(
     Ok(doc)
 }
 
-/// The stored file_url of a non-deleted document, or `None` (for cleanup on delete).
-pub async fn file_url(
-    executor: impl Executor<'_, Database = Postgres>,
-    id: Uuid,
-    company_id: Uuid,
-) -> AppResult<Option<String>> {
-    let file_url = sqlx::query_scalar!(
-        "SELECT file_url FROM documents WHERE id = $1 AND company_id = $2 AND deleted_at IS NULL",
-        id,
-        company_id,
-    )
-    .fetch_optional(executor)
-    .await?;
-    Ok(file_url)
-}
-
 pub async fn delete(
     executor: impl Executor<'_, Database = Postgres>,
     id: Uuid,
@@ -282,6 +272,7 @@ pub async fn expiring(
     executor: impl Executor<'_, Database = Postgres>,
     company_id: Uuid,
     days_ahead: i32,
+    include_confidential: bool,
 ) -> AppResult<Vec<Document>> {
     let docs = sqlx::query_as!(
         Document,
@@ -296,9 +287,11 @@ pub async fn expiring(
         AND d.expiry_date IS NOT NULL
         AND d.expiry_date <= CURRENT_DATE + $2::int * INTERVAL '1 day'
         AND d.status::text != 'archived'
+        AND ($3::bool OR d.is_confidential IS NOT TRUE)
         ORDER BY d.expiry_date ASC"#,
         company_id,
         days_ahead,
+        include_confidential,
     )
     .fetch_all(executor)
     .await?;

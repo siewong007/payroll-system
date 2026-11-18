@@ -73,6 +73,7 @@ fn create_request_touches_payroll_fields(req: &CreateEmployeeRequest) -> bool {
         // Banking decides where salary lands, so it is payroll-sensitive.
         || req.bank_name.is_some()
         || req.bank_account_number.is_some()
+        || req.bank_account_type.is_some()
 }
 
 fn update_request_touches_payroll_fields(req: &UpdateEmployeeRequest) -> bool {
@@ -96,6 +97,7 @@ fn update_request_touches_payroll_fields(req: &UpdateEmployeeRequest) -> bool {
         // Banking decides where salary lands, so it is payroll-sensitive.
         || req.bank_name.is_some()
         || req.bank_account_number.is_some()
+        || req.bank_account_type.is_some()
 }
 
 pub async fn list(
@@ -181,7 +183,7 @@ pub async fn create(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    let (emp, account_info) = employee_service::create_employee(
+    let (mut emp, account_info) = employee_service::create_employee(
         &state.pool,
         company_id,
         req,
@@ -233,6 +235,13 @@ pub async fn create(
         });
     }
 
+    if !auth.is_payroll_privileged() {
+        redact_payroll_fields(&mut emp);
+        if !auth.can(Permission::ManageEmployees) {
+            redact_personal_fields(&mut emp);
+        }
+    }
+
     Ok(Json(serde_json::json!({
         "employee": emp,
         "account": account_info,
@@ -257,7 +266,7 @@ pub async fn update(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    let emp = employee_service::update_employee(
+    let mut emp = employee_service::update_employee(
         &state.pool,
         id,
         company_id,
@@ -266,6 +275,12 @@ pub async fn update(
         Some(&audit_meta),
     )
     .await?;
+    if !auth.is_payroll_privileged() {
+        redact_payroll_fields(&mut emp);
+        if !auth.can(Permission::ManageEmployees) {
+            redact_personal_fields(&mut emp);
+        }
+    }
     Ok(Json(emp))
 }
 

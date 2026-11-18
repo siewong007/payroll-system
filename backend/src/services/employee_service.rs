@@ -8,7 +8,7 @@ use crate::models::employee::{
     Tp3Record, UpdateEmployeeRequest,
 };
 use crate::repositories::{
-    employees, refresh_tokens, salary_history, tp3_records, user_companies, users,
+    employees, refresh_tokens, salary_history, tp3_records, user_companies, user_sessions, users,
 };
 use crate::services::audit_service::AuditRequestMeta;
 
@@ -121,6 +121,43 @@ pub async fn create_user_for_employee(
     .await
 }
 
+fn random_index_unbiased(len: usize) -> usize {
+    debug_assert!(len > 0 && len <= 256);
+    let limit = 256 - (256 % len);
+    loop {
+        let bytes = *Uuid::new_v4().as_bytes();
+        // Exclude UUIDv4 version (byte 6) and variant (byte 8) bit-masked bytes.
+        for &idx in &[0usize, 1, 2, 3, 4, 5, 7, 9, 10, 11, 12, 13, 14, 15] {
+            let v = bytes[idx] as usize;
+            if v < limit {
+                return v % len;
+            }
+        }
+    }
+}
+
+fn generate_random_password() -> String {
+    const UPPER: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    const LOWER: &[u8] = b"abcdefghijklmnopqrstuvwxyz";
+    const DIGIT: &[u8] = b"0123456789";
+    const SYMBOL: &[u8] = b"!@#$%^&*";
+    const ALL: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*";
+
+    let mut chars = Vec::with_capacity(16);
+    chars.push(UPPER[random_index_unbiased(UPPER.len())]);
+    chars.push(LOWER[random_index_unbiased(LOWER.len())]);
+    chars.push(DIGIT[random_index_unbiased(DIGIT.len())]);
+    chars.push(SYMBOL[random_index_unbiased(SYMBOL.len())]);
+    for _ in 0..12 {
+        chars.push(ALL[random_index_unbiased(ALL.len())]);
+    }
+    for i in (1..chars.len()).rev() {
+        let j = random_index_unbiased(i + 1);
+        chars.swap(i, j);
+    }
+    String::from_utf8(chars).expect("ASCII password bytes")
+}
+
 /// Primitive-based form so callers holding row data — the bulk importer —
 /// can provision portal accounts without materialising a full `Employee`
 /// (plan item 14). Same semantics as [`create_user_for_employee`].
@@ -130,12 +167,10 @@ pub async fn create_user_for_employee_fields(
     company_id: Uuid,
     email: &str,
     full_name: &str,
-    ic_number: Option<&str>,
+    _ic_number: Option<&str>,
 ) -> AppResult<Option<EmployeeAccountInfo>> {
     // Check if email already exists
     if let Some(existing) = users::find_by_email(pool, email).await? {
-        let existing_id = existing.id;
-
         // Never touch a soft-deleted account: hard-deleting and recreating it
         // would resurrect a tombstone under a caller-chosen password, and
         // linking it would revive an account that must not authenticate.
@@ -147,9 +182,7 @@ pub async fn create_user_for_employee_fields(
             return Ok(None);
         }
 
-        // Never touch an account belonging to another company. Both branches
-        // below rewrite the account's company/employee binding, so without this
-        // any caller could pull a foreign tenant's user into their own company.
+        // Never touch an account belonging to another company.
         if existing.company_id != Some(company_id) {
             tracing::warn!(
                 employee_id = %employee_id,
@@ -159,18 +192,15 @@ pub async fn create_user_for_employee_fields(
         }
 
         if existing.roles.as_slice() == ["employee"] {
-            // Stale employee account in this same company — clean up and recreate below
-            user_companies::delete_by_user(pool, existing_id).await?;
-            refresh_tokens::delete_by_user(pool, existing_id).await?;
-            users::delete(pool, existing_id).await?;
+            // Never delete or commandeer an existing employee account on duplicate email.
+            tracing::warn!(
+                employee_id = %employee_id,
+                existing_user_id = %existing.id,
+                "employee email already belongs to an existing employee account; skipping portal account creation"
+            );
+            return Ok(None);
         } else {
-            // Never adopt a privileged account into an employee record. Linking
-            // it would hand this employee's lifecycle control over that account:
-            // `soft_delete_employee` hard-deletes whatever `employee_id` points
-            // at, so an employee-manager could capture and permanently destroy a
-            // super_admin whose active company happens to be this one —
-            // bypassing `require_super_admin`, the self-delete guard and the
-            // tombstone that stops the account being recreated.
+            // Never adopt a privileged account into an employee record.
             tracing::warn!(
                 employee_id = %employee_id,
                 "employee email belongs to a privileged account; skipping portal account creation"
@@ -179,8 +209,7 @@ pub async fn create_user_for_employee_fields(
         }
     }
 
-    // Default password: IC number or "Welcome@123" if no IC
-    let default_password = ic_number.unwrap_or("Welcome@123").to_string();
+    let default_password = generate_random_password();
     // bcrypt at cost 12 is ~250ms of blocking CPU. In the bulk-import path this
     // runs once per imported employee, so off the async worker it must go —
     // the same spawn_blocking auth_service already uses for login hashing.
@@ -191,8 +220,9 @@ pub async fn create_user_for_employee_fields(
         .map_err(|e| AppError::Internal(format!("Failed to hash password: {}", e)))?;
 
     let user_id = Uuid::now_v7();
+    let mut tx = pool.begin().await?;
     users::insert_employee_user(
-        pool,
+        &mut *tx,
         user_id,
         email,
         &password_hash,
@@ -203,15 +233,16 @@ pub async fn create_user_for_employee_fields(
     .await?;
 
     // Link user to company
-    user_companies::insert(pool, user_id, company_id).await?;
+    user_companies::insert(&mut *tx, user_id, company_id).await?;
+    tx.commit().await?;
 
     Ok(Some(EmployeeAccountInfo {
         created: true,
         email: email.to_string(),
         role: "employee".into(),
-        default_password: Some(default_password.to_string()),
+        default_password: Some(default_password),
         message: format!(
-            "User account created for {full_name}. Default password is their IC number."
+            "Temporary portal password generated for {full_name}; password change is required on first sign-in."
         ),
     }))
 }
@@ -311,6 +342,12 @@ pub async fn update_employee(
         )
         .await?;
     }
+
+    if req.is_active == Some(false) {
+        user_sessions::revoke_by_employee(&mut *tx, id).await?;
+        refresh_tokens::delete_by_employee(&mut *tx, id).await?;
+    }
+
     tx.commit().await?;
 
     // Audit Log
@@ -368,6 +405,7 @@ pub async fn soft_delete_employee(
     // user row is soft-deleted so the audit trail, payroll approvals and
     // attendance records that reference it stay intact.
     user_companies::delete_by_employee(&mut *tx, id).await?;
+    user_sessions::revoke_by_employee(&mut *tx, id).await?;
     refresh_tokens::delete_by_employee(&mut *tx, id).await?;
     users::soft_delete_by_employee(&mut *tx, id, deleted_by).await?;
 

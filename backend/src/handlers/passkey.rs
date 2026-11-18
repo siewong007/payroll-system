@@ -62,7 +62,7 @@ pub async fn registration_complete(
     Json(req): Json<RegistrationCompleteRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
     let state_json =
-        passkey_service::get_and_delete_challenge(&state.pool, req.challenge_id, "registration")
+        passkey_service::consume_registration_challenge(&state.pool, req.challenge_id, auth.0.sub)
             .await?;
 
     let reg_state: PasskeyRegistration = serde_json::from_value(state_json)

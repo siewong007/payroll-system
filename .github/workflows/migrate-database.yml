@@ -88,15 +88,16 @@ jobs:
             -o StrictHostKeyChecking=yes
             -o "UserKnownHostsFile=$RUNNER_TEMP/vps-known-hosts"
           )
+          ssh "${ssh_opts[@]}" "$VPS_USER@$VPS_HOST" \
+            "set -eu && install -d -m 0700 /opt/payroll /opt/payroll/migration /opt/payroll/migration/.staging"
           scp "${scp_opts[@]}" \
             deploy/deploy.sh deploy/migrate-database.sh deploy/docker-compose.prod.yml \
-            "$VPS_USER@$VPS_HOST:/tmp/"
+            "$VPS_USER@$VPS_HOST:/opt/payroll/migration/.staging/"
           ssh "${ssh_opts[@]}" "$VPS_USER@$VPS_HOST" \
             "set -eu
-             sudo install -d -m 0750 /opt/payroll /opt/payroll/migration
-             sudo install -m 0755 /tmp/deploy.sh /tmp/migrate-database.sh /opt/payroll/migration/
-             sudo install -m 0644 /tmp/docker-compose.prod.yml /opt/payroll/migration/
-             rm -f /tmp/deploy.sh /tmp/migrate-database.sh /tmp/docker-compose.prod.yml"
+             install -m 0755 /opt/payroll/migration/.staging/deploy.sh /opt/payroll/migration/.staging/migrate-database.sh /opt/payroll/migration/
+             install -m 0644 /opt/payroll/migration/.staging/docker-compose.prod.yml /opt/payroll/migration/
+             rm -rf /opt/payroll/migration/.staging"
 
       - name: Run stage on the VPS
         shell: bash
@@ -104,6 +105,7 @@ jobs:
           STAGE: ${{ inputs.stage }}
         run: |
           set -euo pipefail
+          [[ "$STAGE" =~ ^(discover|backup|restore|verify|inspect|cutover|rollback)$ ]]
           ssh_opts=(
             -i "$RUNNER_TEMP/vps-key"
             -p "$VPS_PORT"
@@ -119,7 +121,7 @@ jobs:
           # self-locates the newest CI release dir (it runs as root and can
           # read the 0750 releases tree), so no special-casing is needed here.
           ssh "${ssh_opts[@]}" "$VPS_USER@$VPS_HOST" \
-            "sudo /bin/bash /opt/payroll/migration/migrate-database.sh $STAGE"
+            "sudo /bin/bash /opt/payroll/migration/migrate-database.sh '$STAGE'"
 
       - name: Remove ephemeral SSH key
         if: always()

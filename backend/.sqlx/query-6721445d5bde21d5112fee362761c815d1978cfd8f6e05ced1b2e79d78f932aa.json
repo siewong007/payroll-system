@@ -1,0 +1,27 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT COUNT(*) AS \"count!\" FROM documents\n        WHERE company_id = $1 AND deleted_at IS NULL\n        AND ($2::uuid IS NULL OR employee_id = $2)\n        AND ($3::uuid IS NULL OR category_id = $3)\n        AND ($4::text IS NULL OR status::text = $4)\n        AND ($5::text IS NULL OR title ILIKE '%' || $5 || '%' OR file_name ILIKE '%' || $5 || '%')\n        AND ($6::bool OR is_confidential IS NOT TRUE)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Text",
+        "Bool"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "6721445d5bde21d5112fee362761c815d1978cfd8f6e05ced1b2e79d78f932aa"
+}

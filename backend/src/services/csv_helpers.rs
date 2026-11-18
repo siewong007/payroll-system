@@ -28,11 +28,13 @@ pub fn sen_to_plain_rm(sen: i64) -> String {
 /// Quoting is the CSV writer's job and is orthogonal — this only handles the
 /// leading-byte execution vector, so the two compose.
 pub fn neutralize_formula(s: &str) -> String {
-    let formula_like = s
-        .as_bytes()
-        .first()
-        .is_some_and(|first| matches!(*first, b'=' | b'+' | b'-' | b'@' | b'\t' | b'\r'));
-    if formula_like {
+    let formula_prefix = |text: &str| {
+        text.as_bytes()
+            .first()
+            .is_some_and(|first| matches!(*first, b'=' | b'+' | b'-' | b'@' | b'\t' | b'\r'))
+    };
+    let trimmed = s.trim_start();
+    if formula_prefix(s) || formula_prefix(trimmed) {
         format!("'{s}")
     } else {
         s.to_string()

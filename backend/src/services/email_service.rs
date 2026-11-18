@@ -74,6 +74,28 @@ pub async fn list_email_logs(
 
 // ── Variable Substitution ──────────────────────────────────────────────
 
+/// Escape HTML meta-characters before interpolating untrusted values into HTML bodies or attributes.
+pub fn escape_html(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#x27;"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+fn sanitize_header_text(s: &str) -> String {
+    s.chars()
+        .filter(|c| !matches!(c, '\r' | '\n') && !c.is_control())
+        .collect()
+}
+
 /// Replace template variables like {{employee_name}}, {{company_name}}, etc.
 #[allow(clippy::too_many_arguments)]
 pub fn substitute_variables(
@@ -96,6 +118,30 @@ pub fn substitute_variables(
         .replace("{{company_name}}", company_name)
 }
 
+/// Substitute variables into an HTML letter template, escaping dynamic values.
+#[allow(clippy::too_many_arguments)]
+pub fn substitute_variables_html(
+    template: &str,
+    employee_name: &str,
+    employee_number: &str,
+    employee_email: &str,
+    designation: &str,
+    department: &str,
+    date_joined: &str,
+    company_name: &str,
+) -> String {
+    substitute_variables(
+        template,
+        &escape_html(employee_name),
+        &escape_html(employee_number),
+        &escape_html(employee_email),
+        &escape_html(designation),
+        &escape_html(department),
+        &escape_html(date_joined),
+        &escape_html(company_name),
+    )
+}
+
 // ── Send Email via SMTP ────────────────────────────────────────────────
 
 /// A `Mailbox` built from the display name and the address separately.
@@ -108,10 +154,11 @@ pub fn substitute_variables(
 /// expressible as a side effect.
 fn mailbox(name: &str, email: &str) -> Result<Mailbox, AddressError> {
     let address: Address = email.parse()?;
-    let display_name = if name.trim().is_empty() {
+    let clean_name = sanitize_header_text(name);
+    let display_name = if clean_name.trim().is_empty() {
         None
     } else {
-        Some(name.to_string())
+        Some(clean_name)
     };
     Ok(Mailbox::new(display_name, address))
 }
@@ -204,7 +251,9 @@ pub async fn send_email_with_stored_body(
     // mistyped address left was a log row stuck at `pending` for ever. There is
     // no backend validation anywhere else on the letter path: the frontend's
     // `includes('@')` was it.
-    let to = mailbox(recipient_name, recipient_email).map_err(|_| {
+    let clean_subject = sanitize_header_text(subject);
+    let clean_name = sanitize_header_text(recipient_name);
+    let to = mailbox(&clean_name, recipient_email).map_err(|_| {
         AppError::Validation(format!("{recipient_email} is not a valid email address"))
     })?;
 
@@ -215,7 +264,7 @@ pub async fn send_email_with_stored_body(
         let email = Message::builder()
             .from(from_mailbox(config)?)
             .to(to)
-            .subject(subject)
+            .subject(&clean_subject)
             .header(ContentType::TEXT_HTML)
             .body(body_html.to_string())
             .map_err(|e| AppError::Internal(format!("Failed to build email: {}", e)))?;
@@ -232,8 +281,8 @@ pub async fn send_email_with_stored_body(
         template_id,
         letter_type,
         recipient_email,
-        recipient_name,
-        subject,
+        &clean_name,
+        &clean_subject,
         stored_body_html,
         created_by,
     )
@@ -279,6 +328,7 @@ pub async fn send_system_email(
         return Ok(());
     }
 
+    let clean_subject = sanitize_header_text(subject);
     let to = mailbox(recipient_name, recipient_email).map_err(|_| {
         AppError::Validation(format!("{recipient_email} is not a valid email address"))
     })?;
@@ -286,7 +336,7 @@ pub async fn send_system_email(
     let email = Message::builder()
         .from(from_mailbox(config)?)
         .to(to)
-        .subject(subject)
+        .subject(&clean_subject)
         .header(ContentType::TEXT_HTML)
         .body(body_html.to_string())
         .map_err(|e| AppError::Internal(format!("Failed to build email: {}", e)))?;
@@ -305,6 +355,8 @@ pub async fn send_system_email(
 // ── Password Reset Email ──────────────────────────────────────────────
 
 pub fn password_reset_html(user_name: &str, reset_url: &str) -> String {
+    let user_name = escape_html(user_name);
+    let reset_url = escape_html(reset_url);
     format!(
         r#"<!DOCTYPE html>
 <html>
@@ -349,9 +401,15 @@ pub fn approval_email_html(
     } else {
         format!(
             r#"<p style="font-size: 13px; color: #d97706; background: #fffbeb; padding: 10px 14px; border-radius: 8px;">{}</p>"#,
-            extra_note
+            escape_html(extra_note)
         )
     };
+
+    let approval_type_escaped = escape_html(approval_type);
+    let approval_type_lower = escape_html(&approval_type.to_lowercase());
+    let employee_name = escape_html(employee_name);
+    let details = escape_html(details);
+    let company_name = escape_html(company_name);
 
     format!(
         r#"<!DOCTYPE html>
@@ -359,7 +417,7 @@ pub fn approval_email_html(
 <head><meta charset="utf-8"></head>
 <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; color: #333;">
   <div style="background: #000; color: #fff; padding: 24px; border-radius: 12px 12px 0 0; text-align: center;">
-    <h1 style="margin: 0; font-size: 24px;">{approval_type} Approved</h1>
+    <h1 style="margin: 0; font-size: 24px;">{approval_type_escaped} Approved</h1>
   </div>
   <div style="border: 1px solid #e5e7eb; border-top: none; padding: 24px; border-radius: 0 0 12px 12px;">
     <p>Dear <strong>{employee_name}</strong>,</p>
@@ -375,12 +433,6 @@ pub fn approval_email_html(
   </p>
 </body>
 </html>"#,
-        approval_type = approval_type,
-        approval_type_lower = approval_type.to_lowercase(),
-        employee_name = employee_name,
-        details = details,
-        extra_section = extra_section,
-        company_name = company_name,
     )
 }
 
@@ -483,6 +535,11 @@ fn welcome_html(
     login_email: &str,
     password_cell: &str,
 ) -> String {
+    let employee_name = escape_html(employee_name);
+    let company_name = escape_html(company_name);
+    let frontend_url = escape_html(frontend_url.trim_end_matches('/'));
+    let login_email = escape_html(login_email);
+    let password_cell = escape_html(password_cell);
     format!(
         r#"<!DOCTYPE html>
 <html>

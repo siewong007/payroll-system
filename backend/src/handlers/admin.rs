@@ -23,6 +23,13 @@ pub struct UserListQuery {
     pub per_page: Option<i64>,
 }
 
+fn require_super_admin(auth: &AuthUser) -> AppResult<()> {
+    if !auth.is_super_admin() {
+        return Err(AppError::Forbidden("Super admin access required".into()));
+    }
+    Ok(())
+}
+
 // ─── Companies ───
 
 pub async fn list_companies(
@@ -30,6 +37,7 @@ pub async fn list_companies(
     auth: AuthUser,
 ) -> AppResult<Json<Vec<Company>>> {
     auth.require_permission(Permission::ManageCompanies)?;
+    require_super_admin(&auth)?;
     let companies = company_service::list_companies(&state.pool).await?;
     Ok(Json(companies))
 }
@@ -40,6 +48,7 @@ pub async fn create_company(
     Json(req): Json<CreateCompanyRequest>,
 ) -> AppResult<Json<Company>> {
     auth.require_permission(Permission::ManageCompanies)?;
+    require_super_admin(&auth)?;
     let company = company_service::create_company(&state.pool, req, auth.0.sub).await?;
     Ok(Json(company))
 }
@@ -51,6 +60,7 @@ pub async fn update_company(
     Json(req): Json<UpdateCompanyRequest>,
 ) -> AppResult<Json<Company>> {
     auth.require_permission(Permission::ManageCompanies)?;
+    require_super_admin(&auth)?;
     let company =
         company_service::update_company(&state.pool, company_id, req, auth.0.sub, None).await?;
     Ok(Json(company))
@@ -62,6 +72,7 @@ pub async fn delete_company(
     Path(company_id): Path<Uuid>,
 ) -> AppResult<Json<serde_json::Value>> {
     auth.require_permission(Permission::ManageCompanies)?;
+    require_super_admin(&auth)?;
     company_service::delete_company(&state.pool, company_id).await?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
@@ -109,6 +120,7 @@ pub async fn create_user(
     ValidatedJson(req): ValidatedJson<CreateUserRequest>,
 ) -> AppResult<Json<UserWithCompanies>> {
     auth.require_permission(Permission::ManageUsers)?;
+    require_super_admin(&auth)?;
     let user = user_service::create_user(&state.pool, req, auth.0.sub, Some(&meta)).await?;
     Ok(Json(user))
 }
@@ -121,6 +133,7 @@ pub async fn update_user(
     ValidatedJson(req): ValidatedJson<UpdateUserRequest>,
 ) -> AppResult<Json<UserWithCompanies>> {
     auth.require_permission(Permission::ManageUsers)?;
+    require_super_admin(&auth)?;
     let user =
         user_service::update_user(&state.pool, user_id, req, auth.0.sub, Some(&meta)).await?;
     Ok(Json(user))
@@ -133,6 +146,7 @@ pub async fn delete_user(
     meta: AuditRequestMeta,
 ) -> AppResult<Json<serde_json::Value>> {
     auth.require_permission(Permission::ManageUsers)?;
+    require_super_admin(&auth)?;
     user_service::delete_user(&state.pool, user_id, auth.0.sub, Some(&meta)).await?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
@@ -172,6 +186,7 @@ pub async fn get_2fa_policy(
     auth: AuthUser,
 ) -> AppResult<Json<TwoFactorPolicyResponse>> {
     auth.require_permission(Permission::ManagePlatformSettings)?;
+    require_super_admin(&auth)?;
     Ok(Json(
         auth_service::get_two_factor_policy(&state.pool).await?,
     ))
@@ -184,6 +199,7 @@ pub async fn set_2fa_policy(
     ValidatedJson(req): ValidatedJson<TwoFactorPolicyRequest>,
 ) -> AppResult<Json<TwoFactorPolicyResponse>> {
     auth.require_permission(Permission::ManagePlatformSettings)?;
+    require_super_admin(&auth)?;
     let status =
         auth_service::set_two_factor_policy(&state.pool, req, auth.0.sub, Some(&audit_meta))
             .await?;

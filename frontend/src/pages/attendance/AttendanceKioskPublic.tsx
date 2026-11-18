@@ -31,8 +31,19 @@ const MIN_MINT_INTERVAL_MS = 5_000;
 
 export function AttendanceKioskPublic() {
   const { t } = useTranslation();
-  const { kioskKey = '' } = useParams<{ kioskKey: string }>();
+  const { kioskKey: paramKey = '' } = useParams<{ kioskKey: string }>();
+  const [kioskKey] = useState<string>(() => {
+    const fromHash = window.location.hash.replace(/^#/, '').trim();
+    return fromHash || paramKey;
+  });
   const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  // Immediately scrub any kiosk secret from the address bar / browser history.
+  useEffect(() => {
+    if (window.location.hash) {
+      window.history.replaceState(null, '', '/kiosk');
+    }
+  }, []);
   const [status, setStatus] = useState<Status>({ kind: 'loading' });
   const [timeLeft, setTimeLeft] = useState(FALLBACK_TTL);
   const [now, setNow] = useState(new Date());

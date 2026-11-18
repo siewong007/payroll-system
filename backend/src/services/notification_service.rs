@@ -53,24 +53,34 @@ impl NotificationChannel for EmailNotificationChannel {
 pub async fn get_notifications(
     pool: &PgPool,
     user_id: Uuid,
+    company_id: Uuid,
     unread_only: bool,
     limit: i64,
 ) -> AppResult<Vec<Notification>> {
-    notifications::list(pool, user_id, unread_only, limit).await
+    notifications::list(pool, user_id, company_id, unread_only, limit).await
 }
 
-pub async fn get_notification_count(pool: &PgPool, user_id: Uuid) -> AppResult<NotificationCount> {
-    let unread = notifications::count_unread(pool, user_id).await?;
-    let total = notifications::count_total(pool, user_id).await?;
+pub async fn get_notification_count(
+    pool: &PgPool,
+    user_id: Uuid,
+    company_id: Uuid,
+) -> AppResult<NotificationCount> {
+    let unread = notifications::count_unread(pool, user_id, company_id).await?;
+    let total = notifications::count_total(pool, user_id, company_id).await?;
     Ok(NotificationCount { unread, total })
 }
 
-pub async fn mark_as_read(pool: &PgPool, user_id: Uuid, notification_id: Uuid) -> AppResult<()> {
-    notifications::mark_read(pool, notification_id, user_id).await
+pub async fn mark_as_read(
+    pool: &PgPool,
+    user_id: Uuid,
+    company_id: Uuid,
+    notification_id: Uuid,
+) -> AppResult<()> {
+    notifications::mark_read(pool, notification_id, user_id, company_id).await
 }
 
-pub async fn mark_all_read(pool: &PgPool, user_id: Uuid) -> AppResult<()> {
-    notifications::mark_all_read(pool, user_id).await
+pub async fn mark_all_read(pool: &PgPool, user_id: Uuid, company_id: Uuid) -> AppResult<()> {
+    notifications::mark_all_read(pool, user_id, company_id).await
 }
 
 #[allow(clippy::too_many_arguments)]

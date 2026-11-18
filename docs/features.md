@@ -20,15 +20,19 @@ repository.
 | Capability | Status | Notes |
 | --- | --- | --- |
 | Password login, JWT access, refresh rotation, logout | End to end | Access tokens stay in memory; refresh uses an httpOnly cookie |
-| Forgot/reset/change password | End to end | Forgot/reset requires SMTP for email delivery |
+| Forgot/reset/change password | End to end | Forgot/reset requires SMTP; password change revokes all active sessions and refresh tokens |
+| TOTP 2FA, backup recovery codes, and code-login | End to end | Dedicated `TOTP_ENCRYPTION_KEY`, replay & lockout guards, `super_admin` recovery reset |
+| Active session management | End to end | Device/IP tracking and per-session revocation in Settings / Portal |
 | WebAuthn passkey registration, sign-in, rename, delete | End to end | Relying-party origin and ID must match the deployed host |
-| Google OAuth2 authorize, callback, link, unlink | Conditional | Backend is implemented; provider credentials are required and the existing callback page is not routed in `App.tsx` |
+| Google OAuth2 authorize, callback, link, unlink | Conditional | Routed at `/oauth2/callback` and `/oauth2/link`; requires Google OAuth2 client credentials |
+| Cloudflare Turnstile bot protection | Conditional | Enforced fail-closed on unauthenticated credential-free endpoints when `TURNSTILE_SECRET_KEY` is set |
 | Multi-company membership and active-company switching | End to end | Switching reissues the JWT with a new company context |
 | Company create/update/delete | End to end | Super-admin operation |
 | One-time initial administrator bootstrap | End to end | Explicit `bootstrap_admin` CLI; no database-seeded credential |
-| User create/update/deactivate and company assignment | End to end | Super-admin page and APIs |
-| Role matrix page | Informational | Static role description; it does not edit backend permissions |
-| Password-reset administration page | Unwired | A page and frontend client calls exist, but it is unrouted and matching admin backend endpoints are absent |
+| User create/update/deactivate and company assignment | End to end | Super-admin page and APIs with search and pagination |
+| Additive company-scoped user groups & permissions | End to end | `UserGroups` UI and `PermissionGuard` routing backed by per-request permission union |
+| Role matrix page | Informational | Displays built-in role baseline alongside customizable user groups |
+| Password-reset administration page | Unwired | Legacy unrouted client calls; admin 2FA reset and email reset links cover recovery |
 
 ## Company and employee management
 
@@ -40,7 +44,7 @@ repository.
 | Salary history | End to end | Maintained with employee compensation changes |
 | TP3 records | End to end | Backend and employee detail flow |
 | Employee portal-account linking/provisioning | End to end | Consolidated data migration also repairs eligible legacy links |
-| CSV/XLSX import template, validation preview, confirmation | End to end | Validation sessions expire and confirmation is idempotency-aware |
+| CSV/XLSX import template, validation preview, confirmation | End to end | Validation sessions expire; confirmation runs asynchronously via `background_jobs` (`202` + `GET /api/jobs/{id}`) |
 | Default payroll group selection | End to end | Every company is provisioned with a usable group; management CRUD is not implemented |
 | Work schedules and employee schedule overrides | End to end | Company defaults plus per-employee assignment |
 
@@ -49,12 +53,13 @@ repository.
 | Capability | Status | Notes |
 | --- | --- | --- |
 | Manual payroll entries | End to end | Earnings/deductions can be added, edited, and removed before processing |
-| Monthly payroll calculation | Conditional | Transactional engine exists, but production runs fail closed until official EPF/SOCSO/EIS data is verified and PCB passes LHDN conformance |
-| One active run per group and period | End to end | Enforced by service logic and a partial unique database index |
-| Run detail and employee item review | End to end | Tenant-scoped read models |
+| Monthly payroll calculation & preview | Conditional | Preview surfaces diagnostics (incl. Minimum Wages Order 2024 RM1,700 check & KWSP Parts A–F derivation); runs execute asynchronously via `background_jobs`, and production runs fail closed until official EPF/SOCSO/EIS data is verified and PCB passes LHDN conformance |
+| One active run per group and period | End to end | Enforced by service logic and partial unique indexes on `payroll_runs` and `background_jobs` |
+| Run detail and employee item review | End to end | Tenant-scoped read models plus line-by-line explainable payslip drawer |
 | Manual PCB adjustment before approval | Conditional | Recomputes totals under row locks for an existing non-production/test run; it does not enable production PCB |
-| Submit, approve, return, mark paid, delete eligible run | End to end | Explicit permission and state-transition checks |
-| Cancel a run before payment | End to end | Mandatory reason; preparer cancels draft/processed, approver cancels pending/approved; `paid` stays terminal; staged entries/claims revert in-transaction |
+| Submit, approve, return, mark paid, delete eligible run | End to end | Explicit permission, four-eyes maker-checker, and state-transition checks |
+| Cancel a run before payment | End to end | Mandatory reason; preparer cancels draft/processed, approver cancels pending/approved; staged entries/claims revert in-transaction |
+| Reverse a paid run | End to end | `PUT /api/payroll/runs/{id}/reverse` (`ApprovePayroll` / finance); mandatory reason, blocked if a later run exists, reverts staged entries/claims and records audit provenance |
 | Payroll overview dashboard | End to end | `/payroll`: committed period KPIs, status pipeline, variance vs prior period, 12-period trend, department labour cost, live action queue |
 | Bank payment file export | End to end | CSV for approved/paid runs, `mark_payroll_paid`-gated, formula-neutralised, audited without account numbers |
 | Journal preview | End to end | Balanced DR/CR from committed figures with department allocation; fixed default account codes, nothing posted to a ledger |
@@ -75,6 +80,7 @@ repository.
 | Open-session triage | End to end | `open_only` filter plus a "Still Checked In" tile for finding sessions nobody closed |
 | Per-employee attendance summary and CSV export | End to end | Includes employees with zero matching rows. Counts are per distinct local day (a split shift is one day; a superseded absence is not double-counted). Export defaults to the current month when no range is given |
 | Locations and `none`/`warn`/`enforce` geofence modes | End to end | Coordinate/radius validity is enforced by the schema; clients skip the GPS wait when the mode is `none` |
+| Office-network binding (`none`/`learn`/`warn`/`enforce`) | End to end | Evaluates server-observed egress IP prefixes against admin-approved `company_networks`; learning aggregates anchored candidates without exposing `employee_id → IP` mappings |
 | Automatic absence marking | End to end | In-process scheduler; safe for the current single API instance. Runs as a catch-up from the last bookmarked success, so a missed window is recovered rather than skipped, and HR can re-run a past date on demand |
 | Face ID check-in | End to end | A dedicated challenge is issued per check-in and the WebAuthn assertion is verified server-side against the employee's registered passkeys before the record is written |
 
@@ -95,31 +101,31 @@ repository.
 | Capability | Status | Notes |
 | --- | --- | --- |
 | Document metadata, categories, expiry tracking | End to end | Company and optional employee association |
-| File upload/download | Known limitation | Stored on local API disk; downloads use unguessable capability URLs but are not per-user authorized |
-| Letter/email templates, preview, send, delivery logs | Conditional | SMTP is required for delivery |
-| Holiday CRUD and working-day configuration | End to end | Includes `.ics` file and URL import |
-| ICS URL import | Known limitation | Current outbound fetch needs SSRF hardening before production use |
+| File upload/download | End to end | Stored on local API disk (`uploaded_files`), gated by extension, 10 MB cap, magic-byte validation, canonical path containment, and per-user reverse-reference authorization (`404` on denial) |
+| Letter/email templates, preview, send, delivery logs | Conditional | SMTP is required for delivery; initial passwords redacted from stored `email_logs` |
+| Holiday CRUD and working-day configuration | End to end | Includes `.ics` file and SSRF-hardened URL import (`core::http_client`) |
 | Teams and team membership | End to end | Used by calendars and organizational views |
 
-## Reporting and operations
+## Reporting, localization, legal, and operations
 
 | Capability | Status | Notes |
 | --- | --- | --- |
-| Payroll, department, leave, claims, statutory reports | End to end | Reachable reports page and export actions |
-| Dashboard summary API and page component | API only | Both exist, but `Dashboard.tsx` is not routed in `App.tsx` |
-| Audit trail | End to end | Filtered administrative view plus workflow audit writes |
-| Company JSON backup/export and restore/import | End to end | Restore is tenant-bound; local-file restoration still needs stronger filename containment |
+| Payroll, department, leave, claims, statutory reports | End to end | Reachable reports page and formula-neutralised export actions |
+| Workspace dashboard (`/dashboard`) | End to end | Headcount, pending approvals, attendance exceptions, YTD statutory breakdown, and shortcuts |
+| Four-locale internationalization (`en`, `ms`, `zh-CN`, `zh-TW`) | End to end | Full UI + server-error translation parity, script-purity tests, and CI hardcoded-string scanner |
+| Dark/light/system theme & global command palette (`⌘K`) | End to end | Accessible across Admin and Portal shells |
+| Terms, Privacy/PDPA Notice, and 2026 Statutory Guide | End to end | Public & in-app routes (`/terms`, `/privacy`, `/compliance`) plus `docs/legal/*` |
+| Audit trail & PDPA retention purges | End to end | Filtered administrative view plus automated daily retention purges (7-year `2,555`-day audit horizon) |
+| Company JSON backup/export and restore/import | End to end | Tenant-bound restore with `upload_path` filename sanitization and magic-byte verification |
 | Settings and platform attendance defaults | End to end | Company and super-admin flows |
 | Liveness and database-readiness probes | End to end | Readiness checks connectivity and migration presence |
-| PostgreSQL schema/reference migrations | End to end | Exactly two current SQL scripts; no demo credentials |
-| Docker Compose and GitHub Actions | End to end | Both pin PostgreSQL 19 Beta 2 |
+| PostgreSQL schema/reference & forward migrations | End to end | Consolidated `1000`/`1001` baseline plus immutable forward chain `1002`–`1030`; no demo credentials |
+| Docker Compose and GitHub Actions | End to end | Both pin PostgreSQL 19 Beta 2 and enforce forward-only migration immutability |
 
 ## Explicit non-features
 
-- The product has no published OpenAPI contract.
-- The Face ID label is not a biometric identity service.
-- The static role page is not a customizable authorization engine.
-- There is no object storage; uploads live on the API container's local disk.
-- Redis is not part of the application runtime.
-- Statutory reference data is not automatically synchronized with Malaysian
-  authorities and must be reviewed before real use.
+- The product has no published OpenAPI contract yet.
+- The "Face ID" label triggers device-local W3C WebAuthn passkey verification; it is not a server-side biometric recognition service.
+- Uploads live on the API container's local disk rather than external object storage (S3).
+- Redis is not part of the application runtime; background tasks run in-process for a single API instance.
+- Statutory reference data is not automatically synchronized with Malaysian authorities and must be verified against official KWSP, PERKESO, and LHDN publications before live production use.

@@ -103,6 +103,9 @@ export function Login() {
   }, [email, webauthnSupported]);
 
   if (isAuthenticated && user) {
+    if (user.must_change_password) {
+      return <Navigate to="/change-password" replace />;
+    }
     return <Navigate to={redirectTo ?? (hasOnlyEmployeeRole(user) ? '/portal' : '/')} replace />;
   }
 
@@ -154,7 +157,7 @@ export function Login() {
         setMfaToken(response.mfa_token);
       } else {
         setSession(response.token, response.user);
-        navigate(redirectTo ?? (hasOnlyEmployeeRole(response.user) ? '/portal' : '/'));
+        goPostLogin(response.user);
       }
     } catch (err: unknown) {
       setError(getErrorMessage(err, t('auth.passkeyFailed')));
@@ -453,11 +456,26 @@ export function Login() {
           )}
         </div>
 
-        <div className="mt-6 flex items-center justify-center gap-4">
-          <p className="text-center text-xs text-slate-500">
-            {t('auth.footerTagline')}
-          </p>
-          <LanguageSwitcher dark />
+        <div className="mt-6 space-y-2">
+          <div className="flex items-center justify-center gap-4">
+            <p className="text-center text-xs text-slate-500">
+              {t('auth.footerTagline')}
+            </p>
+            <LanguageSwitcher dark />
+          </div>
+          <div className="flex flex-wrap items-center justify-center gap-3 text-xs text-slate-400">
+            <Link to="/terms" className="hover:text-slate-200 transition-colors">
+              {t('legal.links.terms')}
+            </Link>
+            <span className="text-slate-600">·</span>
+            <Link to="/privacy" className="hover:text-slate-200 transition-colors">
+              {t('legal.links.privacy')}
+            </Link>
+            <span className="text-slate-600">·</span>
+            <Link to="/compliance" className="hover:text-slate-200 transition-colors">
+              {t('legal.links.compliance')}
+            </Link>
+          </div>
         </div>
       </motion.div>
     </div>

@@ -45,14 +45,14 @@ pub async fn create_group(
     audit_meta: AuditRequestMeta,
     ValidatedJson(req): ValidatedJson<CreateUserGroupRequest>,
 ) -> AppResult<Json<UserGroup>> {
-    let (user_id, company_id) = auth.authorize_actor(Permission::ManageUsers)?;
+    let company_id = auth.authorize(Permission::ManageUsers)?;
     let group = user_group_service::create_group(
         &state.pool,
         company_id,
         &req.name,
         req.description.as_deref(),
         &req.permissions,
-        user_id,
+        &auth,
         Some(&audit_meta),
     )
     .await?;
@@ -66,7 +66,7 @@ pub async fn update_group(
     audit_meta: AuditRequestMeta,
     ValidatedJson(req): ValidatedJson<UpdateUserGroupRequest>,
 ) -> AppResult<Json<UserGroup>> {
-    let (user_id, company_id) = auth.authorize_actor(Permission::ManageUsers)?;
+    let company_id = auth.authorize(Permission::ManageUsers)?;
     let group = user_group_service::update_group(
         &state.pool,
         company_id,
@@ -75,7 +75,7 @@ pub async fn update_group(
         req.description.as_deref(),
         req.is_active,
         req.permissions.as_deref(),
-        user_id,
+        &auth,
         Some(&audit_meta),
     )
     .await?;
@@ -114,13 +114,13 @@ pub async fn add_member(
     audit_meta: AuditRequestMeta,
     Json(req): Json<AddUserGroupMemberRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
-    let (user_id, company_id) = auth.authorize_actor(Permission::ManageUsers)?;
+    let company_id = auth.authorize(Permission::ManageUsers)?;
     user_group_service::add_member(
         &state.pool,
         company_id,
         group_id,
         req.user_id,
-        user_id,
+        &auth,
         Some(&audit_meta),
     )
     .await?;

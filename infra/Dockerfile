@@ -38,11 +38,11 @@ WORKDIR /app
 
 COPY --from=builder /app/target/release/payroll-system ./payroll-system
 
-# Run as a non-root user. The app writes uploads under /app/uploads at runtime,
-# so that directory must be owned by the runtime user.
-RUN useradd --system --uid 10001 --home-dir /app appuser \
+# Run as a non-root user with no login shell. The app writes uploads under /app/uploads at runtime.
+RUN useradd --system --uid 10001 --home-dir /app --no-create-home --shell /usr/sbin/nologin appuser \
     && mkdir -p /app/uploads \
-    && chown -R 10001:10001 /app
+    && chown -R 10001:10001 /app \
+    && chmod 0750 /app/uploads
 USER 10001
 
 EXPOSE 8080

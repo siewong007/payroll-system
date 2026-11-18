@@ -10,8 +10,17 @@ vi.mock('react-router', async () => {
 });
 
 const setSession = vi.fn();
+const authState = {
+  user: null as null | { must_change_password?: boolean; roles: string[] },
+  isLoading: false,
+};
 vi.mock('@/context/AuthContext', () => ({
-  useAuth: () => ({ setSession }),
+  useAuth: () => ({ setSession, user: authState.user, isLoading: authState.isLoading }),
+}));
+
+const apiPost = vi.fn();
+vi.mock('@/api/client', () => ({
+  default: { post: apiPost },
 }));
 
 /**
@@ -41,6 +50,9 @@ describe('OAuth2Callback', () => {
   beforeEach(() => {
     navigate.mockReset();
     setSession.mockReset();
+    apiPost.mockReset();
+    authState.user = null;
+    authState.isLoading = false;
   });
 
   it('shows the reason the server sent instead of a generic failure', async () => {
@@ -89,5 +101,41 @@ describe('OAuth2Callback', () => {
 
     expect(await screen.findByText(/Two-factor authentication/i)).toBeInTheDocument();
     expect(screen.queryByText(/Missing authentication data/i)).not.toBeInTheDocument();
+  });
+
+  it('completes #status=ok via cookie-backed /auth/refresh once and routes by role', async () => {
+    const user = {
+      id: 'u1',
+      email: 'staff@example.com',
+      full_name: 'Staff',
+      roles: ['employee'],
+      company_id: 'c1',
+      employee_id: 'e1',
+      must_change_password: false,
+    };
+    apiPost.mockResolvedValueOnce({ data: { token: 'jwt-new', user } });
+
+    await loadCallbackPage('#status=ok');
+
+    await waitFor(() => expect(setSession).toHaveBeenCalledWith('jwt-new', user));
+    expect(apiPost).toHaveBeenCalledTimes(1);
+    expect(apiPost).toHaveBeenCalledWith('/auth/refresh', {});
+    expect(navigate).toHaveBeenCalledWith('/portal', { replace: true });
+  });
+
+  it('redirects to /change-password when restored user must change password', async () => {
+    authState.user = { roles: ['admin'], must_change_password: true };
+
+    await loadCallbackPage('#status=ok');
+
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith('/change-password', { replace: true }));
+    expect(apiPost).not.toHaveBeenCalled();
+  });
+
+  it('rejects raw URL tokens when status=ok is absent', async () => {
+    await loadCallbackPage('#token=leaked-jwt&user=%7B%7D');
+
+    expect(await screen.findByText(/Missing authentication data/i)).toBeInTheDocument();
+    expect(setSession).not.toHaveBeenCalled();
   });
 });

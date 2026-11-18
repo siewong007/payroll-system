@@ -69,6 +69,7 @@ const Overtime = lazyNamed(() => import('@/pages/portal/Overtime'), 'Overtime');
 const TeamCalendar = lazyNamed(() => import('@/pages/portal/TeamCalendar'), 'TeamCalendar');
 const Notifications = lazyNamed(() => import('@/pages/portal/Notifications'), 'Notifications');
 const MyAttendance = lazyNamed(() => import('@/pages/portal/MyAttendance'), 'MyAttendance');
+const LegalPage = lazyNamed(() => import('@/pages/legal/LegalPage'), 'LegalPage');
 
 function RouteFallback() {
   return (
@@ -165,11 +166,13 @@ export default function App() {
                       <Route path="/forgot-password" element={<ForgotPassword />} />
                       <Route path="/reset-password" element={<ResetPassword />} />
                       <Route path="/change-password" element={<ChangePassword />} />
-                      {/* The kiosk display is /kiosk/:kioskKey below — it needs no user
-                          session, so a wall-mounted tablet never falls back to a login
-                          screen. The old session-backed /attendance/kiosk is gone. */}
+                      {/* The kiosk display is /kiosk#<secret> (with /kiosk/:kioskKey kept for legacy links). */}
                       <Route path="/attendance/scan" element={<AttendanceScanPage />} />
+                      <Route path="/kiosk" element={<AttendanceKioskPublic />} />
                       <Route path="/kiosk/:kioskKey" element={<AttendanceKioskPublic />} />
+                      <Route path="/terms" element={<LegalPage />} />
+                      <Route path="/privacy" element={<LegalPage />} />
+                      <Route path="/compliance" element={<LegalPage />} />
                       <Route path="/403" element={<ForbiddenPage />} />
 
                       <Route element={<AppLayout />}>

@@ -41,15 +41,24 @@ an open transaction to repository functions. `AppResult<T>` is the common
 error boundary; database errors convert to `AppError::Database`, while internal
 details are logged rather than exposed in HTTP 500 responses.
 
-The API process also owns two operational jobs:
+The API process owns two scheduled background loops plus an in-process async job executor:
 
-- every 24 hours, cleanup of expired or revoked refresh tokens and of expired
-  attendance QR tokens that no check-in references;
-- a daily attendance evaluation at 12:30 PM Asia/Kuala_Lumpur (and once at
-  startup) that marks eligible employees absent, excluding approved leave,
-  non-working days, and public holidays. Each run catches up every due local
-  date since the last bookmarked success, so a window missed during a deploy is
-  recovered instead of skipped permanently.
+- every 24 hours, PDPA-aligned retention purges covering expired/revoked
+  `refresh_tokens` (>30 days), unreferenced expired `attendance_qr_tokens`
+  (>7 days), aged `attendance_network_observations` (`OBSERVATION_RETENTION_DAYS`),
+  expired network dismissals, `audit_logs` older than 7 years (`2,555` days per
+  *Income Tax Act 1967 s.82*), stale `notifications` (90 days read / 365 days
+  unread), `email_logs` (>180 days), stale `user_sessions` (30 days revoked /
+  90 days inactive), and expired `bulk_import_sessions`;
+- a daily attendance evaluation at 12:30 PM Asia/Kuala_Lumpur (04:30 UTC via
+  `core::schedule::next_daily_run_utc`, plus once at startup) that marks
+  eligible employees absent on each tenant's own timezone, excluding approved
+  leave, non-working days, and public holidays. Each run catches up every due
+  local date since the last bookmarked success, so a window missed during a
+  deploy is recovered instead of skipped permanently;
+- an asynchronous `background_jobs` executor (`202 Accepted` + `GET /api/jobs/{id}`)
+  for long-running payroll processing and bulk employee import confirmations,
+  with boot-time recovery marking interrupted in-flight jobs as failed.
 
 These jobs are suitable for the current single API instance. Multiple replicas
 would need a database lease, leader election, or a separate worker.
@@ -62,15 +71,20 @@ keeps the access token in memory; local storage contains only a display/session
 hint and is not an authorization source.
 
 Canonical roles are `super_admin`, `admin`, `payroll_admin`, `hr_manager`,
-`finance`, `exec`, and `employee`. Payroll actions use explicit permissions:
+`finance`, `exec`, and `employee`. Company-scoped `user_groups` can grant
+additive capabilities (resolved per request as the union of role and active
+group grants, while prohibiting platform-only grants and separation-of-duties
+conflicts). TOTP 2FA (encrypted under `TOTP_ENCRYPTION_KEY`), passkeys, Google
+OAuth2, and Cloudflare Turnstile protect authentication surfaces. Payroll
+actions use explicit permissions:
 
 | Action | Roles |
 | --- | --- |
 | View payroll | `super_admin`, `payroll_admin`, `finance` |
-| Prepare and edit a draft | `super_admin`, `payroll_admin` |
+| Prepare, edit, or cancel a draft/processed run | `super_admin`, `payroll_admin` |
 | Submit for approval | `super_admin`, `payroll_admin` |
-| Approve or return | `super_admin`, `finance` |
-| Mark paid | `super_admin`, `finance` |
+| Approve, return, cancel pending/approved, or reverse paid | `super_admin`, `finance` |
+| Mark paid, export bank payment CSV, preview journal | `super_admin`, `finance` |
 
 Company users carry an active `company_id` claim. Repository calls for
 company-owned data are expected to include it. A multi-company user switches
@@ -88,12 +102,16 @@ exists.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> processing: create run
+    [*] --> processing: enqueue & run job
     processing --> processed: calculations committed
     processed --> pending_approval: submit
-    pending_approval --> approved: finance approval
+    pending_approval --> approved: four-eyes finance approval
     pending_approval --> processed: return for changes
     approved --> paid: lock / mark paid
+    processed --> cancelled: preparer cancel
+    pending_approval --> cancelled: approver cancel
+    approved --> cancelled: approver cancel
+    paid --> cancelled: finance reverse (with reason)
 ```
 
 After a statutory preflight succeeds, the payroll engine executes in a
@@ -196,29 +214,37 @@ idempotent database function repairs missing setup in older companies/backups.
 - `PortalLayout` for employee profile, payslips, leave, claims, overtime,
   calendar, notifications, and attendance history.
 
-Public routes handle login/password recovery and attendance kiosk/scan flows.
-Role guards control navigation and page entry, while the API remains the
-authoritative permission boundary. All API modules use the single Axios client
-in `frontend/src/api/client.ts`. Its 401 interceptor performs one queued refresh
-for concurrent failures, then clears the session if refresh fails. React Query
-defaults to one retry, a 30-second stale time, and no focus refetch.
+Public routes handle login/password recovery, OAuth2 callbacks, attendance
+kiosk/scan flows, and legal/compliance notices (`/terms`, `/privacy`,
+`/compliance`). Capability-based `PermissionGuard` components control navigation
+and page entry, while the API remains the authoritative permission boundary. All
+API modules use the single Axios client in `frontend/src/api/client.ts`. Its 401
+interceptor performs one queued refresh for concurrent failures, then clears the
+session if refresh fails. React Query defaults to one retry, a 30-second stale
+time, and no focus refetch. All user-facing text and server error messages are
+localized across `en`, `ms`, `zh-CN`, and `zh-TW`.
 
 ## Data and deployment
 
-The canonical database consists of one schema migration and one reference-data
-migration. It uses native UUIDv7 identifiers, targeted partial/covering/trigram
-indexes, relational constraints, and multicolumn optimizer statistics. See
-[database.md](database.md) for exact compatibility and verification rules.
+The canonical database consists of the `1000_schema.sql` and `1001_data.sql`
+consolidated baseline followed by immutable numbered forward migrations
+(`1002`–`1030`). It uses native UUIDv7 identifiers, targeted
+partial/covering/trigram indexes, relational constraints, and multicolumn
+optimizer statistics. See [database.md](database.md) for exact compatibility and
+verification rules, and [legal/malaysian-statutory-compliance.md](legal/malaysian-statutory-compliance.md)
+for 2025–2026 Malaysian statutory alignment.
 
 Docker Compose and CI pin PostgreSQL 19 Beta 2. There is no cloud
 infrastructure code in this repository: the AWS frontend path (S3, CloudFront,
 ACM, Route53, OIDC deploy role) was retired in the 2026-09-07 cutover and
 deleted on 2026-09-25, and `infra/` now holds only the backend `Dockerfile`.
 The API, the database and the built frontend all run on the AIC VPS behind
-Cloudflare. The earlier Lightsail deployment record is kept for history in
+Cloudflare with local encrypted nightly backups. The earlier Lightsail deployment record is kept for history in
 [lightsail-pg19-beta2-upgrade-record.md](lightsail-pg19-beta2-upgrade-record.md).
 
-Uploads are written to the API container's local `uploads/` directory. SMTP, OAuth2, WebAuthn origins, and cloud services require
+Uploads are written to the API container's local `uploads/` directory, tracked
+in `uploaded_files`, and served only after per-user reverse-reference
+authorization. SMTP, OAuth2, WebAuthn origins, and Cloudflare Turnstile require
 environment-specific configuration.
 
 ## Architectural invariants

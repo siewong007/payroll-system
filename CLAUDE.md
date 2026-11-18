@@ -22,7 +22,7 @@ cargo clippy -- -D warnings # CI enforces -D warnings
 cargo test                  # integration tests require DATABASE_URL + JWT_SECRET
 cargo test <name>           # run a single test by substring    
 ```
-Migrations live in `backend/migrations/` and are embedded via `sqlx::migrate!` — they run on every `cargo run`. Versions `1000_schema.sql` and `1001_data.sql` are the current two-file rebaseline and become immutable once deployed. Future production changes use a new numbered migration; returning to two files requires another explicit, tested rebaseline.
+Migrations live in `backend/migrations/` and are embedded via `sqlx::migrate!` — they run on every `cargo run`. Versions `1000_schema.sql` and `1001_data.sql` form the consolidated baseline, followed by immutable numbered forward migrations (`1002_*.sql` through `1030_*.sql`). Every deployed migration is strictly immutable (enforced by CI); future production changes use a new numbered migration, and returning to two files requires another explicit, tested rebaseline.
 
 Data access uses the compile-time-checked `sqlx::query!`/`query_as!`/`query_scalar!` macros throughout and lives in `backend/src/repositories/` (see Backend layering below). These macros are verified against the committed `backend/.sqlx/` offline cache, so CI lint and the Docker build need no database (`SQLX_OFFLINE=true`). **After adding or changing a macro query, regenerate the cache** against a migrated DB and commit it:
 ```bash
@@ -103,7 +103,8 @@ Key structure to preserve when changing the engine:
 - **Runs record their provenance.** `payroll_runs.calculation_snapshot` holds the verified rule sets and the overtime settings used. The rule tables and company settings are mutable and effective-dated, so a run recomputed later need not match what was paid.
 
 ### Frontend layout
-- `App.tsx` is the router. Two shells: `AppLayout` for admin/HR, `PortalLayout` for employee self-service. `RoleGuard` wraps routes that a role must not see (e.g. `exec` is blocked from `/payroll/*` and `/reports`); because `roles` is an array, a route that omits `exec` denies anyone holding it even if another of their roles is listed. `/attendance/kiosk` (admin QR display) and `/attendance/scan` (employee scan target) sit outside the two shells but still require a session — the genuinely unauthenticated kiosk surface is `/kiosk/:kioskKey`, which authenticates with a kiosk secret instead of a user.
+- `App.tsx` is the router. Two shells: `AppLayout` for admin/HR, `PortalLayout` for employee self-service. Capability-based `PermissionGuard` wraps routes using `user.permissions` (the union of role grants and active `user_groups` grants; `exec` holds no payroll or report capabilities). `/attendance/scan` requires a user session; `/kiosk/:kioskKey` authenticates with a kiosk secret instead of a user; `/terms`, `/privacy`, and `/compliance` (`LegalPage`) are public legal/PDPA/statutory reference routes backed by `docs/legal/`.
+- `i18n`: four first-class locales (`en`, `ms`, `zh-CN`, `zh-TW`) via i18next (`Messages = typeof en`), `serverErrorMap.ts`, `src/tests/i18n.test.ts` parity/script-purity checks, and `node scripts/i18n-scan.mjs --ci`.
 - `api/client.ts` — single axios instance. Access token is kept in-memory only (never in `localStorage`); refresh uses the httpOnly cookie. A 401 on any non-auth endpoint triggers a single refresh attempt with a queue for concurrent requests, then redirects to `/login` if refresh fails. When adding API modules, always import from `@/api/client` — do not create a second axios instance.
 - `context/AuthContext.tsx` — on mount, calls `/auth/refresh` to restore the session from the cookie; `user` is mirrored to `localStorage` for fast paint only, never for auth.
 - `pages/` mirrors feature areas; `api/*.ts` has one file per backend module.
@@ -122,7 +123,7 @@ Key structure to preserve when changing the engine:
 
 ## codegraph
 
-This project has a codegraph **graph index** at `graphify-out/graph.json` — every symbol, call, import and reference across the Rust backend, the React frontend, the SQL migrations and the Terraform, plus community structure and god nodes. `graphify-out/` and the `graphify` / `graphify-mcp` binaries are the backing runtime's names; the tool itself is called codegraph.
+This project has a codegraph **graph index** at `graphify-out/graph.json` — every symbol, call, import and reference across the Rust backend, the React frontend, and the SQL migrations, plus community structure and god nodes. `graphify-out/` and the `graphify` / `graphify-mcp` binaries are the backing runtime's names; the tool itself is called codegraph.
 
 It is registered as the `codegraph` MCP server in `.mcp.json` and exposes:
 - `query_graph` — BFS/DFS traversal; the default entry point for "how does X work", "what touches Y"

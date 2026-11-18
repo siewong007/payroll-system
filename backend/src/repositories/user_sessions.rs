@@ -34,7 +34,7 @@ pub async fn is_active(
     session_id: Uuid,
 ) -> AppResult<bool> {
     let found = sqlx::query_scalar::<_, i32>(
-        "SELECT 1 FROM user_sessions WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL AND expires_at > NOW()",
+        "SELECT 1 FROM user_sessions WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL AND expires_at > NOW() AND created_at > NOW() - INTERVAL '30 days'",
     ).bind(session_id).bind(user_id).fetch_optional(executor).await?;
     Ok(found.is_some())
 }
@@ -83,19 +83,35 @@ pub async fn revoke_all_for_user(
     Ok(result.rows_affected())
 }
 
+/// Revokes every live session for any user linked to the given employee.
+pub async fn revoke_by_employee(
+    executor: impl Executor<'_, Database = Postgres>,
+    employee_id: Uuid,
+) -> AppResult<u64> {
+    let result = sqlx::query!(
+        "UPDATE user_sessions SET revoked_at = NOW() WHERE user_id IN (SELECT id FROM users WHERE employee_id = $1) AND revoked_at IS NULL",
+        employee_id,
+    )
+    .execute(executor)
+    .await?;
+    Ok(result.rows_affected())
+}
+
 pub async fn touch(
     executor: impl Executor<'_, Database = Postgres>,
     session_id: Uuid,
     expires_at: DateTime<Utc>,
     ip_address: Option<&str>,
-) -> AppResult<()> {
-    sqlx::query("UPDATE user_sessions SET last_seen_at = NOW(), expires_at = $2, ip_address = COALESCE($3::inet, ip_address) WHERE id = $1")
-        .bind(session_id)
-        .bind(expires_at)
-        .bind(ip_address)
-        .execute(executor)
-        .await?;
-    Ok(())
+) -> AppResult<DateTime<Utc>> {
+    let clamped = sqlx::query_scalar::<_, DateTime<Utc>>(
+        "UPDATE user_sessions SET last_seen_at = NOW(), expires_at = LEAST($2, created_at + INTERVAL '30 days'), ip_address = COALESCE($3::inet, ip_address) WHERE id = $1 RETURNING expires_at",
+    )
+    .bind(session_id)
+    .bind(expires_at)
+    .bind(ip_address)
+    .fetch_one(executor)
+    .await?;
+    Ok(clamped)
 }
 
 /// Delete sessions that ended long ago: revoked ones past the short window,

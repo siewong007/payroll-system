@@ -8,7 +8,7 @@ edition = "2024"
 axum = { version = "0.8", features = ["macros", "multipart"] }
 tokio = { version = "1", features = ["full"] }
 tower = "0.5"
-tower-http = { version = "0.6", features = ["cors", "trace", "compression-gzip", "catch-panic", "timeout", "request-id"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "compression-gzip", "catch-panic", "timeout", "request-id", "set-header"] }
 
 # Database
 sqlx = { version = "0.8", default-features = false, features = [
@@ -28,7 +28,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 # Auth
-jsonwebtoken = { version = "10", default-features = false, features = ["rust_crypto"] }
+jsonwebtoken = { version = "10", default-features = false, features = ["aws_lc_rs"] }
 bcrypt = "0.19.2"
 totp-rs = { version = "5.7", features = ["gen_secret", "qr"] }
 aes-gcm = "0.11"
@@ -58,11 +58,12 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 # PDF generation
-printpdf = "0.10"
+printpdf = { version = "0.12.9", default-features = false }
 
 # Excel
-calamine = "0.36"
-rust_xlsxwriter = "0.94"
+calamine = "0.38"
+rust_xlsxwriter = "0.102"
+zip = { version = "9", default-features = false, features = ["deflate"] }
 
 # CSV
 csv = "1"

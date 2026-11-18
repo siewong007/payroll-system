@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE users u SET is_active = FALSE, company_id = NULL, updated_at = NOW()\n           WHERE (\n                 u.company_id = $1\n                 OR EXISTS (\n                     SELECT 1 FROM user_companies uc\n                     WHERE uc.user_id = u.id AND uc.company_id = $1\n                 )\n             )\n             AND NOT ('super_admin' = ANY(u.roles))\n             AND NOT EXISTS (\n                 SELECT 1 FROM user_companies uc2\n                 WHERE uc2.user_id = u.id AND uc2.company_id <> $1\n             )",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "54fd42878c616e853aa89827e6f7e950ca912e0f06e7ddd655449602a3f71d5c"
+}

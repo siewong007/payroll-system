@@ -47,7 +47,14 @@ fn row_to_create_request(row: &ImportRowRaw) -> CreateEmployeeRequest {
         gender: row.gender.as_ref().map(|s| s.to_lowercase()),
         nationality: row.nationality.clone(),
         race: row.race.as_ref().map(|s| s.to_lowercase()),
-        residency_status: row.residency_status.as_ref().map(|s| s.to_lowercase()),
+        residency_status: row.residency_status.as_ref().map(|s| {
+            let lower = s.trim().to_lowercase();
+            if lower == "pr" {
+                "permanent_resident".to_string()
+            } else {
+                lower
+            }
+        }),
         marital_status: row.marital_status.as_ref().map(|s| s.to_lowercase()),
         email: row.email.clone(),
         phone: row.phone.clone(),
@@ -93,7 +100,11 @@ fn row_to_create_request(row: &ImportRowRaw) -> CreateEmployeeRequest {
         eis_number: row.eis_number.clone(),
         working_spouse: row.working_spouse.as_ref().and_then(|s| parse_bool(s).ok()),
         num_children: row.num_children.as_ref().and_then(|s| s.parse().ok()),
-        epf_category: row.epf_category.clone(),
+        epf_category: row
+            .epf_category
+            .as_ref()
+            .map(|s| s.trim().to_uppercase())
+            .filter(|s| !s.is_empty()),
         is_muslim: row.is_muslim.as_ref().and_then(|s| parse_bool(s).ok()),
         zakat_eligible: row.zakat_eligible.as_ref().and_then(|s| parse_bool(s).ok()),
         zakat_monthly_amount: row

@@ -99,6 +99,39 @@ impl AppConfig {
                 .is_some_and(|v| !v.is_empty())
     }
 
+    /// Fail closed on weak or placeholder secrets when running with an HTTPS
+    /// origin or explicit production environment.
+    pub fn validate_production_secrets(&self) -> Result<(), String> {
+        let is_prod = self.frontend_url.starts_with("https://")
+            || std::env::var("RUST_ENV").as_deref() == Ok("production");
+        if !is_prod {
+            return Ok(());
+        }
+
+        const WEAK_PREFIXES: &[&str] = &["change-me", "secret", "your-", "payroll_secret"];
+        let is_weak = |val: &str| {
+            let lower = val.to_ascii_lowercase();
+            val.len() < 32 || WEAK_PREFIXES.iter().any(|p| lower.starts_with(p))
+        };
+
+        if is_weak(&self.jwt_secret) {
+            return Err(
+                "JWT_SECRET must be at least 32 characters and not a placeholder in production"
+                    .into(),
+            );
+        }
+        if is_weak(&self.totp_encryption_key) {
+            return Err(
+                "TOTP_ENCRYPTION_KEY must be at least 32 characters and not a placeholder in production"
+                    .into(),
+            );
+        }
+        if self.jwt_secret == self.totp_encryption_key {
+            return Err("TOTP_ENCRYPTION_KEY must differ from JWT_SECRET in production".into());
+        }
+        Ok(())
+    }
+
     /// The URI Google redirects the browser to after a *login* consent: an
     /// Axum route, so it must be reachable on the API's own origin.
     pub fn google_redirect_uri(&self) -> String {
@@ -249,5 +282,20 @@ mod tests {
         assert!(cfg.smtp_enabled());
         assert!(cfg.smtp_username.is_none());
         assert!(cfg.smtp_password.is_none());
+    }
+
+    #[test]
+    fn production_secrets_must_be_strong_and_distinct() {
+        let mut cfg = config();
+        cfg.frontend_url = "https://payrollmy.com".into();
+        cfg.jwt_secret = "change-me-too-short".into();
+        cfg.totp_encryption_key = "0123456789abcdef0123456789abcdef".into();
+        assert!(cfg.validate_production_secrets().is_err());
+
+        cfg.jwt_secret = "0123456789abcdef0123456789abcdef".into();
+        assert!(cfg.validate_production_secrets().is_err()); // reused key
+
+        cfg.jwt_secret = "fedcba9876543210fedcba9876543210".into();
+        assert!(cfg.validate_production_secrets().is_ok());
     }
 }

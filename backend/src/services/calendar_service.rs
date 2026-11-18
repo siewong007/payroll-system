@@ -261,6 +261,8 @@ pub async fn import_from_ics(
     import_from_ics_text(pool, company_id, &ics_text, created_by).await
 }
 
+const MAX_ICS_EVENTS: usize = 500;
+
 /// Import holidays from raw ICS text content
 pub async fn import_from_ics_text(
     pool: &PgPool,
@@ -269,6 +271,7 @@ pub async fn import_from_ics_text(
     created_by: Uuid,
 ) -> AppResult<Vec<Holiday>> {
     let mut holidays = Vec::new();
+    let mut event_count: usize = 0;
     let mut in_event = false;
     let mut name = String::new();
     let mut date: Option<NaiveDate> = None;
@@ -277,6 +280,12 @@ pub async fn import_from_ics_text(
     for line in ics_text.lines() {
         let line = line.trim();
         if line == "BEGIN:VEVENT" {
+            event_count += 1;
+            if event_count > MAX_ICS_EVENTS {
+                return Err(AppError::BadRequest(format!(
+                    "Calendar contains more than the maximum of {MAX_ICS_EVENTS} events."
+                )));
+            }
             in_event = true;
             name = String::new();
             date = None;
@@ -307,14 +316,20 @@ pub async fn import_from_ics_text(
             in_event = false;
         } else if in_event {
             if let Some(val) = line.strip_prefix("SUMMARY:") {
-                name = val.to_string();
+                name = val.chars().take(200).collect();
             } else if let Some(val) = line.strip_prefix("DTSTART;VALUE=DATE:") {
                 date = NaiveDate::parse_from_str(val, "%Y%m%d").ok();
             } else if let Some(val) = line.strip_prefix("DTSTART:") {
                 let date_str = if val.len() >= 8 { &val[..8] } else { val };
                 date = NaiveDate::parse_from_str(date_str, "%Y%m%d").ok();
             } else if let Some(val) = line.strip_prefix("DESCRIPTION:") {
-                description = Some(val.replace("\\n", "\n").replace("\\,", ","));
+                description = Some(
+                    val.replace("\\n", "\n")
+                        .replace("\\,", ",")
+                        .chars()
+                        .take(1000)
+                        .collect(),
+                );
             }
         }
     }

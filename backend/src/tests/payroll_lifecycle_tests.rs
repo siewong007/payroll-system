@@ -37,6 +37,7 @@ async fn payroll_lifecycle_submit_approve_and_lock() {
     let group_id = seed_payroll_group(&pool, company_id).await;
     let _employee_id = seed_employee(&pool, company_id, Some(group_id), 450_000).await;
     let user_id = seed_user(&pool, company_id, "payroll_admin").await;
+    let finance_id = seed_user(&pool, company_id, "finance").await;
 
     let run = payroll_engine::process_payroll(
         &pool,
@@ -58,19 +59,42 @@ async fn payroll_lifecycle_submit_approve_and_lock() {
             .await
             .expect("submit payroll");
     assert_eq!(submitted.status, "pending_approval");
+    assert_eq!(submitted.submitted_by, Some(user_id));
 
-    let approved = payroll_lifecycle_service::approve(&pool, company_id, run.id, user_id, None)
-        .await
-        .expect("approve payroll");
+    let self_approve = payroll_lifecycle_service::approve(
+        &pool,
+        company_id,
+        run.id,
+        &auth_for(user_id, company_id, &["payroll_admin"]),
+        None,
+    )
+    .await;
+    assert!(
+        matches!(
+            self_approve,
+            Err(crate::core::error::AppError::Forbidden(_))
+        ),
+        "preparer/submitter must not self-approve a payroll run"
+    );
+
+    let approved = payroll_lifecycle_service::approve(
+        &pool,
+        company_id,
+        run.id,
+        &auth_for(finance_id, company_id, &["finance"]),
+        None,
+    )
+    .await
+    .expect("approve payroll");
     assert_eq!(approved.status, "approved");
-    assert_eq!(approved.approved_by, Some(user_id));
+    assert_eq!(approved.approved_by, Some(finance_id));
     assert!(approved.approved_at.is_some());
 
-    let paid = payroll_lifecycle_service::lock_as_paid(&pool, company_id, run.id, user_id, None)
+    let paid = payroll_lifecycle_service::lock_as_paid(&pool, company_id, run.id, finance_id, None)
         .await
         .expect("lock payroll");
     assert_eq!(paid.status, "paid");
-    assert_eq!(paid.locked_by, Some(user_id));
+    assert_eq!(paid.locked_by, Some(finance_id));
     assert!(paid.locked_at.is_some());
 
     let actions: Vec<String> = sqlx::query_scalar(
@@ -318,10 +342,16 @@ async fn cancel_refuses_paid_and_cancel_requires_a_reason() {
     payroll_lifecycle_service::submit_for_approval(&pool, company_id, run.id, user_id, None)
         .await
         .expect("submit payroll");
-    payroll_lifecycle_service::approve(&pool, company_id, run.id, user_id, None)
-        .await
-        .expect("approve payroll");
-    payroll_lifecycle_service::lock_as_paid(&pool, company_id, run.id, user_id, None)
+    payroll_lifecycle_service::approve(
+        &pool,
+        company_id,
+        run.id,
+        &auth_for(approver_id, company_id, &["finance"]),
+        None,
+    )
+    .await
+    .expect("approve payroll");
+    payroll_lifecycle_service::lock_as_paid(&pool, company_id, run.id, approver_id, None)
         .await
         .expect("lock payroll");
 
@@ -405,10 +435,16 @@ async fn only_reversal_can_void_a_paid_run() {
     payroll_lifecycle_service::submit_for_approval(&pool, company_id, run.id, user_id, None)
         .await
         .expect("submit");
-    payroll_lifecycle_service::approve(&pool, company_id, run.id, user_id, None)
-        .await
-        .expect("approve");
-    payroll_lifecycle_service::lock_as_paid(&pool, company_id, run.id, user_id, None)
+    payroll_lifecycle_service::approve(
+        &pool,
+        company_id,
+        run.id,
+        &auth_for(finance_id, company_id, &["finance"]),
+        None,
+    )
+    .await
+    .expect("approve");
+    payroll_lifecycle_service::lock_as_paid(&pool, company_id, run.id, finance_id, None)
         .await
         .expect("lock");
 

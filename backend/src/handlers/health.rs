@@ -15,30 +15,32 @@ pub async fn ready(State(state): State<AppState>) -> (StatusCode, Json<Value>) {
     let row = crate::repositories::reads::system::get_migration_status(&state.pool).await;
 
     match row {
-        Ok((Some(latest), count)) => (
+        Ok((Some(_latest), _count)) => (
             StatusCode::OK,
             Json(json!({
                 "status": "ready",
                 "database": "ok",
-                "latest_migration": latest,
-                "applied_migrations": count,
             })),
         ),
-        Ok((None, _)) => (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(json!({
-                "status": "unready",
-                "database": "ok",
-                "error": "no migrations applied",
-            })),
-        ),
-        Err(e) => (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(json!({
-                "status": "unready",
-                "database": "unreachable",
-                "error": e.to_string(),
-            })),
-        ),
+        Ok((None, _)) => {
+            tracing::error!("Readiness check failed: no migrations applied");
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({
+                    "status": "unready",
+                    "database": "unavailable",
+                })),
+            )
+        }
+        Err(e) => {
+            tracing::error!("Readiness check failed: {}", e);
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({
+                    "status": "unready",
+                    "database": "unavailable",
+                })),
+            )
+        }
     }
 }

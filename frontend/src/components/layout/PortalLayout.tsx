@@ -52,7 +52,7 @@ export function PortalLayout() {
     queryKey: ['notification-count'],
     queryFn: getNotificationCount,
     refetchInterval: 30_000,
-    enabled: isAuthenticated,
+    enabled: isAuthenticated && !user?.must_change_password,
   });
 
   // Close dropdowns on outside click (same idiom as CompanySwitcher).
@@ -242,6 +242,19 @@ export function PortalLayout() {
         <PageTransition>
           <Outlet />
         </PageTransition>
+        <footer className="mt-10 pt-4 border-t border-slate-200/60 dark:border-slate-800/70 flex flex-wrap items-center justify-center gap-3 text-xs text-slate-500 dark:text-slate-400">
+          <Link to="/terms" className="hover:text-teal-600 dark:hover:text-teal-300 transition-colors">
+            {t('legal.links.terms')}
+          </Link>
+          <span>·</span>
+          <Link to="/privacy" className="hover:text-teal-600 dark:hover:text-teal-300 transition-colors">
+            {t('legal.links.privacy')}
+          </Link>
+          <span>·</span>
+          <Link to="/compliance" className="hover:text-teal-600 dark:hover:text-teal-300 transition-colors">
+            {t('legal.links.compliance')}
+          </Link>
+        </footer>
       </main>
 
       {/* Mobile Bottom Tab Bar */}

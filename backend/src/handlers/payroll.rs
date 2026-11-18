@@ -158,7 +158,12 @@ pub async fn list_run_audit_logs(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    let logs = payroll_service::list_run_audit_logs(&state.pool, company_id, id).await?;
+    let mut logs = payroll_service::list_run_audit_logs(&state.pool, company_id, id).await?;
+    crate::services::audit_service::redact_audit_logs(
+        &mut logs,
+        false,
+        !auth.can(Permission::ManageEmployees),
+    );
 
     Ok(Json(logs))
 }
@@ -245,7 +250,7 @@ pub async fn approve_run(
         &state.pool,
         company_id,
         id,
-        auth.0.sub,
+        &auth,
         Some(&audit_meta),
     )
     .await?;

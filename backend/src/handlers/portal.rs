@@ -212,9 +212,11 @@ pub async fn delete_overtime(
 // ─── File Upload ───
 
 pub async fn upload_file(
-    _auth: AuthUser,
+    State(state): State<AppState>,
+    auth: AuthUser,
     mut multipart: Multipart,
 ) -> AppResult<Json<serde_json::Value>> {
+    let company_id = get_company_id(&auth)?;
     let field = multipart
         .next_field()
         .await
@@ -267,6 +269,18 @@ pub async fn upload_file(
         .await
         .map_err(|e| AppError::Internal(format!("Failed to save file: {}", e)))?;
 
+    if let Err(err) = crate::repositories::uploaded_files::insert(
+        &state.pool,
+        &stored_name,
+        company_id,
+        Some(auth.0.sub),
+    )
+    .await
+    {
+        let _ = tokio::fs::remove_file(&file_path).await;
+        return Err(err);
+    }
+
     let file_url = format!("{}{}", upload_path::UPLOAD_URL_PREFIX, stored_name);
 
     Ok(Json(serde_json::json!({
@@ -317,6 +331,28 @@ pub async fn portal_holidays(
 
 // ─── Leave Calendar Export (.ics) ───
 
+fn escape_ics_text(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            ';' => out.push_str("\\;"),
+            ',' => out.push_str("\\,"),
+            '\r' => {
+                if chars.peek() == Some(&'\n') {
+                    let _ = chars.next();
+                }
+                out.push_str("\\n");
+            }
+            '\n' => out.push_str("\\n"),
+            c if c.is_control() => {}
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 pub async fn export_leave_ics(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -341,7 +377,7 @@ pub async fn export_leave_ics(
 
     for lr in &leaves {
         let uid = lr.id;
-        let summary = lr.leave_type_name.as_deref().unwrap_or("Leave");
+        let summary = escape_ics_text(lr.leave_type_name.as_deref().unwrap_or("Leave"));
         let dtstart = lr.start_date.format("%Y%m%d");
         // DTEND in VEVENT DATE type is exclusive, so add 1 day
         let dtend = lr
@@ -349,7 +385,7 @@ pub async fn export_leave_ics(
             .succ_opt()
             .map(|d| d.format("%Y%m%d").to_string())
             .unwrap_or_default();
-        let description = lr.reason.as_deref().unwrap_or("");
+        let description = escape_ics_text(lr.reason.as_deref().unwrap_or(""));
 
         ics.push_str(&format!(
             "BEGIN:VEVENT\r\nUID:{uid}@payrollmy\r\nDTSTART;VALUE=DATE:{dtstart}\r\nDTEND;VALUE=DATE:{dtend}\r\nSUMMARY:{summary}\r\nDESCRIPTION:{description}\r\nSTATUS:CONFIRMED\r\nEND:VEVENT\r\n"
@@ -436,20 +472,18 @@ pub async fn serve_upload(
     // token.
     let access = UploadAccess {
         company_id: get_company_id(&auth)?,
+        user_id: auth.0.sub,
         employee_id: auth.0.employee_id,
         can_view_approvals: auth.can(Permission::ViewApprovals),
         can_view_documents: auth.can(Permission::ViewDocuments),
+        can_view_confidential: auth.can(Permission::ManageEmployees)
+            || auth.is_payroll_privileged(),
     };
 
     let data = upload_service::read_authorized(&state.pool, &filename, &access).await?;
 
-    let content_type = match filename
-        .rsplit('.')
-        .next()
-        .unwrap_or("")
-        .to_lowercase()
-        .as_str()
-    {
+    let ext = upload_service::extension_of(&filename);
+    let content_type = match ext.as_str() {
         "jpg" | "jpeg" => "image/jpeg",
         "png" => "image/png",
         "gif" => "image/gif",
@@ -461,10 +495,18 @@ pub async fn serve_upload(
         "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         _ => "application/octet-stream",
     };
+    let is_raster_image = matches!(ext.as_str(), "jpg" | "jpeg" | "png" | "gif" | "webp");
+    let safe_name = upload_path::sanitize_stored_name(&filename).unwrap_or("download");
+    let content_disposition = if is_raster_image {
+        "inline".to_string()
+    } else {
+        format!("attachment; filename=\"{}\"", safe_name)
+    };
 
     // Defense-in-depth behind the authorization above:
     //   - `nosniff` stops the browser MIME-sniffing an upload into an
     //     executable type (e.g. treating a disguised file as HTML/JS).
+    //   - Non-image uploads force `Content-Disposition: attachment`.
     //   - A locked-down CSP neutralizes any active content if a markup file
     //     were ever served from this same-origin path.
     //   - `private` caching keeps user documents out of shared/CDN caches, and
@@ -473,6 +515,7 @@ pub async fn serve_upload(
     Ok(Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, content_type)
+        .header(header::CONTENT_DISPOSITION, content_disposition)
         .header(header::CACHE_CONTROL, "private, max-age=300")
         .header("X-Content-Type-Options", "nosniff")
         .header(

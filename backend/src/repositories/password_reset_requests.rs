@@ -87,3 +87,23 @@ pub async fn mark_completed(
     .await?;
     Ok(())
 }
+
+/// Atomically claim and complete a valid reset token inside a transaction.
+pub async fn consume_valid_token(
+    executor: impl Executor<'_, Database = Postgres>,
+    reset_token_hash: &str,
+) -> AppResult<Option<PasswordResetRequest>> {
+    let request = sqlx::query_as!(
+        PasswordResetRequest,
+        r#"UPDATE password_reset_requests
+           SET status = 'completed', completed_at = NOW()
+           WHERE reset_token_hash = $1
+             AND status = 'approved'
+             AND reset_token_expires_at > NOW()
+           RETURNING *"#,
+        reset_token_hash,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(request)
+}

@@ -30,7 +30,7 @@ function takeLinkParams(): URLSearchParams {
 export function OAuth2Link() {
   const navigate = useNavigate();
   const { t } = useTranslation();
-  const { isAuthenticated, isLoading } = useAuth();
+  const { user, isAuthenticated, isLoading } = useAuth();
   const [error, setError] = useState('');
 
   // Where the LinkedAccounts card sat before the round-trip to Google.
@@ -70,12 +70,12 @@ export function OAuth2Link() {
     linkGoogleAccount(code, state)
       .then(() => {
         sessionStorage.removeItem(RETURN_PATH_KEY);
-        navigate(returnTo ?? '/', { replace: true });
+        navigate(user?.must_change_password ? '/change-password' : (returnTo ?? '/'), { replace: true });
       })
       .catch((err: unknown) => {
         setError(getErrorMessage(err, t('auth.oauthLink.linkFailed')));
       });
-  }, [isLoading, isAuthenticated, navigate, returnTo, t]);
+  }, [isLoading, isAuthenticated, navigate, returnTo, t, user?.must_change_password]);
 
   if (error) {
     return (

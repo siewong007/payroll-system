@@ -85,22 +85,22 @@ pub async fn reset_password(
 
     let token_hash = hash_token(raw_token);
 
-    // Validate token
-    let request = password_reset_requests::find_by_valid_token(pool, &token_hash)
+    // Pre-check before spending bcrypt CPU, then claim atomically in the transaction.
+    let _ = password_reset_requests::find_by_valid_token(pool, &token_hash)
         .await?
         .ok_or_else(|| AppError::BadRequest("Invalid or expired reset link".into()))?;
 
-    // Hash new password
-    let password_hash = bcrypt::hash(new_password, 12)
-        .map_err(|e| AppError::Internal(format!("Failed to hash password: {}", e)))?;
+    let password_hash = super::auth_service::hash_password(new_password).await?;
 
-    // Update password, complete the request, and revoke active sessions.
+    // Update password, atomically consume the request, and revoke active sessions.
     // user_sessions must be revoked too: `AuthUser` admits a bearer token while
     // its session row is unrevoked, so revoking only refresh_tokens would leave
     // a stolen access JWT usable until it expires.
     let mut tx = pool.begin().await?;
+    let request = password_reset_requests::consume_valid_token(&mut *tx, &token_hash)
+        .await?
+        .ok_or_else(|| AppError::BadRequest("Invalid or expired reset link".into()))?;
     users::set_password(&mut *tx, request.user_id, &password_hash).await?;
-    password_reset_requests::mark_completed(&mut *tx, request.id).await?;
     user_sessions::revoke_all_for_user(&mut *tx, request.user_id).await?;
     refresh_tokens::revoke_all_for_user(&mut *tx, request.user_id).await?;
 

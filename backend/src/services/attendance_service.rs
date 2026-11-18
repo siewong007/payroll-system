@@ -222,9 +222,17 @@ pub async fn generate_qr_token(
     attendance_qr_tokens::revoke_unused_for_issuer(pool, company_id, kiosk_credential_id).await?;
 
     let token = Uuid::new_v4().to_string().replace('-', "");
+    let token_hash = sha256_hex(&token);
     let expires_at = Utc::now() + chrono::Duration::seconds(QR_TOKEN_TTL_SECONDS);
 
-    attendance_qr_tokens::insert(pool, company_id, &token, expires_at, kiosk_credential_id).await?;
+    attendance_qr_tokens::insert(
+        pool,
+        company_id,
+        &token_hash,
+        expires_at,
+        kiosk_credential_id,
+    )
+    .await?;
 
     let scan_url = format!("{}/attendance/scan?token={}", frontend_url, token);
 
@@ -240,7 +248,8 @@ pub async fn generate_qr_token(
 /// same active token during its TTL window. The `used` flag means admin-revoked (a new
 /// token was generated), not employee-scanned.
 pub async fn validate_qr_token(pool: &PgPool, token: &str, company_id: Uuid) -> AppResult<Uuid> {
-    let row = attendance_qr_tokens::find_by_token(pool, token).await?;
+    let token_hash = sha256_hex(token);
+    let row = attendance_qr_tokens::find_by_token(pool, &token_hash).await?;
 
     match row {
         None => Err(AppError::BadRequest(
@@ -430,12 +439,15 @@ pub async fn revoke_kiosk_credential(
             AppError::NotFound("Kiosk credential not found or already revoked".into())
         })?;
 
-    let revoked = attendance_kiosk_credentials::revoke(pool, id, company_id).await?;
+    let mut tx = pool.begin().await?;
+    let revoked = attendance_kiosk_credentials::revoke(&mut *tx, id, company_id).await?;
     if !revoked {
         return Err(AppError::NotFound(
             "Kiosk credential not found or already revoked".into(),
         ));
     }
+    attendance_qr_tokens::revoke_unused_for_issuer(&mut *tx, company_id, Some(id)).await?;
+    tx.commit().await?;
 
     let _ = audit_service::log_action_with_metadata(
         pool,
@@ -862,6 +874,7 @@ pub async fn manual_attendance(
             "Check-out time must not be before check-in time".into(),
         ));
     }
+    validate_correction_span(req.check_in_at, check_out_at)?;
 
     let record = attendance_records::insert_manual(
         pool,

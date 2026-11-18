@@ -82,13 +82,22 @@ pub async fn approve(
     pool: &PgPool,
     company_id: Uuid,
     run_id: Uuid,
-    actor_user_id: Uuid,
+    auth: &AuthUser,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<PayrollRun> {
+    let actor_user_id = auth.0.sub;
     let old_run = load_run(pool, company_id, run_id).await?;
     if old_run.status != "pending_approval" {
         return Err(AppError::BadRequest(
             "Only submitted payroll runs can be approved".into(),
+        ));
+    }
+
+    let is_self_approval =
+        old_run.processed_by == Some(actor_user_id) || old_run.submitted_by == Some(actor_user_id);
+    if is_self_approval && !auth.is_super_admin() {
+        return Err(AppError::Forbidden(
+            "You cannot approve a payroll run that you processed or submitted. Ask another approver, or a super admin, to review it.".into(),
         ));
     }
 
@@ -111,6 +120,25 @@ pub async fn approve(
         audit_meta,
     )
     .await;
+
+    if is_self_approval && auth.is_super_admin() {
+        let _ = crate::services::audit_service::log_action_with_metadata(
+            pool,
+            Some(company_id),
+            Some(actor_user_id),
+            "self_approval_override",
+            "payroll_run",
+            Some(run.id),
+            None,
+            Some(serde_json::json!({
+                "processed_by": old_run.processed_by,
+                "submitted_by": old_run.submitted_by,
+            })),
+            Some("Super admin approved a payroll run they processed or submitted; maker-checker guard overridden"),
+            audit_meta,
+        )
+        .await;
+    }
 
     Ok(run)
 }

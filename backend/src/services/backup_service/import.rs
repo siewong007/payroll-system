@@ -57,12 +57,13 @@ fn importable_employee_email(
     email.map(str::trim).filter(|email| !email.is_empty())
 }
 
-async fn provision_imported_employee_account(
+async fn provision_imported_employee_account_with_hash(
     conn: &mut PgConnection,
     employee_id: Uuid,
     company_id: Uuid,
     full_name: &str,
     email: &str,
+    precomputed_hash: Option<&str>,
 ) -> AppResult<AccountImportOutcome> {
     if let Some(existing) = users::find_by_email(&mut *conn, email).await? {
         // A super-admin deletion is a tombstone, not an invitation for a backup
@@ -85,16 +86,22 @@ async fn provision_imported_employee_account(
 
     // Backups intentionally exclude credentials. Give the account an unknowable,
     // random temporary secret and require the employee to use Forgot Password.
-    let temporary_secret = format!("{}{}", Uuid::new_v4(), Uuid::new_v4());
-    let password_hash = bcrypt::hash(temporary_secret, 12)
-        .map_err(|e| AppError::Internal(format!("Failed to hash password: {e}")))?;
+    let owned_hash;
+    let password_hash = match precomputed_hash {
+        Some(h) => h,
+        None => {
+            let temporary_secret = format!("{}{}", Uuid::new_v4(), Uuid::new_v4());
+            owned_hash = crate::services::auth_service::hash_password(&temporary_secret).await?;
+            &owned_hash
+        }
+    };
     let user_id = Uuid::now_v7();
 
     users::insert_employee_user(
         &mut *conn,
         user_id,
         email,
-        &password_hash,
+        password_hash,
         full_name,
         company_id,
         employee_id,
@@ -450,6 +457,34 @@ pub async fn import_company(
         old.map(|id| remap_id(&remap, id, field)).transpose()
     };
 
+    // Pre-hash temporary portal passwords off-thread *before* starting the DB
+    // transaction so cost-12 bcrypt never stalls Tokio workers or holds a TX lock.
+    let mut emails_needing_hash: Vec<String> = Vec::new();
+    for e in &backup.employees {
+        if let Some(email) =
+            importable_employee_email(e.email.as_deref(), e.is_active, e.deleted_at.is_some())
+            && users::find_by_email(pool, email).await?.is_none()
+        {
+            emails_needing_hash.push(email.to_string());
+        }
+    }
+    let precomputed_hashes: HashMap<String, String> = if emails_needing_hash.is_empty() {
+        HashMap::new()
+    } else {
+        tokio::task::spawn_blocking(move || {
+            let mut map = HashMap::with_capacity(emails_needing_hash.len());
+            for email in emails_needing_hash {
+                let secret = format!("{}{}", Uuid::new_v4(), Uuid::new_v4());
+                let hash = bcrypt::hash(&secret, 12)
+                    .map_err(|e| AppError::Internal(format!("Failed to hash password: {e}")))?;
+                map.insert(email, hash);
+            }
+            Ok::<_, AppError>(map)
+        })
+        .await
+        .map_err(|e| AppError::Internal(format!("Password hashing task failed: {e}")))??
+    };
+
     let mut tx = pool.begin().await?;
     let mut accounts_created = 0usize;
     let mut accounts_linked = 0usize;
@@ -507,12 +542,14 @@ pub async fn import_company(
         if let Some(email) =
             importable_employee_email(e.email.as_deref(), e.is_active, e.deleted_at.is_some())
         {
-            match provision_imported_employee_account(
+            let pre_hash = precomputed_hashes.get(email).map(String::as_str);
+            match provision_imported_employee_account_with_hash(
                 &mut tx,
                 employee_id,
                 new_company_id,
                 &e.full_name,
                 email,
+                pre_hash,
             )
             .await?
             {
@@ -810,7 +847,14 @@ pub async fn import_company(
 
     tx.commit().await?;
 
-    warnings.extend(files::restore_backup_files(&backup.files, &file_plan).await);
+    let (file_warnings, restored_names) =
+        files::restore_backup_files_with_names(&backup.files, &file_plan).await;
+    for stored_name in &restored_names {
+        let _ =
+            crate::repositories::uploaded_files::insert(pool, stored_name, new_company_id, None)
+                .await;
+    }
+    warnings.extend(file_warnings);
     warnings.extend(files::cap_warnings(
         broken_links,
         "row(s) whose file link was cleared",
@@ -1171,7 +1215,7 @@ mod tests {
             .push(document_export("Orphaned", "/api/uploads/absent.pdf"));
         backup.files.insert(
             "/api/uploads/handbook.pdf".to_owned(),
-            b64.encode(b"handbook"),
+            b64.encode(b"%PDF-1.4\nhandbook"),
         );
         backup.files.insert(
             "/api/uploads/../../app/.env".to_owned(),
@@ -1199,7 +1243,7 @@ mod tests {
         let path = upload_path::stored_path(name).expect("generated name is safe");
         assert_eq!(
             tokio::fs::read(&path).await.expect("restored blob on disk"),
-            b"handbook",
+            b"%PDF-1.4\nhandbook",
             "the blob must land under the name the server chose"
         );
         let _ = tokio::fs::remove_file(&path).await;
@@ -1233,12 +1277,13 @@ mod tests {
         let email = format!("import-{}@example.invalid", Uuid::new_v4());
         let mut conn = pool.acquire().await.expect("acquire connection");
 
-        let created = provision_imported_employee_account(
+        let created = provision_imported_employee_account_with_hash(
             &mut conn,
             employee_id,
             company_id,
             "Imported Employee",
             &email,
+            None,
         )
         .await
         .expect("create imported account");
@@ -1263,12 +1308,13 @@ mod tests {
 
         let replacement_employee_id =
             crate::tests::support::seed_employee(&pool, company_id, None, 500_000).await;
-        let linked = provision_imported_employee_account(
+        let linked = provision_imported_employee_account_with_hash(
             &mut conn,
             replacement_employee_id,
             company_id,
             "Imported Employee",
             &email,
+            None,
         )
         .await
         .expect("relink imported account");

@@ -19,6 +19,7 @@ pub enum UploadReferenceKind {
     Claim,
     LeaveRequest,
     Document,
+    CompanyLogo,
 }
 
 impl UploadReferenceKind {
@@ -32,6 +33,7 @@ impl UploadReferenceKind {
             "claim" => Some(Self::Claim),
             "leave_request" => Some(Self::LeaveRequest),
             "document" => Some(Self::Document),
+            "company_logo" => Some(Self::CompanyLogo),
             _ => None,
         }
     }
@@ -45,6 +47,7 @@ pub struct UploadReference {
     /// document, which has no self-service owner and is reachable only through
     /// the documents permission.
     pub employee_id: Option<Uuid>,
+    pub is_confidential: bool,
 }
 
 /// What the caller is entitled to, lifted out of `AuthUser` so the authorization
@@ -53,9 +56,11 @@ pub struct UploadReference {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UploadAccess {
     pub company_id: Uuid,
+    pub user_id: Uuid,
     /// The caller's own employee profile, when they have one. Users who
     /// administer a company without being an employee of it hold `None`.
     pub employee_id: Option<Uuid>,
     pub can_view_approvals: bool,
     pub can_view_documents: bool,
+    pub can_view_confidential: bool,
 }

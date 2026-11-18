@@ -1,5 +1,16 @@
 # Build-context hygiene. infra/Dockerfile only needs backend/{Cargo.*,src,migrations,.sqlx}.
 .git
+.env
+.env.*
+backend/.env
+backend/.env.*
+uploads
+backend/uploads
+*.pem
+*.key
+*.dump
+graphify-out
+.codegraph
 frontend
 docs
 backend/target

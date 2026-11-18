@@ -6,20 +6,22 @@ use uuid::Uuid;
 use crate::core::error::AppResult;
 use crate::models::notification::Notification;
 
-/// A user's notifications, newest first; `unread_only` filters to unread.
+/// A user's notifications for one active company, newest first; `unread_only` filters to unread.
 pub async fn list(
     executor: impl Executor<'_, Database = Postgres>,
     user_id: Uuid,
+    company_id: Uuid,
     unread_only: bool,
     limit: i64,
 ) -> AppResult<Vec<Notification>> {
     let notifications = sqlx::query_as!(
         Notification,
         r#"SELECT * FROM notifications
-        WHERE user_id = $1 AND ($2 = FALSE OR is_read = FALSE)
+        WHERE user_id = $1 AND company_id = $2 AND ($3 = FALSE OR is_read = FALSE)
         ORDER BY created_at DESC
-        LIMIT $3"#,
+        LIMIT $4"#,
         user_id,
+        company_id,
         unread_only,
         limit,
     )
@@ -31,10 +33,12 @@ pub async fn list(
 pub async fn count_unread(
     executor: impl Executor<'_, Database = Postgres>,
     user_id: Uuid,
+    company_id: Uuid,
 ) -> AppResult<i64> {
     let unread = sqlx::query_scalar!(
-        r#"SELECT COUNT(*) AS "count!" FROM notifications WHERE user_id = $1 AND is_read = FALSE"#,
+        r#"SELECT COUNT(*) AS "count!" FROM notifications WHERE user_id = $1 AND company_id = $2 AND is_read = FALSE"#,
         user_id,
+        company_id,
     )
     .fetch_one(executor)
     .await?;
@@ -44,10 +48,12 @@ pub async fn count_unread(
 pub async fn count_total(
     executor: impl Executor<'_, Database = Postgres>,
     user_id: Uuid,
+    company_id: Uuid,
 ) -> AppResult<i64> {
     let total = sqlx::query_scalar!(
-        r#"SELECT COUNT(*) AS "count!" FROM notifications WHERE user_id = $1"#,
+        r#"SELECT COUNT(*) AS "count!" FROM notifications WHERE user_id = $1 AND company_id = $2"#,
         user_id,
+        company_id,
     )
     .fetch_one(executor)
     .await?;
@@ -58,11 +64,13 @@ pub async fn mark_read(
     executor: impl Executor<'_, Database = Postgres>,
     notification_id: Uuid,
     user_id: Uuid,
+    company_id: Uuid,
 ) -> AppResult<()> {
     sqlx::query!(
-        "UPDATE notifications SET is_read = TRUE, read_at = NOW() WHERE id = $1 AND user_id = $2",
+        "UPDATE notifications SET is_read = TRUE, read_at = NOW() WHERE id = $1 AND user_id = $2 AND company_id = $3",
         notification_id,
         user_id,
+        company_id,
     )
     .execute(executor)
     .await?;
@@ -72,10 +80,12 @@ pub async fn mark_read(
 pub async fn mark_all_read(
     executor: impl Executor<'_, Database = Postgres>,
     user_id: Uuid,
+    company_id: Uuid,
 ) -> AppResult<()> {
     sqlx::query!(
-        "UPDATE notifications SET is_read = TRUE, read_at = NOW() WHERE user_id = $1 AND is_read = FALSE",
+        "UPDATE notifications SET is_read = TRUE, read_at = NOW() WHERE user_id = $1 AND company_id = $2 AND is_read = FALSE",
         user_id,
+        company_id,
     )
     .execute(executor)
     .await?;

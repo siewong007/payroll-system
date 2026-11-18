@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT u.email FROM users u\n           WHERE (\n                 u.roles && $1::varchar(50)[]\n                 OR EXISTS (\n                     SELECT 1\n                     FROM user_group_members ugm\n                     JOIN user_groups ug ON ug.id = ugm.group_id AND ug.is_active = TRUE\n                     JOIN user_group_permissions ugp ON ugp.group_id = ug.id\n                     WHERE ugm.user_id = u.id\n                       AND ugp.permission = ANY($2::varchar(80)[])\n                 )\n             )\n             AND u.is_active AND u.deleted_at IS NULL\n             AND NOT EXISTS (\n                 SELECT 1 FROM user_totp t WHERE t.user_id = u.id AND t.enabled\n             )\n           ORDER BY u.email",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "email",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "VarcharArray",
+        "VarcharArray"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "165a952a4cd3c67f5742820294a511fdf28a198cdb0d996fdeaebef785bfd9d3"
+}

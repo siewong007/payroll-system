@@ -342,7 +342,7 @@ pub async fn approve_overtime(
             other => other,
         })?;
 
-    let reviewer_employee = reviewer_employee_id(pool, &reviewer).await?;
+    let reviewer_employee = reviewer_employee_id(pool, &reviewer, company_id).await?;
 
     // Rated through the same `OvertimeSettings::rate_overtime` the payroll engine
     // uses, so the amount quoted here is the amount the run pays. This used to

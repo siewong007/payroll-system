@@ -62,8 +62,7 @@ const ROLE_PERMISSIONS: Record<AppRole, PermissionKey[]> = {
   ],
   exec: [
     'view_employees', 'view_attendance', 'view_teams', 'view_calendar',
-    'view_approvals', 'manage_approvals',
-    'view_documents', 'manage_documents', 'view_email_logs', 'manage_email_templates', 'send_letters',
+    'view_approvals', 'view_documents', 'view_email_logs',
   ],
   employee: [],
 };

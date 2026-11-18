@@ -1,12 +1,12 @@
 use sqlx::{Executor, PgPool, Postgres};
 use uuid::Uuid;
 
-use crate::core::auth::{create_mfa_pending_token, create_token};
+use crate::core::auth::{Permission, create_mfa_pending_token, create_token};
 use crate::core::error::{AppError, AppResult};
 use crate::models::audit::AuditRequestMeta;
 use crate::models::session::{LoginOutcome, LoginResponseWithRefresh};
 use crate::models::user::{CodeLoginRequest, LoginRequest, User, UserResponse};
-use crate::repositories::{employees, refresh_tokens, user_sessions, users};
+use crate::repositories::{employees, refresh_tokens, user_groups, user_sessions, users};
 use crate::services::{audit_service, session_service, totp_service};
 
 const EMPLOYEE_DELETED_MSG: &str =
@@ -16,6 +16,11 @@ pub fn validate_password_strength(password: &str) -> AppResult<()> {
     if password.len() < 10 {
         return Err(AppError::Validation(
             "Password must be at least 10 characters".into(),
+        ));
+    }
+    if password.len() > 72 {
+        return Err(AppError::Validation(
+            "Password must not exceed 72 bytes".into(),
         ));
     }
     let has_upper = password.chars().any(|c| c.is_uppercase());
@@ -38,6 +43,30 @@ pub async fn hash_password(password: &str) -> AppResult<String> {
         .await
         .map_err(|e| AppError::Internal(format!("Password hashing task failed: {}", e)))?
         .map_err(|e| AppError::Internal(format!("Failed to hash password: {}", e)))
+}
+
+static DUMMY_BCRYPT_HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+pub async fn verify_password(password: &str, hash: &str) -> Result<bool, bcrypt::BcryptError> {
+    let password = password.to_string();
+    let hash = hash.to_string();
+    match tokio::task::spawn_blocking(move || bcrypt::verify(&password, &hash)).await {
+        Ok(res) => res,
+        Err(_) => Ok(false),
+    }
+}
+
+async fn equalize_unknown_email_timing(password: &str) {
+    let password = password.to_string();
+    let _ = tokio::task::spawn_blocking(move || {
+        let dummy = DUMMY_BCRYPT_HASH.get_or_init(|| {
+            bcrypt::hash("dummy-timing-equalizer-password", 12).unwrap_or_default()
+        });
+        if !dummy.is_empty() {
+            let _ = bcrypt::verify(&password, dummy);
+        }
+    })
+    .await;
 }
 
 /// True if the user's linked employee (if any) is still active. Users with no linked
@@ -69,6 +98,7 @@ pub async fn login(
     let user = match users::find_active_by_email(pool, &req.email).await? {
         Some(user) => user,
         None => {
+            equalize_unknown_email_timing(&req.password).await;
             // Recorded against no user: the trail must answer "was this
             // address probed" even when the address matched nobody. The
             // attempted email is deliberately stored — that is exactly what
@@ -95,9 +125,8 @@ pub async fn login(
         }
     };
 
-    // Bcrypt cost 12 inline: this is the pre-existing shape of `login`, kept
-    // as-is here; the offload work is tracked separately (plan item 38).
-    let valid = bcrypt::verify(&req.password, &user.password_hash)
+    let valid = verify_password(&req.password, &user.password_hash)
+        .await
         .map_err(|_| AppError::Internal("Password verification failed".into()))?;
 
     if !valid {
@@ -260,11 +289,34 @@ pub async fn issue_session(
         jwt_expiry,
     )?;
 
+    let user_response = build_user_response(pool, user).await?;
     Ok(LoginResponseWithRefresh {
         token,
         refresh_token,
-        user: UserResponse::from(user),
+        user: user_response,
     })
+}
+
+/// Build `UserResponse` including active-company `user_groups` grants (with
+/// platform-only and restricted-role payroll caps filtered out identically to
+/// `AuthUser`).
+pub async fn build_user_response(pool: &PgPool, user: User) -> AppResult<UserResponse> {
+    let group_permissions = match user.company_id {
+        Some(company_id) => {
+            let keys = user_groups::effective_permissions(pool, user.id, company_id).await?;
+            let has_restricted = user.roles.iter().any(|r| r == "exec" || r == "employee");
+            keys.iter()
+                .filter_map(|key| Permission::ALL.iter().find(|p| p.as_str() == key).copied())
+                .filter(|p| !p.is_platform_only())
+                .filter(|p| !has_restricted || !p.is_payroll_capability())
+                .collect()
+        }
+        None => Vec::new(),
+    };
+    Ok(UserResponse::with_group_permissions(
+        user,
+        &group_permissions,
+    ))
 }
 
 /// Single chokepoint for finishing any primary-auth flow (password, passkey,
@@ -331,6 +383,15 @@ pub async fn refresh_session(
         .await?
         .ok_or_else(|| AppError::Unauthorized("User not found or inactive".into()))?;
 
+    if !user_sessions::is_active(&mut *tx, user.id, token.session_id).await? {
+        user_sessions::revoke(&mut *tx, user.id, token.session_id).await?;
+        refresh_tokens::revoke_for_session(&mut *tx, token.session_id).await?;
+        tx.commit().await?;
+        return Err(AppError::Unauthorized(
+            "Session has expired or was revoked".into(),
+        ));
+    }
+
     // Checked inline rather than via `get_active_user` so a terminated employee
     // loses the entire token family, not just the one token they presented —
     // the old code revoked that single token and left the rest of the family
@@ -341,6 +402,13 @@ pub async fn refresh_session(
         // Committed, not rolled back: the revocation is the point of this path.
         tx.commit().await?;
         return Err(AppError::Unauthorized(EMPLOYEE_DELETED_MSG.into()));
+    }
+
+    if let Err(err) = enforce_two_factor_policy(pool, &user).await {
+        user_sessions::revoke(&mut *tx, user.id, token.session_id).await?;
+        refresh_tokens::revoke_for_session(&mut *tx, token.session_id).await?;
+        tx.commit().await?;
+        return Err(AppError::Unauthorized(err.client_response().1));
     }
 
     let new_refresh =
@@ -358,10 +426,11 @@ pub async fn refresh_session(
         jwt_expiry,
     )?;
 
+    let user_response = build_user_response(pool, user).await?;
     Ok(LoginResponseWithRefresh {
         token: jwt,
         refresh_token: new_refresh,
-        user: UserResponse::from(user),
+        user: user_response,
     })
 }
 
@@ -409,11 +478,17 @@ pub async fn change_password(
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<()> {
     validate_password_strength(new_password)?;
+    if current_password == new_password {
+        return Err(AppError::BadRequest(
+            "New password must differ from current password".into(),
+        ));
+    }
 
     let user = get_user_by_id(pool, user_id).await?;
 
     // A malformed stored hash is an authentication failure, not a server fault.
-    let valid = bcrypt::verify(current_password, &user.password_hash)
+    let valid = verify_password(current_password, &user.password_hash)
+        .await
         .map_err(|_| AppError::BadRequest("Current password is incorrect".into()))?;
 
     if !valid {
@@ -433,8 +508,7 @@ pub async fn change_password(
         return Err(AppError::BadRequest("Current password is incorrect".into()));
     }
 
-    let new_hash = bcrypt::hash(new_password, 12)
-        .map_err(|_| AppError::Internal("Password hashing failed".into()))?;
+    let new_hash = hash_password(new_password).await?;
 
     let mut tx = pool.begin().await?;
     users::update_password(&mut *tx, user_id, &new_hash).await?;
@@ -462,18 +536,73 @@ pub async fn change_password(
     Ok(())
 }
 
-pub async fn skip_change_password(pool: &PgPool, user_id: Uuid) -> AppResult<()> {
-    users::clear_must_change_password(pool, user_id).await
-}
-
 /// Roles whose holders can move tenant money or export tenant PII. When the
 /// platform enables 2FA enforcement, these roles must hold a working second
 /// factor before any session is minted (plan item 36).
 pub const TWO_FACTOR_REQUIRED_ROLES: &[&str] =
     &["super_admin", "admin", "payroll_admin", "finance"];
 
+const TWO_FACTOR_REQUIRED_GROUP_PERMS: &[&str] = &[
+    "view_payroll",
+    "manage_payroll_draft",
+    "submit_payroll",
+    "approve_payroll",
+    "mark_payroll_paid",
+    "view_statutory_exports",
+    "view_salary_history",
+    "manage_company_settings",
+];
+
 pub const ENFORCE_2FA_KEY: &str = "enforce_2fa";
 pub const ENFORCE_2FA_GRACE_UNTIL_KEY: &str = "enforce_2fa_grace_until";
+
+async fn user_requires_two_factor(pool: &PgPool, user: &User) -> AppResult<bool> {
+    if user
+        .roles
+        .iter()
+        .any(|r| TWO_FACTOR_REQUIRED_ROLES.contains(&r.as_str()))
+    {
+        return Ok(true);
+    }
+
+    let perms: Vec<String> = TWO_FACTOR_REQUIRED_GROUP_PERMS
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let has_privileged_group = sqlx::query_scalar!(
+        r#"SELECT EXISTS(
+               SELECT 1
+               FROM user_group_members ugm
+               JOIN user_groups ug ON ug.id = ugm.group_id AND ug.is_active = TRUE
+               JOIN user_group_permissions ugp ON ugp.group_id = ug.id
+               WHERE ugm.user_id = $1
+                 AND ugp.permission = ANY($2::varchar(80)[])
+           ) AS "exists!""#,
+        user.id,
+        &perms,
+    )
+    .fetch_one(pool)
+    .await?;
+    Ok(has_privileged_group)
+}
+
+/// Prevent disabling 2FA when platform 2FA enforcement is active for the user's
+/// roles or delegated group capabilities.
+pub async fn require_two_factor_not_enforced(pool: &PgPool, user: &User) -> AppResult<()> {
+    let enabled = platform_settings_value(pool, ENFORCE_2FA_KEY)
+        .await?
+        .as_deref()
+        == Some("true");
+    if !enabled {
+        return Ok(());
+    }
+    if user_requires_two_factor(pool, user).await? {
+        return Err(AppError::Forbidden(
+            "Two-factor authentication cannot be disabled while platform 2FA enforcement applies to your account".into(),
+        ));
+    }
+    Ok(())
+}
 
 /// The enforcement check shared by every session-minting path.
 ///
@@ -486,11 +615,7 @@ pub const ENFORCE_2FA_GRACE_UNTIL_KEY: &str = "enforce_2fa_grace_until";
 /// itself requires a session, so a hard cut without grace would lock out the
 /// very people needed to fix it.
 async fn enforce_two_factor_policy(pool: &PgPool, user: &User) -> AppResult<()> {
-    let privileged = user
-        .roles
-        .iter()
-        .any(|r| TWO_FACTOR_REQUIRED_ROLES.contains(&r.as_str()));
-    if !privileged {
+    if !user_requires_two_factor(pool, user).await? {
         return Ok(());
     }
 
@@ -549,15 +674,30 @@ pub async fn get_two_factor_policy(
         .iter()
         .map(|s| s.to_string())
         .collect();
+    let required_perms: Vec<String> = TWO_FACTOR_REQUIRED_GROUP_PERMS
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
     let non_compliant = sqlx::query!(
         r#"SELECT u.email FROM users u
-           WHERE u.roles && $1::varchar(50)[]
+           WHERE (
+                 u.roles && $1::varchar(50)[]
+                 OR EXISTS (
+                     SELECT 1
+                     FROM user_group_members ugm
+                     JOIN user_groups ug ON ug.id = ugm.group_id AND ug.is_active = TRUE
+                     JOIN user_group_permissions ugp ON ugp.group_id = ug.id
+                     WHERE ugm.user_id = u.id
+                       AND ugp.permission = ANY($2::varchar(80)[])
+                 )
+             )
              AND u.is_active AND u.deleted_at IS NULL
              AND NOT EXISTS (
                  SELECT 1 FROM user_totp t WHERE t.user_id = u.id AND t.enabled
              )
            ORDER BY u.email"#,
         &required_roles,
+        &required_perms,
     )
     .fetch_all(pool)
     .await?

@@ -39,6 +39,9 @@ pub const BACKUP_REQUEST_MAX_BYTES: usize = BACKUP_FILE_MAX_BYTES + 1024 * 1024;
 /// of emerging from two checks that contradict each other.
 fn require_backup_admin(auth: &AuthUser) -> AppResult<(Option<Uuid>, Uuid)> {
     auth.require_permission(Permission::ManageBackups)?;
+    if !auth.is_super_admin() {
+        return Err(AppError::Forbidden("Super admin access required".into()));
+    }
     Ok((auth.0.company_id, auth.0.sub))
 }
 

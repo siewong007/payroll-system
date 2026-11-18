@@ -35,26 +35,35 @@ optimizer, foreign-key checks, GIN maintenance, asynchronous I/O, and defaults
 TOAST compression to LZ4, so the indexes, constraints, and wide JSON/text rows
 benefit without vendor-specific application branches.
 
-## Exactly two current SQL scripts
+## Consolidated baseline and forward migration chain
 
 `backend/migrations/` contains:
 
-1. `1000_schema.sql` — canonical fresh schema plus idempotent reconciliation for
+1. `1000_schema.sql` — canonical fresh schema baseline plus idempotent reconciliation for
    databases created by the retired versions 1–4.
 2. `1001_data.sql` — system/reference data, explicitly unverified academic
    statutory fixtures, and idempotent legacy repairs. It intentionally contains
    no demo company, personal data, known password, or privileged account.
+3. `1002_*.sql` through `1030_*.sql` — immutable forward production migrations
+   covering TOTP 2FA (`1002`), user sessions (`1003`), kiosk-scoped QR tokens
+   (`1004`), attendance & payroll generation reworks (`1005`–`1006`), user
+   groups (`1007`), audit retention FKs (`1008`), authorized upload ownership &
+   URL guards (`1009`, `1014`, `1030`), office-network binding (`1010`, `1016`),
+   tenant composite FKs & bounds (`1011`–`1024`), payroll ops cancellation /
+   reversal (`1025`, `1027`), async `background_jobs` (`1026`), 2025–2026
+   Malaysian statutory alignment (`1029`: KWSP Third Schedule Part F & Minimum
+   Wages Order 2024 RM1,700 defaults), and security hardening (`1030`).
 
-Both are embedded by `sqlx::migrate!("./migrations")` and recorded in
+All migrations are embedded by `sqlx::migrate!("./migrations")` and recorded in
 `public._sqlx_migrations`. The application permits missing files only for the
 known retired versions 1–4 and refuses any other unknown applied version before
 changing the schema.
 
-These files are a one-time consolidated baseline. Once version 1000 or 1001 has
-been deployed, its checksum is immutable. A later production change must use a
-new numbered migration; a future squash back to two files must be an explicit
-rebaseline with the same fresh-install, upgrade, checksum, and backup testing
-performed here.
+Once any migration file has been deployed, its checksum is **strictly immutable**
+(enforced in CI by `backend-migrations`). Every later production change must use
+the next numbered migration file; a future squash back to a two-file baseline
+must be an explicit rebaseline with full fresh-install, upgrade, checksum, and
+backup verification.
 
 ## Fresh and existing database behavior
 
@@ -107,15 +116,20 @@ academic algorithm and input model have not passed LHDN's computerised-MTD
 conformance process. Tests opt into the prototype fixture only in test builds.
 
 Before enabling a statutory dataset, import the complete effective-dated source
-schedule, attach every row to its rule-set ID, record the exact official URL,
-document version and artifact SHA-256, independently verify boundary values and
-eligibility logic, then change its status to `verified`. Primary references:
+schedule (including KWSP Parts A–F with the October 2025 2% foreign-worker Part F
+rule, PERKESO RM6,000 wage ceiling schedules under Act 4 & Act 800, and LHDN YA
+2025/2026 reliefs/brackets), attach every row to its rule-set ID, record the
+exact official URL, document version and artifact SHA-256, independently verify
+boundary values and eligibility logic, then change its status to `verified`. See
+[docs/legal/malaysian-statutory-compliance.md](legal/malaysian-statutory-compliance.md)
+for the complete 2026 statutory mapping. Primary references:
 
-- [KWSP EPF Act Third Schedule index](https://www.kwsp.gov.my/en/epf-act-1991-third-schedule)
-- [PERKESO contribution-rate notice](https://www.perkeso.gov.my/en/rate-of-contribution.html)
+- [KWSP EPF Act Third Schedule (Parts A–F)](https://www.kwsp.gov.my/en/employer/responsibilities/mandatory-contribution)
+- [PERKESO contribution-rate notice (RM6,000 ceiling)](https://www.perkeso.gov.my/en/rate-of-contribution.html)
 - [PERKESO foreign-worker coverage](https://www.perkeso.gov.my/en/our-services/protection/foreign-worker)
-- [LHDN employer payroll specifications](https://www.hasil.gov.my/en/employers/employer-payroll-data-specification/)
+- [LHDN employer payroll & e-PCB Plus specifications](https://www.hasil.gov.my/en/employers/employer-payroll-data-specification/)
 - [LHDN 2026 computerised-MTD specification](https://www.hasil.gov.my/media/arvlrzh5/spesifikasi-kaedah-pengiraan-berkomputer-pcb-2026.pdf)
+- [Minimum Wages Order 2024 (RM1,700 floor)](https://gajiminimum.mohr.gov.my)
 
 ## Schema design rules
 

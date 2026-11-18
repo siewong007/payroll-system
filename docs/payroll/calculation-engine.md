@@ -20,12 +20,18 @@ engine in handlers, jobs, or the frontend.
    group, recurring allowance windows as interval overlaps, staged entries,
    approved OT/claims/unpaid leave, YTD, statutory tables).
 3. `compute_payslip` — **pure** per-employee calculation: prorated basic
-   (EA1955 s.18B calendar days), allowances, OT, claims, unpaid-leave
-   deduction, EPF/SOCSO/EIS/PCB, YTD accumulation.
+   (EA1955 s.18B calendar days), prorated overlapping recurring allowances, OT
+   (EA1955 s.60I 26-day ORP & day-type multipliers), claims, unpaid-leave
+   deduction (reducing statutory wage bases), EPF (KWSP Parts A–F + s.43(1)
+   age-75 cessation, excluding OT per s.2), SOCSO & EIS (including OT, clamped
+   at the RM6,000 ceiling), PCB, YTD accumulation.
 4. `persist_payslip` — writes `payroll_items` + `payroll_item_details`
    (the explainable line breakdown) inside the run transaction.
 5. `preview_payroll` runs the same computation without persisting and returns
-   diagnostics instead of aborting on the first failure.
+   structured `blocking` and `warnings` diagnostics (including
+   `missing_date_of_birth`, `epf_category_override`, `below_minimum_wage` under
+   *Minimum Wages Order 2024* RM1,700/month, `missing_earlier_period`, and
+   `missing_bank_account`) instead of aborting on the first failure.
 
 ## Explainability
 

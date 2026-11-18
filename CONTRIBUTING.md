@@ -24,6 +24,7 @@ Thank you for your interest in improving this project. This repository is mainta
 git clone https://github.com/siewong007/payroll-system.git
 cd payroll-system
 cp .env.example .env
+# Set strong, distinct values for POSTGRES_PASSWORD, JWT_SECRET, and TOTP_ENCRYPTION_KEY in .env
 docker compose up -d
 ```
 
@@ -50,16 +51,18 @@ bun run dev
 - Place business logic in `backend/src/services/`.
 - Place SQL/data access in `backend/src/repositories/` or `backend/src/repositories/reads/`.
 - Use `AppResult<T>` and existing `AppError` variants for fallible paths.
-- Use `rust_decimal::Decimal` for money. Do not introduce floating-point payroll calculations.
-- The current consolidated baseline is `backend/migrations/1000_schema.sql` plus `1001_data.sql`.
-- Treat a migration as immutable after deployment. Later changes use the next numbered file; squashing back to two files requires an explicit rebaseline and fresh/upgrade verification.
+- Use `rust_decimal::Decimal` and integer `sen` (`i64`) for money. Do not introduce floating-point payroll calculations.
+- The consolidated schema baseline is `backend/migrations/1000_schema.sql` plus `1001_data.sql`, followed by numbered forward migrations (`1002_*.sql` onward).
+- Treat every deployed migration as strictly immutable (CI enforces forward-only immutability). Later changes must use the next numbered migration file; squashing history requires an explicit rebaseline and fresh/upgrade verification.
+- Keep statutory rules effective-dated and table-driven (`statutory_rule_sets`); see [docs/legal/malaysian-statutory-compliance.md](docs/legal/malaysian-statutory-compliance.md).
 
 ### Frontend
 
 - Use the existing Axios instance from `frontend/src/api/client.ts`.
 - Do not create a second HTTP client.
 - Keep API types aligned with backend contract changes.
-- Use existing layout, role guard, and React Query patterns.
+- Use existing layout, `PermissionGuard`, and React Query patterns.
+- Route all user-facing strings through i18next (`en`, `ms`, `zh-CN`, `zh-TW`) with full key/interpolation parity and script purity (`docs/i18n/README.md`).
 - Keep UI changes accessible and responsive.
 
 ## SQLx Offline Cache
@@ -86,13 +89,16 @@ cargo clippy -- -D warnings
 cargo test
 ```
 
-Frontend:
+Frontend & i18n gate:
 
 ```bash
 cd frontend
 bun run lint
+bun run typecheck
 bun run test
 bun run build
+cd ..
+node scripts/i18n-scan.mjs --ci
 ```
 
 ## Commit Guidelines

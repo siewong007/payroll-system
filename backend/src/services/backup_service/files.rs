@@ -147,10 +147,10 @@ pub(super) fn plan_restore(files: &HashMap<String, String>) -> RestorePlan {
 /// Returns the warnings to surface on `ImportResult`. Failures here are per file
 /// and never fatal: the rows are already committed by the time this runs, so
 /// aborting on one unwritable blob would only cost the tenant the rest of them.
-pub(super) async fn restore_backup_files(
+pub(super) async fn restore_backup_files_with_names(
     files: &HashMap<String, String>,
     plan: &RestorePlan,
-) -> Vec<String> {
+) -> (Vec<String>, Vec<String>) {
     let mut problems: Vec<String> = plan
         .dropped
         .iter()
@@ -163,7 +163,7 @@ pub(super) async fn restore_backup_files(
         .collect();
 
     if plan.rewrites.is_empty() {
-        return cap_warnings(problems, "unrestored file(s)");
+        return (cap_warnings(problems, "unrestored file(s)"), Vec::new());
     }
 
     let upload_dir = Path::new(upload_path::UPLOAD_DIR);
@@ -171,11 +171,11 @@ pub(super) async fn restore_backup_files(
         problems.push(format!(
             "No attached files were restored: the uploads directory could not be created ({error})."
         ));
-        return cap_warnings(problems, "unrestored file(s)");
+        return (cap_warnings(problems, "unrestored file(s)"), Vec::new());
     }
 
     let b64 = base64::engine::general_purpose::STANDARD;
-    let mut files_restored = 0usize;
+    let mut restored_names = Vec::new();
 
     for (archive_key, data_b64) in files {
         let Some(stored_name) = plan
@@ -191,13 +191,25 @@ pub(super) async fn restore_backup_files(
         };
 
         match b64.decode(data_b64) {
-            Ok(data) => match tokio::fs::write(&path, &data).await {
-                Ok(()) => files_restored += 1,
-                Err(error) => problems.push(format!(
-                    "Attached file \"{}\" could not be written ({error}).",
-                    short_label(archive_key)
-                )),
-            },
+            Ok(data) => {
+                if let Err(err) =
+                    crate::services::upload_service::validate_upload_bytes(stored_name, &data)
+                {
+                    problems.push(format!(
+                        "Attached file \"{}\" was not restored: {}.",
+                        short_label(archive_key),
+                        err.client_response().1
+                    ));
+                    continue;
+                }
+                match tokio::fs::write(&path, &data).await {
+                    Ok(()) => restored_names.push(stored_name.to_string()),
+                    Err(error) => problems.push(format!(
+                        "Attached file \"{}\" could not be written ({error}).",
+                        short_label(archive_key)
+                    )),
+                }
+            }
             Err(error) => problems.push(format!(
                 "Attached file \"{}\" could not be decoded ({error}).",
                 short_label(archive_key)
@@ -209,6 +221,7 @@ pub(super) async fn restore_backup_files(
     // were appended in — is not stable. Sort so the same archive reports the
     // same warnings in the same order.
     problems.sort();
+    let files_restored = restored_names.len();
     let mut warnings = cap_warnings(problems, "unrestored file(s)");
     if files_restored > 0 {
         warnings.insert(
@@ -216,7 +229,15 @@ pub(super) async fn restore_backup_files(
             format!("{files_restored} file(s) restored to the uploads directory under new names."),
         );
     }
-    warnings
+    (warnings, restored_names)
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+pub(super) async fn restore_backup_files(
+    files: &HashMap<String, String>,
+    plan: &RestorePlan,
+) -> Vec<String> {
+    restore_backup_files_with_names(files, plan).await.0
 }
 
 #[cfg(test)]

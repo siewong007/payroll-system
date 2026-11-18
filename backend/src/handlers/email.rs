@@ -196,7 +196,7 @@ pub async fn preview_letter(
             &company.name,
         );
 
-        let body_html = email_service::substitute_variables(
+        let body_html = email_service::substitute_variables_html(
             &req.body_html,
             &employee.full_name,
             &employee.employee_number,
@@ -214,6 +214,12 @@ pub async fn preview_letter(
             recipient_name: employee.full_name,
         }))
     } else {
+        if !auth.can(Permission::ManageEmployees) && !auth.is_super_admin() {
+            return Err(AppError::Forbidden(
+                "Managing employees permission required to preview emails to arbitrary recipients"
+                    .into(),
+            ));
+        }
         // Direct email preview: only substitute company_name
         let recipient_email = req.recipient_email.as_deref().unwrap_or_default();
         let recipient_name = req.recipient_name.as_deref().unwrap_or_default();
@@ -233,7 +239,7 @@ pub async fn preview_letter(
             &company.name,
         );
 
-        let body_html = email_service::substitute_variables(
+        let body_html = email_service::substitute_variables_html(
             &req.body_html,
             recipient_name,
             "",
@@ -297,7 +303,7 @@ pub async fn send_letter(
             &company.name,
         );
 
-        let body_html = email_service::substitute_variables(
+        let body_html = email_service::substitute_variables_html(
             &req.body_html,
             &employee.full_name,
             &employee.employee_number,
@@ -327,6 +333,12 @@ pub async fn send_letter(
         audit_letter_sent(&state.pool, company_id, auth.0.sub, &log, &audit_meta).await;
         send_outcome(log)
     } else {
+        if !auth.can(Permission::ManageEmployees) && !auth.is_super_admin() {
+            return Err(AppError::Forbidden(
+                "Managing employees permission required to send emails to arbitrary addresses"
+                    .into(),
+            ));
+        }
         // Direct email send
         let recipient_email = req
             .recipient_email
@@ -346,7 +358,7 @@ pub async fn send_letter(
             &company.name,
         );
 
-        let body_html = email_service::substitute_variables(
+        let body_html = email_service::substitute_variables_html(
             &req.body_html,
             recipient_name,
             "",

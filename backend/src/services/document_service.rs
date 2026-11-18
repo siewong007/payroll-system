@@ -17,12 +17,20 @@ pub async fn list_documents(
     category_id: Option<Uuid>,
     status: Option<&str>,
     search: Option<&str>,
+    include_confidential: bool,
     limit: i64,
     offset: i64,
 ) -> AppResult<(Vec<Document>, i64)> {
-    let count =
-        document_repo::count_filtered(pool, company_id, employee_id, category_id, status, search)
-            .await?;
+    let count = document_repo::count_filtered(
+        pool,
+        company_id,
+        employee_id,
+        category_id,
+        status,
+        search,
+        include_confidential,
+    )
+    .await?;
 
     let documents = document_repo::list_filtered(
         pool,
@@ -31,6 +39,7 @@ pub async fn list_documents(
         category_id,
         status,
         search,
+        include_confidential,
         limit,
         offset,
     )
@@ -39,10 +48,19 @@ pub async fn list_documents(
     Ok((documents, count))
 }
 
-pub async fn get_document(pool: &PgPool, id: Uuid, company_id: Uuid) -> AppResult<Document> {
-    document_repo::get(pool, id, company_id)
+pub async fn get_document(
+    pool: &PgPool,
+    id: Uuid,
+    company_id: Uuid,
+    can_view_confidential: bool,
+) -> AppResult<Document> {
+    let doc = document_repo::get(pool, id, company_id)
         .await?
-        .ok_or_else(|| AppError::NotFound("Document not found".into()))
+        .ok_or_else(|| AppError::NotFound("Document not found".into()))?;
+    if doc.is_confidential == Some(true) && !can_view_confidential {
+        return Err(AppError::NotFound("Document not found".into()));
+    }
+    Ok(doc)
 }
 
 pub async fn create_document(
@@ -50,12 +68,24 @@ pub async fn create_document(
     company_id: Uuid,
     req: CreateDocumentRequest,
     created_by: Uuid,
+    can_view_confidential: bool,
 ) -> AppResult<Document> {
+    if req.is_confidential == Some(true) && !can_view_confidential {
+        return Err(AppError::Forbidden(
+            "Managing employees or payroll permission required for confidential documents".into(),
+        ));
+    }
     // `file_url` is free text from the client and ends up joined onto a
     // filesystem path by the delete and backup paths, so the shape is settled
     // here, before it can be persisted. `UpdateDocumentRequest` carries no
     // `file_url`, so this is the only write-time entry point for the column.
     upload_path::validate_file_url(&req.file_url)?;
+    crate::services::upload_service::ensure_upload_belongs_to_company(
+        pool,
+        company_id,
+        Some(&req.file_url),
+    )
+    .await?;
 
     let id = Uuid::now_v7();
     document_repo::insert(pool, id, company_id, &req, created_by).await
@@ -67,17 +97,39 @@ pub async fn update_document(
     company_id: Uuid,
     req: UpdateDocumentRequest,
     updated_by: Uuid,
+    can_view_confidential: bool,
 ) -> AppResult<Document> {
+    let existing = document_repo::get(pool, id, company_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Document not found".into()))?;
+    if existing.is_confidential == Some(true) && !can_view_confidential {
+        return Err(AppError::NotFound("Document not found".into()));
+    }
+    if req.is_confidential == Some(true) && !can_view_confidential {
+        return Err(AppError::Forbidden(
+            "Managing employees or payroll permission required for confidential documents".into(),
+        ));
+    }
+
     document_repo::update(pool, id, company_id, &req, updated_by)
         .await?
         .ok_or_else(|| AppError::NotFound("Document not found".into()))
 }
 
-pub async fn soft_delete_document(pool: &PgPool, id: Uuid, company_id: Uuid) -> AppResult<()> {
-    // Fetch the file_url before deleting so we can remove the file from disk
-    let file_url = document_repo::file_url(pool, id, company_id)
+pub async fn soft_delete_document(
+    pool: &PgPool,
+    id: Uuid,
+    company_id: Uuid,
+    can_view_confidential: bool,
+) -> AppResult<()> {
+    let existing = document_repo::get(pool, id, company_id)
         .await?
         .ok_or_else(|| AppError::NotFound("Document not found".into()))?;
+    if existing.is_confidential == Some(true) && !can_view_confidential {
+        return Err(AppError::NotFound("Document not found".into()));
+    }
+    // Fetch the file_url before deleting so we can remove the file from disk
+    let file_url = existing.file_url;
 
     // Hard delete the record
     document_repo::delete(pool, id, company_id).await?;
@@ -126,6 +178,7 @@ pub async fn get_expiring_documents(
     pool: &PgPool,
     company_id: Uuid,
     days_ahead: i32,
+    include_confidential: bool,
 ) -> AppResult<Vec<Document>> {
-    document_repo::expiring(pool, company_id, days_ahead).await
+    document_repo::expiring(pool, company_id, days_ahead, include_confidential).await
 }

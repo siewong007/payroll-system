@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE notifications SET is_read = TRUE, read_at = NOW() WHERE user_id = $1 AND company_id = $2 AND is_read = FALSE",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b8423029a2da5cd3c66230c146d0409c75bacf558aab4c81f261a8c010d7ddff"
+}

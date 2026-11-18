@@ -251,6 +251,32 @@ impl Permission {
             | Permission::ManagePlatformSettings => "Platform administration",
         }
     }
+
+    /// Capabilities reserved strictly for platform `super_admin`s and never
+    /// delegable via company-scoped user groups.
+    pub fn is_platform_only(self) -> bool {
+        matches!(
+            self,
+            Permission::ManageUsers
+                | Permission::ManageCompanies
+                | Permission::ManageBackups
+                | Permission::ManagePlatformSettings
+        )
+    }
+
+    /// Capabilities that expose or manipulate payroll / statutory figures.
+    pub fn is_payroll_capability(self) -> bool {
+        matches!(
+            self,
+            Permission::ViewPayroll
+                | Permission::ManagePayrollDraft
+                | Permission::SubmitPayroll
+                | Permission::ApprovePayroll
+                | Permission::MarkPayrollPaid
+                | Permission::ViewStatutoryExports
+                | Permission::ViewSalaryHistory
+        )
+    }
 }
 
 /// Every role string the `users_roles_valid` CHECK constraint accepts, in
@@ -375,26 +401,15 @@ const FINANCE: &[Permission] = &[
     P::SendLetters,
 ];
 
-/// Read-mostly company overview. Never payroll — `exec` appears in no branch
-/// of the old `can()`, and that is still the rule here.
-///
-/// The write permissions it does hold (documents, email templates, letters)
-/// are inherited from the previous deny-list gate `require_non_employee`,
-/// which admitted every role that was not solely `employee`. They are
-/// preserved so this stays a refactor, but they are the least defensible
-/// grants in the table.
+/// Read-mostly company overview. Never payroll and holds no write capabilities.
 const EXEC: &[Permission] = &[
     P::ViewEmployees,
     P::ViewAttendance,
     P::ViewTeams,
     P::ViewCalendar,
     P::ViewApprovals,
-    P::ManageApprovals,
     P::ViewDocuments,
-    P::ManageDocuments,
     P::ViewEmailLogs,
-    P::ManageEmailTemplates,
-    P::SendLetters,
 ];
 
 /// Self-service only. Portal routes authorize on the caller's own
@@ -507,6 +522,31 @@ mod tests {
             assert!(
                 !role_permissions("exec").contains(&permission),
                 "exec must not hold {permission:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn exec_holds_no_write_or_platform_permission() {
+        for permission in [
+            P::ManageApprovals,
+            P::ManageDocuments,
+            P::ManageEmailTemplates,
+            P::SendLetters,
+            P::ManageEmployees,
+            P::ImportEmployees,
+            P::ManageAttendance,
+            P::GenerateAttendanceQr,
+            P::ManageKiosks,
+            P::ManageCompanySettings,
+            P::ManageUsers,
+            P::ManageCompanies,
+            P::ManageBackups,
+            P::ManagePlatformSettings,
+        ] {
+            assert!(
+                !role_permissions("exec").contains(&permission),
+                "exec must remain read-only and never hold {permission:?}"
             );
         }
     }

@@ -134,11 +134,12 @@ pub struct Reviewer {
 pub(super) async fn reviewer_employee_id(
     pool: &PgPool,
     reviewer: &Reviewer,
+    company_id: Uuid,
 ) -> AppResult<Option<Uuid>> {
     if reviewer.may_self_approve {
         return Ok(None);
     }
-    user_repo::employee_id_for_user(pool, reviewer.user_id).await
+    user_repo::employee_id_for_user_in_company(pool, reviewer.user_id, company_id).await
 }
 
 /// Record that the guard was lifted, when it actually was.
@@ -160,7 +161,8 @@ pub(super) async fn audit_self_approval_override(
     if !reviewer.may_self_approve {
         return;
     }
-    let Ok(Some(employee_id)) = user_repo::employee_id_for_user(pool, reviewer.user_id).await
+    let Ok(Some(employee_id)) =
+        user_repo::employee_id_for_user_in_company(pool, reviewer.user_id, company_id).await
     else {
         return;
     };

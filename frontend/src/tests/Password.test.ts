@@ -22,6 +22,11 @@ describe('password policy (mirrors backend validate_password_strength)', () => {
     expect(validatePassword('StrongPassword')).toMatch(/digit/i);
   });
 
+  it('rejects a password exceeding 72 UTF-8 bytes', () => {
+    expect(validatePassword(`Aa1${'b'.repeat(70)}`)).toMatch(/not exceed 72 bytes/i);
+    expect(validatePassword(`Aa1${'é'.repeat(36)}`)).toMatch(/not exceed 72 bytes/i);
+  });
+
   /**
    * Guards the specific drift this replaced: the form advertised "Minimum 6
    * characters" while the API required 10, so the first thing an administrator

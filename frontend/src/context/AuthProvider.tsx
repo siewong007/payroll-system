@@ -14,7 +14,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // On mount, try to restore session via cookie-based refresh.
   // Skip on the public kiosk path so a tablet without a session doesn't churn /auth/refresh.
   useEffect(() => {
-    if (window.location.pathname.startsWith('/kiosk/')) {
+    if (window.location.pathname === '/kiosk' || window.location.pathname.startsWith('/kiosk/')) {
       setIsLoading(false);
       return;
     }
@@ -85,6 +85,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setToken(null);
     setUser(null);
     localStorage.removeItem('user');
+    sessionStorage.clear();
     queryClient.clear();
   };
 

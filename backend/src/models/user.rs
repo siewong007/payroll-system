@@ -40,7 +40,7 @@ pub struct LoginRequest {
 pub struct CodeLoginRequest {
     #[validate(email(message = "must be a valid email address"))]
     pub email: String,
-    #[validate(length(min = 1, message = "code is required"))]
+    #[validate(length(min = 1, max = 24, message = "code must be 1-24 characters"))]
     pub code: String,
     #[serde(default)]
     pub turnstile_token: Option<String>,
@@ -96,7 +96,13 @@ pub struct UserContact {
 
 impl From<User> for UserResponse {
     fn from(u: User) -> Self {
-        let permissions = effective_permissions(&u.roles);
+        Self::with_group_permissions(u, &[])
+    }
+}
+
+impl UserResponse {
+    pub fn with_group_permissions(u: User, group_permissions: &[Permission]) -> Self {
+        let permissions = effective_permissions(&u.roles, group_permissions);
         Self {
             id: u.id,
             email: u.email,
@@ -110,15 +116,16 @@ impl From<User> for UserResponse {
     }
 }
 
-/// The union of every role's grants, de-duplicated, in `Permission::ALL` order
-/// so the response is stable regardless of how the roles were ordered.
-fn effective_permissions(roles: &[String]) -> Vec<&'static str> {
+/// The union of every role's grants and active-company group grants,
+/// de-duplicated, in `Permission::ALL` order so the response is stable.
+fn effective_permissions(roles: &[String], group_permissions: &[Permission]) -> Vec<&'static str> {
     Permission::ALL
         .iter()
         .filter(|permission| {
             roles
                 .iter()
                 .any(|role| role_permissions(role).contains(permission))
+                || group_permissions.contains(permission)
         })
         .map(|permission| permission.as_str())
         .collect()

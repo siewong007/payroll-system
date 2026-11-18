@@ -16,6 +16,7 @@
 set -o errexit
 set -o pipefail
 set -o nounset
+umask 077
 
 readonly APP_DIR="/opt/payroll"
 readonly BACKUP_DIR="$APP_DIR/backups"
@@ -27,6 +28,7 @@ log() { printf '%s [backup] %s\n' "$(date -u +%Y-%m-%dT%H%M%SZ)" "$*" >> "$LOG_D
 die() { log "FATAL: $*"; echo "payroll-backup: $*" >&2; exit 1; }
 
 install -d -m 0700 "$BACKUP_DIR" -o root -g root
+install -d -m 0750 "$LOG_DIR" -o root -g root
 touch "$LOG_DIR/backup.log" && chmod 0640 "$LOG_DIR/backup.log" 2>/dev/null || true
 
 # Verified before the lock: if flock were missing, `flock … || exit 0` below

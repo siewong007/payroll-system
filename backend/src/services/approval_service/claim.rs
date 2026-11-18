@@ -252,7 +252,7 @@ pub async fn approve_claim(
     //
     // Resolved before the transaction opens; the guard itself runs inside it,
     // against the row the compare-and-swap returned.
-    let reviewer_employee = reviewer_employee_id(pool, &reviewer).await?;
+    let reviewer_employee = reviewer_employee_id(pool, &reviewer, company_id).await?;
 
     let mut tx = pool.begin().await?;
     let claim = claims::set_approved(&mut *tx, claim_id, company_id, reviewer_id, notes)

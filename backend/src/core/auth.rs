@@ -12,9 +12,7 @@ use super::{
     error::{AppError, AppResult},
     permission,
 };
-use crate::repositories::user_groups;
-use crate::repositories::user_sessions;
-use crate::repositories::users;
+use crate::repositories::{employees, user_groups, user_sessions, users};
 
 /// Registered `iss`/`aud` claim values. Validating these on decode rejects
 /// tokens minted for a different service or audience even if they were signed
@@ -181,18 +179,40 @@ impl FromRequestParts<AppState> for AuthUser {
             .ok_or_else(|| AppError::Internal("JWT secret not configured".to_string()))?;
 
         let claims = verify_token(token, &secret.0)?;
-        if users::get_active_by_id(&state.pool, claims.sub)
+        let active_user = users::get_active_by_id(&state.pool, claims.sub)
             .await?
-            .is_none()
+            .ok_or_else(|| AppError::Unauthorized("User account is no longer active".into()))?;
+        if let Some(eid) = claims.employee_id
+            && !matches!(
+                employees::get_active_status(&state.pool, eid).await?,
+                Some(true)
+            )
         {
             return Err(AppError::Unauthorized(
-                "User account is no longer active".into(),
+                "Employee account has been deleted".into(),
             ));
         }
         if !user_sessions::is_active(&state.pool, claims.sub, claims.sid).await? {
             return Err(AppError::Unauthorized(
                 "Session has expired or was revoked".into(),
             ));
+        }
+        if active_user.must_change_password {
+            let path = parts.uri.path();
+            let allowed = matches!(
+                path,
+                "/api/auth/me"
+                    | "/api/auth/change-password"
+                    | "/api/auth/logout"
+                    | "/auth/me"
+                    | "/auth/change-password"
+                    | "/auth/logout"
+            );
+            if !allowed {
+                return Err(AppError::Forbidden(
+                    "Password change required before accessing this resource".into(),
+                ));
+            }
         }
 
         // Group grants are scoped to the active company, so a user with access
@@ -203,11 +223,17 @@ impl FromRequestParts<AppState> for AuthUser {
             Some(company_id) => {
                 let keys =
                     user_groups::effective_permissions(&state.pool, claims.sub, company_id).await?;
+                let has_restricted_role =
+                    claims.roles.iter().any(|r| r == "exec" || r == "employee");
                 // A key that no longer maps to a `Permission` is dropped rather
                 // than refused: a capability removed from the enum must not lock
                 // out every member of a group that still references it.
+                // Platform-only permissions and (for exec/employee) payroll
+                // capabilities are stripped unconditionally as defense-in-depth.
                 keys.iter()
                     .filter_map(|key| Permission::ALL.iter().find(|p| p.as_str() == key).copied())
+                    .filter(|p| !p.is_platform_only())
+                    .filter(|p| !has_restricted_role || !p.is_payroll_capability())
                     .collect()
             }
             None => Vec::new(),
@@ -224,6 +250,10 @@ impl AuthUser {
 
     pub fn has_any_role(&self, roles: &[&str]) -> bool {
         self.roles().iter().any(|role| roles.contains(role))
+    }
+
+    pub fn is_super_admin(&self) -> bool {
+        self.has_any_role(&["super_admin"])
     }
 
     /// Returns the active company ID or rejects users without company context.

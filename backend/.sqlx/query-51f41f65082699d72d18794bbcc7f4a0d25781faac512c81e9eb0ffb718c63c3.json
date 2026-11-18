@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE user_totp_backup_codes SET used_at = NOW() WHERE id = $1 AND used_at IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "51f41f65082699d72d18794bbcc7f4a0d25781faac512c81e9eb0ffb718c63c3"
+}

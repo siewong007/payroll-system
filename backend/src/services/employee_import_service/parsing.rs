@@ -266,7 +266,61 @@ pub fn parse_csv(data: &[u8]) -> AppResult<(Vec<String>, Vec<Vec<String>>)> {
     Ok((headers, rows))
 }
 
+const MAX_XLSX_ZIP_ENTRIES: usize = 200;
+const MAX_XLSX_ENTRY_BYTES: u64 = 32 * 1024 * 1024;
+const MAX_XLSX_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_XLSX_ROWS: usize = 10_000;
+const MAX_XLSX_COLS: usize = 200;
+
+fn validate_xlsx_archive(data: &[u8]) -> AppResult<()> {
+    use std::io::Read;
+
+    let mut archive = zip::ZipArchive::new(Cursor::new(data))
+        .map_err(|e| AppError::BadRequest(format!("Invalid Excel archive: {}", e)))?;
+
+    if archive.len() > MAX_XLSX_ZIP_ENTRIES {
+        return Err(AppError::BadRequest(
+            "Excel archive exceeds maximum entry count".into(),
+        ));
+    }
+
+    let mut total_uncompressed: u64 = 0;
+    for idx in 0..archive.len() {
+        let entry = archive
+            .by_index(idx)
+            .map_err(|e| AppError::BadRequest(format!("Invalid Excel archive entry: {}", e)))?;
+        let name = entry
+            .name()
+            .map_err(|e| AppError::BadRequest(format!("Invalid Excel archive entry: {}", e)))?;
+        if name.contains("..") || name.starts_with('/') || name.starts_with('\\') {
+            return Err(AppError::BadRequest(
+                "Excel archive contains unsafe entry path".into(),
+            ));
+        }
+
+        let mut limited = entry.take(MAX_XLSX_ENTRY_BYTES + 1);
+        let written = std::io::copy(&mut limited, &mut std::io::sink()).map_err(|e| {
+            AppError::BadRequest(format!("Failed to decompress Excel entry: {}", e))
+        })?;
+        if written > MAX_XLSX_ENTRY_BYTES {
+            return Err(AppError::BadRequest(
+                "Excel archive exceeds maximum entry size limit".into(),
+            ));
+        }
+        total_uncompressed = total_uncompressed.saturating_add(written);
+        if total_uncompressed > MAX_XLSX_TOTAL_BYTES {
+            return Err(AppError::BadRequest(
+                "Excel archive exceeds maximum uncompressed size limit".into(),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 pub fn parse_xlsx(data: &[u8]) -> AppResult<(Vec<String>, Vec<Vec<String>>)> {
+    validate_xlsx_archive(data)?;
+
     let cursor = Cursor::new(data);
     let mut workbook: Xlsx<_> = open_workbook_from_rs(cursor)
         .map_err(|e| AppError::BadRequest(format!("Failed to open Excel file: {}", e)))?;
@@ -280,6 +334,13 @@ pub fn parse_xlsx(data: &[u8]) -> AppResult<(Vec<String>, Vec<Vec<String>>)> {
     let range = workbook
         .worksheet_range(&sheet_name)
         .map_err(|e| AppError::BadRequest(format!("Failed to read sheet: {}", e)))?;
+
+    let (row_count, col_count) = range.get_size();
+    if row_count > MAX_XLSX_ROWS || col_count > MAX_XLSX_COLS {
+        return Err(AppError::BadRequest(
+            "Excel sheet dimensions exceed maximum allowed size".into(),
+        ));
+    }
 
     let mut row_iter = range.rows();
 

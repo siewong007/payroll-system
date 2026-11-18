@@ -47,7 +47,7 @@ export function payrollDiagnosticText(d: PayrollDiagnostic): string {
   const vars: Record<string, string | number> = {};
   for (const [k, v] of Object.entries(d.params)) {
     const period = v.match(MM_YYYY);
-    if (k === 'total' && /^\d+$/.test(v)) {
+    if ((k === 'total' || k === 'salary' || k === 'minimum') && /^\d+$/.test(v)) {
       vars[k] = formatMYR(Number(v));
     } else if (k === 'oldest' && /^\d{4}-\d{2}-\d{2}$/.test(v)) {
       vars[k] = formatDate(new Date(`${v}T00:00:00`));

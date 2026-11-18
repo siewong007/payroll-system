@@ -14,7 +14,7 @@ use crate::models::oauth2::{
     LinkGoogleRequest, LinkedAccount, OAuth2AuthorizeQuery, OAuth2CallbackQuery, OAuth2ProviderInfo,
 };
 use crate::models::session::LoginOutcome;
-use crate::services::{auth_service, oauth2_service};
+use crate::services::{audit_service, auth_service, oauth2_service};
 
 /// List available OAuth2 providers and their status.
 pub async fn list_providers(
@@ -161,6 +161,17 @@ async fn google_callback_inner(
         match oauth2_service::find_user_by_oauth2(&state.pool, "google", &google_user.sub).await? {
             Some(user) => user,
             None => {
+                // If this Google identity is already bound to a disabled or deleted
+                // account, never silently re-associate or sign in another user by email.
+                if oauth2_service::find_oauth2_account(&state.pool, "google", &google_user.sub)
+                    .await?
+                    .is_some()
+                {
+                    return Err(AppError::Unauthorized(
+                        "Account is disabled or unavailable.".into(),
+                    ));
+                }
+
                 // No linked account — auto-link by verified email match
                 let user = oauth2_service::find_user_by_email(&state.pool, google_email)
                     .await?
@@ -185,6 +196,20 @@ async fn google_callback_inner(
                     token_resp.expires_in,
                 )
                 .await?;
+
+                let _ = audit_service::log_action_with_metadata(
+                    &state.pool,
+                    user.company_id,
+                    Some(user.id),
+                    "oauth2_linked",
+                    "auth",
+                    Some(user.id),
+                    None::<serde_json::Value>,
+                    Some(serde_json::json!({ "provider": "google", "auto_linked": true })),
+                    Some("Google account auto-linked on sign-in"),
+                    Some(&audit_meta),
+                )
+                .await;
 
                 user
             }
@@ -227,14 +252,11 @@ async fn google_callback_inner(
                 cookie::set_refresh_cookie(&session.refresh_token, &state.config.frontend_url);
             // `append`, not `insert`: the binder-clearing Set-Cookie above is
             // the same header name and `insert` would silently drop it.
+            // Access token and user payload never travel in the redirect URL;
+            // the SPA exchanges the httpOnly refresh cookie via `/auth/refresh`.
             headers.append(name, value.parse().unwrap());
 
-            format!(
-                "{}/oauth2/callback#token={}&user={}",
-                state.config.frontend_url,
-                urlencoding::encode(&session.token),
-                urlencoding::encode(&serde_json::to_string(&session.user).unwrap_or_default()),
-            )
+            format!("{}/oauth2/callback#status=ok", state.config.frontend_url)
         }
         LoginOutcome::MfaRequired { mfa_token } => format!(
             "{}/oauth2/callback#mfa_token={}",
@@ -322,9 +344,23 @@ pub async fn my_linked_accounts(
 pub async fn unlink_provider(
     State(state): State<AppState>,
     auth: AuthUser,
+    audit_meta: AuditRequestMeta,
     Path(provider): Path<String>,
 ) -> AppResult<Json<serde_json::Value>> {
     oauth2_service::unlink_oauth2_account(&state.pool, auth.0.sub, &provider).await?;
+    let _ = audit_service::log_action_with_metadata(
+        &state.pool,
+        auth.0.company_id,
+        Some(auth.0.sub),
+        "oauth2_unlinked",
+        "auth",
+        Some(auth.0.sub),
+        None::<serde_json::Value>,
+        Some(serde_json::json!({ "provider": provider })),
+        Some("OAuth2 provider unlinked"),
+        Some(&audit_meta),
+    )
+    .await;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -333,6 +369,7 @@ pub async fn link_google(
     State(state): State<AppState>,
     auth: AuthUser,
     headers: HeaderMap,
+    audit_meta: AuditRequestMeta,
     Json(body): Json<LinkGoogleRequest>,
 ) -> AppResult<Response> {
     let client_id = state
@@ -403,6 +440,20 @@ pub async fn link_google(
         .into_iter()
         .find(|a| a.provider == "google")
         .ok_or_else(|| AppError::Internal("Failed to fetch linked account".into()))?;
+
+    let _ = audit_service::log_action_with_metadata(
+        &state.pool,
+        auth.0.company_id,
+        Some(auth.0.sub),
+        "oauth2_linked",
+        "auth",
+        Some(auth.0.sub),
+        None::<serde_json::Value>,
+        Some(serde_json::json!({ "provider": "google", "auto_linked": false })),
+        Some("Google account linked by user"),
+        Some(&audit_meta),
+    )
+    .await;
 
     // The flow is over either way, so the binder is spent — same invariant as
     // the login callback.

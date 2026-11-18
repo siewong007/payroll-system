@@ -39,14 +39,15 @@ pub async fn find_unused(
 pub async fn mark_used(
     executor: impl Executor<'_, Database = Postgres>,
     id: Uuid,
-) -> AppResult<()> {
-    sqlx::query!(
-        "UPDATE user_totp_backup_codes SET used_at = NOW() WHERE id = $1",
+) -> AppResult<bool> {
+    let rows = sqlx::query!(
+        "UPDATE user_totp_backup_codes SET used_at = NOW() WHERE id = $1 AND used_at IS NULL",
         id,
     )
     .execute(executor)
-    .await?;
-    Ok(())
+    .await?
+    .rows_affected();
+    Ok(rows == 1)
 }
 
 pub async fn delete_for_user(

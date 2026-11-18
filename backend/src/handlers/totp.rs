@@ -31,9 +31,10 @@ pub async fn setup_confirm(
     audit_meta: AuditRequestMeta,
     ValidatedJson(req): ValidatedJson<TotpConfirmRequest>,
 ) -> AppResult<Json<TotpConfirmResponse>> {
-    let backup_codes = totp_service::confirm_setup(
+    let backup_codes = totp_service::confirm_setup_with_session(
         &state.pool,
         auth.0.sub,
+        Some(auth.0.sid),
         &req.code,
         &state.config.totp_encryption_key,
         Some(&audit_meta),
@@ -86,13 +87,37 @@ pub async fn verify_login(
     ValidatedJson(req): ValidatedJson<TotpVerifyLoginRequest>,
 ) -> AppResult<Response> {
     let user_id = verify_mfa_pending_token(&req.mfa_token, &state.config.jwt_secret)?;
-    totp_service::verify_login_code(
+    if let Err(err) = totp_service::verify_login_code(
         &state.pool,
         user_id,
         &req.code,
         &state.config.totp_encryption_key,
     )
-    .await?;
+    .await
+    {
+        let company_id = crate::repositories::users::get_by_id(&state.pool, user_id)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|u| u.company_id);
+        let _ = crate::services::audit_service::log_action_with_metadata(
+            &state.pool,
+            company_id,
+            Some(user_id),
+            "login_failed",
+            "auth",
+            Some(user_id),
+            None::<serde_json::Value>,
+            Some(serde_json::json!({
+                "reason": "invalid_2fa_code",
+                "method": "totp",
+            })),
+            Some("Failed 2FA verification attempt"),
+            Some(&audit_meta),
+        )
+        .await;
+        return Err(err);
+    }
 
     // This is the one minting path that does not go through `complete_login`,
     // which is why the terminated-employee gate lives inside `get_active_user`.

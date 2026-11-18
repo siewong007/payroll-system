@@ -26,7 +26,8 @@ const FORMULA_PREFIXES = ['=', '+', '-', '@', '\t', '\r'];
  * protect.
  */
 function neutralize(value: string): string {
-  if (!FORMULA_PREFIXES.includes(value.charAt(0))) {
+  const lead = value.trimStart();
+  if (!FORMULA_PREFIXES.includes(value.charAt(0)) && !FORMULA_PREFIXES.includes(lead.charAt(0))) {
     return value;
   }
 

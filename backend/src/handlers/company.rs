@@ -7,7 +7,8 @@ use crate::models::company::{Company, CompanyStats, UpdateCompanyRequest};
 use crate::services::{audit_service::AuditRequestMeta, company_service};
 
 fn request_touches_payroll_fields(req: &UpdateCompanyRequest) -> bool {
-    req.epf_number.is_some()
+    req.tax_number.is_some()
+        || req.epf_number.is_some()
         || req.socso_code.is_some()
         || req.eis_code.is_some()
         || req.hrdf_number.is_some()
@@ -16,6 +17,7 @@ fn request_touches_payroll_fields(req: &UpdateCompanyRequest) -> bool {
 }
 
 fn redact_payroll_fields(company: &mut Company) {
+    company.tax_number = None;
     company.epf_number = None;
     company.socso_code = None;
     company.eis_code = None;
@@ -70,6 +72,7 @@ pub async fn update(
 }
 
 pub async fn stats(State(state): State<AppState>, auth: AuthUser) -> AppResult<Json<CompanyStats>> {
+    auth.require_permission(Permission::ViewEmployees)?;
     let company_id = auth
         .0
         .company_id

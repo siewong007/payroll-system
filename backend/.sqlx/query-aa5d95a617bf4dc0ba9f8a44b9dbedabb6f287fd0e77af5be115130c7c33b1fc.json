@@ -37,6 +37,21 @@
         "ordinal": 6,
         "name": "updated_at",
         "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "last_used_step",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 8,
+        "name": "failed_attempts",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 9,
+        "name": "locked_until",
+        "type_info": "Timestamptz"
       }
     ],
     "parameters": {
@@ -51,7 +66,10 @@
       false,
       true,
       false,
-      false
+      false,
+      true,
+      false,
+      true
     ]
   },
   "hash": "aa5d95a617bf4dc0ba9f8a44b9dbedabb6f287fd0e77af5be115130c7c33b1fc"

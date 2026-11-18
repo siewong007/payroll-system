@@ -383,30 +383,17 @@ pub async fn update_password(
     Ok(())
 }
 
-/// Set the password hash only (does not touch `must_change_password`); used by the
-/// password-reset flow. Cf. `update_password`, which also clears that flag.
+/// Set the password hash and clear `must_change_password`; used by the
+/// password-reset flow so a verified reset clears any forced password rotation.
 pub async fn set_password(
     executor: impl Executor<'_, Database = Postgres>,
     id: Uuid,
     password_hash: &str,
 ) -> AppResult<()> {
     sqlx::query!(
-        "UPDATE users SET password_hash = $2, updated_at = NOW() WHERE id = $1",
+        "UPDATE users SET password_hash = $2, must_change_password = FALSE, updated_at = NOW() WHERE id = $1",
         id,
         password_hash,
-    )
-    .execute(executor)
-    .await?;
-    Ok(())
-}
-
-pub async fn clear_must_change_password(
-    executor: impl Executor<'_, Database = Postgres>,
-    id: Uuid,
-) -> AppResult<()> {
-    sqlx::query!(
-        "UPDATE users SET must_change_password = FALSE, updated_at = NOW() WHERE id = $1",
-        id,
     )
     .execute(executor)
     .await?;
@@ -500,6 +487,37 @@ pub async fn employee_id_for_user(
     .fetch_optional(executor)
     .await?
     .flatten();
+    Ok(employee_id)
+}
+
+/// Resolves the active employee record in `company_id` corresponding to
+/// `user_id` — preferring an explicit `users.employee_id` inside `company_id`,
+/// and falling back to an active employee matching the user's normalized email
+/// so admin-provisioned users cannot approve their own HR requests.
+pub async fn employee_id_for_user_in_company(
+    executor: impl Executor<'_, Database = Postgres>,
+    user_id: Uuid,
+    company_id: Uuid,
+) -> AppResult<Option<Uuid>> {
+    let employee_id = sqlx::query_scalar!(
+        r#"SELECT e.id
+        FROM users u
+        JOIN employees e ON (
+            (u.employee_id IS NOT NULL AND e.id = u.employee_id AND e.company_id = $2)
+            OR (e.company_id = $2 AND e.email IS NOT NULL AND lower(btrim(e.email)) = lower(btrim(u.email)))
+        )
+        WHERE u.id = $1
+          AND u.is_active = TRUE
+          AND u.deleted_at IS NULL
+          AND e.deleted_at IS NULL
+          AND e.is_active = TRUE
+        ORDER BY (u.employee_id IS NOT NULL AND e.id = u.employee_id) DESC
+        LIMIT 1"#,
+        user_id,
+        company_id,
+    )
+    .fetch_optional(executor)
+    .await?;
     Ok(employee_id)
 }
 

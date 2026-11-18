@@ -20,10 +20,7 @@ pub async fn list(
     auth: AuthUser,
     Query(query): Query<SettingsQuery>,
 ) -> AppResult<Json<Vec<CompanySetting>>> {
-    let company_id = auth
-        .0
-        .company_id
-        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
+    let company_id = auth.authorize(Permission::ManageCompanySettings)?;
 
     let mut settings =
         settings_service::get_all_settings(&state.pool, company_id, query.category.as_deref())
@@ -41,6 +38,7 @@ pub async fn get(
     auth: AuthUser,
     Path((category, key)): Path<(String, String)>,
 ) -> AppResult<Json<CompanySetting>> {
+    auth.require_permission(Permission::ManageCompanySettings)?;
     if is_payroll_category(&category) && !auth.is_payroll_privileged() {
         return Err(AppError::Forbidden(
             "Payroll settings not available for this role".into(),

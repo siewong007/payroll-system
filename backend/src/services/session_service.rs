@@ -98,10 +98,11 @@ pub async fn issue_rotated(
 ) -> AppResult<String> {
     let raw_token = format!("rt_{}_{}", Uuid::new_v4(), Uuid::new_v4());
     let token_hash = hash_token(&raw_token);
-    let expires_at = Utc::now() + Duration::days(REFRESH_TOKEN_DAYS);
+    let desired_expires = Utc::now() + Duration::days(REFRESH_TOKEN_DAYS);
+    let expires_at =
+        user_sessions::touch(&mut *conn, session_id, desired_expires, ip_address).await?;
 
     refresh_tokens::insert(&mut *conn, user_id, session_id, &token_hash, expires_at).await?;
-    user_sessions::touch(conn, session_id, expires_at, ip_address).await?;
     Ok(raw_token)
 }
 

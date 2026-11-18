@@ -80,6 +80,12 @@ pub async fn create_leave_request(
     // `attachment_url` is joined onto a filesystem path by the backup export and
     // restore paths, so it is settled at write time rather than at every sink.
     validate_optional_file_url(req.attachment_url.as_deref())?;
+    crate::services::upload_service::ensure_upload_belongs_to_company(
+        pool,
+        company_id,
+        req.attachment_url.as_deref(),
+    )
+    .await?;
 
     if leave_requests::overlaps_existing(pool, employee_id, req.start_date, req.end_date, None)
         .await?
@@ -239,6 +245,12 @@ pub async fn create_claim(
     req: CreateClaimRequest,
 ) -> AppResult<Claim> {
     validate_optional_file_url(req.receipt_url.as_deref())?;
+    crate::services::upload_service::ensure_upload_belongs_to_company(
+        pool,
+        company_id,
+        req.receipt_url.as_deref(),
+    )
+    .await?;
 
     let claim = claims::insert_draft(
         pool,
