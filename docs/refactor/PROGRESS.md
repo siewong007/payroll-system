@@ -6,7 +6,7 @@
 - [x] Phase 1: Tooling and standards
 - [x] Phase 2: Structure and naming
 - [x] Phase 3: Code quality
-- [ ] Phase 4: Security, privacy and performance
+- [x] Phase 4: Security, privacy and performance
 - [ ] Phase 5: Fill the gaps
 - [ ] Phase 6: Final check
 
@@ -22,3 +22,4 @@
 - 2026-11-18: (`refactor`) Completed Phase 3 (Code quality): split `Approvals.tsx` (`ApprovalShared.tsx`, `approvalRules.ts`, `LeaveCrudModal.tsx`, `ClaimCrudModal.tsx`, `OvertimeCrudModal.tsx`), `AttendancePage.tsx` (`attendanceHelpers.ts`, `KioskCredentialsModal.tsx`, `QrPanel.tsx`, `AttendanceSummaryTab.tsx`, `AttendanceRecordModals.tsx`), `EmployeeList.tsx` (`EmployeeProfileDrawer.tsx`, `EmployeeFormModal.tsx`), and `Reports.tsx` (`ReportShared.tsx`, `leaveReportHelpers.ts`, `LeaveEntitlementReport.tsx`, `ClaimsSummaryReport.tsx`, `EaFormTab.tsx`); extracted welcome-email dispatch from `backend/src/handlers/employee.rs` into `backend/src/services/employee_service.rs`.
 - 2026-11-18: (`fix`) Fixed `AppConfig::validate_production_secrets` in `backend/src/core/config.rs` to reject `"replace-with"` `.env.example` placeholder secrets and added `production_secrets_reject_env_example_placeholders` unit test.
 - 2026-11-18: (`fix`) Fixed `core::redact::email` multi-byte single-char masking (`chars().nth(1).is_none()`) and redacted `recipient_email` in `services/email_service.rs` `tracing` logs.
+- 2026-11-18: (`chore`) Completed Phase 4 (Security, privacy and performance): documented `RUST_ENV`, `LOG_FORMAT`, and `VITE_TURNSTILE_SITE_KEY` in `.env.example` with placeholders and descriptions.
