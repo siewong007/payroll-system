@@ -33,29 +33,33 @@ export function TeamCalendar() {
   const dayNames = useMemo(
     () =>
       Array.from({ length: 7 }, (_, i) =>
-        new Intl.DateTimeFormat(intlLocale(), { weekday: 'long' }).format(new Date(2020, 5, 7 + i))),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+        new Intl.DateTimeFormat(intlLocale(i18n.language), { weekday: 'long' }).format(
+          new Date(2020, 5, 7 + i),
+        )),
     [i18n.language],
   );
   const dayNamesShort = useMemo(
     () =>
       Array.from({ length: 7 }, (_, i) =>
-        new Intl.DateTimeFormat(intlLocale(), { weekday: 'short' }).format(new Date(2020, 5, 7 + i))),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+        new Intl.DateTimeFormat(intlLocale(i18n.language), { weekday: 'short' }).format(
+          new Date(2020, 5, 7 + i),
+        )),
     [i18n.language],
   );
   const monthNames = useMemo(
     () =>
       Array.from({ length: 12 }, (_, i) =>
-        new Intl.DateTimeFormat(intlLocale(), { month: 'long' }).format(new Date(2020, i, 1))),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+        new Intl.DateTimeFormat(intlLocale(i18n.language), { month: 'long' }).format(
+          new Date(2020, i, 1),
+        )),
     [i18n.language],
   );
   const monthNamesShort = useMemo(
     () =>
       Array.from({ length: 12 }, (_, i) =>
-        new Intl.DateTimeFormat(intlLocale(), { month: 'short' }).format(new Date(2020, i, 1))),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+        new Intl.DateTimeFormat(intlLocale(i18n.language), { month: 'short' }).format(
+          new Date(2020, i, 1),
+        )),
     [i18n.language],
   );
   const [selectedYear, setSelectedYear] = useState(now.getFullYear());

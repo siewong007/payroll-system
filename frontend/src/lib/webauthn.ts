@@ -65,20 +65,18 @@ export async function createPasskeyCredential(
   publicKeyOptions: PublicKeyCredentialCreationOptionsJSON
 ): Promise<RegistrationResponseJSON> {
   // Convert base64url fields to ArrayBuffer for the browser API
-  // eslint-disable-next-line no-restricted-syntax
-  const publicKey: any = { ...publicKeyOptions };
-  publicKey.challenge = base64urlToBuffer(publicKey.challenge);
-  publicKey.user = {
-    ...publicKey.user,
-    id: base64urlToBuffer(publicKey.user.id),
-  };
-  if (publicKey.excludeCredentials) {
-    // eslint-disable-next-line no-restricted-syntax
-    publicKey.excludeCredentials = publicKey.excludeCredentials.map((c: any) => ({
+  const publicKey: PublicKeyCredentialCreationOptions = {
+    ...publicKeyOptions,
+    challenge: base64urlToBuffer(publicKeyOptions.challenge),
+    user: {
+      ...publicKeyOptions.user,
+      id: base64urlToBuffer(publicKeyOptions.user.id),
+    },
+    excludeCredentials: publicKeyOptions.excludeCredentials?.map((c) => ({
       ...c,
       id: base64urlToBuffer(c.id),
-    }));
-  }
+    })),
+  };
 
   const credential = (await navigator.credentials.create({ publicKey })) as PublicKeyCredential;
   if (!credential) throw new Error('Passkey creation was cancelled');
@@ -102,16 +100,14 @@ export async function createPasskeyCredential(
 export async function getPasskeyCredential(
   publicKeyOptions: PublicKeyCredentialRequestOptionsJSON
 ): Promise<AuthenticationResponseJSON> {
-  // eslint-disable-next-line no-restricted-syntax
-  const publicKey: any = { ...publicKeyOptions };
-  publicKey.challenge = base64urlToBuffer(publicKey.challenge);
-  if (publicKey.allowCredentials) {
-    // eslint-disable-next-line no-restricted-syntax
-    publicKey.allowCredentials = publicKey.allowCredentials.map((c: any) => ({
+  const publicKey: PublicKeyCredentialRequestOptions = {
+    ...publicKeyOptions,
+    challenge: base64urlToBuffer(publicKeyOptions.challenge),
+    allowCredentials: publicKeyOptions.allowCredentials?.map((c) => ({
       ...c,
       id: base64urlToBuffer(c.id),
-    }));
-  }
+    })),
+  };
 
   const credential = (await navigator.credentials.get({ publicKey })) as PublicKeyCredential;
   if (!credential) throw new Error('Passkey authentication was cancelled');
