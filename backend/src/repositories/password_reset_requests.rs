@@ -107,3 +107,19 @@ pub async fn consume_valid_token(
     .await?;
     Ok(request)
 }
+
+/// Purge terminal or expired password reset requests older than `retain_days`.
+pub async fn delete_expired_older_than_days(
+    executor: impl Executor<'_, Database = Postgres>,
+    retain_days: i32,
+) -> AppResult<u64> {
+    let result = sqlx::query!(
+        r#"DELETE FROM password_reset_requests
+           WHERE (status IN ('completed', 'expired', 'rejected') OR reset_token_expires_at < NOW())
+             AND COALESCE(reset_token_expires_at, requested_at) < NOW() - ($1::int * INTERVAL '1 day')"#,
+        retain_days,
+    )
+    .execute(executor)
+    .await?;
+    Ok(result.rows_affected())
+}

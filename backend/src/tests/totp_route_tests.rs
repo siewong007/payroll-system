@@ -697,7 +697,8 @@ async fn set_policy_raw(pool: &sqlx::PgPool, enforce: &str, grace: Option<&str>)
 /// enforcement test: the policy keys are global platform state, so a login
 /// racing an enforce-on window would 422 for reasons unrelated to the code
 /// under test. Lock holders keep their window short.
-static POLICY_SENSITIVE_LOGINS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+pub(crate) static POLICY_SENSITIVE_LOGINS: tokio::sync::Mutex<()> =
+    tokio::sync::Mutex::const_new(());
 
 /// `body_json` caps at 64 KiB; a long-lived dev database accumulates
 /// privileged seed users, so the policy's `non_compliant` array can outgrow
@@ -774,6 +775,10 @@ async fn enforcement_refuses_hard_cut_and_gates_only_privileged_logins() {
     let Some(pool) = skip_if_no_db().await else {
         return;
     };
+    // Hold the policy lock for the entire test (including the initial reset)
+    // so concurrent policy-sensitive tests never interleave with global
+    // `platform_settings` writes.
+    let _policy_guard = POLICY_SENSITIVE_LOGINS.lock().await;
     // The keys are global platform state: a previous failed run may have left
     // enforcement on, which would poison this test's baseline and every other
     // test's privileged logins. Always start from the documented default.
@@ -807,10 +812,8 @@ async fn enforcement_refuses_hard_cut_and_gates_only_privileged_logins() {
         crate::tests::route_auth_tests::token_for(&pool, company_id, "super_admin").await;
     let app = app_for(pool.clone()).await;
 
-    // Hold the policy lock for the whole enforce-on window, and confirm the
-    // gate is actually off before flipping it — every other login test here
-    // already proves opt-in behaviour.
-    let _policy_guard = POLICY_SENSITIVE_LOGINS.lock().await;
+    // Confirm the gate is actually off before flipping it — every other login
+    // test here already proves opt-in behaviour.
     let resp = app
         .clone()
         .oneshot(json_request(

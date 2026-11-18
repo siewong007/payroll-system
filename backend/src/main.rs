@@ -348,18 +348,13 @@ async fn main() -> anyhow::Result<()> {
                 Err(e) => tracing::error!("Failed to purge expired import sessions: {}", e),
             }
 
-            match sqlx::query(
-                "DELETE FROM password_reset_requests \
-                 WHERE (status IN ('completed', 'expired') OR reset_token_expires_at < NOW()) \
-                   AND COALESCE(reset_token_expires_at, created_at) < NOW() - INTERVAL '30 days'",
+            match payroll_system::repositories::password_reset_requests::delete_expired_older_than_days(
+                &cleanup_pool,
+                30,
             )
-            .execute(&cleanup_pool)
             .await
             {
-                Ok(res) => tracing::info!(
-                    rows = res.rows_affected(),
-                    "password-reset cleanup: completed"
-                ),
+                Ok(rows) => tracing::info!(rows, "password-reset cleanup: completed"),
                 Err(e) => tracing::error!("Failed to purge old password reset requests: {}", e),
             }
 
@@ -375,18 +370,13 @@ async fn main() -> anyhow::Result<()> {
                 Err(e) => tracing::error!("Failed to clean up oauth2 states: {}", e),
             }
 
-            match sqlx::query(
-                "DELETE FROM background_jobs \
-                 WHERE status IN ('completed', 'failed') \
-                   AND COALESCE(finished_at, created_at) < NOW() - INTERVAL '30 days'",
+            match payroll_system::repositories::background_jobs::delete_finished_older_than_days(
+                &cleanup_pool,
+                30,
             )
-            .execute(&cleanup_pool)
             .await
             {
-                Ok(res) => tracing::info!(
-                    rows = res.rows_affected(),
-                    "background-job retention: completed"
-                ),
+                Ok(rows) => tracing::info!(rows, "background-job retention: completed"),
                 Err(e) => tracing::error!("Failed to purge old background jobs: {}", e),
             }
 

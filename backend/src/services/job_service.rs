@@ -117,9 +117,13 @@ async fn enqueue(
 /// The executor lifecycle every job shares: claim (`pending` → `running`),
 /// run, then one terminal write. A `mark_running` miss means another executor
 /// took the row — the duplicate task drops its work rather than double-run.
+///
+/// The work future runs in its own `tokio::spawn` so any panic is caught at
+/// the `JoinHandle` boundary and transitions the row to `failed` instead of
+/// leaving it wedged in `running` until restart.
 async fn execute<Fut>(pool: PgPool, job_id: Uuid, work: Fut)
 where
-    Fut: std::future::Future<Output = AppResult<serde_json::Value>>,
+    Fut: std::future::Future<Output = AppResult<serde_json::Value>> + Send + 'static,
 {
     match background_jobs::mark_running(&pool, job_id).await {
         Ok(true) => {}
@@ -135,13 +139,13 @@ where
         }
     }
 
-    match work.await {
-        Ok(result) => {
+    match tokio::spawn(work).await {
+        Ok(Ok(result)) => {
             if let Err(e) = background_jobs::succeed(&pool, job_id, result).await {
                 error!(%job_id, error = %e, "job finished but its result was not recorded");
             }
         }
-        Err(e) => {
+        Ok(Err(e)) => {
             // `client_response` is the sanitized text — the same string the
             // synchronous endpoint would have returned, so the polled error
             // carries no internals a raw `to_string` might.
@@ -149,6 +153,14 @@ where
             warn!(%job_id, error = %e, "background job failed");
             if let Err(write_err) = background_jobs::fail(&pool, job_id, &message).await {
                 error!(%job_id, error = %write_err, "job failure was not recorded");
+            }
+        }
+        Err(join_err) => {
+            error!(%job_id, error = %join_err, "background job task panicked or was aborted");
+            if let Err(write_err) =
+                background_jobs::fail(&pool, job_id, "Internal server error").await
+            {
+                error!(%job_id, error = %write_err, "job panic failure was not recorded");
             }
         }
     }
@@ -275,5 +287,41 @@ pub async fn recover_stale(pool: &PgPool) {
             "marked stale background jobs failed after restart"
         ),
         Err(e) => error!(error = %e, "stale background job recovery failed"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tests::support::{seed_company, seed_user, skip_if_no_db};
+
+    #[tokio::test]
+    async fn panicking_background_job_marks_row_failed() {
+        let Some(pool) = skip_if_no_db().await else {
+            return;
+        };
+        let company_id = seed_company(&pool).await;
+        let user_id = seed_user(&pool, company_id, "payroll_admin").await;
+        let job = enqueue(
+            &pool,
+            company_id,
+            job_type::EMPLOYEE_IMPORT,
+            serde_json::json!({"test": true}),
+            user_id,
+        )
+        .await
+        .expect("enqueue job");
+
+        execute(pool.clone(), job.id, async move {
+            panic!("simulated unexpected job panic");
+        })
+        .await;
+
+        let stored = get(&pool, company_id, job.id)
+            .await
+            .expect("load job after panic");
+        assert_eq!(stored.status, "failed");
+        assert_eq!(stored.error.as_deref(), Some("Internal server error"));
+        assert!(stored.finished_at.is_some());
     }
 }

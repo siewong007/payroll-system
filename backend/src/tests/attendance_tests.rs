@@ -841,35 +841,39 @@ static GLOBAL_ABSENT_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::con
 
 /// Reproduce a row written before migration 1015 existed. The trigger is the
 /// point of that migration, so planting a value it rejects means stepping
-/// around it deliberately — re-enabled even if the write fails, or every later
-/// test would run without the guard.
+/// around it deliberately — executed atomically inside a single transaction so
+/// concurrent readers/writers never observe the trigger disabled and any error
+/// rolls back the DDL cleanly.
 async fn plant_corrupt_timezone(pool: &sqlx::PgPool, company_id: uuid::Uuid, bad: &str) {
+    let mut tx = pool.begin().await.expect("begin plant_corrupt_timezone tx");
+
     sqlx::query(
         "ALTER TABLE company_work_schedules \
          DISABLE TRIGGER company_work_schedules_timezone_valid",
     )
-    .execute(pool)
+    .execute(&mut *tx)
     .await
     .expect("disable the timezone trigger");
 
-    let planted = sqlx::query(
+    sqlx::query(
         "UPDATE company_work_schedules SET timezone = $2
          WHERE company_id = $1 AND is_default = TRUE",
     )
     .bind(company_id)
     .bind(bad)
-    .execute(pool)
-    .await;
+    .execute(&mut *tx)
+    .await
+    .expect("plant the corrupt timezone");
 
     sqlx::query(
         "ALTER TABLE company_work_schedules \
          ENABLE TRIGGER company_work_schedules_timezone_valid",
     )
-    .execute(pool)
+    .execute(&mut *tx)
     .await
     .expect("re-enable the timezone trigger");
 
-    planted.expect("plant the corrupt timezone");
+    tx.commit().await.expect("commit plant_corrupt_timezone tx");
 }
 
 /// The stored zone is interpolated into `AT TIME ZONE` by every attendance
