@@ -535,3 +535,39 @@ pub async fn active_id_for_employee(
     .await?;
     Ok(user_id)
 }
+
+/// Emails of active users subject to mandatory 2FA (by role or active group permission)
+/// who do not currently have TOTP enabled, sorted alphabetically.
+pub async fn list_two_factor_non_compliant_emails(
+    executor: impl Executor<'_, Database = Postgres>,
+    required_roles: &[String],
+    required_perms: &[String],
+) -> AppResult<Vec<String>> {
+    let emails = sqlx::query!(
+        r#"SELECT u.email FROM users u
+           WHERE (
+                 u.roles && $1::varchar(50)[]
+                 OR EXISTS (
+                     SELECT 1
+                     FROM user_group_members ugm
+                     JOIN user_groups ug ON ug.id = ugm.group_id AND ug.is_active = TRUE
+                     JOIN user_group_permissions ugp ON ugp.group_id = ug.id
+                     WHERE ugm.user_id = u.id
+                       AND ugp.permission = ANY($2::varchar(80)[])
+                 )
+             )
+             AND u.is_active AND u.deleted_at IS NULL
+             AND NOT EXISTS (
+                 SELECT 1 FROM user_totp t WHERE t.user_id = u.id AND t.enabled
+             )
+           ORDER BY u.email"#,
+        required_roles,
+        required_perms,
+    )
+    .fetch_all(executor)
+    .await?
+    .into_iter()
+    .map(|r| r.email)
+    .collect();
+    Ok(emails)
+}

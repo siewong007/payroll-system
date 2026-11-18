@@ -43,7 +43,7 @@ payslips|profile|notifications|teamCalendar|myAttendance`), `serverErrors`
 ## Work order
 
 1. **Deps + skeleton** — `bun add i18next react-i18next
-   i18next-browser-languagedetector`; `src/i18n/index.ts`; `locales/en.ts`
+i18next-browser-languagedetector`; `src/i18n/index.ts`; `locales/en.ts`
    seed; `main.tsx` imports `@/i18n`; `LanguageSwitcher` ui component;
    mount in `Sidebar` footer, `PortalLayout` header, `Login` footer.
 2. **format.ts** — `formatDate`, `formatDateTime`, `formatTime`,

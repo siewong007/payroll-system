@@ -35,7 +35,7 @@ Settings
 - Desktop: `lg:grid lg:grid-cols-[240px_1fr]`; nav sticky under the app top bar.
 - Mobile (< lg): nav collapses to a horizontal scrollable pill strip above the content (same pattern the current tab strip already uses).
 - Content panel: `.card` glass surface, `animate-fade-up` on section switch. Each section = title + one-line description + body.
-- Company-setting sections reuse the existing `SettingField` renderer, rows separated by `divide-y`. The always-visible footer is replaced by a sticky save bar *inside* the panel that appears only when the visible section has pending edits: "N unsaved changes" · Discard · "Save changes" (`.btn-primary`). Save behavior unchanged: `bulkUpdateSettings` with edits scoped to the active category; success shows the inline "Saved" confirmation.
+- Company-setting sections reuse the existing `SettingField` renderer, rows separated by `divide-y`. The always-visible footer is replaced by a sticky save bar _inside_ the panel that appears only when the visible section has pending edits: "N unsaved changes" · Discard · "Save changes" (`.btn-primary`). Save behavior unchanged: `bulkUpdateSettings` with edits scoped to the active category; success shows the inline "Saved" confirmation.
 
 ## Sessions (headline feature)
 

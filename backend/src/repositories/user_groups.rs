@@ -327,6 +327,29 @@ pub async fn remove_member(
     Ok(rows)
 }
 
+/// Whether the user belongs to any active group granting at least one permission in `permissions`.
+pub async fn user_has_any_active_permission(
+    executor: impl Executor<'_, Database = Postgres>,
+    user_id: Uuid,
+    permissions: &[String],
+) -> AppResult<bool> {
+    let has_permission = sqlx::query_scalar!(
+        r#"SELECT EXISTS(
+               SELECT 1
+               FROM user_group_members ugm
+               JOIN user_groups ug ON ug.id = ugm.group_id AND ug.is_active = TRUE
+               JOIN user_group_permissions ugp ON ugp.group_id = ug.id
+               WHERE ugm.user_id = $1
+                 AND ugp.permission = ANY($2::varchar(80)[])
+           ) AS "exists!""#,
+        user_id,
+        permissions,
+    )
+    .fetch_one(executor)
+    .await?;
+    Ok(has_permission)
+}
+
 fn member_constraint_error(e: sqlx::Error) -> AppError {
     let constraint = match &e {
         sqlx::Error::Database(db_err) => db_err.constraint(),

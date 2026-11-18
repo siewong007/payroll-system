@@ -14,7 +14,7 @@ without changing any behavior, routes, roles, or API contracts.
 A CSS-variable theme layer scoped per shell, consumed by the shared component
 classes, plus targeted restyling of the two layout shells. Two alternatives were
 rejected: a full per-page redesign (too much churn/risk for no structural gain)
-and a runtime theme context (unnecessary — the shell boundary *is* the theme
+and a runtime theme context (unnecessary — the shell boundary _is_ the theme
 boundary, so a CSS class on each layout root is sufficient and zero-cost).
 
 ## Theme system (`src/index.css`)
@@ -41,7 +41,7 @@ boundary, so a CSS class on each layout root is sufficient and zero-cost).
 
 **Admin console — dark "command center":** near-black sidebar with internal
 aurora glow, light lockup logo, pulsing "Admin Console" chip, nav grouped into
-*Workspace* / *Administration* sections, spring-animated active pill + accent
+_Workspace_ / _Administration_ sections, spring-animated active pill + accent
 bar (framer-motion `layoutId`), gradient avatar with glow ring, dark
 company-switcher dropdown (`glass-dark`), glass mobile top bar with Admin chip,
 ambient indigo/violet blobs behind the content area.

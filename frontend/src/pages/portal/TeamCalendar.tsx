@@ -1,9 +1,13 @@
 import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
+import { AlertTriangle } from 'lucide-react';
 import { getTeamCalendar, getPortalHolidays } from '@/api/portal';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { Skeleton } from '@/components/ui/Skeleton';
 import type { Holiday, TeamLeaveEntry } from '@/types';
 import { formatDateDayMonth } from '@/lib/format';
+import { getErrorMessage } from '@/lib/utils';
 import { intlLocale } from '@/i18n';
 
 // Generate a consistent color for an employee name
@@ -33,44 +37,64 @@ export function TeamCalendar() {
   const dayNames = useMemo(
     () =>
       Array.from({ length: 7 }, (_, i) =>
-        new Intl.DateTimeFormat(intlLocale(), { weekday: 'long' }).format(new Date(2020, 5, 7 + i))),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+        new Intl.DateTimeFormat(intlLocale(i18n.language), { weekday: 'long' }).format(
+          new Date(2020, 5, 7 + i),
+        )),
     [i18n.language],
   );
   const dayNamesShort = useMemo(
     () =>
       Array.from({ length: 7 }, (_, i) =>
-        new Intl.DateTimeFormat(intlLocale(), { weekday: 'short' }).format(new Date(2020, 5, 7 + i))),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+        new Intl.DateTimeFormat(intlLocale(i18n.language), { weekday: 'short' }).format(
+          new Date(2020, 5, 7 + i),
+        )),
     [i18n.language],
   );
   const monthNames = useMemo(
     () =>
       Array.from({ length: 12 }, (_, i) =>
-        new Intl.DateTimeFormat(intlLocale(), { month: 'long' }).format(new Date(2020, i, 1))),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+        new Intl.DateTimeFormat(intlLocale(i18n.language), { month: 'long' }).format(
+          new Date(2020, i, 1),
+        )),
     [i18n.language],
   );
   const monthNamesShort = useMemo(
     () =>
       Array.from({ length: 12 }, (_, i) =>
-        new Intl.DateTimeFormat(intlLocale(), { month: 'short' }).format(new Date(2020, i, 1))),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+        new Intl.DateTimeFormat(intlLocale(i18n.language), { month: 'short' }).format(
+          new Date(2020, i, 1),
+        )),
     [i18n.language],
   );
   const [selectedYear, setSelectedYear] = useState(now.getFullYear());
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth() + 1);
   const [activeTab, setActiveTab] = useState<'calendar' | 'holidays'>('calendar');
 
-  const { data: teamLeaves = [] } = useQuery({
+  const {
+    data: teamLeaves = [],
+    isLoading: leavesLoading,
+    isError: leavesError,
+    error: leavesErr,
+    refetch: refetchLeaves,
+  } = useQuery({
     queryKey: ['team-calendar', selectedYear, selectedMonth],
     queryFn: () => getTeamCalendar(selectedYear, selectedMonth),
   });
 
-  const { data: holidays = [] } = useQuery({
+  const {
+    data: holidays = [],
+    isLoading: holidaysLoading,
+    isError: holidaysError,
+    error: holidaysErr,
+    refetch: refetchHolidays,
+  } = useQuery({
     queryKey: ['portal-holidays', selectedYear],
     queryFn: () => getPortalHolidays(selectedYear),
   });
+
+  const isLoading = leavesLoading || holidaysLoading;
+  const isError = leavesError || holidaysError;
+  const queryError = leavesError ? leavesErr : holidaysErr;
 
   const prevMonth = () => {
     if (selectedMonth === 1) {
@@ -212,7 +236,36 @@ export function TeamCalendar() {
         ))}
       </div>
 
-      {activeTab === 'calendar' && (
+      {isLoading ? (
+        <div
+          className="bg-white rounded-2xl border border-gray-200 p-6 space-y-4"
+          aria-busy="true"
+          aria-label={t('a11y.loading')}
+        >
+          <Skeleton className="h-6 w-48" />
+          <Skeleton className="h-72 w-full" />
+        </div>
+      ) : isError ? (
+        <div className="bg-white rounded-2xl border border-gray-200">
+          <EmptyState
+            icon={AlertTriangle}
+            title={t('portal.teamCalendar.loadFailed')}
+            description={getErrorMessage(queryError, t('portal.teamCalendar.loadFailed'))}
+            action={
+              <button
+                type="button"
+                onClick={() => {
+                  void refetchLeaves();
+                  void refetchHolidays();
+                }}
+                className="btn-primary"
+              >
+                {t('common.retry')}
+              </button>
+            }
+          />
+        </div>
+      ) : activeTab === 'calendar' && (
         <>
           <div className="bg-white rounded-2xl border border-gray-200 p-6">
             {/* Month Navigation */}
@@ -279,7 +332,7 @@ export function TeamCalendar() {
         </>
       )}
 
-      {activeTab === 'holidays' && (
+      {!isLoading && !isError && activeTab === 'holidays' && (
         <div className="bg-white rounded-2xl border border-gray-200">
           <div className="p-4 border-b border-gray-100 flex items-center gap-3">
             <label className="text-sm font-medium text-gray-700">{t('common.year')}:</label>

@@ -27,14 +27,14 @@ serves the built frontend and reverse-proxies `/api` to the API container. All b
 
 ## Backend boundaries
 
-| Layer | Responsibility |
-| --- | --- |
-| `handlers/` | HTTP extraction, authentication context, permission checks, validation, and response mapping |
-| `services/` | Business rules, workflow orchestration, transaction boundaries, and audit intent |
-| `repositories/` | One-table SQL operations, generally generic over a SQLx executor |
-| `repositories/reads/` | Cross-table projections, reports, and other denormalized read models |
-| `models/` | API/domain structures and SQLx result projections |
-| `core/` | Configuration, database startup, JWT extraction, cookies, shared state, and error mapping |
+| Layer                 | Responsibility                                                                               |
+| --------------------- | -------------------------------------------------------------------------------------------- |
+| `handlers/`           | HTTP extraction, authentication context, permission checks, validation, and response mapping |
+| `services/`           | Business rules, workflow orchestration, transaction boundaries, and audit intent             |
+| `repositories/`       | One-table SQL operations, generally generic over a SQLx executor                             |
+| `repositories/reads/` | Cross-table projections, reports, and other denormalized read models                         |
+| `models/`             | API/domain structures and SQLx result projections                                            |
+| `core/`               | Configuration, database startup, JWT extraction, cookies, shared state, and error mapping    |
 
 Request-time SQL belongs in repositories. A service may pass either a pool or
 an open transaction to repository functions. `AppResult<T>` is the common
@@ -47,7 +47,7 @@ The API process owns two scheduled background loops plus an in-process async job
   `refresh_tokens` (>30 days), unreferenced expired `attendance_qr_tokens`
   (>7 days), aged `attendance_network_observations` (`OBSERVATION_RETENTION_DAYS`),
   expired network dismissals, `audit_logs` older than 7 years (`2,555` days per
-  *Income Tax Act 1967 s.82*), stale `notifications` (90 days read / 365 days
+  _Income Tax Act 1967 s.82_), stale `notifications` (90 days read / 365 days
   unread), `email_logs` (>180 days), stale `user_sessions` (30 days revoked /
   90 days inactive), and expired `bulk_import_sessions`;
 - a daily attendance evaluation at 12:30 PM Asia/Kuala_Lumpur (04:30 UTC via
@@ -78,13 +78,13 @@ conflicts). TOTP 2FA (encrypted under `TOTP_ENCRYPTION_KEY`), passkeys, Google
 OAuth2, and Cloudflare Turnstile protect authentication surfaces. Payroll
 actions use explicit permissions:
 
-| Action | Roles |
-| --- | --- |
-| View payroll | `super_admin`, `payroll_admin`, `finance` |
-| Prepare, edit, or cancel a draft/processed run | `super_admin`, `payroll_admin` |
-| Submit for approval | `super_admin`, `payroll_admin` |
-| Approve, return, cancel pending/approved, or reverse paid | `super_admin`, `finance` |
-| Mark paid, export bank payment CSV, preview journal | `super_admin`, `finance` |
+| Action                                                    | Roles                                     |
+| --------------------------------------------------------- | ----------------------------------------- |
+| View payroll                                              | `super_admin`, `payroll_admin`, `finance` |
+| Prepare, edit, or cancel a draft/processed run            | `super_admin`, `payroll_admin`            |
+| Submit for approval                                       | `super_admin`, `payroll_admin`            |
+| Approve, return, cancel pending/approved, or reverse paid | `super_admin`, `finance`                  |
+| Mark paid, export bank payment CSV, preview journal       | `super_admin`, `finance`                  |
 
 Company users carry an active `company_id` claim. Repository calls for
 company-owned data are expected to include it. A multi-company user switches

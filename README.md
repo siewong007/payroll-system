@@ -36,20 +36,20 @@ Many SMEs manage payroll, attendance, leave, claims, and statutory records acros
 
 ## Key Features ✨
 
-| Area | Implemented capabilities |
-| --- | --- |
-| Authentication & security | JWT access tokens, httpOnly refresh cookies, TOTP 2FA with backup recovery codes & code sign-in, WebAuthn passkeys, Google OAuth2 sign-in & linking, Cloudflare Turnstile bot protection, session management, multi-company switching |
-| User, role & group access | Super admin company/user management, additive company-scoped user groups, capability-based `PermissionGuard` routing, strict company-scoped data access |
-| Employee management | Employee CRUD, salary history with change classification, TP3 records, background bulk CSV/XLSX import validation/confirmation, portal account provisioning |
-| Payroll | Payroll overview dashboard, preview with diagnostics (incl. Minimum Wages Order 2024 RM1,700 check), background run processing, four-eyes approval, cancellation, paid-run reversal, bank payment CSV, GL journal preview |
-| Statutory payroll | Source-linked rule tables (`statutory_rule_sets`), KWSP Third Schedule Parts A–F (incl. Oct 2025 2% foreign-worker Part F & s.43(1) age-75 cessation), PERKESO SOCSO & EIS (RM6,000 ceiling), statutory exports, and Form EA; production PCB stays fail-closed pending LHDN conformance |
-| Attendance | Multi-use expiring QR kiosk attendance, server-verified WebAuthn ("Face ID") check-in, overnight check-out, `none`/`warn`/`enforce` geofencing, `none`/`learn`/`warn`/`enforce` office-network binding, self-healing auto-absent catch-up, summaries, CSV export |
-| Employee portal | Self-service profile, payslip PDFs, leave requests, expense claims, overtime requests, team calendar, notifications, attendance history |
-| Approvals | Leave, claims, overtime, and four-eyes payroll lifecycle approval workbenches |
-| Documents and letters | Per-user authorized file uploads/downloads (`uploaded_files` + magic-byte & path guards), categories, expiry tracking, email/letter templates, SSRF-hardened ICS import |
-| Internationalization & UX | Full four-locale support (`en`, `ms`, `zh-CN`, `zh-TW`), light/dark/system appearance, global command palette (`⌘K`) |
-| Legal, PDPA & compliance | In-app & documented [Terms & Conditions](docs/legal/terms-and-conditions.md), bilingual [Privacy & PDPA Notice](docs/legal/privacy-and-pdpa-notice.md), and [2026 Malaysian Statutory Guide](docs/legal/malaysian-statutory-compliance.md) |
-| Reporting, audit & ops | Workspace & payroll dashboards, statutory/HR reports, 7-year audit trail with automated daily PDPA retention purges, company backup/restore, PostgreSQL 19 Beta 2 migrations, CI & VPS deployment |
+| Area                      | Implemented capabilities                                                                                                                                                                                                                                                                |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Authentication & security | JWT access tokens, httpOnly refresh cookies, TOTP 2FA with backup recovery codes & code sign-in, WebAuthn passkeys, Google OAuth2 sign-in & linking, Cloudflare Turnstile bot protection, session management, multi-company switching                                                   |
+| User, role & group access | Super admin company/user management, additive company-scoped user groups, capability-based `PermissionGuard` routing, strict company-scoped data access                                                                                                                                 |
+| Employee management       | Employee CRUD, salary history with change classification, TP3 records, background bulk CSV/XLSX import validation/confirmation, portal account provisioning                                                                                                                             |
+| Payroll                   | Payroll overview dashboard, preview with diagnostics (incl. Minimum Wages Order 2024 RM1,700 check), background run processing, four-eyes approval, cancellation, paid-run reversal, bank payment CSV, GL journal preview                                                               |
+| Statutory payroll         | Source-linked rule tables (`statutory_rule_sets`), KWSP Third Schedule Parts A–F (incl. Oct 2025 2% foreign-worker Part F & s.43(1) age-75 cessation), PERKESO SOCSO & EIS (RM6,000 ceiling), statutory exports, and Form EA; production PCB stays fail-closed pending LHDN conformance |
+| Attendance                | Multi-use expiring QR kiosk attendance, server-verified WebAuthn ("Face ID") check-in, overnight check-out, `none`/`warn`/`enforce` geofencing, `none`/`learn`/`warn`/`enforce` office-network binding, self-healing auto-absent catch-up, summaries, CSV export                        |
+| Employee portal           | Self-service profile, payslip PDFs, leave requests, expense claims, overtime requests, team calendar, notifications, attendance history                                                                                                                                                 |
+| Approvals                 | Leave, claims, overtime, and four-eyes payroll lifecycle approval workbenches                                                                                                                                                                                                           |
+| Documents and letters     | Per-user authorized file uploads/downloads (`uploaded_files` + magic-byte & path guards), categories, expiry tracking, email/letter templates, SSRF-hardened ICS import                                                                                                                 |
+| Internationalization & UX | Full four-locale support (`en`, `ms`, `zh-CN`, `zh-TW`), light/dark/system appearance, global command palette (`⌘K`)                                                                                                                                                                    |
+| Legal, PDPA & compliance  | In-app & documented [Terms & Conditions](docs/legal/terms-and-conditions.md), bilingual [Privacy & PDPA Notice](docs/legal/privacy-and-pdpa-notice.md), and [2026 Malaysian Statutory Guide](docs/legal/malaysian-statutory-compliance.md)                                              |
+| Reporting, audit & ops    | Workspace & payroll dashboards, statutory/HR reports, 7-year audit trail with automated daily PDPA retention purges, company backup/restore, PostgreSQL 19 Beta 2 migrations, CI & VPS deployment                                                                                       |
 
 See the [implemented feature catalogue](docs/features.md) for end-to-end status,
 configuration requirements, and known constraints, and [docs/legal/](docs/legal/malaysian-statutory-compliance.md)
@@ -57,14 +57,14 @@ for Terms of Use, bilingual PDPA governance, and 2025–2026 Malaysian statutory
 
 ## Tech Stack 🧰
 
-| Layer | Technology |
-| --- | --- |
-| Frontend | React 19, TypeScript 7, Vite 8, Tailwind CSS 4, React Router 8, TanStack Query 5, i18next, Axios |
-| Backend | Rust 2024, Axum 0.8, Tokio, SQLx 0.8, Tower HTTP, tower-governor |
-| Database | PostgreSQL 19 Beta 2 (native `uuidv7()`) |
-| Auth and security | JWT (HS256), bcrypt, AES-GCM TOTP 2FA, httpOnly cookies, WebAuthn (`webauthn-rs`), OAuth2, Cloudflare Turnstile, `tower-governor` |
-| Documents and exports | printpdf, rust_xlsxwriter, calamine, csv, lettre |
-| DevOps | Docker Compose, GitHub Actions, local encrypted nightly backups & Caddy on AIC VPS behind Cloudflare |
+| Layer                 | Technology                                                                                                                        |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Frontend              | React 19, TypeScript 7, Vite 8, Tailwind CSS 4, React Router 8, TanStack Query 5, i18next, Axios                                  |
+| Backend               | Rust 2024, Axum 0.8, Tokio, SQLx 0.8, Tower HTTP, tower-governor                                                                  |
+| Database              | PostgreSQL 19 Beta 2 (native `uuidv7()`)                                                                                          |
+| Auth and security     | JWT (HS256), bcrypt, AES-GCM TOTP 2FA, httpOnly cookies, WebAuthn (`webauthn-rs`), OAuth2, Cloudflare Turnstile, `tower-governor` |
+| Documents and exports | printpdf, rust_xlsxwriter, calamine, csv, lettre                                                                                  |
+| DevOps                | Docker Compose, GitHub Actions, local encrypted nightly backups & Caddy on AIC VPS behind Cloudflare                              |
 
 ## Architecture
 
@@ -250,13 +250,15 @@ payroll-system/
 │       ├── components/          # reusable UI & layout shells
 │       ├── context/             # auth & theme providers
 │       ├── i18n/                # en, ms, zh-CN, zh-TW locales & serverErrorMap
+│       ├── lib/                 # shared helpers, formatters, WebAuthn & centralized ROUTES
 │       ├── pages/               # route-level feature & legal screens
 │       ├── tests/               # Vitest component, parity & unit suites
 │       └── types/               # TypeScript domain types
 ├── infra/                       # backend Dockerfile
 ├── deploy/                      # production Docker Compose & deployment scripts
 ├── docs/                        # architecture, database, payroll, i18n & legal docs
-│   └── legal/                   # Terms, bilingual PDPA Notice & Malaysian Statutory Guide
+│   ├── legal/                   # Terms, bilingual PDPA Notice & Malaysian Statutory Guide
+│   └── refactor/                # full-repo audit & phase progress log
 ├── docker-compose.yml           # local PostgreSQL 19 Beta 2
 ├── README.md
 ├── SECURITY.md
@@ -269,8 +271,8 @@ payroll-system/
 ### Prerequisites
 
 - Docker and Docker Compose
-- Rust stable toolchain
-- Bun 1.3.14
+- Rust stable toolchain (pinned in `rust-toolchain.toml` with `rustfmt` and `clippy`)
+- Bun 1.3.14 (pinned in `.bun-version`)
 
 ### 1. Clone the Repository
 
@@ -339,36 +341,37 @@ ok
 
 The main example file is [.env.example](.env.example).
 
-| Variable | Required | Description |
-| --- | --- | --- |
-| `POSTGRES_DB` | Local compose | PostgreSQL database name |
-| `POSTGRES_USER` | Local compose | PostgreSQL username |
-| `POSTGRES_PORT` | Local compose | PostgreSQL host port (defaults to `5434`) |
-| `POSTGRES_PASSWORD` | Local compose | PostgreSQL password |
-| `DATABASE_URL` | Backend | PostgreSQL connection string |
-| `JWT_SECRET` | Backend | Secret used to sign HS256 JWTs |
-| `TOTP_ENCRYPTION_KEY` | Backend | Dedicated AES key for stored TOTP 2FA secrets (must differ from `JWT_SECRET`) |
-| `JWT_EXPIRY_HOURS` | Backend | Access token lifetime in hours (defaults to `1`) |
-| `RUST_LOG` | Backend | Rust tracing/logging filter |
-| `LOG_FORMAT` | Optional | `pretty` (default) or `json` structured container telemetry |
-| `SERVER_HOST` | Backend | Backend bind host |
-| `SERVER_PORT` | Backend | Backend bind port |
-| `FRONTEND_URL` | Backend | Allowed CORS frontend origin and email link base URL |
-| `API_PUBLIC_URL` | Optional | Public API origin when split from `FRONTEND_URL` (OAuth2 redirect) |
-| `TRUST_PROXY_HEADERS` | Optional | Trust `X-Forwarded-For` / `X-Real-IP` only behind a sole reverse proxy (default `false`) |
-| `TURNSTILE_SECRET_KEY` | Optional | Cloudflare Turnstile secret; unset skips verification in dev/CI |
-| `WEBAUTHN_RP_ID` | Backend | WebAuthn relying party ID |
-| `WEBAUTHN_RP_ORIGIN` | Backend | WebAuthn origin URL |
-| `GOOGLE_CLIENT_ID` | Optional | Google OAuth2 client ID |
-| `GOOGLE_CLIENT_SECRET` | Optional | Google OAuth2 client secret |
-| `SMTP_HOST` | Optional | SMTP server hostname |
-| `SMTP_PORT` | Optional | SMTP server port |
-| `SMTP_USERNAME` | Optional | SMTP username |
-| `SMTP_PASSWORD` | Optional | SMTP password |
-| `SMTP_FROM_EMAIL` | Optional | Sender email address |
-| `SMTP_FROM_NAME` | Optional | Sender display name |
-| `VITE_API_URL` | Optional frontend | External API base URL when not using the Vite proxy |
-| `VITE_TURNSTILE_SITE_KEY` | Optional frontend | Cloudflare Turnstile site key for production builds |
+| Variable                  | Required          | Description                                                                              |
+| ------------------------- | ----------------- | ---------------------------------------------------------------------------------------- |
+| `POSTGRES_DB`             | Local compose     | PostgreSQL database name                                                                 |
+| `POSTGRES_USER`           | Local compose     | PostgreSQL username                                                                      |
+| `POSTGRES_PORT`           | Local compose     | PostgreSQL host port (defaults to `5434`)                                                |
+| `POSTGRES_PASSWORD`       | Local compose     | PostgreSQL password                                                                      |
+| `DATABASE_URL`            | Backend           | PostgreSQL connection string                                                             |
+| `JWT_SECRET`              | Backend           | Secret used to sign HS256 JWTs                                                           |
+| `TOTP_ENCRYPTION_KEY`     | Backend           | Dedicated AES key for stored TOTP 2FA secrets (must differ from `JWT_SECRET`)            |
+| `JWT_EXPIRY_HOURS`        | Backend           | Access token lifetime in hours (defaults to `1`)                                         |
+| `RUST_ENV`                | Optional          | Runtime environment (`development` default; `production` enforces strict secret checks)  |
+| `RUST_LOG`                | Backend           | Rust tracing/logging filter                                                              |
+| `LOG_FORMAT`              | Optional          | `pretty` (default) or `json` structured container telemetry                              |
+| `SERVER_HOST`             | Backend           | Backend bind host                                                                        |
+| `SERVER_PORT`             | Backend           | Backend bind port                                                                        |
+| `FRONTEND_URL`            | Backend           | Allowed CORS frontend origin and email link base URL                                     |
+| `API_PUBLIC_URL`          | Optional          | Public API origin when split from `FRONTEND_URL` (OAuth2 redirect)                       |
+| `TRUST_PROXY_HEADERS`     | Optional          | Trust `X-Forwarded-For` / `X-Real-IP` only behind a sole reverse proxy (default `false`) |
+| `TURNSTILE_SECRET_KEY`    | Optional          | Cloudflare Turnstile secret; unset skips verification in dev/CI                          |
+| `WEBAUTHN_RP_ID`          | Backend           | WebAuthn relying party ID                                                                |
+| `WEBAUTHN_RP_ORIGIN`      | Backend           | WebAuthn origin URL                                                                      |
+| `GOOGLE_CLIENT_ID`        | Optional          | Google OAuth2 client ID                                                                  |
+| `GOOGLE_CLIENT_SECRET`    | Optional          | Google OAuth2 client secret                                                              |
+| `SMTP_HOST`               | Optional          | SMTP server hostname                                                                     |
+| `SMTP_PORT`               | Optional          | SMTP server port                                                                         |
+| `SMTP_USERNAME`           | Optional          | SMTP username                                                                            |
+| `SMTP_PASSWORD`           | Optional          | SMTP password                                                                            |
+| `SMTP_FROM_EMAIL`         | Optional          | Sender email address                                                                     |
+| `SMTP_FROM_NAME`          | Optional          | Sender display name                                                                      |
+| `VITE_API_URL`            | Optional frontend | External API base URL when not using the Vite proxy                                      |
+| `VITE_TURNSTILE_SITE_KEY` | Optional frontend | Cloudflare Turnstile site key for production builds                                      |
 
 ## Create the Initial Administrator
 
@@ -432,31 +435,31 @@ curl -s "http://localhost:8080/api/attendance/summary?date_from=2026-01-01&date_
 
 All backend endpoints are nested under `/api`. Most endpoints require `Authorization: Bearer <access-token>` unless marked as public.
 
-| Module | Representative endpoints |
-| --- | --- |
-| Health | `GET /api/health`, `GET /api/health/live`, `GET /api/health/ready` |
-| Auth & 2FA | `POST /api/auth/login`, `POST /api/auth/2fa/verify`, `POST /api/auth/totp/code-login`, `POST /api/auth/refresh`, `POST /api/auth/logout`, `PUT /api/auth/change-password`, `PUT /api/auth/switch-company` |
-| Passkeys, OAuth2 & sessions | `POST /api/auth/passkey/register/begin`, `POST /api/auth/passkey/discoverable/begin`, `GET /api/auth/oauth2/providers`, `GET /api/auth/oauth2/google/callback`, `GET/DELETE /api/auth/sessions` |
-| Admin & user groups | `GET/POST /api/admin/companies`, `GET/POST /api/admin/users`, `POST /api/admin/users/{id}/2fa/reset`, `GET/POST /api/user-groups`, `GET /api/permissions` |
-| Employees & imports | `GET/POST /api/employees`, `GET/PUT/DELETE /api/employees/{id}`, `GET /api/employees/{id}/salary-history`, `POST /api/employees/import/validate`, `POST /api/employees/import/confirm` |
-| Background jobs | `GET /api/jobs/{id}` (polls async payroll processing and bulk employee imports) |
-| Payroll | `GET /api/payroll/overview`, `POST /api/payroll/preview`, `POST /api/payroll/run` (`202`), `GET /api/payroll/runs/{id}`, `PUT /api/payroll/runs/{id}/approve`, `PUT /api/payroll/runs/{id}/lock`, `PUT /api/payroll/runs/{id}/cancel`, `PUT /api/payroll/runs/{id}/reverse`, `GET /api/payroll/runs/{id}/payment-file`, `GET /api/payroll/runs/{id}/journal-preview` |
-| Payroll entries | `GET/POST /api/payroll/entries`, `PUT/DELETE /api/payroll/entries/{id}` |
-| Portal & uploads | `GET /api/portal/profile`, `GET /api/portal/payslips`, `GET/POST /api/portal/leave/requests`, `GET/POST /api/portal/claims`, `GET/POST /api/portal/overtime`, `GET /api/uploads/{filename}` |
-| Approvals | `GET /api/approvals/leave`, `PUT /api/approvals/leave/{id}/approve`, `GET /api/approvals/claims`, `GET /api/approvals/overtime` |
-| Attendance & networks | `POST /api/attendance/qr/generate`, `POST /api/attendance/check-in/qr`, `POST /api/attendance/check-in/face-id/begin`, `POST /api/attendance/check-out`, `POST /api/attendance/absent-run`, `GET /api/attendance/summary`, `GET /api/attendance/export`, `GET/POST /api/attendance/networks` |
-| Kiosk | `POST /api/attendance/kiosk/qr`, `GET/POST /api/attendance/kiosks`, `DELETE /api/attendance/kiosks/{id}` |
-| Calendar and teams | `GET/POST /api/calendar/holidays`, `POST /api/calendar/import-ics`, `GET/POST /api/teams`, `GET/POST /api/teams/{id}/members` |
-| Documents and email | `GET/POST /api/documents`, `GET/POST /api/email/templates`, `POST /api/email/preview`, `POST /api/email/send` |
-| Reports & dashboard | `GET /api/dashboard/summary`, `GET /api/reports/payroll-summary`, `GET /api/reports/leave`, `GET /api/reports/statutory`, `GET /api/reports/ea-form` |
-| Audit and backup | `GET /api/audit-logs`, `GET /api/admin/backup/export`, `POST /api/admin/backup/import` |
-| Work schedules and geofence | `GET /api/work-schedules`, `GET/PUT /api/work-schedules/default`, `GET/POST /api/geofence/locations`, `GET/PUT /api/geofence/mode` |
+| Module                      | Representative endpoints                                                                                                                                                                                                                                                                                                                                             |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Health                      | `GET /api/health`, `GET /api/health/live`, `GET /api/health/ready`                                                                                                                                                                                                                                                                                                   |
+| Auth & 2FA                  | `POST /api/auth/login`, `POST /api/auth/2fa/verify`, `POST /api/auth/totp/code-login`, `POST /api/auth/refresh`, `POST /api/auth/logout`, `PUT /api/auth/change-password`, `PUT /api/auth/switch-company`                                                                                                                                                            |
+| Passkeys, OAuth2 & sessions | `POST /api/auth/passkey/register/begin`, `POST /api/auth/passkey/discoverable/begin`, `GET /api/auth/oauth2/providers`, `GET /api/auth/oauth2/google/callback`, `GET/DELETE /api/auth/sessions`                                                                                                                                                                      |
+| Admin & user groups         | `GET/POST /api/admin/companies`, `GET/POST /api/admin/users`, `POST /api/admin/users/{id}/2fa/reset`, `GET/POST /api/user-groups`, `GET /api/permissions`                                                                                                                                                                                                            |
+| Employees & imports         | `GET/POST /api/employees`, `GET/PUT/DELETE /api/employees/{id}`, `GET /api/employees/{id}/salary-history`, `POST /api/employees/import/validate`, `POST /api/employees/import/confirm`                                                                                                                                                                               |
+| Background jobs             | `GET /api/jobs/{id}` (polls async payroll processing and bulk employee imports)                                                                                                                                                                                                                                                                                      |
+| Payroll                     | `GET /api/payroll/overview`, `POST /api/payroll/preview`, `POST /api/payroll/run` (`202`), `GET /api/payroll/runs/{id}`, `PUT /api/payroll/runs/{id}/approve`, `PUT /api/payroll/runs/{id}/lock`, `PUT /api/payroll/runs/{id}/cancel`, `PUT /api/payroll/runs/{id}/reverse`, `GET /api/payroll/runs/{id}/payment-file`, `GET /api/payroll/runs/{id}/journal-preview` |
+| Payroll entries             | `GET/POST /api/payroll/entries`, `PUT/DELETE /api/payroll/entries/{id}`                                                                                                                                                                                                                                                                                              |
+| Portal & uploads            | `GET /api/portal/profile`, `GET /api/portal/payslips`, `GET/POST /api/portal/leave/requests`, `GET/POST /api/portal/claims`, `GET/POST /api/portal/overtime`, `GET /api/uploads/{filename}`                                                                                                                                                                          |
+| Approvals                   | `GET /api/approvals/leave`, `PUT /api/approvals/leave/{id}/approve`, `GET /api/approvals/claims`, `GET /api/approvals/overtime`                                                                                                                                                                                                                                      |
+| Attendance & networks       | `POST /api/attendance/qr/generate`, `POST /api/attendance/check-in/qr`, `POST /api/attendance/check-in/face-id/begin`, `POST /api/attendance/check-out`, `POST /api/attendance/absent-run`, `GET /api/attendance/summary`, `GET /api/attendance/export`, `GET/POST /api/attendance/networks`                                                                         |
+| Kiosk                       | `POST /api/attendance/kiosk/qr`, `GET/POST /api/attendance/kiosks`, `DELETE /api/attendance/kiosks/{id}`                                                                                                                                                                                                                                                             |
+| Calendar and teams          | `GET/POST /api/calendar/holidays`, `POST /api/calendar/import-ics`, `GET/POST /api/teams`, `GET/POST /api/teams/{id}/members`                                                                                                                                                                                                                                        |
+| Documents and email         | `GET/POST /api/documents`, `GET/POST /api/email/templates`, `POST /api/email/preview`, `POST /api/email/send`                                                                                                                                                                                                                                                        |
+| Reports & dashboard         | `GET /api/dashboard/summary`, `GET /api/reports/payroll-summary`, `GET /api/reports/leave`, `GET /api/reports/statutory`, `GET /api/reports/ea-form`                                                                                                                                                                                                                 |
+| Audit and backup            | `GET /api/audit-logs`, `GET /api/admin/backup/export`, `POST /api/admin/backup/import`                                                                                                                                                                                                                                                                               |
+| Work schedules and geofence | `GET /api/work-schedules`, `GET/PUT /api/work-schedules/default`, `GET/POST /api/geofence/locations`, `GET/PUT /api/geofence/mode`                                                                                                                                                                                                                                   |
 
 ## Legal, Privacy (PDPA) & Malaysian Statutory Compliance ⚖️
 
 - **[Terms and Conditions of Use](docs/legal/terms-and-conditions.md)** — accessible in-app at `/terms`; defines Employer (Data Controller) and User obligations under Malaysian law.
-- **[Privacy Policy & Bilingual PDPA Notice](docs/legal/privacy-and-pdpa-notice.md)** — accessible in-app at `/privacy`; bilingual English & Bahasa Malaysia Section 7 notice aligned with the *Personal Data Protection Act 2010 (Act 709)* and the *Personal Data Protection (Amendment) Act 2024 (Act A1727)* (DPO governance, 72-hour data breach notification, data portability, biometric WebAuthn boundary, and automated retention schedules).
-- **[2026 Malaysian Statutory Compliance Guide](docs/legal/malaysian-statutory-compliance.md)** — accessible in-app at `/compliance`; maps *Employment Act 1955* (+ May 2025 Sabah/Sarawak Labour Ordinance alignment), *Minimum Wages Order 2024* (RM1,700/month), *EPF Act 1991* Third Schedule Parts A–F (incl. October 2025 mandatory 2% foreign-worker Part F & s.43(1) age-75 cessation), *PERKESO Act 4 & Act 800* (RM6,000 ceiling & foreign-worker coverage), *Income Tax Act 1967* (YA 2025/2026 reliefs, Form EA, MyTax e-PCB Plus), and *HRD Corp Act 612* to the codebase.
+- **[Privacy Policy & Bilingual PDPA Notice](docs/legal/privacy-and-pdpa-notice.md)** — accessible in-app at `/privacy`; bilingual English & Bahasa Malaysia Section 7 notice aligned with the _Personal Data Protection Act 2010 (Act 709)_ and the _Personal Data Protection (Amendment) Act 2024 (Act A1727)_ (DPO governance, 72-hour data breach notification, data portability, biometric WebAuthn boundary, and automated retention schedules).
+- **[2026 Malaysian Statutory Compliance Guide](docs/legal/malaysian-statutory-compliance.md)** — accessible in-app at `/compliance`; maps _Employment Act 1955_ (+ May 2025 Sabah/Sarawak Labour Ordinance alignment), _Minimum Wages Order 2024_ (RM1,700/month), _EPF Act 1991_ Third Schedule Parts A–F (incl. October 2025 mandatory 2% foreign-worker Part F & s.43(1) age-75 cessation), _PERKESO Act 4 & Act 800_ (RM6,000 ceiling & foreign-worker coverage), _Income Tax Act 1967_ (YA 2025/2026 reliefs, Form EA, MyTax e-PCB Plus), and _HRD Corp Act 612_ to the codebase.
 
 ## Roadmap and Future Improvements 🗺️
 
@@ -480,7 +483,18 @@ All backend endpoints are nested under `/api`. Most endpoints require `Authoriza
 
 Contributions are welcome for learning, review, and project improvement. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening an issue or pull request.
 
-Recommended checks before a pull request:
+Recommended checks before a pull request (unified from repo root, after `bun install` to enable Husky + `lint-staged` hooks):
+
+```bash
+bun install                 # installs root Husky + lint-staged pre-commit hooks
+bun run format:check
+bun run lint                # cargo clippy, eslint, and i18n-scan --ci
+bun run typecheck
+bun run test                # backend cargo test + frontend Vitest suite
+bun run build
+```
+
+Or run per-package checks individually:
 
 ```bash
 cd backend

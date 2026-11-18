@@ -14,7 +14,7 @@ pub fn email(value: &str) -> String {
     match value.split_once('@') {
         Some((local, domain)) if !local.is_empty() => {
             let first = local.chars().next().unwrap();
-            if local.len() == 1 {
+            if local.chars().nth(1).is_none() {
                 format!("*@{}", domain)
             } else {
                 format!("{}***@{}", first, domain)
@@ -36,6 +36,11 @@ mod tests {
     #[test]
     fn masks_single_char_local() {
         assert_eq!(email("x@example.com"), "*@example.com");
+    }
+
+    #[test]
+    fn masks_multibyte_single_char_local() {
+        assert_eq!(email("李@example.com"), "*@example.com");
     }
 
     #[test]

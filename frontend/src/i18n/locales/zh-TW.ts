@@ -144,6 +144,7 @@ const zhTW: Messages = {
     action: '操作',
     generating: '產生中…',
     noData: '尚無資料',
+    offlineBanner: '您目前處於離線狀態，恢復網路連線前變更可能無法儲存。',
   },
   a11y: {
     showPassword: '顯示密碼',
@@ -161,6 +162,7 @@ const zhTW: Messages = {
     loading: '載入中',
     hour: '小時',
     minute: '分鐘',
+    skipToContent: '跳至主要內容',
   },
   nav: {
     section: {
@@ -1371,6 +1373,7 @@ const zhTW: Messages = {
       days_one: '{{count}} 天',
       days_other: '{{count}} 天',
       noHolidays: '{{year}} 年沒有假期',
+      loadFailed: '無法載入團隊行事曆',
     },
     overtime: {
       title: '加班',

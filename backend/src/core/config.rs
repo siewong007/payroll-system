@@ -108,7 +108,13 @@ impl AppConfig {
             return Ok(());
         }
 
-        const WEAK_PREFIXES: &[&str] = &["change-me", "secret", "your-", "payroll_secret"];
+        const WEAK_PREFIXES: &[&str] = &[
+            "change-me",
+            "secret",
+            "your-",
+            "payroll_secret",
+            "replace-with",
+        ];
         let is_weak = |val: &str| {
             let lower = val.to_ascii_lowercase();
             val.len() < 32 || WEAK_PREFIXES.iter().any(|p| lower.starts_with(p))
@@ -297,5 +303,18 @@ mod tests {
 
         cfg.jwt_secret = "fedcba9876543210fedcba9876543210".into();
         assert!(cfg.validate_production_secrets().is_ok());
+    }
+
+    #[test]
+    fn production_secrets_reject_env_example_placeholders() {
+        let mut cfg = config();
+        cfg.frontend_url = "https://payrollmy.com".into();
+        cfg.jwt_secret = "replace-with-at-least-32-random-characters".into();
+        cfg.totp_encryption_key = "0123456789abcdef0123456789abcdef".into();
+        assert!(cfg.validate_production_secrets().is_err());
+
+        cfg.jwt_secret = "fedcba9876543210fedcba9876543210".into();
+        cfg.totp_encryption_key = "replace-with-a-different-at-least-32-random-characters".into();
+        assert!(cfg.validate_production_secrets().is_err());
     }
 }

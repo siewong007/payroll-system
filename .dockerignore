@@ -17,3 +17,12 @@ backend/target
 **/node_modules
 **/.DS_Store
 payroll-system.amd64
+package.json
+bun.lock
+.husky
+.lintstagedrc.json
+.prettierrc.json
+.prettierignore
+.editorconfig
+.bun-version
+rust-toolchain.toml

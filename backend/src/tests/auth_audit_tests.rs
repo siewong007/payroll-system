@@ -136,6 +136,9 @@ async fn successful_password_login_records_its_method() {
     let Some(pool) = skip_if_no_db().await else {
         return;
     };
+    let _policy_guard = crate::tests::totp_route_tests::POLICY_SENSITIVE_LOGINS
+        .lock()
+        .await;
     let company_id = seed_company(&pool).await;
     let (_, email, password) = seed_login_user(&pool, company_id).await;
 

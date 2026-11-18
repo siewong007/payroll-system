@@ -198,3 +198,19 @@ pub async fn delete_by_employee(
     .await?;
     Ok(())
 }
+
+/// Purge expired or revoked refresh tokens older than `retain_days`.
+pub async fn purge_stale(
+    executor: impl Executor<'_, Database = Postgres>,
+    retain_days: i32,
+) -> AppResult<u64> {
+    let done = sqlx::query!(
+        r#"DELETE FROM refresh_tokens
+           WHERE (revoked = TRUE OR expires_at < NOW())
+             AND created_at < NOW() - ($1::int * INTERVAL '1 day')"#,
+        retain_days,
+    )
+    .execute(executor)
+    .await?;
+    Ok(done.rows_affected())
+}

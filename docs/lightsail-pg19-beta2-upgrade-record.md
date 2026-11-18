@@ -9,15 +9,15 @@
 
 ## Result
 
-| Item | Result |
-| --- | --- |
-| Host | Ubuntu Lightsail instance (identifier omitted) |
-| Database | PostgreSQL `19beta2` from PGDG |
-| Active cluster | `19/main` on the standard PostgreSQL port, data checksums enabled |
-| Rollback cluster | PostgreSQL 18 cluster stopped and retained on a private alternate port |
-| Older rollback cluster | PostgreSQL 16 cluster stopped and retained |
-| Downtime | Approximately 15 seconds |
-| Health | Local and public API health checks remained successful after cutover |
+| Item                   | Result                                                                 |
+| ---------------------- | ---------------------------------------------------------------------- |
+| Host                   | Ubuntu Lightsail instance (identifier omitted)                         |
+| Database               | PostgreSQL `19beta2` from PGDG                                         |
+| Active cluster         | `19/main` on the standard PostgreSQL port, data checksums enabled      |
+| Rollback cluster       | PostgreSQL 18 cluster stopped and retained on a private alternate port |
+| Older rollback cluster | PostgreSQL 16 cluster stopped and retained                             |
+| Downtime               | Approximately 15 seconds                                               |
+| Health                 | Local and public API health checks remained successful after cutover   |
 
 The beta packages were explicitly held so unattended upgrades could not move
 the cluster to another beta with a potentially incompatible catalog. The hold

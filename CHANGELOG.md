@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [docs/legal/terms-and-conditions.md](docs/legal/terms-and-conditions.md),
   bilingual English/Bahasa Malaysia
   [docs/legal/privacy-and-pdpa-notice.md](docs/legal/privacy-and-pdpa-notice.md)
-  (aligned with the *Personal Data Protection (Amendment) Act 2024 [Act A1727]*
+  (aligned with the _Personal Data Protection (Amendment) Act 2024 [Act A1727]_
   DPO, 72-hour data breach notification, data portability, and biometric
   WebAuthn boundaries),
   [docs/legal/malaysian-statutory-compliance.md](docs/legal/malaysian-statutory-compliance.md),
@@ -23,10 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   expanded `epf_service` and `employees_epf_category_check` (`1029`) to support
   Malaysian citizen Part E (aged 60–74: 0% employee / 4% employer), PR Part C
   (aged 60–74), mandatory foreign-worker Part F (2% + 2% effective 1 October
-  2025 under *EPF Amendment Act 2025*), and statutory cessation at age 75
-  (*EPF Act 1991 s.43(1)*); added `below_minimum_wage` preview warnings for
-  full-time salaries below the RM1,700/month floor (*Minimum Wages Order 2024
-  [P.U. (A) 376/2024]*); and normalized `permanent_resident` / `epf_category`
+  2025 under _EPF Amendment Act 2025_), and statutory cessation at age 75
+  (_EPF Act 1991 s.43(1)_); added `below_minimum_wage` preview warnings for
+  full-time salaries below the RM1,700/month floor (_Minimum Wages Order 2024
+  [P.U. (A) 376/2024]_); and normalized `permanent_resident` / `epf_category`
   validation in bulk employee imports.
 - **Workspace UX & security hardening** — enhanced workspace dashboard, dark
   mode, global command palette, dialog UX, upload ownership registry

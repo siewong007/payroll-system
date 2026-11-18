@@ -165,3 +165,19 @@ pub async fn fail_stale(executor: impl Executor<'_, Database = Postgres>) -> App
     .await?;
     Ok(done.rows_affected())
 }
+
+/// Purge terminal (`succeeded` or `failed`) background jobs older than `retain_days`.
+pub async fn delete_finished_older_than_days(
+    executor: impl Executor<'_, Database = Postgres>,
+    retain_days: i32,
+) -> AppResult<u64> {
+    let done = sqlx::query!(
+        r#"DELETE FROM background_jobs
+           WHERE status IN ('succeeded', 'failed')
+             AND COALESCE(finished_at, created_at) < NOW() - ($1::int * INTERVAL '1 day')"#,
+        retain_days,
+    )
+    .execute(executor)
+    .await?;
+    Ok(done.rows_affected())
+}

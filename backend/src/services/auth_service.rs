@@ -569,21 +569,7 @@ async fn user_requires_two_factor(pool: &PgPool, user: &User) -> AppResult<bool>
         .iter()
         .map(|s| s.to_string())
         .collect();
-    let has_privileged_group = sqlx::query_scalar!(
-        r#"SELECT EXISTS(
-               SELECT 1
-               FROM user_group_members ugm
-               JOIN user_groups ug ON ug.id = ugm.group_id AND ug.is_active = TRUE
-               JOIN user_group_permissions ugp ON ugp.group_id = ug.id
-               WHERE ugm.user_id = $1
-                 AND ugp.permission = ANY($2::varchar(80)[])
-           ) AS "exists!""#,
-        user.id,
-        &perms,
-    )
-    .fetch_one(pool)
-    .await?;
-    Ok(has_privileged_group)
+    user_groups::user_has_any_active_permission(pool, user.id, &perms).await
 }
 
 /// Prevent disabling 2FA when platform 2FA enforcement is active for the user's
@@ -678,32 +664,8 @@ pub async fn get_two_factor_policy(
         .iter()
         .map(|s| s.to_string())
         .collect();
-    let non_compliant = sqlx::query!(
-        r#"SELECT u.email FROM users u
-           WHERE (
-                 u.roles && $1::varchar(50)[]
-                 OR EXISTS (
-                     SELECT 1
-                     FROM user_group_members ugm
-                     JOIN user_groups ug ON ug.id = ugm.group_id AND ug.is_active = TRUE
-                     JOIN user_group_permissions ugp ON ugp.group_id = ug.id
-                     WHERE ugm.user_id = u.id
-                       AND ugp.permission = ANY($2::varchar(80)[])
-                 )
-             )
-             AND u.is_active AND u.deleted_at IS NULL
-             AND NOT EXISTS (
-                 SELECT 1 FROM user_totp t WHERE t.user_id = u.id AND t.enabled
-             )
-           ORDER BY u.email"#,
-        &required_roles,
-        &required_perms,
-    )
-    .fetch_all(pool)
-    .await?
-    .into_iter()
-    .map(|r| r.email)
-    .collect();
+    let non_compliant =
+        users::list_two_factor_non_compliant_emails(pool, &required_roles, &required_perms).await?;
 
     Ok(crate::models::totp::TwoFactorPolicyResponse {
         enforce,

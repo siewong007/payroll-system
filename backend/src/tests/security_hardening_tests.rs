@@ -706,3 +706,85 @@ fn xlsx_zip_bomb_and_ipv6_ssrf_guards() {
         assert!(!is_blocked_ip(ip), "expected public IP allowed: {allowed}");
     }
 }
+
+#[tokio::test]
+async fn retention_cleanup_purges_aged_resets_and_succeeded_jobs() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let user_id = seed_user(&pool, company_id, "admin").await;
+
+    let old_rejected_reset = Uuid::new_v4();
+    let fresh_completed_reset = Uuid::new_v4();
+    sqlx::query(
+        r#"INSERT INTO password_reset_requests (id, user_id, status, requested_at)
+           VALUES
+             ($1, $3, 'rejected', NOW() - INTERVAL '31 days'),
+             ($2, $3, 'completed', NOW() - INTERVAL '1 day')"#,
+    )
+    .bind(old_rejected_reset)
+    .bind(fresh_completed_reset)
+    .bind(user_id)
+    .execute(&pool)
+    .await
+    .expect("seed password_reset_requests");
+
+    let old_succeeded_job = Uuid::new_v4();
+    let old_running_job = Uuid::new_v4();
+    sqlx::query(
+        r#"INSERT INTO background_jobs (id, company_id, job_type, status, payload, created_by, created_at, finished_at)
+           VALUES
+             ($1, $3, 'employee_import', 'succeeded', '{}'::jsonb, $4, NOW() - INTERVAL '40 days', NOW() - INTERVAL '31 days'),
+             ($2, $3, 'employee_import', 'running', '{}'::jsonb, $4, NOW() - INTERVAL '40 days', NULL)"#,
+    )
+    .bind(old_succeeded_job)
+    .bind(old_running_job)
+    .bind(company_id)
+    .bind(user_id)
+    .execute(&pool)
+    .await
+    .expect("seed background_jobs");
+
+    let purged_resets =
+        crate::repositories::password_reset_requests::delete_expired_older_than_days(&pool, 30)
+            .await
+            .expect("purge expired resets");
+    assert!(purged_resets >= 1);
+
+    let purged_jobs =
+        crate::repositories::background_jobs::delete_finished_older_than_days(&pool, 30)
+            .await
+            .expect("purge finished jobs");
+    assert!(purged_jobs >= 1);
+
+    let reset_exists = |id: Uuid| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS(SELECT 1 FROM password_reset_requests WHERE id = $1)",
+            )
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let job_exists = |id: Uuid| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS(SELECT 1 FROM background_jobs WHERE id = $1)",
+            )
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+
+    assert!(!reset_exists(old_rejected_reset).await);
+    assert!(reset_exists(fresh_completed_reset).await);
+    assert!(!job_exists(old_succeeded_job).await);
+    assert!(job_exists(old_running_job).await);
+}

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM password_reset_requests\n           WHERE (status IN ('completed', 'expired', 'rejected') OR reset_token_expires_at < NOW())\n             AND COALESCE(reset_token_expires_at, requested_at) < NOW() - ($1::int * INTERVAL '1 day')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6de9e59af98f72790bd4127e48c1cb1792c811daeee1a3a628c29db9af5391e9"
+}

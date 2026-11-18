@@ -93,6 +93,12 @@ export function PortalLayout() {
 
   return (
     <div className="theme-portal relative isolate min-h-screen bg-[var(--background)]">
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:rounded-lg focus:bg-teal-600 focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-white focus:shadow-lg"
+      >
+        {t('a11y.skipToContent')}
+      </a>
       {/* Ambient aurora behind the portal */}
       <div aria-hidden className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
         <div className="ambient-blob animate-float-a -top-32 -left-24 h-96 w-96 bg-teal-200/50" />
@@ -155,7 +161,7 @@ export function PortalLayout() {
               type="button"
               onClick={openCommandPalette}
               aria-label={t('nav.quickSearch')}
-              className="p-2 text-gray-500 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white hover:bg-white/60 dark:hover:bg-slate-800 rounded-lg transition-all-fast"
+              className="min-h-11 min-w-11 inline-flex items-center justify-center text-gray-500 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white hover:bg-white/60 dark:hover:bg-slate-800 rounded-lg transition-all-fast"
             >
               <Search className="w-4 h-4" />
             </button>
@@ -163,7 +169,7 @@ export function PortalLayout() {
             <Link
               to="/portal/notifications"
               aria-label={t('nav.portal.notifications')}
-              className="relative md:hidden p-2 text-gray-500 hover:text-gray-900 hover:bg-white/60 rounded-lg transition-all-fast"
+              className="relative md:hidden min-h-11 min-w-11 inline-flex items-center justify-center text-gray-500 hover:text-gray-900 hover:bg-white/60 rounded-lg transition-all-fast"
             >
               <Bell className="w-5 h-5" />
               {hasUnread && (
@@ -238,7 +244,11 @@ export function PortalLayout() {
       {/* The bottom bar is ~56px plus env(safe-area-inset-bottom) (~34px on a
           phone with a home indicator), so a flat pb-20 leaves the last row of
           content under it on exactly the devices employees check in from. */}
-      <main className="max-w-7xl mx-auto px-4 py-4 md:px-6 md:py-8 pb-[calc(5rem+env(safe-area-inset-bottom))] md:pb-8">
+      <main
+        id="main-content"
+        tabIndex={-1}
+        className="max-w-7xl mx-auto px-4 py-4 md:px-6 md:py-8 pb-[calc(5rem+env(safe-area-inset-bottom))] md:pb-8 focus:outline-none"
+      >
         <PageTransition>
           <Outlet />
         </PageTransition>

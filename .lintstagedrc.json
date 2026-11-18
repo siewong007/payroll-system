@@ -1,0 +1,5 @@
+{
+  "frontend/src/**/*.{ts,tsx}": ["bun --cwd frontend eslint --fix"],
+  "backend/src/**/*.rs": ["rustfmt --edition 2024"],
+  "*.{json,md,yml,yaml}": ["bunx prettier --write"]
+}

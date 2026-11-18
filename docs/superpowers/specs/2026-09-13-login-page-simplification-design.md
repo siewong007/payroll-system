@@ -50,9 +50,9 @@ Forgot password?   ·   More sign-in options ⌄
 
 ## Turnstile mounting change
 
-Today one `<TurnstileWidget>` is mounted *outside* the method-picker
+Today one `<TurnstileWidget>` is mounted _outside_ the method-picker
 conditional so its token survives the swap to the code-login view. After
-this redesign the widget lives *inside* each form, directly above its
+this redesign the widget lives _inside_ each form, directly above its
 submit button:
 
 - Default view: below password, above Sign In.

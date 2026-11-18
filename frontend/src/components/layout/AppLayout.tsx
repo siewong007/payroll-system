@@ -36,6 +36,12 @@ export function AppLayout() {
 
   return (
     <div className="theme-admin relative isolate flex h-screen overflow-hidden bg-[var(--background)]">
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:rounded-lg focus:bg-indigo-600 focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-white focus:shadow-lg"
+      >
+        {t('a11y.skipToContent')}
+      </a>
       {/* Ambient aurora behind the whole console */}
       <div aria-hidden className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
         <div className="ambient-blob animate-float-a -top-32 left-1/4 h-96 w-96 bg-indigo-300/40" />
@@ -51,7 +57,7 @@ export function AppLayout() {
           <button
             onClick={() => setSidebarOpen(true)}
             aria-label={t('a11y.openMenu')}
-            className="p-2 -ml-2 text-gray-600 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white hover:bg-white/60 dark:hover:bg-slate-800 rounded-lg transition-all-fast"
+            className="min-h-11 min-w-11 inline-flex items-center justify-center -ml-2 text-gray-600 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white hover:bg-white/60 dark:hover:bg-slate-800 rounded-lg transition-all-fast"
           >
             <Menu className="w-5 h-5" />
           </button>
@@ -61,7 +67,7 @@ export function AppLayout() {
               type="button"
               onClick={openCommandPalette}
               aria-label={t('nav.quickSearch')}
-              className="p-2 text-gray-500 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white hover:bg-white/60 dark:hover:bg-slate-800 rounded-lg transition-all-fast"
+              className="min-h-11 min-w-11 inline-flex items-center justify-center text-gray-500 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white hover:bg-white/60 dark:hover:bg-slate-800 rounded-lg transition-all-fast"
             >
               <Search className="w-4 h-4" />
             </button>
@@ -72,7 +78,7 @@ export function AppLayout() {
           </div>
         </div>
 
-        <main className="flex-1 overflow-auto">
+        <main id="main-content" tabIndex={-1} className="flex-1 overflow-auto focus:outline-none">
           <div className="max-w-7xl mx-auto px-4 py-4 md:px-8 md:py-8">
             <PageTransition>
               <Outlet />

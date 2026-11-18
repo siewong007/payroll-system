@@ -4,9 +4,9 @@
 
 This project is an academic and portfolio-oriented prototype. Security fixes are handled on the default branch unless a separate release branch is explicitly maintained.
 
-| Version | Supported |
-| --- | --- |
-| `main` | Yes |
+| Version        | Supported                           |
+| -------------- | ----------------------------------- |
+| `main`         | Yes                                 |
 | Other branches | No, unless stated by the maintainer |
 
 ## Reporting a Vulnerability

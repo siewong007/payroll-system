@@ -24,6 +24,7 @@ changes) / React 19 + Vite + TanStack Query + Tailwind v4.
 ## Tasks
 
 ### 1. Migration `1025_payroll_ops.sql`
+
 - `payroll_runs` += `cancelled_by uuid`, `cancelled_at timestamptz`,
   `cancel_reason varchar(500)`.
 - `salary_history` += `change_type varchar(30) NOT NULL DEFAULT 'adjustment'`
@@ -31,6 +32,7 @@ changes) / React 19 + Vite + TanStack Query + Tailwind v4.
   `approved_at timestamptz`. Backfill `new_hire` where `old_salary = 0`.
 
 ### 2. Run cancellation
+
 - `payroll_runs::set_cancelled` — status-guarded UPDATE
   (`draft|processed|pending_approval|approved → cancelled`).
 - `payroll_lifecycle_service::cancel(pool, company, run, auth, reason, meta)`:
@@ -43,7 +45,9 @@ changes) / React 19 + Vite + TanStack Query + Tailwind v4.
   enforces the per-status permission via `AuthUser`.
 
 ### 3. `GET /api/payroll/overview` (ViewPayroll)
+
 `repositories/reads/payroll_overview.rs` + `services/payroll_overview_service.rs`:
+
 - `latest_period`: most recent `(year, month)` with a committed run
   (processed/pending_approval/approved/paid).
 - `kpis`: summed run totals for that period (employees, gross, deductions,
@@ -57,11 +61,13 @@ changes) / React 19 + Vite + TanStack Query + Tailwind v4.
   unprocessed staged entries, runs awaiting submit/approve/pay.
 
 ### 4. `GET /api/payroll/runs/{id}/payment-file` (MarkPayrollPaid)
+
 CSV for `approved`/`paid` runs only: employee no, name, bank name, account
 number, bank type, net sen→RM, reference `PAY-{YYYYMM}-{empno}`. Audited with
 count + total only (never account numbers).
 
 ### 5. `GET /api/payroll/runs/{id}/journal-preview` (ViewPayroll)
+
 Computed from committed figures, zero writes: DR wage expense per department
 (gross − unpaid leave), DR employer EPF/SOCSO/EIS expense, CR statutory
 payables (ee+er), CR PCB/zakat/PTPTN/Tabung Haji/other deductions payable,
@@ -69,12 +75,14 @@ CR net salary payable, CR claims payable; `balanced` flag. Documented as a
 fixed default mapping until a configurable COA exists.
 
 ### 6. Salary history metadata
+
 - `salary_history::insert` gains `change_type`/`notes`.
 - `UpdateEmployeeRequest` += `salary_change_type`, `salary_change_reason`
   (validated against the CHECK list); `employee_service::update` passes them.
 - `SalaryHistory` model + list query + `EmployeeDetail` display.
 
 ### 7. Frontend
+
 - `api/payroll.ts` + `types`: overview, cancel, payment file, journal.
 - `pages/payroll/PayrollOverview.tsx` (KPIs, pipeline, action queue, trend,
   departments — real data only).
@@ -82,6 +90,7 @@ fixed default mapping until a configurable COA exists.
 - `PayrollDetail`: cancel dialog (reason), payment-file + journal actions.
 
 ### 8. Verify + docs
+
 `cargo sqlx prepare` (against `payroll_dev`), fmt, clippy `-D warnings`,
 `cargo test` (DB up), frontend lint/typecheck/test/build, `docs/payroll/`,
 `features.md`, `./scripts/codegraph update .`.

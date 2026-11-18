@@ -11,9 +11,11 @@ import { ToastProvider } from '@/components/ui/Toast';
 import { ConfirmProvider } from '@/components/ui/ConfirmDialog';
 import { PromptProvider } from '@/components/ui/PromptDialog';
 import { CommandPalette } from '@/components/ui/CommandPalette';
+import { OfflineBanner } from '@/components/ui/OfflineBanner';
 import { toast } from '@/lib/toast';
 import { ForbiddenPage, NotFoundPage } from '@/pages/errors/ErrorPage';
 import { SUPER_ADMIN_ROLES, hasAnyRole } from '@/lib/roles';
+import { ROUTES } from '@/lib/routes';
 import { getErrorMessage } from '@/lib/utils';
 import { userCanAny } from '@/lib/usePermissions';
 import type { PermissionKey } from '@/api/permissions';
@@ -102,7 +104,7 @@ export function PermissionGuard({
   const location = useLocation();
   const needed = Array.isArray(requires) ? requires : [requires];
   if (user && !userCanAny(user, needed)) {
-    return <Navigate to="/403" replace state={{ from: location.pathname }} />;
+    return <Navigate to={ROUTES.FORBIDDEN} replace state={{ from: location.pathname }} />;
   }
   return <>{children}</>;
 }
@@ -110,9 +112,9 @@ export function PermissionGuard({
 function HomeRedirect() {
   const { user } = useAuth();
   if (hasAnyRole(user, SUPER_ADMIN_ROLES)) {
-    return <Navigate to="/companies" replace />;
+    return <Navigate to={ROUTES.COMPANIES} replace />;
   }
-  return <Navigate to="/dashboard" replace />;
+  return <Navigate to={ROUTES.DASHBOARD} replace />;
 }
 
 const queryClient = new QueryClient({
@@ -156,31 +158,32 @@ export default function App() {
             <ToastProvider>
               <ConfirmProvider>
                 <PromptProvider>
+                  <OfflineBanner />
                   <CommandPalette />
                   <RouteErrorBoundary>
                   <Suspense fallback={<RouteFallback />}>
                     <Routes>
-                      <Route path="/login" element={<Login />} />
-                      <Route path="/oauth2/callback" element={<OAuth2Callback />} />
-                      <Route path="/oauth2/link" element={<OAuth2Link />} />
-                      <Route path="/forgot-password" element={<ForgotPassword />} />
-                      <Route path="/reset-password" element={<ResetPassword />} />
-                      <Route path="/change-password" element={<ChangePassword />} />
+                      <Route path={ROUTES.LOGIN} element={<Login />} />
+                      <Route path={ROUTES.OAUTH2_CALLBACK} element={<OAuth2Callback />} />
+                      <Route path={ROUTES.OAUTH2_LINK} element={<OAuth2Link />} />
+                      <Route path={ROUTES.FORGOT_PASSWORD} element={<ForgotPassword />} />
+                      <Route path={ROUTES.RESET_PASSWORD} element={<ResetPassword />} />
+                      <Route path={ROUTES.CHANGE_PASSWORD} element={<ChangePassword />} />
                       {/* The kiosk display is /kiosk#<secret> (with /kiosk/:kioskKey kept for legacy links). */}
-                      <Route path="/attendance/scan" element={<AttendanceScanPage />} />
-                      <Route path="/kiosk" element={<AttendanceKioskPublic />} />
-                      <Route path="/kiosk/:kioskKey" element={<AttendanceKioskPublic />} />
-                      <Route path="/terms" element={<LegalPage />} />
-                      <Route path="/privacy" element={<LegalPage />} />
-                      <Route path="/compliance" element={<LegalPage />} />
-                      <Route path="/403" element={<ForbiddenPage />} />
+                      <Route path={ROUTES.ATTENDANCE_SCAN} element={<AttendanceScanPage />} />
+                      <Route path={ROUTES.KIOSK} element={<AttendanceKioskPublic />} />
+                      <Route path={ROUTES.KIOSK_LEGACY} element={<AttendanceKioskPublic />} />
+                      <Route path={ROUTES.TERMS} element={<LegalPage />} />
+                      <Route path={ROUTES.PRIVACY} element={<LegalPage />} />
+                      <Route path={ROUTES.COMPLIANCE} element={<LegalPage />} />
+                      <Route path={ROUTES.FORBIDDEN} element={<ForbiddenPage />} />
 
                       <Route element={<AppLayout />}>
-                        <Route path="/" element={<HomeRedirect />} />
-                        <Route path="/dashboard" element={<DashboardPage />} />
-                        <Route path="/company" element={<CompanyProfile />} />
+                        <Route path={ROUTES.HOME} element={<HomeRedirect />} />
+                        <Route path={ROUTES.DASHBOARD} element={<DashboardPage />} />
+                        <Route path={ROUTES.COMPANY} element={<CompanyProfile />} />
                   <Route
-                    path="/employees"
+                    path={ROUTES.EMPLOYEES}
                     element={(
                       <PermissionGuard requires="view_employees">
                         <EmployeeList />
@@ -188,7 +191,7 @@ export default function App() {
                     )}
                   />
                   <Route
-                    path="/employees/new"
+                    path={ROUTES.EMPLOYEES_NEW}
                     element={(
                       <PermissionGuard requires="manage_employees">
                         <EmployeeCreate />
@@ -196,7 +199,7 @@ export default function App() {
                     )}
                   />
                   <Route
-                    path="/employees/import"
+                    path={ROUTES.EMPLOYEES_IMPORT}
                     element={(
                       <PermissionGuard requires="import_employees">
                         <EmployeeImport />
@@ -204,7 +207,7 @@ export default function App() {
                     )}
                   />
                   <Route
-                    path="/employees/:id"
+                    path={ROUTES.EMPLOYEE_DETAIL}
                     element={(
                       <PermissionGuard requires="view_employees">
                         <EmployeeDetail />
@@ -212,7 +215,7 @@ export default function App() {
                     )}
                   />
                   <Route
-                    path="/payroll"
+                    path={ROUTES.PAYROLL}
                     element={(
                       <PermissionGuard requires="view_payroll">
                         <PayrollOverview />
@@ -220,7 +223,7 @@ export default function App() {
                     )}
                   />
                   <Route
-                    path="/payroll/runs"
+                    path={ROUTES.PAYROLL_RUNS}
                     element={(
                       <PermissionGuard requires="view_payroll">
                         <PayrollList />
@@ -228,7 +231,7 @@ export default function App() {
                     )}
                   />
                   <Route
-                    path="/payroll/process"
+                    path={ROUTES.PAYROLL_PROCESS}
                     element={(
                       <PermissionGuard requires="manage_payroll_draft">
                         <PayrollProcess />
@@ -236,7 +239,7 @@ export default function App() {
                     )}
                   />
                   <Route
-                    path="/payroll/:id"
+                    path={ROUTES.PAYROLL_DETAIL}
                     element={(
                       <PermissionGuard requires="view_payroll">
                         <PayrollDetail />
@@ -244,7 +247,7 @@ export default function App() {
                     )}
                   />
                   <Route
-                    path="/documents"
+                    path={ROUTES.DOCUMENTS}
                     element={(
                       <PermissionGuard requires="view_documents">
                         <DocumentList />
@@ -252,7 +255,7 @@ export default function App() {
                     )}
                   />
                   <Route
-                    path="/calendar"
+                    path={ROUTES.CALENDAR}
                     element={(
                       <PermissionGuard requires="view_calendar">
                         <CalendarPage />
@@ -260,7 +263,7 @@ export default function App() {
                     )}
                   />
                   <Route
-                    path="/teams"
+                    path={ROUTES.TEAMS}
                     element={(
                       <PermissionGuard requires="view_teams">
                         <TeamsPage />
@@ -268,7 +271,7 @@ export default function App() {
                     )}
                   />
                   <Route
-                    path="/approvals"
+                    path={ROUTES.APPROVALS}
                     element={(
                       <PermissionGuard requires="view_approvals">
                         <Approvals />
@@ -276,7 +279,7 @@ export default function App() {
                     )}
                   />
                   <Route
-                    path="/reports"
+                    path={ROUTES.REPORTS}
                     element={(
                       <PermissionGuard requires="view_reports">
                         <Reports />
@@ -284,7 +287,7 @@ export default function App() {
                     )}
                   />
                   <Route
-                    path="/letters"
+                    path={ROUTES.LETTERS}
                     element={(
                       <PermissionGuard requires="view_email_logs">
                         <LettersPage />
@@ -292,7 +295,7 @@ export default function App() {
                     )}
                   />
                   <Route
-                    path="/settings"
+                    path={ROUTES.SETTINGS}
                     element={(
                       <PermissionGuard requires="manage_company_settings">
                         <SettingsPage />
@@ -300,7 +303,7 @@ export default function App() {
                     )}
                   />
                   <Route
-                    path="/companies"
+                    path={ROUTES.COMPANIES}
                     element={(
                       <PermissionGuard requires="manage_companies">
                         <CompanyManagement />
@@ -308,7 +311,7 @@ export default function App() {
                     )}
                   />
                   <Route
-                    path="/users"
+                    path={ROUTES.USERS}
                     element={(
                       <PermissionGuard requires="manage_users">
                         <UserManagement />
@@ -316,7 +319,7 @@ export default function App() {
                     )}
                   />
                   <Route
-                    path="/roles"
+                    path={ROUTES.ROLES}
                     element={(
                       <PermissionGuard requires="manage_users">
                         <RoleManagement />
@@ -324,7 +327,7 @@ export default function App() {
                     )}
                   />
                   <Route
-                    path="/user-groups"
+                    path={ROUTES.USER_GROUPS}
                     element={(
                       <PermissionGuard requires="manage_users">
                         <UserGroups />
@@ -332,7 +335,7 @@ export default function App() {
                     )}
                   />
                   <Route
-                    path="/backup"
+                    path={ROUTES.BACKUP}
                     element={(
                       <PermissionGuard requires="manage_backups">
                         <BackupPage />
@@ -340,7 +343,7 @@ export default function App() {
                     )}
                   />
                   <Route
-                    path="/audit-trail"
+                    path={ROUTES.AUDIT_TRAIL}
                     element={(
                       <PermissionGuard requires="view_audit_log">
                         <AuditTrailPage />
@@ -348,7 +351,7 @@ export default function App() {
                     )}
                   />
                   <Route
-                    path="/attendance"
+                    path={ROUTES.ATTENDANCE}
                     element={(
                       <PermissionGuard requires="view_attendance">
                         <AttendancePage />
@@ -356,26 +359,26 @@ export default function App() {
                     )}
                   />
                   <Route
-                    path="/admin/attendance-settings"
+                    path={ROUTES.ADMIN_ATTENDANCE_SETTINGS}
                     element={(
                       <PermissionGuard requires="manage_platform_settings">
                         <AttendanceSettings />
                       </PermissionGuard>
                     )}
                   />
-                  <Route path="/my/attendance" element={<MyAttendance />} />
+                  <Route path={ROUTES.MY_ATTENDANCE} element={<MyAttendance />} />
                 </Route>
 
                 <Route element={<PortalLayout />}>
-                  <Route path="/portal" element={<Navigate to="/portal/profile" replace />} />
-                  <Route path="/portal/profile" element={<MyProfile />} />
-                  <Route path="/portal/payslips" element={<MyPayslips />} />
-                  <Route path="/portal/leave" element={<Leave />} />
-                  <Route path="/portal/claims" element={<Claims />} />
-                  <Route path="/portal/overtime" element={<Overtime />} />
-                  <Route path="/portal/team-calendar" element={<TeamCalendar />} />
-                  <Route path="/portal/notifications" element={<Notifications />} />
-                  <Route path="/portal/attendance" element={<MyAttendance />} />
+                  <Route path={ROUTES.PORTAL} element={<Navigate to={ROUTES.PORTAL_PROFILE} replace />} />
+                  <Route path={ROUTES.PORTAL_PROFILE} element={<MyProfile />} />
+                  <Route path={ROUTES.PORTAL_PAYSLIPS} element={<MyPayslips />} />
+                  <Route path={ROUTES.PORTAL_LEAVE} element={<Leave />} />
+                  <Route path={ROUTES.PORTAL_CLAIMS} element={<Claims />} />
+                  <Route path={ROUTES.PORTAL_OVERTIME} element={<Overtime />} />
+                  <Route path={ROUTES.PORTAL_TEAM_CALENDAR} element={<TeamCalendar />} />
+                  <Route path={ROUTES.PORTAL_NOTIFICATIONS} element={<Notifications />} />
+                  <Route path={ROUTES.PORTAL_ATTENDANCE} element={<MyAttendance />} />
                 </Route>
 
                       <Route path="*" element={<NotFoundPage />} />
