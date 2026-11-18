@@ -74,12 +74,16 @@ async fn main() -> anyhow::Result<()> {
 
     // Retention windows for the daily cleanup task (plan item 26). Audit rows
     // default to the seven-year statutory horizon; the others are operational.
+    const REFRESH_TOKEN_RETENTION_DAYS: i32 = 30;
+    const QR_TOKEN_RETENTION_DAYS: i32 = 7;
     const AUDIT_LOG_RETENTION_DAYS: i64 = 2_555;
     const NOTIFICATION_READ_RETENTION_DAYS: i32 = 90;
     const NOTIFICATION_UNREAD_RETENTION_DAYS: i32 = 365;
     const EMAIL_LOG_RETENTION_DAYS: i32 = 180;
     const SESSION_REVOKED_RETENTION_DAYS: i32 = 30;
     const SESSION_INACTIVE_RETENTION_DAYS: i32 = 90;
+    const PASSWORD_RESET_RETENTION_DAYS: i32 = 30;
+    const BACKGROUND_JOB_RETENTION_DAYS: i32 = 30;
 
     // Claim the configured address before running migrations or spawning background work.
     // This makes startup fail fast with an actionable error when another process owns the port.
@@ -228,7 +232,9 @@ async fn main() -> anyhow::Result<()> {
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let mut cleanup_shutdown = shutdown_rx.clone();
     let cleanup_handle = tokio::spawn(async move {
-        use payroll_system::repositories::{attendance_network_observations, attendance_qr_tokens};
+        use payroll_system::repositories::{
+            attendance_network_observations, attendance_qr_tokens, refresh_tokens,
+        };
         use payroll_system::services::attendance_network_service;
 
         const CLEANUP_LOCK_KEY: i64 = 7_492_026_101;
@@ -247,26 +253,17 @@ async fn main() -> anyhow::Result<()> {
                 continue;
             };
             tracing::info!("refresh-token cleanup: tick");
-            match sqlx::query(
-                "DELETE FROM refresh_tokens \
-                 WHERE (revoked = TRUE OR expires_at < NOW()) \
-                 AND created_at < NOW() - INTERVAL '30 days'",
-            )
-            .execute(&cleanup_pool)
-            .await
-            {
-                Ok(result) => {
-                    tracing::info!(
-                        rows = result.rows_affected(),
-                        "refresh-token cleanup: completed"
-                    );
+            match refresh_tokens::purge_stale(&cleanup_pool, REFRESH_TOKEN_RETENTION_DAYS).await {
+                Ok(rows) => {
+                    tracing::info!(rows, "refresh-token cleanup: completed");
                 }
                 Err(e) => tracing::error!("Failed to clean up refresh tokens: {}", e),
             }
 
             // A kiosk mints ~288 QR tokens/day; unreferenced expired ones are
             // dead weight. Tokens referenced by a check-in are kept as history.
-            match attendance_qr_tokens::purge_expired(&cleanup_pool, 7).await {
+            match attendance_qr_tokens::purge_expired(&cleanup_pool, QR_TOKEN_RETENTION_DAYS).await
+            {
                 Ok(rows) => tracing::info!(rows, "qr-token cleanup: completed"),
                 Err(e) => tracing::error!("Failed to clean up attendance QR tokens: {}", e),
             }
@@ -350,7 +347,7 @@ async fn main() -> anyhow::Result<()> {
 
             match payroll_system::repositories::password_reset_requests::delete_expired_older_than_days(
                 &cleanup_pool,
-                30,
+                PASSWORD_RESET_RETENTION_DAYS,
             )
             .await
             {
@@ -372,7 +369,7 @@ async fn main() -> anyhow::Result<()> {
 
             match payroll_system::repositories::background_jobs::delete_finished_older_than_days(
                 &cleanup_pool,
-                30,
+                BACKGROUND_JOB_RETENTION_DAYS,
             )
             .await
             {

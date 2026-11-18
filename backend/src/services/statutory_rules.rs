@@ -49,30 +49,18 @@ pub async fn require_verified(
     rule_code: &str,
     effective_date: NaiveDate,
 ) -> AppResult<()> {
-    let row = sqlx::query!(
-        r#"
-        SELECT
-            (SELECT value FROM platform_settings WHERE key = $1) AS pcb_status,
-            EXISTS (
-                SELECT 1
-                FROM statutory_rule_sets
-                WHERE rule_code = $2
-                  AND status = 'verified'
-                  AND effective_from <= $3
-                  AND (effective_to IS NULL OR effective_to >= $3)
-            ) AS "verified!"
-        "#,
+    let (pcb_status, verified) = statutory_rule_sets::pcb_status_and_rule_verified(
+        executor,
         PCB_CALCULATOR_STATUS_KEY,
         rule_code,
-        effective_date
+        effective_date,
     )
-    .fetch_one(executor)
     .await?;
 
-    if row.pcb_status.as_deref() != Some("enabled") {
+    if pcb_status.as_deref() != Some("enabled") {
         return Err(gate_closed_error());
     }
-    if !row.verified {
+    if !verified {
         return Err(AppError::Validation(format!(
             "No verified {} statutory rule set covers {}. Automatic payroll is disabled until official source data is imported and independently verified.",
             rule_code.to_uppercase(),

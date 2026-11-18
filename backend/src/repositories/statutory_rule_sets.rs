@@ -116,3 +116,34 @@ pub async fn missing_required_for_date(
 
     Ok(missing)
 }
+
+/// Read the automatic PCB feature gate setting together with whether a verified
+/// statutory rule set exists for `rule_code` on `effective_date` in a single query.
+pub async fn pcb_status_and_rule_verified(
+    executor: impl Executor<'_, Database = Postgres>,
+    pcb_status_key: &str,
+    rule_code: &str,
+    effective_date: NaiveDate,
+) -> AppResult<(Option<String>, bool)> {
+    let row = sqlx::query!(
+        r#"
+        SELECT
+            (SELECT value FROM platform_settings WHERE key = $1) AS pcb_status,
+            EXISTS (
+                SELECT 1
+                FROM statutory_rule_sets
+                WHERE rule_code = $2
+                  AND status = 'verified'
+                  AND effective_from <= $3
+                  AND (effective_to IS NULL OR effective_to >= $3)
+            ) AS "verified!"
+        "#,
+        pcb_status_key,
+        rule_code,
+        effective_date
+    )
+    .fetch_one(executor)
+    .await?;
+
+    Ok((row.pcb_status, row.verified))
+}

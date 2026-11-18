@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM refresh_tokens\n           WHERE (revoked = TRUE OR expires_at < NOW())\n             AND created_at < NOW() - ($1::int * INTERVAL '1 day')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "423f968073e6ff5bba75c65fa6be6aa67dd764e66e2217af58a558fea654873d"
+}
