@@ -1,17 +1,30 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter, Route, Routes } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import i18n from '@/i18n';
+import { userWithRoles } from './support/permissions';
 
 const portalMocks = vi.hoisted(() => ({
   getTeamCalendar: vi.fn(),
   getPortalHolidays: vi.fn(),
 }));
+const authMocks = vi.hoisted(() => ({ useAuth: vi.fn() }));
+const adminMocks = vi.hoisted(() => ({ getMyCompanies: vi.fn() }));
+const notificationMocks = vi.hoisted(() => ({ getNotificationCount: vi.fn() }));
 
 vi.mock('@/api/portal', () => portalMocks);
+vi.mock('@/context/AuthContext', () => ({ useAuth: authMocks.useAuth }));
+vi.mock('@/api/admin', () => ({ getMyCompanies: adminMocks.getMyCompanies }));
+vi.mock('@/api/notifications', () => ({
+  getNotificationCount: notificationMocks.getNotificationCount,
+}));
 
 import { TeamCalendar } from '@/pages/portal/TeamCalendar';
+import { OfflineBanner } from '@/components/ui/OfflineBanner';
+import { AppLayout } from '@/components/layout/AppLayout';
+import { PortalLayout } from '@/components/layout/PortalLayout';
 
 function renderTeamCalendar() {
   const client = new QueryClient({
@@ -26,6 +39,19 @@ function renderTeamCalendar() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  Object.defineProperty(window.navigator, 'onLine', {
+    value: true,
+    configurable: true,
+  });
+  adminMocks.getMyCompanies.mockResolvedValue([]);
+  notificationMocks.getNotificationCount.mockResolvedValue({ unread: 0 });
+  authMocks.useAuth.mockReturnValue({
+    user: userWithRoles(['admin'], { full_name: 'Admin User', must_change_password: false }),
+    isAuthenticated: true,
+    isLoading: false,
+    logout: vi.fn(),
+    switchCompany: vi.fn(),
+  });
 });
 
 describe('TeamCalendar loading, error, and success states', () => {
@@ -74,5 +100,68 @@ describe('TeamCalendar loading, error, and success states', () => {
     renderTeamCalendar();
 
     expect(await screen.findByText('Siti Aminah')).toBeInTheDocument();
+  });
+});
+
+describe('OfflineBanner and layout accessibility', () => {
+  it('shows offline banner when browser transitions offline and hides on online', () => {
+    render(<OfflineBanner />);
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+
+    act(() => {
+      window.dispatchEvent(new Event('offline'));
+    });
+    expect(screen.getByRole('status')).toHaveTextContent(i18n.t('common.offlineBanner'));
+
+    act(() => {
+      window.dispatchEvent(new Event('online'));
+    });
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
+  it('renders skip-to-content link and >=44px mobile header buttons in AppLayout', () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/dashboard']}>
+          <Routes>
+            <Route element={<AppLayout />}>
+              <Route path="/dashboard" element={<div>Dashboard Content</div>} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    const skipLink = screen.getByRole('link', { name: i18n.t('a11y.skipToContent') });
+    expect(skipLink).toHaveAttribute('href', '#main-content');
+    expect(screen.getByRole('main')).toHaveAttribute('id', 'main-content');
+    expect(screen.getByRole('button', { name: i18n.t('a11y.openMenu') })).toHaveClass(
+      'min-h-11',
+      'min-w-11',
+    );
+  });
+
+  it('renders skip-to-content link and >=44px header controls in PortalLayout', () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/portal/profile']}>
+          <Routes>
+            <Route element={<PortalLayout />}>
+              <Route path="/portal/profile" element={<div>Portal Content</div>} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    const skipLink = screen.getByRole('link', { name: i18n.t('a11y.skipToContent') });
+    expect(skipLink).toHaveAttribute('href', '#main-content');
+    expect(screen.getByRole('main')).toHaveAttribute('id', 'main-content');
+    expect(screen.getByRole('button', { name: i18n.t('nav.quickSearch') })).toHaveClass(
+      'min-h-11',
+      'min-w-11',
+    );
   });
 });

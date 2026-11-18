@@ -7,7 +7,7 @@
 - [x] Phase 2: Structure and naming
 - [x] Phase 3: Code quality
 - [x] Phase 4: Security, privacy and performance
-- [ ] Phase 5: Fill the gaps
+- [x] Phase 5: Fill the gaps
 - [ ] Phase 6: Final check
 
 ## Log
@@ -24,3 +24,4 @@
 - 2026-11-18: (`fix`) Fixed `core::redact::email` multi-byte single-char masking (`chars().nth(1).is_none()`) and redacted `recipient_email` in `services/email_service.rs` `tracing` logs.
 - 2026-11-18: (`chore`) Completed Phase 4 (Security, privacy and performance): documented `RUST_ENV`, `LOG_FORMAT`, and `VITE_TURNSTILE_SITE_KEY` in `.env.example` with placeholders and descriptions.
 - 2026-11-18: (`fix`) Fixed missing loading and error/retry states in `frontend/src/pages/portal/TeamCalendar.tsx` (with 4-locale i18n keys and unit tests in `frontend/src/tests/TeamCalendarAndOffline.test.tsx`).
+- 2026-11-18: (`feat`) Completed Phase 5 (Fill the gaps): added `OfflineBanner` component and mounted in `App.tsx`, added keyboard skip-to-content links (`#main-content`) and `min-h-11 min-w-11` mobile header touch targets in `AppLayout`/`PortalLayout`, added HTML `<meta name="description">`, `theme-color`, and `apple-touch-icon` in `frontend/index.html`, expanded tests, and updated `docs/refactor/AUDIT.md` checklist statuses.

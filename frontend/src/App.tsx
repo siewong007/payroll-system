@@ -11,6 +11,7 @@ import { ToastProvider } from '@/components/ui/Toast';
 import { ConfirmProvider } from '@/components/ui/ConfirmDialog';
 import { PromptProvider } from '@/components/ui/PromptDialog';
 import { CommandPalette } from '@/components/ui/CommandPalette';
+import { OfflineBanner } from '@/components/ui/OfflineBanner';
 import { toast } from '@/lib/toast';
 import { ForbiddenPage, NotFoundPage } from '@/pages/errors/ErrorPage';
 import { SUPER_ADMIN_ROLES, hasAnyRole } from '@/lib/roles';
@@ -157,6 +158,7 @@ export default function App() {
             <ToastProvider>
               <ConfirmProvider>
                 <PromptProvider>
+                  <OfflineBanner />
                   <CommandPalette />
                   <RouteErrorBoundary>
                   <Suspense fallback={<RouteFallback />}>

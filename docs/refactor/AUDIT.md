@@ -90,14 +90,14 @@ Payroll System (`PayrollMY`) is a full-stack Malaysian SME payroll, attendance, 
 
 ### App and UX Essentials
 
-- Loading, empty, error, and offline states: **partial** -> **present** after Phase 5 (`TeamCalendar.tsx` loading/error/retry fix + global `OfflineBanner`)
+- Loading, empty, error, and offline states: **present** (`TeamCalendar.tsx` loading/error/retry fix + global `OfflineBanner` implemented in Phase 5)
 - Form validation & confirmation before destructive actions (`ConfirmProvider`, `react-hook-form` + `zod`, Rust `validator`): **present**
-- Accessibility (screen-reader labels, contrast, >=44px mobile touch targets, skip link, scalable layouts): **partial** -> improved in Phase 5 (skip-to-content link + >=44px mobile header buttons in `AppLayout`/`PortalLayout`)
+- Accessibility (screen-reader labels, contrast, >=44px mobile touch targets, skip link, scalable layouts): **present** (skip-to-content link + >=44px mobile header buttons added in `AppLayout`/`PortalLayout` in Phase 5)
 - Responsive layouts & safe areas (`viewport-fit=cover`, responsive grids, mobile drawer/bottom nav): **present**
 - Shared design tokens & shared component set (`frontend/src/index.css`, `frontend/src/components/ui/*`): **present**
 - User-facing text centralized for translation (4 locales + `i18n.test.ts` + `i18n-scan.mjs --ci`): **present**
 - Correct handling of time zones and date formats (`Asia/Kuala_Lumpur` / tenant timezone + `intlLocale` + `lib/format.ts`): **present**
-- App icon, metadata, not-found page, and favicon (`frontend/index.html`, `NotFoundPage`, SVG branding): **partial** -> completed in Phase 5 (`description`, `theme-color`, `apple-touch-icon` meta tags)
+- App icon, metadata, not-found page, and favicon (`frontend/index.html`, `NotFoundPage`, SVG branding): **present** (`description`, `theme-color`, `apple-touch-icon` metadata added in Phase 5)
 - Notifications (`notifications` backend/portal module + `email_service` SMTP): **present**
 
 ### Domain Lifecycle Equivalents ("Rides and events" template mapping)
