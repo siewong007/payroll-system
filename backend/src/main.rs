@@ -421,10 +421,11 @@ async fn main() -> anyhow::Result<()> {
         const RUN_MINUTE_UTC: u32 = 30;
         const AUTO_ABSENT_LOCK_KEY: i64 = 7_492_026_102;
 
-        if let Some(lock_conn) = try_advisory_lock_guard(&absent_pool, AUTO_ABSENT_LOCK_KEY).await
-        {
+        if let Some(lock_conn) = try_advisory_lock_guard(&absent_pool, AUTO_ABSENT_LOCK_KEY).await {
             match attendance_service::run_auto_absent_catchup(&absent_pool).await {
-                Ok(count) => tracing::info!(marked = count, "auto-absent: startup catch-up completed"),
+                Ok(count) => {
+                    tracing::info!(marked = count, "auto-absent: startup catch-up completed")
+                }
                 Err(e) => tracing::error!("Auto-absent startup catch-up failed: {}", e),
             }
             release_advisory_lock(lock_conn, AUTO_ABSENT_LOCK_KEY).await;
