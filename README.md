@@ -250,13 +250,15 @@ payroll-system/
 │       ├── components/          # reusable UI & layout shells
 │       ├── context/             # auth & theme providers
 │       ├── i18n/                # en, ms, zh-CN, zh-TW locales & serverErrorMap
+│       ├── lib/                 # shared helpers, formatters, WebAuthn & centralized ROUTES
 │       ├── pages/               # route-level feature & legal screens
 │       ├── tests/               # Vitest component, parity & unit suites
 │       └── types/               # TypeScript domain types
 ├── infra/                       # backend Dockerfile
 ├── deploy/                      # production Docker Compose & deployment scripts
 ├── docs/                        # architecture, database, payroll, i18n & legal docs
-│   └── legal/                   # Terms, bilingual PDPA Notice & Malaysian Statutory Guide
+│   ├── legal/                   # Terms, bilingual PDPA Notice & Malaysian Statutory Guide
+│   └── refactor/                # full-repo audit & phase progress log
 ├── docker-compose.yml           # local PostgreSQL 19 Beta 2
 ├── README.md
 ├── SECURITY.md
@@ -269,8 +271,8 @@ payroll-system/
 ### Prerequisites
 
 - Docker and Docker Compose
-- Rust stable toolchain
-- Bun 1.3.14
+- Rust stable toolchain (pinned in `rust-toolchain.toml` with `rustfmt` and `clippy`)
+- Bun 1.3.14 (pinned in `.bun-version`)
 
 ### 1. Clone the Repository
 
@@ -349,6 +351,7 @@ The main example file is [.env.example](.env.example).
 | `JWT_SECRET`              | Backend           | Secret used to sign HS256 JWTs                                                           |
 | `TOTP_ENCRYPTION_KEY`     | Backend           | Dedicated AES key for stored TOTP 2FA secrets (must differ from `JWT_SECRET`)            |
 | `JWT_EXPIRY_HOURS`        | Backend           | Access token lifetime in hours (defaults to `1`)                                         |
+| `RUST_ENV`                | Optional          | Runtime environment (`development` default; `production` enforces strict secret checks)  |
 | `RUST_LOG`                | Backend           | Rust tracing/logging filter                                                              |
 | `LOG_FORMAT`              | Optional          | `pretty` (default) or `json` structured container telemetry                              |
 | `SERVER_HOST`             | Backend           | Backend bind host                                                                        |
@@ -480,7 +483,18 @@ All backend endpoints are nested under `/api`. Most endpoints require `Authoriza
 
 Contributions are welcome for learning, review, and project improvement. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening an issue or pull request.
 
-Recommended checks before a pull request:
+Recommended checks before a pull request (unified from repo root, after `bun install` to enable Husky + `lint-staged` hooks):
+
+```bash
+bun install                 # installs root Husky + lint-staged pre-commit hooks
+bun run format:check
+bun run lint                # cargo clippy, eslint, and i18n-scan --ci
+bun run typecheck
+bun run test                # backend cargo test + frontend Vitest suite
+bun run build
+```
+
+Or run per-package checks individually:
 
 ```bash
 cd backend

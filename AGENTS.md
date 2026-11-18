@@ -15,6 +15,19 @@ docker compose up -d        # Postgres 19 Beta 2 on 127.0.0.1:5434
 
 Requires `POSTGRES_PASSWORD`, `JWT_SECRET`, and `TOTP_ENCRYPTION_KEY` (dedicated AES key for stored TOTP secrets; never reuse `JWT_SECRET`) in the root `.env`.
 
+### Root workspace (monorepo scripts & hooks)
+
+Runtime versions are pinned via `rust-toolchain.toml` (`stable` with `rustfmt` and `clippy`) and `.bun-version` (`1.3.14`), alongside `.editorconfig` and `.prettierrc.json`. Run `bun install` at the repo root to enable Husky + `lint-staged` pre-commit hooks, then run full-repo gates from the root:
+
+```bash
+bun run lint                # cargo clippy -- -D warnings, eslint, and i18n-scan --ci
+bun run format              # cargo fmt + prettier across root/docs config & markdown
+bun run format:check        # verify formatting without writing
+bun run typecheck           # frontend tsc -b --noEmit
+bun run test                # backend cargo test + frontend Vitest suite
+bun run build               # backend cargo build + frontend production build
+```
+
 ### Backend (Rust / Axum, edition 2024)
 
 ```bash
@@ -28,7 +41,7 @@ cargo test <name>           # run a single test by substring
 
 Migrations live in `backend/migrations/` and are embedded via `sqlx::migrate!` — they run on every `cargo run`. Versions `1000_schema.sql` and `1001_data.sql` form the consolidated baseline, followed by immutable numbered forward migrations (`1002_*.sql` through `1030_*.sql`). Every deployed migration is strictly immutable (enforced by CI); future production changes must add the next numbered migration file, and returning to two files requires an explicit, tested rebaseline.
 
-Some queries use the compile-time-checked `sqlx::query!`/`query_as!` macros (the payroll engine is fully migrated; other modules still use runtime `query`/`query_as` and are being migrated incrementally). These macros are verified against the committed `backend/.sqlx/` offline cache, so CI lint and the Docker build need no database (`SQLX_OFFLINE=true`). **After adding or changing a macro query, regenerate the cache** against a migrated DB and commit it:
+Data access lives in `backend/src/repositories/` (including `reads/` projections); handlers and services must not embed request-time SQL. Some queries use the compile-time-checked `sqlx::query!`/`query_as!` macros (the payroll engine and repository helpers are migrated; other legacy queries still use runtime `query`/`query_as` and are being migrated incrementally). These macros are verified against the committed `backend/.sqlx/` offline cache, so CI lint and the Docker build need no database (`SQLX_OFFLINE=true`). **After adding or changing a macro query, regenerate the cache** against a migrated DB and commit it:
 
 ```bash
 DATABASE_URL=postgres://… cargo sqlx prepare   # writes backend/.sqlx/
@@ -95,7 +108,7 @@ Key design decisions to be aware of:
 
 ### Frontend layout
 
-- `App.tsx` is the router. Two shells: `AppLayout` for admin/HR, `PortalLayout` for employee self-service. Capability-based `PermissionGuard` wraps routes that a user lacks permission to see (e.g. `exec` holds no payroll or report permissions, and additive `user_groups` combine with role grants). `/kiosk/:kioskKey` (kiosk-secret authenticated QR display) and `/terms`, `/privacy`, `/compliance` (`LegalPage`) are public routes outside the user shells.
+- `App.tsx` is the router. Two shells: `AppLayout` for admin/HR, `PortalLayout` for employee self-service. Route path constants live in `lib/routes.ts` (`ROUTES`), and global offline status renders via `components/ui/OfflineBanner.tsx`. Capability-based `PermissionGuard` wraps routes that a user lacks permission to see (e.g. `exec` holds no payroll or report permissions, and additive `user_groups` combine with role grants). `/kiosk/:kioskKey` (kiosk-secret authenticated QR display) and `/terms`, `/privacy`, `/compliance` (`LegalPage`) are public routes outside the user shells.
 - `api/client.ts` — single axios instance. Access token is kept in-memory only (never in `localStorage`); refresh uses the httpOnly cookie. A 401 on any non-auth endpoint triggers a single refresh attempt with a queue for concurrent requests, then redirects to `/login` if refresh fails. When adding API modules, always import from `@/api/client` — do not create a second axios instance.
 - `context/AuthContext.tsx` — on mount, calls `/auth/refresh` to restore the session from the cookie; `user` is mirrored to `localStorage` for fast paint only, never for auth.
 - `pages/` mirrors feature areas; `api/*.ts` has one file per backend module.

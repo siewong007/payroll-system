@@ -15,6 +15,19 @@ docker compose up -d        # Postgres 19 Beta 2 on 127.0.0.1:5434
 
 Requires `POSTGRES_PASSWORD` in the root `.env` (no default), as does `JWT_SECRET` and `TOTP_ENCRYPTION_KEY` (the dedicated AES key for stored TOTP secrets; generate with `openssl rand -hex 32`, never reuse `JWT_SECRET`).
 
+### Root workspace (monorepo scripts & hooks)
+
+Runtime versions are pinned via `rust-toolchain.toml` (`stable` with `rustfmt` and `clippy`) and `.bun-version` (`1.3.14`), with shared editor formatting rules in `.editorconfig` and `.prettierrc.json`. Run `bun install` at the repo root to wire Husky + `lint-staged` pre-commit hooks, then use the unified root scripts:
+
+```bash
+bun run lint                # cargo clippy -- -D warnings, eslint, and i18n-scan --ci
+bun run format              # cargo fmt + prettier across root/docs config & markdown
+bun run format:check        # verify formatting without writing
+bun run typecheck           # frontend tsc -b --noEmit
+bun run test                # backend cargo test + frontend Vitest suite
+bun run build               # backend cargo build + frontend production build
+```
+
 ### Backend (Rust / Axum, edition 2024)
 
 ```bash
@@ -121,7 +134,7 @@ Key structure to preserve when changing the engine:
 
 ### Frontend layout
 
-- `App.tsx` is the router. Two shells: `AppLayout` for admin/HR, `PortalLayout` for employee self-service. Capability-based `PermissionGuard` wraps routes using `user.permissions` (the union of role grants and active `user_groups` grants; `exec` holds no payroll or report capabilities). `/attendance/scan` requires a user session; `/kiosk/:kioskKey` authenticates with a kiosk secret instead of a user; `/terms`, `/privacy`, and `/compliance` (`LegalPage`) are public legal/PDPA/statutory reference routes backed by `docs/legal/`.
+- `App.tsx` is the router. Two shells: `AppLayout` for admin/HR, `PortalLayout` for employee self-service. Route path constants are centralized in `lib/routes.ts` (`ROUTES`), and global connectivity feedback renders via `components/ui/OfflineBanner.tsx`. Capability-based `PermissionGuard` wraps routes using `user.permissions` (the union of role grants and active `user_groups` grants; `exec` holds no payroll or report capabilities). `/attendance/scan` requires a user session; `/kiosk/:kioskKey` authenticates with a kiosk secret instead of a user; `/terms`, `/privacy`, and `/compliance` (`LegalPage`) are public legal/PDPA/statutory reference routes backed by `docs/legal/`.
 - `i18n`: four first-class locales (`en`, `ms`, `zh-CN`, `zh-TW`) via i18next (`Messages = typeof en`), `serverErrorMap.ts`, `src/tests/i18n.test.ts` parity/script-purity checks, and `node scripts/i18n-scan.mjs --ci`.
 - `api/client.ts` — single axios instance. Access token is kept in-memory only (never in `localStorage`); refresh uses the httpOnly cookie. A 401 on any non-auth endpoint triggers a single refresh attempt with a queue for concurrent requests, then redirects to `/login` if refresh fails. When adding API modules, always import from `@/api/client` — do not create a second axios instance.
 - `context/AuthContext.tsx` — on mount, calls `/auth/refresh` to restore the session from the cookie; `user` is mirrored to `localStorage` for fast paint only, never for auth.
