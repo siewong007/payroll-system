@@ -10,11 +10,14 @@ import {
   MonitorSmartphone,
   ShieldCheck,
   SlidersHorizontal,
+  Smartphone,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { getSettings, bulkUpdateSettings } from '@/api/settings';
 import type { CompanySetting, SettingUpdate } from '@/types';
 import { SessionManagement } from '@/components/SessionManagement';
+import { AppInstallCard } from '@/components/pwa/AppInstallCard';
+import { NotificationActivationCard } from '@/components/pwa/NotificationActivationCard';
 import { SettingsNav, type SettingsNavItem } from './SettingsNav';
 import { CompanyCategorySection } from './CompanyCategorySection';
 import { SecuritySection } from './SecuritySection';
@@ -26,10 +29,11 @@ const SECTION_ICONS: Record<string, LucideIcon> = {
   notifications: Bell,
   security: ShieldCheck,
   sessions: MonitorSmartphone,
+  app: Smartphone,
 };
 
 const WORKSPACE_ORDER = ['system', 'payroll', 'statutory', 'notifications'];
-const ACCOUNT_SECTIONS = ['security', 'sessions'];
+const ACCOUNT_SECTIONS = ['security', 'sessions', 'app'];
 
 export function SettingsPage() {
   const { t } = useTranslation();
@@ -149,7 +153,16 @@ export function SettingsPage() {
             <>
               <h2 className="section-title">{t(`settings.sections.${active}.label`)}</h2>
               <p className="text-sm text-gray-500 mt-1 mb-4">{t(`settings.sections.${active}.description`)}</p>
-              {active === 'security' ? <SecuritySection /> : <SessionManagement />}
+              {active === 'security' ? (
+                <SecuritySection />
+              ) : active === 'sessions' ? (
+                <SessionManagement />
+              ) : (
+                <div className="space-y-6">
+                  <AppInstallCard />
+                  <NotificationActivationCard />
+                </div>
+              )}
             </>
           )}
         </div>

@@ -25,8 +25,12 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Search,
+  Bell,
+  Download,
+  Smartphone,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
+import { usePwa } from '@/context/PwaContext';
 import { useTranslation } from 'react-i18next';
 import { CompanySwitcher } from './CompanySwitcher';
 import { LanguageSwitcher } from '@/components/ui/LanguageSwitcher';
@@ -104,6 +108,14 @@ function SidebarContent({
 }) {
   const location = useLocation();
   const { user, logout } = useAuth();
+  const {
+    canPromptInstall,
+    canShowInstallGuide,
+    notificationStatus,
+    notificationBusy,
+    triggerInstall,
+    enableNotifications,
+  } = usePwa();
   const { t } = useTranslation();
 
   const visibleNav = navigation.filter((item) => {
@@ -283,6 +295,48 @@ function SidebarContent({
       >
         {!collapsed && (
           <div className="mb-3 space-y-2">
+            {(canShowInstallGuide ||
+              notificationStatus === 'default' ||
+              notificationStatus === 'ios-install-required') && (
+              <div className="space-y-1.5">
+                {canShowInstallGuide && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClose?.();
+                      void triggerInstall();
+                    }}
+                    className="flex w-full items-center gap-2 rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5 text-xs font-medium text-slate-200 hover:bg-white/10 transition-colors"
+                  >
+                    {canPromptInstall ? (
+                      <Download className="w-3.5 h-3.5 shrink-0 text-indigo-300" aria-hidden="true" />
+                    ) : (
+                      <Smartphone className="w-3.5 h-3.5 shrink-0 text-indigo-300" aria-hidden="true" />
+                    )}
+                    <span className="truncate">
+                      {canPromptInstall
+                        ? t('pwa.actions.installApp')
+                        : t('pwa.actions.addToHomeScreen')}
+                    </span>
+                  </button>
+                )}
+                {(notificationStatus === 'default' ||
+                  notificationStatus === 'ios-install-required') && (
+                  <button
+                    type="button"
+                    disabled={notificationBusy}
+                    onClick={() => {
+                      onClose?.();
+                      void enableNotifications();
+                    }}
+                    className="flex w-full items-center gap-2 rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5 text-xs font-medium text-slate-200 hover:bg-white/10 transition-colors disabled:opacity-50"
+                  >
+                    <Bell className="w-3.5 h-3.5 shrink-0 text-indigo-300" aria-hidden="true" />
+                    <span className="truncate">{t('pwa.actions.allowNotifications')}</span>
+                  </button>
+                )}
+              </div>
+            )}
             <AppearanceSwitcher darkRail />
             <LanguageSwitcher dark />
             <div className="flex flex-wrap items-center justify-center gap-2 pt-1 text-[11px] text-slate-400">

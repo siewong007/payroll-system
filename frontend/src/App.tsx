@@ -4,6 +4,7 @@ import { MutationCache, QueryClient, QueryClientProvider } from '@tanstack/react
 import { AuthProvider } from '@/context/AuthProvider';
 import { useAuth } from '@/context/AuthContext';
 import { ThemeProvider } from '@/context/ThemeProvider';
+import { PwaProvider } from '@/context/PwaProvider';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { PortalLayout } from '@/components/layout/PortalLayout';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
@@ -156,12 +157,13 @@ export default function App() {
         <BrowserRouter>
           <AuthProvider>
             <ToastProvider>
-              <ConfirmProvider>
-                <PromptProvider>
-                  <OfflineBanner />
-                  <CommandPalette />
-                  <RouteErrorBoundary>
-                  <Suspense fallback={<RouteFallback />}>
+              <PwaProvider>
+                <ConfirmProvider>
+                  <PromptProvider>
+                    <OfflineBanner />
+                    <CommandPalette />
+                    <RouteErrorBoundary>
+                    <Suspense fallback={<RouteFallback />}>
                     <Routes>
                       <Route path={ROUTES.LOGIN} element={<Login />} />
                       <Route path={ROUTES.OAUTH2_CALLBACK} element={<OAuth2Callback />} />
@@ -385,8 +387,9 @@ export default function App() {
                     </Routes>
                   </Suspense>
                 </RouteErrorBoundary>
-                </PromptProvider>
-              </ConfirmProvider>
+                  </PromptProvider>
+                </ConfirmProvider>
+              </PwaProvider>
             </ToastProvider>
           </AuthProvider>
         </BrowserRouter>

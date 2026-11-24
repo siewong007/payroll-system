@@ -4,6 +4,10 @@ import './index.css'
 import '@/i18n'
 import App from './App'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import { initPwaListeners, registerServiceWorker } from '@/lib/pwa'
+
+initPwaListeners()
+void registerServiceWorker()
 
 // Outermost boundary: catches provider- and router-level throws that no
 // boundary inside App can see. The one around the routes is what keeps the

@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { Bell, Check, CheckCheck } from 'lucide-react';
 import { getNotifications, markAsRead, markAllRead, type Notification } from '@/api/notifications';
+import { NotificationActivationCard } from '@/components/pwa/NotificationActivationCard';
 import { formatDateTime } from '@/lib/format';
 
 export function Notifications() {
@@ -63,6 +64,8 @@ export function Notifications() {
           </button>
         )}
       </div>
+
+      <NotificationActivationCard />
 
       {notifications.length === 0 ? (
         <div className="card text-center py-16">

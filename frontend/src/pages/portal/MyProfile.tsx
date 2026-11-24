@@ -7,6 +7,8 @@ import { formatMYR, formatDate } from '@/lib/utils';
 import { PasskeyManagement } from '@/components/PasskeyManagement';
 import { SessionManagement } from '@/components/SessionManagement';
 import { LinkedAccounts } from '@/components/LinkedAccounts';
+import { AppInstallCard } from '@/components/pwa/AppInstallCard';
+import { NotificationActivationCard } from '@/components/pwa/NotificationActivationCard';
 import { CheckInCard } from '@/components/attendance/CheckInCard';
 import { Skeleton } from '@/components/ui/Skeleton';
 
@@ -173,6 +175,8 @@ function ProfileDetails({ profile }: { profile: Profile }) {
           </div>
 
           <div className={`space-y-6 ${mobileTab === 'statutory' ? 'hidden lg:block' : ''}`}>
+            <AppInstallCard />
+            <NotificationActivationCard />
             <PasskeyManagement />
             <LinkedAccounts />
             <SessionManagement />

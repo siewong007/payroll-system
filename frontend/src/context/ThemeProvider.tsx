@@ -40,6 +40,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const root = document.documentElement;
     root.classList.toggle('dark', resolvedTheme === 'dark');
+    const themeColorMeta = document.querySelector('meta[name="theme-color"]');
+    if (themeColorMeta) {
+      themeColorMeta.setAttribute('content', resolvedTheme === 'dark' ? '#0b1120' : '#ffffff');
+    }
   }, [resolvedTheme]);
 
   const setMode = useCallback((next: AppearanceMode) => {

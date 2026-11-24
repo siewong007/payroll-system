@@ -407,9 +407,19 @@ body {
   transition: all 0.15s ease;
 }
 
-/* Safe area for iOS bottom bar */
+/* Safe area for iOS top and bottom bars */
+.safe-area-top {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
 .safe-area-bottom {
   padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+@media (display-mode: standalone) {
+  body {
+    overscroll-behavior-y: none;
+  }
 }
 
 /* ── Glass surfaces ─────────────────────────────────────────── */

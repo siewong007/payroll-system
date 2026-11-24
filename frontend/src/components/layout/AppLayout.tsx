@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
 import { Sidebar } from './Sidebar';
 import { BrandLogo } from '@/components/ui/BrandLogo';
 import { PageTransition } from '@/components/ui/PageTransition';
+import { PwaInstallBanner } from '@/components/pwa/PwaInstallBanner';
 import { openCommandPalette } from '@/lib/commandPalette';
 import { hasOnlyEmployeeRole } from '@/lib/roles';
 
@@ -53,7 +54,7 @@ export function AppLayout() {
 
       <div className="flex-1 flex flex-col min-w-0">
         {/* Mobile top bar */}
-        <div className="md:hidden glass-nav sticky top-0 z-30 flex items-center gap-3 px-4 py-3">
+        <div className="md:hidden glass-nav safe-area-top sticky top-0 z-30 flex items-center gap-3 px-4 py-3">
           <button
             onClick={() => setSidebarOpen(true)}
             aria-label={t('a11y.openMenu')}
@@ -80,6 +81,7 @@ export function AppLayout() {
 
         <main id="main-content" tabIndex={-1} className="flex-1 overflow-auto focus:outline-none">
           <div className="max-w-7xl mx-auto px-4 py-4 md:px-8 md:py-8">
+            <PwaInstallBanner />
             <PageTransition>
               <Outlet />
             </PageTransition>

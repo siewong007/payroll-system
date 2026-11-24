@@ -1,6 +1,7 @@
 import { Outlet, Link, useLocation, Navigate } from 'react-router';
-import { User, FileText, Calendar, Receipt, LogOut, ChevronDown, Bell, Users, Clock, MoreHorizontal, ScanLine, Sparkles, LayoutDashboard, Search } from 'lucide-react';
+import { User, FileText, Calendar, Receipt, LogOut, ChevronDown, Bell, Users, Clock, MoreHorizontal, ScanLine, Sparkles, LayoutDashboard, Search, Download, Smartphone } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
+import { usePwa } from '@/context/PwaContext';
 import { canUseAdminConsole } from '@/lib/roles';
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -9,6 +10,7 @@ import { getNotificationCount } from '@/api/notifications';
 import { BrandLogo } from '@/components/ui/BrandLogo';
 import { LanguageSwitcher } from '@/components/ui/LanguageSwitcher';
 import { AppearanceSwitcher } from '@/components/ui/AppearanceSwitcher';
+import { PwaInstallBanner } from '@/components/pwa/PwaInstallBanner';
 import { openCommandPalette } from '@/lib/commandPalette';
 import { PageTransition } from '@/components/ui/PageTransition';
 import { useTranslation } from 'react-i18next';
@@ -42,6 +44,14 @@ const mobileMoreNav = [
 
 export function PortalLayout() {
   const { user, logout, isAuthenticated, isLoading } = useAuth();
+  const {
+    canPromptInstall,
+    canShowInstallGuide,
+    notificationStatus,
+    notificationBusy,
+    triggerInstall,
+    enableNotifications,
+  } = usePwa();
   const { t } = useTranslation();
   const location = useLocation();
   const [showUserMenu, setShowUserMenu] = useState(false);
@@ -107,7 +117,7 @@ export function PortalLayout() {
       </div>
 
       {/* Top Navigation Bar */}
-      <header className="glass-nav sticky top-0 z-50">
+      <header className="glass-nav safe-area-top sticky top-0 z-50">
         <div className="max-w-7xl mx-auto flex items-center justify-between h-14 md:h-16 px-4 md:px-6">
           {/* Left: Logo + nav */}
           <div className="flex items-center gap-8">
@@ -226,6 +236,46 @@ export function PortalLayout() {
                       <AppearanceSwitcher />
                       <LanguageSwitcher />
                     </div>
+                    {(canShowInstallGuide ||
+                      notificationStatus === 'default' ||
+                      notificationStatus === 'ios-install-required') && (
+                      <div className="border-b border-gray-200/60 dark:border-slate-800">
+                        {canShowInstallGuide && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowUserMenu(false);
+                              void triggerInstall();
+                            }}
+                            className="flex items-center gap-2.5 w-full px-4 py-2.5 text-sm text-gray-600 dark:text-slate-300 hover:bg-white/70 dark:hover:bg-slate-800 hover:text-teal-700 dark:hover:text-teal-300 transition-all-fast"
+                          >
+                            {canPromptInstall ? (
+                              <Download className="w-4 h-4" aria-hidden="true" />
+                            ) : (
+                              <Smartphone className="w-4 h-4" aria-hidden="true" />
+                            )}
+                            {canPromptInstall
+                              ? t('pwa.actions.installApp')
+                              : t('pwa.actions.addToHomeScreen')}
+                          </button>
+                        )}
+                        {(notificationStatus === 'default' ||
+                          notificationStatus === 'ios-install-required') && (
+                          <button
+                            type="button"
+                            disabled={notificationBusy}
+                            onClick={() => {
+                              setShowUserMenu(false);
+                              void enableNotifications();
+                            }}
+                            className="flex items-center gap-2.5 w-full px-4 py-2.5 text-sm text-gray-600 dark:text-slate-300 hover:bg-white/70 dark:hover:bg-slate-800 hover:text-teal-700 dark:hover:text-teal-300 transition-all-fast disabled:opacity-50"
+                          >
+                            <Bell className="w-4 h-4" aria-hidden="true" />
+                            {t('pwa.actions.allowNotifications')}
+                          </button>
+                        )}
+                      </div>
+                    )}
                     <button
                       onClick={logout}
                       className="flex items-center gap-2.5 w-full px-4 py-3 text-sm text-gray-600 hover:bg-white/70 hover:text-red-600 transition-all-fast"
@@ -249,6 +299,7 @@ export function PortalLayout() {
         tabIndex={-1}
         className="max-w-7xl mx-auto px-4 py-4 md:px-6 md:py-8 pb-[calc(5rem+env(safe-area-inset-bottom))] md:pb-8 focus:outline-none"
       >
+        <PwaInstallBanner />
         <PageTransition>
           <Outlet />
         </PageTransition>
