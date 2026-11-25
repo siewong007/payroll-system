@@ -228,7 +228,7 @@ pub async fn discoverable_auth_complete(
         .map_err(|e| AppError::BadRequest(format!("Invalid auth state: {}", e)))?;
 
     // Identify which user is authenticating from the credential response
-    let (user_uuid, _cred_id_bytes) = state
+    let (user_uuid, cred_id_bytes) = state
         .webauthn
         .identify_discoverable_authentication(&req.credential)
         .map_err(|e| AppError::Unauthorized(format!("Failed to identify credential: {}", e)))?;
@@ -236,17 +236,22 @@ pub async fn discoverable_auth_complete(
     let user_id = user_uuid;
 
     // Load the user's passkeys to finish verification
-    let passkeys = passkey_service::get_passkeys_for_user(&state.pool, user_id).await?;
-    let discoverable_keys: Vec<DiscoverableKey> =
-        passkeys.iter().map(DiscoverableKey::from).collect();
+    let mut passkeys = passkey_service::get_passkeys_for_user(&state.pool, user_id).await?;
+    let matched_passkey = passkeys
+        .iter()
+        .find(|pk| pk.cred_id().as_slice() == cred_id_bytes)
+        .ok_or_else(|| AppError::Unauthorized("Passkey authentication failed".into()))?;
 
     let auth_result = state
         .webauthn
-        .finish_discoverable_authentication(&req.credential, auth_state, &discoverable_keys)
+        .finish_discoverable_authentication_v2(
+            &req.credential,
+            auth_state,
+            DiscoverableKey::from(matched_passkey),
+        )
         .map_err(|e| AppError::Unauthorized(format!("Passkey authentication failed: {}", e)))?;
 
     // Update credential counter
-    let mut passkeys = passkey_service::get_passkeys_for_user(&state.pool, user_id).await?;
     for pk in passkeys.iter_mut() {
         if pk.cred_id() == auth_result.cred_id() {
             pk.update_credential(&auth_result);

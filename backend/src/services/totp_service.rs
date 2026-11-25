@@ -1,7 +1,7 @@
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use std::fmt::Write as _;
-use totp_rs::{Algorithm, Secret, TOTP};
+use totp_rs::{Algorithm, Builder, Secret, Totp};
 use uuid::Uuid;
 
 use crate::core::crypto;
@@ -18,22 +18,21 @@ const BACKUP_CODE_COUNT: usize = 10;
 /// random codes synchronously per request; these aren't user-chosen secrets.
 const BACKUP_CODE_BCRYPT_COST: u32 = 10;
 
-fn build_totp(secret_bytes: Vec<u8>, account_name: &str) -> AppResult<TOTP> {
-    TOTP::new(
-        Algorithm::SHA1,
-        6,
-        1,
-        30,
-        secret_bytes,
-        Some(ISSUER.to_string()),
-        account_name.to_string(),
-    )
-    .map_err(|e| AppError::Internal(format!("Failed to build TOTP: {e}")))
+fn build_totp(secret: Secret, account_name: &str) -> AppResult<Totp> {
+    Builder::new()
+        .with_algorithm(Algorithm::SHA1)
+        .with_digits(6)
+        .with_skew(1)
+        .with_step_duration(30)
+        .with_secret(secret)
+        .with_issuer(Some(ISSUER))
+        .with_account_name(account_name)
+        .build()
+        .map_err(|e| AppError::Internal(format!("Failed to build TOTP: {e}")))
 }
 
-fn secret_to_bytes(secret_b32: &str) -> AppResult<Vec<u8>> {
-    Secret::Encoded(secret_b32.to_string())
-        .to_bytes()
+fn parse_secret(secret_b32: &str) -> AppResult<Secret> {
+    Secret::try_from_base32(secret_b32)
         .map_err(|e| AppError::Internal(format!("Invalid stored TOTP secret: {e}")))
 }
 
@@ -122,15 +121,16 @@ pub async fn begin_setup(
         ));
     }
 
-    let secret = Secret::generate_secret();
-    let secret_b32 = secret.to_encoded().to_string();
-    let secret_bytes = secret
-        .to_bytes()
-        .map_err(|e| AppError::Internal(format!("Failed to generate secret: {e}")))?;
+    let secret = Secret::generate();
+    let secret_b32 = secret.to_base32();
 
-    let totp = build_totp(secret_bytes, &user.email)?;
-    let otpauth_url = totp.get_url();
-    let qr_code_base64 = totp.get_qr_base64().map_err(AppError::Internal)?;
+    let totp = build_totp(secret, &user.email)?;
+    let otpauth_url = totp
+        .to_url()
+        .map_err(|e| AppError::Internal(format!("Failed to build TOTP URL: {e}")))?;
+    let qr_code_base64 = totp
+        .to_qr_base64()
+        .map_err(|e| AppError::Internal(format!("Failed to render TOTP QR code: {e}")))?;
 
     let encrypted = crypto::encrypt_secret(&secret_b32, encryption_key)?;
     if user_totp::upsert_pending(pool, user.id, &encrypted)
@@ -180,7 +180,7 @@ pub async fn confirm_setup_with_session(
     }
 
     let secret_b32 = crypto::decrypt_secret(&row.secret_encrypted, encryption_key)?;
-    let totp = build_totp(secret_to_bytes(&secret_b32)?, "")?;
+    let totp = build_totp(parse_secret(&secret_b32)?, "")?;
 
     let trimmed = code.trim();
     let now_step = chrono::Utc::now().timestamp() / 30;
@@ -188,7 +188,7 @@ pub async fn confirm_setup_with_session(
     for offset in [-1i64, 0, 1] {
         let step = now_step + offset;
         if step >= 0 {
-            let expected = totp.generate((step as u64) * 30);
+            let expected = totp.generate((step as u64) * 30).to_string();
             if constant_time_eq(trimmed.as_bytes(), expected.as_bytes()) {
                 matched_step = Some(step);
             }
@@ -297,7 +297,7 @@ async fn verify_code_inner(
     let trimmed = code.trim();
 
     match crypto::decrypt_secret(&row.secret_encrypted, encryption_key)
-        .and_then(|secret_b32| build_totp(secret_to_bytes(&secret_b32)?, ""))
+        .and_then(|secret_b32| build_totp(parse_secret(&secret_b32)?, ""))
     {
         Ok(totp) => {
             let now_step = chrono::Utc::now().timestamp() / 30;
@@ -305,7 +305,7 @@ async fn verify_code_inner(
             for offset in [-1i64, 0, 1] {
                 let step = now_step + offset;
                 if step >= 0 {
-                    let expected = totp.generate((step as u64) * 30);
+                    let expected = totp.generate((step as u64) * 30).to_string();
                     if constant_time_eq(trimmed.as_bytes(), expected.as_bytes()) {
                         matched_step = Some(step);
                     }

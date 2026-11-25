@@ -45,12 +45,9 @@ fn claims_with_roles(roles: &[&str]) -> Claims {
 }
 
 fn signed_token(claims: &Claims) -> String {
-    encode(
-        &Header::default(),
-        claims,
-        &EncodingKey::from_secret(TEST_SECRET.as_bytes()),
-    )
-    .expect("test claims should encode")
+    let encoding_key =
+        EncodingKey::from_secret(TEST_SECRET.as_bytes()).expect("test secret should encode");
+    encode(&Header::default(), claims, &encoding_key).expect("test claims should encode")
 }
 
 #[test]

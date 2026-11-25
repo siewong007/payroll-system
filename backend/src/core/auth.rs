@@ -61,12 +61,11 @@ pub fn create_token(
         aud: JWT_AUDIENCE.to_string(),
     };
 
-    encode(
-        &Header::default(),
-        &claims,
-        &EncodingKey::from_secret(secret.as_bytes()),
-    )
-    .map_err(|e| AppError::Internal(format!("Failed to create token: {}", e)))
+    let encoding_key = EncodingKey::from_secret(secret.as_bytes())
+        .map_err(|e| AppError::Internal(format!("Failed to create token key: {}", e)))?;
+
+    encode(&Header::default(), &claims, &encoding_key)
+        .map_err(|e| AppError::Internal(format!("Failed to create token: {}", e)))
 }
 
 fn normalized_roles(roles: &[String]) -> Vec<String> {
@@ -84,13 +83,12 @@ pub fn verify_token(token: &str, secret: &str) -> AppResult<Claims> {
     validation.set_issuer(&[JWT_ISSUER]);
     validation.set_audience(&[JWT_AUDIENCE]);
 
-    decode::<Claims>(
-        token,
-        &DecodingKey::from_secret(secret.as_bytes()),
-        &validation,
-    )
-    .map(|data| data.claims)
-    .map_err(|e| AppError::Unauthorized(format!("Invalid token: {}", e)))
+    let decoding_key = DecodingKey::from_secret(secret.as_bytes())
+        .map_err(|e| AppError::Internal(format!("Invalid JWT decoding key: {}", e)))?;
+
+    decode::<Claims>(token, &decoding_key, &validation)
+        .map(|data| data.claims)
+        .map_err(|e| AppError::Unauthorized(format!("Invalid token: {}", e)))
 }
 
 /// Registered `iss`/`aud` for the short-lived token issued between primary
@@ -121,12 +119,11 @@ pub fn create_mfa_pending_token(user_id: Uuid, secret: &str) -> AppResult<String
         aud: MFA_PENDING_AUDIENCE.to_string(),
     };
 
-    encode(
-        &Header::default(),
-        &claims,
-        &EncodingKey::from_secret(secret.as_bytes()),
-    )
-    .map_err(|e| AppError::Internal(format!("Failed to create MFA token: {}", e)))
+    let encoding_key = EncodingKey::from_secret(secret.as_bytes())
+        .map_err(|e| AppError::Internal(format!("Failed to create MFA token key: {}", e)))?;
+
+    encode(&Header::default(), &claims, &encoding_key)
+        .map_err(|e| AppError::Internal(format!("Failed to create MFA token: {}", e)))
 }
 
 /// Verifies an MFA-pending token and returns the user id it was issued for.
@@ -135,13 +132,12 @@ pub fn verify_mfa_pending_token(token: &str, secret: &str) -> AppResult<Uuid> {
     validation.set_issuer(&[MFA_PENDING_ISSUER]);
     validation.set_audience(&[MFA_PENDING_AUDIENCE]);
 
-    decode::<MfaPendingClaims>(
-        token,
-        &DecodingKey::from_secret(secret.as_bytes()),
-        &validation,
-    )
-    .map(|data| data.claims.sub)
-    .map_err(|e| AppError::Unauthorized(format!("Invalid or expired MFA token: {}", e)))
+    let decoding_key = DecodingKey::from_secret(secret.as_bytes())
+        .map_err(|e| AppError::Internal(format!("Invalid MFA decoding key: {}", e)))?;
+
+    decode::<MfaPendingClaims>(token, &decoding_key, &validation)
+        .map(|data| data.claims.sub)
+        .map_err(|e| AppError::Unauthorized(format!("Invalid or expired MFA token: {}", e)))
 }
 
 /// Extractor for authenticated user claims from JWT.

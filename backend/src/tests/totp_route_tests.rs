@@ -9,7 +9,7 @@ use std::net::SocketAddr;
 use axum::body::{Body, to_bytes};
 use axum::extract::ConnectInfo;
 use axum::http::{Request, StatusCode, header};
-use totp_rs::{Algorithm, Secret, TOTP};
+use totp_rs::{Algorithm, Builder, Secret};
 use tower::ServiceExt;
 use uuid::Uuid;
 
@@ -82,13 +82,18 @@ fn code_for_secret(secret_b32: &str) -> String {
 }
 
 fn code_for_secret_offset(secret_b32: &str, offset_secs: i64) -> String {
-    let bytes = Secret::Encoded(secret_b32.to_string())
-        .to_bytes()
-        .expect("valid base32 secret");
-    let totp =
-        TOTP::new(Algorithm::SHA1, 6, 1, 30, bytes, None, "test".to_string()).expect("build totp");
+    let secret = Secret::try_from_base32(secret_b32).expect("valid base32 secret");
+    let totp = Builder::new()
+        .with_algorithm(Algorithm::SHA1)
+        .with_digits(6)
+        .with_skew(1)
+        .with_step_duration(30)
+        .with_secret(secret)
+        .with_account_name("test")
+        .build()
+        .expect("build totp");
     let ts = (chrono::Utc::now().timestamp() + offset_secs).max(0) as u64;
-    totp.generate(ts)
+    totp.generate(ts).to_string()
 }
 
 #[tokio::test]

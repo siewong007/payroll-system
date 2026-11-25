@@ -305,12 +305,17 @@ async fn password_reset_request_and_completion_are_recorded() {
 // Local helper so the test does not import from `totp_route_tests` (which is
 // compiled under the same crate but keeps its helpers private).
 fn totp_route_tests_support_code(secret_b32: &str) -> String {
-    use totp_rs::{Algorithm, Secret, TOTP};
-    let bytes = Secret::Encoded(secret_b32.to_string())
-        .to_bytes()
-        .expect("valid base32 secret");
-    TOTP::new(Algorithm::SHA1, 6, 1, 30, bytes, None, "test".to_string())
+    use totp_rs::{Algorithm, Builder, Secret};
+    let secret = Secret::try_from_base32(secret_b32).expect("valid base32 secret");
+    Builder::new()
+        .with_algorithm(Algorithm::SHA1)
+        .with_digits(6)
+        .with_skew(1)
+        .with_step_duration(30)
+        .with_secret(secret)
+        .with_account_name("test")
+        .build()
         .expect("build totp")
         .generate_current()
-        .expect("generate code")
+        .to_string()
 }
