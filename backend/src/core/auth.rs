@@ -226,21 +226,10 @@ impl FromRequestParts<AppState> for AuthUser {
         // another. Skipped entirely when there is no company context — there is
         // nothing a group could be scoped to.
         let group_permissions = if claims.company_id.is_some() {
-            let has_restricted_role = claims
-                .roles
-                .iter()
-                .any(|r| r == "exec" || r == "employee" || r == "manager");
-            // A key that no longer maps to a `Permission` is dropped rather
-            // than refused: a capability removed from the enum must not lock
-            // out every member of a group that still references it.
-            // Platform-only permissions and (for exec/employee/manager) payroll
-            // capabilities are stripped unconditionally as defense-in-depth.
-            ctx.group_permissions
-                .iter()
-                .filter_map(|key| Permission::ALL.iter().find(|p| p.as_str() == key).copied())
-                .filter(|p| !p.is_platform_only())
-                .filter(|p| !has_restricted_role || !p.is_payroll_capability())
-                .collect()
+            crate::core::permission::filter_group_permissions_for_roles(
+                &claims.roles,
+                &ctx.group_permissions,
+            )
         } else {
             Vec::new()
         };

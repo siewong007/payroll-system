@@ -568,7 +568,7 @@ async fn totp_replay_lockout_backup_codes_and_passkey_challenge_binding() {
     user_totp::upsert_pending(&pool, user_a, "encrypted-secret")
         .await
         .expect("upsert_pending");
-    user_totp::confirm(&pool, user_a).await.expect("confirm");
+    user_totp::confirm(&pool, user_a, 0).await.expect("confirm");
 
     assert!(
         user_totp::claim_totp_step(&pool, user_a, 100)

@@ -15,6 +15,8 @@ const RETURN_PATH_KEY = 'oauth2_link_return';
  * StrictMode remount must see the memo, not an empty search string.
  */
 let linkParams: URLSearchParams | null = null;
+let inflightLinkKey: string | null = null;
+let inflightLinkPromise: Promise<unknown> | null = null;
 
 function takeLinkParams(): URLSearchParams {
   const fromQuery = new URLSearchParams(window.location.search);
@@ -27,6 +29,22 @@ function takeLinkParams(): URLSearchParams {
   return linkParams ?? fromQuery;
 }
 
+function readReturnPath(): string | null {
+  try {
+    return safeRedirectPath(sessionStorage.getItem(RETURN_PATH_KEY));
+  } catch {
+    return null;
+  }
+}
+
+function clearReturnPath() {
+  try {
+    sessionStorage.removeItem(RETURN_PATH_KEY);
+  } catch {
+    // Ignore storage errors in restricted environments.
+  }
+}
+
 export function OAuth2Link() {
   const navigate = useNavigate();
   const { t } = useTranslation();
@@ -34,7 +52,7 @@ export function OAuth2Link() {
   const [error, setError] = useState('');
 
   // Where the LinkedAccounts card sat before the round-trip to Google.
-  const returnTo = safeRedirectPath(sessionStorage.getItem(RETURN_PATH_KEY));
+  const returnTo = readReturnPath();
 
   useEffect(() => {
     // The page reload wiped the in-memory token; the POST needs the session
@@ -47,6 +65,7 @@ export function OAuth2Link() {
 
     const providerError = params.get('error');
     if (providerError) {
+      linkParams = null;
       setError(
         providerError === 'access_denied'
           ? t('auth.oauthLink.cancelled')
@@ -56,6 +75,7 @@ export function OAuth2Link() {
     }
 
     if (!isAuthenticated) {
+      linkParams = null;
       setError(t('auth.oauthLink.sessionLost'));
       return;
     }
@@ -63,18 +83,44 @@ export function OAuth2Link() {
     const code = params.get('code');
     const state = params.get('state');
     if (!code || !state) {
+      linkParams = null;
       setError(t('auth.oauthLink.missingData'));
       return;
     }
 
-    linkGoogleAccount(code, state)
+    let cancelled = false;
+    const key = `${code}:${state}`;
+    if (!inflightLinkPromise || inflightLinkKey !== key) {
+      inflightLinkKey = key;
+      inflightLinkPromise = linkGoogleAccount(code, state);
+    }
+
+    inflightLinkPromise
       .then(() => {
-        sessionStorage.removeItem(RETURN_PATH_KEY);
-        navigate(user?.must_change_password ? '/change-password' : (returnTo ?? '/'), { replace: true });
+        if (inflightLinkKey === key) {
+          inflightLinkPromise = null;
+          inflightLinkKey = null;
+        }
+        linkParams = null;
+        clearReturnPath();
+        if (!cancelled) {
+          navigate(user?.must_change_password ? '/change-password' : (returnTo ?? '/'), { replace: true });
+        }
       })
       .catch((err: unknown) => {
-        setError(getErrorMessage(err, t('auth.oauthLink.linkFailed')));
+        if (inflightLinkKey === key) {
+          inflightLinkPromise = null;
+          inflightLinkKey = null;
+        }
+        linkParams = null;
+        if (!cancelled) {
+          setError(getErrorMessage(err, t('auth.oauthLink.linkFailed')));
+        }
       });
+
+    return () => {
+      cancelled = true;
+    };
   }, [isLoading, isAuthenticated, navigate, returnTo, t, user?.must_change_password]);
 
   if (error) {

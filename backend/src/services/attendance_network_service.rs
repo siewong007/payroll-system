@@ -590,6 +590,14 @@ pub async fn observe(
         return Ok(());
     }
 
+    // Do not accumulate observations for addresses already covered by an active approved network.
+    if check_network(pool, company_id, Some(addr))
+        .await
+        .is_ok_and(|res| res.is_approved)
+    {
+        return Ok(());
+    }
+
     let prefix = candidate_prefix(addr)?;
 
     attendance_network_observations::record(
@@ -654,7 +662,7 @@ pub(crate) fn score_candidate(
 /// kiosk-minted token and a habit of checking in twice a day would otherwise
 /// clear the observation count on their own.
 fn anchored_employees_met(candidate: &crate::models::company_network::NetworkCandidate) -> bool {
-    candidate.distinct_employees >= ANCHORED_MIN_EMPLOYEES
+    candidate.anchored_employees >= ANCHORED_MIN_EMPLOYEES
 }
 
 #[cfg(test)]
@@ -668,6 +676,7 @@ mod tests {
             network: "203.0.113.7".into(),
             prefix_len: 32,
             distinct_employees: employees,
+            anchored_employees: if anchored > 0 { employees } else { 0 },
             observation_count: observations,
             anchored_count: anchored,
             denied_count: 0,

@@ -17,6 +17,8 @@ use super::common::{
     Reviewer, audit_self_approval_override, ensure_employee_in_company, ensure_not_self_approval,
     ensure_positive_amount, reviewer_employee_id,
 };
+use crate::models::upload::UploadAccess;
+use crate::services::upload_service;
 
 pub use crate::models::approval::ClaimWithEmployee;
 
@@ -26,6 +28,7 @@ pub async fn create_claim_admin(
     employee_id: Uuid,
     req: CreateClaimRequest,
     actor_id: Uuid,
+    access: &UploadAccess,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<Claim> {
     ensure_employee_in_company(pool, company_id, employee_id).await?;
@@ -33,6 +36,13 @@ pub async fn create_claim_admin(
     // `receipt_url` is joined onto a filesystem path by the backup export and
     // restore paths, so it is settled at write time rather than at every sink.
     validate_optional_file_url(req.receipt_url.as_deref())?;
+    upload_service::ensure_upload_attach_authorized(
+        pool,
+        access,
+        req.receipt_url.as_deref(),
+        false,
+    )
+    .await?;
 
     let claim = claims::insert(
         pool,
@@ -71,6 +81,7 @@ pub async fn update_claim_admin(
     claim_id: Uuid,
     req: UpdateClaimRequest,
     actor_id: Uuid,
+    access: &UploadAccess,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<Claim> {
     let current = claims::get_editable(pool, claim_id, company_id)
@@ -85,7 +96,9 @@ pub async fn update_claim_admin(
         ensure_positive_amount(amount)?;
     }
 
-    validate_optional_file_url(req.receipt_url.as_deref())?;
+    let non_empty_receipt = req.receipt_url.as_deref().filter(|s| !s.is_empty());
+    validate_optional_file_url(non_empty_receipt)?;
+    upload_service::ensure_upload_attach_authorized(pool, access, non_empty_receipt, false).await?;
 
     let updated = claims::update_full(
         pool,
@@ -100,7 +113,12 @@ pub async fn update_claim_admin(
         req.receipt_file_name,
         req.expense_date,
     )
-    .await?;
+    .await?
+    .ok_or_else(|| {
+        AppError::Conflict(
+            "This claim changed state while it was being updated. Reload and try again.".into(),
+        )
+    })?;
 
     let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
@@ -133,7 +151,12 @@ pub async fn delete_claim_admin(
         .await?
         .ok_or_else(|| AppError::BadRequest("Claim not found or cannot be deleted".into()))?;
 
-    claims::delete(pool, claim_id, company_id).await?;
+    let rows = claims::delete(pool, claim_id, company_id).await?;
+    if rows == 0 {
+        return Err(AppError::Conflict(
+            "This claim changed state while it was being deleted. Reload and try again.".into(),
+        ));
+    }
 
     let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
@@ -297,19 +320,21 @@ pub async fn approve_claim(
     // Send approval email
     let emp_info = approval_reads::employee_email_info(pool, claim.employee_id).await?;
 
-    if let Some(emp) = emp_info {
+    if let Some(emp) = emp_info
+        && let Some(recipient_email) = emp.email.as_deref().filter(|e| !e.trim().is_empty())
+    {
         let amount_rm = claim.amount as f64 / 100.0;
-        let details = format!(
-            "<strong>Claim:</strong> {}<br><strong>Amount:</strong> RM {:.2}<br><strong>Category:</strong> {}",
-            claim.title,
-            amount_rm,
-            claim.category.as_deref().unwrap_or("General")
-        );
+        let amount_str = format!("RM {:.2}", amount_rm);
+        let category = claim.category.as_deref().unwrap_or("General");
         let body = email_service::approval_email_html(
             &emp.full_name,
             &emp.company_name,
             "Claim",
-            &details,
+            &[
+                ("Claim", &claim.title),
+                ("Amount", &amount_str),
+                ("Category", category),
+            ],
             "The approved amount will be included in your next payroll.",
         );
         let _ = email_service::enqueue_email(
@@ -319,7 +344,7 @@ pub async fn approve_claim(
             Some(claim.employee_id),
             None,
             "claim_approved",
-            &emp.email,
+            recipient_email,
             &emp.full_name,
             &format!("Claim Approved - {} (RM {:.2})", claim.title, amount_rm),
             &body,

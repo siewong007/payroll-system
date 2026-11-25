@@ -1,7 +1,7 @@
 import api from '@/api/client';
 import type { PermissionKey } from '@/api/permissions';
 
-export interface UserGroup {
+export interface UserGroupBase {
   id: string;
   company_id: string;
   name: string;
@@ -9,6 +9,9 @@ export interface UserGroup {
   is_active: boolean;
   created_at: string;
   updated_at: string;
+}
+
+export interface UserGroup extends UserGroupBase {
   permissions: PermissionKey[];
   member_count: number;
 }
@@ -41,13 +44,13 @@ export const userGroupsApi = {
     return data;
   },
 
-  create: async (req: CreateUserGroupRequest): Promise<UserGroup> => {
-    const { data } = await api.post<UserGroup>('/user-groups', req);
+  create: async (req: CreateUserGroupRequest): Promise<UserGroupBase> => {
+    const { data } = await api.post<UserGroupBase>('/user-groups', req);
     return data;
   },
 
-  update: async (id: string, req: UpdateUserGroupRequest): Promise<UserGroup> => {
-    const { data } = await api.put<UserGroup>(`/user-groups/${id}`, req);
+  update: async (id: string, req: UpdateUserGroupRequest): Promise<UserGroupBase> => {
+    const { data } = await api.put<UserGroupBase>(`/user-groups/${id}`, req);
     return data;
   },
 

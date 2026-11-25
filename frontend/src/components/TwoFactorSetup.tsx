@@ -10,6 +10,7 @@ import {
   totpRegenerateBackupCodes,
 } from '@/api/totp';
 import { FormField } from '@/components/ui/FormField';
+import { triggerBlobDownload } from '@/lib/download';
 import { getErrorMessage } from '@/lib/utils';
 
 type View = 'idle' | 'setting_up' | 'backup_codes' | 'disabling' | 'regenerating';
@@ -75,20 +76,18 @@ export function TwoFactorSetup() {
     onError: (err: unknown) => setError(getErrorMessage(err, t('auth.twoFactor.regenFailed'))),
   });
 
-  const handleCopyBackupCodes = () => {
-    navigator.clipboard.writeText(backupCodes.join('\n'));
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const handleCopyBackupCodes = async () => {
+    try {
+      await navigator.clipboard.writeText(backupCodes.join('\n'));
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setCopied(false);
+    }
   };
 
   const handleDownloadBackupCodes = () => {
-    const blob = new Blob([backupCodes.join('\n') + '\n'], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'payrollmy-backup-codes.txt';
-    a.click();
-    URL.revokeObjectURL(url);
+    triggerBlobDownload(backupCodes.join('\n') + '\n', 'payrollmy-backup-codes.txt', 'text/plain');
   };
 
   if (isLoading) {

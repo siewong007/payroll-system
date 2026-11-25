@@ -7,7 +7,8 @@ export interface WorkSchedule {
   start_time: string; // "HH:MM:SS"
   end_time: string;
   grace_minutes: number;
-  half_day_hours: number;
+  half_day_hours: string;
+  unpaid_break_minutes: number;
   timezone: string;
   is_default: boolean;
   created_at: string;
@@ -19,7 +20,8 @@ export interface UpsertWorkScheduleRequest {
   start_time: string; // "HH:MM"
   end_time: string;
   grace_minutes?: number;
-  half_day_hours?: number;
+  half_day_hours?: number | string;
+  unpaid_break_minutes?: number;
   timezone?: string;
 }
 
@@ -28,7 +30,8 @@ export interface UpdateWorkScheduleRequest {
   start_time?: string;
   end_time?: string;
   grace_minutes?: number;
-  half_day_hours?: number;
+  half_day_hours?: number | string;
+  unpaid_break_minutes?: number;
   timezone?: string;
 }
 

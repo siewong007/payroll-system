@@ -307,7 +307,7 @@ pub async fn send_email(
         AppError::Validation(format!("{recipient_email} is not a valid email address"))
     })?;
 
-    if !config.smtp_enabled() {
+    if !config.smtp_enabled() || !mailer.is_enabled() {
         let log = email_logs::insert_with_delivery_state(
             pool,
             company_id,
@@ -342,9 +342,9 @@ pub async fn send_email(
         body_html,
         "pending",
         None,
-        0,
+        1,
         3,
-        Some(Utc::now()),
+        None,
         created_by,
     )
     .await?;
@@ -354,7 +354,7 @@ pub async fn send_email(
         .await
     {
         Ok(()) => {
-            let log = email_logs::mark_sent(pool, log.id).await?;
+            let log = email_logs::mark_sent(pool, log.id).await?.unwrap_or(log);
             tracing::info!(
                 "Email sent successfully: {} to {}",
                 log.id,
@@ -364,7 +364,9 @@ pub async fn send_email(
         }
         Err(error_msg) => {
             let next_retry = Utc::now() + chrono::Duration::seconds(60);
-            let log = email_logs::schedule_retry(pool, log.id, 1, next_retry, &error_msg).await?;
+            let log = email_logs::schedule_retry(pool, log.id, 1, next_retry, &error_msg)
+                .await?
+                .unwrap_or(log);
             tracing::warn!(
                 email_id = %log.id,
                 error = %error_msg,
@@ -592,8 +594,8 @@ pub fn approval_email_html(
     employee_name: &str,
     company_name: &str,
     approval_type: &str, // "Leave", "Claim"
-    details: &str,       // e.g. "Annual Leave from 2026-04-15 to 2026-04-17"
-    extra_note: &str,    // e.g. "A salary deduction will be applied..." or ""
+    details: &[(&str, &str)],
+    extra_note: &str, // e.g. "A salary deduction will be applied..." or ""
 ) -> String {
     let extra_section = if extra_note.is_empty() {
         String::new()
@@ -607,7 +609,17 @@ pub fn approval_email_html(
     let approval_type_escaped = escape_html(approval_type);
     let approval_type_lower = escape_html(&approval_type.to_lowercase());
     let employee_name = escape_html(employee_name);
-    let details = escape_html(details);
+    let details = details
+        .iter()
+        .map(|(label, value)| {
+            format!(
+                "<strong>{}:</strong> {}",
+                escape_html(label),
+                escape_html(value)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("<br>");
     let company_name = escape_html(company_name);
 
     format!(
@@ -716,7 +728,7 @@ pub async fn send_welcome_email(
         login_email,
     );
 
-    if !config.smtp_enabled() || !mailer.is_enabled() {
+    if !config.smtp_enabled() {
         return email_logs::insert_with_delivery_state(
             pool,
             company_id,

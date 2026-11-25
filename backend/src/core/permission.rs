@@ -264,7 +264,8 @@ impl Permission {
         )
     }
 
-    /// Capabilities that expose or manipulate payroll / statutory figures.
+    /// Capabilities that expose or manipulate payroll / statutory figures
+    /// (including `ImportEmployees`, which writes salaries and bank details).
     pub fn is_payroll_capability(self) -> bool {
         matches!(
             self,
@@ -273,10 +274,49 @@ impl Permission {
                 | Permission::SubmitPayroll
                 | Permission::ApprovePayroll
                 | Permission::MarkPayrollPaid
+                | Permission::ImportEmployees
                 | Permission::ViewStatutoryExports
                 | Permission::ViewSalaryHistory
         )
     }
+
+    /// Capabilities that mutate state or perform privileged actions (as opposed
+    /// to read-only `View*` capabilities). Used to keep `exec` read-only.
+    pub fn is_write_capability(self) -> bool {
+        !matches!(
+            self,
+            Permission::ViewPayroll
+                | Permission::ViewEmployees
+                | Permission::ViewSalaryHistory
+                | Permission::ViewAttendance
+                | Permission::ViewTeams
+                | Permission::ViewCalendar
+                | Permission::ViewApprovals
+                | Permission::ViewReports
+                | Permission::ViewStatutoryExports
+                | Permission::ViewDocuments
+                | Permission::ViewEmailLogs
+                | Permission::ViewUserDirectory
+                | Permission::ViewAuditLog
+        )
+    }
+}
+
+/// Filters company-scoped `user_group` permission keys consistently across both
+/// request authentication (`AuthUser`) and login/profile responses (`UserResponse`).
+pub fn filter_group_permissions_for_roles(roles: &[String], keys: &[String]) -> Vec<Permission> {
+    let has_restricted_payroll = roles
+        .iter()
+        .any(|r| r == "exec" || r == "employee" || r == "manager");
+    let is_exec_only =
+        roles.iter().any(|r| r == "exec") && !roles.iter().any(|r| r != "exec" && r != "employee");
+
+    keys.iter()
+        .filter_map(|key| Permission::ALL.iter().find(|p| p.as_str() == key).copied())
+        .filter(|p| !p.is_platform_only())
+        .filter(|p| !has_restricted_payroll || !p.is_payroll_capability())
+        .filter(|p| !is_exec_only || !p.is_write_capability())
+        .collect()
 }
 
 /// Every role string the `users_roles_valid` CHECK constraint accepts, in

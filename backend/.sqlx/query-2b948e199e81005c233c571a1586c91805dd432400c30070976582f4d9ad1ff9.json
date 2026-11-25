@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM claims WHERE id = $1 AND company_id = $2 AND status IN ('draft', 'cancelled')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2b948e199e81005c233c571a1586c91805dd432400c30070976582f4d9ad1ff9"
+}

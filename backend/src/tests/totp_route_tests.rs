@@ -78,12 +78,17 @@ async fn body_json(response: axum::response::Response) -> serde_json::Value {
 }
 
 fn code_for_secret(secret_b32: &str) -> String {
+    code_for_secret_offset(secret_b32, 0)
+}
+
+fn code_for_secret_offset(secret_b32: &str, offset_secs: i64) -> String {
     let bytes = Secret::Encoded(secret_b32.to_string())
         .to_bytes()
         .expect("valid base32 secret");
     let totp =
         TOTP::new(Algorithm::SHA1, 6, 1, 30, bytes, None, "test".to_string()).expect("build totp");
-    totp.generate_current().expect("generate code")
+    let ts = (chrono::Utc::now().timestamp() + offset_secs).max(0) as u64;
+    totp.generate(ts)
 }
 
 #[tokio::test]
@@ -140,14 +145,15 @@ async fn totp_setup_gates_login_until_code_is_verified() {
             .starts_with("otpauth://")
     );
 
-    // Confirm with the first code — enables 2FA and returns backup codes.
+    // Confirm with the previous-step code — enables 2FA and returns backup codes,
+    // leaving the current step unused for the immediate login below.
     let resp = app
         .clone()
         .oneshot(json_request(
             "POST",
             "/api/auth/2fa/setup/confirm",
             Some(&auth_token),
-            &format!(r#"{{"code":"{}"}}"#, code_for_secret(&secret)),
+            &format!(r#"{{"code":"{}"}}"#, code_for_secret_offset(&secret, -30)),
         ))
         .await
         .expect("setup/confirm response");
@@ -235,7 +241,7 @@ async fn enroll_target(
     let codes = totp_service::confirm_setup(
         pool,
         user_id,
-        &code_for_secret(&setup.secret),
+        &code_for_secret_offset(&setup.secret, -30),
         TOTP_ENCRYPTION_KEY,
         None,
     )
@@ -495,7 +501,7 @@ async fn enroll_and_get_secret(
     let codes = totp_service::confirm_setup(
         pool,
         user_id,
-        &code_for_secret(&setup.secret),
+        &code_for_secret_offset(&setup.secret, -30),
         TOTP_ENCRYPTION_KEY,
         None,
     )
@@ -509,6 +515,7 @@ async fn code_login_with_a_totp_code_issues_a_full_session() {
     let Some(pool) = skip_if_no_db().await else {
         return;
     };
+    let _policy_guard = POLICY_SENSITIVE_LOGINS.lock().await;
     let company_id = seed_company(&pool).await;
     let (_user_id, email, secret, _codes) = enroll_and_get_secret(&pool, company_id).await;
 
@@ -540,6 +547,7 @@ async fn code_login_with_a_backup_code_issues_a_session_and_consumes_the_code() 
     let Some(pool) = skip_if_no_db().await else {
         return;
     };
+    let _policy_guard = POLICY_SENSITIVE_LOGINS.lock().await;
     let company_id = seed_company(&pool).await;
     let (_user_id, email, _secret, backup_codes) = enroll_target(&pool, company_id).await;
     let app = app_for(pool).await;

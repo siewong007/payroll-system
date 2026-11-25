@@ -16,8 +16,8 @@
 x-logging: &default-logging
   driver: json-file
   options:
-    max-size: "10m"
-    max-file: "3"
+    max-size: '10m'
+    max-file: '3'
 
 services:
   postgres:
@@ -38,13 +38,13 @@ services:
       - max_parallel_workers=1
     environment:
       POSTGRES_USER: payroll
-      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
+      POSTGRES_PASSWORD: '${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}'
       POSTGRES_DB: payroll_db
     volumes:
       # PostgreSQL 18+ stores versioned data below /var/lib/postgresql.
       - postgres_data:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U payroll -d payroll_db"]
+      test: ['CMD-SHELL', 'pg_isready -U payroll -d payroll_db']
       interval: 10s
       timeout: 5s
       retries: 12
@@ -61,24 +61,25 @@ services:
       - database
 
   backend:
-    image: "payroll-backend:${IMAGE_TAG:?IMAGE_TAG is required}"
+    image: 'payroll-backend:${IMAGE_TAG:?IMAGE_TAG is required}'
     container_name: payroll-backend
     restart: unless-stopped
     init: true
     ports:
-      - "127.0.0.1:8080:8080"
+      - '127.0.0.1:8080:8080'
     environment:
-      DATABASE_URL: "postgres://payroll:${POSTGRES_PASSWORD}@postgres:5432/payroll_db"
-      JWT_SECRET: "${JWT_SECRET:?JWT_SECRET is required}"
+      DATABASE_URL: 'postgres://payroll:${POSTGRES_PASSWORD}@postgres:5432/payroll_db'
+      JWT_SECRET: '${JWT_SECRET:?JWT_SECRET is required}'
       # Deliberately separate from JWT_SECRET so rotating one after a leak
       # cannot lock every 2FA user out of their own accounts. deploy.sh mints
       # it into /opt/payroll/secrets.env on install.
-      TOTP_ENCRYPTION_KEY: "${TOTP_ENCRYPTION_KEY:?TOTP_ENCRYPTION_KEY is required}"
-      JWT_EXPIRY_HOURS: "${JWT_EXPIRY_HOURS:-1}"
+      TOTP_ENCRYPTION_KEY: '${TOTP_ENCRYPTION_KEY:?TOTP_ENCRYPTION_KEY is required}'
+      JWT_EXPIRY_HOURS: '${JWT_EXPIRY_HOURS:-1}'
       # Structured JSON logs for docker logging drivers (plan item 24)
       LOG_FORMAT: json
-      SERVER_HOST: "0.0.0.0"
-      SERVER_PORT: "8080"
+      RUST_ENV: '${RUST_ENV:-production}'
+      SERVER_HOST: '0.0.0.0'
+      SERVER_PORT: '8080'
       # The host Caddy is the ONLY path to this container: port 8080 is
       # published on 127.0.0.1 alone (see `ports:` above), so nothing off-host
       # can reach Axum directly and forge X-Forwarded-For. Caddy appends the
@@ -90,25 +91,25 @@ services:
       # 172.x.0.1, and every tower_governor limiter collapses into a single
       # global bucket, so one attacker tripping the login limiter locks out
       # every legitimate user.
-      TRUST_PROXY_HEADERS: "true"
-      FRONTEND_URL: "${FRONTEND_URL:-https://payrollmy.com}"
+      TRUST_PROXY_HEADERS: 'true'
+      FRONTEND_URL: '${FRONTEND_URL:-https://payrollmy.com}'
       # The API's own public origin — Google OAuth callbacks must land here,
       # not on the static frontend site. payrollmy.com serves only the SPA.
-      API_PUBLIC_URL: "${API_PUBLIC_URL:-https://api.payrollmy.com}"
-      WEBAUTHN_RP_ID: "${WEBAUTHN_RP_ID:-payrollmy.com}"
-      WEBAUTHN_RP_ORIGIN: "${WEBAUTHN_RP_ORIGIN:-https://payrollmy.com}"
-      GOOGLE_CLIENT_ID: "${GOOGLE_CLIENT_ID:-}"
-      GOOGLE_CLIENT_SECRET: "${GOOGLE_CLIENT_SECRET:-}"
+      API_PUBLIC_URL: '${API_PUBLIC_URL:-https://api.payrollmy.com}'
+      WEBAUTHN_RP_ID: '${WEBAUTHN_RP_ID:-payrollmy.com}'
+      WEBAUTHN_RP_ORIGIN: '${WEBAUTHN_RP_ORIGIN:-https://payrollmy.com}'
+      GOOGLE_CLIENT_ID: '${GOOGLE_CLIENT_ID:-}'
+      GOOGLE_CLIENT_SECRET: '${GOOGLE_CLIENT_SECRET:-}'
       # Empty = Turnstile verification off; set the real secret in
       # /opt/payroll/secrets.env to enforce it on public auth endpoints.
-      TURNSTILE_SECRET_KEY: "${TURNSTILE_SECRET_KEY:-}"
-      SMTP_HOST: "${SMTP_HOST:-}"
-      SMTP_PORT: "${SMTP_PORT:-}"
-      SMTP_USERNAME: "${SMTP_USERNAME:-}"
-      SMTP_PASSWORD: "${SMTP_PASSWORD:-}"
-      SMTP_FROM_EMAIL: "${SMTP_FROM_EMAIL:-}"
-      SMTP_FROM_NAME: "${SMTP_FROM_NAME:-}"
-      RUST_LOG: "${RUST_LOG:-info}"
+      TURNSTILE_SECRET_KEY: '${TURNSTILE_SECRET_KEY:-}'
+      SMTP_HOST: '${SMTP_HOST:-}'
+      SMTP_PORT: '${SMTP_PORT:-}'
+      SMTP_USERNAME: '${SMTP_USERNAME:-}'
+      SMTP_PASSWORD: '${SMTP_PASSWORD:-}'
+      SMTP_FROM_EMAIL: '${SMTP_FROM_EMAIL:-}'
+      SMTP_FROM_NAME: '${SMTP_FROM_NAME:-}'
+      RUST_LOG: '${RUST_LOG:-info}'
     volumes:
       # Bind mount survives image/container replacement.
       - /opt/payroll/data/uploads:/app/uploads
@@ -116,11 +117,11 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/api/health >/dev/null || exit 1"]
+      test: ['CMD-SHELL', 'curl -fsS http://localhost:8080/api/health/ready >/dev/null || exit 1']
       interval: 10s
       timeout: 5s
       retries: 12
-      start_period: 30s
+      start_period: 60s
     mem_limit: 256m
     cpus: 0.45
     pids_limit: 256

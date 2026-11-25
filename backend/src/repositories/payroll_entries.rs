@@ -133,21 +133,20 @@ pub async fn delete_unprocessed(
     Ok(())
 }
 
-/// Mark an employee's staged entries for a period as processed, attaching the run id.
+/// Mark the exact staged entries that fed a payslip as processed, attaching the run id.
 pub async fn mark_processed(
     executor: impl Executor<'_, Database = Postgres>,
     run_id: Uuid,
-    employee_id: Uuid,
-    year: i32,
-    month: i32,
+    entry_ids: &[Uuid],
 ) -> AppResult<()> {
+    if entry_ids.is_empty() {
+        return Ok(());
+    }
     sqlx::query!(
-        r#"UPDATE payroll_entries SET is_processed = TRUE, payroll_run_id = $1
-        WHERE employee_id = $2 AND period_year = $3 AND period_month = $4 AND is_processed = FALSE"#,
+        r#"UPDATE payroll_entries SET is_processed = TRUE, payroll_run_id = $1, updated_at = NOW()
+        WHERE id = ANY($2) AND is_processed = FALSE"#,
         run_id,
-        employee_id,
-        year,
-        month,
+        entry_ids,
     )
     .execute(executor)
     .await?;
@@ -185,6 +184,7 @@ pub async fn exists_processed_unpaid_leave(
     executor: impl Executor<'_, Database = Postgres>,
     employee_id: Uuid,
     company_id: Uuid,
+    leave_request_id: Uuid,
     description: &str,
 ) -> AppResult<bool> {
     let exists = sqlx::query_scalar!(
@@ -193,11 +193,12 @@ pub async fn exists_processed_unpaid_leave(
                     WHERE employee_id = $1
                       AND company_id = $2
                       AND item_type = 'unpaid_leave'
-                      AND description LIKE $3
+                      AND (leave_request_id = $3 OR (leave_request_id IS NULL AND description LIKE $4))
                       AND is_processed = TRUE
                 ) AS "exists!""#,
         employee_id,
         company_id,
+        leave_request_id,
         description,
     )
     .fetch_one(executor)
@@ -205,29 +206,29 @@ pub async fn exists_processed_unpaid_leave(
     Ok(exists)
 }
 
-/// Delete the *unprocessed* unpaid-leave deduction matching `description`.
-//
-// NOTE: indentation matches the byte-exact SQL in the offline `.sqlx` cache.
+/// Delete the *unprocessed* unpaid-leave deduction linked to `leave_request_id` (or matching legacy `description`).
 pub async fn delete_unprocessed_unpaid_leave(
     executor: impl Executor<'_, Database = Postgres>,
     employee_id: Uuid,
     company_id: Uuid,
+    leave_request_id: Uuid,
     description: &str,
-) -> AppResult<()> {
-    sqlx::query!(
+) -> AppResult<u64> {
+    let res = sqlx::query!(
         r#"DELETE FROM payroll_entries
                 WHERE employee_id = $1
                   AND company_id = $2
                   AND item_type = 'unpaid_leave'
-                  AND description LIKE $3
+                  AND (leave_request_id = $3 OR (leave_request_id IS NULL AND description LIKE $4))
                   AND is_processed = FALSE"#,
         employee_id,
         company_id,
+        leave_request_id,
         description,
     )
     .execute(executor)
     .await?;
-    Ok(())
+    Ok(res.rows_affected())
 }
 
 /// Stage an unpaid-leave salary deduction.
@@ -247,13 +248,14 @@ pub async fn insert_unpaid_leave_deduction(
     description: &str,
     amount: i64,
     quantity: Decimal,
+    leave_request_id: Option<Uuid>,
     created_by: Uuid,
 ) -> AppResult<()> {
     sqlx::query!(
         r#"INSERT INTO payroll_entries
             (id, employee_id, company_id, period_year, period_month, category, item_type,
-             description, amount, quantity, created_by)
-        VALUES ($1, $2, $3, $4, $5, 'deduction', 'unpaid_leave', $6, $7, $8, $9)"#,
+             description, amount, quantity, leave_request_id, created_by)
+        VALUES ($1, $2, $3, $4, $5, 'deduction', 'unpaid_leave', $6, $7, $8, $9, $10)"#,
         id,
         employee_id,
         company_id,
@@ -262,6 +264,7 @@ pub async fn insert_unpaid_leave_deduction(
         description,
         amount,
         quantity,
+        leave_request_id,
         created_by,
     )
     .execute(executor)
@@ -271,16 +274,15 @@ pub async fn insert_unpaid_leave_deduction(
 
 // ─── Overtime earning entries (staged on OT approval) ───
 
-/// Whether a *processed* overtime entry matching `description` already exists for
-/// an employee in a period (blocks cancelling already-paid OT).
-//
-// NOTE: indentation matches the byte-exact SQL in the offline `.sqlx` cache.
+/// Whether a *processed* overtime entry linked to `overtime_application_id`
+/// (or matching legacy `description`) already exists for an employee in a period.
 pub async fn exists_processed_overtime(
     executor: impl Executor<'_, Database = Postgres>,
     employee_id: Uuid,
     company_id: Uuid,
     period_year: i32,
     period_month: i32,
+    overtime_application_id: Uuid,
     description: &str,
 ) -> AppResult<bool> {
     let exists = sqlx::query_scalar!(
@@ -291,13 +293,14 @@ pub async fn exists_processed_overtime(
                   AND period_year = $3
                   AND period_month = $4
                   AND item_type = 'overtime'
-                  AND description LIKE $5
+                  AND (overtime_application_id = $5 OR (overtime_application_id IS NULL AND description LIKE $6))
                   AND is_processed = TRUE
             ) AS "exists!""#,
         employee_id,
         company_id,
         period_year,
         period_month,
+        overtime_application_id,
         description,
     )
     .fetch_one(executor)
@@ -305,40 +308,38 @@ pub async fn exists_processed_overtime(
     Ok(exists)
 }
 
-/// Delete the *unprocessed* overtime entry matching `description` in a period.
-//
-// NOTE: indentation matches the byte-exact SQL in the offline `.sqlx` cache.
+/// Delete the *unprocessed* overtime entry linked to `overtime_application_id` (or matching legacy `description`).
 pub async fn delete_unprocessed_overtime(
     executor: impl Executor<'_, Database = Postgres>,
     employee_id: Uuid,
     company_id: Uuid,
     period_year: i32,
     period_month: i32,
+    overtime_application_id: Uuid,
     description: &str,
-) -> AppResult<()> {
-    sqlx::query!(
+) -> AppResult<u64> {
+    let res = sqlx::query!(
         r#"DELETE FROM payroll_entries
             WHERE employee_id = $1
               AND company_id = $2
               AND period_year = $3
               AND period_month = $4
               AND item_type = 'overtime'
-              AND description LIKE $5
+              AND (overtime_application_id = $5 OR (overtime_application_id IS NULL AND description LIKE $6))
               AND is_processed = FALSE"#,
         employee_id,
         company_id,
         period_year,
         period_month,
+        overtime_application_id,
         description,
     )
     .execute(executor)
     .await?;
-    Ok(())
+    Ok(res.rows_affected())
 }
 
 /// Stage an overtime earning (with hours as quantity and the computed OT rate).
-//
-// NOTE: indentation matches the byte-exact SQL in the offline `.sqlx` cache.
 #[allow(clippy::too_many_arguments)]
 pub async fn insert_overtime(
     executor: impl Executor<'_, Database = Postgres>,
@@ -351,13 +352,14 @@ pub async fn insert_overtime(
     amount: i64,
     quantity: Decimal,
     rate: i64,
+    overtime_application_id: Option<Uuid>,
     created_by: Uuid,
 ) -> AppResult<()> {
     sqlx::query!(
         r#"INSERT INTO payroll_entries
                 (id, employee_id, company_id, period_year, period_month, category, item_type,
-                 description, amount, quantity, rate, is_taxable, created_by)
-            VALUES ($1, $2, $3, $4, $5, 'earning', 'overtime', $6, $7, $8, $9, TRUE, $10)"#,
+                 description, amount, quantity, rate, is_taxable, overtime_application_id, created_by)
+            VALUES ($1, $2, $3, $4, $5, 'earning', 'overtime', $6, $7, $8, $9, TRUE, $10, $11)"#,
         id,
         employee_id,
         company_id,
@@ -367,6 +369,7 @@ pub async fn insert_overtime(
         amount,
         quantity,
         rate,
+        overtime_application_id,
         created_by,
     )
     .execute(executor)

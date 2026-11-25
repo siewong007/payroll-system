@@ -14,6 +14,7 @@ pub async fn summary(
     auth: AuthUser,
     Query(q): Query<DashboardQuery>,
 ) -> AppResult<Json<DashboardSummary>> {
+    auth.require_permission(Permission::ViewEmployees)?;
     let company_id = auth
         .0
         .company_id
@@ -21,6 +22,7 @@ pub async fn summary(
 
     let can_access_payroll = auth.is_payroll_privileged();
     let can_view_approvals = auth.can(Permission::ViewApprovals);
+    let can_view_attendance = auth.can(Permission::ViewAttendance);
 
     Ok(Json(
         dashboard_service::summary(
@@ -28,6 +30,7 @@ pub async fn summary(
             company_id,
             can_access_payroll,
             can_view_approvals,
+            can_view_attendance,
             q.window_days(),
         )
         .await?,

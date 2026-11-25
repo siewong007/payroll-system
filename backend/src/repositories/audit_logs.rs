@@ -20,18 +20,8 @@ pub async fn count_filtered(
     start_date: Option<NaiveDate>,
     end_date: Option<NaiveDate>,
 ) -> AppResult<i64> {
-    // Filter by al.company_id so NULL-user rows (public kiosk endpoints etc.)
-    // remain visible. Legacy rows missing company_id are excluded; migration
-    // 024 backfills them from the associated user where possible.
-    let count = sqlx::query_scalar!(
-        r#"SELECT COUNT(*) AS "count!" FROM audit_logs al
-        WHERE al.company_id = $1
-        AND ($2::text IS NULL OR al.entity_type = $2)
-        AND ($3::uuid IS NULL OR al.entity_id = $3)
-        AND ($4::text IS NULL OR al.action = $4)
-        AND ($5::uuid IS NULL OR al.user_id = $5)
-        AND ($6::date IS NULL OR al.created_at >= $6::date)
-        AND ($7::date IS NULL OR al.created_at < ($7::date + INTERVAL '1 day'))"#,
+    count_filtered_scoped(
+        executor,
         company_id,
         entity_type,
         entity_id,
@@ -39,6 +29,52 @@ pub async fn count_filtered(
         user_id,
         start_date,
         end_date,
+        false,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn count_filtered_scoped(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    entity_type: Option<&str>,
+    entity_id: Option<Uuid>,
+    action: Option<&str>,
+    user_id: Option<Uuid>,
+    start_date: Option<NaiveDate>,
+    end_date: Option<NaiveDate>,
+    hide_privileged: bool,
+) -> AppResult<i64> {
+    let count = sqlx::query_scalar!(
+        r#"SELECT COUNT(*) AS "count!" FROM audit_logs al
+        LEFT JOIN users u ON al.user_id = u.id
+        WHERE al.company_id = $1
+        AND ($2::text IS NULL OR al.entity_type = $2)
+        AND ($3::uuid IS NULL OR al.entity_id = $3)
+        AND ($4::text IS NULL OR al.action = $4)
+        AND ($5::uuid IS NULL OR al.user_id = $5)
+        AND ($6::date IS NULL OR al.created_at >= $6::date)
+        AND ($7::date IS NULL OR al.created_at < ($7::date + INTERVAL '1 day'))
+        AND NOT (
+            $8::bool AND (
+                (u.id IS NOT NULL AND u.roles && ARRAY['admin', 'super_admin']::varchar[])
+                OR (
+                    al.entity_type = 'user' AND (
+                        (al.old_values->'roles') ?| ARRAY['admin', 'super_admin']
+                        OR (al.new_values->'roles') ?| ARRAY['admin', 'super_admin']
+                    )
+                )
+            )
+        )"#,
+        company_id,
+        entity_type,
+        entity_id,
+        action,
+        user_id,
+        start_date,
+        end_date,
+        hide_privileged,
     )
     .fetch_one(executor)
     .await?;

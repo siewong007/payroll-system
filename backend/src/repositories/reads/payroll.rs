@@ -39,7 +39,7 @@ pub async fn recurring_allowance_lines(
 ) -> AppResult<Vec<PayslipSourceLine>> {
     let rows = sqlx::query_as!(
         PayslipSourceLine,
-        r#"SELECT employee_id, category,
+        r#"SELECT NULL::uuid AS "id?", employee_id, category,
                   -- `employee_allowances` has no item_type of its own; the two
                   -- names below are what the payslip breakdown has always
                   -- labelled these lines.
@@ -75,7 +75,7 @@ pub async fn entry_lines(
 ) -> AppResult<Vec<PayslipSourceLine>> {
     let rows = sqlx::query_as!(
         PayslipSourceLine,
-        r#"SELECT employee_id, category,
+        r#"SELECT id AS "id?", employee_id, category,
                   -- Carried so the breakdown can label an unpaid-leave deduction
                   -- as one instead of folding it into "other deduction".
                   item_type AS "item_type!",
@@ -143,6 +143,39 @@ pub async fn entry_category_totals(
     Ok(rows)
 }
 
+#[derive(Debug)]
+pub struct StagedEntryIdRow {
+    pub id: Uuid,
+    pub employee_id: Uuid,
+}
+
+/// Every unprocessed `payroll_entries` id for the period (excluding `claim_reimbursement`,
+/// which is no longer staged/used by payroll) captured once inside the engine transaction so
+/// `mark_processed` only retires rows actually visible to this run.
+pub async fn staged_entry_ids(
+    executor: impl Executor<'_, Database = Postgres>,
+    employee_ids: &[Uuid],
+    year: i32,
+    month: i32,
+) -> AppResult<Vec<StagedEntryIdRow>> {
+    let rows = sqlx::query_as!(
+        StagedEntryIdRow,
+        r#"SELECT id, employee_id
+           FROM payroll_entries
+           WHERE employee_id = ANY($1)
+             AND period_year = $2
+             AND period_month = $3
+             AND is_processed = FALSE
+             AND item_type <> 'claim_reimbursement'"#,
+        employee_ids,
+        year,
+        month,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(rows)
+}
+
 /// Staged unpaid-leave deductions per employee: amount and working days.
 ///
 /// Same shape and filters as `bonus_commission_totals`, so the two reconcile
@@ -196,7 +229,9 @@ pub async fn bonus_commission_totals(
         EmployeeBonusCommission,
         r#"SELECT employee_id,
                   COALESCE(SUM(amount) FILTER (WHERE item_type = 'bonus'), 0)::BIGINT AS "bonus!",
-                  COALESCE(SUM(amount) FILTER (WHERE item_type = 'commission'), 0)::BIGINT AS "commission!"
+                  COALESCE(SUM(amount) FILTER (WHERE item_type = 'commission'), 0)::BIGINT AS "commission!",
+                  COALESCE(SUM(amount) FILTER (WHERE item_type = 'bonus' AND COALESCE(is_taxable, TRUE)), 0)::BIGINT AS "taxable_bonus!",
+                  COALESCE(SUM(amount) FILTER (WHERE item_type = 'commission' AND COALESCE(is_taxable, TRUE)), 0)::BIGINT AS "taxable_commission!"
            FROM payroll_entries
            WHERE employee_id = ANY($1) AND period_year = $2 AND period_month = $3
              AND is_processed = FALSE
@@ -238,13 +273,14 @@ pub async fn monthly_allowance_totals(
 }
 
 /// Attendance-based overtime hours per employee, excluding days already covered by an
-/// approved overtime application.
+/// approved overtime application, absent records, or records above the company ceiling.
 pub async fn attendance_ot_hours(
     executor: impl Executor<'_, Database = Postgres>,
     employee_ids: &[Uuid],
     period_start: NaiveDate,
     period_end: NaiveDate,
     tz: &str,
+    max_overtime_hours: rust_decimal::Decimal,
 ) -> AppResult<Vec<EmployeeHours>> {
     let rows = sqlx::query_as!(
         EmployeeHours,
@@ -263,6 +299,7 @@ pub async fn attendance_ot_hours(
                           WHERE h.company_id = ar.company_id
                             AND (h.date = local_date
                                  OR (h.is_recurring
+                                     AND h.date <= local_date
                                      AND EXTRACT(MONTH FROM h.date) = EXTRACT(MONTH FROM local_date)
                                      AND EXTRACT(DAY FROM h.date) = EXTRACT(DAY FROM local_date)))
                         ) THEN 'public_holiday'
@@ -290,6 +327,9 @@ pub async fn attendance_ot_hours(
                  -- (company_id, check_in_at) index.
                  AND ar.check_in_at >= ($2::date)::timestamp AT TIME ZONE $4
                  AND ar.check_in_at < ($3::date + 1)::timestamp AT TIME ZONE $4
+                 AND ar.status <> 'absent'
+                 AND ar.overtime_hours IS NOT NULL
+                 AND ar.overtime_hours <= $5
                  AND oa.id IS NULL
            ) buckets
            GROUP BY employee_id, day_type"#,
@@ -297,6 +337,7 @@ pub async fn attendance_ot_hours(
         period_start,
         period_end,
         tz,
+        max_overtime_hours,
     )
     .fetch_all(executor)
     .await?;
@@ -328,6 +369,7 @@ pub async fn unrated_overtime_records(
            JOIN employees e ON e.id = ar.employee_id
            WHERE ar.employee_id = ANY($1)
              AND ar.check_out_at IS NOT NULL
+             AND ar.status <> 'absent'
              AND (ar.overtime_hours IS NULL OR ar.overtime_hours > $4)
              -- Same sargable local-date bounds as attendance_ot_hours, so the
              -- warning covers exactly the records that run would have paid.
@@ -524,6 +566,7 @@ pub async fn payroll_ytd(
         r#"SELECT
             pi.employee_id,
             COALESCE(SUM(pi.gross_salary), 0)::BIGINT AS "gross!",
+            COALESCE(SUM(COALESCE(pi.taxable_gross, GREATEST(pi.gross_salary - pi.unpaid_leave_deduction, 0))), 0)::BIGINT AS "taxable_gross!",
             COALESCE(SUM(pi.pcb_amount), 0)::BIGINT AS "pcb!",
             COALESCE(SUM(pi.epf_employee), 0)::BIGINT AS "epf!",
             COALESCE(SUM(pi.socso_employee), 0)::BIGINT AS "socso!",
@@ -558,7 +601,8 @@ pub async fn entries_with_employee(
         PayrollEntryWithEmployee,
         r#"SELECT pe.id, pe.employee_id, pe.company_id, pe.period_year, pe.period_month,
             pe.category, pe.item_type, pe.description, pe.amount, pe.quantity, pe.rate,
-            pe.is_taxable, pe.is_processed, pe.payroll_run_id, pe.created_at, pe.updated_at,
+            pe.is_taxable, pe.is_processed, pe.payroll_run_id, pe.overtime_application_id,
+            pe.leave_request_id, pe.created_at, pe.updated_at,
             pe.created_by, pe.updated_by,
             e.full_name AS "employee_name?", e.employee_number AS "employee_number?"
         FROM payroll_entries pe
@@ -655,6 +699,43 @@ pub async fn run_has_later_committed_run(
     .fetch_one(executor)
     .await?;
     Ok(exists)
+}
+
+/// Employees in a proposed run who already appear in another non-cancelled run
+/// for the SAME period (e.g. transferred between payroll groups mid-month).
+pub async fn employees_already_paid_in_period(
+    executor: impl Executor<'_, Database = Postgres>,
+    employee_ids: &[Uuid],
+    company_id: Uuid,
+    period_year: i32,
+    period_month: i32,
+    exclude_run_id: Option<Uuid>,
+) -> AppResult<Vec<LaterCommittedRun>> {
+    let rows = sqlx::query_as!(
+        LaterCommittedRun,
+        r#"SELECT e.id AS "employee_id!", e.employee_number AS "employee_number!",
+                  e.full_name AS "employee_name!",
+                  (pr.period_year * 100 + pr.period_month)::INT AS "earliest_later_period!"
+           FROM payroll_items pi
+           JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
+           JOIN employees e ON e.id = pi.employee_id
+           WHERE pi.employee_id = ANY($1)
+             AND pr.company_id = $2
+             AND pr.period_year = $3
+             AND pr.period_month = $4
+             AND pr.status::text <> 'cancelled'
+             AND ($5::uuid IS NULL OR pr.id <> $5)
+           GROUP BY e.id, e.employee_number, e.full_name, pr.period_year, pr.period_month
+           ORDER BY e.employee_number"#,
+        employee_ids,
+        company_id,
+        period_year,
+        period_month,
+        exclude_run_id,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(rows)
 }
 
 /// Employees in a proposed run who already appear in a LATER committed run.

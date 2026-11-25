@@ -45,7 +45,9 @@ pub async fn insert(
     .fetch_one(executor)
     .await
     .map_err(|e| match e {
-        sqlx::Error::Database(ref db_err) if db_err.constraint().is_some() => {
+        sqlx::Error::Database(ref db_err)
+            if db_err.constraint() == Some("teams_company_id_name_key") =>
+        {
             AppError::Conflict(format!("A team named '{}' already exists", name))
         }
         _ => AppError::Database(e),
@@ -67,8 +69,8 @@ pub async fn update(
         Team,
         r#"UPDATE teams SET
             name = COALESCE($3, name),
-            description = COALESCE($4, description),
-            tag = COALESCE($5, tag),
+            description = CASE WHEN $4::text IS NULL THEN description ELSE NULLIF(BTRIM($4), '') END,
+            tag = CASE WHEN $5::text IS NULL THEN tag ELSE NULLIF(BTRIM($5), '') END,
             is_active = COALESCE($6, is_active),
             updated_by = $7,
             updated_at = NOW()

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, Navigate, Link, useSearchParams } from 'react-router';
 import type { User } from '@/types';
 import { useQuery } from '@tanstack/react-query';
@@ -15,8 +15,9 @@ import { BrandLogo } from '@/components/ui/BrandLogo';
 import { TwoFactorPrompt } from '@/components/TwoFactorPrompt';
 import { GoogleIcon } from '@/components/ui/GoogleIcon';
 import { getGoogleAuthorizeUrl, getOAuth2Providers } from '@/api/oauth2';
-import { TurnstileWidget, type TurnstileWidgetRef } from '@/components/TurnstileWidget';
+import { TurnstileWidget } from '@/components/TurnstileWidget';
 import { turnstileEnabled } from '@/lib/turnstile';
+import { useTurnstileWaiter } from '@/lib/useTurnstileWaiter';
 
 export function Login() {
   const [email, setEmail] = useState('');
@@ -44,35 +45,15 @@ export function Login() {
   // One widget serves every submit on this page (password, passkey, Google).
   // Tokens are single-use, so each send takes the current token, clears it,
   // and resets the widget to mint the next one.
-  const turnstileRef = useRef<TurnstileWidgetRef>(null);
-  const turnstileToken = useRef<string | undefined>(undefined);
-  const takeTurnstileToken = () => {
-    const token = turnstileToken.current;
-    turnstileToken.current = undefined;
-    turnstileRef.current?.reset();
-    return token;
-  };
-
-  // The widget mints asynchronously after mount — a fast click would send an
-  // empty token and fail closed on the server. Wait for the next onVerify
-  // (or the timeout) instead of erroring immediately.
-  const turnstileWaiter = useRef<(() => void) | null>(null);
-  const waitForTurnstileToken = (): Promise<string | undefined> => {
-    if (!turnstileEnabled() || turnstileToken.current) {
-      return Promise.resolve(takeTurnstileToken());
-    }
-    return new Promise((resolve) => {
-      const timeout = window.setTimeout(() => {
-        turnstileWaiter.current = null;
-        resolve(takeTurnstileToken());
-      }, 5000);
-      turnstileWaiter.current = () => {
-        window.clearTimeout(timeout);
-        turnstileWaiter.current = null;
-        resolve(takeTurnstileToken());
-      };
-    });
-  };
+  const {
+    widgetRef: turnstileRef,
+    takeToken: takeTurnstileToken,
+    waitForToken: waitForTurnstileToken,
+    handleVerify: handleTurnstileVerify,
+    handleExpire: handleTurnstileExpire,
+    handleError: handleTurnstileError,
+  } = useTurnstileWaiter();
+  const anySubmitting = loading || passkeyLoading || googleLoading;
 
   const { data: providers, isPending: providersPending } = useQuery({
     queryKey: ['oauth2-providers'],
@@ -98,7 +79,7 @@ export function Login() {
       }
     }, 500);
     return () => clearTimeout(timer);
-  }, [email, webauthnSupported]);
+  }, [email, takeTurnstileToken, webauthnSupported]);
 
   if (isAuthenticated && user) {
     if (user.must_change_password) {
@@ -227,16 +208,9 @@ export function Login() {
   const turnstile = (
     <TurnstileWidget
       ref={turnstileRef}
-      onVerify={(t) => {
-        turnstileToken.current = t;
-        turnstileWaiter.current?.();
-      }}
-      onExpire={() => {
-        turnstileToken.current = undefined;
-      }}
-      onError={() => {
-        turnstileToken.current = undefined;
-      }}
+      onVerify={handleTurnstileVerify}
+      onExpire={handleTurnstileExpire}
+      onError={handleTurnstileError}
     />
   );
 
@@ -334,7 +308,7 @@ export function Login() {
 
                   <button
                     type="submit"
-                    disabled={loading}
+                    disabled={anySubmitting}
                     className="w-full min-h-11 bg-gradient-to-r from-slate-900 to-slate-700 dark:from-indigo-600 dark:to-indigo-500 text-white py-2.5 rounded-xl font-semibold shadow-lg hover:shadow-[0_10px_30px_-8px_rgba(99,102,241,0.5),0_10px_30px_-8px_rgba(20,184,166,0.4)] hover:-translate-y-px active:translate-y-0 disabled:opacity-50 disabled:shadow-none transition-all"
                   >
                     {loading ? t('auth.signingIn') : t('auth.signIn')}
@@ -352,7 +326,7 @@ export function Login() {
                     <button
                       type="button"
                       onClick={handleGoogleLogin}
-                      disabled={googleLoading}
+                      disabled={anySubmitting}
                       className="w-full min-h-11 flex items-center justify-center gap-3 py-2.5 px-4 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl text-sm font-medium text-gray-700 dark:text-slate-100 hover:border-gray-300 dark:hover:border-slate-600 hover:shadow-md hover:-translate-y-px disabled:opacity-50 transition-all"
                     >
                       <GoogleIcon />
@@ -438,7 +412,7 @@ export function Login() {
 
                     <button
                       type="submit"
-                      disabled={loading}
+                      disabled={anySubmitting}
                       className="w-full min-h-11 bg-gradient-to-r from-slate-900 to-slate-700 dark:from-indigo-600 dark:to-indigo-500 text-white py-2.5 rounded-xl font-semibold shadow-lg hover:shadow-[0_10px_30px_-8px_rgba(99,102,241,0.5),0_10px_30px_-8px_rgba(20,184,166,0.4)] hover:-translate-y-px active:translate-y-0 disabled:opacity-50 disabled:shadow-none transition-all"
                     >
                       {loading ? t('auth.signingIn') : t('auth.signIn')}
@@ -472,7 +446,7 @@ export function Login() {
                           <button
                             type="button"
                             onClick={handlePasskeyLogin}
-                            disabled={passkeyLoading}
+                            disabled={anySubmitting}
                             className="min-h-11 flex flex-col items-center justify-center gap-1.5 py-2.5 px-2 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl text-xs font-medium text-gray-600 dark:text-slate-200 hover:border-gray-300 dark:hover:border-slate-600 hover:shadow-sm disabled:opacity-50 transition-all"
                           >
                             <Fingerprint className="w-5 h-5" />
@@ -481,16 +455,24 @@ export function Login() {
                         )}
                         <button
                           type="button"
-                          onClick={() => setCodeMethod('totp')}
-                          className="min-h-11 flex flex-col items-center justify-center gap-1.5 py-2.5 px-2 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl text-xs font-medium text-gray-600 dark:text-slate-200 hover:border-gray-300 dark:hover:border-slate-600 hover:shadow-sm transition-all"
+                          onClick={() => {
+                            setError('');
+                            setCodeMethod('totp');
+                          }}
+                          disabled={anySubmitting}
+                          className="min-h-11 flex flex-col items-center justify-center gap-1.5 py-2.5 px-2 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl text-xs font-medium text-gray-600 dark:text-slate-200 hover:border-gray-300 dark:hover:border-slate-600 hover:shadow-sm disabled:opacity-50 transition-all"
                         >
                           <Smartphone className="w-5 h-5" />
                           {t('auth.authenticator')}
                         </button>
                         <button
                           type="button"
-                          onClick={() => setCodeMethod('backup')}
-                          className="min-h-11 flex flex-col items-center justify-center gap-1.5 py-2.5 px-2 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl text-xs font-medium text-gray-600 dark:text-slate-200 hover:border-gray-300 dark:hover:border-slate-600 hover:shadow-sm transition-all"
+                          onClick={() => {
+                            setError('');
+                            setCodeMethod('backup');
+                          }}
+                          disabled={anySubmitting}
+                          className="min-h-11 flex flex-col items-center justify-center gap-1.5 py-2.5 px-2 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl text-xs font-medium text-gray-600 dark:text-slate-200 hover:border-gray-300 dark:hover:border-slate-600 hover:shadow-sm disabled:opacity-50 transition-all"
                         >
                           <LifeBuoy className="w-5 h-5" />
                           {t('auth.recoveryCode')}

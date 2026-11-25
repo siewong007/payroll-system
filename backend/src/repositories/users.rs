@@ -165,6 +165,7 @@ pub async fn list_page(
     limit: i64,
     offset: i64,
 ) -> AppResult<Vec<UserRow>> {
+    let escaped = search.map(crate::repositories::escape_like);
     let users = sqlx::query_as!(
         UserRow,
         r#"SELECT u.id, u.email, u.full_name, u.roles, u.company_id,
@@ -175,12 +176,12 @@ pub async fn list_page(
                     SELECT 1 FROM user_companies uc
                     WHERE uc.user_id = u.id AND uc.company_id = $1))
               AND ($2::text IS NULL
-                    OR u.full_name ILIKE '%' || $2 || '%'
-                    OR u.email ILIKE '%' || $2 || '%')
+                    OR u.full_name ILIKE '%' || $2 || '%' ESCAPE '\'
+                    OR u.email ILIKE '%' || $2 || '%' ESCAPE '\')
             ORDER BY u.created_at DESC
             LIMIT $3 OFFSET $4"#,
         company_id,
-        search,
+        escaped.as_deref(),
         limit,
         offset,
     )
@@ -195,6 +196,7 @@ pub async fn count_all(
     company_id: Option<Uuid>,
     search: Option<&str>,
 ) -> AppResult<i64> {
+    let escaped = search.map(crate::repositories::escape_like);
     let total = sqlx::query_scalar!(
         r#"SELECT COUNT(*) AS "count!"
             FROM users u
@@ -203,10 +205,10 @@ pub async fn count_all(
                     SELECT 1 FROM user_companies uc
                     WHERE uc.user_id = u.id AND uc.company_id = $1))
               AND ($2::text IS NULL
-                    OR u.full_name ILIKE '%' || $2 || '%'
-                    OR u.email ILIKE '%' || $2 || '%')"#,
+                    OR u.full_name ILIKE '%' || $2 || '%' ESCAPE '\'
+                    OR u.email ILIKE '%' || $2 || '%' ESCAPE '\')"#,
         company_id,
-        search,
+        escaped.as_deref(),
     )
     .fetch_one(executor)
     .await?;
@@ -223,6 +225,7 @@ pub async fn list_page_by_role(
     limit: i64,
     offset: i64,
 ) -> AppResult<Vec<UserRow>> {
+    let escaped = search.map(crate::repositories::escape_like);
     let users = sqlx::query_as::<_, UserRow>(
         r#"SELECT u.id, u.email, u.full_name, u.roles, u.company_id,
                 u.employee_id, u.is_active, u.created_at
@@ -232,14 +235,14 @@ pub async fn list_page_by_role(
                     SELECT 1 FROM user_companies uc
                     WHERE uc.user_id = u.id AND uc.company_id = $1))
               AND ($2::text IS NULL
-                    OR u.full_name ILIKE '%' || $2 || '%'
-                    OR u.email ILIKE '%' || $2 || '%')
+                    OR u.full_name ILIKE '%' || $2 || '%' ESCAPE '\'
+                    OR u.email ILIKE '%' || $2 || '%' ESCAPE '\')
               AND $3 = ANY(u.roles)
             ORDER BY u.created_at DESC
             LIMIT $4 OFFSET $5"#,
     )
     .bind(company_id)
-    .bind(search)
+    .bind(escaped.as_deref())
     .bind(role)
     .bind(limit)
     .bind(offset)
@@ -255,6 +258,7 @@ pub async fn count_all_by_role(
     search: Option<&str>,
     role: &str,
 ) -> AppResult<i64> {
+    let escaped = search.map(crate::repositories::escape_like);
     let total = sqlx::query_scalar::<_, i64>(
         r#"SELECT COUNT(*)
             FROM users u
@@ -263,30 +267,33 @@ pub async fn count_all_by_role(
                     SELECT 1 FROM user_companies uc
                     WHERE uc.user_id = u.id AND uc.company_id = $1))
               AND ($2::text IS NULL
-                    OR u.full_name ILIKE '%' || $2 || '%'
-                    OR u.email ILIKE '%' || $2 || '%')
+                    OR u.full_name ILIKE '%' || $2 || '%' ESCAPE '\'
+                    OR u.email ILIKE '%' || $2 || '%' ESCAPE '\')
               AND $3 = ANY(u.roles)"#,
     )
     .bind(company_id)
-    .bind(search)
+    .bind(escaped.as_deref())
     .bind(role)
     .fetch_one(executor)
     .await?;
     Ok(total)
 }
 
-/// Number of live accounts holding `super_admin`. Checked inside the update and
-/// delete transactions so the platform can never be left unadministrable.
+/// Number of live accounts holding `super_admin`. Locks the matching rows
+/// `FOR UPDATE` so concurrent demotions/deletions inside transactions serialize
+/// instead of both observing count == 2.
 pub async fn count_active_super_admins(
     executor: impl Executor<'_, Database = Postgres>,
 ) -> AppResult<i64> {
-    let count = sqlx::query_scalar!(
-        r#"SELECT COUNT(*) AS "count!" FROM users
-        WHERE 'super_admin' = ANY(roles) AND is_active = TRUE AND deleted_at IS NULL"#,
+    let ids = sqlx::query_scalar!(
+        r#"SELECT id FROM users
+        WHERE 'super_admin' = ANY(roles) AND is_active = TRUE AND deleted_at IS NULL
+        ORDER BY id
+        FOR UPDATE"#,
     )
-    .fetch_one(executor)
+    .fetch_all(executor)
     .await?;
-    Ok(count)
+    Ok(ids.len() as i64)
 }
 
 pub async fn get_projection_by_id(
@@ -370,6 +377,53 @@ pub async fn update_active_company(
     sqlx::query!(
         "UPDATE users SET company_id = $2, updated_at = NOW() WHERE id = $1",
         id,
+        company_id,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
+/// Role sets of every live login linked to `employee_id`. Usually zero or one
+/// row; an employee promoted to a staff role keeps the link.
+pub async fn roles_linked_to_employee(
+    executor: impl Executor<'_, Database = Postgres>,
+    employee_id: Uuid,
+) -> AppResult<Vec<Vec<String>>> {
+    let rows = sqlx::query_scalar!(
+        r#"SELECT roles AS "roles!: Vec<String>" FROM users
+        WHERE employee_id = $1 AND deleted_at IS NULL"#,
+        employee_id,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(rows)
+}
+
+/// Detach staff logins (anything beyond a sole `employee` role) from a deleted
+/// employee record, so the login keeps working in its other companies instead
+/// of failing every request on the deleted employee. If the login's active
+/// company was the deleted employee's, it moves to one of its remaining
+/// memberships (or none). Run after the membership for `company_id` is removed.
+pub async fn unlink_staff_from_employee(
+    executor: impl Executor<'_, Database = Postgres>,
+    employee_id: Uuid,
+    company_id: Uuid,
+) -> AppResult<()> {
+    sqlx::query!(
+        r#"UPDATE users SET
+            employee_id = NULL,
+            company_id = CASE WHEN company_id = $2 THEN (
+                SELECT uc.company_id FROM user_companies uc
+                WHERE uc.user_id = users.id
+                ORDER BY uc.company_id
+                LIMIT 1
+            ) ELSE company_id END,
+            updated_at = NOW()
+        WHERE employee_id = $1
+            AND deleted_at IS NULL
+            AND NOT (roles <@ ARRAY['employee']::VARCHAR(50)[])"#,
+        employee_id,
         company_id,
     )
     .execute(executor)
@@ -530,6 +584,25 @@ pub async fn soft_delete_by_employee(
     .execute(executor)
     .await?;
     Ok(())
+}
+
+/// Lock non-deleted user rows before mutating roles or group memberships.
+pub async fn lock_for_update(
+    executor: impl Executor<'_, Database = Postgres>,
+    user_ids: &[Uuid],
+) -> AppResult<Vec<UserRow>> {
+    let rows = sqlx::query_as!(
+        UserRow,
+        r#"SELECT id, email, full_name, roles, company_id, employee_id, is_active, created_at
+        FROM users
+        WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL
+        ORDER BY id
+        FOR UPDATE"#,
+        user_ids,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(rows)
 }
 
 /// The employee a user account is linked to, if any.

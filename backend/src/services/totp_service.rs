@@ -133,7 +133,14 @@ pub async fn begin_setup(
     let qr_code_base64 = totp.get_qr_base64().map_err(AppError::Internal)?;
 
     let encrypted = crypto::encrypt_secret(&secret_b32, encryption_key)?;
-    user_totp::upsert_pending(pool, user.id, &encrypted).await?;
+    if user_totp::upsert_pending(pool, user.id, &encrypted)
+        .await?
+        .is_none()
+    {
+        return Err(AppError::Conflict(
+            "2FA is already enabled. Disable it before setting up again.".into(),
+        ));
+    }
 
     Ok(TotpSetupResponse {
         secret: secret_b32,
@@ -175,12 +182,20 @@ pub async fn confirm_setup_with_session(
     let secret_b32 = crypto::decrypt_secret(&row.secret_encrypted, encryption_key)?;
     let totp = build_totp(secret_to_bytes(&secret_b32)?, "")?;
 
-    let valid = totp
-        .check_current(code)
-        .map_err(|e| AppError::Internal(format!("Failed to check code: {e}")))?;
-    if !valid {
-        return Err(AppError::Unauthorized("Invalid authentication code".into()));
+    let trimmed = code.trim();
+    let now_step = chrono::Utc::now().timestamp() / 30;
+    let mut matched_step: Option<i64> = None;
+    for offset in [-1i64, 0, 1] {
+        let step = now_step + offset;
+        if step >= 0 {
+            let expected = totp.generate((step as u64) * 30);
+            if constant_time_eq(trimmed.as_bytes(), expected.as_bytes()) {
+                matched_step = Some(step);
+            }
+        }
     }
+    let matched_step =
+        matched_step.ok_or_else(|| AppError::Unauthorized("Invalid authentication code".into()))?;
 
     let backup_codes = generate_backup_codes();
     let lookup_hashes: Vec<String> = backup_codes
@@ -190,7 +205,7 @@ pub async fn confirm_setup_with_session(
     let hashes = hash_backup_codes(backup_codes.clone()).await?;
 
     let mut tx = pool.begin().await?;
-    user_totp::confirm(&mut *tx, user_id).await?;
+    user_totp::confirm(&mut *tx, user_id, matched_step).await?;
     user_totp_backup_codes::delete_for_user(&mut *tx, user_id).await?;
     user_totp_backup_codes::insert_many(&mut *tx, user_id, &hashes, &lookup_hashes).await?;
     if let Some(sid) = current_session_id {
@@ -221,8 +236,11 @@ pub async fn confirm_setup_with_session(
     Ok(backup_codes)
 }
 
-pub async fn is_enabled(pool: &PgPool, user_id: Uuid) -> AppResult<bool> {
-    Ok(user_totp::find_by_user(pool, user_id)
+pub async fn is_enabled<'e>(
+    executor: impl sqlx::Executor<'e, Database = sqlx::Postgres>,
+    user_id: Uuid,
+) -> AppResult<bool> {
+    Ok(user_totp::find_by_user(executor, user_id)
         .await?
         .map(|r| r.enabled)
         .unwrap_or(false))
@@ -239,6 +257,28 @@ pub async fn verify_login_code(
     user_id: Uuid,
     code: &str,
     encryption_key: &str,
+) -> AppResult<()> {
+    verify_code_inner(pool, user_id, code, encryption_key, true).await
+}
+
+/// Passwordless `/auth/login/code` variant: verifies the code without mutating
+/// `user_totp.failed_attempts` / `locked_until` so unauthenticated callers
+/// cannot DoS-lock a victim's normal password + 2FA login flow.
+pub async fn verify_code_login(
+    pool: &PgPool,
+    user_id: Uuid,
+    code: &str,
+    encryption_key: &str,
+) -> AppResult<()> {
+    verify_code_inner(pool, user_id, code, encryption_key, false).await
+}
+
+async fn verify_code_inner(
+    pool: &PgPool,
+    user_id: Uuid,
+    code: &str,
+    encryption_key: &str,
+    record_lockout: bool,
 ) -> AppResult<()> {
     let row = user_totp::find_by_user(pool, user_id)
         .await?
@@ -275,8 +315,10 @@ pub async fn verify_login_code(
                 if user_totp::claim_totp_step(pool, user_id, step).await? {
                     return Ok(());
                 }
-                user_totp::record_failure(pool, user_id, MAX_2FA_ATTEMPTS, LOCK_2FA_MINUTES)
-                    .await?;
+                if record_lockout {
+                    user_totp::record_failure(pool, user_id, MAX_2FA_ATTEMPTS, LOCK_2FA_MINUTES)
+                        .await?;
+                }
                 return Err(AppError::Unauthorized("Invalid authentication code".into()));
             }
         }
@@ -332,7 +374,9 @@ pub async fn verify_login_code(
         return Ok(());
     }
 
-    user_totp::record_failure(pool, user_id, MAX_2FA_ATTEMPTS, LOCK_2FA_MINUTES).await?;
+    if record_lockout {
+        user_totp::record_failure(pool, user_id, MAX_2FA_ATTEMPTS, LOCK_2FA_MINUTES).await?;
+    }
     Err(AppError::Unauthorized("Invalid authentication code".into()))
 }
 

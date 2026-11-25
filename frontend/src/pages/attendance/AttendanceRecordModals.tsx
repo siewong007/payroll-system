@@ -379,7 +379,7 @@ export function RecordCard({
         <div className="min-w-0">
           <p className="font-medium text-gray-900 dark:text-slate-100 line-clamp-2">{r.full_name}</p>
           <p className="text-xs text-gray-400 dark:text-slate-500 truncate">
-            {r.employee_number} · {formatDate(r.check_in_at)}
+            {r.employee_number} · {formatDate(r.check_in_at, timeZone)}
           </p>
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
@@ -419,7 +419,7 @@ export function RecordCard({
           </p>
           <p className="mt-0.5 flex items-center gap-1.5 text-sm tabular-nums text-gray-700 dark:text-slate-200">
             <LogIn className="w-3.5 h-3.5 shrink-0 text-emerald-500 dark:text-emerald-400" />
-            {isAbsentPlaceholder ? '—' : formatTime(r.check_in_at)}
+            {isAbsentPlaceholder ? '—' : formatTime(r.check_in_at, timeZone)}
           </p>
         </div>
         <div>
@@ -428,7 +428,7 @@ export function RecordCard({
           </p>
           <p className="mt-0.5 flex items-center gap-1.5 text-sm tabular-nums text-gray-700 dark:text-slate-200">
             <LogOut className="w-3.5 h-3.5 shrink-0 text-gray-400 dark:text-slate-500" />
-            {isAbsentPlaceholder ? '—' : formatTime(r.check_out_at)}
+            {isAbsentPlaceholder ? '—' : formatTime(r.check_out_at, timeZone)}
             {overnightOut && (
               <span className="rounded bg-gray-100 dark:bg-slate-800 px-1 py-px text-[10px] font-medium text-gray-600 dark:text-slate-300">
                 {t('attendance.records.nextDay')}

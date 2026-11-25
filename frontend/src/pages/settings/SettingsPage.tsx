@@ -8,6 +8,7 @@ import {
   Calculator,
   Check,
   Landmark,
+  Mail,
   MonitorSmartphone,
   ShieldCheck,
   SlidersHorizontal,
@@ -34,12 +35,13 @@ const SECTION_ICONS: Record<string, LucideIcon> = {
   payroll: Calculator,
   statutory: Landmark,
   notifications: Bell,
+  email: Mail,
   security: ShieldCheck,
   sessions: MonitorSmartphone,
   app: Smartphone,
 };
 
-const WORKSPACE_ORDER = ['system', 'payroll', 'statutory', 'notifications'];
+const WORKSPACE_ORDER = ['system', 'payroll', 'statutory', 'notifications', 'email'];
 const ACCOUNT_SECTIONS = ['security', 'sessions', 'app'];
 
 export function SettingsPage() {
@@ -72,12 +74,20 @@ export function SettingsPage() {
     return map;
   }, [settings]);
 
+  const workspaceCategories = useMemo(
+    () => [
+      ...WORKSPACE_ORDER.filter((c) => grouped[c]?.length),
+      ...Object.keys(grouped).filter((c) => !WORKSPACE_ORDER.includes(c) && grouped[c]?.length),
+    ],
+    [grouped],
+  );
+
   const sections = useMemo<SettingsNavItem[]>(
     () => [
-      ...WORKSPACE_ORDER.filter((c) => grouped[c]?.length).map((c) => ({
+      ...workspaceCategories.map((c) => ({
         id: c,
-        label: t(`settings.sections.${c}.label`),
-        icon: SECTION_ICONS[c],
+        label: t(`settings.sections.${c}.label`, { defaultValue: c }),
+        icon: SECTION_ICONS[c] ?? SlidersHorizontal,
         group: 'Workspace' as const,
       })),
       ...ACCOUNT_SECTIONS.map((id) => ({
@@ -87,7 +97,7 @@ export function SettingsPage() {
         group: 'Account' as const,
       })),
     ],
-    [grouped, t],
+    [workspaceCategories, t],
   );
 
   const requested = searchParams.get('section');
@@ -142,7 +152,7 @@ export function SettingsPage() {
     setSearchParams({ section: id });
   };
 
-  const isWorkspace = WORKSPACE_ORDER.includes(active);
+  const isWorkspace = workspaceCategories.includes(active);
 
   if (isLoading) {
     return (
@@ -192,8 +202,8 @@ export function SettingsPage() {
         <div key={active} className="mt-4 lg:mt-0 animate-fade-up">
           {isWorkspace ? (
             <CompanyCategorySection
-              title={t(`settings.sections.${active}.label`)}
-              description={t(`settings.sections.${active}.description`)}
+              title={t(`settings.sections.${active}.label`, { defaultValue: active })}
+              description={t(`settings.sections.${active}.description`, { defaultValue: '' })}
               settings={grouped[active] ?? []}
               edits={edits}
               onEdit={(s, v) => setEdits((prev) => ({ ...prev, [`${s.category}/${s.key}`]: v }))}

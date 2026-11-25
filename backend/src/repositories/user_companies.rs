@@ -70,13 +70,36 @@ pub async fn delete_by_user(
     Ok(())
 }
 
+/// Remove company memberships no longer in `keep_company_ids` without touching
+/// retained companies (so the cleanup trigger never wipes group memberships or
+/// notifications in retained companies).
+pub async fn delete_removed(
+    executor: impl Executor<'_, Database = Postgres>,
+    user_id: Uuid,
+    keep_company_ids: &[Uuid],
+) -> AppResult<()> {
+    sqlx::query!(
+        "DELETE FROM user_companies WHERE user_id = $1 AND NOT (company_id = ANY($2::uuid[]))",
+        user_id,
+        keep_company_ids,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
+/// Remove the employee's company membership from every login linked to the
+/// employee (employee-only and staff logins alike), leaving any other company
+/// memberships on a staff login intact.
 pub async fn delete_by_employee(
     executor: impl Executor<'_, Database = Postgres>,
     employee_id: Uuid,
+    company_id: Uuid,
 ) -> AppResult<()> {
     sqlx::query!(
-        "DELETE FROM user_companies WHERE user_id IN (SELECT id FROM users WHERE employee_id = $1)",
+        "DELETE FROM user_companies WHERE company_id = $2 AND user_id IN (SELECT id FROM users WHERE employee_id = $1)",
         employee_id,
+        company_id,
     )
     .execute(executor)
     .await?;

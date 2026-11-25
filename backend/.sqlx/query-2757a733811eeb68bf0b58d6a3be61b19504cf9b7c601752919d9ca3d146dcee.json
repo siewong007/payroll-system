@@ -1,0 +1,53 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, pcb_amount, total_deductions, net_salary, ytd_pcb, ytd_net\n        FROM payroll_items\n        WHERE payroll_run_id = $1 AND employee_id = $2\n        FOR UPDATE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "pcb_amount",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "total_deductions",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "net_salary",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "ytd_pcb",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "ytd_net",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "2757a733811eeb68bf0b58d6a3be61b19504cf9b7c601752919d9ca3d146dcee"
+}

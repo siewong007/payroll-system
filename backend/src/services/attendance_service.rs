@@ -39,7 +39,7 @@ fn normalize_absent_check_out(
     check_out_at: Option<chrono::DateTime<Utc>>,
 ) -> Option<chrono::DateTime<Utc>> {
     if status == "absent" {
-        Some(check_out_at.unwrap_or(check_in_at))
+        Some(check_in_at)
     } else {
         check_out_at
     }
@@ -220,20 +220,21 @@ pub async fn set_company_attendance_method(
 /// surface. `kiosk_credential_id` is `None` for the admin console; each kiosk
 /// retires only its own tokens, so kiosks on staggered refresh cycles no longer
 /// revoke each other's still-displayed codes.
-pub async fn generate_qr_token(
-    pool: &PgPool,
+async fn mint_qr_token_on(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     company_id: Uuid,
     frontend_url: &str,
     kiosk_credential_id: Option<Uuid>,
 ) -> AppResult<QrTokenResponse> {
-    attendance_qr_tokens::revoke_unused_for_issuer(pool, company_id, kiosk_credential_id).await?;
+    attendance_qr_tokens::revoke_unused_for_issuer(&mut **tx, company_id, kiosk_credential_id)
+        .await?;
 
     let token = Uuid::new_v4().to_string().replace('-', "");
     let token_hash = sha256_hex(&token);
     let expires_at = Utc::now() + chrono::Duration::seconds(QR_TOKEN_TTL_SECONDS);
 
     attendance_qr_tokens::insert(
-        pool,
+        &mut **tx,
         company_id,
         &token_hash,
         expires_at,
@@ -241,7 +242,11 @@ pub async fn generate_qr_token(
     )
     .await?;
 
-    let scan_url = format!("{}/attendance/scan?token={}", frontend_url, token);
+    let scan_url = format!(
+        "{}/attendance/scan?token={}",
+        frontend_url.trim_end_matches('/'),
+        token
+    );
 
     Ok(QrTokenResponse {
         token,
@@ -249,6 +254,18 @@ pub async fn generate_qr_token(
         scan_url,
         ttl_seconds: QR_TOKEN_TTL_SECONDS,
     })
+}
+
+pub async fn generate_qr_token(
+    pool: &PgPool,
+    company_id: Uuid,
+    frontend_url: &str,
+    kiosk_credential_id: Option<Uuid>,
+) -> AppResult<QrTokenResponse> {
+    let mut tx = pool.begin().await?;
+    let resp = mint_qr_token_on(&mut tx, company_id, frontend_url, kiosk_credential_id).await?;
+    tx.commit().await?;
+    Ok(resp)
 }
 
 /// Validate a QR token without consuming it — multiple employees may check in with the
@@ -492,17 +509,20 @@ pub async fn generate_qr_via_kiosk(
     client_ip: Option<&str>,
 ) -> AppResult<(QrTokenResponse, Uuid)> {
     let hash = sha256_hex(presented_secret);
-    let cred = attendance_kiosk_credentials::find_active_by_hash(pool, &hash).await?;
+    let mut tx = pool.begin().await?;
+    let cred = attendance_kiosk_credentials::find_active_by_hash_locked(&mut *tx, &hash).await?;
 
     let cred = match cred {
         Some(c) => c,
         None => {
+            drop(tx);
             tokio::time::sleep(Duration::from_millis(150)).await;
             return Err(AppError::Unauthorized("Invalid kiosk credential".into()));
         }
     };
 
-    let resp = generate_qr_token(pool, cred.company_id, frontend_url, Some(cred.id)).await?;
+    let resp = mint_qr_token_on(&mut tx, cred.company_id, frontend_url, Some(cred.id)).await?;
+    tx.commit().await?;
 
     // Best-effort heartbeat; failure to record this should not block the kiosk.
     if let Err(e) = attendance_kiosk_credentials::mark_used(pool, cred.id, client_ip).await {
@@ -537,18 +557,43 @@ pub(crate) async fn determine_checkin_status(
         None => company_work_schedules::find_default_timing(pool, company_id).await?,
     };
 
-    let Some((start_time, grace_minutes)) = timing else {
+    let Some((start_time, end_time, grace_minutes)) = timing else {
         // No schedule configured at all — nothing to be late against.
         return Ok("present".to_string());
     };
 
-    let cutoff = start_time + chrono::Duration::minutes(grace_minutes as i64);
+    Ok(
+        if is_arrival_late(now_local, start_time, end_time, grace_minutes) {
+            "late".to_string()
+        } else {
+            "present".to_string()
+        },
+    )
+}
 
-    Ok(if now_local > cutoff {
-        "late".to_string()
-    } else {
-        "present".to_string()
-    })
+pub(crate) fn is_arrival_late(
+    now_local: chrono::NaiveTime,
+    start_time: chrono::NaiveTime,
+    end_time: chrono::NaiveTime,
+    grace_minutes: i32,
+) -> bool {
+    use chrono::Timelike;
+    let start_mins = (start_time.hour() * 60 + start_time.minute()) as i64;
+    let end_mins = (end_time.hour() * 60 + end_time.minute()) as i64;
+    let now_mins = (now_local.hour() * 60 + now_local.minute()) as i64;
+    let shift_len = (end_mins - start_mins).rem_euclid(1440);
+    // Signed cyclic offset in [0, 1440) minutes after `start_time`.
+    // Arrivals outside the active shift window and up to 6 hours before shift start
+    // (delta >= 1080) are early ("present").
+    let delta = (now_mins - start_mins).rem_euclid(1440);
+    if delta > shift_len && delta >= 1080 {
+        return false;
+    }
+    if delta > grace_minutes as i64 {
+        return true;
+    }
+    // Same minute past `start_time + grace_minutes`: check seconds past the boundary.
+    delta == grace_minutes as i64 && now_local.second() > start_time.second()
 }
 
 /// Get the timezone for a company from its work schedule (fallback to default)
@@ -850,9 +895,6 @@ pub async fn get_today_checkin(
     company_id: Uuid,
 ) -> AppResult<Option<AttendanceRecord>> {
     let tz = get_company_timezone(pool, company_id).await;
-    if let Some(record) = attendance_records::get_today(pool, employee_id, &tz).await? {
-        return Ok(Some(record));
-    }
     if let Some((record, _, _)) =
         attendance_records::find_open_with_local_date(pool, employee_id, &tz).await?
         && record.company_id == company_id
@@ -860,7 +902,7 @@ pub async fn get_today_checkin(
     {
         return Ok(Some(record));
     }
-    Ok(None)
+    attendance_records::get_today(pool, employee_id, &tz).await
 }
 
 pub async fn manual_attendance(
@@ -887,6 +929,11 @@ pub async fn manual_attendance(
         ));
     }
     let check_out_at = normalize_absent_check_out(status, req.check_in_at, req.check_out_at);
+    if check_out_at.is_none() && req.check_in_at > Utc::now() {
+        return Err(AppError::BadRequest(
+            "An open attendance record cannot have a future check-in time".into(),
+        ));
+    }
     if check_out_at.is_some_and(|check_out| check_out < req.check_in_at) {
         return Err(AppError::BadRequest(
             "Check-out time must not be before check-in time".into(),
@@ -894,7 +941,7 @@ pub async fn manual_attendance(
     }
     validate_correction_span(req.check_in_at, check_out_at)?;
 
-    let record = attendance_records::insert_manual(
+    let record = match attendance_records::insert_manual(
         pool,
         company_id,
         req.employee_id,
@@ -904,7 +951,18 @@ pub async fn manual_attendance(
         req.notes.as_deref(),
         created_by,
     )
-    .await?;
+    .await
+    {
+        Ok(r) => r,
+        Err(AppError::Database(sqlx::Error::Database(db_err)))
+            if db_err.code().as_deref() == Some("23505") =>
+        {
+            return Err(AppError::Conflict(
+                "This employee already has an open attendance session".into(),
+            ));
+        }
+        Err(e) => return Err(e),
+    };
 
     let _ = audit_service::log_action_with_metadata(
         pool,
@@ -1206,6 +1264,11 @@ fn auto_absent_due_range(
 /// the shared bookmark was written, so the next tick re-failed on the same date
 /// for every tenant until the owed days aged past the backfill cap.
 pub async fn run_auto_absent_catchup(pool: &PgPool) -> AppResult<i64> {
+    let (total, _failures) = run_auto_absent_catchup_with_health(pool).await?;
+    Ok(total)
+}
+
+pub async fn run_auto_absent_catchup_with_health(pool: &PgPool) -> AppResult<(i64, usize)> {
     // One clock read for the whole run; each company's local date is derived
     // from this instant in Rust. Converting per company in SQL would put every
     // tenant back in one failure domain — a single unparseable stored zone
@@ -1216,6 +1279,7 @@ pub async fn run_auto_absent_catchup(pool: &PgPool) -> AppResult<i64> {
 
     let targets = attendance_reads::auto_absent_targets(pool).await?;
     let mut total = 0i64;
+    let mut failures = 0usize;
 
     for target in &targets {
         let Some(tz) = timezone::parse(&target.timezone) else {
@@ -1224,6 +1288,7 @@ pub async fn run_auto_absent_catchup(pool: &PgPool) -> AppResult<i64> {
                 timezone = %target.timezone,
                 "auto-absent: skipping company with an unrecognised IANA timezone"
             );
+            failures += 1;
             continue;
         };
 
@@ -1250,9 +1315,7 @@ pub async fn run_auto_absent_catchup(pool: &PgPool) -> AppResult<i64> {
                         error = %e,
                         "auto-absent: company run failed; bookmark not advanced"
                     );
-                    // This tenant only, and stop at the first failed date: the
-                    // bookmark means "everything up to here is done", so dates
-                    // must complete in order. Retried on the next tick.
+                    failures += 1;
                     break;
                 }
             };
@@ -1268,6 +1331,7 @@ pub async fn run_auto_absent_catchup(pool: &PgPool) -> AppResult<i64> {
                     error = %e,
                     "auto-absent: bookmark write failed; this date will be re-run"
                 );
+                failures += 1;
                 break;
             }
 
@@ -1287,9 +1351,10 @@ pub async fn run_auto_absent_catchup(pool: &PgPool) -> AppResult<i64> {
     tracing::info!(
         companies = targets.len(),
         marked = total,
+        failures,
         "auto-absent: catch-up complete"
     );
-    Ok(total)
+    Ok((total, failures))
 }
 
 // ─── Attendance Summary ───
@@ -1427,6 +1492,9 @@ pub(crate) async fn export_attendance_csv_bounded(
         employee_id: q.employee_id,
         status: q.status.clone(),
         method: q.method.clone(),
+        open_only: q.open_only,
+        outside_geofence_only: q.outside_geofence_only,
+        offsite_network_only: q.offsite_network_only,
     };
 
     // The read asks for one row more than the ceiling; its presence is the

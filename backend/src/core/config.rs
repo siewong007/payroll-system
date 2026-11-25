@@ -77,12 +77,12 @@ impl AppConfig {
             google_client_secret: env::var("GOOGLE_CLIENT_SECRET")
                 .ok()
                 .filter(|v| !v.is_empty()),
-            smtp_host: env::var("SMTP_HOST").ok(),
+            smtp_host: env::var("SMTP_HOST").ok().filter(|v| !v.is_empty()),
             smtp_port: env::var("SMTP_PORT").ok().and_then(|p| p.parse().ok()),
-            smtp_username: env::var("SMTP_USERNAME").ok(),
-            smtp_password: env::var("SMTP_PASSWORD").ok(),
-            smtp_from_email: env::var("SMTP_FROM_EMAIL").ok(),
-            smtp_from_name: env::var("SMTP_FROM_NAME").ok(),
+            smtp_username: env::var("SMTP_USERNAME").ok().filter(|v| !v.is_empty()),
+            smtp_password: env::var("SMTP_PASSWORD").ok().filter(|v| !v.is_empty()),
+            smtp_from_email: env::var("SMTP_FROM_EMAIL").ok().filter(|v| !v.is_empty()),
+            smtp_from_name: env::var("SMTP_FROM_NAME").ok().filter(|v| !v.is_empty()),
             // Defaults to false: believing a forwarded header on a directly
             // reachable API lets anyone bypass the login rate limiter.
             trust_proxy_headers: env::var("TRUST_PROXY_HEADERS")
@@ -169,7 +169,11 @@ impl AppConfig {
     }
 
     pub fn smtp_enabled(&self) -> bool {
-        self.smtp_host.is_some() && self.smtp_from_email.is_some()
+        self.smtp_host.as_deref().is_some_and(|v| !v.is_empty())
+            && self
+                .smtp_from_email
+                .as_deref()
+                .is_some_and(|v| !v.is_empty())
     }
 }
 

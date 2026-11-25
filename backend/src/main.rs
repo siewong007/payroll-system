@@ -457,6 +457,22 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
 
+            match payroll_system::services::upload_service::purge_unreferenced_uploads(
+                &cleanup_pool,
+                24,
+            )
+            .await
+            {
+                Ok(rows) => {
+                    cleanup_processed += rows;
+                    tracing::info!(rows, "unreferenced-uploads retention: completed");
+                }
+                Err(e) => {
+                    tracing::error!("Failed to purge unreferenced uploads: {}", e);
+                    cleanup_errors.push(format!("uploaded_files: {e}"));
+                }
+            }
+
             let err_summary = if cleanup_errors.is_empty() {
                 None
             } else {
@@ -503,8 +519,8 @@ async fn main() -> anyhow::Result<()> {
         const AUTO_ABSENT_LOCK_KEY: i64 = 7_492_026_102;
 
         if let Some(lock_conn) = try_advisory_lock_guard(&absent_pool, AUTO_ABSENT_LOCK_KEY).await {
-            match attendance_service::run_auto_absent_catchup(&absent_pool).await {
-                Ok(count) => {
+            match attendance_service::run_auto_absent_catchup_with_health(&absent_pool).await {
+                Ok((count, 0)) => {
                     tracing::info!(marked = count, "auto-absent: startup catch-up completed");
                     job_health_service::record_job_run(
                         &absent_pool,
@@ -512,6 +528,22 @@ async fn main() -> anyhow::Result<()> {
                         true,
                         count as u64,
                         None,
+                    )
+                    .await;
+                }
+                Ok((count, failures)) => {
+                    let msg = format!("{failures} company catch-up run(s) failed");
+                    tracing::warn!(
+                        marked = count,
+                        failures,
+                        "auto-absent: startup catch-up completed with errors"
+                    );
+                    job_health_service::record_job_run(
+                        &absent_pool,
+                        JOB_AUTO_ABSENT,
+                        false,
+                        count as u64,
+                        Some(&msg),
                     )
                     .await;
                 }
@@ -557,8 +589,8 @@ async fn main() -> anyhow::Result<()> {
                 try_advisory_lock_guard(&absent_pool, AUTO_ABSENT_LOCK_KEY).await
             {
                 tracing::info!("auto-absent: tick fired; marking absentees");
-                match attendance_service::run_auto_absent_catchup(&absent_pool).await {
-                    Ok(count) => {
+                match attendance_service::run_auto_absent_catchup_with_health(&absent_pool).await {
+                    Ok((count, 0)) => {
                         tracing::info!(marked = count, "auto-absent: completed");
                         job_health_service::record_job_run(
                             &absent_pool,
@@ -566,6 +598,22 @@ async fn main() -> anyhow::Result<()> {
                             true,
                             count as u64,
                             None,
+                        )
+                        .await;
+                    }
+                    Ok((count, failures)) => {
+                        let msg = format!("{failures} company catch-up run(s) failed");
+                        tracing::warn!(
+                            marked = count,
+                            failures,
+                            "auto-absent: completed with errors"
+                        );
+                        job_health_service::record_job_run(
+                            &absent_pool,
+                            JOB_AUTO_ABSENT,
+                            false,
+                            count as u64,
+                            Some(&msg),
                         )
                         .await;
                     }
@@ -596,7 +644,7 @@ async fn main() -> anyhow::Result<()> {
     let outbox_handle = tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(15));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        let mut last_heartbeat = std::time::Instant::now() - std::time::Duration::from_secs(120);
+        let mut last_heartbeat: Option<std::time::Instant> = None;
 
         loop {
             tokio::select! {
@@ -608,7 +656,10 @@ async fn main() -> anyhow::Result<()> {
                 .await
             {
                 Ok((sent, failed)) => {
-                    if sent > 0 || failed > 0 || last_heartbeat.elapsed().as_secs() >= 60 {
+                    if sent > 0
+                        || failed > 0
+                        || last_heartbeat.is_none_or(|t| t.elapsed().as_secs() >= 60)
+                    {
                         let ok = failed == 0;
                         let err = if failed > 0 {
                             Some(format!("{failed} outbox email(s) failed delivery"))
@@ -623,7 +674,7 @@ async fn main() -> anyhow::Result<()> {
                             err.as_deref(),
                         )
                         .await;
-                        last_heartbeat = std::time::Instant::now();
+                        last_heartbeat = Some(std::time::Instant::now());
                     }
                 }
                 Err(e) => {
@@ -637,7 +688,7 @@ async fn main() -> anyhow::Result<()> {
                         Some(&msg),
                     )
                     .await;
-                    last_heartbeat = std::time::Instant::now();
+                    last_heartbeat = Some(std::time::Instant::now());
                 }
             }
         }

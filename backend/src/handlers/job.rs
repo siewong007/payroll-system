@@ -36,10 +36,18 @@ pub async fn status(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
+    if !auth.can(Permission::ViewPayroll) && !auth.can(Permission::ImportEmployees) {
+        return Err(AppError::Forbidden(
+            "Not authorized to view background jobs".into(),
+        ));
+    }
+
     let job = job_service::get(&state.pool, company_id, id).await?;
     let permission = read_permission(&job.job_type)
         .ok_or_else(|| AppError::Forbidden("This job type has no status endpoint".into()))?;
-    auth.require_permission(permission)?;
+    if !auth.can(permission) {
+        return Err(AppError::NotFound("Job not found".into()));
+    }
 
     Ok(Json(job))
 }

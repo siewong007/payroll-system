@@ -3,6 +3,7 @@ import type { Document, PaginatedResponse, CreateDocumentRequest, DocumentCatego
 
 export async function getDocuments(params?: {
   employee_id?: string;
+  company_wide?: boolean;
   category_id?: string;
   status?: string;
   search?: string;

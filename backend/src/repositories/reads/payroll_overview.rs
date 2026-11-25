@@ -234,11 +234,43 @@ pub async fn inactive_without_resignation(
 ) -> AppResult<(i64, Vec<ActionEmployeeRef>)> {
     employee_flags(
         executor,
-        "NOT is_active AND date_resigned IS NULL AND payroll_group_id IS NOT NULL",
+        "is_active IS NOT TRUE AND date_resigned IS NULL AND payroll_group_id IS NOT NULL",
         company_id,
         limit,
     )
     .await
+}
+
+/// Department breakdown for one period across all committed runs (`processed` through `paid`),
+/// matching `period_totals` so `overview` does not show period totals alongside empty departments.
+pub async fn department_totals_committed(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    year: i32,
+    month: i32,
+) -> AppResult<Vec<crate::models::report::DepartmentPayrollRow>> {
+    let rows = sqlx::query_as!(
+        crate::models::report::DepartmentPayrollRow,
+        r#"SELECT
+            e.department,
+            COUNT(DISTINCT pi.employee_id) AS "employee_count!",
+            COALESCE(SUM(pi.gross_salary), 0)::bigint AS "total_gross!",
+            COALESCE(SUM(pi.net_salary), 0)::bigint AS "total_net!",
+            COALESCE(SUM(pi.employer_cost), 0)::bigint AS "total_employer_cost!"
+        FROM payroll_items pi
+        JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
+        JOIN employees e ON pi.employee_id = e.id
+        WHERE pr.company_id = $1 AND pr.period_year = $2 AND pr.period_month = $3
+          AND pr.status::text IN ('processed', 'pending_approval', 'approved', 'paid')
+        GROUP BY e.department
+        ORDER BY COALESCE(SUM(pi.gross_salary), 0) DESC"#,
+        company_id,
+        year,
+        month,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(rows)
 }
 
 /// Citizens/PRs with no EPF number, or anyone with no TIN — statutory filings

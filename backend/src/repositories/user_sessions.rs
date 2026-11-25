@@ -89,7 +89,7 @@ pub async fn revoke_by_employee(
     employee_id: Uuid,
 ) -> AppResult<u64> {
     let result = sqlx::query!(
-        "UPDATE user_sessions SET revoked_at = NOW() WHERE user_id IN (SELECT id FROM users WHERE employee_id = $1) AND revoked_at IS NULL",
+        "UPDATE user_sessions SET revoked_at = NOW() WHERE user_id IN (SELECT id FROM users WHERE employee_id = $1 AND roles <@ ARRAY['employee']::VARCHAR(50)[]) AND revoked_at IS NULL",
         employee_id,
     )
     .execute(executor)

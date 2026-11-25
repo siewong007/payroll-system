@@ -50,11 +50,14 @@ export function Modal({ open, onClose, title, children, footer, maxWidth = 'max-
 
     return () => {
       const idx = openModalStack.indexOf(instanceId);
+      const wasTopmost = idx !== -1 && idx === openModalStack.length - 1;
       if (idx !== -1) {
         openModalStack.splice(idx, 1);
       }
       syncBodyScrollLock();
-      previousFocusRef.current?.focus?.();
+      if (wasTopmost) {
+        previousFocusRef.current?.focus?.();
+      }
     };
   }, [instanceId, open]);
 

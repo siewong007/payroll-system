@@ -26,7 +26,7 @@ fn parse_permission(key: &str) -> Option<Permission> {
 /// self-approval combinations inside one group.
 fn validate_permissions(keys: &[String]) -> AppResult<Vec<String>> {
     let mut validated: Vec<String> = Vec::with_capacity(keys.len());
-    let mut has_submit = false;
+    let mut has_prepare = false;
     let mut has_approve = false;
 
     for key in keys {
@@ -37,8 +37,11 @@ fn validate_permissions(keys: &[String]) -> AppResult<Vec<String>> {
                 "Platform permission '{key}' cannot be granted via user groups"
             )));
         }
-        if perm == Permission::SubmitPayroll {
-            has_submit = true;
+        if matches!(
+            perm,
+            Permission::SubmitPayroll | Permission::ManagePayrollDraft
+        ) {
+            has_prepare = true;
         }
         if perm == Permission::ApprovePayroll {
             has_approve = true;
@@ -48,9 +51,10 @@ fn validate_permissions(keys: &[String]) -> AppResult<Vec<String>> {
         }
     }
 
-    if has_submit && has_approve {
+    if has_prepare && has_approve {
         return Err(AppError::BadRequest(
-            "A single group cannot grant both submit_payroll and approve_payroll".into(),
+            "A single group cannot grant both submit_payroll/manage_payroll_draft and approve_payroll"
+                .into(),
         ));
     }
 
@@ -69,7 +73,7 @@ fn ensure_monotonic_delegation(auth: &AuthUser, permission_keys: &[String]) -> A
     Ok(())
 }
 
-fn ensure_user_permission_invariants(
+pub(crate) fn ensure_user_permission_invariants(
     user_roles: &[String],
     candidate_keys: &[String],
 ) -> AppResult<()> {
@@ -80,14 +84,19 @@ fn ensure_user_permission_invariants(
     let is_restricted = user_roles
         .iter()
         .any(|r| r == "exec" || r == "employee" || r == "manager");
+    let is_exec_only = user_roles.iter().any(|r| r == "exec")
+        && !user_roles.iter().any(|r| r != "exec" && r != "employee");
 
-    let mut has_submit = false;
+    let mut has_prepare = false;
     let mut has_approve = false;
 
     for role in user_roles {
         for perm in role_permissions(role) {
-            if *perm == Permission::SubmitPayroll {
-                has_submit = true;
+            if matches!(
+                *perm,
+                Permission::SubmitPayroll | Permission::ManagePayrollDraft
+            ) {
+                has_prepare = true;
             }
             if *perm == Permission::ApprovePayroll {
                 has_approve = true;
@@ -103,8 +112,16 @@ fn ensure_user_permission_invariants(
                         .into(),
                 ));
             }
-            if perm == Permission::SubmitPayroll {
-                has_submit = true;
+            if is_exec_only && perm.is_write_capability() {
+                return Err(AppError::BadRequest(
+                    "Write capabilities cannot be granted to read-only exec accounts".into(),
+                ));
+            }
+            if matches!(
+                perm,
+                Permission::SubmitPayroll | Permission::ManagePayrollDraft
+            ) {
+                has_prepare = true;
             }
             if perm == Permission::ApprovePayroll {
                 has_approve = true;
@@ -112,9 +129,9 @@ fn ensure_user_permission_invariants(
         }
     }
 
-    if !is_super_admin && has_submit && has_approve {
+    if !is_super_admin && has_prepare && has_approve {
         return Err(AppError::BadRequest(
-            "User cannot hold both submit_payroll and approve_payroll across roles and groups"
+            "User cannot hold both payroll preparation/submission and approve_payroll across roles and groups"
                 .into(),
         ));
     }
@@ -122,8 +139,12 @@ fn ensure_user_permission_invariants(
     Ok(())
 }
 
-pub async fn list_groups(pool: &PgPool, company_id: Uuid) -> AppResult<Vec<UserGroupWithDetail>> {
-    user_groups::list_for_company(pool, company_id).await
+pub async fn list_groups(
+    pool: &PgPool,
+    company_id: Uuid,
+    hide_privileged: bool,
+) -> AppResult<Vec<UserGroupWithDetail>> {
+    user_groups::list_for_company(pool, company_id, hide_privileged).await
 }
 
 pub async fn get_group(pool: &PgPool, company_id: Uuid, group_id: Uuid) -> AppResult<UserGroup> {
@@ -201,12 +222,15 @@ pub async fn update_group(
     };
 
     let candidate_keys = validated.as_deref().unwrap_or(&existing_permissions);
+    let actor_id = auth.0.sub;
+    let mut tx = pool.begin().await?;
     if validated.is_some() || is_active == Some(true) {
-        let members = user_groups::member_user_ids(pool, group_id).await?;
-        for member_id in members {
-            if let Some(user) = users::get_active_by_id(pool, member_id).await? {
+        let members = user_groups::member_user_ids(&mut *tx, group_id).await?;
+        if !members.is_empty() {
+            let locked_users = users::lock_for_update(&mut *tx, &members).await?;
+            for user in locked_users {
                 let mut combined = user_groups::user_permissions_in_other_groups(
-                    pool, member_id, company_id, group_id,
+                    &mut *tx, user.id, company_id, group_id,
                 )
                 .await?;
                 combined.extend(candidate_keys.iter().cloned());
@@ -215,8 +239,6 @@ pub async fn update_group(
         }
     }
 
-    let actor_id = auth.0.sub;
-    let mut tx = pool.begin().await?;
     let group = user_groups::update(
         &mut *tx,
         company_id,
@@ -326,31 +348,39 @@ pub async fn add_member(
     let group_perms = user_groups::permissions_for(pool, group_id).await?;
     ensure_monotonic_delegation(auth, &group_perms)?;
 
-    let user = users::get_active_by_id(pool, user_id)
-        .await?
+    let mut tx = pool.begin().await?;
+    let locked = users::lock_for_update(&mut *tx, &[user_id]).await?;
+    let user = locked
+        .into_iter()
+        .find(|u| u.is_active == Some(true))
         .ok_or_else(|| AppError::NotFound("User not found".into()))?;
-    if !user_companies::user_has_company(pool, user_id, company_id).await? {
+    if !user_companies::user_has_company(&mut *tx, user_id, company_id).await? {
         return Err(AppError::BadRequest(
             "User does not belong to this company".into(),
         ));
     }
 
     let mut combined =
-        user_groups::user_permissions_in_other_groups(pool, user_id, company_id, group_id).await?;
+        user_groups::user_permissions_in_other_groups(&mut *tx, user_id, company_id, group_id)
+            .await?;
     combined.extend(group_perms);
     ensure_user_permission_invariants(&user.roles, &combined)?;
 
     let actor_id = auth.0.sub;
-    let inserted = user_groups::add_member(pool, company_id, group_id, user_id, actor_id).await?;
+    let inserted =
+        user_groups::add_member(&mut *tx, company_id, group_id, user_id, actor_id).await?;
     if !inserted {
         // Either the group is not this company's, or the user already holds it.
         // Distinguish the two so a repeated click is not reported as a missing
         // group.
-        get_group(pool, company_id, group_id).await?;
+        user_groups::get(&mut *tx, company_id, group_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("Group not found".into()))?;
         return Err(AppError::Conflict(
             "User is already a member of this group".into(),
         ));
     }
+    tx.commit().await?;
 
     let _ = audit_service::log_action_with_metadata(
         pool,

@@ -92,6 +92,8 @@ pub async fn get_ea_form_data(
         ytd_bonus: agg.ytd_bonus,
         ytd_commission: agg.ytd_commission,
         ytd_overtime: agg.ytd_overtime,
+        ytd_unpaid_leave: agg.ytd_unpaid_leave,
+        ytd_non_taxable: agg.ytd_non_taxable,
         ytd_gross: agg.ytd_gross,
         ytd_epf_employee: agg.ytd_epf_employee,
         ytd_socso_employee: agg.ytd_socso_employee,
@@ -150,31 +152,11 @@ pub fn generate_ea_form_pdf(data: &EaFormData) -> AppResult<Vec<u8>> {
         "SECTION A: EMPLOYER DETAILS / BUTIRAN MAJIKAN",
     );
     y -= 6.0;
-    draw_row(
-        &mut ops,
-        &font,
-        &bold,
-        9.0,
-        left + 3.0,
-        mid - 5.0,
-        y,
-        "Employer Name:",
-        &data.company_name,
-        false,
-    );
+    add_text(&mut ops, &font, 9.0, left + 3.0, y, "Employer Name:");
+    add_text(&mut ops, &font, 9.0, left + 36.0, y, &data.company_name);
     y -= 5.0;
-    draw_row(
-        &mut ops,
-        &font,
-        &bold,
-        9.0,
-        left + 3.0,
-        mid - 5.0,
-        y,
-        "Employer Tax No:",
-        &data.company_tax_no,
-        false,
-    );
+    add_text(&mut ops, &font, 9.0, left + 3.0, y, "Employer Tax No:");
+    add_text(&mut ops, &font, 9.0, left + 36.0, y, &data.company_tax_no);
     add_text(
         &mut ops,
         &font,
@@ -184,18 +166,8 @@ pub fn generate_ea_form_pdf(data: &EaFormData) -> AppResult<Vec<u8>> {
         &format!("EPF Ref No: {}", data.company_epf_no),
     );
     y -= 5.0;
-    draw_row(
-        &mut ops,
-        &font,
-        &bold,
-        9.0,
-        left + 3.0,
-        mid - 5.0,
-        y,
-        "Reg No:",
-        &data.company_reg_no,
-        false,
-    );
+    add_text(&mut ops, &font, 9.0, left + 3.0, y, "Reg No:");
+    add_text(&mut ops, &font, 9.0, left + 36.0, y, &data.company_reg_no);
     y -= 5.0;
     add_text(
         &mut ops,
@@ -219,31 +191,11 @@ pub fn generate_ea_form_pdf(data: &EaFormData) -> AppResult<Vec<u8>> {
         "SECTION B: EMPLOYEE DETAILS / BUTIRAN PEKERJA",
     );
     y -= 6.0;
-    draw_row(
-        &mut ops,
-        &font,
-        &bold,
-        9.0,
-        left + 3.0,
-        mid - 5.0,
-        y,
-        "Employee Name:",
-        &data.employee_name,
-        false,
-    );
+    add_text(&mut ops, &font, 9.0, left + 3.0, y, "Employee Name:");
+    add_text(&mut ops, &font, 9.0, left + 36.0, y, &data.employee_name);
     y -= 5.0;
-    draw_row(
-        &mut ops,
-        &font,
-        &bold,
-        9.0,
-        left + 3.0,
-        mid - 5.0,
-        y,
-        "IC Number:",
-        &data.ic_number,
-        false,
-    );
+    add_text(&mut ops, &font, 9.0, left + 3.0, y, "IC Number:");
+    add_text(&mut ops, &font, 9.0, left + 36.0, y, &data.ic_number);
     add_text(
         &mut ops,
         &font,
@@ -253,18 +205,8 @@ pub fn generate_ea_form_pdf(data: &EaFormData) -> AppResult<Vec<u8>> {
         &format!("Tax Ref No: {}", data.tax_id),
     );
     y -= 5.0;
-    draw_row(
-        &mut ops,
-        &font,
-        &bold,
-        9.0,
-        left + 3.0,
-        mid - 5.0,
-        y,
-        "EPF Number:",
-        &data.epf_number,
-        false,
-    );
+    add_text(&mut ops, &font, 9.0, left + 3.0, y, "EPF Number:");
+    add_text(&mut ops, &font, 9.0, left + 36.0, y, &data.epf_number);
     add_text(
         &mut ops,
         &font,
@@ -314,14 +256,23 @@ pub fn generate_ea_form_pdf(data: &EaFormData) -> AppResult<Vec<u8>> {
         ("5", "Overtime / Kerja Lebih Masa", data.ytd_overtime),
     ];
 
-    // The five categories above are narrow allow-lists over `item_type`, while
-    // the total below is the YTD gross of every earning that reached a payslip.
-    // Anything staged under another item type therefore sat inside the total
-    // without appearing in a line, and the form failed its own arithmetic — on a
-    // document filed under s.83(1A). The year's payslips cannot be reclassified
-    // after the fact, so the residual is named instead.
+    if data.ytd_unpaid_leave != 0 {
+        income_items.push((
+            "6",
+            "Less: Unpaid Leave / Cuti Tanpa Gaji",
+            -data.ytd_unpaid_leave,
+        ));
+    }
+    if data.ytd_non_taxable != 0 {
+        income_items.push((
+            "7",
+            "Less: Tax-Exempt Allowances (See Sec. G)",
+            -data.ytd_non_taxable,
+        ));
+    }
+
     let unclassified = unclassified_earnings(
-        data.ytd_gross,
+        data.ytd_gross + data.ytd_unpaid_leave + data.ytd_non_taxable,
         data.ytd_basic,
         data.ytd_allowances,
         data.ytd_overtime,
@@ -329,7 +280,7 @@ pub fn generate_ea_form_pdf(data: &EaFormData) -> AppResult<Vec<u8>> {
         data.ytd_commission,
     );
     if unclassified != 0 {
-        income_items.push(("6", "Other Remuneration / Saraan Lain", unclassified));
+        income_items.push(("8", "Other Remuneration / Saraan Lain", unclassified));
     }
 
     for (num, label, amount) in &income_items {
@@ -448,6 +399,37 @@ pub fn generate_ea_form_pdf(data: &EaFormData) -> AppResult<Vec<u8>> {
         y,
         &format!("RM {}", sen_to_rm(net)),
     );
+
+    if data.ytd_non_taxable > 0 {
+        y -= 8.0;
+        draw_line(&mut ops, left, right, y);
+        y -= 7.0;
+        add_text(
+            &mut ops,
+            &bold,
+            10.0,
+            left,
+            y,
+            "SECTION G: TAX-EXEMPT ALLOWANCES / PERQUISITES",
+        );
+        y -= 6.0;
+        add_text(
+            &mut ops,
+            &font,
+            9.0,
+            left + 3.0,
+            y,
+            "Total Tax-Exempt Allowances / Elaun Dikecualikan Cukai",
+        );
+        add_text_right(
+            &mut ops,
+            &font,
+            9.0,
+            right,
+            y,
+            &format!("RM {}", sen_to_rm(data.ytd_non_taxable)),
+        );
+    }
 
     // Footer
     add_text(

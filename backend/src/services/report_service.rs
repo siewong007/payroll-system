@@ -67,38 +67,65 @@ pub fn current_report_year_month() -> (i32, i32) {
 }
 
 pub async fn report_periods(pool: &PgPool, company_id: Uuid) -> AppResult<ReportPeriodsResponse> {
-    let payroll_periods = report_reads::distinct_payroll_periods(pool, company_id).await?;
+    report_periods_scoped(pool, company_id, true, true).await
+}
 
+pub async fn report_periods_scoped(
+    pool: &PgPool,
+    company_id: Uuid,
+    include_payroll: bool,
+    include_ea: bool,
+) -> AppResult<ReportPeriodsResponse> {
     let mut payroll_months_map = BTreeMap::<i32, Vec<i32>>::new();
-    for row in payroll_periods {
-        payroll_months_map
-            .entry(row.period_year)
-            .or_default()
-            .push(row.period_month);
+    if include_payroll || include_ea {
+        let payroll_periods = report_reads::distinct_payroll_periods(pool, company_id).await?;
+        for row in payroll_periods {
+            payroll_months_map
+                .entry(row.period_year)
+                .or_default()
+                .push(row.period_month);
+        }
     }
 
-    let payroll_years = payroll_months_map.keys().copied().collect::<Vec<_>>();
-    let payroll_months = payroll_months_map
-        .into_iter()
-        .map(|(year, months)| YearMonthsOption { year, months })
-        .collect::<Vec<_>>();
+    let ea_form_years = if include_ea {
+        payroll_months_map.keys().copied().collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+
+    let (payroll_years, payroll_months) = if include_payroll {
+        let years = payroll_months_map.keys().copied().collect::<Vec<_>>();
+        let months = payroll_months_map
+            .into_iter()
+            .map(|(year, months)| YearMonthsOption { year, months })
+            .collect::<Vec<_>>();
+        (years, months)
+    } else {
+        (Vec::new(), Vec::new())
+    };
 
     let leave_years = report_reads::distinct_leave_years(pool, company_id).await?;
 
     let claims_years = report_reads::distinct_claims_years(pool, company_id).await?;
 
-    let (default_year, default_month) = payroll_months
-        .last()
-        .and_then(|period| period.months.last().map(|month| (period.year, *month)))
-        .unwrap_or_else(current_report_year_month);
+    let (default_year, default_month) = if include_payroll {
+        payroll_months
+            .last()
+            .and_then(|period| period.months.last().map(|month| (period.year, *month)))
+            .unwrap_or_else(current_report_year_month)
+    } else {
+        let fallback = current_report_year_month();
+        let latest_non_payroll = leave_years.iter().chain(claims_years.iter()).copied().max();
+        (latest_non_payroll.unwrap_or(fallback.0), fallback.1)
+    };
 
     Ok(ReportPeriodsResponse {
         default_year,
         default_month,
-        payroll_years: payroll_years.clone(),
+        payroll_years,
         payroll_months,
         leave_years,
         claims_years,
-        ea_form_years: payroll_years,
+        ea_form_years,
     })
 }

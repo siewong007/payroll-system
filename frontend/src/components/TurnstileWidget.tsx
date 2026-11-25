@@ -79,6 +79,17 @@ export function TurnstileWidget({ onVerify, onExpire, onError, ref }: TurnstileW
     };
 
     let script: HTMLScriptElement | null = null;
+    const handleScriptError = () => {
+      if (script) {
+        script.removeEventListener('load', render);
+        script.removeEventListener('error', handleScriptError);
+        script.remove();
+        script = null;
+      }
+      if (!cancelled) {
+        callbacks.current.onError?.();
+      }
+    };
     if (window.turnstile) {
       render();
     } else {
@@ -92,6 +103,7 @@ export function TurnstileWidget({ onVerify, onExpire, onError, ref }: TurnstileW
         document.head.appendChild(script);
       }
       script.addEventListener('load', render);
+      script.addEventListener('error', handleScriptError);
       // The script may have finished loading between the turnstile check and
       // the listener attach — render immediately if so.
       render();
@@ -100,6 +112,7 @@ export function TurnstileWidget({ onVerify, onExpire, onError, ref }: TurnstileW
     return () => {
       cancelled = true;
       script?.removeEventListener('load', render);
+      script?.removeEventListener('error', handleScriptError);
       if (widgetId.current != null) {
         window.turnstile?.remove(widgetId.current);
         widgetId.current = null;

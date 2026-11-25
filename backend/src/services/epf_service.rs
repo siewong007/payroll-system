@@ -144,6 +144,14 @@ pub(crate) fn calculate_epf_with(
         },
     };
 
+    if contributable_wage <= 0 {
+        return Ok(EpfContribution {
+            employee: 0,
+            employer: 0,
+            category: category.to_string(),
+        });
+    }
+
     let normalized_residency = residency_status.trim().to_ascii_lowercase();
     match tables.epf_band(category, contributable_wage) {
         Some(band) => Ok(EpfContribution {

@@ -48,7 +48,7 @@ pub async fn consume_active(
     token_hash: &str,
 ) -> AppResult<Option<ActiveRefreshToken>> {
     Ok(sqlx::query_as::<_, ActiveRefreshToken>(
-        "UPDATE refresh_tokens rt SET revoked = TRUE \
+        "UPDATE refresh_tokens rt SET revoked = TRUE, revoked_at = NOW() \
          FROM user_sessions us \
          WHERE rt.token_hash = $1 AND rt.revoked = FALSE AND rt.expires_at > NOW() \
            AND us.id = rt.session_id AND us.revoked_at IS NULL AND us.expires_at > NOW() \
@@ -76,22 +76,31 @@ pub async fn find_owner_of_hash(
     .await?)
 }
 
-/// True if this session was issued a still-live token within the last `seconds`.
-///
-/// `created_at` on the successor row is what makes the reuse grace window
-/// expressible without a `revoked_at` column: a presented-but-dead token whose
-/// session has a brand-new sibling is a tab that lost a rotation race, not a
-/// replay.
+/// True if the presented token itself was rotated within the last `seconds`
+/// AND the session holds a live successor issued within the same window.
 pub async fn has_fresh_sibling(
     executor: impl Executor<'_, Database = Postgres>,
+    token_hash: &str,
     session_id: Uuid,
     seconds: f64,
 ) -> AppResult<bool> {
     let exists = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM refresh_tokens \
-         WHERE session_id = $1 AND revoked = FALSE AND expires_at > NOW() \
-           AND created_at > NOW() - make_interval(secs => $2))",
+        "SELECT EXISTS(\
+            SELECT 1 FROM refresh_tokens presented \
+            WHERE presented.token_hash = $1 \
+              AND presented.revoked = TRUE \
+              AND presented.revoked_at IS NOT NULL \
+              AND presented.revoked_at > NOW() - make_interval(secs => $3) \
+              AND EXISTS(\
+                  SELECT 1 FROM refresh_tokens sibling \
+                  WHERE sibling.session_id = $2 \
+                    AND sibling.revoked = FALSE \
+                    AND sibling.expires_at > NOW() \
+                    AND sibling.created_at > NOW() - make_interval(secs => $3)\
+              )\
+         )",
     )
+    .bind(token_hash)
     .bind(session_id)
     .bind(seconds)
     .fetch_one(executor)
@@ -108,7 +117,7 @@ pub async fn revoke_by_hash(
     token_hash: &str,
 ) -> AppResult<u64> {
     let result = sqlx::query!(
-        "UPDATE refresh_tokens SET revoked = TRUE WHERE token_hash = $1 AND revoked = FALSE",
+        "UPDATE refresh_tokens SET revoked = TRUE, revoked_at = NOW() WHERE token_hash = $1 AND revoked = FALSE",
         token_hash,
     )
     .execute(executor)
@@ -124,7 +133,7 @@ pub async fn revoke_for_revoked_sessions(
     current_session_id: Uuid,
 ) -> AppResult<()> {
     sqlx::query(
-        "UPDATE refresh_tokens SET revoked = TRUE WHERE session_id IN (SELECT id FROM user_sessions WHERE user_id = $1 AND id <> $2 AND revoked_at IS NOT NULL)",
+        "UPDATE refresh_tokens SET revoked = TRUE, revoked_at = COALESCE(revoked_at, NOW()) WHERE session_id IN (SELECT id FROM user_sessions WHERE user_id = $1 AND id <> $2 AND revoked_at IS NOT NULL)",
     )
     .bind(user_id)
     .bind(current_session_id)
@@ -138,7 +147,7 @@ pub async fn revoke_for_session(
     session_id: Uuid,
 ) -> AppResult<()> {
     sqlx::query(
-        "UPDATE refresh_tokens SET revoked = TRUE WHERE session_id = $1 AND revoked = FALSE",
+        "UPDATE refresh_tokens SET revoked = TRUE, revoked_at = NOW() WHERE session_id = $1 AND revoked = FALSE",
     )
     .bind(session_id)
     .execute(executor)
@@ -153,7 +162,7 @@ pub async fn revoke_other_sessions(
     current_session_id: Uuid,
 ) -> AppResult<()> {
     sqlx::query!(
-        "UPDATE refresh_tokens SET revoked = TRUE WHERE user_id = $1 AND session_id <> $2 AND revoked = FALSE",
+        "UPDATE refresh_tokens SET revoked = TRUE, revoked_at = NOW() WHERE user_id = $1 AND session_id <> $2 AND revoked = FALSE",
         user_id,
         current_session_id,
     )
@@ -168,7 +177,7 @@ pub async fn revoke_all_for_user(
     user_id: Uuid,
 ) -> AppResult<()> {
     sqlx::query!(
-        "UPDATE refresh_tokens SET revoked = TRUE WHERE user_id = $1 AND revoked = FALSE",
+        "UPDATE refresh_tokens SET revoked = TRUE, revoked_at = NOW() WHERE user_id = $1 AND revoked = FALSE",
         user_id,
     )
     .execute(executor)
@@ -191,7 +200,7 @@ pub async fn delete_by_employee(
     employee_id: Uuid,
 ) -> AppResult<()> {
     sqlx::query!(
-        "DELETE FROM refresh_tokens WHERE user_id IN (SELECT id FROM users WHERE employee_id = $1)",
+        "DELETE FROM refresh_tokens WHERE user_id IN (SELECT id FROM users WHERE employee_id = $1 AND roles <@ ARRAY['employee']::VARCHAR(50)[])",
         employee_id,
     )
     .execute(executor)

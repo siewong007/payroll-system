@@ -33,7 +33,7 @@ pub(crate) fn calculate_eis_with(
     age: i32,
     is_foreigner: bool,
 ) -> AppResult<EisContribution> {
-    if is_foreigner || age >= 60 {
+    if is_foreigner || !(18..60).contains(&age) {
         return Ok(EisContribution {
             employee: 0,
             employer: 0,
@@ -45,6 +45,13 @@ pub(crate) fn calculate_eis_with(
             "Automatic EIS is unavailable for employees aged 57-59 until prior EIS contribution status is recorded"
                 .into(),
         ));
+    }
+
+    if wage <= 0 {
+        return Ok(EisContribution {
+            employee: 0,
+            employer: 0,
+        });
     }
 
     match tables.eis_band(wage) {

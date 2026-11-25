@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT g.company_id, p.permission\n        FROM user_group_members m\n        JOIN user_groups g ON g.id = m.group_id\n        JOIN user_group_permissions p ON p.group_id = g.id\n        WHERE m.user_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "company_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "permission",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "751f7422bde7e54742b04871c84ba200be91610cb134b8f609b1d9d1b20ece15"
+}

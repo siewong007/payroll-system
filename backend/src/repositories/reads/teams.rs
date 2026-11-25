@@ -18,7 +18,9 @@ pub async fn list_with_member_count(
         TeamWithCount,
         r#"SELECT t.id, t.company_id, t.name, t.description, t.tag, t.is_active,
             t.created_at, t.updated_at,
-            (SELECT COUNT(*) FROM team_members tm WHERE tm.team_id = t.id) AS member_count
+            (SELECT COUNT(*) FROM team_members tm
+             JOIN employees e ON e.id = tm.employee_id
+             WHERE tm.team_id = t.id AND e.deleted_at IS NULL) AS member_count
         FROM teams t
         WHERE t.company_id = $1
         ORDER BY t.name"#,
@@ -48,7 +50,7 @@ pub async fn list_members(
         FROM team_members tm
         JOIN teams t ON t.id = tm.team_id
         JOIN employees e ON tm.employee_id = e.id
-        WHERE tm.team_id = $1 AND t.company_id = $2
+        WHERE tm.team_id = $1 AND t.company_id = $2 AND e.deleted_at IS NULL
         ORDER BY tm.role DESC, e.full_name"#,
         team_id,
         company_id,

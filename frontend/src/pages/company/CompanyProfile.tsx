@@ -74,14 +74,17 @@ export function CompanyProfile() {
 
 function CompanyDetails() {
   const { t } = useTranslation();
+  const { user } = useAuth();
   const { can } = usePermissions();
   const canManageCompany = can('manage_company_settings');
   const canViewPayroll = can('view_payroll');
+  const canViewEmployees = can('view_employees');
   const toast = useToast();
   const confirm = useConfirm();
   const queryClient = useQueryClient();
   const [activeSection, setActiveSection] = useState<Section | null>(null);
   const [form, setForm] = useState<UpdateCompanyRequest>({});
+  const [divisorInput, setDivisorInput] = useState('');
   const [dirty, setDirty] = useState(false);
   const [error, setError] = useState('');
 
@@ -101,11 +104,13 @@ function CompanyDetails() {
   const { data: stats } = useQuery({
     queryKey: ['company-stats'],
     queryFn: getCompanyStats,
+    enabled: Boolean(user?.company_id) && canViewEmployees,
   });
 
   const resetModal = () => {
     setActiveSection(null);
     setForm({});
+    setDivisorInput('');
     setDirty(false);
     setError('');
   };
@@ -127,6 +132,7 @@ function CompanyDetails() {
     mutationFn: updateCompany,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['company'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-companies'] });
       toast.success(t('companyProfile.updated'));
       resetModal();
     },
@@ -173,9 +179,8 @@ function CompanyDetails() {
         country: company.country ?? 'Malaysia',
       });
     } else if (section === 'payroll') {
-      setForm({
-        unpaid_leave_divisor: company.unpaid_leave_divisor ?? 26,
-      });
+      setDivisorInput(company.unpaid_leave_divisor != null ? String(company.unpaid_leave_divisor) : '');
+      setForm({});
     }
   };
 
@@ -189,6 +194,30 @@ function CompanyDetails() {
 
   const handleSave = (e?: React.FormEvent) => {
     e?.preventDefault();
+    setError('');
+    if (activeSection === 'info') {
+      const trimmedName = form.name?.trim() ?? '';
+      if (!trimmedName) {
+        setError(t('companyProfile.nameRequired'));
+        return;
+      }
+      mutation.mutate({ ...form, name: trimmedName });
+      return;
+    }
+    if (activeSection === 'payroll') {
+      const trimmed = divisorInput.trim();
+      if (!trimmed) {
+        mutation.mutate({ clear_unpaid_leave_divisor: true });
+        return;
+      }
+      const parsed = Number(trimmed);
+      if (!Number.isInteger(parsed) || parsed < 1 || parsed > 31) {
+        setError(t('companyProfile.divisorHint'));
+        return;
+      }
+      mutation.mutate({ unpaid_leave_divisor: parsed });
+      return;
+    }
     mutation.mutate(form);
   };
 
@@ -406,7 +435,12 @@ function CompanyDetails() {
                 <span className="text-xs font-medium text-[var(--accent-1)] shrink-0">{t('common.clickToEdit')}</span>
               )}
             </div>
-            {renderRow(t('companyProfile.unpaidLeaveDivisor'), String(company.unpaid_leave_divisor ?? 26))}
+            {renderRow(
+              t('companyProfile.unpaidLeaveDivisor'),
+              company.unpaid_leave_divisor != null
+                ? String(company.unpaid_leave_divisor)
+                : t('companyProfile.divisorDefault'),
+            )}
             {renderRow(t('common.status'), company.is_active ? t('common.active') : t('common.inactive'))}
             {renderRow(t('companyProfile.created'), formatDateLong(company.created_at))}
             {renderRow(t('companyProfile.lastUpdated'), formatDateLong(company.updated_at))}
@@ -508,9 +542,14 @@ function CompanyDetails() {
               {(aria) => (
                 <input
                   {...aria}
-                  type="number"
-                  value={form.unpaid_leave_divisor ?? ''}
-                  onChange={(e) => updateField('unpaid_leave_divisor', Number(e.target.value))}
+                  type="text"
+                  inputMode="numeric"
+                  value={divisorInput}
+                  placeholder={t('companyProfile.divisorDefault')}
+                  onChange={(e) => {
+                    setDirty(true);
+                    setDivisorInput(e.target.value);
+                  }}
                   className="form-input"
                 />
               )}

@@ -11,8 +11,10 @@ use std::path::Path;
 
 use base64::Engine;
 
+use crate::core::error::AppResult;
 use crate::core::upload_path;
 use crate::models::backup::{ClaimExport, DocumentExport, LeaveRequestExport};
+use crate::repositories::uploaded_files;
 
 /// Per-file warnings are the point — a link silently vanishing from a restored
 /// tenant is the failure class this pass exists to stop — but an archive can
@@ -88,6 +90,45 @@ pub(super) fn collect_backup_files(
     }
 
     files
+}
+
+/// Export variant that also collects `companies.logo_url` and filters out any
+/// local upload whose `uploaded_files` ownership belongs to another company.
+pub(super) async fn collect_backup_files_for_company(
+    pool: &sqlx::PgPool,
+    company_id: uuid::Uuid,
+    company_logo_url: Option<&String>,
+    documents: &[DocumentExport],
+    leave_requests: &[LeaveRequestExport],
+    claims: &[ClaimExport],
+) -> AppResult<HashMap<String, String>> {
+    let mut files = collect_backup_files(documents, leave_requests, claims);
+    if let Some(url) = company_logo_url
+        && let Ok(Some(path)) = upload_path::local_upload_path(url)
+        && let Ok(data) = std::fs::read(&path)
+    {
+        files.insert(
+            url.clone(),
+            base64::engine::general_purpose::STANDARD.encode(&data),
+        );
+    }
+
+    let mut checked = HashMap::with_capacity(files.len());
+    for (url, encoded) in files {
+        if let Some(stored_name) = url.strip_prefix(upload_path::UPLOAD_URL_PREFIX)
+            && let Some(owner) = uploaded_files::find_by_stored_name(pool, stored_name).await?
+            && owner.company_id != company_id
+        {
+            tracing::warn!(
+                file_url = %short_label(&url),
+                "refusing to export uploaded file owned by another company"
+            );
+            continue;
+        }
+        checked.insert(url, encoded);
+    }
+
+    Ok(checked)
 }
 
 /// Where each archived blob will be written — and which ones will not be.

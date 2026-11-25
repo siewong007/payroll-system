@@ -1234,9 +1234,12 @@ async fn concurrent_absent_runs_insert_one_placeholder_not_two() {
     let inserted = first.expect("first run") + second.expect("second run");
 
     let rows: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM attendance_records WHERE employee_id = $1 AND status = 'absent'",
+        "SELECT COUNT(*) FROM attendance_records
+         WHERE employee_id = $1 AND status = 'absent'
+           AND (check_in_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date = $2",
     )
     .bind(employee_id)
+    .bind(target)
     .fetch_one(&pool)
     .await
     .expect("count placeholders");
@@ -1266,9 +1269,12 @@ async fn a_written_placeholder_carries_the_marker_note() {
         .expect("mark absent");
 
     let notes: Option<String> = sqlx::query_scalar(
-        "SELECT notes FROM attendance_records WHERE employee_id = $1 AND status = 'absent'",
+        "SELECT notes FROM attendance_records
+         WHERE employee_id = $1 AND status = 'absent'
+           AND (check_in_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date = $2",
     )
     .bind(employee_id)
+    .bind(target)
     .fetch_one(&pool)
     .await
     .expect("read the placeholder note");
@@ -1706,6 +1712,9 @@ fn export_range(from: &str, to: &str) -> AttendanceExportQuery {
         employee_id: None,
         status: None,
         method: None,
+        open_only: None,
+        outside_geofence_only: None,
+        offsite_network_only: None,
     }
 }
 
@@ -1767,6 +1776,9 @@ async fn each_export_date_bound_defaults_independently() {
         employee_id: None,
         status: None,
         method: None,
+        open_only: None,
+        outside_geofence_only: None,
+        offsite_network_only: None,
     };
     let csv = attendance_service::export_attendance_csv(&pool, company_id, &only_to)
         .await
@@ -1786,6 +1798,9 @@ async fn each_export_date_bound_defaults_independently() {
         employee_id: None,
         status: None,
         method: None,
+        open_only: None,
+        outside_geofence_only: None,
+        offsite_network_only: None,
     };
     let csv = attendance_service::export_attendance_csv(&pool, company_id, &only_from)
         .await
@@ -1826,6 +1841,9 @@ async fn the_export_rejects_an_inverted_or_over_long_range() {
         employee_id: None,
         status: None,
         method: None,
+        open_only: None,
+        outside_geofence_only: None,
+        offsite_network_only: None,
     };
     attendance_service::export_attendance_csv(&pool, company_id, &at_cap)
         .await

@@ -232,7 +232,7 @@ payroll-system/
 │   ├── migrations/
 │   │   ├── 1000_schema.sql      # canonical baseline schema + legacy reconciliation
 │   │   ├── 1001_data.sql        # baseline defaults + prototype fixtures; no credentials
-│   │   └── 1002..1030_*.sql     # immutable forward migrations (2FA, jobs, ops, statutory, security)
+│   │   └── 1002..1033_*.sql     # immutable forward migrations (2FA, jobs, ops, statutory, security)
 │   ├── src/
 │   │   ├── core/                # config, auth, permissions, Turnstile, SSRF & path guards
 │   │   ├── handlers/            # thin Axum HTTP handlers

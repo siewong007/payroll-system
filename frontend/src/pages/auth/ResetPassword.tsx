@@ -1,12 +1,14 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { Eye, EyeOff } from 'lucide-react';
 import { resetPassword, validateResetToken } from '@/api/admin';
 import { BrandLogo } from '@/components/ui/BrandLogo';
 import { LanguageSwitcher } from '@/components/ui/LanguageSwitcher';
-import { TurnstileWidget, type TurnstileWidgetRef } from '@/components/TurnstileWidget';
+import { TurnstileWidget } from '@/components/TurnstileWidget';
 import { PASSWORD_MAX_BYTES, PASSWORD_MIN_LENGTH, passwordPolicyHint, validatePassword } from '@/lib/password';
+import { useTurnstileWaiter } from '@/lib/useTurnstileWaiter';
+import { getErrorMessage } from '@/lib/utils';
 
 export function ResetPassword() {
   const { t } = useTranslation();
@@ -21,8 +23,14 @@ export function ResetPassword() {
   const [loading, setLoading] = useState(false);
   const [validating, setValidating] = useState(true);
   const [tokenValid, setTokenValid] = useState(false);
-  const turnstileRef = useRef<TurnstileWidgetRef>(null);
-  const turnstileToken = useRef<string | undefined>(undefined);
+  const {
+    widgetRef: turnstileRef,
+    waitForToken: waitForTurnstileToken,
+    handleVerify: handleTurnstileVerify,
+    handleExpire: handleTurnstileExpire,
+    handleError: handleTurnstileError,
+    resetWidget: resetTurnstileWidget,
+  } = useTurnstileWaiter();
 
   useEffect(() => {
     if (!token) {
@@ -50,14 +58,13 @@ export function ResetPassword() {
     }
 
     setLoading(true);
-    const captcha = turnstileToken.current;
-    turnstileToken.current = undefined;
     try {
+      const captcha = await waitForTurnstileToken();
       await resetPassword(token, password, captcha);
       setSuccess(true);
-    } catch {
-      turnstileRef.current?.reset();
-      setError(t('auth.reset.failed'));
+    } catch (err: unknown) {
+      resetTurnstileWidget();
+      setError(getErrorMessage(err, t('auth.reset.failed')));
     } finally {
       setLoading(false);
     }
@@ -172,15 +179,9 @@ export function ResetPassword() {
               <div className="flex justify-center">
                 <TurnstileWidget
                   ref={turnstileRef}
-                  onVerify={(t) => {
-                    turnstileToken.current = t;
-                  }}
-                  onExpire={() => {
-                    turnstileToken.current = undefined;
-                  }}
-                  onError={() => {
-                    turnstileToken.current = undefined;
-                  }}
+                  onVerify={handleTurnstileVerify}
+                  onExpire={handleTurnstileExpire}
+                  onError={handleTurnstileError}
                 />
               </div>
 

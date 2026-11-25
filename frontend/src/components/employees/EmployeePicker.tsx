@@ -65,6 +65,10 @@ export function EmployeePicker({
   const [selectedLabel, setSelectedLabel] = useState(initialLabel ?? '');
   const containerRef = useRef<HTMLDivElement>(null);
   const optionRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const lastSelectedRef = useRef<{ id: string; label: string }>({
+    id: value,
+    label: initialLabel ?? '',
+  });
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search), SEARCH_DEBOUNCE_MS);
@@ -114,7 +118,14 @@ export function EmployeePicker({
   // A label the user just picked wins over `initialLabel`; only a blank is seeded.
   useEffect(() => {
     if (!value) {
+      lastSelectedRef.current = { id: '', label: '' };
       setSelectedLabel('');
+      return;
+    }
+    if (lastSelectedRef.current.id !== value) {
+      const nextLabel = initialLabel ?? '';
+      lastSelectedRef.current = { id: value, label: nextLabel };
+      setSelectedLabel(nextLabel);
       return;
     }
     setSelectedLabel((previous) => previous || initialLabel || '');
@@ -122,6 +133,7 @@ export function EmployeePicker({
 
   const handleSelect = (emp: { id: string; full_name: string; employee_number: string }) => {
     const label = formatEmployeeLabel(emp.full_name, emp.employee_number) ?? emp.full_name;
+    lastSelectedRef.current = { id: emp.id, label };
     onChange(emp.id, label);
     setSelectedLabel(label);
     setOpen(false);

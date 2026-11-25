@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO payroll_runs (id, company_id, payroll_group_id, period_year, period_month,\n               period_start, period_end, pay_date, status,\n               total_gross, total_net, total_employer_cost,\n               total_epf_employee, total_epf_employer,\n               total_socso_employee, total_socso_employer,\n               total_eis_employee, total_eis_employer,\n               total_pcb, total_zakat, employee_count, version, notes,\n               created_at, updated_at, cancelled_at, cancel_reason)\n               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::text::payroll_status,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25::timestamptz,\n                       CASE WHEN $9 = 'cancelled' THEN COALESCE($26::timestamptz, $25::timestamptz) ELSE $26::timestamptz END, $27)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Int4",
+        "Int4",
+        "Date",
+        "Date",
+        "Date",
+        "Text",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int4",
+        "Int4",
+        "Text",
+        "Timestamptz",
+        "Timestamptz",
+        "Timestamptz",
+        "Varchar"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "da939c75166247e24b0b35b979d99e5214f5f928d1c710d3d0dfd60756ad4c28"
+}

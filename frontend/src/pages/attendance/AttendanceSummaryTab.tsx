@@ -176,7 +176,15 @@ function SummaryCard({ item: i }: { item: AttendanceSummaryItem }) {
   );
 }
 
-export function SummaryTab({ today, canExport }: { today: string; canExport: boolean }) {
+export function SummaryTab({
+  today,
+  canExport,
+  canView = true,
+}: {
+  today: string;
+  canExport: boolean;
+  canView?: boolean;
+}) {
   const { t } = useTranslation();
   const [range, setRange] = useState({ date_from: firstOfMonth(today), date_to: today });
   const [exporting, setExporting] = useState(false);
@@ -185,6 +193,7 @@ export function SummaryTab({ today, canExport }: { today: string; canExport: boo
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['attendance-summary', range],
     queryFn: () => getAttendanceSummary(range),
+    enabled: canView,
     placeholderData: keepPreviousData,
   });
   const items = data ?? [];

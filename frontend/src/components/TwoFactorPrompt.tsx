@@ -55,7 +55,7 @@ export function TwoFactorPrompt({ mfaToken, onSuccess, onBack }: TwoFactorPrompt
 
         <input
           type="text"
-          inputMode="numeric"
+          inputMode="text"
           autoComplete="one-time-code"
           value={code}
           onChange={(e) => setCode(e.target.value)}

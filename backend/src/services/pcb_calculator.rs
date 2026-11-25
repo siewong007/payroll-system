@@ -233,18 +233,16 @@ fn calculate_tax_from_brackets(
             && chargeable_income <= b.chargeable_income_to;
         if covers {
             matched = true;
-        }
-
-        if chargeable_income > b.chargeable_income_from {
-            let taxable_in_bracket =
-                chargeable_income.min(b.chargeable_income_to) - b.chargeable_income_from;
+            let prior_ceiling = if b.chargeable_income_from > 0 {
+                b.chargeable_income_from - 1
+            } else {
+                0
+            };
+            let taxable_in_bracket = chargeable_income - prior_ceiling;
             let bracket_tax =
                 Decimal::from(taxable_in_bracket) * b.tax_rate_percent / Decimal::from(100);
-            tax = b.cumulative_tax + bracket_tax.to_i64().unwrap_or(0);
-
-            if chargeable_income <= b.chargeable_income_to {
-                break;
-            }
+            tax = b.cumulative_tax + bracket_tax.round().to_i64().unwrap_or(0);
+            break;
         }
     }
 

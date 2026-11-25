@@ -98,7 +98,8 @@ pub async fn delete_for_network(
 ) -> AppResult<u64> {
     let result = sqlx::query!(
         r#"DELETE FROM attendance_network_observations
-           WHERE company_id = $1 AND network = $2 AND prefix_len = $3"#,
+           WHERE company_id = $1
+             AND ((network || '/' || prefix_len)::cidr <<= ($2 || '/' || $3::smallint::text)::cidr)"#,
         company_id,
         network,
         prefix_len
@@ -138,7 +139,10 @@ pub async fn dismiss(
                (company_id, network, prefix_len, dismissed_by)
            VALUES ($1, $2, $3, $4)
            ON CONFLICT (company_id, network, prefix_len)
-           DO UPDATE SET dismissed_by = $4, dismissed_at = NOW()"#,
+           DO UPDATE SET
+               dismissed_by = $4,
+               dismissed_at = NOW(),
+               expires_at = NOW() + INTERVAL '180 days'"#,
         company_id,
         network,
         prefix_len,

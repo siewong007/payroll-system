@@ -59,6 +59,10 @@ const UserManagement = lazyNamed(() => import('@/pages/admin/UserManagement'), '
 const RoleManagement = lazyNamed(() => import('@/pages/admin/RoleManagement'), 'RoleManagement');
 const UserGroups = lazyNamed(() => import('@/pages/admin/UserGroups'), 'UserGroups');
 const AttendanceSettings = lazyNamed(() => import('@/pages/admin/AttendanceSettings'), 'AttendanceSettings');
+const PlatformSettingsPage = lazyNamed(
+  () => import('@/pages/admin/PlatformSettingsPage'),
+  'PlatformSettingsPage',
+);
 const LettersPage = lazyNamed(() => import('@/pages/letters/LettersPage'), 'LettersPage');
 const BackupPage = lazyNamed(() => import('@/pages/backup/BackupPage'), 'BackupPage');
 const AuditTrailPage = lazyNamed(() => import('@/pages/audit/AuditTrailPage'), 'AuditTrailPage');
@@ -100,9 +104,11 @@ function RouteFallback() {
  */
 export function PermissionGuard({
   requires,
+  requiresCompany = false,
   children,
 }: {
   requires: PermissionKey | PermissionKey[];
+  requiresCompany?: boolean;
   children: ReactNode;
 }) {
   const { user } = useAuth();
@@ -110,6 +116,15 @@ export function PermissionGuard({
   const needed = Array.isArray(requires) ? requires : [requires];
   if (user && !userCanAny(user, needed)) {
     return <Navigate to={ROUTES.FORBIDDEN} replace state={{ from: location.pathname }} />;
+  }
+  if (requiresCompany && user && !user.company_id) {
+    return (
+      <Navigate
+        to={userCanAny(user, ['manage_companies']) ? ROUTES.COMPANIES : ROUTES.FORBIDDEN}
+        replace
+        state={{ from: location.pathname }}
+      />
+    );
   }
   return <>{children}</>;
 }
@@ -288,7 +303,7 @@ export default function App() {
                   <Route
                     path={ROUTES.PAYROLL}
                     element={(
-                      <PermissionGuard requires="view_payroll">
+                      <PermissionGuard requires="view_payroll" requiresCompany>
                         <PayrollOverview />
                       </PermissionGuard>
                     )}
@@ -296,7 +311,7 @@ export default function App() {
                   <Route
                     path={ROUTES.PAYROLL_RUNS}
                     element={(
-                      <PermissionGuard requires="view_payroll">
+                      <PermissionGuard requires="view_payroll" requiresCompany>
                         <PayrollList />
                       </PermissionGuard>
                     )}
@@ -304,7 +319,7 @@ export default function App() {
                   <Route
                     path={ROUTES.PAYROLL_PROCESS}
                     element={(
-                      <PermissionGuard requires="manage_payroll_draft">
+                      <PermissionGuard requires="manage_payroll_draft" requiresCompany>
                         <PayrollProcess />
                       </PermissionGuard>
                     )}
@@ -312,7 +327,7 @@ export default function App() {
                   <Route
                     path={ROUTES.PAYROLL_DETAIL}
                     element={(
-                      <PermissionGuard requires="view_payroll">
+                      <PermissionGuard requires="view_payroll" requiresCompany>
                         <PayrollDetail />
                       </PermissionGuard>
                     )}
@@ -352,7 +367,7 @@ export default function App() {
                   <Route
                     path={ROUTES.REPORTS}
                     element={(
-                      <PermissionGuard requires="view_reports">
+                      <PermissionGuard requires="view_reports" requiresCompany>
                         <Reports />
                       </PermissionGuard>
                     )}
@@ -401,7 +416,7 @@ export default function App() {
                   <Route
                     path={ROUTES.USER_GROUPS}
                     element={(
-                      <PermissionGuard requires="manage_users">
+                      <PermissionGuard requires={['view_user_directory', 'manage_users']} requiresCompany>
                         <UserGroups />
                       </PermissionGuard>
                     )}
@@ -417,7 +432,7 @@ export default function App() {
                   <Route
                     path={ROUTES.AUDIT_TRAIL}
                     element={(
-                      <PermissionGuard requires="view_audit_log">
+                      <PermissionGuard requires="view_audit_log" requiresCompany>
                         <AuditTrailPage />
                       </PermissionGuard>
                     )}
@@ -435,6 +450,14 @@ export default function App() {
                     element={(
                       <PermissionGuard requires="manage_platform_settings">
                         <AttendanceSettings />
+                      </PermissionGuard>
+                    )}
+                  />
+                  <Route
+                    path={ROUTES.ADMIN_PLATFORM}
+                    element={(
+                      <PermissionGuard requires="manage_platform_settings">
+                        <PlatformSettingsPage />
                       </PermissionGuard>
                     )}
                   />

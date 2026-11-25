@@ -120,12 +120,23 @@ describe('UserManagement — listing', () => {
     );
   });
 
-  it('narrows the visible rows with the role filter', async () => {
+  it('sends the role filter to the server and resets to the first page', async () => {
     renderPage();
     await findRow('Ahmad Target');
 
+    adminMocks.listUsers.mockResolvedValueOnce({
+      data: [target],
+      total: 1,
+      page: 1,
+      per_page: 20,
+    });
     await userEvent.selectOptions(screen.getByRole('combobox', { name: /filter by role/i }), 'finance');
 
+    await waitFor(() =>
+      expect(adminMocks.listUsers).toHaveBeenLastCalledWith(
+        expect.objectContaining({ role: 'finance', page: 1 }),
+      ),
+    );
     expect(within(table()).getByText('Ahmad Target')).toBeInTheDocument();
     expect(within(table()).queryByText('Siti Boss')).not.toBeInTheDocument();
   });

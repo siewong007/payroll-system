@@ -67,6 +67,24 @@ pub async fn find_active_by_hash(
     Ok(row)
 }
 
+pub async fn find_active_by_hash_locked(
+    executor: impl Executor<'_, Database = Postgres>,
+    token_hash: &str,
+) -> AppResult<Option<KioskCredential>> {
+    let row = sqlx::query_as!(
+        KioskCredential,
+        r#"SELECT id, company_id, label, token_prefix, created_by,
+                  created_at, last_used_at, last_used_ip, revoked_at
+           FROM attendance_kiosk_credentials
+           WHERE token_hash = $1 AND revoked_at IS NULL
+           FOR UPDATE"#,
+        token_hash,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(row)
+}
+
 pub async fn mark_used(
     executor: impl Executor<'_, Database = Postgres>,
     id: Uuid,

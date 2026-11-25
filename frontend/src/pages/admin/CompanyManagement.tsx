@@ -344,20 +344,20 @@ function EditCompanyModal({
 }) {
   const [form, setForm] = useState<UpdateCompanyRequest>({
     name: company.name,
-    registration_number: company.registration_number ?? undefined,
-    tax_number: company.tax_number ?? undefined,
-    epf_number: company.epf_number ?? undefined,
-    socso_code: company.socso_code ?? undefined,
-    eis_code: company.eis_code ?? undefined,
-    hrdf_number: company.hrdf_number ?? undefined,
-    address_line1: company.address_line1 ?? undefined,
-    address_line2: company.address_line2 ?? undefined,
-    city: company.city ?? undefined,
-    state: company.state ?? undefined,
-    postcode: company.postcode ?? undefined,
-    country: company.country ?? undefined,
-    phone: company.phone ?? undefined,
-    email: company.email ?? undefined,
+    registration_number: company.registration_number ?? '',
+    tax_number: company.tax_number ?? '',
+    epf_number: company.epf_number ?? '',
+    socso_code: company.socso_code ?? '',
+    eis_code: company.eis_code ?? '',
+    hrdf_number: company.hrdf_number ?? '',
+    address_line1: company.address_line1 ?? '',
+    address_line2: company.address_line2 ?? '',
+    city: company.city ?? '',
+    state: company.state ?? '',
+    postcode: company.postcode ?? '',
+    country: company.country ?? '',
+    phone: company.phone ?? '',
+    email: company.email ?? '',
   });
   const { t } = useTranslation();
   const [error, setError] = useState('');
@@ -369,7 +369,7 @@ function EditCompanyModal({
   });
 
   const set = (key: keyof UpdateCompanyRequest, value: string) =>
-    setForm((p) => ({ ...p, [key]: value || undefined }));
+    setForm((p) => ({ ...p, [key]: value }));
 
   return (
     <Modal

@@ -86,6 +86,7 @@ export interface UpdateUserRequest {
 
 export interface ListUsersParams {
   companyId?: string;
+  role?: string;
   search?: string;
   page?: number;
   perPage?: number;
@@ -151,6 +152,7 @@ export interface CreateEmployeeRequest {
   employee_number: string;
   full_name: string;
   ic_number?: string;
+  passport_number?: string;
   date_of_birth?: string;
   gender?: string;
   nationality?: string;
@@ -170,9 +172,14 @@ export interface CreateEmployeeRequest {
   branch?: string;
   employment_type?: string;
   date_joined: string;
+  probation_start?: string;
+  probation_end?: string;
   basic_salary: number;
+  hourly_rate?: number;
+  daily_rate?: number;
   bank_name?: string;
   bank_account_number?: string;
+  bank_account_type?: string;
   tax_identification_number?: string;
   epf_number?: string;
   socso_number?: string;
@@ -184,7 +191,9 @@ export interface CreateEmployeeRequest {
   zakat_eligible?: boolean;
   zakat_monthly_amount?: number;
   ptptn_monthly_amount?: number;
+  tabung_haji_amount?: number;
   payroll_group_id?: string;
+  salary_group?: string;
   is_active?: boolean;
 }
 
@@ -197,8 +206,13 @@ export interface UpdateEmployeeRequest extends Partial<CreateEmployeeRequest> {
   confirmation_date?: string;
   date_resigned?: string;
   resignation_reason?: string;
+  salary_change_type?: string;
+  salary_change_notes?: string;
+  hrdf_contribution?: boolean;
   /** Explicit clear (un-terminate). Omitting `date_resigned` means "keep existing". */
   clear_date_resigned?: boolean;
+  /** Explicit clear `epf_category` so EPF reverts to age/residency derivation. */
+  clear_epf_category?: boolean;
 }
 
 export interface PaginatedResponse<T> {
@@ -448,6 +462,11 @@ export interface SalaryHistory {
   new_salary: number;
   effective_date: string;
   reason: string | null;
+  change_type: string;
+  notes: string | null;
+  approved_by: string | null;
+  approved_at: string | null;
+  created_by: string | null;
   created_at: string;
 }
 
@@ -543,6 +562,7 @@ export interface UpdateCompanyRequest {
   logo_url?: string;
   hrdf_enabled?: boolean;
   unpaid_leave_divisor?: number;
+  clear_unpaid_leave_divisor?: boolean;
 }
 
 export interface CompanyStats {

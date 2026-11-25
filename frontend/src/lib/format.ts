@@ -90,52 +90,81 @@ const MYR_OPTIONS: Intl.NumberFormatOptions = {
   maximumFractionDigits: 2,
 };
 
-function toDate(value: string | Date): Date {
-  return value instanceof Date ? value : new Date(value);
+const DATE_ONLY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+function toDate(value: string | Date): Date | null {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const dateOnly = DATE_ONLY_RE.exec(trimmed);
+  if (dateOnly) {
+    const year = Number(dateOnly[1]);
+    const month = Number(dateOnly[2]);
+    const day = Number(dateOnly[3]);
+    const parsed = new Date(year, month - 1, day);
+    if (
+      parsed.getFullYear() !== year ||
+      parsed.getMonth() !== month - 1 ||
+      parsed.getDate() !== day
+    ) {
+      return null;
+    }
+    return parsed;
+  }
+  const parsed = new Date(trimmed);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function formatWith(value: string | Date, key: string, options: Intl.DateTimeFormatOptions): string {
+  const date = toDate(value);
+  if (!date) return '';
+  return getDateFormatter(intlLocale(), key, options).format(date);
 }
 
 /** DD/MM/YYYY-style short date (locale-ordered). */
 export function formatDate(value: string | Date): string {
-  return getDateFormatter(intlLocale(), 'short', DATE_SHORT).format(toDate(value));
+  return formatWith(value, 'short', DATE_SHORT);
 }
 
 /** "16 September 2026" — locale long form. */
 export function formatDateLong(value: string | Date): string {
-  return getDateFormatter(intlLocale(), 'long', DATE_LONG).format(toDate(value));
+  return formatWith(value, 'long', DATE_LONG);
 }
 
 /** "16 Sep 2026" — locale medium form. */
 export function formatDateMedium(value: string | Date): string {
-  return getDateFormatter(intlLocale(), 'medium', DATE_MEDIUM).format(toDate(value));
+  return formatWith(value, 'medium', DATE_MEDIUM);
 }
 
 /** "16 Sep" — no year, for compact ranges. */
 export function formatDateDayMonth(value: string | Date): string {
-  return getDateFormatter(intlLocale(), 'dayMonth', DATE_DAY_MONTH).format(toDate(value));
+  return formatWith(value, 'dayMonth', DATE_DAY_MONTH);
 }
 
 /** "Wednesday, 16 September". */
 export function formatDateWeekday(value: string | Date): string {
-  return getDateFormatter(intlLocale(), 'weekdayLong', DATE_WEEKDAY_LONG).format(toDate(value));
+  return formatWith(value, 'weekdayLong', DATE_WEEKDAY_LONG);
 }
 
 /** Date + time, e.g. "16 Sep 2026, 02:30 PM". */
 export function formatDateTime(value: string | Date): string {
-  return getDateFormatter(intlLocale(), 'datetime', DATETIME).format(toDate(value));
+  return formatWith(value, 'datetime', DATETIME);
 }
 
 /** "02:30 PM" / "14:30" depending on locale conventions. */
 export function formatTime(value: string | Date): string {
-  return getDateFormatter(intlLocale(), 'time', TIME).format(toDate(value));
+  return formatWith(value, 'time', TIME);
 }
 
 export function formatTimeSeconds(value: string | Date): string {
-  return getDateFormatter(intlLocale(), 'timeSec', TIME_SECONDS).format(toDate(value));
+  return formatWith(value, 'timeSec', TIME_SECONDS);
 }
 
 /** Non-padded hour form ("2:30 PM") used by attendance displays. */
 export function formatTimeHour(value: string | Date): string {
-  return getDateFormatter(intlLocale(), 'timeHour', TIME_HOUR).format(toDate(value));
+  return formatWith(value, 'timeHour', TIME_HOUR);
 }
 
 /** Grouped number, no decimals: 1,234 / 1.234 / 1,234 per locale. */
@@ -151,7 +180,11 @@ export function monthName(month: number, style: 'short' | 'long' = 'long', local
 }
 
 /** Localized weekday name for a JS day-of-week (0 = Sunday). */
-export function weekdayName(day: number, style: 'short' | 'long' = 'short', locale?: string): string {
+export function weekdayName(
+  day: number,
+  style: 'short' | 'long' | 'narrow' = 'short',
+  locale?: string,
+): string {
   // 2000-01-02 was a Sunday, so day N lands on weekday N.
   return getDateFormatter(intlLocale(locale), `weekday:${style}`, { weekday: style }).format(
     new Date(2000, 0, 2 + day),
@@ -179,7 +212,9 @@ export function formatMYR(sen: number): string {
  * not a truncation of RelativeTimeFormat's "5 minutes ago").
  */
 export function formatRelativeTime(value: string | Date): string {
-  const seconds = Math.max(0, Math.floor((Date.now() - toDate(value).getTime()) / 1000));
+  const date = toDate(value);
+  if (!date) return '';
+  const seconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
   if (seconds < 60) return i18n.t('time.justNow');
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return i18n.t('time.minutesAgo', { count: minutes });

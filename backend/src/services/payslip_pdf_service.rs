@@ -59,7 +59,7 @@ pub async fn generate_bulk_payslips(
             let lines = lines_by_item.get(item_id).map_or(&[][..], Vec::as_slice);
             main_doc
                 .pages
-                .push(render_payslip_ops(slip, &company, lines, &font, &bold));
+                .extend(render_payslip_ops(slip, &company, lines, &font, &bold));
         }
         if main_doc.pages.is_empty() {
             return Err(AppError::NotFound("No payslips generated".into()));
@@ -87,9 +87,9 @@ fn render_payslip_page(
     let font = PdfFontHandle::Builtin(BuiltinFont::Helvetica);
     let bold = PdfFontHandle::Builtin(BuiltinFont::HelveticaBold);
 
-    let page = render_payslip_ops(data, company, lines, &font, &bold);
+    let pages = render_payslip_ops(data, company, lines, &font, &bold);
     let mut doc = PdfDocument::new("Payslip");
-    doc.pages.push(page);
+    doc.pages.extend(pages);
 
     let mut warnings = Vec::new();
     let bytes = doc.save(&PdfSaveOptions::default(), &mut warnings);
@@ -179,9 +179,10 @@ fn render_payslip_ops(
     lines: &[PayrollItemDetail],
     font: &PdfFontHandle,
     bold: &PdfFontHandle,
-) -> PdfPage {
+) -> Vec<PdfPage> {
     let sections = payslip_sections(data, lines);
 
+    let mut pages: Vec<Vec<Op>> = Vec::new();
     let mut ops: Vec<Op> = Vec::new();
     let left = 20.0;
     let right = 190.0;
@@ -202,6 +203,29 @@ fn render_payslip_ops(
         "December",
     ];
     let month_name = months.get((data.period_month - 1) as usize).unwrap_or(&"");
+    let header_title = format!(
+        "PAYSLIP (continued) - {} {} - {} ({})",
+        month_name, data.period_year, data.employee_name, data.employee_number
+    );
+    let ensure_space =
+        |needed_mm: f32, y: &mut f32, ops: &mut Vec<Op>, pages: &mut Vec<Vec<Op>>| {
+            if *y - needed_mm < 25.0 {
+                add_text(
+                    ops,
+                    font,
+                    7.0,
+                    left,
+                    15.0,
+                    "This is a computer-generated payslip. No signature is required.",
+                );
+                pages.push(std::mem::take(ops));
+                *y = 275.0;
+                add_text(ops, bold, 10.0, left, *y, &header_title);
+                *y -= 5.0;
+                draw_line(ops, left, right, *y);
+                *y -= 7.0;
+            }
+        };
 
     // Company header
     add_text(&mut ops, bold, 14.0, left, y, &company.name);
@@ -314,6 +338,7 @@ fn render_payslip_ops(
     y -= 8.0;
 
     // Earnings
+    ensure_space(16.0, &mut y, &mut ops, &mut pages);
     add_text(&mut ops, bold, 10.0, left, y, "EARNINGS");
     add_text_right(&mut ops, bold, 10.0, right, y, "RM");
     y -= 6.0;
@@ -322,6 +347,7 @@ fn render_payslip_ops(
         // A negative row is only reachable from hand-edited data, but hiding it
         // would put the rows back out of step with the total below them.
         if *amount != 0 {
+            ensure_space(6.0, &mut y, &mut ops, &mut pages);
             draw_row(
                 &mut ops,
                 font,
@@ -337,6 +363,7 @@ fn render_payslip_ops(
             y -= 5.0;
         }
     }
+    ensure_space(10.0, &mut y, &mut ops, &mut pages);
     draw_line(&mut ops, left, right, y + 1.0);
     y -= 5.0;
     draw_row(
@@ -355,10 +382,12 @@ fn render_payslip_ops(
 
     // Payments (claims)
     if data.total_claims > 0 {
+        ensure_space(16.0, &mut y, &mut ops, &mut pages);
         add_text(&mut ops, bold, 10.0, left, y, "PAYMENTS");
         y -= 6.0;
         for (label, amount) in &sections.payments {
             if *amount != 0 {
+                ensure_space(6.0, &mut y, &mut ops, &mut pages);
                 draw_row(
                     &mut ops,
                     font,
@@ -374,6 +403,7 @@ fn render_payslip_ops(
                 y -= 5.0;
             }
         }
+        ensure_space(10.0, &mut y, &mut ops, &mut pages);
         draw_line(&mut ops, left, right, y + 1.0);
         y -= 5.0;
         draw_row(
@@ -392,10 +422,12 @@ fn render_payslip_ops(
     }
 
     // Deductions
+    ensure_space(16.0, &mut y, &mut ops, &mut pages);
     add_text(&mut ops, bold, 10.0, left, y, "DEDUCTIONS");
     y -= 6.0;
     for (label, amount) in &sections.deductions {
         if *amount != 0 {
+            ensure_space(6.0, &mut y, &mut ops, &mut pages);
             draw_row(
                 &mut ops,
                 font,
@@ -411,6 +443,7 @@ fn render_payslip_ops(
             y -= 5.0;
         }
     }
+    ensure_space(10.0, &mut y, &mut ops, &mut pages);
     draw_line(&mut ops, left, right, y + 1.0);
     y -= 5.0;
     draw_row(
@@ -428,6 +461,7 @@ fn render_payslip_ops(
     y -= 10.0;
 
     // Net Salary
+    ensure_space(16.0, &mut y, &mut ops, &mut pages);
     draw_line(&mut ops, left, right, y + 2.0);
     y -= 2.0;
     draw_row(
@@ -448,6 +482,7 @@ fn render_payslip_ops(
 
     // Bank info
     if let (Some(bank), Some(acc)) = (&data.bank_name, &data.bank_account_number) {
+        ensure_space(10.0, &mut y, &mut ops, &mut pages);
         add_text(
             &mut ops,
             font,
@@ -460,6 +495,7 @@ fn render_payslip_ops(
     }
 
     // Employer Contributions
+    ensure_space(34.0, &mut y, &mut ops, &mut pages);
     add_text(&mut ops, bold, 10.0, left, y, "EMPLOYER CONTRIBUTIONS");
     y -= 6.0;
     draw_row(
@@ -518,6 +554,7 @@ fn render_payslip_ops(
     y -= 10.0;
 
     // YTD Summary
+    ensure_space(16.0, &mut y, &mut ops, &mut pages);
     add_text(
         &mut ops,
         bold,
@@ -537,6 +574,7 @@ fn render_payslip_ops(
         ("YTD Net", data.ytd_net),
     ] {
         if *amount > 0 {
+            ensure_space(6.0, &mut y, &mut ops, &mut pages);
             draw_row(
                 &mut ops,
                 font,
@@ -562,6 +600,10 @@ fn render_payslip_ops(
         15.0,
         "This is a computer-generated payslip. No signature is required.",
     );
+    pages.push(ops);
 
-    PdfPage::new(Mm(210.0), Mm(297.0), ops)
+    pages
+        .into_iter()
+        .map(|page_ops| PdfPage::new(Mm(210.0), Mm(297.0), page_ops))
+        .collect()
 }

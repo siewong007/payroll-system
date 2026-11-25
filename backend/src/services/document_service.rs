@@ -14,6 +14,7 @@ pub async fn list_documents(
     pool: &PgPool,
     company_id: Uuid,
     employee_id: Option<Uuid>,
+    company_wide: Option<bool>,
     category_id: Option<Uuid>,
     status: Option<&str>,
     search: Option<&str>,
@@ -25,6 +26,7 @@ pub async fn list_documents(
         pool,
         company_id,
         employee_id,
+        company_wide,
         category_id,
         status,
         search,
@@ -36,6 +38,7 @@ pub async fn list_documents(
         pool,
         company_id,
         employee_id,
+        company_wide,
         category_id,
         status,
         search,
@@ -68,9 +71,10 @@ pub async fn create_document(
     company_id: Uuid,
     req: CreateDocumentRequest,
     created_by: Uuid,
-    can_view_confidential: bool,
+    access: &crate::models::upload::UploadAccess,
 ) -> AppResult<Document> {
-    if req.is_confidential == Some(true) && !can_view_confidential {
+    let is_confidential = req.is_confidential == Some(true);
+    if is_confidential && !access.can_view_confidential {
         return Err(AppError::Forbidden(
             "Managing employees or payroll permission required for confidential documents".into(),
         ));
@@ -80,10 +84,11 @@ pub async fn create_document(
     // here, before it can be persisted. `UpdateDocumentRequest` carries no
     // `file_url`, so this is the only write-time entry point for the column.
     upload_path::validate_file_url(&req.file_url)?;
-    crate::services::upload_service::ensure_upload_belongs_to_company(
+    crate::services::upload_service::ensure_upload_attach_authorized(
         pool,
-        company_id,
+        access,
         Some(&req.file_url),
+        is_confidential,
     )
     .await?;
 
@@ -134,20 +139,31 @@ pub async fn soft_delete_document(
     // Hard delete the record
     document_repo::delete(pool, id, company_id).await?;
 
-    // Remove the file from disk if it exists. A row poisoned before
-    // `validate_file_url` existed must not unlink whatever path it names, but it
-    // must also not fail the delete: the record is already gone at this point, so
-    // erroring here would leave the tenant unable to remove the document at all.
-    match upload_path::local_upload_path(&file_url) {
-        Ok(Some(file_path)) => {
-            let _ = tokio::fs::remove_file(&file_path).await;
+    // Only unlink the file from disk when no other claim, leave, document, or
+    // company logo still references it.
+    let remaining_refs =
+        crate::repositories::reads::uploads::find_references(pool, company_id, &file_url)
+            .await
+            .unwrap_or_default();
+    if remaining_refs.is_empty() {
+        match upload_path::local_upload_path(&file_url) {
+            Ok(Some(file_path)) => {
+                let _ = tokio::fs::remove_file(&file_path).await;
+                if let Some(stored_name) = file_url.strip_prefix(upload_path::UPLOAD_URL_PREFIX) {
+                    let _ = crate::repositories::uploaded_files::delete_by_stored_name(
+                        pool,
+                        stored_name,
+                    )
+                    .await;
+                }
+            }
+            // An external http(s) link — nothing of ours to unlink.
+            Ok(None) => {}
+            Err(_) => tracing::warn!(
+                %file_url,
+                "refusing to unlink a document whose file_url is not a safe upload path"
+            ),
         }
-        // An external http(s) link — nothing of ours to unlink.
-        Ok(None) => {}
-        Err(_) => tracing::warn!(
-            %file_url,
-            "refusing to unlink a document whose file_url is not a safe upload path"
-        ),
     }
 
     Ok(())

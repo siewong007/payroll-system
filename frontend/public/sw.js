@@ -1,8 +1,17 @@
 const CACHE_NAME = 'payrollmy-shell-v2';
 const ASSETS_CACHE = 'payrollmy-assets-v1';
+const MAX_CACHED_ASSETS = 120;
 const CACHE_PREFIXES = ['payrollmy-shell-', 'payrollmy-assets-'];
 const PRECACHE_URLS = ['/offline.html', '/icons/icon-192.png', '/icons/badge-72.png'];
 const DEFAULT_NOTIFICATION_URL = '/portal/notifications';
+
+async function pruneAssetsCache(cache) {
+  const keys = await cache.keys();
+  const excess = keys.length - MAX_CACHED_ASSETS;
+  if (excess > 0) {
+    await Promise.all(keys.slice(0, excess).map((req) => cache.delete(req)));
+  }
+}
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -60,8 +69,10 @@ self.addEventListener('fetch', (event) => {
           return cached;
         }
         const response = await fetch(request);
-        if (response.ok && response.type === 'basic') {
-          void cache.put(request, response.clone());
+        const contentType = (response.headers.get('content-type') || '').toLowerCase();
+        if (response.ok && response.type === 'basic' && !contentType.includes('text/html')) {
+          await cache.put(request, response.clone());
+          void pruneAssetsCache(cache);
         }
         return response;
       }),
@@ -184,10 +195,4 @@ self.addEventListener('notificationclick', (event) => {
       return undefined;
     }),
   );
-});
-
-self.addEventListener('message', (event) => {
-  if (event.data && event.data.type === 'SKIP_WAITING') {
-    self.skipWaiting();
-  }
 });

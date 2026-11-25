@@ -1,6 +1,6 @@
 [Unit]
 Description=Payroll nightly local database backup
-Documentation=file:///opt/payroll/deploy/payroll-backup.sh
+Documentation=file:///opt/payroll/payroll-backup.sh
 # The dump needs the database container.
 Requires=docker.service
 After=docker.service

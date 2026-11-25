@@ -76,6 +76,8 @@ pub struct NetworkCandidate {
     /// How many different people have checked in from here. The number that
     /// distinguishes an office from somebody's flat.
     pub distinct_employees: i64,
+    #[serde(default)]
+    pub anchored_employees: i64,
     pub observation_count: i64,
     /// Observations corroborated by a signal the employee does not control —
     /// inside the geofence, or a QR token minted by a kiosk in the building.

@@ -48,9 +48,10 @@ import type { JournalPreview } from '@/types';
 import type { TFunction } from 'i18next';
 import i18n from '@/i18n';
 import { PayslipBreakdownDrawer } from './PayslipBreakdownDrawer';
-import type { PayrollSummary } from '@/types';
+import type { PayrollRun, PayrollSummary } from '@/types';
 
-const canDeletePayrollRun = (status: string) => ['draft', 'processed', 'cancelled'].includes(status);
+const canDeletePayrollRun = (run: PayrollRun) =>
+  ['draft', 'processed', 'cancelled'].includes(run.status) && !run.locked_at;
 const canDownloadPayslips = (status: string) => ['approved', 'paid'].includes(status);
 // Cancellation follows the four-eyes split the backend enforces: the preparer
 // withdraws their own draft/processed run; once submitted, only an approver
@@ -185,8 +186,9 @@ export function PayrollDetail() {
   const updatePcbMutation = useMutation({
     mutationFn: ({ employeeId, pcbAmount }: { employeeId: string; pcbAmount: number }) =>
       updatePayrollItemPcb(id!, employeeId, { pcb_amount: pcbAmount }),
-    onSuccess: (summary) => {
+    onSuccess: (summary, variables) => {
       queryClient.setQueryData(['payrollRun', id], summary);
+      queryClient.invalidateQueries({ queryKey: ['payslipBreakdown', id, variables.employeeId] });
       queryClient.invalidateQueries({ queryKey: ['payrollRuns'] });
       queryClient.invalidateQueries({ queryKey: ['payrollRunAuditLogs', id] });
       queryClient.invalidateQueries({ queryKey: ['payrollOverview'] });
@@ -282,6 +284,10 @@ export function PayrollDetail() {
   };
 
   const savePcb = (employeeId: string) => {
+    if (!pcbInput.trim()) {
+      setPcbError(t('payroll.detail.pcbInvalid'));
+      return;
+    }
     const amount = Number(pcbInput);
     if (!Number.isFinite(amount) || amount < 0) {
       setPcbError(t('payroll.detail.pcbInvalid'));
@@ -313,7 +319,7 @@ export function PayrollDetail() {
                 {downloadingPayslips ? t('common.downloading') : t('payroll.detail.downloadPayslips')}
               </button>
             )}
-            {canManageDraft && canDeletePayrollRun(run.status) && (
+            {canManageDraft && canDeletePayrollRun(run) && (
               <button
                 type="button"
                 onClick={async () => {

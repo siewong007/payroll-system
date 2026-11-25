@@ -1,0 +1,64 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, email, full_name, roles, company_id, employee_id, is_active, created_at\n        FROM users\n        WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL\n        ORDER BY id\n        FOR UPDATE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "email",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "full_name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "roles",
+        "type_info": "VarcharArray"
+      },
+      {
+        "ordinal": 4,
+        "name": "company_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 5,
+        "name": "employee_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 6,
+        "name": "is_active",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 7,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "UuidArray"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "768fcb775cb43a22db3c1c395abe6e1a021e838b232e314b096eb1da0aa5a0b5"
+}

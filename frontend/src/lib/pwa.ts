@@ -229,10 +229,18 @@ export async function showLocalNotification(
       'serviceWorker' in navigator &&
       typeof navigator.serviceWorker.getRegistration === 'function'
     ) {
-      const registration = await navigator.serviceWorker.getRegistration('/');
-      if (registration && typeof registration.showNotification === 'function') {
-        await registration.showNotification(title, notificationOptions);
-        return true;
+      try {
+        const registration = await navigator.serviceWorker.getRegistration('/');
+        if (
+          registration &&
+          typeof registration.showNotification === 'function' &&
+          (!('active' in registration) || registration.active)
+        ) {
+          await registration.showNotification(title, notificationOptions);
+          return true;
+        }
+      } catch {
+        // Fall through to window.Notification if SW is still activating or fails.
       }
     }
 

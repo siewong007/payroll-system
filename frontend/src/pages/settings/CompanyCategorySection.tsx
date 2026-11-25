@@ -76,7 +76,11 @@ function SettingField({
   const { t } = useTranslation();
   const inputId = `setting-${setting.category}-${setting.key}`;
   const isBool = typeof setting.value === 'boolean';
-  const isNumber = typeof setting.value === 'number' || (typeof setting.value === 'string' && !isNaN(Number(setting.value)));
+  const isNumber =
+    typeof setting.value === 'number' ||
+    (typeof setting.value === 'string' &&
+      setting.value.trim() !== '' &&
+      Number.isFinite(Number(setting.value)));
   const fieldClass =
     'px-3 py-2 border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-100 rounded-lg text-sm focus:ring-2 focus:ring-[var(--ring)] outline-none';
 

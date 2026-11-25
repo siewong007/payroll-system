@@ -33,6 +33,20 @@ fn text_field(value: &str) -> String {
     neutralize_formula(value)
 }
 
+fn ic_or_passport(row: &StatutoryRow) -> &str {
+    row.ic_number
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            row.passport_number
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+        })
+        .unwrap_or("")
+}
+
 pub async fn export_epf(
     pool: &PgPool,
     company_id: Uuid,
@@ -58,12 +72,13 @@ pub async fn export_epf(
         if row.epf_employee == 0 && row.epf_employer == 0 {
             continue;
         }
+        let epf_wages = (row.gross_salary - row.total_overtime - row.unpaid_leave_deduction).max(0);
         wtr.write_record([
             employer_epf.clone(),
             text_field(row.epf_number.as_deref().unwrap_or("")),
-            text_field(row.ic_number.as_deref().unwrap_or("")),
+            text_field(ic_or_passport(row)),
             text_field(&row.employee_name),
-            sen_to_plain_rm(row.gross_salary),
+            sen_to_plain_rm(epf_wages),
             sen_to_plain_rm(row.epf_employee),
             sen_to_plain_rm(row.epf_employer),
         ])
@@ -99,12 +114,13 @@ pub async fn export_socso(
         if row.socso_employee == 0 && row.socso_employer == 0 {
             continue;
         }
+        let wages = (row.gross_salary - row.unpaid_leave_deduction).max(0);
         wtr.write_record([
             employer_socso.clone(),
             text_field(row.socso_number.as_deref().unwrap_or("")),
-            text_field(row.ic_number.as_deref().unwrap_or("")),
+            text_field(ic_or_passport(row)),
             text_field(&row.employee_name),
-            sen_to_plain_rm(row.gross_salary),
+            sen_to_plain_rm(wages),
             sen_to_plain_rm(row.socso_employee),
             sen_to_plain_rm(row.socso_employer),
         ])
@@ -140,12 +156,13 @@ pub async fn export_eis(
         if row.eis_employee == 0 && row.eis_employer == 0 {
             continue;
         }
+        let wages = (row.gross_salary - row.unpaid_leave_deduction).max(0);
         wtr.write_record([
             employer_eis.clone(),
             text_field(row.eis_number.as_deref().unwrap_or("")),
-            text_field(row.ic_number.as_deref().unwrap_or("")),
+            text_field(ic_or_passport(row)),
             text_field(&row.employee_name),
-            sen_to_plain_rm(row.gross_salary),
+            sen_to_plain_rm(wages),
             sen_to_plain_rm(row.eis_employee),
             sen_to_plain_rm(row.eis_employer),
         ])
@@ -195,7 +212,7 @@ pub async fn export_pcb_cp39(
         output.push_str(&format!(
             "D|{}|{}|{}|{}|0.00\n",
             cp39_field(row.tax_identification_number.as_deref().unwrap_or("")),
-            cp39_field(row.ic_number.as_deref().unwrap_or("")),
+            cp39_field(ic_or_passport(row)),
             name,
             sen_to_plain_rm(row.pcb_amount),
         ));

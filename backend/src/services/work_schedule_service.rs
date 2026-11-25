@@ -29,6 +29,45 @@ pub async fn list_schedules(pool: &PgPool, company_id: Uuid) -> AppResult<Vec<Wo
     company_work_schedules::list_for_company(pool, company_id).await
 }
 
+fn validate_schedule_fields(
+    name: &str,
+    start: NaiveTime,
+    end: NaiveTime,
+    grace: i32,
+    half_day: f64,
+    unpaid_break: i32,
+    tz: &str,
+) -> AppResult<String> {
+    let trimmed_name = name.trim();
+    if trimmed_name.is_empty() || trimmed_name.chars().count() > 100 {
+        return Err(AppError::BadRequest(
+            "Schedule name must be 1–100 characters".into(),
+        ));
+    }
+    if start == end {
+        return Err(AppError::BadRequest(
+            "Start time and end time cannot be the same".into(),
+        ));
+    }
+    if !half_day.is_finite() || half_day <= 0.0 || half_day > 24.0 {
+        return Err(AppError::BadRequest(
+            "Half-day hours must be between 0.5 and 24".into(),
+        ));
+    }
+    if !(0..=120).contains(&grace) {
+        return Err(AppError::BadRequest(
+            "Grace minutes must be between 0 and 120".into(),
+        ));
+    }
+    if !(0..=480).contains(&unpaid_break) {
+        return Err(AppError::BadRequest(
+            "Unpaid break minutes must be between 0 and 480".into(),
+        ));
+    }
+    timezone::validate(tz)?;
+    Ok(trimmed_name.to_string())
+}
+
 /// Create or replace the default work schedule for a company
 pub async fn upsert_default_schedule(
     pool: &PgPool,
@@ -37,40 +76,41 @@ pub async fn upsert_default_schedule(
     actor_id: Uuid,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<WorkSchedule> {
+    let existing = get_default_schedule(pool, company_id).await?;
     let start = parse_time(&req.start_time)?;
     let end = parse_time(&req.end_time)?;
-    let name = req.name.as_deref().unwrap_or("Default");
-    let grace = req.grace_minutes.unwrap_or(15);
-    let half_day = req.half_day_hours.unwrap_or(4.0);
-    let unpaid_break = req.unpaid_break_minutes.unwrap_or(60);
+    let raw_name = req
+        .name
+        .as_deref()
+        .or_else(|| existing.as_ref().map(|e| e.name.as_str()))
+        .unwrap_or("Default");
+    let grace = req
+        .grace_minutes
+        .or_else(|| existing.as_ref().map(|e| e.grace_minutes))
+        .unwrap_or(15);
+    let half_day = req
+        .half_day_hours
+        .or_else(|| {
+            use rust_decimal::prelude::ToPrimitive;
+            existing.as_ref().and_then(|e| e.half_day_hours.to_f64())
+        })
+        .unwrap_or(4.0);
+    let unpaid_break = req
+        .unpaid_break_minutes
+        .or_else(|| existing.as_ref().map(|e| e.unpaid_break_minutes))
+        .unwrap_or(60);
     let tz = req
         .timezone
         .as_deref()
+        .or_else(|| existing.as_ref().map(|e| e.timezone.as_str()))
         .unwrap_or(timezone::DEFAULT_TIMEZONE);
 
-    if !(0..=120).contains(&grace) {
-        return Err(AppError::BadRequest(
-            "Grace minutes must be between 0 and 120".into(),
-        ));
-    }
-    // Same policy bound as the database CHECK: a full working day is the most
-    // break anyone could plausibly configure away.
-    if !(0..=480).contains(&unpaid_break) {
-        return Err(AppError::BadRequest(
-            "Unpaid break minutes must be between 0 and 480".into(),
-        ));
-    }
-    // The stored zone is interpolated into `AT TIME ZONE` by every attendance
-    // read, write and by the daily absent job. Unvalidated, one typo here made
-    // each of those a 500 for this tenant — and stalled the platform-wide job.
-    timezone::validate(tz)?;
-
-    let existing = get_default_schedule(pool, company_id).await?;
+    let name = validate_schedule_fields(raw_name, start, end, grace, half_day, unpaid_break, tz)?;
 
     let schedule = company_work_schedules::upsert_default(
         pool,
         company_id,
-        name,
+        &name,
         start,
         end,
         grace,
@@ -141,23 +181,13 @@ pub async fn update_schedule(
         .unpaid_break_minutes
         .unwrap_or(existing.unpaid_break_minutes);
 
-    if !(0..=120).contains(&grace) {
-        return Err(AppError::BadRequest(
-            "Grace minutes must be between 0 and 120".into(),
-        ));
-    }
-    if !(0..=480).contains(&unpaid_break) {
-        return Err(AppError::BadRequest(
-            "Unpaid break minutes must be between 0 and 480".into(),
-        ));
-    }
-    timezone::validate(tz)?;
+    let name = validate_schedule_fields(name, start, end, grace, half_day, unpaid_break, tz)?;
 
     let schedule = company_work_schedules::update(
         pool,
         schedule_id,
         company_id,
-        name,
+        &name,
         start,
         end,
         grace,

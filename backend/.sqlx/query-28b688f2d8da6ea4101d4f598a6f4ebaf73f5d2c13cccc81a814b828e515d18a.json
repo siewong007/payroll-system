@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT start_time, end_time, grace_minutes FROM company_work_schedules WHERE company_id = $1 AND is_default = TRUE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "start_time",
+        "type_info": "Time"
+      },
+      {
+        "ordinal": 1,
+        "name": "end_time",
+        "type_info": "Time"
+      },
+      {
+        "ordinal": 2,
+        "name": "grace_minutes",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "28b688f2d8da6ea4101d4f598a6f4ebaf73f5d2c13cccc81a814b828e515d18a"
+}

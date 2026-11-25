@@ -13,37 +13,52 @@ pub async fn list_audit_logs(
     company_id: Uuid,
     query: &AuditLogQuery,
 ) -> AppResult<(Vec<AuditLogWithUser>, i64)> {
-    let page = query.page.unwrap_or(1).max(1);
-    let per_page = query.per_page.unwrap_or(25).min(100);
-    let offset = (page - 1) * per_page;
+    list_audit_logs_scoped(pool, company_id, query, false).await
+}
 
-    let count = audit_logs::count_filtered(
+pub async fn list_audit_logs_scoped(
+    pool: &PgPool,
+    company_id: Uuid,
+    query: &AuditLogQuery,
+    hide_privileged: bool,
+) -> AppResult<(Vec<AuditLogWithUser>, i64)> {
+    let page = query.page.unwrap_or(1).clamp(1, 100_000);
+    let per_page = query.per_page.unwrap_or(25).clamp(1, 100);
+    let offset = (page - 1).saturating_mul(per_page);
+
+    let count = audit_logs::count_filtered_scoped(
         pool,
         company_id,
         query.entity_type.as_deref(),
         query.entity_id,
         query.action.as_deref(),
         query.user_id,
-        query.start_date,
+        start_date_or_none(query),
         query.end_date,
+        hide_privileged,
     )
     .await?;
 
-    let logs = audit_reads::list_filtered(
+    let logs = audit_reads::list_filtered_scoped(
         pool,
         company_id,
         query.entity_type.as_deref(),
         query.entity_id,
         query.action.as_deref(),
         query.user_id,
-        query.start_date,
+        start_date_or_none(query),
         query.end_date,
+        hide_privileged,
         per_page,
         offset,
     )
     .await?;
 
     Ok((logs, count))
+}
+
+fn start_date_or_none(query: &AuditLogQuery) -> Option<chrono::NaiveDate> {
+    query.start_date
 }
 
 /// Write one audit row.
@@ -120,8 +135,15 @@ pub async fn list_filter_options(pool: &PgPool, company_id: Uuid) -> AppResult<A
     })
 }
 
-fn is_payroll_audit_key(key: &str) -> bool {
+fn is_payroll_audit_key(key: &str, entity_type: &str) -> bool {
     let k = key.to_ascii_lowercase();
+    let is_payroll_entity = matches!(
+        entity_type,
+        "payroll_entry" | "payroll_run" | "payroll_item" | "salary_history"
+    );
+    if is_payroll_entity && matches!(k.as_str(), "amount" | "rate" | "quantity") {
+        return true;
+    }
     matches!(
         k.as_str(),
         "basic_salary"
@@ -178,22 +200,27 @@ fn is_personal_audit_key(key: &str) -> bool {
     )
 }
 
-fn redact_audit_json(value: &mut serde_json::Value, hide_payroll: bool, hide_personal: bool) {
+fn redact_audit_json(
+    value: &mut serde_json::Value,
+    entity_type: &str,
+    hide_payroll: bool,
+    hide_personal: bool,
+) {
     match value {
         serde_json::Value::Object(map) => {
             for (k, v) in map.iter_mut() {
-                let should_redact = (hide_payroll && is_payroll_audit_key(k))
+                let should_redact = (hide_payroll && is_payroll_audit_key(k, entity_type))
                     || (hide_personal && is_personal_audit_key(k));
                 if should_redact {
                     *v = serde_json::Value::String("[REDACTED]".to_string());
                 } else {
-                    redact_audit_json(v, hide_payroll, hide_personal);
+                    redact_audit_json(v, entity_type, hide_payroll, hide_personal);
                 }
             }
         }
         serde_json::Value::Array(items) => {
             for item in items {
-                redact_audit_json(item, hide_payroll, hide_personal);
+                redact_audit_json(item, entity_type, hide_payroll, hide_personal);
             }
         }
         _ => {}
@@ -207,11 +234,12 @@ pub fn redact_audit_logs(logs: &mut [AuditLogWithUser], hide_payroll: bool, hide
         return;
     }
     for row in logs {
+        let entity_type = row.entity_type.clone();
         if let Some(ref mut old_val) = row.old_values {
-            redact_audit_json(old_val, hide_payroll, hide_personal);
+            redact_audit_json(old_val, &entity_type, hide_payroll, hide_personal);
         }
         if let Some(ref mut new_val) = row.new_values {
-            redact_audit_json(new_val, hide_payroll, hide_personal);
+            redact_audit_json(new_val, &entity_type, hide_payroll, hide_personal);
         }
     }
 }

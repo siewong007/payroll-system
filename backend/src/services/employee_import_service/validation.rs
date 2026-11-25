@@ -7,7 +7,7 @@ use super::parsing::{parse_csv, parse_xlsx, rows_to_import_rows};
 use super::values::{parse_bool, parse_date, parse_money_to_sen};
 use crate::core::error::{AppError, AppResult};
 use crate::models::employee_import::*;
-use crate::repositories::{bulk_import_sessions, employees as employee_repo};
+use crate::repositories::{bulk_import_sessions, employees as employee_repo, payroll_groups};
 
 fn validate_row(row: &ImportRowRaw) -> Vec<FieldError> {
     let mut errors = Vec::new();
@@ -61,6 +61,17 @@ fn validate_row(row: &ImportRowRaw) -> Vec<FieldError> {
                 message: msg,
             });
         }
+    }
+
+    if let Some(ps_str) = &row.probation_start
+        && let Some(pe_str) = &row.probation_end
+        && let (Ok(ps), Ok(pe)) = (parse_date(ps_str), parse_date(pe_str))
+        && pe < ps
+    {
+        errors.push(FieldError {
+            field: "probation_end".into(),
+            message: "Probation end date cannot be before probation start date".into(),
+        });
     }
 
     for (field, value) in [
@@ -168,13 +179,18 @@ fn validate_row(row: &ImportRowRaw) -> Vec<FieldError> {
         }
     }
 
-    if let Some(v) = &row.num_children
-        && v.parse::<i32>().is_err()
-    {
-        errors.push(FieldError {
-            field: "num_children".into(),
-            message: format!("Invalid number '{}'. Enter a whole number", v),
-        });
+    if let Some(v) = &row.num_children {
+        match v.parse::<i32>() {
+            Err(_) => errors.push(FieldError {
+                field: "num_children".into(),
+                message: format!("Invalid number '{}'. Enter a whole number", v),
+            }),
+            Ok(n) if !(0..=30).contains(&n) => errors.push(FieldError {
+                field: "num_children".into(),
+                message: "Number of children must be between 0 and 30".into(),
+            }),
+            Ok(_) => {}
+        }
     }
 
     if let Some(v) = &row.email
@@ -298,6 +314,10 @@ pub async fn validate_file(
 
     let import_rows = rows_to_import_rows(&headers, rows)?;
     let existing = load_existing(pool, company_id).await?;
+    let valid_group_ids: HashSet<Uuid> = payroll_groups::list_ids_for_company(pool, company_id)
+        .await?
+        .into_iter()
+        .collect();
 
     let mut validated_rows = Vec::with_capacity(import_rows.len());
     let mut seen_emp_numbers: HashMap<String, usize> = HashMap::new();
@@ -305,6 +325,15 @@ pub async fn validate_file(
 
     for row in import_rows {
         let mut errors = validate_row(&row);
+        if let Some(v) = &row.payroll_group_id
+            && let Ok(gid) = Uuid::parse_str(v)
+            && !valid_group_ids.contains(&gid)
+        {
+            errors.push(FieldError {
+                field: "payroll_group_id".into(),
+                message: format!("Payroll group '{}' does not exist in this company", v),
+            });
+        }
         let dup_errors = check_duplicates(&row, &existing, &seen_emp_numbers, &seen_ic_numbers);
 
         if let Some(emp_no) = &row.employee_number {

@@ -12,7 +12,8 @@ use crate::models::dashboard::{
     YtdEmployerTotals,
 };
 
-/// The most recent non-cancelled/non-draft run for the company, if any.
+/// The most recent committed (`approved`/`paid`) period aggregated across all
+/// payroll groups for the company, if any.
 pub async fn last_payroll(
     executor: impl Executor<'_, Database = Postgres>,
     company_id: Uuid,
@@ -21,9 +22,12 @@ pub async fn last_payroll(
         LastPayrollRow,
         r#"SELECT
             period_year::text || '-' || LPAD(period_month::text, 2, '0') AS "period!",
-            total_net, total_gross, employee_count
+            COALESCE(SUM(total_net), 0)::BIGINT AS "total_net!",
+            COALESCE(SUM(total_gross), 0)::BIGINT AS "total_gross!",
+            COALESCE(SUM(employee_count), 0)::INT4 AS "employee_count!"
         FROM payroll_runs
-        WHERE company_id = $1 AND status NOT IN ('cancelled', 'draft')
+        WHERE company_id = $1 AND status IN ('approved', 'paid')
+        GROUP BY period_year, period_month
         ORDER BY period_year DESC, period_month DESC
         LIMIT 1"#,
         company_id,
@@ -33,7 +37,7 @@ pub async fn last_payroll(
     Ok(row)
 }
 
-/// Year-to-date employer-cost totals across non-cancelled/non-draft runs.
+/// Year-to-date employer-cost totals across committed (`approved`/`paid`) runs.
 pub async fn ytd_employer_totals(
     executor: impl Executor<'_, Database = Postgres>,
     company_id: Uuid,
@@ -48,7 +52,7 @@ pub async fn ytd_employer_totals(
             COALESCE(SUM(total_eis_employer), 0)::BIGINT AS "total_eis_employer!"
         FROM payroll_runs
         WHERE company_id = $1 AND period_year = $2
-        AND status NOT IN ('cancelled', 'draft')"#,
+        AND status IN ('approved', 'paid')"#,
         company_id,
         year,
     )

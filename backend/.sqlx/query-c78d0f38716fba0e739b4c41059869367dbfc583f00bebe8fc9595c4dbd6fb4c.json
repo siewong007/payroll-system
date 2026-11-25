@@ -1,0 +1,77 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO user_totp (user_id, secret_encrypted, enabled, confirmed_at, last_used_step, failed_attempts, locked_until)\n        VALUES ($1, $2, false, NULL, NULL, 0, NULL)\n        ON CONFLICT (user_id) DO UPDATE SET\n            secret_encrypted = EXCLUDED.secret_encrypted,\n            enabled = false,\n            confirmed_at = NULL,\n            last_used_step = NULL,\n            failed_attempts = 0,\n            locked_until = NULL,\n            updated_at = NOW()\n        WHERE user_totp.enabled = FALSE\n        RETURNING *",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "user_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "secret_encrypted",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 4,
+        "name": "confirmed_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 5,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "last_used_step",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 8,
+        "name": "failed_attempts",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 9,
+        "name": "locked_until",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "c78d0f38716fba0e739b4c41059869367dbfc583f00bebe8fc9595c4dbd6fb4c"
+}

@@ -12,7 +12,7 @@ use crate::models::report::{
     StatutoryReportRow,
 };
 
-/// Per-period payroll totals for a year (approved/paid runs only).
+/// Per-period payroll totals for a year (approved/paid runs only), aggregated across payroll groups.
 pub async fn payroll_summary(
     executor: impl Executor<'_, Database = Postgres>,
     company_id: Uuid,
@@ -21,15 +21,23 @@ pub async fn payroll_summary(
     let rows = sqlx::query_as!(
         PayrollSummaryRow,
         r#"SELECT
-            TO_CHAR(period_start, 'YYYY-MM') AS "period!",
-            employee_count, total_gross, total_net,
-            total_epf_employee, total_epf_employer,
-            total_socso_employee, total_socso_employer,
-            total_eis_employee, total_eis_employer,
-            total_pcb, total_zakat, total_employer_cost
+            TO_CHAR(MIN(period_start), 'YYYY-MM') AS "period!",
+            COALESCE(SUM(employee_count), 0)::int AS "employee_count!",
+            COALESCE(SUM(total_gross), 0)::bigint AS "total_gross!",
+            COALESCE(SUM(total_net), 0)::bigint AS "total_net!",
+            COALESCE(SUM(total_epf_employee), 0)::bigint AS "total_epf_employee!",
+            COALESCE(SUM(total_epf_employer), 0)::bigint AS "total_epf_employer!",
+            COALESCE(SUM(total_socso_employee), 0)::bigint AS "total_socso_employee!",
+            COALESCE(SUM(total_socso_employer), 0)::bigint AS "total_socso_employer!",
+            COALESCE(SUM(total_eis_employee), 0)::bigint AS "total_eis_employee!",
+            COALESCE(SUM(total_eis_employer), 0)::bigint AS "total_eis_employer!",
+            COALESCE(SUM(total_pcb), 0)::bigint AS "total_pcb!",
+            COALESCE(SUM(total_zakat), 0)::bigint AS "total_zakat!",
+            COALESCE(SUM(total_employer_cost), 0)::bigint AS "total_employer_cost!"
         FROM payroll_runs
         WHERE company_id = $1 AND period_year = $2
-        AND status::text IN ('approved', 'paid')
+          AND status::text IN ('approved', 'paid')
+        GROUP BY period_year, period_month
         ORDER BY period_month ASC"#,
         company_id,
         year,
@@ -118,14 +126,15 @@ pub async fn claims_report(
             e.department,
             COUNT(*) AS "total_claims!",
             COALESCE(SUM(c.amount), 0)::bigint AS "total_amount!",
-            COUNT(*) FILTER (WHERE c.status = 'approved') AS "approved_count!",
-            COALESCE(SUM(c.amount) FILTER (WHERE c.status = 'approved'), 0)::bigint AS "approved_amount!",
+            COUNT(*) FILTER (WHERE c.status IN ('approved', 'processed')) AS "approved_count!",
+            COALESCE(SUM(c.amount) FILTER (WHERE c.status IN ('approved', 'processed')), 0)::bigint AS "approved_amount!",
             COUNT(*) FILTER (WHERE c.status = 'pending') AS "pending_count!",
             COALESCE(SUM(c.amount) FILTER (WHERE c.status = 'pending'), 0)::bigint AS "pending_amount!",
             COUNT(*) FILTER (WHERE c.status = 'rejected') AS "rejected_count!"
         FROM claims c
         JOIN employees e ON c.employee_id = e.id
         WHERE c.company_id = $1 AND c.expense_date BETWEEN $2 AND $3
+          AND c.status NOT IN ('draft', 'cancelled')
         GROUP BY e.id, e.full_name, e.employee_number, e.department
         ORDER BY COALESCE(SUM(c.amount), 0) DESC"#,
         company_id,

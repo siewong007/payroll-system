@@ -15,8 +15,8 @@ impl StatusQuery {
     /// Resolved `(page, per_page, offset)` for the approval inboxes.
     pub fn pagination(&self) -> (i64, i64, i64) {
         let per_page = self.per_page.unwrap_or(25).clamp(1, 200);
-        let page = self.page.unwrap_or(1).max(1);
-        (page, per_page, (page - 1) * per_page)
+        let page = self.page.unwrap_or(1).clamp(1, 100_000);
+        (page, per_page, (page - 1).saturating_mul(per_page))
     }
 }
 
@@ -86,7 +86,7 @@ pub struct LeaveRequestWithEmployee {
 #[derive(Debug, sqlx::FromRow)]
 pub struct EmployeeEmailInfo {
     pub full_name: String,
-    pub email: String,
+    pub email: Option<String>,
     pub company_name: String,
 }
 

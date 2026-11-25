@@ -217,8 +217,12 @@ export function AttendancePage() {
   };
 
   const tabItems = [
-    { key: 'records' as const, label: t('attendance.page.tabs.records'), icon: Clock },
-    { key: 'summary' as const, label: t('attendance.page.tabs.summary'), icon: ListChecks },
+    ...(canView
+      ? [
+          { key: 'records' as const, label: t('attendance.page.tabs.records'), icon: Clock },
+          { key: 'summary' as const, label: t('attendance.page.tabs.summary'), icon: ListChecks },
+        ]
+      : [{ key: 'records' as const, label: t('attendance.page.tabs.records'), icon: Clock }]),
     ...(canConfigure
       ? [{ key: 'settings' as const, label: t('attendance.page.tabs.settings'), icon: Settings }]
       : []),
@@ -243,7 +247,11 @@ export function AttendancePage() {
                   aria-label={t('attendance.page.method')}
                   className="form-input !w-auto !py-1 !px-2 text-sm font-medium disabled:opacity-50"
                 >
-                  <option value="">{`${attMethodLabel(method.method)} (${t('attendance.page.methodDefault')})`}</option>
+                  <option value="">
+                    {method.is_company_override
+                      ? t('attendance.page.platformDefault')
+                      : `${attMethodLabel(method.method)} (${t('attendance.page.methodDefault')})`}
+                  </option>
                   <option value="qr_code">{attMethodLabel('qr_code')}</option>
                   <option value="face_id">{attMethodLabel('face_id')}</option>
                 </select>
@@ -284,6 +292,9 @@ export function AttendancePage() {
                     status:      filters.status      || undefined,
                     method:      filters.method      || undefined,
                     employee_id: filters.employee_id || undefined,
+                    open_only:             filters.open_only || undefined,
+                    outside_geofence_only: filters.outside_geofence_only || undefined,
+                    offsite_network_only:  filters.offsite_network_only || undefined,
                   });
                 } catch (e) {
                   setPageError(getErrorMessage(e, t('attendance.page.exportFailed')));
@@ -350,8 +361,8 @@ export function AttendancePage() {
           {canManageGeofence && <GeofenceCard />}
           {canManageNetworks && <NetworkCard enabled={canManageNetworks} />}
         </div>
-      ) : tab === 'summary' ? (
-        <SummaryTab today={today} canExport={canView} />
+      ) : tab === 'summary' && canView ? (
+        <SummaryTab today={today} canExport={canView} canView={canView} />
       ) : (
       <div className={`grid grid-cols-1 gap-6 ${showQrPanel ? 'xl:grid-cols-[300px_minmax(0,1fr)]' : ''}`}>
         {/* QR Panel — only in QR mode */}
@@ -562,7 +573,7 @@ export function AttendancePage() {
                         return (
                           <tr key={r.id} className="hover:bg-gray-50/70 dark:hover:bg-slate-800/40 transition-colors">
                             <td className="px-5 py-3.5 whitespace-nowrap text-gray-600 dark:text-slate-300">
-                              {formatDate(r.check_in_at)}
+                              {formatDate(r.check_in_at, timeZone)}
                             </td>
                             <td className="px-5 py-3.5">
                               <div className="font-medium text-gray-900 dark:text-slate-100">{r.full_name}</div>
@@ -576,13 +587,13 @@ export function AttendancePage() {
                             <td className="px-5 py-3.5 tabular-nums text-gray-700 dark:text-slate-200 whitespace-nowrap">
                               <div className="flex items-center gap-1.5">
                                 <LogIn className="w-3.5 h-3.5 text-emerald-500 dark:text-emerald-400" />
-                                {isAbsentPlaceholder ? '—' : formatTime(r.check_in_at)}
+                                {isAbsentPlaceholder ? '—' : formatTime(r.check_in_at, timeZone)}
                               </div>
                             </td>
                             <td className="px-5 py-3.5 tabular-nums text-gray-700 dark:text-slate-200 whitespace-nowrap">
                               <div className="flex items-center gap-1.5">
                                 <LogOut className="w-3.5 h-3.5 text-gray-400 dark:text-slate-500" />
-                                {isAbsentPlaceholder ? '—' : formatTime(r.check_out_at)}
+                                {isAbsentPlaceholder ? '—' : formatTime(r.check_out_at, timeZone)}
                                 {overnightOut && (
                                   <span className="rounded bg-gray-100 dark:bg-slate-800 px-1 py-px text-[10px] font-medium text-gray-600 dark:text-slate-300">
                                     {t('attendance.records.nextDay')}

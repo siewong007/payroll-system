@@ -102,6 +102,14 @@ pub struct CompanyExport {
     pub geofence_mode: Option<String>,
 }
 
+fn default_unpaid_break_minutes() -> i32 {
+    60
+}
+
+fn default_carry_forward_expiry_months() -> i32 {
+    3
+}
+
 /// A shift definition. The default one (`is_default`) is what the whole
 /// attendance subsystem reads its timezone, lateness grace and half-day
 /// threshold from, so an archive that cannot carry it silently relocates the
@@ -114,6 +122,8 @@ pub struct CompanyWorkScheduleExport {
     pub start_time: NaiveTime,
     pub end_time: NaiveTime,
     pub grace_minutes: i32,
+    #[serde(default = "default_unpaid_break_minutes")]
+    pub unpaid_break_minutes: i32,
     pub half_day_hours: rust_decimal::Decimal,
     pub timezone: String,
     pub is_default: bool,
@@ -270,6 +280,12 @@ pub struct LeaveTypeExport {
     pub default_days: rust_decimal::Decimal,
     pub is_paid: bool,
     pub is_active: bool,
+    #[serde(default)]
+    pub max_carry_forward: rust_decimal::Decimal,
+    #[serde(default = "default_carry_forward_expiry_months")]
+    pub carry_forward_expiry_months: i32,
+    #[serde(default)]
+    pub is_system: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -320,6 +336,8 @@ pub struct ClaimExport {
     pub expense_date: NaiveDate,
     pub status: String,
     pub submitted_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub payroll_run_id: Option<Uuid>,
     pub review_notes: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -367,6 +385,10 @@ pub struct PayrollRunExport {
     pub employee_count: i32,
     pub version: i32,
     pub notes: Option<String>,
+    #[serde(default)]
+    pub cancelled_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub cancel_reason: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -378,6 +400,8 @@ pub struct PayrollItemExport {
     pub employee_id: Uuid,
     pub basic_salary: i64,
     pub gross_salary: i64,
+    #[serde(default)]
+    pub taxable_gross: Option<i64>,
     pub total_allowances: i64,
     pub total_overtime: i64,
     pub total_bonus: i64,

@@ -119,7 +119,7 @@ repository.
 | Company JSON backup/export and restore/import                   | End to end | Tenant-bound restore with `upload_path` filename sanitization and magic-byte verification                                                                                |
 | Settings and platform attendance defaults                       | End to end | Company and super-admin flows                                                                                                                                            |
 | Liveness, readiness, and platform health telemetry              | End to end | Readiness checks DB/migrations, running build `revision`, and background-job heartbeats; `super_admin` `/admin/platform/health` surfaces queue depth and last job errors |
-| PostgreSQL schema/reference & forward migrations                | End to end | Consolidated `1000`/`1001` baseline plus immutable forward chain `1002`–`1032`; no demo credentials                                                                      |
+| PostgreSQL schema/reference & forward migrations                | End to end | Consolidated `1000`/`1001` baseline plus immutable forward chain `1002`–`1033`; no demo credentials                                                                      |
 | Docker Compose and GitHub Actions                               | End to end | Both pin PostgreSQL 19 Beta 2 and enforce forward-only migration immutability                                                                                            |
 
 ## Explicit non-features

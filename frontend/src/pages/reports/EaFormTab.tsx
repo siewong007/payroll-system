@@ -27,16 +27,24 @@ export function EaFormTab({
 }) {
   const { t } = useTranslation();
   const toast = useToast();
-  const [downloading, setDownloading] = useState<string | null>(null);
+  const [downloadingIds, setDownloadingIds] = useState<Set<string>>(() => new Set());
 
   const handleDownload = async (employeeId: string) => {
-    setDownloading(employeeId);
+    setDownloadingIds((prev) => {
+      const next = new Set(prev);
+      next.add(employeeId);
+      return next;
+    });
     try {
       await downloadEaForm(year, employeeId);
     } catch (err) {
       toast.error(getErrorMessage(err, t('reports.downloadFailed')));
     } finally {
-      setDownloading(null);
+      setDownloadingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(employeeId);
+        return next;
+      });
     }
   };
 
@@ -106,11 +114,11 @@ export function EaFormTab({
                 <button
                   type="button"
                   onClick={() => handleDownload(emp.employee_id)}
-                  disabled={downloading === emp.employee_id}
+                  disabled={downloadingIds.has(emp.employee_id)}
                   className="no-print btn-secondary w-full min-h-11 justify-center text-xs disabled:opacity-50"
                 >
                   <Download className="w-3.5 h-3.5" aria-hidden="true" />
-                  {downloading === emp.employee_id ? t('common.generating') : t('reports.downloadPdf')}
+                  {downloadingIds.has(emp.employee_id) ? t('common.generating') : t('reports.downloadPdf')}
                 </button>
               </div>
             ))}
@@ -147,11 +155,11 @@ export function EaFormTab({
                       <button
                         type="button"
                         onClick={() => handleDownload(emp.employee_id)}
-                        disabled={downloading === emp.employee_id}
+                        disabled={downloadingIds.has(emp.employee_id)}
                         className="btn-secondary min-h-9 !py-1.5 !px-3 !text-xs disabled:opacity-50"
                       >
                         <Download className="w-3.5 h-3.5" aria-hidden="true" />
-                        {downloading === emp.employee_id
+                        {downloadingIds.has(emp.employee_id)
                           ? t('common.generating')
                           : t('reports.downloadPdf')}
                       </button>

@@ -117,6 +117,7 @@ export function CalendarPage() {
     mutationFn: createHoliday,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['holidays'] });
+      queryClient.invalidateQueries({ queryKey: ['portal-holidays'] });
       queryClient.invalidateQueries({ queryKey: ['month-calendar'] });
       setShowHolidayModal(false);
       toast.success(t('calendar.holidaySaved'));
@@ -129,6 +130,7 @@ export function CalendarPage() {
       updateHoliday(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['holidays'] });
+      queryClient.invalidateQueries({ queryKey: ['portal-holidays'] });
       queryClient.invalidateQueries({ queryKey: ['month-calendar'] });
       setShowHolidayModal(false);
       setEditingHoliday(null);
@@ -141,6 +143,7 @@ export function CalendarPage() {
     mutationFn: deleteHoliday,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['holidays'] });
+      queryClient.invalidateQueries({ queryKey: ['portal-holidays'] });
       queryClient.invalidateQueries({ queryKey: ['month-calendar'] });
       toast.success(t('calendar.holidayDeleted'));
     },
@@ -296,7 +299,7 @@ export function CalendarPage() {
       <div className="grid grid-cols-7 gap-0 rounded-xl overflow-hidden border border-gray-200 dark:border-slate-800">
         {DAY_INDICES.map((dow) => (
           <div key={dow} className="text-center text-xs font-medium text-gray-500 dark:text-slate-400 py-2 bg-gray-50 dark:bg-slate-800/80 border-b border-gray-200 dark:border-slate-800 truncate px-0.5">
-            <span className="sm:hidden">{weekdayName(dow).slice(0, 1)}</span>
+            <span className="sm:hidden">{weekdayName(dow, 'narrow')}</span>
             <span className="hidden sm:inline">{weekdayName(dow)}</span>
           </div>
         ))}
@@ -454,6 +457,7 @@ export function CalendarPage() {
                               type="button"
                               onClick={() => {
                                 setEditingHoliday(h);
+                                createMutation.reset();
                                 updateMutation.reset();
                                 setShowHolidayModal(true);
                               }}
@@ -502,7 +506,13 @@ export function CalendarPage() {
               id="calendar-holiday-year"
               aria-label={t('common.year')}
               value={selectedYear}
-              onChange={(e) => setSelectedYear(Number(e.target.value))}
+              onChange={(e) => {
+                const nextYear = Number(e.target.value);
+                setSelectedYear(nextYear);
+                setSelectedDay((prev) =>
+                  prev !== null ? Math.min(prev, new Date(nextYear, selectedMonth, 0).getDate()) : null,
+                );
+              }}
               className="form-input !w-auto !py-1.5"
             >
               {yearOptions.map((y) => (
@@ -567,6 +577,7 @@ export function CalendarPage() {
                           type="button"
                           onClick={() => {
                             setEditingHoliday(h);
+                            createMutation.reset();
                             updateMutation.reset();
                             setShowHolidayModal(true);
                           }}
@@ -679,10 +690,12 @@ export function CalendarPage() {
         }}
         isLoading={createMutation.isPending || updateMutation.isPending}
         serverError={
-          createMutation.isError
-            ? getErrorMessage(createMutation.error, t('calendar.holidaySaveFailed'))
-            : updateMutation.isError
+          editingHoliday
+            ? updateMutation.isError
               ? getErrorMessage(updateMutation.error, t('calendar.holidaySaveFailed'))
+              : ''
+            : createMutation.isError
+              ? getErrorMessage(createMutation.error, t('calendar.holidaySaveFailed'))
               : ''
         }
       />
@@ -693,6 +706,7 @@ export function CalendarPage() {
         onClose={() => setShowImportModal(false)}
         onSuccess={() => {
           queryClient.invalidateQueries({ queryKey: ['holidays'] });
+          queryClient.invalidateQueries({ queryKey: ['portal-holidays'] });
           queryClient.invalidateQueries({ queryKey: ['month-calendar'] });
         }}
       />

@@ -1,12 +1,14 @@
 use sqlx::{Executor, PgPool, Postgres};
 use uuid::Uuid;
 
-use crate::core::auth::{Permission, create_mfa_pending_token, create_token};
+use crate::core::auth::{create_mfa_pending_token, create_token};
 use crate::core::error::{AppError, AppResult};
 use crate::models::audit::AuditRequestMeta;
 use crate::models::session::{LoginOutcome, LoginResponseWithRefresh};
 use crate::models::user::{CodeLoginRequest, LoginRequest, User, UserResponse};
-use crate::repositories::{employees, refresh_tokens, user_groups, user_sessions, users};
+use crate::repositories::{
+    employees, platform_settings, refresh_tokens, user_groups, user_sessions, users,
+};
 use crate::services::{audit_service, session_service, totp_service};
 
 const EMPLOYEE_DELETED_MSG: &str =
@@ -210,13 +212,33 @@ pub async fn code_login(
 
     // get_active_user applies the terminated-employee gate — a portal account
     // whose employee record was deleted must not mint a session off a code.
-    let user = get_active_user(pool, user.id).await?;
+    // Collapse any inactive/terminated rejection into the uniform INVALID error
+    // so /auth/login/code never reveals whether an account exists or is deleted.
+    let user = match get_active_user(pool, user.id).await {
+        Ok(user) => user,
+        Err(AppError::Unauthorized(_)) => {
+            let _ = reject(Some(&user), "inactive_or_deleted").await;
+            return Err(AppError::Unauthorized(INVALID.into()));
+        }
+        Err(other) => return Err(other),
+    };
+
+    // When platform 2FA enforcement is active for privileged accounts, refuse
+    // passwordless 1FA code sign-in so an attacker cannot downgrade 2FA to 1FA.
+    let enforce_2fa = platform_settings::get_value(pool, ENFORCE_2FA_KEY)
+        .await?
+        .as_deref()
+        == Some("true");
+    if enforce_2fa && user_requires_two_factor(pool, &user).await? {
+        let _ = reject(Some(&user), "code_login_blocked_by_2fa_policy").await;
+        return Err(AppError::Unauthorized(INVALID.into()));
+    }
 
     if let Err(e) =
-        totp_service::verify_login_code(pool, user.id, req.code.trim(), encryption_key).await
+        totp_service::verify_code_login(pool, user.id, req.code.trim(), encryption_key).await
     {
         return match e {
-            AppError::Unauthorized(_) => {
+            AppError::Unauthorized(_) | AppError::TooManyRequests(_) => {
                 let _ = reject(Some(&user), "invalid_code").await;
                 Err(AppError::Unauthorized(INVALID.into()))
             }
@@ -304,12 +326,7 @@ pub async fn build_user_response(pool: &PgPool, user: User) -> AppResult<UserRes
     let group_permissions = match user.company_id {
         Some(company_id) => {
             let keys = user_groups::effective_permissions(pool, user.id, company_id).await?;
-            let has_restricted = user.roles.iter().any(|r| r == "exec" || r == "employee");
-            keys.iter()
-                .filter_map(|key| Permission::ALL.iter().find(|p| p.as_str() == key).copied())
-                .filter(|p| !p.is_platform_only())
-                .filter(|p| !has_restricted || !p.is_payroll_capability())
-                .collect()
+            crate::core::permission::filter_group_permissions_for_roles(&user.roles, &keys)
         }
         None => Vec::new(),
     };
@@ -379,9 +396,12 @@ pub async fn refresh_session(
         return Err(session_service::classify_rotation_miss(pool, raw_token).await);
     };
 
-    let user = users::get_active_by_id(&mut *tx, token.user_id)
-        .await?
-        .ok_or_else(|| AppError::Unauthorized("User not found or inactive".into()))?;
+    let Some(user) = users::get_active_by_id(&mut *tx, token.user_id).await? else {
+        user_sessions::revoke(&mut *tx, token.user_id, token.session_id).await?;
+        refresh_tokens::revoke_for_session(&mut *tx, token.session_id).await?;
+        tx.commit().await?;
+        return Err(AppError::Unauthorized("User not found or inactive".into()));
+    };
 
     if !user_sessions::is_active(&mut *tx, user.id, token.session_id).await? {
         user_sessions::revoke(&mut *tx, user.id, token.session_id).await?;
@@ -404,7 +424,7 @@ pub async fn refresh_session(
         return Err(AppError::Unauthorized(EMPLOYEE_DELETED_MSG.into()));
     }
 
-    if let Err(err) = enforce_two_factor_policy(pool, &user).await {
+    if let Err(err) = enforce_two_factor_policy_with(&mut tx, &user).await {
         user_sessions::revoke(&mut *tx, user.id, token.session_id).await?;
         refresh_tokens::revoke_for_session(&mut *tx, token.session_id).await?;
         tx.commit().await?;
@@ -553,6 +573,7 @@ const TWO_FACTOR_REQUIRED_GROUP_PERMS: &[&str] = &[
     "submit_payroll",
     "approve_payroll",
     "mark_payroll_paid",
+    "import_employees",
     "view_statutory_exports",
     "view_salary_history",
     "manage_company_settings",
@@ -561,7 +582,10 @@ const TWO_FACTOR_REQUIRED_GROUP_PERMS: &[&str] = &[
 pub const ENFORCE_2FA_KEY: &str = "enforce_2fa";
 pub const ENFORCE_2FA_GRACE_UNTIL_KEY: &str = "enforce_2fa_grace_until";
 
-async fn user_requires_two_factor(pool: &PgPool, user: &User) -> AppResult<bool> {
+async fn user_requires_two_factor<'e>(
+    executor: impl sqlx::Executor<'e, Database = sqlx::Postgres>,
+    user: &User,
+) -> AppResult<bool> {
     if user
         .roles
         .iter()
@@ -574,7 +598,7 @@ async fn user_requires_two_factor(pool: &PgPool, user: &User) -> AppResult<bool>
         .iter()
         .map(|s| s.to_string())
         .collect();
-    user_groups::user_has_any_active_permission(pool, user.id, &perms).await
+    user_groups::user_has_any_active_permission(executor, user.id, &perms).await
 }
 
 /// Prevent disabling 2FA when platform 2FA enforcement is active for the user's
@@ -606,11 +630,19 @@ pub async fn require_two_factor_not_enforced(pool: &PgPool, user: &User) -> AppR
 /// itself requires a session, so a hard cut without grace would lock out the
 /// very people needed to fix it.
 async fn enforce_two_factor_policy(pool: &PgPool, user: &User) -> AppResult<()> {
-    if !user_requires_two_factor(pool, user).await? {
+    let mut conn = pool.acquire().await?;
+    enforce_two_factor_policy_with(&mut conn, user).await
+}
+
+async fn enforce_two_factor_policy_with(
+    conn: &mut sqlx::PgConnection,
+    user: &User,
+) -> AppResult<()> {
+    if !user_requires_two_factor(&mut *conn, user).await? {
         return Ok(());
     }
 
-    let enabled = platform_settings_value(pool, ENFORCE_2FA_KEY)
+    let enabled = platform_settings::get_value(&mut *conn, ENFORCE_2FA_KEY)
         .await?
         .as_deref()
         == Some("true");
@@ -618,16 +650,16 @@ async fn enforce_two_factor_policy(pool: &PgPool, user: &User) -> AppResult<()> 
         return Ok(());
     }
 
-    if totp_service::is_enabled(pool, user.id).await? {
+    if totp_service::is_enabled(&mut *conn, user.id).await? {
         return Ok(());
     }
 
-    let grace = platform_settings_value(pool, ENFORCE_2FA_GRACE_UNTIL_KEY).await?;
+    let grace = platform_settings::get_value(&mut *conn, ENFORCE_2FA_GRACE_UNTIL_KEY).await?;
     if let Some(until) = parse_grace(grace) {
         let now_utc_date = chrono::Utc::now().date_naive();
         if now_utc_date <= until {
             let _ = crate::services::audit_service::log_action_with_metadata(
-                pool,
+                &mut *conn,
                 user.company_id,
                 Some(user.id),
                 "two_factor_overdue",

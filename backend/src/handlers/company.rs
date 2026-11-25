@@ -14,6 +14,7 @@ fn request_touches_payroll_fields(req: &UpdateCompanyRequest) -> bool {
         || req.hrdf_number.is_some()
         || req.hrdf_enabled.is_some()
         || req.unpaid_leave_divisor.is_some()
+        || req.clear_unpaid_leave_divisor == Some(true)
 }
 
 fn redact_payroll_fields(company: &mut Company) {
@@ -56,11 +57,13 @@ pub async fn update(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
+    let access = crate::services::upload_service::access_from_auth(&auth, company_id);
     let mut company = company_service::update_company(
         &state.pool,
         company_id,
         req,
         auth.0.sub,
+        &access,
         Some(&audit_meta),
     )
     .await?;

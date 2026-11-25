@@ -223,6 +223,9 @@ pub struct AttendanceExportQuery {
     /// Mirrors the table's method filter; without it an export taken while the
     /// filter was active silently contained every method.
     pub method: Option<String>,
+    pub open_only: Option<bool>,
+    pub outside_geofence_only: Option<bool>,
+    pub offsite_network_only: Option<bool>,
 }
 
 /// Response for the effective attendance method of a company. Also carries the

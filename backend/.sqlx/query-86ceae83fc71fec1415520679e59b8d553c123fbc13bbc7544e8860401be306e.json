@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM attendance_network_observations\n           WHERE company_id = $1\n             AND ((network || '/' || prefix_len)::cidr <<= ($2 || '/' || $3::smallint::text)::cidr)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Int2"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "86ceae83fc71fec1415520679e59b8d553c123fbc13bbc7544e8860401be306e"
+}

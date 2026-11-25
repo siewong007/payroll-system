@@ -39,6 +39,7 @@ export function ClaimCrudModal({
     receipt_file_name: '',
     expense_date: todayLocalDate(),
   });
+  const [amountInput, setAmountInput] = useState('');
   const [error, setError] = useState('');
   const [uploading, setUploading] = useState(false);
   const modalTitle = item
@@ -61,6 +62,7 @@ export function ClaimCrudModal({
         receipt_file_name: item.receipt_file_name || '',
         expense_date: item.expense_date,
       });
+      setAmountInput(String(item.amount / 100));
       setError('');
       return;
     }
@@ -75,6 +77,7 @@ export function ClaimCrudModal({
       receipt_file_name: '',
       expense_date: todayLocalDate(),
     });
+    setAmountInput('');
     setError('');
   }, [item, open]);
 
@@ -133,22 +136,25 @@ export function ClaimCrudModal({
     const trimmedTitle = form.title.trim();
     const trimmedCategory = form.category?.trim() || '';
     const trimmedDescription = form.description?.trim() || '';
-    if (!form.employee_id || !trimmedTitle || !form.expense_date || !Number.isFinite(form.amount) || form.amount <= 0) {
+    const parsedAmount = amountInput.trim() ? Number(amountInput) : NaN;
+    if (!form.employee_id || !trimmedTitle || !form.expense_date || !Number.isFinite(parsedAmount) || parsedAmount <= 0) {
       setError(t('approvals.claimRequired'));
       return;
     }
 
     if (item) {
+      const receiptUrl = !form.receipt_url && !item.receipt_url ? undefined : form.receipt_url;
+      const receiptFileName = !form.receipt_file_name && !item.receipt_file_name ? undefined : form.receipt_file_name;
       updateMutation.mutate({
         id: item.id,
         payload: {
           employee_id: form.employee_id,
           title: trimmedTitle,
           description: trimmedDescription,
-          amount: Math.round(form.amount * 100),
+          amount: Math.round(parsedAmount * 100),
           category: trimmedCategory,
-          receipt_url: form.receipt_url,
-          receipt_file_name: form.receipt_file_name,
+          receipt_url: receiptUrl,
+          receipt_file_name: receiptFileName,
           expense_date: form.expense_date,
         },
       });
@@ -158,7 +164,7 @@ export function ClaimCrudModal({
     createMutation.mutate({
       ...form,
       title: trimmedTitle,
-      amount: Math.round(form.amount * 100),
+      amount: Math.round(parsedAmount * 100),
       description: trimmedDescription || undefined,
       category: trimmedCategory || undefined,
       receipt_url: form.receipt_url || undefined,
@@ -241,10 +247,12 @@ export function ClaimCrudModal({
                 type="number"
                 min="0.01"
                 step="0.01"
-                value={Number.isFinite(form.amount) ? form.amount : ''}
-                onChange={(event) =>
-                  setForm((prev) => ({ ...prev, amount: Number(event.target.value) }))
-                }
+                value={amountInput}
+                onChange={(event) => {
+                  const raw = event.target.value;
+                  setAmountInput(raw);
+                  setForm((prev) => ({ ...prev, amount: raw.trim() ? Number(raw) : 0 }));
+                }}
                 className="form-input"
                 required
               />

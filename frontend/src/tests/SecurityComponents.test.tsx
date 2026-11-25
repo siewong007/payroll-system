@@ -143,13 +143,13 @@ describe('TwoFactorPrompt', () => {
     expect(screen.queryByRole('button', { name: 'Back to login' })).not.toBeInTheDocument();
   });
 
-  it('marks the input as a one-time code for autofill', () => {
+  it('marks the input as a one-time code while allowing alphanumeric recovery codes', () => {
     setup();
     render(<TwoFactorPrompt mfaToken="mfa-token" onSuccess={vi.fn()} />);
 
     const input = screen.getByPlaceholderText('123456');
     expect(input).toHaveAttribute('autocomplete', 'one-time-code');
-    expect(input).toHaveAttribute('inputmode', 'numeric');
+    expect(input).toHaveAttribute('inputmode', 'text');
   });
 });
 

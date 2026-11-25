@@ -1,0 +1,27 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS(\n                SELECT 1 FROM payroll_entries\n                WHERE employee_id = $1\n                  AND company_id = $2\n                  AND period_year = $3\n                  AND period_month = $4\n                  AND item_type = 'overtime'\n                  AND (overtime_application_id = $5 OR (overtime_application_id IS NULL AND description LIKE $6))\n                  AND is_processed = TRUE\n            ) AS \"exists!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "exists!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int4",
+        "Int4",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "49fdbc5c05aead876fc3f027d9d4cfe83ac32eb11ddebb3edc6e3c505c33f929"
+}

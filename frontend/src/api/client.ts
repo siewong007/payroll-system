@@ -1,4 +1,5 @@
 import axios from 'axios';
+import type { User } from '@/types';
 
 function resolveApiBaseUrl(rawBaseUrl?: string) {
   if (!rawBaseUrl) {
@@ -21,6 +22,15 @@ const api = axios.create({
 
 // Module-level token storage (in-memory only, not localStorage)
 let accessToken: string | null = null;
+type AuthRefreshedListener = (token: string, user: User) => void;
+const authRefreshedListeners = new Set<AuthRefreshedListener>();
+
+export function onAuthRefreshed(listener: AuthRefreshedListener): () => void {
+  authRefreshedListeners.add(listener);
+  return () => {
+    authRefreshedListeners.delete(listener);
+  };
+}
 
 export function setAccessToken(token: string | null) {
   accessToken = token;
@@ -99,36 +109,35 @@ function processQueue(error: unknown, token: string | null) {
   failedQueue = [];
 }
 
-/**
- * Turns a 429 into a message a person can act on.
- *
- * The backend limits expensive endpoints per session — payroll runs, bulk
- * imports, uploads, outbound mail. Without this the raw axios error surfaces as
- * "Request failed with status code 429", which reads like a bug and invites the
- * user to retry immediately, which is the one thing that keeps them limited.
- */
-function describeRateLimit(error: {
-  response?: { status?: number; headers?: Record<string, unknown> };
-  rateLimitMessage?: string;
-}) {
-  const retryAfter = Number(error.response?.headers?.['retry-after']);
-  const wait =
-    Number.isFinite(retryAfter) && retryAfter > 0
-      ? `Try again in ${retryAfter} second${retryAfter === 1 ? '' : 's'}.`
-      : 'Try again shortly.';
-  return `Too many requests. ${wait}`;
+async function decodeBlobErrorData(error: { response?: { data?: unknown } }): Promise<void> {
+  const data = error.response?.data;
+  if (!(data instanceof Blob)) {
+    return;
+  }
+  try {
+    const text = await data.text();
+    if (!text) return;
+    const parsed: unknown = JSON.parse(text);
+    if (typeof parsed === 'object' && parsed !== null && error.response) {
+      error.response.data = parsed;
+    }
+  } catch {
+    // Non-JSON blob error body — leave as-is for fallback handling.
+  }
 }
 
 // Handle 401 responses with refresh token retry (cookie-based)
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
+    if (error.response?.data instanceof Blob) {
+      await decodeBlobErrorData(error);
+    }
     const originalRequest = error.config;
 
-    // Attach before any other handling: a 429 is never a session problem, so it
-    // must not fall through to the refresh-and-redirect path below.
+    // A 429 is never a session problem — reject immediately so callers can read
+    // the server error message or localized Retry-After fallback via getErrorMessage().
     if (error.response?.status === 429) {
-      error.rateLimitMessage = describeRateLimit(error);
       return Promise.reject(error);
     }
 
@@ -136,10 +145,12 @@ api.interceptors.response.use(
       return Promise.reject(error);
     }
 
+    const requestPath = String(originalRequest?.url ?? '').split(/[?#]/, 1)[0];
+
     // The public kiosk endpoint authenticates via a kiosk secret, not the user JWT.
     // A 401 there means the kiosk credential was revoked — surface it to the caller
     // verbatim, never refresh or redirect.
-    const isKioskEndpoint = originalRequest.url === '/attendance/kiosk/qr';
+    const isKioskEndpoint = requestPath === '/attendance/kiosk/qr';
 
     // A 401 on a request that has *already* been replayed after a successful
     // refresh is by definition not a session problem: the session was just
@@ -151,7 +162,7 @@ api.interceptors.response.use(
     if (
       originalRequest._retry ||
       isKioskEndpoint ||
-      NO_REFRESH_401_ENDPOINTS.includes(originalRequest.url ?? '')
+      NO_REFRESH_401_ENDPOINTS.includes(requestPath)
     ) {
       return Promise.reject(error);
     }
@@ -160,6 +171,7 @@ api.interceptors.response.use(
       return new Promise((resolve, reject) => {
         failedQueue.push({ resolve, reject });
       }).then((token) => {
+        originalRequest._retry = true;
         originalRequest.headers.Authorization = `Bearer ${token}`;
         return api(originalRequest);
       });
@@ -174,6 +186,7 @@ api.interceptors.response.use(
 
       accessToken = data.token;
       localStorage.setItem('user', JSON.stringify(data.user));
+      authRefreshedListeners.forEach((listener) => listener(data.token, data.user));
 
       processQueue(null, data.token);
       originalRequest.headers.Authorization = `Bearer ${data.token}`;

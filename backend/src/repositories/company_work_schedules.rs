@@ -7,18 +7,18 @@ use uuid::Uuid;
 use crate::core::error::AppResult;
 use crate::models::work_schedule::WorkSchedule;
 
-/// `(start_time, grace_minutes)` for the company's default schedule, if set.
+/// `(start_time, end_time, grace_minutes)` for the company's default schedule, if set.
 pub async fn find_default_timing(
     executor: impl Executor<'_, Database = Postgres>,
     company_id: Uuid,
-) -> AppResult<Option<(NaiveTime, i32)>> {
+) -> AppResult<Option<(NaiveTime, NaiveTime, i32)>> {
     let row = sqlx::query!(
-        "SELECT start_time, grace_minutes FROM company_work_schedules WHERE company_id = $1 AND is_default = TRUE",
+        "SELECT start_time, end_time, grace_minutes FROM company_work_schedules WHERE company_id = $1 AND is_default = TRUE",
         company_id,
     )
     .fetch_optional(executor)
     .await?;
-    Ok(row.map(|r| (r.start_time, r.grace_minutes)))
+    Ok(row.map(|r| (r.start_time, r.end_time, r.grace_minutes)))
 }
 
 /// Timezone for the company's default schedule, if set.

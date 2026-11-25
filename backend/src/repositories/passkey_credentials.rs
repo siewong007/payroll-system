@@ -61,10 +61,10 @@ pub async fn update_credential_json(
     cred_id: &serde_json::Value,
     credential_json: &serde_json::Value,
 ) -> AppResult<()> {
-    sqlx::query!(
+    let result = sqlx::query!(
         r#"UPDATE passkey_credentials
         SET credential_json = $3, last_used_at = NOW()
-        WHERE user_id = $1 AND credential_json->'cred' ->> 'cred_id' = $2::jsonb ->> 0
+        WHERE user_id = $1 AND credential_json->'cred'->'cred_id' = $2::jsonb
         "#,
         user_id,
         cred_id,
@@ -72,6 +72,9 @@ pub async fn update_credential_json(
     )
     .execute(executor)
     .await?;
+    if result.rows_affected() == 0 {
+        tracing::warn!(%user_id, "passkey update_credential_json matched 0 rows");
+    }
     Ok(())
 }
 

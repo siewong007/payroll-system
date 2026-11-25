@@ -128,7 +128,14 @@ pub async fn classify_rotation_miss(pool: &PgPool, raw_token: &str) -> AppError 
         Err(e) => return e,
     };
 
-    match refresh_tokens::has_fresh_sibling(pool, owner.session_id, ROTATION_GRACE_SECONDS).await {
+    match refresh_tokens::has_fresh_sibling(
+        pool,
+        &token_hash,
+        owner.session_id,
+        ROTATION_GRACE_SECONDS,
+    )
+    .await
+    {
         Ok(true) => return unauthorized(),
         Ok(false) => {}
         Err(e) => return e,

@@ -32,19 +32,22 @@ use axum::http::HeaderMap;
 /// Only meaningful when a trusted proxy is the sole path to the API; callers
 /// gate this on `trust_forwarded`.
 pub fn forwarded_ip(headers: &HeaderMap) -> Option<IpAddr> {
-    if let Some(xff) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok())
-        && let Some(ip) = xff
-            .split(',')
-            .rev()
-            .filter_map(|part| part.trim().parse::<IpAddr>().ok())
-            .next()
+    if let Some(ip) = headers
+        .get_all("x-forwarded-for")
+        .iter()
+        .rev()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|xff| xff.split(',').rev())
+        .find_map(|part| part.trim().parse::<IpAddr>().ok())
     {
         return Some(ip);
     }
     headers
-        .get("x-real-ip")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.trim().parse::<IpAddr>().ok())
+        .get_all("x-real-ip")
+        .iter()
+        .rev()
+        .filter_map(|v| v.to_str().ok())
+        .find_map(|v| v.trim().parse::<IpAddr>().ok())
 }
 
 /// The client IP to attribute a request to.

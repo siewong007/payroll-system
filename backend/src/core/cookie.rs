@@ -23,19 +23,18 @@ fn secure_flag(frontend_url: &str) -> &'static str {
 /// Read one cookie by name from a `Cookie` header, treating an empty value as
 /// absent (a cleared cookie is still sent by some clients until it expires).
 fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
+    let prefix = format!("{name}=");
     headers
-        .get(header::COOKIE)?
-        .to_str()
-        .ok()?
-        .split(';')
+        .get_all(header::COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|header_str| header_str.split(';'))
         .find_map(|cookie| {
             let cookie = cookie.trim();
-            if let Some(value) = cookie.strip_prefix(&format!("{}=", name))
-                && !value.is_empty()
-            {
-                return Some(value.to_string());
-            }
-            None
+            cookie
+                .strip_prefix(&prefix)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
         })
 }
 

@@ -72,12 +72,6 @@ export interface PermissionMatrix {
 }
 
 export const permissionsApi = {
-  /** The caller's own effective permissions. */
-  mine: async (): Promise<MyPermissions> => {
-    const { data } = await api.get<MyPermissions>('/auth/permissions');
-    return data;
-  },
-
   /** The full role-to-permission matrix, for the Role Management screen. */
   matrix: async (): Promise<PermissionMatrix> => {
     const { data } = await api.get<PermissionMatrix>('/auth/permissions/matrix');

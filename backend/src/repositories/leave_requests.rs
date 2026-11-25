@@ -176,7 +176,7 @@ pub async fn update_full(
     reason: Option<String>,
     attachment_url: Option<String>,
     attachment_name: Option<String>,
-) -> AppResult<LeaveRequest> {
+) -> AppResult<Option<LeaveRequest>> {
     let updated = sqlx::query_as!(
         LeaveRequest,
         r#"UPDATE leave_requests
@@ -189,7 +189,7 @@ pub async fn update_full(
             attachment_url = CASE WHEN $9::text IS NULL THEN attachment_url ELSE NULLIF($9, '') END,
             attachment_name = CASE WHEN $10::text IS NULL THEN attachment_name ELSE NULLIF($10, '') END,
             updated_at = NOW()
-        WHERE id = $1 AND company_id = $2
+        WHERE id = $1 AND company_id = $2 AND status = 'pending'
         RETURNING *,
             (SELECT name FROM leave_types WHERE id = leave_type_id) AS "leave_type_name?""#,
         request_id,
@@ -203,7 +203,7 @@ pub async fn update_full(
         attachment_url,
         attachment_name,
     )
-    .fetch_one(executor)
+    .fetch_optional(executor)
     .await?;
     Ok(updated)
 }
@@ -212,15 +212,15 @@ pub async fn delete(
     executor: impl Executor<'_, Database = Postgres>,
     request_id: Uuid,
     company_id: Uuid,
-) -> AppResult<()> {
-    sqlx::query!(
-        "DELETE FROM leave_requests WHERE id = $1 AND company_id = $2",
+) -> AppResult<u64> {
+    let res = sqlx::query!(
+        "DELETE FROM leave_requests WHERE id = $1 AND company_id = $2 AND status = 'cancelled'",
         request_id,
         company_id,
     )
     .execute(executor)
     .await?;
-    Ok(())
+    Ok(res.rows_affected())
 }
 
 /// Cancels a request, returning `None` if it was already cancelled.

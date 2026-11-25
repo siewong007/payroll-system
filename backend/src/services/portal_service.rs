@@ -53,6 +53,7 @@ pub async fn create_leave_request(
     employee_id: Uuid,
     company_id: Uuid,
     req: CreateLeaveRequest,
+    access: &crate::models::upload::UploadAccess,
 ) -> AppResult<LeaveRequest> {
     // Before the calendar is read, not after: the count walks the range a day
     // at a time, and this endpoint takes a bare `NaiveDate` pair from any
@@ -80,25 +81,26 @@ pub async fn create_leave_request(
     // `attachment_url` is joined onto a filesystem path by the backup export and
     // restore paths, so it is settled at write time rather than at every sink.
     validate_optional_file_url(req.attachment_url.as_deref())?;
-    crate::services::upload_service::ensure_upload_belongs_to_company(
+    crate::services::upload_service::ensure_upload_attach_authorized(
         pool,
-        company_id,
+        access,
         req.attachment_url.as_deref(),
+        false,
     )
     .await?;
 
-    if leave_requests::overlaps_existing(pool, employee_id, req.start_date, req.end_date, None)
+    // One transaction: serialize concurrent overlap checks via the employee lock,
+    // and keep balance reservation atomic with inserting the leave request row.
+    let mut tx = pool.begin().await?;
+    employee_repo::lock_for_update(&mut *tx, employee_id, company_id).await?;
+
+    if leave_requests::overlaps_existing(&mut *tx, employee_id, req.start_date, req.end_date, None)
         .await?
     {
         return Err(AppError::BadRequest(
             "You already have a leave request covering some of these dates".into(),
         ));
     }
-
-    // One transaction: the balance reservation below can legitimately fail
-    // (insufficient entitlement, uninitialized balance), and a rejected request
-    // must not leave a leave_requests row behind.
-    let mut tx = pool.begin().await?;
     let leave = leave_requests::insert_self_service(
         &mut *tx,
         employee_id,
@@ -170,6 +172,7 @@ pub async fn cancel_leave_request(
                 &mut *tx,
                 lr.employee_id,
                 lr.company_id,
+                request_id,
                 &description,
             )
             .await?;
@@ -180,13 +183,28 @@ pub async fn cancel_leave_request(
                 ));
             }
 
-            payroll_entries::delete_unprocessed_unpaid_leave(
+            let deleted = payroll_entries::delete_unprocessed_unpaid_leave(
                 &mut *tx,
                 lr.employee_id,
                 lr.company_id,
+                request_id,
                 &description,
             )
             .await?;
+            if deleted == 0
+                && payroll_entries::exists_processed_unpaid_leave(
+                    &mut *tx,
+                    lr.employee_id,
+                    lr.company_id,
+                    request_id,
+                    &description,
+                )
+                .await?
+            {
+                return Err(AppError::Conflict(
+                    "Approved unpaid leave was processed by payroll while being cancelled.".into(),
+                ));
+            }
         }
     }
 
@@ -243,12 +261,15 @@ pub async fn create_claim(
     employee_id: Uuid,
     company_id: Uuid,
     req: CreateClaimRequest,
+    access: &crate::models::upload::UploadAccess,
 ) -> AppResult<Claim> {
+    crate::services::approval_service::ensure_positive_amount(req.amount)?;
     validate_optional_file_url(req.receipt_url.as_deref())?;
-    crate::services::upload_service::ensure_upload_belongs_to_company(
+    crate::services::upload_service::ensure_upload_attach_authorized(
         pool,
-        company_id,
+        access,
         req.receipt_url.as_deref(),
+        false,
     )
     .await?;
 
@@ -428,6 +449,7 @@ pub async fn cancel_overtime_application(
             app.company_id,
             period_year,
             period_month,
+            id,
             &description,
         )
         .await?;
@@ -438,15 +460,32 @@ pub async fn cancel_overtime_application(
             ));
         }
 
-        payroll_entries::delete_unprocessed_overtime(
+        let deleted = payroll_entries::delete_unprocessed_overtime(
             &mut *tx,
             app.employee_id,
             app.company_id,
             period_year,
             period_month,
+            id,
             &description,
         )
         .await?;
+        if deleted == 0
+            && payroll_entries::exists_processed_overtime(
+                &mut *tx,
+                app.employee_id,
+                app.company_id,
+                period_year,
+                period_month,
+                id,
+                &description,
+            )
+            .await?
+        {
+            return Err(AppError::Conflict(
+                "Approved OT was processed by payroll while being cancelled.".into(),
+            ));
+        }
 
         if app.ot_type == "public_holiday" {
             leave_balances::subtract_entitled_replacement(
@@ -459,7 +498,11 @@ pub async fn cancel_overtime_application(
         }
     }
 
-    overtime_applications::mark_cancelled_for_employee(&mut *tx, id).await?;
+    if !overtime_applications::mark_cancelled_for_employee(&mut *tx, id, employee_id).await? {
+        return Err(AppError::Conflict(
+            "This overtime application has already been cancelled or modified.".into(),
+        ));
+    }
 
     tx.commit().await?;
 
@@ -545,15 +588,28 @@ pub async fn process_year_end_carry_forward(
     from_year: i32,
     to_year: i32,
 ) -> AppResult<i32> {
+    if !(2000..=2100).contains(&from_year) || to_year != from_year + 1 {
+        return Err(AppError::BadRequest(
+            "to_year must be exactly from_year + 1 (within 2000..=2100)".into(),
+        ));
+    }
+
     let leave_types = leave_types::list_active(pool, company_id).await?;
     let employees = employee_repo::list_active_ids_and_joined_dates(pool, company_id).await?;
 
+    let mut tx = pool.begin().await?;
     let mut count = 0;
     for (emp_id, date_joined) in employees {
         for lt in &leave_types {
+            // System types (e.g. Replacement Leave) are earned dynamically, not
+            // provisioned via annual carry-forward.
+            if lt.is_system {
+                continue;
+            }
+
             // Get current year balance
             let balance =
-                leave_balances::get_balance_for_year(pool, emp_id, lt.id, from_year).await?;
+                leave_balances::get_balance_for_year(&mut *tx, emp_id, lt.id, from_year).await?;
 
             let carry = if let Some((entitled, taken, pending, carried_forward)) = balance {
                 let remaining = entitled + carried_forward - taken - pending;
@@ -570,13 +626,16 @@ pub async fn process_year_end_carry_forward(
             // Calculate entitled for next year (prorate for mid-year joiners)
             let entitled = calculate_prorated_days(lt.default_days, date_joined, to_year);
 
-            // UPSERT next year balance
-            leave_balances::upsert_carried_forward(pool, emp_id, lt.id, to_year, entitled, carry)
-                .await?;
+            // UPSERT next year balance (preserving any existing entitled_days)
+            leave_balances::upsert_carried_forward(
+                &mut *tx, emp_id, lt.id, to_year, entitled, carry,
+            )
+            .await?;
 
             count += 1;
         }
     }
+    tx.commit().await?;
 
     Ok(count)
 }

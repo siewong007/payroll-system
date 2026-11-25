@@ -35,11 +35,11 @@ pub fn create_router(state: AppState) -> Router {
             .expect("Failed to build rate limiter"),
     );
 
-    // Rate limiter: 3 requests per 60 seconds per IP (stricter for forgot-password)
+    // Rate limiter: 3 requests per 60 seconds per IP (1 token every 20s, burst 3)
     let forgot_rate_limit = Arc::new(
         GovernorConfigBuilder::default()
             .key_extractor(ip_key)
-            .period(Duration::from_secs(60))
+            .per_second(20)
             .burst_size(3)
             .finish()
             .expect("Failed to build rate limiter"),
@@ -55,13 +55,11 @@ pub fn create_router(state: AppState) -> Router {
             .expect("Failed to build rate limiter"),
     );
 
-    // Public kiosk QR endpoint (~120/min/IP — comfortable for a tablet refreshing
-    // every minute, far below what a guesser would need to be effective against the
-    // ≥244-bit secret space).
+    // Public kiosk QR endpoint (~120/min/IP — 1 token every 500ms, burst 10).
     let kiosk_rate_limit = Arc::new(
         GovernorConfigBuilder::default()
             .key_extractor(ip_key)
-            .per_second(2)
+            .per_millisecond(500)
             .burst_size(10)
             .finish()
             .expect("Failed to build rate limiter"),
@@ -72,6 +70,10 @@ pub fn create_router(state: AppState) -> Router {
         .route("/auth/login", post(auth::login))
         .route("/auth/login/code", post(auth::code_login))
         .route("/auth/reset-password", post(auth::reset_password))
+        .route(
+            "/auth/validate-reset-token",
+            post(auth::validate_reset_token),
+        )
         .route("/auth/2fa/verify", post(totp::verify_login))
         .route("/auth/passkey/check", post(passkey::check_passkey))
         .route(
@@ -176,30 +178,40 @@ pub fn create_router(state: AppState) -> Router {
 
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
         let ip_limiters = vec![
-            auth_rate_limit.clone(),
-            forgot_rate_limit.clone(),
-            oauth2_rate_limit.clone(),
-            kiosk_rate_limit.clone(),
+            Arc::downgrade(&auth_rate_limit),
+            Arc::downgrade(&forgot_rate_limit),
+            Arc::downgrade(&oauth2_rate_limit),
+            Arc::downgrade(&kiosk_rate_limit),
         ];
         let session_limiters = vec![
-            session_auth_rate_limit.clone(),
-            email_rate_limit.clone(),
-            heavy_job_rate_limit.clone(),
-            upload_rate_limit.clone(),
-            import_rate_limit.clone(),
+            Arc::downgrade(&session_auth_rate_limit),
+            Arc::downgrade(&email_rate_limit),
+            Arc::downgrade(&heavy_job_rate_limit),
+            Arc::downgrade(&upload_rate_limit),
+            Arc::downgrade(&import_rate_limit),
         ];
         handle.spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(60));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
                 interval.tick().await;
-                for cfg in &ip_limiters {
-                    cfg.limiter().retain_recent();
-                    cfg.limiter().shrink_to_fit();
+                let mut any_alive = false;
+                for weak in &ip_limiters {
+                    if let Some(cfg) = weak.upgrade() {
+                        any_alive = true;
+                        cfg.limiter().retain_recent();
+                        cfg.limiter().shrink_to_fit();
+                    }
                 }
-                for cfg in &session_limiters {
-                    cfg.limiter().retain_recent();
-                    cfg.limiter().shrink_to_fit();
+                for weak in &session_limiters {
+                    if let Some(cfg) = weak.upgrade() {
+                        any_alive = true;
+                        cfg.limiter().retain_recent();
+                        cfg.limiter().shrink_to_fit();
+                    }
+                }
+                if !any_alive {
+                    break;
                 }
             }
         });
@@ -208,6 +220,13 @@ pub fn create_router(state: AppState) -> Router {
     let rate_limited_session_auth = Router::new()
         .route("/auth/refresh", post(auth::refresh_token))
         .route("/auth/change-password", put(auth::change_password))
+        .route("/auth/2fa/setup/confirm", post(totp::setup_confirm))
+        .route("/auth/2fa/disable", post(totp::disable))
+        .route(
+            "/auth/2fa/backup-codes/regenerate",
+            post(totp::regenerate_backup_codes),
+        )
+        .route("/admin/users/{id}/2fa/reset", post(admin::reset_user_2fa))
         .layer(GovernorLayer::new(session_auth_rate_limit));
 
     let rate_limited_email = Router::new()
@@ -274,10 +293,6 @@ pub fn create_router(state: AppState) -> Router {
         .route("/auth/sessions", get(auth::list_sessions))
         .route("/auth/sessions/others", delete(auth::revoke_other_sessions))
         .route("/auth/sessions/{session_id}", delete(auth::revoke_session))
-        .route(
-            "/auth/validate-reset-token",
-            post(auth::validate_reset_token),
-        )
         .route("/auth/switch-company", put(auth::switch_company))
         .route("/auth/my-companies", get(auth::my_companies))
         .route("/auth/permissions/matrix", get(permission::matrix))
@@ -315,15 +330,9 @@ pub fn create_router(state: AppState) -> Router {
             "/auth/passkeys/{id}",
             put(passkey::rename_passkey).delete(passkey::delete_passkey),
         )
-        // TOTP 2FA (authenticated management; /auth/2fa/verify is rate-limited above)
+        // TOTP 2FA (authenticated management; rate-limited endpoints live above)
         .route("/auth/2fa/setup/begin", post(totp::setup_begin))
-        .route("/auth/2fa/setup/confirm", post(totp::setup_confirm))
         .route("/auth/2fa/status", get(totp::status))
-        .route("/auth/2fa/disable", post(totp::disable))
-        .route(
-            "/auth/2fa/backup-codes/regenerate",
-            post(totp::regenerate_backup_codes),
-        )
         // OAuth2 (non-rate-limited routes)
         .route("/auth/oauth2/providers", get(oauth2::list_providers))
         .route("/auth/oauth2/google/link", post(oauth2::link_google))
@@ -349,9 +358,6 @@ pub fn create_router(state: AppState) -> Router {
             "/admin/users/{id}",
             put(admin::update_user).delete(admin::delete_user),
         )
-        // Break-glass 2FA reset (super_admin only, password re-confirmed in
-        // the handler); the only recovery path that does not need SQL access.
-        .route("/admin/users/{id}/2fa/reset", post(admin::reset_user_2fa))
         // Platform 2FA enforcement policy (ManagePlatformSettings): the
         // switch plus the privileged accounts it would refuse at login.
         .route(
@@ -469,6 +475,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/portal/teams", get(portal::my_teams))
         .route("/portal/team-calendar", get(portal::team_calendar))
         .route("/portal/holidays", get(portal::portal_holidays))
+        .route("/portal/working-days", get(portal::portal_working_days))
         .route(
             "/portal/claims",
             get(portal::list_claims).post(portal::create_claim),

@@ -80,7 +80,7 @@ export function sameIdSet(a: readonly string[], b: readonly string[]): boolean {
 export const PAYROLL_DATA_ROLES: AppRole[] = ['super_admin', 'payroll_admin', 'finance'];
 export const PAYROLL_PREP_ROLES: AppRole[] = ['super_admin', 'payroll_admin'];
 export const PAYROLL_APPROVAL_ROLES: AppRole[] = ['super_admin', 'finance'];
-export const REPORT_ROLES: AppRole[] = ALL_ROLES.filter((role) => role !== 'exec');
+export const REPORT_ROLES: AppRole[] = ALL_ROLES.filter((role) => role !== 'exec' && role !== 'employee');
 export const SUPER_ADMIN_ROLES: AppRole[] = ['super_admin'];
 export const ADMIN_DATA_ROLES: AppRole[] = ['super_admin', 'admin'];
 /**

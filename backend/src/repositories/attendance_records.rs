@@ -129,26 +129,10 @@ pub async fn check_out(
            FROM (
                SELECT open_record.id,
                       open_record.elapsed_hours,
-                      GREATEST(0, open_record.elapsed_hours
-                          -- The unpaid break is part of presence but not of
-                          -- work: without subtracting it, a standard lunch
-                          -- inside a long day was rated at the overtime
-                          -- multiplier (plan item 12). It comes from the same
-                          -- schedule row as the shift length.
-                          - COALESCE((SELECT ws.unpaid_break_minutes
-                              FROM company_work_schedules ws
-                              WHERE ws.company_id = open_record.company_id AND ws.is_default = TRUE
-                            ), 0) / 60.0
-                          - COALESCE((
-                          -- Wrap past midnight: a night shift (e.g. 22:00->06:00)
-                          -- has end_time < start_time, and a plain subtraction
-                          -- yields -16h, which would turn an 8h shift into 24h of
-                          -- overtime. Adding a day before the modulo maps that
-                          -- back to 8h and leaves same-day shifts unchanged.
-                          SELECT MOD(EXTRACT(EPOCH FROM (ws.end_time - ws.start_time))::numeric + 86400, 86400) / 3600.0
-                          FROM company_work_schedules ws
-                          WHERE ws.company_id = open_record.company_id AND ws.is_default = TRUE
-                      ), 9)) AS overtime_hours
+                      GREATEST(0,
+                          GREATEST(0, open_record.elapsed_hours - COALESCE(sched.break_hours, 0))
+                          - GREATEST(0, COALESCE(sched.shift_span_hours, 9) - COALESCE(sched.break_hours, 0))
+                      ) AS overtime_hours
                FROM (
                    SELECT id, company_id,
                           ROUND(EXTRACT(EPOCH FROM (NOW() - check_in_at)) / 3600.0, 2) AS elapsed_hours
@@ -157,11 +141,19 @@ pub async fn check_out(
                      AND company_id = $4
                      AND check_out_at IS NULL
                      AND check_in_at > NOW() - INTERVAL '24 hours'
+                     AND check_in_at <= NOW()
                    ORDER BY check_in_at DESC
                    LIMIT 1
                ) open_record
+               LEFT JOIN LATERAL (
+                   SELECT ws.unpaid_break_minutes / 60.0 AS break_hours,
+                          MOD(EXTRACT(EPOCH FROM (ws.end_time - ws.start_time))::numeric + 86400, 86400) / 3600.0 AS shift_span_hours
+                   FROM company_work_schedules ws
+                   WHERE ws.company_id = open_record.company_id AND ws.is_default = TRUE
+                   LIMIT 1
+               ) sched ON TRUE
            ) src
-           WHERE ar.id = src.id
+           WHERE ar.id = src.id AND ar.check_out_at IS NULL
            RETURNING ar.id, ar.company_id, ar.employee_id, ar.check_in_at, ar.check_out_at,
                      ar.method, ar.status, ar.latitude, ar.longitude, ar.checkout_latitude,
                      ar.checkout_longitude, ar.notes, ar.qr_token_id, ar.created_by,
@@ -312,8 +304,28 @@ pub async fn insert_manual(
     let record = sqlx::query_as!(
         AttendanceRecord,
         r#"INSERT INTO attendance_records
-           (company_id, employee_id, check_in_at, check_out_at, method, status, notes, created_by)
-           VALUES ($1, $2, $3, $4, 'manual', $5, $6, $7)
+           (company_id, employee_id, check_in_at, check_out_at, method, status, notes, created_by,
+            hours_worked, overtime_hours)
+           SELECT
+               $1, $2, $3, $4, 'manual', $5::varchar, $6, $7,
+               CASE
+                   WHEN $4::timestamptz IS NULL OR $5::varchar = 'absent' THEN NULL
+                   ELSE ROUND(EXTRACT(EPOCH FROM ($4::timestamptz - $3::timestamptz)) / 3600.0, 2)
+               END,
+               CASE
+                   WHEN $4::timestamptz IS NULL THEN NULL
+                   WHEN $5::varchar = 'absent' THEN 0
+                   ELSE GREATEST(0,
+                       GREATEST(0,
+                           ROUND(EXTRACT(EPOCH FROM ($4::timestamptz - $3::timestamptz)) / 3600.0, 2)
+                           - COALESCE((SELECT ws.unpaid_break_minutes FROM company_work_schedules ws WHERE ws.company_id = $1 AND ws.is_default = TRUE), 0) / 60.0
+                       )
+                       - GREATEST(0,
+                           COALESCE((SELECT MOD(EXTRACT(EPOCH FROM (ws.end_time - ws.start_time))::numeric + 86400, 86400) / 3600.0 FROM company_work_schedules ws WHERE ws.company_id = $1 AND ws.is_default = TRUE), 9)
+                           - COALESCE((SELECT ws.unpaid_break_minutes FROM company_work_schedules ws WHERE ws.company_id = $1 AND ws.is_default = TRUE), 0) / 60.0
+                       )
+                   )
+               END
            RETURNING id, company_id, employee_id, check_in_at, check_out_at, method, status,
                      latitude, longitude, checkout_latitude, checkout_longitude, notes, qr_token_id,
                      created_by, hours_worked, overtime_hours, is_outside_geofence, is_offsite_network,
@@ -343,25 +355,29 @@ pub async fn update(
     let record = sqlx::query_as!(
         AttendanceRecord,
         r#"UPDATE attendance_records ar
-           SET check_in_at = $3, check_out_at = $4, status = $5, notes = $6,
+           SET check_in_at = $3, check_out_at = $4, status = $5::varchar, notes = $6,
                -- Recompute hours and overtime from the corrected timestamps, in
                -- numeric — the correction path must not round-trip money-feeding
                -- figures through float. Same schedule expression as check_out,
                -- including the past-midnight wrap for night shifts. Clearing the
                -- check-out clears both derived figures.
                hours_worked = CASE
-                   WHEN $4::timestamptz IS NULL THEN NULL
+                   WHEN $4::timestamptz IS NULL OR $5::varchar = 'absent' THEN NULL
                    ELSE ROUND(EXTRACT(EPOCH FROM ($4::timestamptz - $3::timestamptz)) / 3600.0, 2)
                END,
                overtime_hours = CASE
                    WHEN $4::timestamptz IS NULL THEN NULL
+                   WHEN $5::varchar = 'absent' THEN 0
                    ELSE GREATEST(0,
-                       ROUND(EXTRACT(EPOCH FROM ($4::timestamptz - $3::timestamptz)) / 3600.0, 2)
-                       - COALESCE((
-                           SELECT MOD(EXTRACT(EPOCH FROM (ws.end_time - ws.start_time))::numeric + 86400, 86400) / 3600.0
-                           FROM company_work_schedules ws
-                           WHERE ws.company_id = ar.company_id AND ws.is_default = TRUE
-                       ), 9))
+                       GREATEST(0,
+                           ROUND(EXTRACT(EPOCH FROM ($4::timestamptz - $3::timestamptz)) / 3600.0, 2)
+                           - COALESCE((SELECT ws.unpaid_break_minutes FROM company_work_schedules ws WHERE ws.company_id = ar.company_id AND ws.is_default = TRUE), 0) / 60.0
+                       )
+                       - GREATEST(0,
+                           COALESCE((SELECT MOD(EXTRACT(EPOCH FROM (ws.end_time - ws.start_time))::numeric + 86400, 86400) / 3600.0 FROM company_work_schedules ws WHERE ws.company_id = ar.company_id AND ws.is_default = TRUE), 9)
+                           - COALESCE((SELECT ws.unpaid_break_minutes FROM company_work_schedules ws WHERE ws.company_id = ar.company_id AND ws.is_default = TRUE), 0) / 60.0
+                       )
+                   )
                END,
                updated_at = NOW()
            WHERE ar.id = $1 AND ar.company_id = $2
@@ -480,6 +496,7 @@ pub async fn mark_absent(
                        h.date = $2::date
                        OR (
                            h.is_recurring
+                           AND h.date <= $2::date
                            AND EXTRACT(MONTH FROM h.date) = EXTRACT(MONTH FROM $2::date)
                            AND EXTRACT(DAY FROM h.date) = EXTRACT(DAY FROM $2::date)
                        )
@@ -491,6 +508,13 @@ pub async fn mark_absent(
                  WHERE lr.employee_id = e.id
                    AND lr.status = 'approved'
                    AND $2::date BETWEEN lr.start_date AND lr.end_date
+             )
+             -- No open overnight session currently in progress within 24h
+             AND NOT EXISTS (
+                 SELECT 1 FROM attendance_records open_ar
+                 WHERE open_ar.employee_id = e.id
+                   AND open_ar.check_out_at IS NULL
+                   AND open_ar.check_in_at > NOW() - INTERVAL '24 hours'
              )
              -- No attendance record on that local date. Sargable range on the raw
              -- timestamptz so the (employee_id, check_in_at) index serves it.

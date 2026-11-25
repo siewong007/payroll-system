@@ -189,7 +189,7 @@ const normalizeRust = (s) =>
 
 function scanBackend() {
   const messages = new Set();
-  const re = /AppError::(BadRequest|Unauthorized|Forbidden|NotFound|Conflict|Validation|Internal)\(\s*"((?:[^"\\]|\\[\s\S])*)"/g;
+  const re = /AppError::(BadRequest|Unauthorized|Forbidden|NotFound|Conflict|Validation|Internal|BadGateway|PayloadTooLarge|TooManyRequests)\(\s*"((?:[^"\\]|\\[\s\S])*)"/g;
   for (const file of walk(BE_SRC)) {
     if (!file.endsWith('.rs') || file.includes('/tests/')) continue;
     const src = readFileSync(file, 'utf8');

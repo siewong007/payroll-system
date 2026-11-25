@@ -7,12 +7,11 @@ use uuid::Uuid;
 use chrono::Datelike;
 
 use crate::core::app_state::AppState;
-use crate::core::auth::{AuthUser, Permission};
+use crate::core::auth::AuthUser;
 use crate::core::error::{AppError, AppResult};
 use crate::core::upload_path;
 use crate::models::employee::Employee;
 use crate::models::portal::*;
-use crate::models::upload::UploadAccess;
 use crate::services::{portal_service, upload_service};
 
 fn get_employee_id(auth: &AuthUser) -> AppResult<Uuid> {
@@ -66,7 +65,7 @@ pub async fn leave_balances(
     Query(q): Query<LeaveBalanceQuery>,
 ) -> AppResult<Json<Vec<LeaveBalanceWithType>>> {
     let employee_id = get_employee_id(&auth)?;
-    let year = q.year.unwrap_or(2026);
+    let year = q.year.unwrap_or_else(|| chrono::Utc::now().year());
     let balances = portal_service::get_leave_balances(&state.pool, employee_id, year).await?;
     Ok(Json(balances))
 }
@@ -87,8 +86,10 @@ pub async fn create_leave(
 ) -> AppResult<Json<LeaveRequest>> {
     let employee_id = get_employee_id(&auth)?;
     let company_id = get_company_id(&auth)?;
+    let access = upload_service::access_from_auth(&auth, company_id);
     let leave =
-        portal_service::create_leave_request(&state.pool, employee_id, company_id, req).await?;
+        portal_service::create_leave_request(&state.pool, employee_id, company_id, req, &access)
+            .await?;
     Ok(Json(leave))
 }
 
@@ -131,7 +132,9 @@ pub async fn create_claim(
 ) -> AppResult<Json<Claim>> {
     let employee_id = get_employee_id(&auth)?;
     let company_id = get_company_id(&auth)?;
-    let claim = portal_service::create_claim(&state.pool, employee_id, company_id, req).await?;
+    let access = upload_service::access_from_auth(&auth, company_id);
+    let claim =
+        portal_service::create_claim(&state.pool, employee_id, company_id, req, &access).await?;
     Ok(Json(claim))
 }
 
@@ -329,6 +332,16 @@ pub async fn portal_holidays(
     Ok(Json(holidays))
 }
 
+pub async fn portal_working_days(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> AppResult<Json<Vec<crate::models::calendar::WorkingDayConfig>>> {
+    let company_id = get_company_id(&auth)?;
+    let config =
+        crate::services::calendar_service::get_working_days(&state.pool, company_id).await?;
+    Ok(Json(config))
+}
+
 // ─── Leave Calendar Export (.ics) ───
 
 fn escape_ics_text(s: &str) -> String {
@@ -470,15 +483,8 @@ pub async fn serve_upload(
     // that references it. Filename validation and the reverse lookup both live
     // in the service; this handler only lifts the caller's authority out of the
     // token.
-    let access = UploadAccess {
-        company_id: get_company_id(&auth)?,
-        user_id: auth.0.sub,
-        employee_id: auth.0.employee_id,
-        can_view_approvals: auth.can(Permission::ViewApprovals),
-        can_view_documents: auth.can(Permission::ViewDocuments),
-        can_view_confidential: auth.can(Permission::ManageEmployees)
-            || auth.is_payroll_privileged(),
-    };
+    let company_id = get_company_id(&auth)?;
+    let access = upload_service::access_from_auth(&auth, company_id);
 
     let data = upload_service::read_authorized(&state.pool, &filename, &access).await?;
 

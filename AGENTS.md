@@ -39,7 +39,7 @@ cargo test                  # integration tests require DATABASE_URL + JWT_SECRE
 cargo test <name>           # run a single test by substring
 ```
 
-Migrations live in `backend/migrations/` and are embedded via `sqlx::migrate!` — they run on every `cargo run`. Versions `1000_schema.sql` and `1001_data.sql` form the consolidated baseline, followed by immutable numbered forward migrations (`1002_*.sql` through `1032_*.sql`). Every deployed migration is strictly immutable (enforced by CI); future production changes must add the next numbered migration file, and returning to two files requires an explicit, tested rebaseline.
+Migrations live in `backend/migrations/` and are embedded via `sqlx::migrate!` — they run on every `cargo run`. Versions `1000_schema.sql` and `1001_data.sql` form the consolidated baseline, followed by immutable numbered forward migrations (`1002_*.sql` through `1033_*.sql`). Every deployed migration is strictly immutable (enforced by CI); future production changes must add the next numbered migration file, and returning to two files requires an explicit, tested rebaseline.
 
 Data access lives in `backend/src/repositories/` (including `reads/` projections); handlers and services must not embed request-time SQL. Some queries use the compile-time-checked `sqlx::query!`/`query_as!` macros (the payroll engine and repository helpers are migrated; other legacy queries still use runtime `query`/`query_as` and are being migrated incrementally). These macros are verified against the committed `backend/.sqlx/` offline cache, so CI lint and the Docker build need no database (`SQLX_OFFLINE=true`). **After adding or changing a macro query, regenerate the cache** against a migrated DB and commit it:
 

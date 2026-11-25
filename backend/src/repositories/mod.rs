@@ -67,3 +67,19 @@ pub mod users;
 pub mod working_day_config;
 
 pub mod reads;
+
+/// Escape SQL `LIKE` / `ILIKE` metacharacters (`\`, `%`, `_`) so user-supplied
+/// search strings match literally when paired with `ESCAPE '\'`.
+pub fn escape_like(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for ch in input.chars() {
+        match ch {
+            '\\' | '%' | '_' => {
+                out.push('\\');
+                out.push(ch);
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}

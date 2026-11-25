@@ -16,7 +16,6 @@ use crate::models::payroll::{
 use crate::repositories::reads::audit as audit_reads;
 use crate::repositories::reads::payroll as payroll_reads;
 use crate::repositories::reads::payroll_overview as overview_reads;
-use crate::repositories::reads::reports as report_reads;
 use crate::repositories::{
     claims, employees as employee_reads, payroll_entries, payroll_groups, payroll_item_details,
     payroll_items, payroll_runs,
@@ -110,7 +109,8 @@ pub async fn delete_run(
     actor_id: Uuid,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<()> {
-    let run = payroll_runs::get_for_company(pool, id, company_id)
+    let mut tx = pool.begin().await?;
+    let run = payroll_runs::get_for_company_locked(&mut *tx, id, company_id)
         .await?
         .ok_or_else(|| AppError::NotFound("Payroll run not found".into()))?;
 
@@ -122,33 +122,27 @@ pub async fn delete_run(
 
     if matches!(
         run.status.as_str(),
-        "pending_approval" | "approved" | "paid"
+        "pending_approval" | "approved" | "paid" | "cancelled"
     ) || run.locked_at.is_some()
     {
         return Err(AppError::BadRequest(
-            "Submitted, approved, or paid payroll runs are locked and cannot be deleted".into(),
+            "Submitted, approved, paid, or cancelled payroll runs cannot be deleted".into(),
         ));
     }
 
     // A later committed run's stored ytd_* and PCB annualisation were computed
     // from this run's figures; deleting it would leave those describing a run
-    // that no longer exists.
-    if payroll_reads::run_has_later_committed_run(pool, company_id, id).await? {
+    // that no longer exists. Checked inside tx while holding the run row lock.
+    if payroll_reads::run_has_later_committed_run(&mut *tx, company_id, id).await? {
         return Err(AppError::BadRequest(
             "A later payroll run already includes these employees; delete that run first".into(),
         ));
     }
 
-    let mut tx = pool.begin().await?;
     payroll_entries::revert_for_run(&mut *tx, id, company_id, actor_id).await?;
-    // By run id, not by period: a run legitimately reimburses claims incurred
-    // before its own period, so a period-bounded revert would un-process claims
-    // an earlier run already paid.
     claims::revert_for_run(&mut *tx, id, company_id).await?;
     payroll_item_details::delete_for_run(&mut *tx, id).await?;
     payroll_items::delete_for_run(&mut *tx, id).await?;
-    // Re-checks status/lock atomically: the guard above ran outside this
-    // transaction, so a concurrent submit or approve could have locked the run.
     if !payroll_runs::delete_if_unlocked(&mut *tx, id, company_id).await? {
         return Err(AppError::BadRequest(
             "Payroll run was submitted or locked while being deleted".into(),
@@ -223,27 +217,21 @@ pub async fn update_item_pcb(
         .await?
         .ok_or_else(|| AppError::NotFound("Payroll item not found".into()))?;
 
+    // Check ceiling BEFORE computing delta + total_deductions so i64::MAX never overflows.
+    let max_pcb = current.net_salary.saturating_add(current.pcb_amount);
+    if pcb_amount > max_pcb {
+        return Err(AppError::BadRequest(format!(
+            "PCB of {} sen would leave a negative net salary. The most this payslip can carry is {} sen.",
+            pcb_amount, max_pcb
+        )));
+    }
+
     let old_pcb = current.pcb_amount;
     let delta = pcb_amount - old_pcb;
     let new_total_deductions = current.total_deductions + delta;
     let new_net_salary = current.net_salary - delta;
     let new_ytd_pcb = current.ytd_pcb + delta;
-
-    // Mirrors `compute_payslip`, which fails the whole run rather than create a
-    // negative net; an edit must not be able to reach one either. An operator
-    // typing sen where they meant ringgit otherwise wrote a negative net that
-    // survived submit, approve and pay, because the lifecycle transitions never
-    // re-validate the figures. `net - (new - old) >= 0` is exactly
-    // `new <= net + old`, so the message quotes that ceiling rather than making
-    // the operator derive it. Nothing has been written at this point, so the
-    // transaction rolls back untouched.
-    if new_net_salary < 0 {
-        return Err(AppError::BadRequest(format!(
-            "PCB of {} sen would leave a negative net salary. The most this payslip can carry is {} sen.",
-            pcb_amount,
-            current.net_salary + current.pcb_amount
-        )));
-    }
+    let new_ytd_net = current.ytd_net - delta;
 
     payroll_items::update_pcb(
         &mut *tx,
@@ -253,6 +241,7 @@ pub async fn update_item_pcb(
         new_total_deductions,
         new_net_salary,
         new_ytd_pcb,
+        new_ytd_net,
     )
     .await?;
 
@@ -454,7 +443,7 @@ pub async fn overview(pool: &PgPool, company_id: Uuid) -> AppResult<PayrollOverv
     let pipeline = overview_reads::status_counts(pool, company_id).await?;
     let departments = match &current_period {
         Some(period) => {
-            report_reads::payroll_by_department(
+            overview_reads::department_totals_committed(
                 pool,
                 company_id,
                 period.period_year,
@@ -581,6 +570,16 @@ pub async fn journal_preview(
     }
 
     let departments = payroll_reads::run_department_totals(pool, run_id).await?;
+    let items = payroll_items::list_for_run(pool, run_id).await?;
+    let total_claims: i64 = items.iter().map(|i| i.total_claims).sum();
+    let total_ptptn: i64 = items.iter().map(|i| i.ptptn_amount).sum();
+    let total_tabung_haji: i64 = items.iter().map(|i| i.tabung_haji_amount).sum();
+    let total_other_deductions: i64 = items
+        .iter()
+        .map(|i| i.total_loan_deductions + i.total_other_deductions)
+        .sum();
+    let total_unpaid_leave: i64 = items.iter().map(|i| i.unpaid_leave_deduction).sum();
+
     let mut lines: Vec<JournalLine> = Vec::new();
     let mut push = |side: &str,
                     code: &str,
@@ -624,6 +623,13 @@ pub async fn journal_preview(
         );
     }
     debit!(
+        "5040",
+        "Staff claims reimbursement",
+        None,
+        total_claims,
+        None
+    );
+    debit!(
         "5010",
         "Employer EPF expense",
         None,
@@ -665,6 +671,20 @@ pub async fn journal_preview(
     );
     credit!("2130", "PCB (MTD) payable", run.total_pcb, None);
     credit!("2140", "Zakat payable", run.total_zakat, None);
+    credit!("2150", "PTPTN payable", total_ptptn, None);
+    credit!("2160", "Tabung Haji payable", total_tabung_haji, None);
+    credit!(
+        "2170",
+        "Loan & other deductions payable",
+        total_other_deductions,
+        None
+    );
+    credit!(
+        "5001",
+        "Unpaid leave wage recovery",
+        total_unpaid_leave,
+        None
+    );
     credit!("2200", "Net salaries payable", run.total_net, None);
 
     let total_debits: i64 = lines

@@ -221,6 +221,31 @@ pub async fn get_for_company(
     Ok(run)
 }
 
+pub async fn get_for_company_locked(
+    executor: impl Executor<'_, Database = Postgres>,
+    run_id: Uuid,
+    company_id: Uuid,
+) -> AppResult<Option<PayrollRun>> {
+    let run = sqlx::query_as!(
+        PayrollRun,
+        r#"SELECT id, company_id, payroll_group_id, period_year, period_month,
+            period_start, period_end, pay_date, status::text AS "status!",
+            total_gross, total_net, total_employer_cost,
+            total_epf_employee, total_epf_employer, total_socso_employee, total_socso_employer,
+            total_eis_employee, total_eis_employer, total_pcb, total_zakat,
+            employee_count, version, processed_by, processed_at, submitted_by, approved_by, approved_at,
+            locked_at, locked_by, cancelled_by, cancelled_at, cancel_reason, notes, created_at, updated_at, created_by, updated_by
+        FROM payroll_runs
+        WHERE id = $1 AND company_id = $2
+        FOR UPDATE"#,
+        run_id,
+        company_id,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(run)
+}
+
 /// `processed` → `pending_approval`. Returns `None` if the run isn't in `processed`.
 pub async fn set_pending_approval(
     executor: impl Executor<'_, Database = Postgres>,
@@ -249,18 +274,24 @@ pub async fn set_pending_approval(
     Ok(run)
 }
 
-/// `pending_approval` → `approved`. Returns `None` if the run isn't in `pending_approval`.
+/// `pending_approval` → `approved`. Returns `None` if the run isn't in `pending_approval`
+/// or if segregation-of-duties forbids the approver (unless `allow_self_override`).
 pub async fn set_approved(
     executor: impl Executor<'_, Database = Postgres>,
     run_id: Uuid,
     company_id: Uuid,
     approved_by: Uuid,
+    allow_self_override: bool,
 ) -> AppResult<Option<PayrollRun>> {
     let run = sqlx::query_as!(
         PayrollRun,
         r#"UPDATE payroll_runs SET
             status = 'approved', approved_by = $3, approved_at = NOW(), updated_at = NOW()
         WHERE id = $1 AND company_id = $2 AND status = 'pending_approval'
+          AND ($4::bool
+               OR ((processed_by IS NULL OR processed_by <> $3)
+                   AND (submitted_by IS NULL OR submitted_by <> $3)
+                   AND (updated_by IS NULL OR updated_by <> $3)))
         RETURNING id, company_id, payroll_group_id, period_year, period_month,
             period_start, period_end, pay_date, status::text AS "status!",
             total_gross, total_net, total_employer_cost,
@@ -271,6 +302,7 @@ pub async fn set_approved(
         run_id,
         company_id,
         approved_by,
+        allow_self_override,
     )
     .fetch_optional(executor)
     .await?;
@@ -315,6 +347,7 @@ pub async fn set_cancelled(
     company_id: Uuid,
     cancelled_by: Uuid,
     reason: &str,
+    expected_status: &str,
 ) -> AppResult<Option<PayrollRun>> {
     let run = sqlx::query_as!(
         PayrollRun,
@@ -322,6 +355,7 @@ pub async fn set_cancelled(
             status = 'cancelled', cancelled_by = $3, cancelled_at = NOW(),
             cancel_reason = $4, updated_by = $3, updated_at = NOW()
         WHERE id = $1 AND company_id = $2
+          AND status::text = $5
           AND status::text IN ('draft', 'processed', 'pending_approval', 'approved')
         RETURNING id, company_id, payroll_group_id, period_year, period_month,
             period_start, period_end, pay_date, status::text AS "status!",
@@ -334,6 +368,7 @@ pub async fn set_cancelled(
         company_id,
         cancelled_by,
         reason,
+        expected_status,
     )
     .fetch_optional(executor)
     .await?;
@@ -428,7 +463,7 @@ pub async fn delete_if_unlocked(
         r#"DELETE FROM payroll_runs
         WHERE id = $1 AND company_id = $2
           AND locked_at IS NULL
-          AND status::text NOT IN ('processing', 'pending_approval', 'approved', 'paid')"#,
+          AND status::text IN ('draft', 'processed')"#,
         run_id,
         company_id,
     )

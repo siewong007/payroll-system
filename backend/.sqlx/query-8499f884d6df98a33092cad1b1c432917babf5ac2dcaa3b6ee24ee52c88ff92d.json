@@ -1,0 +1,71 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT g.id, g.company_id, g.name, g.description, g.is_active,\n            g.created_at, g.updated_at,\n            COALESCE(\n                ARRAY(SELECT p.permission FROM user_group_permissions p\n                      WHERE p.group_id = g.id ORDER BY p.permission),\n                ARRAY[]::VARCHAR[]\n            ) AS \"permissions!: Vec<String>\",\n            (SELECT COUNT(*) FROM user_group_members m\n             JOIN users u ON u.id = m.user_id\n             WHERE m.group_id = g.id\n               AND u.deleted_at IS NULL\n               AND NOT ($2::bool AND u.roles && ARRAY['admin', 'super_admin']::varchar[]))\n                AS \"member_count!: i64\"\n        FROM user_groups g\n        WHERE g.company_id = $1\n        ORDER BY g.name",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "company_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "description",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "is_active",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 5,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "permissions!: Vec<String>",
+        "type_info": "VarcharArray"
+      },
+      {
+        "ordinal": 8,
+        "name": "member_count!: i64",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Bool"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      null,
+      null
+    ]
+  },
+  "hash": "8499f884d6df98a33092cad1b1c432917babf5ac2dcaa3b6ee24ee52c88ff92d"
+}

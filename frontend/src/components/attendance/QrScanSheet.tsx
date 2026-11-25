@@ -148,7 +148,15 @@ export function QrScanSheet({ onClose, onToken, onRetryScan, onCameraReady, busy
             /* fires once per undecoded frame — not an error */
           }
         );
-        if (cancelled) return;
+        if (cancelled) {
+          await scanner.stop().catch(() => {});
+          try {
+            scanner.clear();
+          } catch {
+            /* already cleared */
+          }
+          return;
+        }
         setPhase('scanning');
         onCameraReadyRef.current?.();
 
@@ -213,6 +221,7 @@ export function QrScanSheet({ onClose, onToken, onRetryScan, onCameraReady, busy
   }, [torchOn]);
 
   const submitManual = () => {
+    if (busy || claimedRef.current || !manualCode.trim()) return;
     const parsed = parseScanToken(manualCode);
     if ('error' in parsed) {
       setScanError(parsed.error);

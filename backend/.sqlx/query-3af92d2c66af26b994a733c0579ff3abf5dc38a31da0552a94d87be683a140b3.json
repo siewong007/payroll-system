@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE payroll_items\n        SET pcb_amount = $3,\n            total_deductions = $4,\n            net_salary = $5,\n            ytd_pcb = $6,\n            ytd_net = $7,\n            updated_at = NOW()\n        WHERE payroll_run_id = $1 AND employee_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3af92d2c66af26b994a733c0579ff3abf5dc38a31da0552a94d87be683a140b3"
+}

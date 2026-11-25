@@ -18,8 +18,18 @@ fn haversine_meters(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
     let d_lon = (lon2 - lon1).to_radians();
     let a = (d_lat / 2.0).sin().powi(2)
         + lat1.to_radians().cos() * lat2.to_radians().cos() * (d_lon / 2.0).sin().powi(2);
-    let c = 2.0 * a.sqrt().asin();
+    let c = 2.0 * a.clamp(0.0, 1.0).sqrt().asin();
     R * c
+}
+
+fn validate_location_name(name: &str) -> AppResult<String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() || trimmed.chars().count() > 150 {
+        return Err(AppError::BadRequest(
+            "Location name must be 1–150 characters".into(),
+        ));
+    }
+    Ok(trimmed.to_string())
 }
 
 fn validate_coordinates(latitude: f64, longitude: f64) -> AppResult<()> {
@@ -62,19 +72,14 @@ pub async fn create_location(
     actor_id: Uuid,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<CompanyLocation> {
+    let name = validate_location_name(&req.name)?;
     validate_coordinates(req.latitude, req.longitude)?;
     let radius = req.radius_meters.unwrap_or(DEFAULT_RADIUS_METERS);
     validate_radius(radius)?;
 
-    let loc = company_locations::insert(
-        pool,
-        company_id,
-        &req.name,
-        req.latitude,
-        req.longitude,
-        radius,
-    )
-    .await?;
+    let loc =
+        company_locations::insert(pool, company_id, &name, req.latitude, req.longitude, radius)
+            .await?;
 
     let _ = audit_service::log_action_with_metadata(
         pool,
@@ -105,7 +110,10 @@ pub async fn update_location(
         .await?
         .ok_or_else(|| AppError::NotFound("Location not found".into()))?;
 
-    let name = req.name.as_deref().unwrap_or(&existing.name);
+    let name = match req.name.as_deref() {
+        Some(n) => validate_location_name(n)?,
+        None => existing.name.clone(),
+    };
     let lat = req.latitude.unwrap_or(existing.latitude);
     let lng = req.longitude.unwrap_or(existing.longitude);
     let radius = req.radius_meters.unwrap_or(existing.radius_meters);
@@ -124,7 +132,7 @@ pub async fn update_location(
         pool,
         location_id,
         company_id,
-        name,
+        &name,
         lat,
         lng,
         radius,

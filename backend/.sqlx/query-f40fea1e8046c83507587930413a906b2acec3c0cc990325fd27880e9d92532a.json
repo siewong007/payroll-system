@@ -1,0 +1,35 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT start_time, end_time, grace_minutes FROM employee_work_schedules\n         WHERE employee_id = $1 AND day_of_week = $2 AND is_active = TRUE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "start_time",
+        "type_info": "Time"
+      },
+      {
+        "ordinal": 1,
+        "name": "end_time",
+        "type_info": "Time"
+      },
+      {
+        "ordinal": 2,
+        "name": "grace_minutes",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int2"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "f40fea1e8046c83507587930413a906b2acec3c0cc990325fd27880e9d92532a"
+}

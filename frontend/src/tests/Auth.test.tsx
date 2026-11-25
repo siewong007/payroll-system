@@ -18,6 +18,7 @@ vi.mock('@/api/client', () => ({
     put: apiMocks.put,
   },
   setAccessToken: apiMocks.setAccessToken,
+  onAuthRefreshed: vi.fn(() => () => {}),
 }));
 
 const user: User = {
@@ -97,16 +98,18 @@ describe('AuthProvider', () => {
   });
 
   it.each(['/terms', '/privacy', '/compliance'])(
-    'does not churn the refresh endpoint on public legal route %s',
+    'restores session on public legal route %s when refresh cookie is valid',
     async (legalPath) => {
+      apiMocks.post.mockResolvedValueOnce({ data: { token: 'legal-token', user } });
       window.history.replaceState(null, '', legalPath);
       const { result } = renderAuth();
 
       await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-      expect(apiMocks.post).not.toHaveBeenCalled();
-      expect(apiMocks.setAccessToken).not.toHaveBeenCalled();
-      expect(result.current.isAuthenticated).toBe(false);
+      expect(apiMocks.post).toHaveBeenCalledWith('/auth/refresh', {});
+      expect(apiMocks.setAccessToken).toHaveBeenCalledWith('legal-token');
+      expect(result.current.isAuthenticated).toBe(true);
+      expect(result.current.user).toEqual(user);
     },
   );
 

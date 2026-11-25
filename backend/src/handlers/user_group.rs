@@ -24,7 +24,12 @@ pub async fn list_groups(
 ) -> AppResult<Json<Vec<UserGroupWithDetail>>> {
     let company_id = auth.authorize(Permission::ViewUserDirectory)?;
     Ok(Json(
-        user_group_service::list_groups(&state.pool, company_id).await?,
+        user_group_service::list_groups(
+            &state.pool,
+            company_id,
+            user_service::hides_privileged_users(&auth),
+        )
+        .await?,
     ))
 }
 

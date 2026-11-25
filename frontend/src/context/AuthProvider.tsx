@@ -1,14 +1,12 @@
 import { useState, useEffect, useCallback, useMemo, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { User, LoginResponse, MfaRequiredResponse } from '@/types';
-import api, { setAccessToken } from '@/api/client';
+import api, { onAuthRefreshed, setAccessToken } from '@/api/client';
 import { verifyTwoFactorLogin } from '@/api/totp';
 import { AuthContext, type LoginResult } from './AuthContext';
 
-const PUBLIC_NO_SESSION_ROUTES = new Set(['/kiosk', '/terms', '/privacy', '/compliance']);
-
 function shouldSkipSessionRestore(pathname: string): boolean {
-  return PUBLIC_NO_SESSION_ROUTES.has(pathname) || pathname.startsWith('/kiosk/');
+  return pathname === '/kiosk' || pathname.startsWith('/kiosk/');
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -17,9 +15,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const queryClient = useQueryClient();
 
+  useEffect(() => {
+    return onAuthRefreshed((newToken, newUser) => {
+      setToken(newToken);
+      setUser(newUser);
+    });
+  }, []);
+
   // On mount, try to restore session via cookie-based refresh.
-  // Skip on public unauthenticated paths (kiosk tablets and static legal pages)
-  // so they don't churn /auth/refresh or trigger an unnecessary CORS preflight.
+  // Skip on public kiosk tablet routes so they don't churn /auth/refresh.
   useEffect(() => {
     if (shouldSkipSessionRestore(window.location.pathname)) {
       setIsLoading(false);
@@ -47,12 +51,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void restoreSession();
   }, []);
 
-  const setSession = useCallback((newToken: string, newUser: User) => {
-    setAccessToken(newToken);
-    setToken(newToken);
-    setUser(newUser);
-    localStorage.setItem('user', JSON.stringify(newUser));
-  }, []);
+  const setSession = useCallback(
+    (newToken: string, newUser: User) => {
+      queryClient.clear();
+      setAccessToken(newToken);
+      setToken(newToken);
+      setUser(newUser);
+      localStorage.setItem('user', JSON.stringify(newUser));
+    },
+    [queryClient],
+  );
 
   const login = useCallback(
     async (email: string, password: string, turnstileToken?: string): Promise<LoginResult> => {

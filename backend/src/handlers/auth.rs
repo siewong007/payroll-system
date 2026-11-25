@@ -6,7 +6,7 @@ use axum::{
 };
 
 use crate::core::app_state::AppState;
-use crate::core::auth::{AuthUser, create_token};
+use crate::core::auth::{AuthUser, create_token, verify_token};
 use crate::core::cookie;
 use crate::core::error::{AppError, AppResult};
 use crate::core::extract::ValidatedJson;
@@ -196,11 +196,13 @@ pub async fn logout(
     headers: HeaderMap,
     audit_meta: AuditRequestMeta,
 ) -> Result<impl IntoResponse, AppError> {
+    let mut revoked = false;
     if let Some(refresh) = cookie::extract_refresh_token(&headers) {
         if let Ok((user_id, session_id)) =
             session_service::verify_refresh_token(&state.pool, &refresh).await
         {
             let _ = session_service::revoke_session(&state.pool, user_id, session_id).await;
+            revoked = true;
             // Best-effort, after the revocation: the logout itself must not
             // fail because its trail row could not be written, but the row
             // still answers "when did this account sign out".
@@ -222,6 +224,32 @@ pub async fn logout(
         } else {
             let _ = session_service::revoke_refresh_token(&state.pool, &refresh).await;
         }
+    }
+
+    // Fallback when refresh cookie is missing or was already rotated by another
+    // tab: revoke the Bearer JWT's session directly so logout never leaves an
+    // active session usable until token expiry.
+    if !revoked
+        && let Some(token) = headers
+            .get(axum::http::header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+        && let Ok(claims) = verify_token(token, &state.config.jwt_secret)
+    {
+        let _ = session_service::revoke_session(&state.pool, claims.sub, claims.sid).await;
+        let _ = crate::services::audit_service::log_action_with_metadata(
+            &state.pool,
+            claims.company_id,
+            Some(claims.sub),
+            "logout",
+            "auth",
+            Some(claims.sub),
+            None::<serde_json::Value>,
+            Some(serde_json::json!({ "session_id": claims.sid })),
+            Some("Logout"),
+            Some(&audit_meta),
+        )
+        .await;
     }
 
     let mut resp_headers = HeaderMap::new();

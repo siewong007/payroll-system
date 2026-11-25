@@ -53,6 +53,14 @@ pub(crate) fn calculate_socso_with(
         SocsoCategory::FirstCategory
     };
 
+    if wage <= 0 {
+        return Ok(SocsoContribution {
+            employee: 0,
+            employer: 0,
+            category,
+        });
+    }
+
     match tables.socso_band(wage) {
         Some(band) => match category {
             SocsoCategory::FirstCategory => Ok(SocsoContribution {

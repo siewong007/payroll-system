@@ -235,7 +235,7 @@ export function TeamsPage() {
       id: editingTeam.id,
       data: {
         name: teamName.trim(),
-        description: teamDescription.trim() || undefined,
+        description: teamDescription.trim(),
         tag: teamTag.trim().toLowerCase() || 'general',
         is_active: teamIsActive,
       },

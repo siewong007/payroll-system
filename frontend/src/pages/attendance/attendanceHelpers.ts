@@ -1,5 +1,5 @@
 import { QrCode, Fingerprint, User } from 'lucide-react';
-import i18n from '@/i18n';
+import i18n, { intlLocale } from '@/i18n';
 import {
   formatTime as formatTimeL,
   formatDateMedium,
@@ -60,12 +60,32 @@ export function attMethodLabel(method: string): string {
   return i18n.t(`enums.attendanceMethod.${method}`, { defaultValue: method });
 }
 
-export function formatTime(iso: string | null) {
-  return iso ? formatTimeL(iso) : '—';
+export function formatTime(iso: string | null, timeZone?: string) {
+  if (!iso) return '—';
+  if (!timeZone) return formatTimeL(iso);
+  try {
+    return new Intl.DateTimeFormat(intlLocale(), {
+      timeZone,
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(new Date(iso));
+  } catch {
+    return formatTimeL(iso);
+  }
 }
 
-export function formatDate(iso: string) {
-  return formatDateMedium(iso);
+export function formatDate(iso: string, timeZone?: string) {
+  if (!timeZone) return formatDateMedium(iso);
+  try {
+    return new Intl.DateTimeFormat(intlLocale(), {
+      timeZone,
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+    }).format(new Date(iso));
+  } catch {
+    return formatDateMedium(iso);
+  }
 }
 
 export function formatDateTime(iso: string | null) {

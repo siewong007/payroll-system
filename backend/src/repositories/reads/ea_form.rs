@@ -20,7 +20,7 @@ pub async fn list_employee_summaries(
             e.full_name AS employee_name,
             e.employee_number,
             e.ic_number,
-            SUM(pi.gross_salary)::bigint AS "ytd_gross!",
+            SUM(COALESCE(pi.taxable_gross, GREATEST(pi.gross_salary - pi.unpaid_leave_deduction, 0)))::bigint AS "ytd_gross!",
             COUNT(DISTINCT pr.period_month) AS "months_worked!"
         FROM payroll_items pi
         JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
@@ -85,7 +85,9 @@ pub async fn ytd_totals(
             COALESCE(SUM(pi.total_bonus), 0)::bigint AS "ytd_bonus!",
             COALESCE(SUM(pi.total_commission), 0)::bigint AS "ytd_commission!",
             COALESCE(SUM(pi.total_overtime), 0)::bigint AS "ytd_overtime!",
-            COALESCE(SUM(pi.gross_salary), 0)::bigint AS "ytd_gross!",
+            COALESCE(SUM(pi.unpaid_leave_deduction), 0)::bigint AS "ytd_unpaid_leave!",
+            COALESCE(SUM(GREATEST(pi.gross_salary - pi.unpaid_leave_deduction - COALESCE(pi.taxable_gross, GREATEST(pi.gross_salary - pi.unpaid_leave_deduction, 0)), 0)), 0)::bigint AS "ytd_non_taxable!",
+            COALESCE(SUM(COALESCE(pi.taxable_gross, GREATEST(pi.gross_salary - pi.unpaid_leave_deduction, 0))), 0)::bigint AS "ytd_gross!",
             COALESCE(SUM(pi.epf_employee), 0)::bigint AS "ytd_epf_employee!",
             COALESCE(SUM(pi.socso_employee), 0)::bigint AS "ytd_socso_employee!",
             COALESCE(SUM(pi.eis_employee), 0)::bigint AS "ytd_eis_employee!",

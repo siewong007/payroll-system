@@ -412,9 +412,9 @@ pub async fn list_email_logs(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    let page = query.page.unwrap_or(1).max(1);
-    let per_page = query.per_page.unwrap_or(20).min(100);
-    let offset = (page - 1) * per_page;
+    let page = query.page.unwrap_or(1).clamp(1, 100_000);
+    let per_page = query.per_page.unwrap_or(20).clamp(1, 100);
+    let offset = (page - 1).saturating_mul(per_page);
 
     let (logs, total) = email_service::list_email_logs(
         &state.pool,

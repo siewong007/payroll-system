@@ -24,6 +24,8 @@ use super::common::{
     Reviewer, audit_self_approval_override, ensure_employee_in_company,
     ensure_leave_type_in_company, ensure_not_self_approval, reviewer_employee_id,
 };
+use crate::models::upload::UploadAccess;
+use crate::services::upload_service;
 
 pub use crate::models::approval::LeaveRequestWithEmployee;
 
@@ -35,6 +37,7 @@ pub async fn create_leave_request_admin(
     employee_id: Uuid,
     req: CreateLeaveRequest,
     actor_id: Uuid,
+    access: &UploadAccess,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<LeaveRequest> {
     // Bound the span before the calendar walk, as the portal path does.
@@ -57,16 +60,24 @@ pub async fn create_leave_request_admin(
     // `attachment_url` is joined onto a filesystem path by the backup export and
     // restore paths, so it is settled here rather than at every sink.
     validate_optional_file_url(req.attachment_url.as_deref())?;
+    upload_service::ensure_upload_attach_authorized(
+        pool,
+        access,
+        req.attachment_url.as_deref(),
+        false,
+    )
+    .await?;
 
-    if leave_requests::overlaps_existing(pool, employee_id, req.start_date, req.end_date, None)
+    let mut tx = pool.begin().await?;
+    employee_repo::lock_for_update(&mut *tx, employee_id, company_id).await?;
+
+    if leave_requests::overlaps_existing(&mut *tx, employee_id, req.start_date, req.end_date, None)
         .await?
     {
         return Err(AppError::BadRequest(
             "This employee already has a leave request covering some of these dates".into(),
         ));
     }
-
-    let mut tx = pool.begin().await?;
 
     let leave = leave_requests::insert_with_type(
         &mut *tx,
@@ -120,29 +131,65 @@ pub async fn update_leave_request_admin(
     request_id: Uuid,
     req: UpdateLeaveRequest,
     actor_id: Uuid,
+    access: &UploadAccess,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<LeaveRequest> {
-    let mut tx = pool.begin().await?;
-
-    let current = leave_requests::get_pending_with_type(&mut *tx, request_id, company_id)
+    // Perform pool reads BEFORE opening the write transaction to avoid holding
+    // a write tx connection while acquiring additional pooled connections.
+    let preview = leave_requests::get_pending_with_type(pool, request_id, company_id)
         .await?
         .ok_or_else(|| {
             AppError::BadRequest("Leave request not found or cannot be edited".into())
         })?;
 
-    let employee_id = req.employee_id.unwrap_or(current.employee_id);
+    let employee_id = req.employee_id.unwrap_or(preview.employee_id);
     ensure_employee_in_company(pool, company_id, employee_id).await?;
-    let leave_type_id = req.leave_type_id.unwrap_or(current.leave_type_id);
+    let leave_type_id = req.leave_type_id.unwrap_or(preview.leave_type_id);
     ensure_leave_type_in_company(pool, company_id, leave_type_id).await?;
-    let start_date = req.start_date.unwrap_or(current.start_date);
-    let end_date = req.end_date.unwrap_or(current.end_date);
-    let days = req.days.unwrap_or(current.days);
+    let start_date = req.start_date.unwrap_or(preview.start_date);
+    let end_date = req.end_date.unwrap_or(preview.end_date);
+    let days = req.days.unwrap_or(preview.days);
     crate::services::leave_rules::validate_range(start_date, end_date)?;
     let working_days =
         calendar_service::count_working_days_between(pool, company_id, start_date, end_date)
             .await?;
     crate::services::leave_rules::validate_period(start_date, end_date, days, working_days)?;
-    validate_optional_file_url(req.attachment_url.as_deref())?;
+
+    let non_empty_attachment = req.attachment_url.as_deref().filter(|s| !s.is_empty());
+    validate_optional_file_url(non_empty_attachment)?;
+    upload_service::ensure_upload_attach_authorized(pool, access, non_empty_attachment, false)
+        .await?;
+
+    let mut tx = pool.begin().await?;
+
+    let current = leave_requests::get_pending_with_type(&mut *tx, request_id, company_id)
+        .await?
+        .ok_or_else(|| {
+            AppError::Conflict(
+                "This leave request changed state while it was being updated. Reload and try again."
+                    .into(),
+            )
+        })?;
+
+    if (
+        current.employee_id,
+        current.leave_type_id,
+        current.start_date,
+        current.end_date,
+        current.days,
+    ) != (
+        preview.employee_id,
+        preview.leave_type_id,
+        preview.start_date,
+        preview.end_date,
+        preview.days,
+    ) {
+        return Err(AppError::Conflict(
+            "This leave request was modified concurrently. Reload and try again.".into(),
+        ));
+    }
+
+    employee_repo::lock_for_update(&mut *tx, employee_id, company_id).await?;
 
     if leave_requests::overlaps_existing(
         &mut *tx,
@@ -192,7 +239,13 @@ pub async fn update_leave_request_admin(
         req.attachment_url,
         req.attachment_name,
     )
-    .await?;
+    .await?
+    .ok_or_else(|| {
+        AppError::Conflict(
+            "This leave request changed state while it was being updated. Reload and try again."
+                .into(),
+        )
+    })?;
 
     tx.commit().await?;
 
@@ -229,7 +282,13 @@ pub async fn delete_leave_request_admin(
             AppError::BadRequest("Leave request not found or cannot be deleted".into())
         })?;
 
-    leave_requests::delete(pool, request_id, company_id).await?;
+    let rows = leave_requests::delete(pool, request_id, company_id).await?;
+    if rows == 0 {
+        return Err(AppError::Conflict(
+            "This leave request changed state while it was being deleted. Reload and try again."
+                .into(),
+        ));
+    }
 
     let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
@@ -278,6 +337,7 @@ pub async fn cancel_leave_request_admin(
                 &mut *tx,
                 current.employee_id,
                 company_id,
+                request_id,
                 &description,
             )
             .await?;
@@ -288,13 +348,28 @@ pub async fn cancel_leave_request_admin(
                 ));
             }
 
-            payroll_entries::delete_unprocessed_unpaid_leave(
+            let deleted = payroll_entries::delete_unprocessed_unpaid_leave(
                 &mut *tx,
                 current.employee_id,
                 company_id,
+                request_id,
                 &description,
             )
             .await?;
+            if deleted == 0
+                && payroll_entries::exists_processed_unpaid_leave(
+                    &mut *tx,
+                    current.employee_id,
+                    company_id,
+                    request_id,
+                    &description,
+                )
+                .await?
+            {
+                return Err(AppError::Conflict(
+                    "Approved unpaid leave was processed by payroll while being cancelled.".into(),
+                ));
+            }
         }
     }
 
@@ -447,9 +522,12 @@ async fn compute_unpaid_leave_deduction(
         return Ok(None);
     }
 
-    let amount = round_sen(
-        Decimal::from(basic_salary) * Decimal::from(unpaid_working_days) / Decimal::from(divisor),
-    );
+    let effective_days = lr.days.min(Decimal::from(unpaid_working_days));
+    if effective_days <= Decimal::ZERO {
+        return Ok(None);
+    }
+
+    let amount = round_sen(Decimal::from(basic_salary) * effective_days / Decimal::from(divisor));
     if amount <= 0 {
         return Ok(None);
     }
@@ -463,10 +541,12 @@ async fn compute_unpaid_leave_deduction(
         period_month: leave_month as i32,
         description: format!(
             "Unpaid leave: {} to {} ({} working days)",
-            lr.start_date, lr.end_date, unpaid_working_days
+            lr.start_date,
+            lr.end_date,
+            effective_days.normalize()
         ),
         amount,
-        working_days: Decimal::from(unpaid_working_days),
+        working_days: effective_days,
     }))
 }
 
@@ -566,6 +646,7 @@ pub async fn approve_leave(
             &d.description,
             d.amount,
             d.working_days,
+            Some(lr.id),
             reviewer_id,
         )
         .await?;
@@ -614,11 +695,12 @@ pub async fn approve_leave(
     // Send approval email
     let emp_info = approval_reads::employee_email_info(pool, lr.employee_id).await?;
 
-    if let Some(emp) = emp_info {
+    if let Some(emp) = emp_info
+        && let Some(recipient_email) = emp.email.as_deref().filter(|e| !e.trim().is_empty())
+    {
         let leave_type = lr.leave_type_name.as_deref().unwrap_or("Leave");
-        let details = format!(
-            "<strong>Type:</strong> {}<br><strong>Period:</strong> {} to {} ({} day{})",
-            leave_type,
+        let period_str = format!(
+            "{} to {} ({} day{})",
             lr.start_date,
             lr.end_date,
             lr.days,
@@ -637,7 +719,7 @@ pub async fn approve_leave(
             &emp.full_name,
             &emp.company_name,
             "Leave",
-            &details,
+            &[("Type", leave_type), ("Period", &period_str)],
             extra,
         );
         let _ = email_service::enqueue_email(
@@ -647,7 +729,7 @@ pub async fn approve_leave(
             Some(lr.employee_id),
             None,
             "leave_approved",
-            &emp.email,
+            recipient_email,
             &emp.full_name,
             &format!(
                 "Leave Request Approved - {} to {}",

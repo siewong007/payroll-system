@@ -25,30 +25,35 @@ pub async fn count_active(
     Ok(count)
 }
 
-/// Count of documents matching the library filters (employee/category/status/search).
+/// Count of documents matching the library filters (employee/company-wide/category/status/search).
+#[allow(clippy::too_many_arguments)]
 pub async fn count_filtered(
     executor: impl Executor<'_, Database = Postgres>,
     company_id: Uuid,
     employee_id: Option<Uuid>,
+    company_wide: Option<bool>,
     category_id: Option<Uuid>,
     status: Option<&str>,
     search: Option<&str>,
     include_confidential: bool,
 ) -> AppResult<i64> {
+    let escaped = search.map(crate::repositories::escape_like);
     let count = sqlx::query_scalar!(
         r#"SELECT COUNT(*) AS "count!" FROM documents
         WHERE company_id = $1 AND deleted_at IS NULL
         AND ($2::uuid IS NULL OR employee_id = $2)
         AND ($3::uuid IS NULL OR category_id = $3)
         AND ($4::text IS NULL OR status::text = $4)
-        AND ($5::text IS NULL OR title ILIKE '%' || $5 || '%' OR file_name ILIKE '%' || $5 || '%')
-        AND ($6::bool OR is_confidential IS NOT TRUE)"#,
+        AND ($5::text IS NULL OR title ILIKE '%' || $5 || '%' ESCAPE '\' OR file_name ILIKE '%' || $5 || '%' ESCAPE '\')
+        AND ($6::bool OR is_confidential IS NOT TRUE)
+        AND ($7::bool IS NULL OR ($7 = TRUE AND employee_id IS NULL) OR ($7 = FALSE AND employee_id IS NOT NULL))"#,
         company_id,
         employee_id,
         category_id,
         status,
-        search,
+        escaped.as_deref(),
         include_confidential,
+        company_wide,
     )
     .fetch_one(executor)
     .await?;
@@ -61,6 +66,7 @@ pub async fn list_filtered(
     executor: impl Executor<'_, Database = Postgres>,
     company_id: Uuid,
     employee_id: Option<Uuid>,
+    company_wide: Option<bool>,
     category_id: Option<Uuid>,
     status: Option<&str>,
     search: Option<&str>,
@@ -68,6 +74,7 @@ pub async fn list_filtered(
     limit: i64,
     offset: i64,
 ) -> AppResult<Vec<Document>> {
+    let escaped = search.map(crate::repositories::escape_like);
     let documents = sqlx::query_as!(
         Document,
         r#"SELECT
@@ -81,16 +88,18 @@ pub async fn list_filtered(
         AND ($2::uuid IS NULL OR d.employee_id = $2)
         AND ($3::uuid IS NULL OR d.category_id = $3)
         AND ($4::text IS NULL OR d.status::text = $4)
-        AND ($5::text IS NULL OR d.title ILIKE '%' || $5 || '%' OR d.file_name ILIKE '%' || $5 || '%')
+        AND ($5::text IS NULL OR d.title ILIKE '%' || $5 || '%' ESCAPE '\' OR d.file_name ILIKE '%' || $5 || '%' ESCAPE '\')
         AND ($6::bool OR d.is_confidential IS NOT TRUE)
+        AND ($7::bool IS NULL OR ($7 = TRUE AND d.employee_id IS NULL) OR ($7 = FALSE AND d.employee_id IS NOT NULL))
         ORDER BY d.created_at DESC
-        LIMIT $7 OFFSET $8"#,
+        LIMIT $8 OFFSET $9"#,
         company_id,
         employee_id,
         category_id,
         status,
-        search,
+        escaped.as_deref(),
         include_confidential,
+        company_wide,
         limit,
         offset,
     )

@@ -14,6 +14,15 @@ graphify-out
 frontend
 docs
 backend/target
+backend/proptest-regressions
+**/.terraform
+*.tfstate
+*.tfstate.*
+.github
+deploy
+scripts
+.claude
+.codex
 **/node_modules
 **/.DS_Store
 payroll-system.amd64

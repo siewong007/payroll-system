@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT (COALESCE(is_active, FALSE) AND deleted_at IS NULL) AS \"is_active!\" FROM employees WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "is_active!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "8c6cb8dc427042d1d31abe0b36c164dae5a3e08639ecfeac0781d7c70668baee"
+}

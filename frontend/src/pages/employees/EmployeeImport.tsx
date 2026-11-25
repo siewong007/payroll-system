@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router';
 import { Upload, Download, CheckCircle, XCircle, AlertTriangle, FileSpreadsheet, Loader2 } from 'lucide-react';
 import { downloadImportTemplate, validateImport, confirmImport } from '@/api/employees';
 import { getJob } from '@/api/jobs';
+import { triggerBlobDownload } from '@/lib/download';
 import { getErrorMessage, translateServerMessage } from '@/lib/utils';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { useToast } from '@/lib/toast';
@@ -55,7 +56,8 @@ export function EmployeeImport() {
     queryFn: () => getJob(jobId as string),
     enabled: jobId !== null,
     refetchInterval: (query) =>
-      query.state.data?.status === 'pending' || query.state.data?.status === 'running'
+      query.state.status !== 'error' &&
+      (query.state.data?.status === 'pending' || query.state.data?.status === 'running')
         ? 1_000
         : false,
   });
@@ -63,7 +65,6 @@ export function EmployeeImport() {
   const importing =
     confirmMutation.isPending ||
     (jobId !== null &&
-      !isJobPollError &&
       importJob?.status !== 'succeeded' &&
       importJob?.status !== 'failed');
 
@@ -88,12 +89,7 @@ export function EmployeeImport() {
   const handleDownloadTemplate = async (format: 'csv' | 'xlsx') => {
     try {
       const blob = await downloadImportTemplate(format);
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `employee_import_template.${format}`;
-      a.click();
-      URL.revokeObjectURL(url);
+      triggerBlobDownload(blob, `employee_import_template.${format}`);
     } catch (err) {
       toast.error(getErrorMessage(err, t('employees.import.templateDownloadFailed')));
     }
@@ -408,14 +404,17 @@ export function EmployeeImport() {
           <div className="flex flex-col-reverse sm:flex-row justify-between gap-3">
             <button
               type="button"
+              disabled={importing || jobId !== null}
               onClick={() => {
                 setStep('upload');
                 setValidation(null);
                 setFile(null);
                 setJobId(null);
                 setJobError('');
+                confirmMutation.reset();
+                validateMutation.reset();
               }}
-              className="btn-secondary"
+              className="btn-secondary disabled:opacity-50"
             >
               {t('employees.import.backToUpload')}
             </button>

@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { keepPreviousData, useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -134,13 +134,10 @@ export function DocumentList() {
 
   const companyDocsSummary = useQuery({
     queryKey: ['documents', companyId, 'company-wide-summary'],
-    queryFn: () => getDocuments({ page: 1, per_page: 100 }),
+    queryFn: () => getDocuments({ company_wide: true, page: 1, per_page: 1 }),
   });
 
-  const companyWideCount = useMemo(
-    () => (companyDocsSummary.data?.data ?? []).filter((d) => !d.employee_id).length,
-    [companyDocsSummary.data],
-  );
+  const companyWideCount = companyDocsSummary.data?.total ?? 0;
 
   const employeeList = employees?.data ?? [];
   const employeeTotal = employees?.total ?? 0;
@@ -349,21 +346,18 @@ function EmployeeDocumentsModal({
   const isCompanyWide = target.type === 'company';
 
   const { data, isLoading, isError, error, refetch } = useQuery({
-    queryKey: ['documents', isCompanyWide ? { companyWide: true } : { employee_id: target.id, page }],
+    queryKey: ['documents', isCompanyWide ? { companyWide: true, page } : { employee_id: target.id, page }],
     queryFn: () =>
       isCompanyWide
-        ? getDocuments({ page: 1, per_page: 100 })
+        ? getDocuments({ company_wide: true, page, per_page: PER_PAGE })
         : getDocuments({ employee_id: target.id, page, per_page: PER_PAGE }),
     placeholderData: keepPreviousData,
   });
 
-  const rows = useMemo(() => {
-    const raw = data?.data ?? [];
-    return isCompanyWide ? raw.filter((d) => !d.employee_id) : raw;
-  }, [data?.data, isCompanyWide]);
+  const rows = data?.data ?? [];
 
-  const totalCount = isCompanyWide ? rows.length : (data?.total ?? 0);
-  const totalPages = isCompanyWide ? 1 : Math.max(1, Math.ceil(totalCount / PER_PAGE));
+  const totalCount = data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(totalCount / PER_PAGE));
 
   const { data: categories } = useQuery({
     queryKey: ['document-categories'],
@@ -402,7 +396,7 @@ function EmployeeDocumentsModal({
               {totalCount > 0 ? t('documents.count', { count: totalCount }) : ''}
             </span>
             <div className="flex items-center gap-2">
-              {!isCompanyWide && totalCount > PER_PAGE && (
+              {totalCount > PER_PAGE && (
                 <div className="flex items-center gap-2 mr-2">
                   <button
                     type="button"

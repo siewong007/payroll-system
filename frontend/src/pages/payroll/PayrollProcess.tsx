@@ -121,14 +121,14 @@ export function PayrollProcess() {
     queryFn: () => getJob(jobId as string),
     enabled: jobId !== null,
     refetchInterval: (query) =>
-      query.state.data?.status === 'pending' || query.state.data?.status === 'running'
+      query.state.status !== 'error' &&
+      (query.state.data?.status === 'pending' || query.state.data?.status === 'running')
         ? 1_000
         : false,
   });
 
   const jobRunning =
     jobId !== null &&
-    !jobPollError &&
     processJob?.status !== 'succeeded' &&
     processJob?.status !== 'failed';
 
@@ -197,9 +197,12 @@ export function PayrollProcess() {
 
   const deleteEntryMutation = useMutation({
     mutationFn: deletePayrollEntry,
-    onSuccess: () => {
+    onSuccess: (_data, deletedId) => {
       queryClient.invalidateQueries({ queryKey: ['payrollEntries'] });
       invalidatePreview();
+      if (editingEntry?.id === deletedId) {
+        resetEntryForm();
+      }
     },
     onError: (err: unknown) => {
       toast.error(getErrorMessage(err, t('payroll.process.deleteEntryFailed')));
@@ -392,6 +395,7 @@ export function PayrollProcess() {
                 onChange={(e) => {
                   setYear(parseInt(e.target.value, 10));
                   invalidatePreview();
+                  if (editingEntry) resetEntryForm();
                 }}
                 className="form-input"
               >
@@ -409,6 +413,7 @@ export function PayrollProcess() {
                 onChange={(e) => {
                   setMonth(parseInt(e.target.value, 10));
                   invalidatePreview();
+                  if (editingEntry) resetEntryForm();
                 }}
                 className="form-input"
               >

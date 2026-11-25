@@ -289,26 +289,34 @@ function EmployeeFormContent({
   const handleZakatChange = (value: string) => {
     setZakatDisplay(value);
     if (!value.trim()) {
-      updateField('zakat_monthly_amount', undefined);
+      updateField('zakat_monthly_amount', mode === 'edit' ? 0 : undefined);
       return;
     }
     const parsed = parseFloat(value);
     updateField(
       'zakat_monthly_amount',
-      Number.isFinite(parsed) ? Math.round(Math.max(0, parsed) * 100) : undefined,
+      Number.isFinite(parsed)
+        ? Math.round(Math.max(0, parsed) * 100)
+        : mode === 'edit'
+          ? 0
+          : undefined,
     );
   };
 
   const handlePtptnChange = (value: string) => {
     setPtptnDisplay(value);
     if (!value.trim()) {
-      updateField('ptptn_monthly_amount', undefined);
+      updateField('ptptn_monthly_amount', mode === 'edit' ? 0 : undefined);
       return;
     }
     const parsed = parseFloat(value);
     updateField(
       'ptptn_monthly_amount',
-      Number.isFinite(parsed) ? Math.round(Math.max(0, parsed) * 100) : undefined,
+      Number.isFinite(parsed)
+        ? Math.round(Math.max(0, parsed) * 100)
+        : mode === 'edit'
+          ? 0
+          : undefined,
     );
   };
 
@@ -325,6 +333,8 @@ function EmployeeFormContent({
     const payload: UpdateEmployeeRequest = canViewPayroll
       ? { ...form }
       : stripPayrollFields(form);
+    delete payload.employee_number;
+    delete payload.date_joined;
     // An omitted `date_resigned` means "keep existing" on the backend, so
     // emptying the field has to be sent as an explicit clear or the resignation
     // would be unremovable — which is what kept an un-terminated employee out of
@@ -332,6 +342,10 @@ function EmployeeFormContent({
     if (initialData?.date_resigned && !form.date_resigned) {
       delete payload.date_resigned;
       payload.clear_date_resigned = true;
+    }
+    if (canViewPayroll && initialData?.epf_category && !form.epf_category) {
+      delete payload.epf_category;
+      payload.clear_epf_category = true;
     }
     updateMutation.mutate(payload);
   };
@@ -388,15 +402,20 @@ function EmployeeFormContent({
         <section className={sectionClass}>
           <h3 className={sectionTitleClass}>{t('employees.form.personalInfo')}</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
-            <FormField label={t('employees.form.employeeNumber')} required>
+            <FormField
+              label={t('employees.form.employeeNumber')}
+              required={mode === 'create'}
+              hint={mode === 'edit' ? t('employees.form.editReadOnlyHint') : undefined}
+            >
               {(aria) => (
                 <input
                   {...aria}
                   type="text"
                   value={form.employee_number}
                   onChange={(e) => updateField('employee_number', e.target.value)}
-                  className="form-input"
-                  required
+                  disabled={mode === 'edit'}
+                  className="form-input disabled:opacity-60 disabled:cursor-not-allowed"
+                  required={mode === 'create'}
                   placeholder={t('employees.form.employeeNumberPlaceholder')}
                 />
               )}
@@ -628,15 +647,20 @@ function EmployeeFormContent({
                 </select>
               )}
             </FormField>
-            <FormField label={t('employees.fields.dateJoined')} required>
+            <FormField
+              label={t('employees.fields.dateJoined')}
+              required={mode === 'create'}
+              hint={mode === 'edit' ? t('employees.form.editReadOnlyHint') : undefined}
+            >
               {(aria) => (
                 <input
                   {...aria}
                   type="date"
                   value={form.date_joined}
                   onChange={(e) => updateField('date_joined', e.target.value)}
-                  className="form-input"
-                  required
+                  disabled={mode === 'edit'}
+                  className="form-input disabled:opacity-60 disabled:cursor-not-allowed"
+                  required={mode === 'create'}
                 />
               )}
             </FormField>
@@ -924,7 +948,7 @@ function EmployeeFormContent({
                       updateField('is_muslim', e.target.checked);
                       if (!e.target.checked) {
                         updateField('zakat_eligible', false);
-                        updateField('zakat_monthly_amount', undefined);
+                        updateField('zakat_monthly_amount', mode === 'edit' ? 0 : undefined);
                         setZakatDisplay('');
                       }
                     }}
@@ -942,7 +966,7 @@ function EmployeeFormContent({
                       onChange={(e) => {
                         updateField('zakat_eligible', e.target.checked);
                         if (!e.target.checked) {
-                          updateField('zakat_monthly_amount', undefined);
+                          updateField('zakat_monthly_amount', mode === 'edit' ? 0 : undefined);
                           setZakatDisplay('');
                         }
                       }}

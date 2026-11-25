@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT COUNT(*) AS \"count!\" FROM audit_logs al\n        LEFT JOIN users u ON al.user_id = u.id\n        WHERE al.company_id = $1\n        AND ($2::text IS NULL OR al.entity_type = $2)\n        AND ($3::uuid IS NULL OR al.entity_id = $3)\n        AND ($4::text IS NULL OR al.action = $4)\n        AND ($5::uuid IS NULL OR al.user_id = $5)\n        AND ($6::date IS NULL OR al.created_at >= $6::date)\n        AND ($7::date IS NULL OR al.created_at < ($7::date + INTERVAL '1 day'))\n        AND NOT (\n            $8::bool AND (\n                (u.id IS NOT NULL AND u.roles && ARRAY['admin', 'super_admin']::varchar[])\n                OR (\n                    al.entity_type = 'user' AND (\n                        (al.old_values->'roles') ?| ARRAY['admin', 'super_admin']\n                        OR (al.new_values->'roles') ?| ARRAY['admin', 'super_admin']\n                    )\n                )\n            )\n        )",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Uuid",
+        "Text",
+        "Uuid",
+        "Date",
+        "Date",
+        "Bool"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "72db9ead2cefcd393b4130196b71a278993dd5bb0f99e6781a81ee6c7861b4ad"
+}

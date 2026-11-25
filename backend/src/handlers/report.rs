@@ -24,12 +24,11 @@ pub async fn report_periods(
     auth: AuthUser,
 ) -> AppResult<Json<ReportPeriodsResponse>> {
     let company_id = auth.authorize(Permission::ViewReports)?;
-    let mut periods = report_service::report_periods(&state.pool, company_id).await?;
-    if !auth.is_payroll_privileged() {
-        periods.payroll_years.clear();
-        periods.payroll_months.clear();
-        periods.ea_form_years.clear();
-    }
+    let include_payroll = auth.can(Permission::ViewPayroll);
+    let include_ea = auth.can(Permission::ViewStatutoryExports);
+    let periods =
+        report_service::report_periods_scoped(&state.pool, company_id, include_payroll, include_ea)
+            .await?;
     Ok(Json(periods))
 }
 
@@ -248,8 +247,27 @@ pub async fn get_ea_form(
         ea_form_service::get_ea_form_data(&state.pool, company_id, employee_id, year).await?;
     let bytes = ea_form_service::generate_ea_form_pdf(&data)?;
 
-    let filename = format!("EA_Form_{}_{}.pdf", year, data.employee_number);
-    Ok(Response::builder()
+    let safe_emp: String = data
+        .employee_number
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let filename = format!(
+        "EA_Form_{}_{}.pdf",
+        year,
+        if safe_emp.is_empty() {
+            "employee"
+        } else {
+            &safe_emp
+        }
+    );
+    Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "application/pdf")
         .header(
@@ -257,5 +275,5 @@ pub async fn get_ea_form(
             format!("attachment; filename=\"{}\"", filename),
         )
         .body(Body::from(bytes))
-        .unwrap())
+        .map_err(|e| crate::core::error::AppError::Internal(format!("Response error: {e}")))
 }

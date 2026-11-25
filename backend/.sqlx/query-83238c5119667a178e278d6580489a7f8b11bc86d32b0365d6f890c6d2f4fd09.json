@@ -1,0 +1,72 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT NULL::uuid AS \"id?\", employee_id, category,\n                  -- `employee_allowances` has no item_type of its own; the two\n                  -- names below are what the payslip breakdown has always\n                  -- labelled these lines.\n                  CASE WHEN category = 'earning' THEN 'allowance'::text\n                       ELSE 'other_deduction'::text END AS \"item_type!\",\n                  name AS \"description!\", amount,\n                  COALESCE(is_taxable, TRUE) AS \"is_taxable!\",\n                  effective_from AS \"effective_from?\", effective_to AS \"effective_to?\"\n           FROM employee_allowances\n           WHERE employee_id = ANY($1) AND is_active = TRUE AND is_recurring = TRUE\n             AND effective_from <= $3\n             AND (effective_to IS NULL OR effective_to >= $2)\n           ORDER BY employee_id, category, name",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id?",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "employee_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "category",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "item_type!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "description!",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "amount",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 6,
+        "name": "is_taxable!",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 7,
+        "name": "effective_from?",
+        "type_info": "Date"
+      },
+      {
+        "ordinal": 8,
+        "name": "effective_to?",
+        "type_info": "Date"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "UuidArray",
+        "Date",
+        "Date"
+      ]
+    },
+    "nullable": [
+      null,
+      false,
+      false,
+      null,
+      false,
+      false,
+      null,
+      false,
+      true
+    ]
+  },
+  "hash": "83238c5119667a178e278d6580489a7f8b11bc86d32b0365d6f890c6d2f4fd09"
+}

@@ -25,6 +25,7 @@ import {
   Search,
   Settings,
   Shield,
+  ShieldCheck,
   Sparkles,
   Sun,
   Upload,
@@ -164,11 +165,12 @@ export function CommandPalette() {
       label: string,
       href: string,
       icon: typeof Search,
-      opts?: { requires?: PermissionKey; hideFor?: AppRole[]; requiresEmployee?: boolean },
+      opts?: { requires?: PermissionKey; hideFor?: AppRole[]; requiresEmployee?: boolean; requiresCompany?: boolean },
     ) => {
       if (opts?.hideFor && hasAnyRole(user, opts.hideFor)) return;
       if (opts?.requires && !userCan(user, opts.requires)) return;
       if (opts?.requiresEmployee && !user.employee_id) return;
+      if (opts?.requiresCompany && !user.company_id) return;
       list.push({
         id,
         group: 'pages',
@@ -183,25 +185,26 @@ export function CommandPalette() {
     };
 
     if (!isPortalOnly) {
-      addRoute('dashboard', t('nav.dashboard'), '/dashboard', LayoutDashboard, { hideFor: ['super_admin'] });
-      addRoute('company', t('nav.company'), '/company', Building2, { hideFor: ['super_admin'] });
-      addRoute('employees', t('nav.employees'), '/employees', Users, { requires: 'view_employees', hideFor: ['super_admin'] });
-      addRoute('payroll', t('nav.payroll'), '/payroll', Calculator, { requires: 'view_payroll' });
-      addRoute('teams', t('nav.teams'), '/teams', Users2, { requires: 'view_teams', hideFor: ['super_admin'] });
-      addRoute('calendar', t('nav.calendar'), '/calendar', CalendarDays, { requires: 'view_calendar', hideFor: ['super_admin'] });
-      addRoute('attendance', t('nav.attendance'), '/attendance', ScanLine, { requires: 'view_attendance', hideFor: ['super_admin'] });
-      addRoute('approvals', t('nav.approvals'), '/approvals', ClipboardCheck, { requires: 'view_approvals', hideFor: ['super_admin'] });
-      addRoute('reports', t('nav.reports'), '/reports', BarChart3, { requires: 'view_reports' });
-      addRoute('documents', t('nav.documents'), '/documents', FileText, { requires: 'view_documents', hideFor: ['super_admin'] });
-      addRoute('letters', t('nav.letters'), '/letters', Mail, { requires: 'view_email_logs', hideFor: ['super_admin'] });
-      addRoute('settings', t('nav.settings'), '/settings', Settings, { requires: 'manage_company_settings', hideFor: ['super_admin'] });
+      addRoute('dashboard', t('nav.dashboard'), '/dashboard', LayoutDashboard, { hideFor: ['super_admin'], requiresCompany: true });
+      addRoute('company', t('nav.company'), '/company', Building2, { hideFor: ['super_admin'], requiresCompany: true });
+      addRoute('employees', t('nav.employees'), '/employees', Users, { requires: 'view_employees', hideFor: ['super_admin'], requiresCompany: true });
+      addRoute('payroll', t('nav.payroll'), '/payroll', Calculator, { requires: 'view_payroll', requiresCompany: true });
+      addRoute('teams', t('nav.teams'), '/teams', Users2, { requires: 'view_teams', hideFor: ['super_admin'], requiresCompany: true });
+      addRoute('calendar', t('nav.calendar'), '/calendar', CalendarDays, { requires: 'view_calendar', hideFor: ['super_admin'], requiresCompany: true });
+      addRoute('attendance', t('nav.attendance'), '/attendance', ScanLine, { requires: 'view_attendance', hideFor: ['super_admin'], requiresCompany: true });
+      addRoute('approvals', t('nav.approvals'), '/approvals', ClipboardCheck, { requires: 'view_approvals', hideFor: ['super_admin'], requiresCompany: true });
+      addRoute('reports', t('nav.reports'), '/reports', BarChart3, { requires: 'view_reports', requiresCompany: true });
+      addRoute('documents', t('nav.documents'), '/documents', FileText, { requires: 'view_documents', hideFor: ['super_admin'], requiresCompany: true });
+      addRoute('letters', t('nav.letters'), '/letters', Mail, { requires: 'view_email_logs', hideFor: ['super_admin'], requiresCompany: true });
+      addRoute('settings', t('nav.settings'), '/settings', Settings, { requires: 'manage_company_settings', hideFor: ['super_admin'], requiresCompany: true });
       addRoute('my-attendance', t('nav.myAttendance'), '/my/attendance', UserCheck, { requiresEmployee: true });
       addRoute('companies', t('nav.companies'), '/companies', Building2, { requires: 'manage_companies' });
       addRoute('users', t('nav.users'), '/users', UserCog, { requires: 'manage_users' });
       addRoute('roles', t('nav.roles'), '/roles', Shield, { requires: 'view_user_directory' });
-      addRoute('user-groups', t('nav.userGroups'), '/user-groups', Users2, { requires: 'manage_users' });
+      addRoute('user-groups', t('nav.userGroups'), '/user-groups', Users2, { requires: 'view_user_directory', requiresCompany: true });
       addRoute('attendance-settings', t('nav.attendanceSettings'), '/admin/attendance-settings', ScanLine, { requires: 'manage_platform_settings' });
-      addRoute('audit-trail', t('nav.auditTrail'), '/audit-trail', ScrollText, { requires: 'view_audit_log' });
+      addRoute('platform-settings', t('nav.platformSettings'), '/admin/platform', ShieldCheck, { requires: 'manage_platform_settings' });
+      addRoute('audit-trail', t('nav.auditTrail'), '/audit-trail', ScrollText, { requires: 'view_audit_log', requiresCompany: true });
       addRoute('backup', t('nav.backup'), '/backup', DatabaseBackup, { requires: 'manage_backups' });
       addRoute('account-security', t('nav.accountSecurity'), '/account', Shield);
     }
@@ -277,7 +280,7 @@ export function CommandPalette() {
           },
         });
       }
-      if (userCan(user, 'manage_payroll_draft')) {
+      if (userCan(user, 'manage_payroll_draft') && user.company_id) {
         list.push({
           id: 'act-process-payroll',
           group: 'actions',

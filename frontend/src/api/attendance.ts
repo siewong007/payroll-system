@@ -1,4 +1,5 @@
 import api from './client';
+import { triggerBlobDownload } from '@/lib/download';
 import type {
   AuthenticationResponseJSON,
   PublicKeyCredentialRequestOptionsJSON,
@@ -58,7 +59,8 @@ export interface AttendanceRecord {
   updated_at: string;
 }
 
-export interface AttendanceRecordWithEmployee extends AttendanceRecord {
+export interface AttendanceRecordWithEmployee
+  extends Omit<AttendanceRecord, 'qr_token_id' | 'created_by' | 'updated_at'> {
   employee_number: string;
   full_name: string;
   department: string | null;
@@ -229,15 +231,13 @@ export async function downloadAttendanceCsv(params: {
   employee_id?: string;
   status?: string;
   method?: string;
+  open_only?: boolean;
+  outside_geofence_only?: boolean;
+  offsite_network_only?: boolean;
 }): Promise<void> {
   const response = await api.get('/attendance/export', {
     params,
     responseType: 'blob',
   });
-  const url = URL.createObjectURL(new Blob([response.data], { type: 'text/csv' }));
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'attendance.csv';
-  a.click();
-  URL.revokeObjectURL(url);
+  triggerBlobDownload(response.data, 'attendance.csv', 'text/csv');
 }

@@ -8,7 +8,7 @@ interface TestRequestConfig {
 
 interface TestResponseError {
   config: TestRequestConfig;
-  response?: { status: number };
+  response?: { status: number; data?: unknown };
 }
 
 type RequestHandler = (config: TestRequestConfig) => TestRequestConfig;
@@ -214,5 +214,34 @@ describe('API client', () => {
     expect(isSessionInvalid({ response: { data: { error: 'Invalid code' } } })).toBe(false);
     expect(isSessionInvalid(new Error('nope'))).toBe(false);
     expect(isSessionInvalid(null)).toBe(false);
+  });
+
+  it('decodes JSON error payloads inside Blob responses', async () => {
+    const blobError = {
+      config: { url: '/reports/export', headers: {} },
+      response: {
+        status: 400,
+        data: new Blob([JSON.stringify({ error: 'Invalid date range' })], {
+          type: 'application/json',
+        }),
+      },
+    } as unknown as TestResponseError;
+
+    await expect(responseErrorHandler(blobError)).rejects.toBe(blobError);
+    expect(blobError.response?.data).toEqual({ error: 'Invalid date range' });
+  });
+
+  it('rejects 429 responses without refreshing or attaching English rateLimitMessage', async () => {
+    const rateLimited = {
+      config: { url: '/auth/login', headers: {} },
+      response: {
+        status: 429,
+        data: { error: 'Too many failed 2FA attempts. Please try again later.' },
+      },
+    } as unknown as TestResponseError;
+
+    await expect(responseErrorHandler(rateLimited)).rejects.toBe(rateLimited);
+    expect('rateLimitMessage' in rateLimited).toBe(false);
+    expect(axiosMocks.post).not.toHaveBeenCalled();
   });
 });

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertCircle, Copy, Plus, ShieldCheck, Trash2 } from 'lucide-react';
@@ -20,7 +20,17 @@ export function KioskCredentialsModal({ onClose }: { onClose: () => void }) {
   const [label, setLabel] = useState('');
   const [created, setCreated] = useState<CreateKioskCredentialResponse | null>(null);
   const [copied, setCopied] = useState(false);
+  const [hasCopied, setHasCopied] = useState(false);
   const [error, setError] = useState('');
+  const copyTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current !== null) {
+        window.clearTimeout(copyTimerRef.current);
+      }
+    };
+  }, []);
 
   const { data: credentials = [], isLoading, isError: listError } = useQuery({
     queryKey: ['kiosk-credentials'],
@@ -32,6 +42,7 @@ export function KioskCredentialsModal({ onClose }: { onClose: () => void }) {
     onSuccess: (data) => {
       setCreated(data);
       setCopied(false);
+      setHasCopied(false);
       setLabel('');
       setError('');
       queryClient.invalidateQueries({ queryKey: ['kiosk-credentials'] });
@@ -51,27 +62,41 @@ export function KioskCredentialsModal({ onClose }: { onClose: () => void }) {
     try {
       await navigator.clipboard.writeText(url);
       setCopied(true);
+      setHasCopied(true);
       setError('');
-      setTimeout(() => setCopied(false), 2000);
+      if (copyTimerRef.current !== null) {
+        window.clearTimeout(copyTimerRef.current);
+      }
+      copyTimerRef.current = window.setTimeout(() => {
+        copyTimerRef.current = null;
+        setCopied(false);
+      }, 2000);
     } catch {
       setError(t('attendance.kioskModal.copyFailed'));
     }
   };
 
+  const confirmDiscardUncopied = async (): Promise<boolean> => {
+    if (!created || hasCopied) return true;
+    return confirmDialog({
+      description: t('attendance.kioskModal.hideUncopiedConfirm'),
+      confirmLabel: t('attendance.kioskModal.doneHide'),
+      variant: 'warning',
+    });
+  };
+
   const handleHideCreated = async () => {
-    if (!copied) {
-      const ok = await confirmDialog({
-        description: t('attendance.kioskModal.hideUncopiedConfirm'),
-        confirmLabel: t('attendance.kioskModal.doneHide'),
-        variant: 'warning',
-      });
-      if (!ok) return;
-    }
+    if (!(await confirmDiscardUncopied())) return;
     setCreated(null);
   };
 
+  const handleRequestClose = async () => {
+    if (!(await confirmDiscardUncopied())) return;
+    onClose();
+  };
+
   return (
-    <Modal open onClose={onClose} title={t('attendance.kioskModal.title')} maxWidth="max-w-2xl">
+    <Modal open onClose={() => void handleRequestClose()} title={t('attendance.kioskModal.title')} maxWidth="max-w-2xl">
       <div>
         <p className="text-sm text-gray-500 dark:text-slate-400">
           {t('attendance.kioskModal.body')}

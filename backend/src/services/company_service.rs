@@ -17,6 +17,9 @@ pub async fn create_company(
     req: CreateCompanyRequest,
     created_by: Uuid,
 ) -> AppResult<Company> {
+    if req.name.trim().is_empty() {
+        return Err(AppError::BadRequest("Company name is required".into()));
+    }
     let mut tx = pool.begin().await?;
     let company = companies::insert(&mut *tx, &req, created_by).await?;
     companies::provision_defaults(&mut *tx, company.id, Some(created_by)).await?;
@@ -33,21 +36,22 @@ pub async fn update_company(
     company_id: Uuid,
     req: UpdateCompanyRequest,
     updated_by: Uuid,
+    access: &crate::models::upload::UploadAccess,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<Company> {
+    if req.name.as_deref().is_some_and(|n| n.trim().is_empty()) {
+        return Err(AppError::BadRequest("Company name cannot be empty".into()));
+    }
     if req.unpaid_leave_divisor.is_some_and(|divisor| divisor <= 0) {
         return Err(AppError::BadRequest(
             "Unpaid leave divisor must be greater than zero".into(),
         ));
     }
 
-    crate::core::upload_path::validate_optional_file_url(req.logo_url.as_deref())?;
-    crate::services::upload_service::ensure_upload_belongs_to_company(
-        pool,
-        company_id,
-        req.logo_url.as_deref(),
-    )
-    .await?;
+    let logo_url = req.logo_url.as_deref().filter(|s| !s.trim().is_empty());
+    crate::core::upload_path::validate_optional_file_url(logo_url)?;
+    crate::services::upload_service::ensure_upload_attach_authorized(pool, access, logo_url, false)
+        .await?;
 
     // The company profile carries the EPF/SOCSO/EIS employer numbers and the
     // unpaid-leave divisor that every payroll run reads, so a change here moves

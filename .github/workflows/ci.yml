@@ -246,7 +246,7 @@ jobs:
           # commit that says so. A deliberate in-place restore (e.g. recovering
           # a file edited after it was installed) goes through only when a
           # commit in the range carries the [migration-override] marker.
-          bad=$(echo "$status" | grep -E '^(M|R|C)[0-9]*\s' || true)
+          bad=$(echo "$status" | grep -E '^(M|R|C|D)[0-9]*\s' || true)
           if [ -n "$bad" ]; then
             if git log --format=%B "$base"..HEAD | grep -qF '[migration-override]'; then
               echo "::warning::Installed migrations modified under [migration-override]: $bad"
@@ -259,10 +259,25 @@ jobs:
       - name: Start PostgreSQL 19 Beta 2
         run: |
           docker run --rm -d --name pg-migrate             -e POSTGRES_USER=payroll -e POSTGRES_PASSWORD=ci -e POSTGRES_DB=payroll_db             -p 5432:5432 postgres:19beta2-alpine
+          ready=0
           for i in $(seq 1 30); do
-            docker exec pg-migrate pg_isready -U payroll && break
+            if docker exec pg-migrate pg_isready -h 127.0.0.1 -U payroll -d payroll_db >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
             sleep 1
           done
+          if [ "$ready" -ne 1 ]; then
+            echo "pg-migrate did not become ready in time"
+            exit 1
+          fi
+
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master (2026-07)
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: backend
 
       - name: Install sqlx-cli
         run: cargo install sqlx-cli --version ^0.8 --no-default-features --features rustls,postgres --locked

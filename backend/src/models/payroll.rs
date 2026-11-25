@@ -74,6 +74,7 @@ pub struct PayrollItem {
 
     pub basic_salary: i64,
     pub gross_salary: i64,
+    pub taxable_gross: Option<i64>,
     pub total_allowances: i64,
     pub total_overtime: i64,
     pub total_bonus: i64,
@@ -145,6 +146,8 @@ pub struct PayrollEntry {
     pub is_taxable: Option<bool>,
     pub is_processed: Option<bool>,
     pub payroll_run_id: Option<Uuid>,
+    pub overtime_application_id: Option<Uuid>,
+    pub leave_request_id: Option<Uuid>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub created_by: Option<Uuid>,
@@ -167,6 +170,8 @@ pub struct PayrollEntryWithEmployee {
     pub is_taxable: Option<bool>,
     pub is_processed: Option<bool>,
     pub payroll_run_id: Option<Uuid>,
+    pub overtime_application_id: Option<Uuid>,
+    pub leave_request_id: Option<Uuid>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub created_by: Option<Uuid>,
@@ -468,8 +473,11 @@ pub(crate) struct BulkPayrollData {
     pub(crate) approved_claims: HashMap<Uuid, Vec<PayableClaim>>,
     pub(crate) tp3: HashMap<Uuid, Tp3Totals>,
     pub(crate) ytd: HashMap<Uuid, YtdTotals>,
+    pub(crate) taxable_ytd_gross: HashMap<Uuid, i64>,
     pub(crate) monthly_allowances: HashMap<Uuid, i64>,
     pub(crate) bonus_commission: HashMap<Uuid, (i64, i64)>,
+    pub(crate) taxable_bonus_commission: HashMap<Uuid, (i64, i64)>,
+    pub(crate) staged_entry_ids: HashMap<Uuid, Vec<Uuid>>,
     pub(crate) ot_settings: OvertimeSettings,
 }
 
@@ -556,7 +564,7 @@ impl OvertimeSettings {
     /// division by zero, and while `settings_service` filters zeros out on read,
     /// a guard here makes the panic unrepresentable instead of merely unreachable.
     pub(crate) fn hourly_rate(&self, hourly_rate: Option<i64>, basic_salary: i64) -> Decimal {
-        if let Some(rate) = hourly_rate {
+        if let Some(rate) = hourly_rate.filter(|&r| r > 0) {
             return Decimal::from(rate);
         }
         if self.working_days_per_month.is_zero() || self.effective_hours_per_day.is_zero() {
@@ -643,6 +651,7 @@ impl PayslipLine {
 /// staged entry, which is keyed by period and never prorated.
 #[derive(Debug, Clone)]
 pub struct PayslipSourceLine {
+    pub id: Option<Uuid>,
     pub employee_id: Uuid,
     pub category: String,
     /// What the stored breakdown line is labelled. Real for a staged entry;
@@ -690,6 +699,8 @@ pub struct EmployeeBonusCommission {
     pub employee_id: Uuid,
     pub bonus: i64,
     pub commission: i64,
+    pub taxable_bonus: i64,
+    pub taxable_commission: i64,
 }
 
 #[derive(Debug)]
@@ -718,6 +729,7 @@ pub struct EmployeeOtTypeHours {
 pub struct PayrollYtd {
     pub employee_id: Uuid,
     pub gross: i64,
+    pub taxable_gross: i64,
     pub pcb: i64,
     pub epf: i64,
     pub socso: i64,
@@ -743,6 +755,7 @@ pub struct PcbFields {
     pub total_deductions: i64,
     pub net_salary: i64,
     pub ytd_pcb: i64,
+    pub ytd_net: i64,
 }
 
 // ─── Payroll overview (operational dashboard) ───

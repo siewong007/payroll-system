@@ -1,0 +1,180 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE companies SET\n            name = COALESCE($2, name),\n            registration_number = CASE WHEN $3::text IS NULL THEN registration_number ELSE NULLIF(BTRIM($3), '') END,\n            tax_number = CASE WHEN $4::text IS NULL THEN tax_number ELSE NULLIF(BTRIM($4), '') END,\n            epf_number = CASE WHEN $5::text IS NULL THEN epf_number ELSE NULLIF(BTRIM($5), '') END,\n            socso_code = CASE WHEN $6::text IS NULL THEN socso_code ELSE NULLIF(BTRIM($6), '') END,\n            eis_code = CASE WHEN $7::text IS NULL THEN eis_code ELSE NULLIF(BTRIM($7), '') END,\n            hrdf_number = CASE WHEN $8::text IS NULL THEN hrdf_number ELSE NULLIF(BTRIM($8), '') END,\n            address_line1 = CASE WHEN $9::text IS NULL THEN address_line1 ELSE NULLIF(BTRIM($9), '') END,\n            address_line2 = CASE WHEN $10::text IS NULL THEN address_line2 ELSE NULLIF(BTRIM($10), '') END,\n            city = CASE WHEN $11::text IS NULL THEN city ELSE NULLIF(BTRIM($11), '') END,\n            state = CASE WHEN $12::text IS NULL THEN state ELSE NULLIF(BTRIM($12), '') END,\n            postcode = CASE WHEN $13::text IS NULL THEN postcode ELSE NULLIF(BTRIM($13), '') END,\n            country = CASE WHEN $14::text IS NULL THEN country ELSE NULLIF(BTRIM($14), '') END,\n            phone = CASE WHEN $15::text IS NULL THEN phone ELSE NULLIF(BTRIM($15), '') END,\n            email = CASE WHEN $16::text IS NULL THEN email ELSE NULLIF(BTRIM($16), '') END,\n            logo_url = CASE WHEN $17::text IS NULL THEN logo_url ELSE NULLIF(BTRIM($17), '') END,\n            hrdf_enabled = COALESCE($18, hrdf_enabled),\n            unpaid_leave_divisor = CASE WHEN COALESCE($21, FALSE) THEN NULL ELSE COALESCE($19, unpaid_leave_divisor) END,\n            updated_by = $20,\n            updated_at = NOW()\n        WHERE id = $1\n        RETURNING id, name, registration_number, tax_number, epf_number, socso_code, eis_code, hrdf_number, address_line1, address_line2, city, state, postcode, country, phone, email, logo_url, hrdf_enabled, unpaid_leave_divisor, is_active, created_at, updated_at, created_by, updated_by",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "registration_number",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "tax_number",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "epf_number",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "socso_code",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "eis_code",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 7,
+        "name": "hrdf_number",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 8,
+        "name": "address_line1",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 9,
+        "name": "address_line2",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 10,
+        "name": "city",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 11,
+        "name": "state",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 12,
+        "name": "postcode",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 13,
+        "name": "country",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 14,
+        "name": "phone",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 15,
+        "name": "email",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 16,
+        "name": "logo_url",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 17,
+        "name": "hrdf_enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 18,
+        "name": "unpaid_leave_divisor",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 19,
+        "name": "is_active",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 20,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 21,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 22,
+        "name": "created_by",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 23,
+        "name": "updated_by",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Varchar",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Bool",
+        "Int4",
+        "Uuid",
+        "Bool"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "71ff1243a768a1902ec335ff773573ae87f7b79e34e0e5ef932d8c489410ba52"
+}

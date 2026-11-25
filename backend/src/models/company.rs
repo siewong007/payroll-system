@@ -39,7 +39,7 @@ pub struct CreateCompanyRequest {
     pub phone: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 pub struct UpdateCompanyRequest {
     pub name: Option<String>,
     pub registration_number: Option<String>,
@@ -59,6 +59,7 @@ pub struct UpdateCompanyRequest {
     pub logo_url: Option<String>,
     pub hrdf_enabled: Option<bool>,
     pub unpaid_leave_divisor: Option<i32>,
+    pub clear_unpaid_leave_divisor: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]

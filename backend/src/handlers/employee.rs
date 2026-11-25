@@ -78,6 +78,7 @@ fn create_request_touches_payroll_fields(req: &CreateEmployeeRequest) -> bool {
 
 fn update_request_touches_payroll_fields(req: &UpdateEmployeeRequest) -> bool {
     req.basic_salary.is_some()
+        || req.clear_epf_category.is_some()
         || req.hourly_rate.is_some()
         || req.daily_rate.is_some()
         || req.tax_identification_number.is_some()
@@ -111,9 +112,9 @@ pub async fn list(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    let page = query.page.unwrap_or(1).max(1);
-    let per_page = query.per_page.unwrap_or(20).min(100);
-    let offset = (page - 1) * per_page;
+    let page = query.page.unwrap_or(1).clamp(1, 100_000);
+    let per_page = query.per_page.unwrap_or(20).clamp(1, 100);
+    let offset = (page - 1).saturating_mul(per_page);
 
     let (mut employees, total) = employee_service::list_employees(
         &state.pool,
@@ -237,6 +238,16 @@ pub async fn update(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
+    if req.is_active == Some(false) {
+        employee_service::ensure_may_revoke_linked_logins(
+            &state.pool,
+            id,
+            company_id,
+            &auth.0.roles,
+        )
+        .await?;
+    }
+
     let mut emp = employee_service::update_employee(
         &state.pool,
         id,
@@ -267,6 +278,8 @@ pub async fn delete(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
+    employee_service::ensure_may_revoke_linked_logins(&state.pool, id, company_id, &auth.0.roles)
+        .await?;
     employee_service::soft_delete_employee(
         &state.pool,
         id,
@@ -283,7 +296,7 @@ pub async fn salary_history(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<Vec<SalaryHistory>>> {
-    auth.require_permission(Permission::ViewPayroll)?;
+    auth.require_permission(Permission::ViewSalaryHistory)?;
     let company_id = auth.company_id()?;
     // Tenant isolation: confirm the employee belongs to the caller's company
     // before exposing salary history. `get_employee` is company-scoped and

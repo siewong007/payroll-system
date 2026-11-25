@@ -434,6 +434,7 @@ pub async fn update_user(
 
     let roles_changed = roles != existing.roles;
     let deactivating = req.is_active == Some(false) && existing.is_active != Some(false);
+    let reactivating = req.is_active == Some(true) && existing.is_active != Some(true);
 
     // Self-lockout guard. `delete_user` has always refused self-deletion; the
     // same account could nonetheless demote or deactivate itself here and lose
@@ -497,7 +498,7 @@ pub async fn update_user(
     let companies_changed =
         req.company_ids.is_some() && !same_set(&effective_company_ids, &existing_company_ids);
     if companies_changed {
-        user_companies::delete_by_user(&mut *tx, user_id).await?;
+        user_companies::delete_removed(&mut *tx, user_id, &effective_company_ids).await?;
         user_companies::insert_many(&mut *tx, user_id, &effective_company_ids)
             .await
             .map_err(map_user_write_error)?;
@@ -506,6 +507,20 @@ pub async fn update_user(
             .is_none_or(|current| !effective_company_ids.contains(&current))
         {
             users::update_active_company(&mut *tx, user_id, effective_company_ids[0]).await?;
+        }
+    }
+
+    // Re-check SoD and restricted-role invariants against surviving group
+    // memberships whenever roles change or an inactive user is reactivated.
+    if roles_changed || reactivating {
+        let mut by_company: HashMap<Uuid, Vec<String>> = HashMap::new();
+        for (cid, perm) in
+            crate::repositories::user_groups::user_permissions_by_company(&mut *tx, user_id).await?
+        {
+            by_company.entry(cid).or_default().push(perm);
+        }
+        for (_cid, perms) in by_company {
+            crate::services::user_group_service::ensure_user_permission_invariants(&roles, &perms)?;
         }
     }
 

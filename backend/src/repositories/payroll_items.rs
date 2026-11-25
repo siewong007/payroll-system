@@ -17,6 +17,7 @@ pub async fn insert(
     employee_id: Uuid,
     basic_salary: i64,
     gross_salary: i64,
+    taxable_gross: i64,
     total_allowances: i64,
     total_overtime: i64,
     total_claims: i64,
@@ -62,12 +63,13 @@ pub async fn insert(
             ytd_eis_employee, ytd_zakat, ytd_net,
             total_bonus, total_commission,
             working_days, days_worked, is_prorated,
-            unpaid_leave_deduction, unpaid_leave_days
+            unpaid_leave_deduction, unpaid_leave_days,
+            taxable_gross
         ) VALUES (
             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
             $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
             $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31,
-            $32, $33, $34, $35, $36
+            $32, $33, $34, $35, $36, $37
         ) RETURNING *"#,
         id,
         payroll_run_id,
@@ -105,6 +107,7 @@ pub async fn insert(
         is_prorated,
         unpaid_leave_deduction,
         unpaid_leave_days,
+        taxable_gross,
     )
     .fetch_one(executor)
     .await?;
@@ -167,7 +170,7 @@ pub async fn get_pcb_fields_locked(
 ) -> AppResult<Option<PcbFields>> {
     let row = sqlx::query_as!(
         PcbFields,
-        r#"SELECT id, pcb_amount, total_deductions, net_salary, ytd_pcb
+        r#"SELECT id, pcb_amount, total_deductions, net_salary, ytd_pcb, ytd_net
         FROM payroll_items
         WHERE payroll_run_id = $1 AND employee_id = $2
         FOR UPDATE"#,
@@ -188,6 +191,7 @@ pub async fn update_pcb(
     total_deductions: i64,
     net_salary: i64,
     ytd_pcb: i64,
+    ytd_net: i64,
 ) -> AppResult<()> {
     sqlx::query!(
         r#"UPDATE payroll_items
@@ -195,6 +199,7 @@ pub async fn update_pcb(
             total_deductions = $4,
             net_salary = $5,
             ytd_pcb = $6,
+            ytd_net = $7,
             updated_at = NOW()
         WHERE payroll_run_id = $1 AND employee_id = $2"#,
         run_id,
@@ -203,6 +208,7 @@ pub async fn update_pcb(
         total_deductions,
         net_salary,
         ytd_pcb,
+        ytd_net,
     )
     .execute(executor)
     .await?;

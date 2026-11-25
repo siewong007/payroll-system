@@ -9,7 +9,8 @@ use uuid::Uuid;
 use crate::core::error::AppResult;
 use crate::core::timezone;
 use crate::models::dashboard::{
-    DashboardSummary, DepartmentCount, NeedsAttention, PendingApprovalCounts, YtdEmployerTotals,
+    AttendanceExceptionTotals, DashboardSummary, DepartmentCount, NeedsAttention,
+    PendingApprovalCounts, YtdEmployerTotals,
 };
 use crate::repositories::reads::dashboard as dashboard_reads;
 use crate::services::attendance_service;
@@ -26,6 +27,7 @@ pub async fn summary(
     company_id: Uuid,
     can_access_payroll: bool,
     can_view_approvals: bool,
+    can_view_attendance: bool,
     window_days: i64,
 ) -> AppResult<DashboardSummary> {
     let current_year = chrono::Utc::now().year();
@@ -50,13 +52,24 @@ pub async fn summary(
     };
 
     let exceptions_fut = async {
-        // Bucket the exception window on the company's own calendar, so "last 7
-        // days" here means the same 7 days the attendance list shows.
-        let tz = attendance_service::get_company_timezone(pool, company_id).await;
-        let parsed_tz = timezone::parse(&tz).unwrap_or(chrono_tz::Asia::Kuala_Lumpur);
-        let today = chrono::Utc::now().with_timezone(&parsed_tz).date_naive();
-        let date_from = today - chrono::Duration::days(window_days - 1);
-        dashboard_reads::attendance_exception_totals(pool, company_id, &tz, date_from, today).await
+        if can_view_attendance {
+            // Bucket the exception window on the company's own calendar, so "last 7
+            // days" here means the same 7 days the attendance list shows.
+            let tz = attendance_service::get_company_timezone(pool, company_id).await;
+            let parsed_tz = timezone::parse(&tz).unwrap_or(chrono_tz::Asia::Kuala_Lumpur);
+            let today = chrono::Utc::now().with_timezone(&parsed_tz).date_naive();
+            let date_from = today - chrono::Duration::days(window_days - 1);
+            dashboard_reads::attendance_exception_totals(pool, company_id, &tz, date_from, today)
+                .await
+        } else {
+            Ok(AttendanceExceptionTotals {
+                late_count: 0,
+                absent_count: 0,
+                open_session_count: 0,
+                outside_geofence_count: 0,
+                manual_entry_count: 0,
+            })
+        }
     };
 
     let pending_fut = async {

@@ -1,56 +1,8 @@
 use crate::core::error::AppResult;
 use crate::models::notification::{Notification, NotificationCount};
-use crate::repositories::{notifications, users as user_repo};
+use crate::repositories::notifications;
 use sqlx::PgPool;
 use uuid::Uuid;
-
-pub trait NotificationChannel: Send + Sync {
-    fn send(
-        &self,
-        pool: &PgPool,
-        user_id: Uuid,
-        company_id: Uuid,
-        title: &str,
-        message: &str,
-    ) -> impl std::future::Future<Output = AppResult<()>> + Send;
-}
-
-pub struct EmailNotificationChannel {
-    pub config: crate::core::config::AppConfig,
-    pub mailer: crate::services::email_service::SharedMailer,
-}
-
-impl NotificationChannel for EmailNotificationChannel {
-    async fn send(
-        &self,
-        pool: &PgPool,
-        user_id: Uuid,
-        company_id: Uuid,
-        title: &str,
-        message: &str,
-    ) -> AppResult<()> {
-        // Get user email
-        let (email, full_name) = user_repo::name_and_email(pool, user_id).await?;
-
-        crate::services::email_service::send_email(
-            &self.mailer,
-            &self.config,
-            pool,
-            company_id,
-            None,
-            None,
-            "notification",
-            &email,
-            &full_name,
-            title,
-            message,     // This should ideally be wrapped in HTML
-            Uuid::nil(), // System sent
-        )
-        .await?;
-
-        Ok(())
-    }
-}
 
 pub async fn get_notifications(
     pool: &PgPool,

@@ -177,17 +177,23 @@ describe('payroll API', () => {
   });
 
   it('requests payslips as a blob and names the download after the run', async () => {
-    const { anchor, click } = captureDownload();
-    apiMocks.get.mockResolvedValue({ data: new Blob(['pdf']), headers: {} });
+    vi.useFakeTimers();
+    try {
+      const { anchor, click } = captureDownload();
+      apiMocks.get.mockResolvedValue({ data: new Blob(['pdf']), headers: {} });
 
-    await downloadRunPayslips('run-42');
+      await downloadRunPayslips('run-42');
 
-    expect(apiMocks.get).toHaveBeenCalledWith('/payroll/runs/run-42/payslips/pdf', {
-      responseType: 'blob',
-    });
-    expect(anchor.download).toBe('payslips_run-42.pdf');
-    expect(click).toHaveBeenCalledOnce();
-    expect(globalThis.URL.revokeObjectURL).toHaveBeenCalledWith('blob:mock-url');
+      expect(apiMocks.get).toHaveBeenCalledWith('/payroll/runs/run-42/payslips/pdf', {
+        responseType: 'blob',
+      });
+      expect(anchor.download).toBe('payslips_run-42.pdf');
+      expect(click).toHaveBeenCalledOnce();
+      vi.advanceTimersByTime(10_000);
+      expect(globalThis.URL.revokeObjectURL).toHaveBeenCalledWith('blob:mock-url');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -359,15 +365,22 @@ describe('payroll-sensitive employee fields', () => {
   it('covers every field the API classifies as payroll-sensitive', () => {
     expect([...PAYROLL_SENSITIVE_EMPLOYEE_FIELDS].sort()).toEqual([
       'bank_account_number',
+      'bank_account_type',
       'bank_name',
       'basic_salary',
+      'clear_epf_category',
+      'daily_rate',
       'eis_number',
       'epf_category',
       'epf_number',
+      'hourly_rate',
+      'hrdf_contribution',
       'is_muslim',
       'payroll_group_id',
       'ptptn_monthly_amount',
+      'salary_group',
       'socso_number',
+      'tabung_haji_amount',
       'tax_identification_number',
       'working_spouse',
       'zakat_eligible',

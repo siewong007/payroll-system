@@ -409,9 +409,9 @@ export function TeamCalendar() {
                     </div>
                     <div className="text-right shrink-0">
                       <p className="text-sm text-gray-700 dark:text-slate-200">
-                        {formatDateDayMonth(entry.start_date)}
+                        {formatDateDayMonth(parseLocalDate(entry.start_date))}
                         {entry.start_date !== entry.end_date && (
-                          <> &ndash; {formatDateDayMonth(entry.end_date)}</>
+                          <> &ndash; {formatDateDayMonth(parseLocalDate(entry.end_date))}</>
                         )}
                       </p>
                       <p className="text-xs text-gray-400 dark:text-slate-400">{t('portal.teamCalendar.days', { count: Number(entry.days) })}</p>

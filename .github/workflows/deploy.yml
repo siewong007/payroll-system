@@ -135,15 +135,17 @@ jobs:
             -o "UserKnownHostsFile=$RUNNER_TEMP/vps-known-hosts" \
             "$VPS_USER@$VPS_HOST" \
             "set -euo pipefail
-             trap 'rm -f /tmp/payroll-frontend-$DEPLOY_SHA.tar.gz.part /tmp/payroll-frontend-$DEPLOY_SHA.tar.gz' EXIT
+             incoming=''
+             trap 'rm -rf \"\${incoming:-}\" /tmp/payroll-frontend-$DEPLOY_SHA.tar.gz.part /tmp/payroll-frontend-$DEPLOY_SHA.tar.gz' EXIT
              mv /tmp/payroll-frontend-$DEPLOY_SHA.tar.gz.part /tmp/payroll-frontend-$DEPLOY_SHA.tar.gz
              incoming=\$(mktemp -d /opt/payrollmy-site.incoming.XXXXXX)
              tar -xzf /tmp/payroll-frontend-$DEPLOY_SHA.tar.gz -C \"\$incoming\"
              test -f \"\$incoming/index.html\"
+             chmod -R a+rX \"\$incoming\"
              rm -rf /opt/payrollmy-site.prev
              if [ -d $SITE_DIR ]; then mv $SITE_DIR /opt/payrollmy-site.prev; fi
              mv \"\$incoming\" $SITE_DIR
-             chmod -R a+rX $SITE_DIR"
+             incoming=''"
 
       - name: Verify public HTTPS once DNS has been cut over
         shell: bash

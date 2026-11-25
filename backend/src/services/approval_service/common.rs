@@ -25,7 +25,7 @@ pub async fn get_pending_counts(
     })
 }
 
-pub(super) fn ensure_positive_amount(amount: i64) -> AppResult<()> {
+pub fn ensure_positive_amount(amount: i64) -> AppResult<()> {
     if amount <= 0 {
         return Err(AppError::BadRequest(
             "Amount must be greater than zero".into(),

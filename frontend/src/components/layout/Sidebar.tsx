@@ -14,6 +14,7 @@ import {
   CalendarDays,
   UserCog,
   Shield,
+  ShieldCheck,
   Mail,
   DatabaseBackup,
   ScrollText,
@@ -55,26 +56,27 @@ function readCollapsed(): boolean {
 }
 
 const navigation = [
-  { nameKey: 'nav.dashboard', href: '/dashboard', icon: LayoutDashboard, hideFor: ['super_admin'], section: 'workspace' },
-  { nameKey: 'nav.company', href: '/company', icon: Building2, hideFor: ['super_admin'], section: 'workspace' },
-  { nameKey: 'nav.employees', href: '/employees', icon: Users, requires: 'view_employees', hideFor: ['super_admin'], section: 'workspace' },
-  { nameKey: 'nav.payroll', href: '/payroll', icon: Calculator, requires: 'view_payroll', section: 'workspace' },
-  { nameKey: 'nav.teams', href: '/teams', icon: Users2, requires: 'view_teams', hideFor: ['super_admin'], section: 'workspace' },
-  { nameKey: 'nav.calendar', href: '/calendar', icon: CalendarDays, requires: 'view_calendar', hideFor: ['super_admin'], section: 'workspace' },
-  { nameKey: 'nav.attendance', href: '/attendance', icon: ScanLine, requires: 'view_attendance', hideFor: ['super_admin'], section: 'workspace' },
-  { nameKey: 'nav.approvals', href: '/approvals', icon: ClipboardCheck, requires: 'view_approvals', hideFor: ['super_admin'], section: 'workspace' },
-  { nameKey: 'nav.reports', href: '/reports', icon: BarChart3, requires: 'view_reports', section: 'workspace' },
-  { nameKey: 'nav.documents', href: '/documents', icon: FileText, requires: 'view_documents', hideFor: ['super_admin'], section: 'workspace' },
-  { nameKey: 'nav.letters', href: '/letters', icon: Mail, requires: 'view_email_logs', hideFor: ['super_admin'], section: 'workspace' },
-  { nameKey: 'nav.settings', href: '/settings', icon: Settings, requires: 'manage_company_settings', hideFor: ['super_admin'], section: 'workspace' },
+  { nameKey: 'nav.dashboard', href: '/dashboard', icon: LayoutDashboard, hideFor: ['super_admin'], requiresCompany: true, section: 'workspace' },
+  { nameKey: 'nav.company', href: '/company', icon: Building2, hideFor: ['super_admin'], requiresCompany: true, section: 'workspace' },
+  { nameKey: 'nav.employees', href: '/employees', icon: Users, requires: 'view_employees', hideFor: ['super_admin'], requiresCompany: true, section: 'workspace' },
+  { nameKey: 'nav.payroll', href: '/payroll', icon: Calculator, requires: 'view_payroll', requiresCompany: true, section: 'workspace' },
+  { nameKey: 'nav.teams', href: '/teams', icon: Users2, requires: 'view_teams', hideFor: ['super_admin'], requiresCompany: true, section: 'workspace' },
+  { nameKey: 'nav.calendar', href: '/calendar', icon: CalendarDays, requires: 'view_calendar', hideFor: ['super_admin'], requiresCompany: true, section: 'workspace' },
+  { nameKey: 'nav.attendance', href: '/attendance', icon: ScanLine, requires: 'view_attendance', hideFor: ['super_admin'], requiresCompany: true, section: 'workspace' },
+  { nameKey: 'nav.approvals', href: '/approvals', icon: ClipboardCheck, requires: 'view_approvals', hideFor: ['super_admin'], requiresCompany: true, section: 'workspace' },
+  { nameKey: 'nav.reports', href: '/reports', icon: BarChart3, requires: 'view_reports', requiresCompany: true, section: 'workspace' },
+  { nameKey: 'nav.documents', href: '/documents', icon: FileText, requires: 'view_documents', hideFor: ['super_admin'], requiresCompany: true, section: 'workspace' },
+  { nameKey: 'nav.letters', href: '/letters', icon: Mail, requires: 'view_email_logs', hideFor: ['super_admin'], requiresCompany: true, section: 'workspace' },
+  { nameKey: 'nav.settings', href: '/settings', icon: Settings, requires: 'manage_company_settings', hideFor: ['super_admin'], requiresCompany: true, section: 'workspace' },
   { nameKey: 'nav.myAttendance', href: '/my/attendance', icon: UserCheck, requiresEmployeeProfile: true, section: 'personal' },
   { nameKey: 'nav.myPortal', href: '/portal/profile', icon: Sparkles, requiresEmployeeProfile: true, section: 'personal' },
   { nameKey: 'nav.companies', href: '/companies', icon: Building2, requires: 'manage_companies', section: 'admin' },
   { nameKey: 'nav.users', href: '/users', icon: UserCog, requires: 'manage_users', section: 'admin' },
   { nameKey: 'nav.roles', href: '/roles', icon: Shield, requires: 'view_user_directory', section: 'admin' },
-  { nameKey: 'nav.userGroups', href: '/user-groups', icon: Users2, requires: 'manage_users', section: 'admin' },
+  { nameKey: 'nav.userGroups', href: '/user-groups', icon: Users2, requires: 'view_user_directory', requiresCompany: true, section: 'admin' },
   { nameKey: 'nav.attendanceSettings', href: '/admin/attendance-settings', icon: ScanLine, requires: 'manage_platform_settings', section: 'admin' },
-  { nameKey: 'nav.auditTrail', href: '/audit-trail', icon: ScrollText, requires: 'view_audit_log', section: 'admin' },
+  { nameKey: 'nav.platformSettings', href: '/admin/platform', icon: ShieldCheck, requires: 'manage_platform_settings', section: 'admin' },
+  { nameKey: 'nav.auditTrail', href: '/audit-trail', icon: ScrollText, requires: 'view_audit_log', requiresCompany: true, section: 'admin' },
   { nameKey: 'nav.backup', href: '/backup', icon: DatabaseBackup, requires: 'manage_backups', section: 'admin' },
 ] satisfies ReadonlyArray<{
   nameKey: string;
@@ -83,6 +85,7 @@ const navigation = [
   requires?: PermissionKey;
   hideFor?: AppRole[];
   requiresEmployeeProfile?: boolean;
+  requiresCompany?: boolean;
   section: string;
 }>;
 
@@ -124,6 +127,7 @@ function SidebarContent({
     if (item.hideFor && hasAnyRole(user, item.hideFor)) return false;
     if (item.requires && !userCan(user, item.requires)) return false;
     if (item.requiresEmployeeProfile && !user?.employee_id) return false;
+    if (item.requiresCompany && !user?.company_id) return false;
     return true;
   });
 

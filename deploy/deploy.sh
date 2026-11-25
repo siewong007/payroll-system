@@ -152,13 +152,17 @@ ensure_secrets() {
   # to preserve, so minting it on first deploy after this change is safe —
   # every enrolment created before it existed was protected by the JWT-derived
   # key and is migrated at backend boot (see core::crypto).
-  if [[ ! "${TOTP_ENCRYPTION_KEY:-}" =~ ^[A-Za-z0-9._~-]{32,}$ ]]; then
+  if [[ -z "${TOTP_ENCRYPTION_KEY:-}" ]]; then
     local totp_key
     totp_key=$(openssl rand -hex 32) \
       || die "TOTP_ENCRYPTION_KEY is missing from $SECRETS_FILE and could not be generated (openssl unavailable); add a 64-char random hex value manually"
     printf '\n# Minted by deploy.sh: dedicated AES key for TOTP secrets at rest.\nTOTP_ENCRYPTION_KEY=%s\n' "$totp_key" >> "$SECRETS_FILE"
     chmod 0600 "$SECRETS_FILE"
     export TOTP_ENCRYPTION_KEY="$totp_key"
+  else
+    local totp_value=${TOTP_ENCRYPTION_KEY}
+    (( ${#totp_value} >= 32 )) \
+      || die "TOTP_ENCRYPTION_KEY in $SECRETS_FILE must be at least 32 characters"
   fi
 
 }
@@ -166,6 +170,11 @@ ensure_secrets() {
 install_release_files() {
   install -m 0644 "$RELEASE_DIR/docker-compose.prod.yml" "$COMPOSE_FILE"
   install -m 0750 "$RELEASE_DIR/deploy.sh" "$APP_DIR/deploy.sh"
+
+  # Ensure directories referenced by systemd ReadWritePaths= exist before
+  # enabling/starting the units so mount namespaces never fail with 226/NAMESPACE.
+  install -d -m 0750 -o root -g root "$APP_DIR/logs"
+  install -d -m 0700 -o root -g root "$BACKUP_DIR"
 
   # Nightly local backup: the script runs from APP_DIR (the release directory
   # is wiped by cleanup_old_releases), and the timer is enabled idempotently on
@@ -252,6 +261,7 @@ wait_for_healthy() {
 
 deploy_tag() {
   local target_tag=$1
+  local mode=${2:-deploy}
   export IMAGE_TAG=$target_tag
   compose config >/dev/null || return 1
   # Force a fresh backend container. An earlier failed start (e.g. a port
@@ -267,9 +277,11 @@ deploy_tag() {
   # publish or stale container revision is caught before Caddy stays pointed at it.
   local ready_body
   ready_body=$(curl -fsS http://127.0.0.1:8080/api/health/ready) || return 1
-  if ! grep -Eq "\"revision\"[[:space:]]*:[[:space:]]*\"${target_tag}\"" <<<"$ready_body"; then
-    log "Readiness revision mismatch on 127.0.0.1:8080 (expected $target_tag): $ready_body"
-    return 1
+  if [[ "$mode" != "rollback" ]] || grep -Eq '"revision"[[:space:]]*:' <<<"$ready_body"; then
+    if ! grep -Eq "\"revision\"[[:space:]]*:[[:space:]]*\"${target_tag}\"" <<<"$ready_body"; then
+      log "Readiness revision mismatch on 127.0.0.1:8080 (expected $target_tag): $ready_body"
+      return 1
+    fi
   fi
 }
 
@@ -475,7 +487,7 @@ if [[ -n "$previous_tag" ]] \
   if [[ -f "$RELEASES_DIR/$previous_tag/docker-compose.prod.yml" ]]; then
     install -m 0644 "$RELEASES_DIR/$previous_tag/docker-compose.prod.yml" "$COMPOSE_FILE"
   fi
-  if deploy_tag "$previous_tag"; then
+  if deploy_tag "$previous_tag" rollback; then
     log "Rollback succeeded"
   else
     log "Rollback failed; manual intervention is required"

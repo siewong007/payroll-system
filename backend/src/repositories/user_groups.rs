@@ -35,6 +35,7 @@ pub async fn effective_permissions(
 pub async fn list_for_company(
     executor: impl Executor<'_, Database = Postgres>,
     company_id: Uuid,
+    hide_privileged: bool,
 ) -> AppResult<Vec<UserGroupWithDetail>> {
     let groups = sqlx::query_as!(
         UserGroupWithDetail,
@@ -45,12 +46,17 @@ pub async fn list_for_company(
                       WHERE p.group_id = g.id ORDER BY p.permission),
                 ARRAY[]::VARCHAR[]
             ) AS "permissions!: Vec<String>",
-            (SELECT COUNT(*) FROM user_group_members m WHERE m.group_id = g.id)
+            (SELECT COUNT(*) FROM user_group_members m
+             JOIN users u ON u.id = m.user_id
+             WHERE m.group_id = g.id
+               AND u.deleted_at IS NULL
+               AND NOT ($2::bool AND u.roles && ARRAY['admin', 'super_admin']::varchar[]))
                 AS "member_count!: i64"
         FROM user_groups g
         WHERE g.company_id = $1
         ORDER BY g.name"#,
         company_id,
+        hide_privileged,
     )
     .fetch_all(executor)
     .await?;
@@ -108,7 +114,7 @@ pub async fn update(
         UserGroup,
         r#"UPDATE user_groups SET
             name = COALESCE($3, name),
-            description = COALESCE($4, description),
+            description = CASE WHEN $4::text IS NULL THEN description ELSE NULLIF($4, '') END,
             is_active = COALESCE($5, is_active),
             updated_by = $6,
             updated_at = NOW()
@@ -328,6 +334,28 @@ pub async fn remove_member(
     .await?
     .rows_affected();
     Ok(rows)
+}
+
+/// Every `(company_id, permission)` granted to `user_id` across all groups
+/// (including inactive groups) so role changes can enforce SoD invariants.
+pub async fn user_permissions_by_company(
+    executor: impl Executor<'_, Database = Postgres>,
+    user_id: Uuid,
+) -> AppResult<Vec<(Uuid, String)>> {
+    let rows = sqlx::query!(
+        r#"SELECT DISTINCT g.company_id, p.permission
+        FROM user_group_members m
+        JOIN user_groups g ON g.id = m.group_id
+        JOIN user_group_permissions p ON p.group_id = g.id
+        WHERE m.user_id = $1"#,
+        user_id,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| (r.company_id, r.permission))
+        .collect())
 }
 
 /// Whether the user belongs to any active group granting at least one permission in `permissions`.

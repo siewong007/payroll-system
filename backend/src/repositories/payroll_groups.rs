@@ -34,3 +34,17 @@ pub async fn count_active(
     .await?;
     Ok(count)
 }
+
+/// Every payroll group ID belonging to `company_id`, for import validation.
+pub async fn list_ids_for_company(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+) -> AppResult<Vec<Uuid>> {
+    let ids = sqlx::query_scalar!(
+        "SELECT id FROM payroll_groups WHERE company_id = $1",
+        company_id,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(ids)
+}

@@ -121,7 +121,7 @@ pub async fn insert(
     Ok(notification)
 }
 
-/// Fan out one notification to every active admin/HR user in the company.
+/// Fan out one notification to every active approver/HR user in the company.
 pub async fn insert_for_admins(
     executor: impl Executor<'_, Database = Postgres>,
     company_id: Uuid,
@@ -133,11 +133,24 @@ pub async fn insert_for_admins(
 ) -> AppResult<()> {
     sqlx::query!(
         r#"INSERT INTO notifications (user_id, company_id, notification_type, title, message, entity_type, entity_id)
-        SELECT id, company_id, $2, $3, $4, $5, $6
-        FROM users
-        WHERE company_id = $1
-            AND roles && ARRAY['super_admin', 'payroll_admin', 'hr_manager']::VARCHAR(50)[]
-            AND is_active = TRUE"#,
+        SELECT DISTINCT u.id, $1::uuid, $2::varchar, $3::varchar, $4::text, $5::varchar, $6::uuid
+        FROM users u
+        JOIN user_companies uc ON uc.user_id = u.id AND uc.company_id = $1
+        WHERE u.is_active = TRUE
+            AND u.deleted_at IS NULL
+            AND (
+                u.roles && ARRAY['super_admin', 'admin', 'payroll_admin', 'hr_manager', 'manager']::VARCHAR(50)[]
+                OR EXISTS (
+                    SELECT 1
+                    FROM user_group_members ugm
+                    JOIN user_groups ug ON ug.id = ugm.group_id
+                    JOIN user_group_permissions ugp ON ugp.group_id = ug.id
+                    WHERE ugm.user_id = u.id
+                      AND ug.company_id = $1
+                      AND ug.is_active = TRUE
+                      AND ugp.permission = 'manage_approvals'
+                )
+            )"#,
         company_id,
         notification_type,
         title,

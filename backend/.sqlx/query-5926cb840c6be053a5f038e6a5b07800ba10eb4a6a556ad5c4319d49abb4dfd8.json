@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM user_companies WHERE user_id = $1 AND NOT (company_id = ANY($2::uuid[]))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "UuidArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5926cb840c6be053a5f038e6a5b07800ba10eb4a6a556ad5c4319d49abb4dfd8"
+}

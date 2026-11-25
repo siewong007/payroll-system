@@ -90,25 +90,34 @@ export function AttendanceKioskPublic() {
     };
   }, []);
 
+  const mountedRef = useRef(true);
   // One timer for every scheduled mint, so a reschedule replaces the pending one
   // instead of stacking a second alongside it.
   const scheduleMint = useCallback((delayMs: number) => {
+    if (!mountedRef.current) return;
     if (mintTimerRef.current !== null) {
       clearTimeout(mintTimerRef.current);
     }
     mintTimerRef.current = setTimeout(() => {
       mintTimerRef.current = null;
-      void fetchTokenRef.current();
+      if (mountedRef.current) {
+        void fetchTokenRef.current();
+      }
     }, Math.max(0, delayMs));
   }, []);
 
-  useEffect(() => () => {
-    if (mintTimerRef.current !== null) {
-      clearTimeout(mintTimerRef.current);
-    }
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (mintTimerRef.current !== null) {
+        clearTimeout(mintTimerRef.current);
+      }
+    };
   }, []);
 
   const fetchToken = useCallback(async () => {
+    if (!mountedRef.current) return;
     // Defer rather than drop: the backoff retry after a network error asks for
     // 2 s, and silently swallowing it would strand the kiosk on its error card.
     const sinceLastMint = performance.now() - lastMintRef.current;
@@ -120,6 +129,7 @@ export function AttendanceKioskPublic() {
 
     try {
       const data = await fetchKioskQr(kioskKey);
+      if (!mountedRef.current) return;
       backoffRef.current = 2000;
       const ttl = data.ttl_seconds > 0 ? data.ttl_seconds : FALLBACK_TTL;
       setStatus({
@@ -130,6 +140,7 @@ export function AttendanceKioskPublic() {
       });
       scheduleMint(Math.max(MIN_MINT_INTERVAL_MS, (ttl - GUARD_SECONDS) * 1000));
     } catch (err: unknown) {
+      if (!mountedRef.current) return;
       const e = err as { response?: { status?: number } };
       const code = e.response?.status;
       if (code === 401) {
@@ -177,7 +188,12 @@ export function AttendanceKioskPublic() {
       const wl = (navigator as Navigator & { wakeLock?: { request: (type: 'screen') => Promise<{ release: () => Promise<void> }> } }).wakeLock;
       if (!wl || document.visibilityState !== 'visible') return;
       try {
-        wakeLock = await wl.request('screen');
+        const sentinel = await wl.request('screen');
+        if (disposed) {
+          void sentinel.release().catch(() => {});
+          return;
+        }
+        wakeLock = sentinel;
       } catch {
         /* browser or power-saver refused Wake Lock — non-fatal */
       }

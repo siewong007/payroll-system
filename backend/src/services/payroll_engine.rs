@@ -66,6 +66,7 @@ struct ComputedPayslip {
     employee_id: Uuid,
     basic: i64,
     gross: i64,
+    taxable_gross: i64,
     total_allowances: i64,
     total_overtime: i64,
     total_claims: i64,
@@ -73,6 +74,8 @@ struct ComputedPayslip {
     /// those rows paid rather than re-running a predicate that may have picked
     /// up a claim approved since.
     claim_ids: Vec<Uuid>,
+    /// Exactly the staged `payroll_entries` rows seen by this run.
+    entry_ids: Vec<Uuid>,
     epf: EpfContribution,
     socso: SocsoContribution,
     eis: EisContribution,
@@ -259,20 +262,34 @@ async fn gather_run_inputs(
         monthly_allowances_map.insert(row.employee_id, row.total);
     }
 
-    // Bonus/commission are already inside variable_earnings (and therefore gross);
-    // this is purely so they can also be stored as their own payslip line items.
-    let bonus_commission_map: HashMap<Uuid, (i64, i64)> =
-        payroll_reads::bonus_commission_totals(&mut *conn, &employee_ids, year, month)
-            .await?
-            .into_iter()
-            .map(|r| (r.employee_id, (r.bonus, r.commission)))
-            .collect();
+    let mut bonus_commission_map: HashMap<Uuid, (i64, i64)> = HashMap::new();
+    let mut taxable_bonus_commission_map: HashMap<Uuid, (i64, i64)> = HashMap::new();
+    for r in payroll_reads::bonus_commission_totals(&mut *conn, &employee_ids, year, month).await? {
+        bonus_commission_map.insert(r.employee_id, (r.bonus, r.commission));
+        taxable_bonus_commission_map.insert(r.employee_id, (r.taxable_bonus, r.taxable_commission));
+    }
+
+    let mut staged_entry_ids_map: HashMap<Uuid, Vec<Uuid>> = HashMap::new();
+    for row in payroll_reads::staged_entry_ids(&mut *conn, &employee_ids, year, month).await? {
+        staged_entry_ids_map
+            .entry(row.employee_id)
+            .or_default()
+            .push(row.id);
+    }
+
+    let ot_settings = settings_service::overtime_settings_on(&mut *conn, company_id).await;
 
     // 3. Batch fetch attendance OT hours, bucketed by the local date's type
     let mut attendance_ot_map: HashMap<Uuid, Vec<(String, Decimal)>> = HashMap::new();
-    for row in
-        payroll_reads::attendance_ot_hours(&mut *conn, &employee_ids, period_start, period_end, &tz)
-            .await?
+    for row in payroll_reads::attendance_ot_hours(
+        &mut *conn,
+        &employee_ids,
+        period_start,
+        period_end,
+        &tz,
+        ot_settings.max_overtime_hours_per_day,
+    )
+    .await?
     {
         if row.hours > Decimal::ZERO {
             attendance_ot_map
@@ -324,23 +341,20 @@ async fn gather_run_inputs(
             .collect();
 
     // 5. Batch fetch YTD figures
-    let ytd_map: HashMap<Uuid, YtdTotals> =
-        payroll_reads::payroll_ytd(&mut *conn, &employee_ids, year, month)
-            .await?
-            .into_iter()
-            .map(|r| {
-                (
-                    r.employee_id,
-                    (r.gross, r.pcb, r.epf, r.socso, r.eis, r.zakat, r.net),
-                )
-            })
-            .collect();
+    let mut ytd_map: HashMap<Uuid, YtdTotals> = HashMap::new();
+    let mut taxable_ytd_gross_map: HashMap<Uuid, i64> = HashMap::new();
+    for r in payroll_reads::payroll_ytd(&mut *conn, &employee_ids, year, month).await? {
+        ytd_map.insert(
+            r.employee_id,
+            (r.gross, r.pcb, r.epf, r.socso, r.eis, r.zakat, r.net),
+        );
+        taxable_ytd_gross_map.insert(r.employee_id, r.taxable_gross);
+    }
 
     // Read every rule table once. The per-employee calculators are pure over
     // this snapshot, so a run is not held open across ~15 statutory round trips
     // per employee.
     let statutory = StatutoryTables::load_on(&mut *conn, effective_date).await?;
-    let ot_settings = settings_service::overtime_settings_on(&mut *conn, company_id).await;
 
     Ok(RunInputs {
         employees,
@@ -356,8 +370,11 @@ async fn gather_run_inputs(
             approved_claims: claims_map,
             tp3: tp3_map,
             ytd: ytd_map,
+            taxable_ytd_gross: taxable_ytd_gross_map,
             monthly_allowances: monthly_allowances_map,
             bonus_commission: bonus_commission_map,
+            taxable_bonus_commission: taxable_bonus_commission_map,
+            staged_entry_ids: staged_entry_ids_map,
             ot_settings: ot_settings.clone(),
         },
         statutory,
@@ -542,6 +559,31 @@ pub async fn preview_payroll(
                 format!(
                     "Already paid by a run for {}. That run's year-to-date figures and PCB annualisation assumed this period was already included, and nothing recomputes them, so this period cannot be inserted behind it. Delete the later run first if it must be re-created.",
                     format_period(row.earliest_later_period)
+                ),
+                row.employee_id,
+                row.employee_number,
+                row.employee_name,
+            )
+            .with_params(&[("period", format_period(row.earliest_later_period))]),
+        );
+    }
+
+    for row in payroll_reads::employees_already_paid_in_period(
+        &mut *conn,
+        &employee_ids,
+        company_id,
+        year,
+        month,
+        None,
+    )
+    .await?
+    {
+        blocking.push(
+            PayrollDiagnostic::for_employee(
+                "already_paid_in_period",
+                format!(
+                    "Already included in another payroll run for {:02}/{}. Remove them from one group or cancel the other run to avoid duplicate payment.",
+                    month, year
                 ),
                 row.employee_id,
                 row.employee_number,
@@ -1143,6 +1185,30 @@ pub(crate) async fn process_payroll_inner(
         )));
     }
 
+    let same_period_runs = payroll_reads::employees_already_paid_in_period(
+        &mut *tx,
+        &employee_ids,
+        company_id,
+        year,
+        month,
+        Some(run_id),
+    )
+    .await?;
+    if !same_period_runs.is_empty() {
+        let named: String = same_period_runs
+            .iter()
+            .take(10)
+            .map(|row| format!("\n• {} {}", row.employee_number, row.employee_name))
+            .collect();
+        return Err(AppError::Conflict(format!(
+            "Payroll for {:02}/{} cannot be processed: {} employee(s) already belong to another active run in this period (e.g. transferred between payroll groups mid-month). Nothing has been saved.{}",
+            month,
+            year,
+            same_period_runs.len(),
+            named
+        )));
+    }
+
     tracing::Span::current().record("employee_count", employees.len());
     info!(employees = employees.len(), "starting payroll run");
 
@@ -1340,6 +1406,10 @@ fn compute_payslip(
     let variable_earnings = *bulk.variable_earnings.get(&emp.id).unwrap_or(&0);
     let taxable_variable_earnings = *bulk.taxable_variable_earnings.get(&emp.id).unwrap_or(&0);
     let (total_bonus, total_commission) = *bulk.bonus_commission.get(&emp.id).unwrap_or(&(0, 0));
+    let (taxable_bonus, taxable_commission) = *bulk
+        .taxable_bonus_commission
+        .get(&emp.id)
+        .unwrap_or(&(0, 0));
     let variable_deductions = *bulk.variable_deductions.get(&emp.id).unwrap_or(&0);
     let (unpaid_leave_deduction, unpaid_leave_days) = *bulk
         .unpaid_leave
@@ -1528,6 +1598,7 @@ fn compute_payslip(
     // Get YTD figures (from previous months this year)
     let (ytd_gross, ytd_pcb, ytd_epf, ytd_socso, ytd_eis, ytd_zakat, ytd_net) =
         *bulk.ytd.get(&emp.id).unwrap_or(&(0, 0, 0, 0, 0, 0, 0));
+    let ytd_taxable_gross = *bulk.taxable_ytd_gross.get(&emp.id).unwrap_or(&ytd_gross);
 
     // Get TP3 data if exists
     let (tp3_income, tp3_epf, tp3_pcb, tp3_socso, tp3_zakat) =
@@ -1541,28 +1612,31 @@ fn compute_payslip(
     };
 
     // PCB
-    //
-    // LHDN MTD treats bonus and commission as *additional remuneration*, taxed
-    // by the Schedule 2 differential rather than annualised as recurring income.
-    // They stay inside `gross` because EPF (s.2), SOCSO and EIS all levy on them
-    // — only the PCB base is narrowed.
-    //
-    // Caveat worth stating rather than hiding: LHDN's "additional remuneration"
-    // covers commission paid at *irregular* intervals, and a genuinely monthly
-    // commission is normal remuneration. `item_type = 'commission'` is all the
-    // data model has to tell them apart, and treating it as additional is the
-    // conservative direction — it under-annualises rather than over-deducting.
-    //
-    // Derived from `taxable_gross`, not `gross`: an earning staged as
-    // non-taxable was badged "Non-taxable" on the payslip and taxed anyway.
-    // Clamped at zero because a bonus row staged as non-taxable is already
-    // outside `taxable_gross`, so subtracting it again would go negative.
-    let normal_remuneration = (taxable_gross - total_bonus - total_commission).max(0);
+    let additional_total = total_bonus + total_commission;
+    let bonus_amount = taxable_bonus + taxable_commission;
+    let normal_remuneration = (taxable_gross - bonus_amount).max(0);
+    let (pcb_epf_monthly, pcb_socso_monthly, pcb_eis_monthly) = if additional_total > 0 {
+        let normal_epf_wage = (statutory_epf_wage - additional_total).max(0);
+        let normal_se_wage = (statutory_socso_eis_wage - additional_total).max(0);
+        let n_epf = epf_service::calculate_epf_with(
+            statutory,
+            normal_epf_wage,
+            age,
+            &emp.residency_status,
+            emp.epf_category.as_deref(),
+        )?;
+        let n_socso =
+            socso_service::calculate_socso_with(statutory, normal_se_wage, age, is_foreigner)?;
+        let n_eis = eis_service::calculate_eis_with(statutory, normal_se_wage, age, is_foreigner)?;
+        (n_epf.employee, n_socso.employee, n_eis.employee)
+    } else {
+        (epf.employee, socso.employee, eis.employee)
+    };
     let pcb_input = PcbInput {
         monthly_normal_remuneration: normal_remuneration,
-        epf_employee_monthly: epf.employee,
-        socso_employee_monthly: socso.employee,
-        eis_employee_monthly: eis.employee,
+        epf_employee_monthly: pcb_epf_monthly,
+        socso_employee_monthly: pcb_socso_monthly,
+        eis_employee_monthly: pcb_eis_monthly,
         zakat_monthly: zakat,
         marital_status: emp
             .marital_status
@@ -1571,13 +1645,13 @@ fn compute_payslip(
         working_spouse: emp.working_spouse.unwrap_or(false),
         num_children: emp.num_children.unwrap_or(0),
         months_worked: month,
-        ytd_gross: ytd_gross + tp3_income,
+        ytd_gross: ytd_taxable_gross + tp3_income,
         ytd_pcb: ytd_pcb + tp3_pcb,
         ytd_epf: ytd_epf + tp3_epf,
         ytd_socso: ytd_socso + tp3_socso,
         ytd_eis,
         ytd_zakat: ytd_zakat + tp3_zakat,
-        bonus_amount: total_bonus + total_commission,
+        bonus_amount,
     };
 
     let pcb = pcb_calculator::calculate_pcb_with(statutory, &pcb_input)?;
@@ -1647,10 +1721,16 @@ fn compute_payslip(
         employee_id: emp.id,
         basic,
         gross,
+        taxable_gross,
         total_allowances,
         total_overtime,
         total_claims,
         claim_ids: payable_claims.iter().map(|claim| claim.id).collect(),
+        entry_ids: bulk
+            .staged_entry_ids
+            .get(&emp.id)
+            .cloned()
+            .unwrap_or_default(),
         epf,
         socso,
         eis,
@@ -1690,7 +1770,7 @@ async fn persist_payslip(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     run_id: Uuid,
     emp: &Employee,
-    period: &RunPeriod,
+    _period: &RunPeriod,
     computed: &ComputedPayslip,
 ) -> AppResult<PayrollItem> {
     let item_id = Uuid::now_v7();
@@ -1701,6 +1781,7 @@ async fn persist_payslip(
         emp.id,
         computed.basic,
         computed.gross,
+        computed.taxable_gross,
         computed.total_allowances,
         computed.total_overtime,
         computed.total_claims,
@@ -1737,8 +1818,8 @@ async fn persist_payslip(
 
     payroll_item_details::insert_lines(&mut **tx, item_id, &computed.lines).await?;
 
-    // Mark staged entries as processed
-    payroll_entries::mark_processed(&mut **tx, run_id, emp.id, period.year, period.month).await?;
+    // Mark only the staged entries captured inside gather_run_inputs for this run.
+    payroll_entries::mark_processed(&mut **tx, run_id, &computed.entry_ids).await?;
 
     // Mark exactly the claims this payslip reimbursed, by id. The old call
     // re-ran the period predicate, so a claim approved between the read and this
@@ -2049,8 +2130,11 @@ mod payslip_golden_tests {
             approved_claims: HashMap::new(),
             tp3: HashMap::new(),
             ytd: HashMap::new(),
+            taxable_ytd_gross: HashMap::new(),
             monthly_allowances: HashMap::new(),
             bonus_commission: HashMap::new(),
+            taxable_bonus_commission: HashMap::new(),
+            staged_entry_ids: HashMap::new(),
             ot_settings: OvertimeSettings::statutory_defaults(),
         }
     }
@@ -2070,6 +2154,7 @@ mod payslip_golden_tests {
 
     fn earning_line(employee_id: Uuid, item_type: &str, amount: i64) -> PayslipSourceLine {
         PayslipSourceLine {
+            id: None,
             employee_id,
             category: "earning".into(),
             item_type: item_type.to_string(),
@@ -2083,6 +2168,7 @@ mod payslip_golden_tests {
 
     fn deduction_line(employee_id: Uuid, item_type: &str, amount: i64) -> PayslipSourceLine {
         PayslipSourceLine {
+            id: None,
             employee_id,
             category: "deduction".into(),
             item_type: item_type.to_string(),
@@ -2377,6 +2463,7 @@ mod payslip_golden_tests {
                 bulk.variable_earnings.insert(emp.id, bonus);
                 bulk.taxable_variable_earnings.insert(emp.id, bonus);
                 bulk.bonus_commission.insert(emp.id, (bonus, 0));
+                bulk.taxable_bonus_commission.insert(emp.id, (bonus, 0));
             }
             compute(&emp, &p, &bulk).expect("compute")
         };

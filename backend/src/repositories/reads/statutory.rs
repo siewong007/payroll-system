@@ -31,9 +31,9 @@ pub async fn statutory_rows(
     let rows = sqlx::query_as!(
         StatutoryRow,
         r#"SELECT
-            e.full_name AS employee_name, e.ic_number,
+            e.full_name AS employee_name, e.ic_number, e.passport_number,
             e.tax_identification_number, e.epf_number, e.socso_number, e.eis_number,
-            pi.gross_salary,
+            pi.gross_salary, pi.total_overtime, pi.unpaid_leave_deduction,
             pi.epf_employee, pi.epf_employer,
             pi.socso_employee, pi.socso_employer,
             pi.eis_employee, pi.eis_employer,

@@ -93,17 +93,24 @@ pub async fn approve(
         ));
     }
 
-    let is_self_approval =
-        old_run.processed_by == Some(actor_user_id) || old_run.submitted_by == Some(actor_user_id);
+    let is_self_approval = old_run.processed_by == Some(actor_user_id)
+        || old_run.submitted_by == Some(actor_user_id)
+        || old_run.updated_by == Some(actor_user_id);
     if is_self_approval && !auth.is_super_admin() {
         return Err(AppError::Forbidden(
-            "You cannot approve a payroll run that you processed or submitted. Ask another approver, or a super admin, to review it.".into(),
+            "You cannot approve a payroll run that you processed, edited, or submitted. Ask another approver, or a super admin, to review it.".into(),
         ));
     }
 
-    let run = payroll_runs::set_approved(pool, run_id, company_id, actor_user_id)
-        .await?
-        .ok_or_else(|| AppError::BadRequest("Payroll run could not be approved".into()))?;
+    let run = payroll_runs::set_approved(
+        pool,
+        run_id,
+        company_id,
+        actor_user_id,
+        auth.is_super_admin(),
+    )
+    .await?
+    .ok_or_else(|| AppError::BadRequest("Payroll run could not be approved".into()))?;
 
     audit_transition(
         pool,
@@ -212,6 +219,12 @@ pub async fn cancel(
     reason: Option<String>,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<PayrollRun> {
+    if !auth.can(Permission::ManagePayrollDraft) && !auth.can(Permission::ApprovePayroll) {
+        return Err(AppError::Forbidden(
+            "Payroll draft or approval permission required".into(),
+        ));
+    }
+
     let reason = reason
         .as_deref()
         .map(str::trim)
@@ -221,7 +234,12 @@ pub async fn cancel(
             AppError::BadRequest("A reason is required to cancel a payroll run".into())
         })?;
 
-    let old_run = load_run(pool, company_id, run_id).await?;
+    let actor_user_id = auth.0.sub;
+    let mut tx = pool.begin().await?;
+    let old_run = payroll_runs::get_for_company_locked(&mut *tx, run_id, company_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Payroll run not found".into()))?;
+
     match old_run.status.as_str() {
         "draft" | "processed" => auth.require_permission(Permission::ManagePayrollDraft)?,
         "pending_approval" | "approved" => auth.require_permission(Permission::ApprovePayroll)?,
@@ -244,23 +262,27 @@ pub async fn cancel(
 
     // Same corruption rule as `delete_run`: a later committed run's frozen YTD
     // and PCB annualisation were computed from this run's figures.
-    if payroll_reads::run_has_later_committed_run(pool, company_id, run_id).await? {
+    if payroll_reads::run_has_later_committed_run(&mut *tx, company_id, run_id).await? {
         return Err(AppError::BadRequest(
             "A later payroll run already includes these employees; cancel that run first".into(),
         ));
     }
 
-    let actor_user_id = auth.0.sub;
-    let mut tx = pool.begin().await?;
     payroll_entries::revert_for_run(&mut *tx, run_id, company_id, actor_user_id).await?;
     claims::revert_for_run(&mut *tx, run_id, company_id).await?;
-    // Re-checked inside the transaction: the status predicates in the UPDATE
-    // are the atomic guard against a concurrent submit/approve/pay.
-    let run = payroll_runs::set_cancelled(&mut *tx, run_id, company_id, actor_user_id, &reason)
-        .await?
-        .ok_or_else(|| {
-            AppError::BadRequest("Payroll run changed state while being cancelled".into())
-        })?;
+    // Bound to exact locked status so concurrent transitions cannot cross permissions.
+    let run = payroll_runs::set_cancelled(
+        &mut *tx,
+        run_id,
+        company_id,
+        actor_user_id,
+        &reason,
+        &old_run.status,
+    )
+    .await?
+    .ok_or_else(|| {
+        AppError::BadRequest("Payroll run changed state while being cancelled".into())
+    })?;
     tx.commit().await?;
 
     audit_transition(
@@ -351,7 +373,11 @@ pub async fn reverse_paid_run(
             AppError::BadRequest("A reason is required to reverse a paid payroll run".into())
         })?;
 
-    let old_run = load_run(pool, company_id, run_id).await?;
+    let actor_user_id = auth.0.sub;
+    let mut tx = pool.begin().await?;
+    let old_run = payroll_runs::get_for_company_locked(&mut *tx, run_id, company_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Payroll run not found".into()))?;
     if old_run.status != "paid" {
         return Err(AppError::BadRequest(format!(
             "Only paid payroll runs can be reversed; this one is '{}'. Cancel instead.",
@@ -359,14 +385,12 @@ pub async fn reverse_paid_run(
         )));
     }
 
-    if payroll_reads::run_has_later_committed_run(pool, company_id, run_id).await? {
+    if payroll_reads::run_has_later_committed_run(&mut *tx, company_id, run_id).await? {
         return Err(AppError::BadRequest(
             "A later payroll run already includes these employees; reverse that run first".into(),
         ));
     }
 
-    let actor_user_id = auth.0.sub;
-    let mut tx = pool.begin().await?;
     payroll_entries::revert_for_run(&mut *tx, run_id, company_id, actor_user_id).await?;
     claims::revert_for_run(&mut *tx, run_id, company_id).await?;
     let run = payroll_runs::set_reversed(&mut *tx, run_id, company_id, actor_user_id, &reason)

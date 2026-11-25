@@ -197,6 +197,11 @@
         "ordinal": 38,
         "name": "updated_at",
         "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 39,
+        "name": "taxable_gross",
+        "type_info": "Int8"
       }
     ],
     "parameters": {
@@ -244,7 +249,8 @@
       true,
       true,
       false,
-      false
+      false,
+      true
     ]
   },
   "hash": "f322b27b4e678aecb785e05f8dc9230d6b036d823d4733a1d7a65c71454101a6"

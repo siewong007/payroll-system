@@ -333,29 +333,29 @@ pub async fn update_employee(
     updated_by: Uuid,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<Employee> {
-    let existing = get_employee(pool, id, company_id).await?;
-
-    // Resignation dates decide who the payroll population contains and how much
-    // of the month they are paid for, so validate them before anything is
-    // written. These are service guards rather than CHECK constraints: an
-    // existing tenant may already hold a bad row, and a constraint added in a
-    // migration would fail the deploy instead of the request.
     let clearing = req.clear_date_resigned.unwrap_or(false);
     if clearing && req.date_resigned.is_some() {
         return Err(AppError::BadRequest(
             "Cannot set and clear the resignation date in the same request".into(),
         ));
     }
+    let clearing_epf = req.clear_epf_category.unwrap_or(false);
+    if clearing_epf && req.epf_category.is_some() {
+        return Err(AppError::BadRequest(
+            "Cannot set and clear epf_category in the same request".into(),
+        ));
+    }
+
+    let mut tx = pool.begin().await?;
+    let existing = employees::get_locked(&mut *tx, id, company_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Employee not found".into()))?;
+
     let effective_resigned = if clearing {
         None
     } else {
         req.date_resigned.or(existing.date_resigned)
     };
-    // Checked against the resulting row, not just the incoming field, so an
-    // update cannot leave behind a window `compute_payslip` would clamp to zero
-    // days worked. It therefore also catches a pre-existing bad date on an
-    // otherwise unrelated edit, which is why the message names the date and both
-    // remedies rather than only the rule.
     if let Some(resigned) = effective_resigned
         && resigned < existing.date_joined
     {
@@ -379,15 +379,6 @@ pub async fn update_employee(
         req.confirmation_date.or(existing.confirmation_date),
     )?;
 
-    // The employee row is written first, and both writes share one transaction.
-    //
-    // This is not a race — it was deterministic. `employees::update` casts
-    // free-text into enum columns (`gender_type`, `race_type`,
-    // `employment_type`), so one PUT carrying a new salary *and* an invalid
-    // gender committed a salary-history row asserting a raise and then failed on
-    // the employee update. The salary history is what the audit trail and the EA
-    // form read, so it recorded a raise that never happened.
-    let mut tx = pool.begin().await?;
     let emp = employees::update(&mut *tx, id, company_id, &req, updated_by).await?;
 
     // Track salary change
@@ -496,10 +487,17 @@ pub async fn soft_delete_employee(
     // refresh tokens really are deleted — they are access, not history — but the
     // user row is soft-deleted so the audit trail, payroll approvals and
     // attendance records that reference it stay intact.
-    user_companies::delete_by_employee(&mut *tx, id).await?;
+    //
+    // A staff login linked to the record (an employee promoted to a staff role)
+    // only loses this company: its membership here goes, its sessions are
+    // revoked so it re-authenticates without the stale employee link, and the
+    // link itself is cleared last (the revocations select by `employee_id`).
+    user_companies::delete_by_employee(&mut *tx, id, company_id).await?;
     user_sessions::revoke_by_employee(&mut *tx, id).await?;
     refresh_tokens::delete_by_employee(&mut *tx, id).await?;
+    crate::repositories::password_reset_requests::expire_pending_for_employee(&mut *tx, id).await?;
     users::soft_delete_by_employee(&mut *tx, id, deleted_by).await?;
+    users::unlink_staff_from_employee(&mut *tx, id, company_id).await?;
 
     crate::services::audit_service::log_action_with_metadata(
         &mut *tx,
@@ -523,6 +521,47 @@ pub async fn soft_delete_employee(
     Ok(())
 }
 
+/// Whether a caller holding `caller_roles` may cut off a login holding
+/// `target_roles` — by deactivating or deleting the employee record it is
+/// linked to. Only `super_admin` may do that to a `super_admin`, and only an
+/// `admin` or `super_admin` to an `admin`. Everyone else is fair game for any
+/// holder of `ManageEmployees`, matching who may manage employees at all.
+pub fn may_revoke_login(caller_roles: &[String], target_roles: &[String]) -> bool {
+    let holds = |roles: &[String], role: &str| roles.iter().any(|r| r == role);
+    if holds(target_roles, "super_admin") && !holds(caller_roles, "super_admin") {
+        return false;
+    }
+    if holds(target_roles, "admin")
+        && !holds(caller_roles, "admin")
+        && !holds(caller_roles, "super_admin")
+    {
+        return false;
+    }
+    true
+}
+
+/// Refuses to deactivate or delete an employee whose linked login outranks the
+/// caller. Deactivation fails every request that login makes (the auth
+/// extractor rejects an inactive employee), so without this a manager or HR
+/// user could lock an administrator out of the platform.
+pub async fn ensure_may_revoke_linked_logins(
+    pool: &PgPool,
+    employee_id: Uuid,
+    company_id: Uuid,
+    caller_roles: &[String],
+) -> AppResult<()> {
+    // Company-scoped read first, so a foreign id is NotFound, not Forbidden.
+    get_employee(pool, employee_id, company_id).await?;
+    for target_roles in users::roles_linked_to_employee(pool, employee_id).await? {
+        if !may_revoke_login(caller_roles, &target_roles) {
+            return Err(AppError::Forbidden(
+                "This employee is linked to a login with a higher role than yours; ask a super admin".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub async fn get_salary_history(pool: &PgPool, employee_id: Uuid) -> AppResult<Vec<SalaryHistory>> {
     salary_history::list_by_employee(pool, employee_id).await
 }
@@ -534,8 +573,49 @@ pub async fn create_tp3(
     req: CreateTp3Request,
     created_by: Uuid,
 ) -> AppResult<Tp3Record> {
+    if !(2000..=2200).contains(&req.tax_year) {
+        return Err(AppError::BadRequest(
+            "TP3 tax_year must be between 2000 and 2200".into(),
+        ));
+    }
+    let zakat_ytd = req.previous_zakat_ytd.unwrap_or(0);
+    if req.previous_income_ytd < 0
+        || req.previous_epf_ytd < 0
+        || req.previous_pcb_ytd < 0
+        || req.previous_socso_ytd < 0
+        || zakat_ytd < 0
+    {
+        return Err(AppError::BadRequest(
+            "TP3 prior-employer YTD amounts cannot be negative".into(),
+        ));
+    }
     let id = Uuid::now_v7();
-    tp3_records::upsert(pool, id, employee_id, company_id, &req, created_by).await
+    let record = tp3_records::upsert(pool, id, employee_id, company_id, &req, created_by).await?;
+    let _ = crate::services::audit_service::log_action_with_metadata(
+        pool,
+        Some(company_id),
+        Some(created_by),
+        "upsert_tp3",
+        "tp3_record",
+        Some(record.id),
+        None,
+        Some(serde_json::json!({
+            "employee_id": employee_id,
+            "tax_year": record.tax_year,
+            "previous_income_ytd": record.previous_income_ytd,
+            "previous_epf_ytd": record.previous_epf_ytd,
+            "previous_pcb_ytd": record.previous_pcb_ytd,
+            "previous_socso_ytd": record.previous_socso_ytd,
+            "previous_zakat_ytd": record.previous_zakat_ytd,
+        })),
+        Some(&format!(
+            "Saved TP3 record for tax year {}",
+            record.tax_year
+        )),
+        None,
+    )
+    .await;
+    Ok(record)
 }
 
 /// Spawn asynchronous welcome email delivery when employee creation also
@@ -594,4 +674,36 @@ pub async fn dispatch_welcome_email_if_created(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod revoke_rank_tests {
+    use super::may_revoke_login;
+
+    fn r(values: &[&str]) -> Vec<String> {
+        values.iter().map(|v| (*v).to_string()).collect()
+    }
+
+    #[test]
+    fn only_super_admin_may_revoke_a_super_admin() {
+        assert!(may_revoke_login(&r(&["super_admin"]), &r(&["super_admin"])));
+        for caller in ["admin", "manager", "hr_manager", "payroll_admin"] {
+            assert!(!may_revoke_login(&r(&[caller]), &r(&["super_admin"])));
+        }
+    }
+
+    #[test]
+    fn only_admin_or_super_admin_may_revoke_an_admin() {
+        assert!(may_revoke_login(&r(&["admin"]), &r(&["admin", "finance"])));
+        assert!(may_revoke_login(&r(&["super_admin"]), &r(&["admin"])));
+        for caller in ["manager", "hr_manager", "payroll_admin"] {
+            assert!(!may_revoke_login(&r(&[caller]), &r(&["admin"])));
+        }
+    }
+
+    #[test]
+    fn other_roles_are_revocable_by_any_employee_manager() {
+        assert!(may_revoke_login(&r(&["hr_manager"]), &r(&["employee"])));
+        assert!(may_revoke_login(&r(&["manager"]), &r(&["finance"])));
+    }
 }

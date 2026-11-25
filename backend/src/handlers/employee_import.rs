@@ -109,8 +109,15 @@ pub async fn validate_import(
     let (file_name, data) = file_data
         .ok_or_else(|| AppError::BadRequest("No file uploaded. Include a 'file' field.".into()))?;
 
-    let is_xlsx = file_name.ends_with(".xlsx") || file_name.ends_with(".xls");
-    let is_csv = file_name.ends_with(".csv");
+    let lower_name = file_name.to_ascii_lowercase();
+    if lower_name.ends_with(".xls") {
+        return Err(AppError::BadRequest(
+            "Legacy binary .xls files are not supported. Please save as .xlsx or .csv and upload again."
+                .into(),
+        ));
+    }
+    let is_xlsx = lower_name.ends_with(".xlsx");
+    let is_csv = lower_name.ends_with(".csv");
 
     if !is_xlsx && !is_csv {
         return Err(AppError::BadRequest(
@@ -147,6 +154,8 @@ pub async fn confirm_import(
 
     let job = crate::services::job_service::submit_employee_import(
         &state.pool,
+        &state.mailer,
+        &state.config,
         company_id,
         user_id,
         req,

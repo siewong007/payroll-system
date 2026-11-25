@@ -115,6 +115,14 @@ pub async fn get_month_calendar(
     year: i32,
     month: u32,
 ) -> AppResult<MonthCalendar> {
+    if !(1900..=2100).contains(&year) {
+        return Err(AppError::BadRequest(
+            "Year must be between 1900 and 2100".into(),
+        ));
+    }
+    if !(1..=12).contains(&month) {
+        return Err(AppError::BadRequest("Invalid month".into()));
+    }
     let working_day_config = get_working_days(pool, company_id).await?;
     let holidays = get_holidays(pool, company_id, year).await?;
 
@@ -263,6 +271,32 @@ pub async fn import_from_ics(
 
 const MAX_ICS_EVENTS: usize = 500;
 
+fn unfold_ics_lines(ics_text: &str) -> Vec<String> {
+    let mut unfolded: Vec<String> = Vec::new();
+    for raw_line in ics_text.lines() {
+        let line = raw_line.trim_end_matches('\r');
+        if let Some(rest) = line.strip_prefix(' ').or_else(|| line.strip_prefix('\t'))
+            && let Some(last) = unfolded.last_mut()
+        {
+            last.push_str(rest);
+            continue;
+        }
+        unfolded.push(line.to_string());
+    }
+    unfolded
+}
+
+fn parse_ics_date(val: &str) -> Option<NaiveDate> {
+    let digits = val.trim().get(..8)?;
+    NaiveDate::parse_from_str(digits, "%Y%m%d").ok()
+}
+
+struct ParsedIcsHoliday {
+    name: String,
+    date: NaiveDate,
+    description: Option<String>,
+}
+
 /// Import holidays from raw ICS text content
 pub async fn import_from_ics_text(
     pool: &PgPool,
@@ -270,15 +304,15 @@ pub async fn import_from_ics_text(
     ics_text: &str,
     created_by: Uuid,
 ) -> AppResult<Vec<Holiday>> {
-    let mut holidays = Vec::new();
+    let mut parsed = Vec::new();
     let mut event_count: usize = 0;
     let mut in_event = false;
     let mut name = String::new();
     let mut date: Option<NaiveDate> = None;
     let mut description: Option<String> = None;
 
-    for line in ics_text.lines() {
-        let line = line.trim();
+    for raw_line in unfold_ics_lines(ics_text) {
+        let line = raw_line.trim();
         if line == "BEGIN:VEVENT" {
             event_count += 1;
             if event_count > MAX_ICS_EVENTS {
@@ -292,36 +326,28 @@ pub async fn import_from_ics_text(
             description = None;
         } else if line == "END:VEVENT" {
             if in_event
-                && let (n, Some(d)) = (&name, date)
-                && !n.is_empty()
+                && let Some(d) = date
+                && !name.is_empty()
             {
-                let exists = holiday_repo::count_matching(pool, company_id, d, n.as_str()).await?;
-
-                if exists == 0 {
-                    let h = create_holiday(
-                        pool,
-                        company_id,
-                        n,
-                        d,
-                        "public_holiday",
-                        description.as_deref(),
-                        false,
-                        None,
-                        created_by,
-                    )
-                    .await?;
-                    holidays.push(h);
-                }
+                parsed.push(ParsedIcsHoliday {
+                    name: std::mem::take(&mut name),
+                    date: d,
+                    description: description.take(),
+                });
             }
             in_event = false;
         } else if in_event {
             if let Some(val) = line.strip_prefix("SUMMARY:") {
                 name = val.chars().take(200).collect();
-            } else if let Some(val) = line.strip_prefix("DTSTART;VALUE=DATE:") {
-                date = NaiveDate::parse_from_str(val, "%Y%m%d").ok();
-            } else if let Some(val) = line.strip_prefix("DTSTART:") {
-                let date_str = if val.len() >= 8 { &val[..8] } else { val };
-                date = NaiveDate::parse_from_str(date_str, "%Y%m%d").ok();
+            } else if let Some(val) = line
+                .strip_prefix("DTSTART;VALUE=DATE:")
+                .or_else(|| line.strip_prefix("DTSTART:"))
+            {
+                date = parse_ics_date(val);
+            } else if line.starts_with("DTSTART;")
+                && let Some((_, val)) = line.split_once(':')
+            {
+                date = parse_ics_date(val);
             } else if let Some(val) = line.strip_prefix("DESCRIPTION:") {
                 description = Some(
                     val.replace("\\n", "\n")
@@ -334,6 +360,28 @@ pub async fn import_from_ics_text(
         }
     }
 
+    let mut tx = pool.begin().await?;
+    let mut holidays = Vec::new();
+    for ev in parsed {
+        let exists = holiday_repo::count_matching(&mut *tx, company_id, ev.date, &ev.name).await?;
+        if exists == 0 {
+            let h = holiday_repo::insert(
+                &mut *tx,
+                company_id,
+                &ev.name,
+                ev.date,
+                "public_holiday",
+                ev.description.as_deref(),
+                false,
+                None,
+                created_by,
+            )
+            .await?;
+            holidays.push(h);
+        }
+    }
+    tx.commit().await?;
+
     Ok(holidays)
 }
 
@@ -344,6 +392,11 @@ pub async fn get_working_days_in_month(
     year: i32,
     month: u32,
 ) -> AppResult<i32> {
+    if !(1900..=2100).contains(&year) {
+        return Err(AppError::BadRequest(
+            "Year must be between 1900 and 2100".into(),
+        ));
+    }
     let first_day = NaiveDate::from_ymd_opt(year, month, 1)
         .ok_or_else(|| AppError::BadRequest("Invalid month".into()))?;
     let last_day = if month == 12 {

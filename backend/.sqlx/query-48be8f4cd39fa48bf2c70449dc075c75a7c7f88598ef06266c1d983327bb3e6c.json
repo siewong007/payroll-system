@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n            period_year::text || '-' || LPAD(period_month::text, 2, '0') AS \"period!\",\n            COALESCE(SUM(total_net), 0)::BIGINT AS \"total_net!\",\n            COALESCE(SUM(total_gross), 0)::BIGINT AS \"total_gross!\",\n            COALESCE(SUM(employee_count), 0)::INT4 AS \"employee_count!\"\n        FROM payroll_runs\n        WHERE company_id = $1 AND status IN ('approved', 'paid')\n        GROUP BY period_year, period_month\n        ORDER BY period_year DESC, period_month DESC\n        LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "period!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "total_net!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "total_gross!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "employee_count!",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "48be8f4cd39fa48bf2c70449dc075c75a7c7f88598ef06266c1d983327bb3e6c"
+}

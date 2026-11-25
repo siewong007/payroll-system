@@ -79,9 +79,9 @@ describe('role helpers', () => {
     expect(canAccessPayrollData('exec')).toBe(false);
   });
 
-  it('excludes exec from reports and limits admin data to admins', () => {
+  it('excludes exec and employee from reports and limits admin data to admins', () => {
     expect(REPORT_ROLES).not.toContain('exec');
-    expect(REPORT_ROLES).toContain('employee');
+    expect(REPORT_ROLES).not.toContain('employee');
     expect(ADMIN_DATA_ROLES).toEqual(['super_admin', 'admin']);
   });
 });

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE users SET\n            employee_id = NULL,\n            company_id = CASE WHEN company_id = $2 THEN (\n                SELECT uc.company_id FROM user_companies uc\n                WHERE uc.user_id = users.id\n                ORDER BY uc.company_id\n                LIMIT 1\n            ) ELSE company_id END,\n            updated_at = NOW()\n        WHERE employee_id = $1\n            AND deleted_at IS NULL\n            AND NOT (roles <@ ARRAY['employee']::VARCHAR(50)[])",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3810694c6989349065724e83a3547b14276084ee454793a6d8bca45e82ce072a"
+}

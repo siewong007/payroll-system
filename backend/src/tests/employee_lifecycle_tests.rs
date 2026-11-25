@@ -431,3 +431,125 @@ async fn employee_numeric_and_date_invariants_are_validated_on_create_and_update
         );
     }
 }
+
+/// A staff login linked to an employee record: what an employee promoted to a
+/// staff role looks like. Returns the user id.
+async fn seed_linked_login(pool: &PgPool, company_id: Uuid, employee_id: Uuid, role: &str) -> Uuid {
+    let user_id = seed_user(pool, company_id, role).await;
+    crate::repositories::users::link_to_employee(pool, employee_id, company_id, user_id)
+        .await
+        .expect("link login to employee");
+    crate::repositories::user_companies::insert(pool, user_id, company_id)
+        .await
+        .expect("link company");
+    user_id
+}
+
+/// A manager or HR user must not be able to cut off an admin or super_admin by
+/// deactivating or deleting the employee record their login is linked to.
+#[tokio::test]
+async fn lower_roles_cannot_revoke_a_privileged_linked_login() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let roles = |r: &[&str]| r.iter().map(|s| (*s).to_string()).collect::<Vec<_>>();
+
+    for (target, refused_for, allowed_for) in [
+        (
+            "super_admin",
+            vec!["admin", "manager", "hr_manager"],
+            "super_admin",
+        ),
+        (
+            "admin",
+            vec!["manager", "hr_manager", "payroll_admin"],
+            "admin",
+        ),
+    ] {
+        let employee_id = seed_employee(&pool, company_id, None, 500_000).await;
+        seed_linked_login(&pool, company_id, employee_id, target).await;
+
+        for caller in refused_for {
+            let err = employee_service::ensure_may_revoke_linked_logins(
+                &pool,
+                employee_id,
+                company_id,
+                &roles(&[caller]),
+            )
+            .await
+            .expect_err("lower role must be refused");
+            assert!(
+                matches!(err, crate::core::error::AppError::Forbidden(_)),
+                "{caller} revoking {target}: {err:?}"
+            );
+        }
+        employee_service::ensure_may_revoke_linked_logins(
+            &pool,
+            employee_id,
+            company_id,
+            &roles(&[allowed_for]),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("{allowed_for} may revoke {target}: {e:?}"));
+    }
+
+    // A record with no privileged login is unaffected.
+    let plain = seed_employee(&pool, company_id, None, 500_000).await;
+    employee_service::ensure_may_revoke_linked_logins(
+        &pool,
+        plain,
+        company_id,
+        &roles(&["manager"]),
+    )
+    .await
+    .expect("no linked login");
+}
+
+/// Deleting an employee in one company removes only that company's access from
+/// a linked staff login. Its other memberships survive and the stale employee
+/// link is cleared, so it keeps working elsewhere.
+#[tokio::test]
+async fn deleting_an_employee_keeps_a_staff_logins_other_companies() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_a = seed_company(&pool).await;
+    let company_b = seed_company(&pool).await;
+    let employee_id = seed_employee(&pool, company_a, None, 500_000).await;
+    let user_id = seed_linked_login(&pool, company_a, employee_id, "admin").await;
+    crate::repositories::user_companies::insert(&pool, user_id, company_b)
+        .await
+        .expect("link second company");
+    let actor = seed_user(&pool, company_a, "admin").await;
+
+    employee_service::soft_delete_employee(&pool, employee_id, company_a, actor, None)
+        .await
+        .expect("delete employee");
+
+    use crate::repositories::user_companies::user_has_company;
+    assert!(!user_has_company(&pool, user_id, company_a).await.unwrap());
+    assert!(
+        user_has_company(&pool, user_id, company_b).await.unwrap(),
+        "membership in another company must survive"
+    );
+
+    let (employee_link, active_company, deleted): (Option<Uuid>, Option<Uuid>, bool) =
+        sqlx::query_as(
+            "SELECT employee_id, company_id, deleted_at IS NOT NULL FROM users WHERE id = $1",
+        )
+        .bind(user_id)
+        .fetch_one(&pool)
+        .await
+        .expect("read user");
+    assert_eq!(employee_link, None, "stale employee link must be cleared");
+    assert_eq!(
+        active_company,
+        Some(company_b),
+        "active company moves off the deleted one"
+    );
+    assert!(
+        !deleted,
+        "a staff login is not deleted with the employee record"
+    );
+}

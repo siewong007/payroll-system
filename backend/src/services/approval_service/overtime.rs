@@ -123,7 +123,12 @@ pub async fn update_overtime_admin(
         ot_type,
         req.reason,
     )
-    .await?;
+    .await?
+    .ok_or_else(|| {
+        AppError::Conflict(
+            "This overtime application changed state while it was being updated. Reload and try again.".into(),
+        )
+    })?;
 
     let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
@@ -158,7 +163,12 @@ pub async fn delete_overtime_admin(
             AppError::BadRequest("OT application not found or cannot be deleted".into())
         })?;
 
-    overtime_applications::delete(pool, ot_id, company_id).await?;
+    let rows = overtime_applications::delete(pool, ot_id, company_id).await?;
+    if rows == 0 {
+        return Err(AppError::Conflict(
+            "This overtime application changed state while it was being deleted. Reload and try again.".into(),
+        ));
+    }
 
     let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
@@ -209,6 +219,7 @@ pub async fn cancel_overtime_admin(
             company_id,
             period_year,
             period_month,
+            ot_id,
             &description,
         )
         .await?;
@@ -219,15 +230,32 @@ pub async fn cancel_overtime_admin(
             ));
         }
 
-        payroll_entries::delete_unprocessed_overtime(
+        let deleted = payroll_entries::delete_unprocessed_overtime(
             &mut *tx,
             current.employee_id,
             company_id,
             period_year,
             period_month,
+            ot_id,
             &description,
         )
         .await?;
+        if deleted == 0
+            && payroll_entries::exists_processed_overtime(
+                &mut *tx,
+                current.employee_id,
+                company_id,
+                period_year,
+                period_month,
+                ot_id,
+                &description,
+            )
+            .await?
+        {
+            return Err(AppError::Conflict(
+                "Approved OT was processed by payroll while being cancelled.".into(),
+            ));
+        }
 
         if current.ot_type == "public_holiday" {
             leave_balances::subtract_entitled_replacement(
@@ -240,7 +268,13 @@ pub async fn cancel_overtime_admin(
         }
     }
 
-    let cancelled = overtime_applications::set_cancelled(&mut *tx, ot_id, company_id).await?;
+    let cancelled = overtime_applications::set_cancelled(&mut *tx, ot_id, company_id)
+        .await?
+        .ok_or_else(|| {
+            AppError::Conflict(
+                "This overtime application was already cancelled or modified.".into(),
+            )
+        })?;
 
     tx.commit().await?;
 
@@ -413,6 +447,7 @@ pub async fn approve_overtime(
             s.amount,
             ot.hours,
             s.rate,
+            Some(ot.id),
             reviewer_id,
         )
         .await?;

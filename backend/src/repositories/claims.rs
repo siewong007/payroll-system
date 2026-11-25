@@ -163,7 +163,7 @@ pub async fn update_full(
     receipt_url: Option<String>,
     receipt_file_name: Option<String>,
     expense_date: Option<NaiveDate>,
-) -> AppResult<Claim> {
+) -> AppResult<Option<Claim>> {
     let updated = sqlx::query_as!(
         Claim,
         r#"UPDATE claims
@@ -177,6 +177,7 @@ pub async fn update_full(
             expense_date = COALESCE($10, expense_date),
             updated_at = NOW()
         WHERE id = $1 AND company_id = $2
+          AND status IN ('draft', 'pending', 'rejected')
         RETURNING *"#,
         claim_id,
         company_id,
@@ -189,7 +190,7 @@ pub async fn update_full(
         receipt_file_name,
         expense_date,
     )
-    .fetch_one(executor)
+    .fetch_optional(executor)
     .await?;
     Ok(updated)
 }
@@ -198,15 +199,15 @@ pub async fn delete(
     executor: impl Executor<'_, Database = Postgres>,
     claim_id: Uuid,
     company_id: Uuid,
-) -> AppResult<()> {
-    sqlx::query!(
-        "DELETE FROM claims WHERE id = $1 AND company_id = $2",
+) -> AppResult<u64> {
+    let res = sqlx::query!(
+        "DELETE FROM claims WHERE id = $1 AND company_id = $2 AND status IN ('draft', 'cancelled')",
         claim_id,
         company_id,
     )
     .execute(executor)
     .await?;
-    Ok(())
+    Ok(res.rows_affected())
 }
 
 /// Cancel a claim that is still cancellable. `None` if it is not.

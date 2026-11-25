@@ -156,6 +156,7 @@ export function LettersPage() {
   const [templateName, setTemplateName] = useState('');
   const [templateSubject, setTemplateSubject] = useState('');
   const [templateBodyHtml, setTemplateBodyHtml] = useState('');
+  const [templateFormError, setTemplateFormError] = useState('');
   const [deletingTemplateId, setDeletingTemplateId] = useState<string | null>(null);
   const [historyPage, setHistoryPage] = useState(1);
 
@@ -167,7 +168,12 @@ export function LettersPage() {
 
   // One employee, fetched by id — the picker resolves the choice, and this is
   // only here for the "no email on file" warning below.
-  const { data: selectedEmp } = useQuery({
+  const {
+    data: selectedEmp,
+    isError: selectedEmpError,
+    error: selectedEmpErrorObj,
+    refetch: refetchSelectedEmp,
+  } = useQuery({
     queryKey: ['employee', selectedEmployee],
     queryFn: () => getEmployee(selectedEmployee),
     enabled: Boolean(selectedEmployee) && canPreview,
@@ -205,12 +211,12 @@ export function LettersPage() {
       queryClient.invalidateQueries({ queryKey: ['emailLogs'] });
     },
     onSuccess: (data) => {
-      // The API answers 502 when the letter was recorded but never delivered,
-      // so this guard should be unreachable. It stays because a 200 carrying
-      // status:"failed" is exactly what this page used to treat as delivery —
-      // clearing the form and unmounting the modal before anyone could read it.
-      if (data.status !== 'sent') return;
-      toast.success(t('letters.sendSuccess'));
+      if (data.status !== 'sent' && data.status !== 'pending') return;
+      if (data.status === 'pending') {
+        toast.info(t('letters.queuedForRetry'));
+      } else {
+        toast.success(t('letters.sendSuccess'));
+      }
       setShowPreview(false);
       setPreview(null);
       setSelectedEmployee('');
@@ -254,7 +260,10 @@ export function LettersPage() {
   const deleteTemplateMutation = useMutation({
     mutationFn: deleteEmailTemplate,
     onMutate: (id) => setDeletingTemplateId(id),
-    onSuccess: () => {
+    onSuccess: (_data, deletedId) => {
+      if (loadedTemplateId === deletedId) {
+        setLoadedTemplateId(undefined);
+      }
       queryClient.invalidateQueries({ queryKey: ['emailTemplates'] });
       toast.success(t('letters.templateDeleted'));
     },
@@ -316,6 +325,7 @@ export function LettersPage() {
   const openSaveTemplateModal = () => {
     saveTemplateMutation.reset();
     updateTemplateMutation.reset();
+    setTemplateFormError('');
     setEditingTemplate(null);
     setTemplateName('');
     setTemplateSubject(subject);
@@ -326,6 +336,7 @@ export function LettersPage() {
   const openEditTemplateModal = (tpl: EmailTemplate) => {
     saveTemplateMutation.reset();
     updateTemplateMutation.reset();
+    setTemplateFormError('');
     setEditingTemplate(tpl);
     setTemplateName(tpl.name);
     setTemplateSubject(tpl.subject);
@@ -532,6 +543,14 @@ export function LettersPage() {
                     isActive={null}
                     placeholder={t('letters.searchEmployee')}
                   />
+                  {selectedEmployee && selectedEmpError && (
+                    <div role="alert" className="mt-2 flex items-center justify-between gap-2 rounded-lg border border-red-200 dark:border-red-500/30 bg-red-50 dark:bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-300">
+                      <span>{getErrorMessage(selectedEmpErrorObj, t('letters.employeeLoadFailed'))}</span>
+                      <button type="button" onClick={() => void refetchSelectedEmp()} className="font-medium underline shrink-0">
+                        {t('common.retry')}
+                      </button>
+                    </div>
+                  )}
                   {selectedEmp && !selectedEmp.email && (
                     <p className="text-xs text-red-500 dark:text-red-400 mt-2">{t('letters.noEmailOnFile')}</p>
                   )}
@@ -854,7 +873,7 @@ export function LettersPage() {
                 {getErrorMessage(sendMutation.error, t('letters.sendFailed'))}
               </div>
             )}
-            {sendMutation.data && sendMutation.data.status !== 'sent' && (
+            {sendMutation.data && sendMutation.data.status !== 'sent' && sendMutation.data.status !== 'pending' && (
               <div role="alert" className="bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-300 text-sm px-4 py-3 rounded-lg">
                 {sendMutation.data.error_message || t('letters.recordedNotSent')}
               </div>
@@ -869,6 +888,7 @@ export function LettersPage() {
         onClose={() => {
           setTemplateModalMode(null);
           setEditingTemplate(null);
+          setTemplateFormError('');
         }}
         title={templateModalMode === 'edit' ? t('letters.editTemplate') : t('letters.saveAsTemplate')}
         maxWidth={templateModalMode === 'edit' ? 'max-w-xl' : 'max-w-md'}
@@ -879,6 +899,7 @@ export function LettersPage() {
               onClick={() => {
                 setTemplateModalMode(null);
                 setEditingTemplate(null);
+                setTemplateFormError('');
               }}
               className="btn-secondary"
             >
@@ -887,7 +908,11 @@ export function LettersPage() {
             <button
               type="submit"
               form={templateFormId}
-              disabled={!templateName.trim() || isSavingTemplate}
+              disabled={
+                !templateName.trim() ||
+                (templateModalMode === 'edit' && (!templateSubject.trim() || !templateBodyHtml.trim())) ||
+                isSavingTemplate
+              }
               className="btn-primary"
             >
               {isSavingTemplate
@@ -903,29 +928,40 @@ export function LettersPage() {
           id={templateFormId}
           onSubmit={(e) => {
             e.preventDefault();
+            setTemplateFormError('');
             const trimmedName = templateName.trim();
             if (!trimmedName) return;
             if (templateModalMode === 'edit' && editingTemplate) {
+              const trimmedSubject = templateSubject.trim();
+              if (!trimmedSubject || !templateBodyHtml.trim()) {
+                setTemplateFormError(t('letters.templateFieldsRequired'));
+                return;
+              }
               updateTemplateMutation.mutate({
                 id: editingTemplate.id,
                 name: trimmedName,
-                subject: templateSubject,
+                subject: trimmedSubject,
                 body_html: templateBodyHtml,
               });
             } else {
+              const trimmedSubject = subject.trim();
+              if (!trimmedSubject || !bodyHtml.trim()) {
+                setTemplateFormError(t('letters.templateFieldsRequired'));
+                return;
+              }
               saveTemplateMutation.mutate({
                 name: trimmedName,
                 letter_type: selectedType,
-                subject,
+                subject: trimmedSubject,
                 body_html: bodyHtml,
               });
             }
           }}
           className="space-y-4"
         >
-          {(saveTemplateMutation.isError || updateTemplateMutation.isError) && (
+          {(templateFormError || saveTemplateMutation.isError || updateTemplateMutation.isError) && (
             <div role="alert" className="bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-300 text-sm px-3 py-2 rounded-lg border border-red-200 dark:border-red-500/30">
-              {getErrorMessage(
+              {templateFormError || getErrorMessage(
                 saveTemplateMutation.error || updateTemplateMutation.error,
                 t('letters.templateSaveFailed'),
               )}
@@ -946,7 +982,7 @@ export function LettersPage() {
           </FormField>
           {templateModalMode === 'edit' ? (
             <>
-              <FormField label={t('letters.subject')}>
+              <FormField label={t('letters.subject')} required>
                 {(aria) => (
                   <input
                     {...aria}
@@ -954,10 +990,11 @@ export function LettersPage() {
                     value={templateSubject}
                     onChange={(e) => setTemplateSubject(e.target.value)}
                     className="form-input"
+                    required
                   />
                 )}
               </FormField>
-              <FormField label={t('letters.bodyHtml')}>
+              <FormField label={t('letters.bodyHtml')} required>
                 {(aria) => (
                   <textarea
                     {...aria}
@@ -965,6 +1002,7 @@ export function LettersPage() {
                     onChange={(e) => setTemplateBodyHtml(e.target.value)}
                     rows={8}
                     className="form-input font-mono text-sm"
+                    required
                   />
                 )}
               </FormField>

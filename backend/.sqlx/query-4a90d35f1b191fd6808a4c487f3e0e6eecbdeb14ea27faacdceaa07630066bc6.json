@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT COUNT(DISTINCT department) AS \"count!\" FROM employees WHERE company_id = $1 AND is_active = TRUE AND deleted_at IS NULL AND department IS NOT NULL",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "4a90d35f1b191fd6808a4c487f3e0e6eecbdeb14ea27faacdceaa07630066bc6"
+}

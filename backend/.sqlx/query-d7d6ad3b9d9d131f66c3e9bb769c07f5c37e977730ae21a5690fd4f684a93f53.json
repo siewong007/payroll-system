@@ -1,0 +1,67 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT u.id, u.email, u.full_name, u.roles, u.company_id,\n                u.employee_id, u.is_active, u.created_at\n            FROM users u\n            WHERE u.deleted_at IS NULL\n              AND ($1::uuid IS NULL OR EXISTS (\n                    SELECT 1 FROM user_companies uc\n                    WHERE uc.user_id = u.id AND uc.company_id = $1))\n              AND ($2::text IS NULL\n                    OR u.full_name ILIKE '%' || $2 || '%' ESCAPE '\\'\n                    OR u.email ILIKE '%' || $2 || '%' ESCAPE '\\')\n            ORDER BY u.created_at DESC\n            LIMIT $3 OFFSET $4",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "email",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "full_name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "roles",
+        "type_info": "VarcharArray"
+      },
+      {
+        "ordinal": 4,
+        "name": "company_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 5,
+        "name": "employee_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 6,
+        "name": "is_active",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 7,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "d7d6ad3b9d9d131f66c3e9bb769c07f5c37e977730ae21a5690fd4f684a93f53"
+}

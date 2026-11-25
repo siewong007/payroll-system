@@ -205,17 +205,23 @@ describe('portal API', () => {
   });
 
   it('downloads a payslip as a blob named after the payslip', async () => {
-    const { anchor, click } = captureDownload();
-    apiMocks.get.mockResolvedValue({ data: new Blob(['pdf']), headers: {} });
+    vi.useFakeTimers();
+    try {
+      const { anchor, click } = captureDownload();
+      apiMocks.get.mockResolvedValue({ data: new Blob(['pdf']), headers: {} });
 
-    await portal.downloadPayslipPdf('slip-7');
+      await portal.downloadPayslipPdf('slip-7');
 
-    expect(apiMocks.get).toHaveBeenCalledWith('/portal/payslips/slip-7/pdf', {
-      responseType: 'blob',
-    });
-    expect(anchor.download).toBe('payslip_slip-7.pdf');
-    expect(click).toHaveBeenCalledOnce();
-    expect(globalThis.URL.revokeObjectURL).toHaveBeenCalledWith('blob:mock-url');
+      expect(apiMocks.get).toHaveBeenCalledWith('/portal/payslips/slip-7/pdf', {
+        responseType: 'blob',
+      });
+      expect(anchor.download).toBe('payslip_slip-7.pdf');
+      expect(click).toHaveBeenCalledOnce();
+      vi.advanceTimersByTime(10_000);
+      expect(globalThis.URL.revokeObjectURL).toHaveBeenCalledWith('blob:mock-url');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('exports the leave calendar as an .ics file', async () => {

@@ -93,7 +93,15 @@ pub async fn export_company(pool: &PgPool, company_id: Uuid) -> AppResult<Compan
         record_counts,
     };
 
-    let files = files::collect_backup_files(&documents, &leave_requests, &claims);
+    let files = files::collect_backup_files_for_company(
+        pool,
+        company_id,
+        company.logo_url.as_ref(),
+        &documents,
+        &leave_requests,
+        &claims,
+    )
+    .await?;
 
     Ok(CompanyBackup {
         metadata,

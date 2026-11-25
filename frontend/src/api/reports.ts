@@ -1,4 +1,5 @@
 import api from './client';
+import { triggerBlobDownload } from '@/lib/download';
 import type { EaEmployeeSummary, ReportPeriodsResponse } from '@/types';
 
 export interface PayrollSummaryRow {
@@ -33,10 +34,10 @@ export interface LeaveReportRow {
   marital_status: string | null;
   num_children: number | null;
   leave_type_name: string;
-  entitled_days: number;
-  taken_days: number;
-  pending_days: number;
-  balance: number;
+  entitled_days: string;
+  taken_days: string;
+  pending_days: string;
+  balance: string;
 }
 
 export interface ClaimsReportRow {
@@ -97,12 +98,7 @@ export const downloadStatutoryExport = async (type: 'epf' | 'socso' | 'eis' | 'p
   const contentDisposition = res.headers['content-disposition'] || '';
   const match = contentDisposition.match(/filename="?([^"]+)"?/);
   const filename = match?.[1] || `${type}_export_${year}_${month}.csv`;
-  const url = window.URL.createObjectURL(new Blob([res.data]));
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  window.URL.revokeObjectURL(url);
+  triggerBlobDownload(res.data, filename);
 };
 
 export const getEaEmployees = (year: number) =>
@@ -116,10 +112,5 @@ export const downloadEaForm = async (year: number, employeeId: string) => {
   const contentDisposition = res.headers['content-disposition'] || '';
   const match = contentDisposition.match(/filename="?([^"]+)"?/);
   const filename = match?.[1] || `EA_Form_${year}.pdf`;
-  const url = window.URL.createObjectURL(new Blob([res.data]));
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  window.URL.revokeObjectURL(url);
+  triggerBlobDownload(res.data, filename);
 };

@@ -61,7 +61,10 @@ export function Claims() {
 
   const deleteMutation = useMutation({
     mutationFn: deleteClaim,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['my-claims'] }),
+    onSuccess: (_data, deletedId) => {
+      setSelectedClaimIds((prev) => prev.filter((id) => id !== deletedId));
+      queryClient.invalidateQueries({ queryKey: ['my-claims'] });
+    },
   });
 
   const cancelMutation = useMutation({
@@ -525,6 +528,9 @@ function CreateClaimForm({ onClose }: { onClose: () => void }) {
       setUploadPreview(null);
     } finally {
       setUploading(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
     }
   };
 
@@ -665,6 +671,7 @@ function CreateClaimForm({ onClose }: { onClose: () => void }) {
               ref={fileInputRef}
               type="file"
               accept="image/*,.pdf,.doc,.docx,.xls,.xlsx"
+              disabled={uploading}
               onChange={handleFileSelect}
               className="sr-only"
               id="receipt-upload"

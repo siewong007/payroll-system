@@ -1,5 +1,6 @@
 mod approval_flow_tests;
 mod attendance_tests;
+mod audit_regression_tests;
 mod audit_tests;
 mod auth_audit_tests;
 mod backup_tests;

@@ -1,3 +1,4 @@
+import { triggerBlobDownload } from '@/lib/download';
 import api from './client';
 import type { Employee, LeaveType, LeaveBalance, LeaveRequest, MyPayslip, Holiday, TeamLeaveEntry, Team, OvertimeApplication, CreateOvertimeRequest } from '@/types';
 
@@ -97,37 +98,14 @@ export async function getPortalHolidays(year?: number): Promise<Holiday[]> {
   return data;
 }
 
-function isIosTouchDevice(): boolean {
-  if (typeof navigator === 'undefined') return false;
-  return (
-    /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) ||
-    Boolean((navigator as { standalone?: boolean }).standalone)
-  );
-}
-
-function triggerBlobDownload(data: BlobPart, filename: string, mimeType: string): void {
-  const blob = data instanceof Blob && data.type ? data : new Blob([data], { type: mimeType });
-  const url = window.URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.rel = 'noopener noreferrer';
-  const ios = isIosTouchDevice();
-  if (ios) {
-    a.target = '_blank';
-  }
-  a.style.display = 'none';
-  document.body?.appendChild(a);
-  a.click();
-  if (typeof a.remove === 'function') {
-    a.remove();
-  }
-  if (ios) {
-    window.setTimeout(() => window.URL.revokeObjectURL(url), 10_000);
-  } else {
-    window.URL.revokeObjectURL(url);
-  }
+export async function getPortalWorkingDays(
+  startDate: string,
+  endDate: string,
+): Promise<{ working_days: number }> {
+  const { data } = await api.get<{ working_days: number }>('/portal/working-days', {
+    params: { start_date: startDate, end_date: endDate },
+  });
+  return data;
 }
 
 // Payslip PDF Download

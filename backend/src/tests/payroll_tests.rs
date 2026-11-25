@@ -1112,6 +1112,7 @@ async fn payroll_reads_survive_an_employee_whose_only_overtime_is_null() {
         NaiveDate::from_ymd_opt(2024, 6, 1).unwrap(),
         NaiveDate::from_ymd_opt(2024, 6, 30).unwrap(),
         "Asia/Kuala_Lumpur",
+        Decimal::from(4),
     )
     .await
     .expect("an all-NULL overtime group must not fail the read");
@@ -2327,6 +2328,7 @@ async fn attendance_overtime_is_bucketed_by_day_type() {
         NaiveDate::from_ymd_opt(2024, 6, 1).unwrap(),
         NaiveDate::from_ymd_opt(2024, 6, 30).unwrap(),
         "Asia/Kuala_Lumpur",
+        Decimal::from(4),
     )
     .await
     .expect("bucketed read");

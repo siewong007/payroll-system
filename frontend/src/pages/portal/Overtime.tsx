@@ -75,7 +75,10 @@ export function Overtime() {
 
   const deleteMutation = useMutation({
     mutationFn: deleteOvertimeApplication,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['my-overtime'] }),
+    onSuccess: (_data, deletedId) => {
+      setSelectedOvertimeIds((prev) => prev.filter((id) => id !== deletedId));
+      queryClient.invalidateQueries({ queryKey: ['my-overtime'] });
+    },
   });
 
   // Partial failure is an outcome, not an exception: the refetch runs whatever
@@ -106,6 +109,7 @@ export function Overtime() {
   // deliberate input standing between an open modal and a submitted record.
   const resetForm = () => {
     setFormError('');
+    createMutation.reset();
     setForm({
       ot_date: '',
       start_time: OT_DEFAULT_START,

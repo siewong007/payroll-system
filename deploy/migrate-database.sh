@@ -86,6 +86,7 @@ load_compose_env() {
   . "$SECRETS_FILE"
   set +a
   export IMAGE_TAG="${IMAGE_TAG:-$(cat "$APP_DIR/current-tag" 2>/dev/null || printf 'compose-noop')}"
+  export TOTP_ENCRYPTION_KEY="${TOTP_ENCRYPTION_KEY:-compose-noop}"
 }
 
 # ---------------------------------------------------------------------------

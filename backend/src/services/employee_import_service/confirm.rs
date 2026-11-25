@@ -134,12 +134,11 @@ pub async fn confirm_import(
     req: ImportConfirmRequest,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<ImportConfirmResponse> {
-    confirm_import_inner(pool, company_id, user_id, req, audit_meta, None).await
+    confirm_import_inner(pool, company_id, user_id, req, audit_meta, None, None).await
 }
 
-/// `confirm_import` with an optional progress reporter — the job executor
-/// ticks once per attempted row and once per provisioning step, so a polled
-/// status shows a large import moving instead of sitting at 0 until done.
+/// `confirm_import` with an optional progress reporter and optional mailer context
+/// so provisioned portal accounts receive their initial welcome email post-commit.
 pub(crate) async fn confirm_import_inner(
     pool: &PgPool,
     company_id: Uuid,
@@ -147,6 +146,10 @@ pub(crate) async fn confirm_import_inner(
     req: ImportConfirmRequest,
     audit_meta: Option<&AuditRequestMeta>,
     progress: Option<&crate::services::job_service::JobProgress>,
+    mail_ctx: Option<(
+        &crate::services::email_service::SharedMailer,
+        &crate::core::config::AppConfig,
+    )>,
 ) -> AppResult<ImportConfirmResponse> {
     let session = bulk_import_sessions::get(pool, req.session_id)
         .await?
@@ -272,9 +275,6 @@ pub(crate) async fn confirm_import_inner(
         }
 
         processed_count += 1;
-        if let Some(p) = progress {
-            p.tick(processed_count).await;
-        }
     }
 
     // Claim the session inside the same transaction as the employees. Doing this
@@ -311,17 +311,22 @@ pub(crate) async fn confirm_import_inner(
 
     tx.commit().await?;
 
-    // Post-commit, best-effort, exactly like single-employee creation treats
-    // these steps: the employees exist either way, and each failure is
-    // reported per row instead of failing an import that already committed.
-    // `create_user_for_employee_fields` deliberately refuses to adopt foreign
-    // or privileged accounts, so re-importing over existing staff is inert.
-    // Phase two covers the provisioning loop: the denominator grows by the
-    // committed row count so progress stays monotonic across both phases.
+    // Report phase-one completion and extend total after committing so `progress.tick`
+    // never borrows a second pooled connection while `tx` is still open.
     if let Some(p) = progress {
         p.set_total(processed_count + to_provision.len() as i32)
             .await;
+        p.tick(processed_count).await;
     }
+
+    let company_name = if mail_ctx.is_some() && !to_provision.is_empty() {
+        crate::services::company_service::get_company(pool, company_id)
+            .await
+            .ok()
+            .map(|c| c.name)
+    } else {
+        None
+    };
 
     let current_year = chrono::Utc::now().year();
     let mut portal_accounts_created = 0usize;
@@ -349,7 +354,30 @@ pub(crate) async fn confirm_import_inner(
             )
             .await
             {
-                Ok(Some(_)) => portal_accounts_created += 1,
+                Ok(Some(info)) => {
+                    portal_accounts_created += 1;
+                    if info.created
+                        && let Some((mailer, config)) = mail_ctx
+                        && let Some(ref cname) = company_name
+                    {
+                        let default_pw = info
+                            .default_password
+                            .as_deref()
+                            .unwrap_or("(your IC number)");
+                        if let Err(err) = crate::services::email_service::send_welcome_email(
+                            mailer, config, pool, company_id, cname, *id, full_name, email,
+                            default_pw, user_id,
+                        )
+                        .await
+                        {
+                            tracing::error!(
+                                employee_id = %id,
+                                error = %err,
+                                "Failed to dispatch bulk-import welcome email"
+                            );
+                        }
+                    }
+                }
                 Ok(None) => {}
                 Err(e) => provisioning_warnings.push(format!(
                     "Row {row_number}: portal account not created: {}",

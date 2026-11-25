@@ -109,7 +109,7 @@ pub async fn update_full(
     hours: Option<Decimal>,
     ot_type: &str,
     reason: Option<String>,
-) -> AppResult<OvertimeApplication> {
+) -> AppResult<Option<OvertimeApplication>> {
     let updated = sqlx::query_as!(
         OvertimeApplication,
         r#"UPDATE overtime_applications
@@ -121,7 +121,7 @@ pub async fn update_full(
             ot_type = $8,
             reason = CASE WHEN $9::text IS NULL THEN reason ELSE NULLIF($9, '') END,
             updated_at = NOW()
-        WHERE id = $1 AND company_id = $2
+        WHERE id = $1 AND company_id = $2 AND status = 'pending'
         RETURNING *"#,
         ot_id,
         company_id,
@@ -133,7 +133,7 @@ pub async fn update_full(
         ot_type,
         reason,
     )
-    .fetch_one(executor)
+    .fetch_optional(executor)
     .await?;
     Ok(updated)
 }
@@ -142,32 +142,33 @@ pub async fn delete(
     executor: impl Executor<'_, Database = Postgres>,
     ot_id: Uuid,
     company_id: Uuid,
-) -> AppResult<()> {
-    sqlx::query!(
-        "DELETE FROM overtime_applications WHERE id = $1 AND company_id = $2",
+) -> AppResult<u64> {
+    let res = sqlx::query!(
+        "DELETE FROM overtime_applications WHERE id = $1 AND company_id = $2 AND status = 'cancelled'",
         ot_id,
         company_id,
     )
     .execute(executor)
     .await?;
-    Ok(())
+    Ok(res.rows_affected())
 }
 
 pub async fn set_cancelled(
     executor: impl Executor<'_, Database = Postgres>,
     ot_id: Uuid,
     company_id: Uuid,
-) -> AppResult<OvertimeApplication> {
+) -> AppResult<Option<OvertimeApplication>> {
     let cancelled = sqlx::query_as!(
         OvertimeApplication,
         r#"UPDATE overtime_applications
         SET status = 'cancelled', updated_at = NOW()
         WHERE id = $1 AND company_id = $2
+          AND status IN ('pending', 'approved', 'rejected')
         RETURNING *"#,
         ot_id,
         company_id,
     )
-    .fetch_one(executor)
+    .fetch_optional(executor)
     .await?;
     Ok(cancelled)
 }
@@ -264,14 +265,17 @@ pub async fn get_cancellable_for_employee(
 pub async fn mark_cancelled_for_employee(
     executor: impl Executor<'_, Database = Postgres>,
     ot_id: Uuid,
-) -> AppResult<()> {
-    sqlx::query!(
-        "UPDATE overtime_applications SET status = 'cancelled', updated_at = NOW() WHERE id = $1",
+    employee_id: Uuid,
+) -> AppResult<bool> {
+    let res = sqlx::query!(
+        "UPDATE overtime_applications SET status = 'cancelled', updated_at = NOW()
+         WHERE id = $1 AND employee_id = $2 AND status IN ('pending', 'approved', 'rejected')",
         ot_id,
+        employee_id,
     )
     .execute(executor)
     .await?;
-    Ok(())
+    Ok(res.rows_affected() > 0)
 }
 
 pub async fn delete_cancelled_for_employee(

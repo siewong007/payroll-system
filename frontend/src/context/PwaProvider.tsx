@@ -24,7 +24,6 @@ import {
   requestNotificationPermission,
   showLocalNotification,
   subscribeInstallPrompt,
-  subscribeToPushIfConfigured,
   type NotificationStatus,
 } from '@/lib/pwa';
 import { toast } from '@/lib/toast';
@@ -173,7 +172,6 @@ export function PwaProvider({ children }: { children: ReactNode }) {
         const registration = await registerServiceWorker();
         if (registration) {
           setSwReady(true);
-          void subscribeToPushIfConfigured(registration);
         }
         toast.success(t('pwa.notifications.enabledToast'));
         await showLocalNotification(t('pwa.notifications.welcomeTitle'), {

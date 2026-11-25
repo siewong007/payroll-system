@@ -1,4 +1,5 @@
 import api from './client';
+import { triggerBlobDownload } from '@/lib/download';
 import type {
   AuditLog,
   BackgroundJob,
@@ -119,12 +120,7 @@ export async function lockPayroll(id: string): Promise<PayrollRun> {
 
 export async function downloadRunPayslips(runId: string): Promise<void> {
   const res = await api.get(`/payroll/runs/${runId}/payslips/pdf`, { responseType: 'blob' });
-  const url = window.URL.createObjectURL(new Blob([res.data]));
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `payslips_${runId}.pdf`;
-  a.click();
-  window.URL.revokeObjectURL(url);
+  triggerBlobDownload(res.data, `payslips_${runId}.pdf`);
 }
 
 /// Operational dashboard payload: committed period totals, pipeline, variance,
@@ -144,12 +140,7 @@ export async function cancelPayrollRun(id: string, reason: string): Promise<Payr
 /// Bank payment file (CSV) for an approved/paid run — finance-facing.
 export async function downloadPaymentFile(runId: string): Promise<void> {
   const res = await api.get(`/payroll/runs/${runId}/payment-file`, { responseType: 'blob' });
-  const url = window.URL.createObjectURL(new Blob([res.data]));
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `payment_file_${runId}.csv`;
-  a.click();
-  window.URL.revokeObjectURL(url);
+  triggerBlobDownload(res.data, `payment_file_${runId}.csv`);
 }
 
 /// Balanced journal preview for an approved/paid run. Writes nothing.

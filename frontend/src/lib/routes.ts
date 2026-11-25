@@ -39,6 +39,7 @@ export const ROUTES = {
   AUDIT_TRAIL: '/audit-trail',
   ATTENDANCE: '/attendance',
   ADMIN_ATTENDANCE_SETTINGS: '/admin/attendance-settings',
+  ADMIN_PLATFORM: '/admin/platform',
   MY_ATTENDANCE: '/my/attendance',
   PORTAL: '/portal',
   PORTAL_PROFILE: '/portal/profile',

@@ -75,7 +75,7 @@ pub async fn employee_email_info(
 ) -> AppResult<Option<EmployeeEmailInfo>> {
     let info = sqlx::query_as!(
         EmployeeEmailInfo,
-        r#"SELECT e.full_name, e.email AS "email!", COALESCE(c.name, '') AS "company_name!"
+        r#"SELECT e.full_name, e.email, COALESCE(c.name, '') AS "company_name!"
         FROM employees e
         JOIN companies c ON e.company_id = c.id
         WHERE e.id = $1"#,
@@ -121,8 +121,8 @@ pub async fn list_pending_overtime(
 ) -> AppResult<Vec<OvertimeWithEmployee>> {
     let apps = sqlx::query_as::<_, OvertimeWithEmployee>(
         r#"SELECT oa.*,
-            e.full_name AS "employee_name?",
-            e.employee_number AS "employee_number?"
+            e.full_name AS employee_name,
+            e.employee_number AS employee_number
         FROM overtime_applications oa
         JOIN employees e ON oa.employee_id = e.id
         WHERE oa.company_id = $1
@@ -191,8 +191,8 @@ pub async fn list_pending_claims(
 ) -> AppResult<Vec<ClaimWithEmployee>> {
     let claims = sqlx::query_as::<_, ClaimWithEmployee>(
         r#"SELECT c.*,
-            e.full_name AS "employee_name?",
-            e.employee_number AS "employee_number?"
+            e.full_name AS employee_name,
+            e.employee_number AS employee_number
         FROM claims c
         JOIN employees e ON c.employee_id = e.id
         WHERE c.company_id = $1

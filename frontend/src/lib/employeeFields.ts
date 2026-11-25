@@ -1,4 +1,4 @@
-import type { CreateEmployeeRequest } from '@/types';
+import type { UpdateEmployeeRequest } from '@/types';
 
 /**
  * Fields the API classifies as payroll-sensitive — mirrors
@@ -18,20 +18,27 @@ import type { CreateEmployeeRequest } from '@/types';
  */
 export const PAYROLL_SENSITIVE_EMPLOYEE_FIELDS = [
   'basic_salary',
+  'hourly_rate',
+  'daily_rate',
   'bank_name',
   'bank_account_number',
+  'bank_account_type',
   'tax_identification_number',
   'epf_number',
   'socso_number',
   'eis_number',
   'working_spouse',
   'epf_category',
+  'clear_epf_category',
   'is_muslim',
   'zakat_eligible',
   'zakat_monthly_amount',
   'ptptn_monthly_amount',
+  'tabung_haji_amount',
+  'hrdf_contribution',
   'payroll_group_id',
-] as const satisfies readonly (keyof CreateEmployeeRequest)[];
+  'salary_group',
+] as const satisfies readonly (keyof UpdateEmployeeRequest)[];
 
 /**
  * Drop every payroll-sensitive key from a form payload. The keys are *deleted*
@@ -42,7 +49,9 @@ export const PAYROLL_SENSITIVE_EMPLOYEE_FIELDS = [
  * `COALESCE($n, column)`, so a field left out keeps its stored value and an
  * HR-only save can no longer clobber banking.
  */
-export function stripPayrollFields<T extends Partial<CreateEmployeeRequest>>(form: T): Partial<T> {
+export function stripPayrollFields<T extends Partial<UpdateEmployeeRequest>>(
+  form: T,
+): Partial<T> {
   const safe: Partial<T> = { ...form };
   for (const field of PAYROLL_SENSITIVE_EMPLOYEE_FIELDS) {
     delete safe[field as keyof T];

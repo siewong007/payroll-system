@@ -133,6 +133,77 @@ pub async fn ensure_upload_belongs_to_company(
     Ok(())
 }
 
+/// Build an [`UploadAccess`] capability summary from an authenticated user.
+pub fn access_from_auth(auth: &crate::core::auth::AuthUser, company_id: Uuid) -> UploadAccess {
+    use crate::core::auth::Permission;
+    UploadAccess {
+        company_id,
+        user_id: auth.0.sub,
+        employee_id: auth.0.employee_id,
+        can_view_approvals: auth.can(Permission::ViewApprovals),
+        can_view_documents: auth.can(Permission::ViewDocuments),
+        can_view_confidential: auth.can(Permission::ManageEmployees)
+            || auth.is_payroll_privileged(),
+    }
+}
+
+/// Verify that `access` may bind `file_url` onto a new or edited record.
+///
+/// Prevents same-company IDOR (binding another user's unreferenced upload or an
+/// inaccessible/confidential record's upload to gain read permission via
+/// `find_references` OR-semantics) as well as cross-tenant attachment.
+pub async fn ensure_upload_attach_authorized(
+    pool: &PgPool,
+    access: &UploadAccess,
+    file_url: Option<&str>,
+    target_allows_confidential: bool,
+) -> AppResult<()> {
+    let Some(url) = file_url.filter(|u| !u.is_empty()) else {
+        return Ok(());
+    };
+    let Some(stored_name) = url.strip_prefix(upload_path::UPLOAD_URL_PREFIX) else {
+        return Ok(());
+    };
+    upload_path::sanitize_stored_name(stored_name)?;
+
+    let Some(owner) = uploaded_files::find_by_stored_name(pool, stored_name).await? else {
+        return Ok(());
+    };
+    if owner.company_id != access.company_id {
+        return Err(AppError::BadRequest("Invalid file URL".into()));
+    }
+
+    let full_url = format!("{}{}", upload_path::UPLOAD_URL_PREFIX, stored_name);
+    let references = uploads::find_references(pool, access.company_id, &full_url).await?;
+    if references.is_empty() {
+        if owner.uploaded_by == Some(access.user_id) {
+            return Ok(());
+        }
+        return Err(AppError::BadRequest("Invalid file URL".into()));
+    }
+
+    if references.iter().any(|r| r.is_confidential) && !target_allows_confidential {
+        return Err(AppError::BadRequest("Invalid file URL".into()));
+    }
+    if references.iter().all(|r| permits(access, r)) {
+        Ok(())
+    } else {
+        Err(AppError::BadRequest("Invalid file URL".into()))
+    }
+}
+
+/// Remove unreferenced uploaded blobs older than `min_age_hours` from DB and disk.
+pub async fn purge_unreferenced_uploads(pool: &PgPool, min_age_hours: i32) -> AppResult<u64> {
+    let removed = uploaded_files::purge_unreferenced_older_than_hours(pool, min_age_hours).await?;
+    let count = removed.len() as u64;
+    for stored_name in removed {
+        if let Ok(path) = upload_path::stored_path(&stored_name) {
+            let _ = tokio::fs::remove_file(&path).await;
+        }
+    }
+    Ok(count)
+}
+
 /// Reads an uploaded file, or fails as though it did not exist.
 ///
 /// Every denial is a 404, never a 403: a 403 would confirm that a filename is

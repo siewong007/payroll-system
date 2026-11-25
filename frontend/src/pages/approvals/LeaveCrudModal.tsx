@@ -43,6 +43,10 @@ export function LeaveCrudModal({
   const { t } = useTranslation();
   const formId = useId();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const latestLeaveTypesRef = useRef<LeaveType[]>(leaveTypes);
+  useEffect(() => {
+    latestLeaveTypesRef.current = leaveTypes;
+  }, [leaveTypes]);
   const [form, setForm] = useState<AdminCreateLeaveRequest>({
     employee_id: '',
     leave_type_id: '',
@@ -53,6 +57,7 @@ export function LeaveCrudModal({
     attachment_url: '',
     attachment_name: '',
   });
+  const [daysInput, setDaysInput] = useState('1');
   const [error, setError] = useState('');
   const [uploading, setUploading] = useState(false);
   const modalTitle = item
@@ -75,6 +80,7 @@ export function LeaveCrudModal({
         attachment_url: item.attachment_url || '',
         attachment_name: item.attachment_name || '',
       });
+      setDaysInput(String(Number(item.days)));
       setError('');
       return;
     }
@@ -83,7 +89,7 @@ export function LeaveCrudModal({
     // file a request against, and the submit guard already demands a choice.
     setForm({
       employee_id: '',
-      leave_type_id: leaveTypes[0]?.id || '',
+      leave_type_id: latestLeaveTypesRef.current[0]?.id || '',
       start_date: '',
       end_date: '',
       days: 1,
@@ -91,8 +97,15 @@ export function LeaveCrudModal({
       attachment_url: '',
       attachment_name: '',
     });
+    setDaysInput('1');
     setError('');
-  }, [item, leaveTypes, open]);
+  }, [item, open]);
+
+  useEffect(() => {
+    if (!item && open && !form.leave_type_id && leaveTypes[0]?.id) {
+      setForm((prev) => (prev.leave_type_id ? prev : { ...prev, leave_type_id: leaveTypes[0].id }));
+    }
+  }, [form.leave_type_id, item, leaveTypes, open]);
 
   const createMutation = useMutation({
     mutationFn: createLeaveRequest,
@@ -113,6 +126,7 @@ export function LeaveCrudModal({
       const computed = inclusiveDaysBetween(next.start_date, next.end_date);
       if (computed !== null) {
         next.days = computed;
+        setDaysInput(String(computed));
       }
       return next;
     });
@@ -140,13 +154,14 @@ export function LeaveCrudModal({
   };
 
   const submit = () => {
+    const parsedDays = daysInput.trim() ? Number(daysInput) : NaN;
     if (
       !form.employee_id ||
       !form.leave_type_id ||
       !form.start_date ||
       !form.end_date ||
-      !Number.isFinite(form.days) ||
-      form.days <= 0
+      !Number.isFinite(parsedDays) ||
+      parsedDays <= 0
     ) {
       setError(t('approvals.leaveRequired'));
       return;
@@ -160,6 +175,8 @@ export function LeaveCrudModal({
     const trimmedReason = form.reason?.trim() || '';
 
     if (item) {
+      const attachmentUrl = !form.attachment_url && !item.attachment_url ? undefined : form.attachment_url;
+      const attachmentName = !form.attachment_name && !item.attachment_name ? undefined : form.attachment_name;
       updateMutation.mutate({
         id: item.id,
         payload: {
@@ -167,10 +184,10 @@ export function LeaveCrudModal({
           leave_type_id: form.leave_type_id,
           start_date: form.start_date,
           end_date: form.end_date,
-          days: form.days,
+          days: parsedDays,
           reason: trimmedReason,
-          attachment_url: form.attachment_url,
-          attachment_name: form.attachment_name,
+          attachment_url: attachmentUrl,
+          attachment_name: attachmentName,
         },
       });
       return;
@@ -178,6 +195,7 @@ export function LeaveCrudModal({
 
     createMutation.mutate({
       ...form,
+      days: parsedDays,
       reason: trimmedReason || undefined,
       attachment_url: form.attachment_url || undefined,
       attachment_name: form.attachment_name || undefined,
@@ -295,10 +313,12 @@ export function LeaveCrudModal({
               type="number"
               min="0.5"
               step="0.5"
-              value={form.days}
-              onChange={(event) =>
-                setForm((prev) => ({ ...prev, days: Number(event.target.value) }))
-              }
+              value={daysInput}
+              onChange={(event) => {
+                const raw = event.target.value;
+                setDaysInput(raw);
+                setForm((prev) => ({ ...prev, days: raw.trim() ? Number(raw) : 0 }));
+              }}
               className="form-input"
               required
             />

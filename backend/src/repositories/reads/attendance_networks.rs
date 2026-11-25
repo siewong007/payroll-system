@@ -23,27 +23,26 @@ pub async fn list_candidates(
 ) -> AppResult<Vec<NetworkCandidate>> {
     let rows = sqlx::query_as!(
         NetworkCandidate,
-        r#"SELECT o.network                          AS "network!",
-                  o.prefix_len                       AS "prefix_len!",
-                  COUNT(DISTINCT o.employee_id)      AS "distinct_employees!",
-                  SUM(o.observation_count)::bigint   AS "observation_count!",
-                  SUM(o.anchored_count)::bigint      AS "anchored_count!",
-                  SUM(o.denied_count)::bigint        AS "denied_count!",
-                  MIN(o.first_seen_at)               AS "first_seen_at!",
-                  MAX(o.last_seen_at)                AS "last_seen_at!"
+        r#"SELECT o.network                                                           AS "network!",
+                  o.prefix_len                                                        AS "prefix_len!",
+                  COUNT(DISTINCT o.employee_id) FILTER (WHERE o.observation_count > 0) AS "distinct_employees!",
+                  COUNT(DISTINCT o.employee_id) FILTER (WHERE o.anchored_count > 0)    AS "anchored_employees!",
+                  SUM(o.observation_count)::bigint                                    AS "observation_count!",
+                  SUM(o.anchored_count)::bigint                                       AS "anchored_count!",
+                  SUM(o.denied_count)::bigint                                         AS "denied_count!",
+                  MIN(o.first_seen_at)                                                AS "first_seen_at!",
+                  MAX(o.last_seen_at)                                                 AS "last_seen_at!"
            FROM attendance_network_observations o
            WHERE o.company_id = $1
              AND NOT EXISTS (
                  SELECT 1 FROM company_networks n
                  WHERE n.company_id = o.company_id
-                   AND n.network = o.network
-                   AND n.prefix_len = o.prefix_len
+                   AND ((o.network || '/' || o.prefix_len)::cidr <<= (n.network || '/' || n.prefix_len)::cidr)
              )
              AND NOT EXISTS (
                  SELECT 1 FROM attendance_network_dismissals d
                  WHERE d.company_id = o.company_id
-                   AND d.network = o.network
-                   AND d.prefix_len = o.prefix_len
+                   AND ((o.network || '/' || o.prefix_len)::cidr <<= (d.network || '/' || d.prefix_len)::cidr)
                    AND d.expires_at > NOW()
              )
            GROUP BY o.network, o.prefix_len
@@ -72,10 +71,11 @@ pub async fn get_candidate(
 ) -> AppResult<Option<NetworkCandidate>> {
     let row = sqlx::query_as!(
         NetworkCandidate,
-        r#"SELECT o.network                          AS "network!",
-                  o.prefix_len                       AS "prefix_len!",
-                  COUNT(DISTINCT o.employee_id)      AS "distinct_employees!",
-                  SUM(o.observation_count)::bigint   AS "observation_count!",
+        r#"SELECT o.network                                                           AS "network!",
+                  o.prefix_len                                                        AS "prefix_len!",
+                  COUNT(DISTINCT o.employee_id) FILTER (WHERE o.observation_count > 0) AS "distinct_employees!",
+                  COUNT(DISTINCT o.employee_id) FILTER (WHERE o.anchored_count > 0)    AS "anchored_employees!",
+                  SUM(o.observation_count)::bigint                                    AS "observation_count!",
                   SUM(o.anchored_count)::bigint      AS "anchored_count!",
                   SUM(o.denied_count)::bigint        AS "denied_count!",
                   MIN(o.first_seen_at)               AS "first_seen_at!",

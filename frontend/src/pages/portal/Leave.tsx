@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation, Trans } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, ArrowLeft, Paperclip, ExternalLink, X, Calendar, AlertTriangle, Download, Trash2 } from 'lucide-react';
-import { getLeaveBalances, getLeaveRequests, getLeaveTypes, createLeaveRequest, cancelLeaveRequest, deleteLeaveRequest, uploadFile, getMyProfile, exportLeaveIcs, getPortalHolidays } from '@/api/portal';
+import { getLeaveBalances, getLeaveRequests, getLeaveTypes, createLeaveRequest, cancelLeaveRequest, deleteLeaveRequest, uploadFile, getMyProfile, exportLeaveIcs, getPortalHolidays, getPortalWorkingDays } from '@/api/portal';
 import { runBulk, summarizeBulkFailure } from '@/lib/bulk';
 import { formatDate, getErrorMessage } from '@/lib/utils';
 import { AttachmentLink, AttachmentPreview } from '@/components/ui/AttachmentPreview';
@@ -195,7 +195,12 @@ export function Leave() {
     queryFn: getLeaveRequests,
   });
 
-  const { data: leaveTypes } = useQuery({
+  const {
+    data: leaveTypes,
+    isLoading: loadingLeaveTypes,
+    isError: leaveTypesError,
+    refetch: refetchLeaveTypes,
+  } = useQuery({
     queryKey: ['leave-types'],
     queryFn: getLeaveTypes,
   });
@@ -210,7 +215,8 @@ export function Leave() {
 
   const deleteMutation = useMutation({
     mutationFn: deleteLeaveRequest,
-    onSuccess: () => {
+    onSuccess: (_data, deletedId) => {
+      setSelectedLeaveIds((prev) => prev.filter((id) => id !== deletedId));
       queryClient.invalidateQueries({ queryKey: ['leave-requests'] });
       queryClient.invalidateQueries({ queryKey: ['leave-balances'] });
     },
@@ -260,7 +266,42 @@ export function Leave() {
     );
   }
 
-  if (showApply && leaveTypes) {
+  if (showApply) {
+    if (loadingLeaveTypes) {
+      return (
+        <div className="space-y-6">
+          <button type="button" onClick={() => setShowApply(false)} aria-label={t('common.goBack')} className="btn-secondary !px-3 !py-2">
+            <ArrowLeft className="w-4 h-4" />
+          </button>
+          <div className="flex items-center justify-center h-64">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 dark:border-slate-200" />
+          </div>
+        </div>
+      );
+    }
+    if (leaveTypesError || !leaveTypes) {
+      return (
+        <div className="space-y-6">
+          <div className="flex items-center gap-4">
+            <button type="button" onClick={() => setShowApply(false)} aria-label={t('common.goBack')} className="btn-secondary !px-3 !py-2">
+              <ArrowLeft className="w-4 h-4" />
+            </button>
+            <h1 className="page-title">{t('portal.leave.apply')}</h1>
+          </div>
+          <div role="alert" className="card space-y-4 border-red-200 dark:border-red-500/30">
+            <p className="text-sm text-red-700 dark:text-red-300">{t('portal.leave.typesLoadFailed')}</p>
+            <div className="flex gap-2">
+              <button type="button" onClick={() => void refetchLeaveTypes()} className="btn-primary text-xs">
+                {t('common.retry')}
+              </button>
+              <button type="button" onClick={() => setShowApply(false)} className="btn-secondary text-xs">
+                {t('common.goBack')}
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
     return (
       <ApplyLeaveForm
         leaveTypes={leaveTypes}
@@ -587,10 +628,12 @@ function ApplyLeaveForm({
     attachment_name: '',
   });
   const [halfDay, setHalfDay] = useState(false);
+  const [daysManuallyEdited, setDaysManuallyEdited] = useState(false);
   const [attachmentFile, setAttachmentFile] = useState<File | null>(null);
   const [attachmentPreview, setAttachmentPreview] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const startYear = form.start_date ? parseLocalDate(form.start_date).getFullYear() : new Date().getFullYear();
   const endYear = form.end_date ? parseLocalDate(form.end_date).getFullYear() : startYear;
@@ -616,6 +659,33 @@ function ApplyLeaveForm({
     () => countWorkingDaysBetween(form.start_date, form.end_date, holidayDates),
     [form.start_date, form.end_date, holidayDates],
   );
+
+  const validDateRange = Boolean(
+    form.start_date &&
+      form.end_date &&
+      parseLocalDate(form.end_date) >= parseLocalDate(form.start_date),
+  );
+
+  const { data: serverWorkingDays } = useQuery({
+    queryKey: ['portal-working-days', form.start_date, form.end_date],
+    queryFn: () => getPortalWorkingDays(form.start_date, form.end_date),
+    enabled: validDateRange,
+  });
+
+  const effectiveWorkingDays = serverWorkingDays?.working_days ?? calculatedWorkingDays;
+
+  useEffect(() => {
+    if (!validDateRange) return;
+    if (effectiveWorkingDays !== 1) {
+      setHalfDay(false);
+    }
+    if (!daysManuallyEdited) {
+      setForm((prev) => ({
+        ...prev,
+        days: effectiveWorkingDays > 0 ? (effectiveWorkingDays === 1 && halfDay ? 0.5 : effectiveWorkingDays) : 0,
+      }));
+    }
+  }, [validDateRange, effectiveWorkingDays, halfDay, daysManuallyEdited]);
 
   useEffect(() => {
     return () => {
@@ -674,6 +744,7 @@ function ApplyLeaveForm({
   });
 
   const syncDatesAndDays = (start: string, end: string) => {
+    setDaysManuallyEdited(false);
     const working = countWorkingDaysBetween(start, end, holidayDates);
     if (working !== 1) {
       setHalfDay(false);
@@ -682,12 +753,13 @@ function ApplyLeaveForm({
       ...prev,
       start_date: start,
       end_date: end,
-      days: working > 0 ? (working === 1 && halfDay ? 0.5 : working) : prev.days,
+      days: working > 0 ? (working === 1 && halfDay ? 0.5 : working) : 0,
     }));
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.currentTarget.value = '';
     if (file) {
       if (attachmentPreview) URL.revokeObjectURL(attachmentPreview);
       setAttachmentFile(file);
@@ -701,6 +773,7 @@ function ApplyLeaveForm({
     if (!form.leave_type_id) { setError(t('portal.leave.typeRequired')); return; }
     if (!form.start_date || !form.end_date) { setError(t('portal.leave.datesRequired')); return; }
     if (parseLocalDate(form.end_date) < parseLocalDate(form.start_date)) { setError(t('portal.leave.endAfterStart')); return; }
+    if (effectiveWorkingDays === 0 && !daysManuallyEdited) { setError(t('portal.leave.noWorkingDays')); return; }
     if (form.days <= 0) { setError(t('portal.leave.daysPositive')); return; }
     mutation.mutate(form);
   };
@@ -800,17 +873,18 @@ function ApplyLeaveForm({
                   value={form.days}
                   onChange={(e) => {
                     const v = Number(e.target.value);
-                    setHalfDay(v === 0.5 && calculatedWorkingDays === 1);
+                    setDaysManuallyEdited(true);
+                    setHalfDay(v === 0.5 && effectiveWorkingDays === 1);
                     setForm((prev) => ({ ...prev, days: v }));
                   }}
                   className="form-input"
                 />
               </div>
             </div>
-            {form.start_date && form.end_date && parseLocalDate(form.end_date) >= parseLocalDate(form.start_date) && (
+            {validDateRange && (
               <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-gray-500 dark:text-slate-400">
-                <span>{t('portal.leave.workingDaysHint', { count: calculatedWorkingDays })}</span>
-                {calculatedWorkingDays === 1 && (
+                <span>{t('portal.leave.workingDaysHint', { count: effectiveWorkingDays })}</span>
+                {effectiveWorkingDays === 1 && (
                   <label className="inline-flex items-center gap-2 font-medium text-gray-700 dark:text-slate-200 cursor-pointer">
                     <input
                       type="checkbox"
@@ -853,13 +927,14 @@ function ApplyLeaveForm({
                 <label className="min-h-10 flex items-center gap-2 px-4 py-2.5 bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg text-sm text-gray-600 dark:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-700 cursor-pointer transition-all-fast focus-within:ring-2 focus-within:ring-teal-500/40">
                   <Paperclip className="w-4 h-4 shrink-0" />
                   <span className="truncate max-w-[220px]">{form.attachment_name || t('common.chooseFile')}</span>
-                  <input id="leave-attachment" type="file" onChange={handleFileChange} accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" className="sr-only" />
+                  <input ref={fileInputRef} id="leave-attachment" type="file" onChange={handleFileChange} accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" className="sr-only" />
                 </label>
                 {form.attachment_name && (
                   <button
                     type="button"
                     aria-label={t('common.removeFile')}
                     onClick={() => {
+                      if (fileInputRef.current) fileInputRef.current.value = '';
                       setForm((prev) => ({ ...prev, attachment_url: '', attachment_name: '' }));
                       setAttachmentFile(null);
                       if (attachmentPreview) {

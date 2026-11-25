@@ -159,16 +159,16 @@ pub async fn mark_failed_not_configured(
 pub async fn mark_sent(
     executor: impl Executor<'_, Database = Postgres>,
     id: Uuid,
-) -> AppResult<EmailLog> {
+) -> AppResult<Option<EmailLog>> {
     let log = sqlx::query_as!(
         EmailLog,
         r#"UPDATE email_logs
            SET status = 'sent', sent_at = NOW(), error_message = NULL,
                next_retry_at = NULL, attempts = GREATEST(attempts, 1)
-           WHERE id = $1 RETURNING *"#,
+           WHERE id = $1 AND status = 'pending' RETURNING *"#,
         id,
     )
-    .fetch_one(executor)
+    .fetch_optional(executor)
     .await?;
     Ok(log)
 }
@@ -180,18 +180,18 @@ pub async fn schedule_retry(
     attempts: i32,
     next_retry_at: DateTime<Utc>,
     error_message: &str,
-) -> AppResult<EmailLog> {
+) -> AppResult<Option<EmailLog>> {
     let log = sqlx::query_as!(
         EmailLog,
         r#"UPDATE email_logs
            SET status = 'pending', attempts = $2, next_retry_at = $3, error_message = $4
-           WHERE id = $1 RETURNING *"#,
+           WHERE id = $1 AND status = 'pending' RETURNING *"#,
         id,
         attempts,
         next_retry_at,
         error_message,
     )
-    .fetch_one(executor)
+    .fetch_optional(executor)
     .await?;
     Ok(log)
 }
@@ -201,16 +201,16 @@ pub async fn mark_failed(
     executor: impl Executor<'_, Database = Postgres>,
     id: Uuid,
     error_message: &str,
-) -> AppResult<EmailLog> {
+) -> AppResult<Option<EmailLog>> {
     let log = sqlx::query_as!(
         EmailLog,
         r#"UPDATE email_logs
            SET status = 'failed', error_message = $2, next_retry_at = NULL
-           WHERE id = $1 RETURNING *"#,
+           WHERE id = $1 AND status = 'pending' RETURNING *"#,
         id,
         error_message,
     )
-    .fetch_one(executor)
+    .fetch_optional(executor)
     .await?;
     Ok(log)
 }
@@ -221,6 +221,20 @@ pub async fn mark_failed(
 /// double-send.
 pub async fn claim_due_outbox(pool: &PgPool, limit: i64) -> AppResult<Vec<EmailLog>> {
     let mut tx = pool.begin().await?;
+    // Any row whose final-attempt worker crashed before recording completion
+    // must not stay stuck in 'pending' forever.
+    sqlx::query!(
+        r#"UPDATE email_logs
+           SET status = 'failed',
+               next_retry_at = NULL,
+               error_message = COALESCE(error_message, 'Delivery worker lease expired on final attempt')
+           WHERE status = 'pending'
+             AND next_retry_at IS NOT NULL
+             AND next_retry_at <= NOW()
+             AND attempts >= max_attempts"#
+    )
+    .execute(&mut *tx)
+    .await?;
     let rows = sqlx::query_as!(
         EmailLog,
         r#"WITH claimed AS (

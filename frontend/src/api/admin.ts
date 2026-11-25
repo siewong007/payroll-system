@@ -30,6 +30,7 @@ export const listUsers = (params: ListUsersParams = {}) =>
   api.get<PaginatedResponse<UserWithCompanies>>('/admin/users', {
     params: {
       company_id: params.companyId,
+      role: params.role || undefined,
       search: params.search?.trim() || undefined,
       page: params.page,
       per_page: params.perPage,

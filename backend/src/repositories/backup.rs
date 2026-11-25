@@ -47,8 +47,8 @@ pub async fn company_work_schedules(
 ) -> AppResult<Vec<CompanyWorkScheduleExport>> {
     let rows = sqlx::query_as!(
         CompanyWorkScheduleExport,
-        r#"SELECT id, company_id, name, start_time, end_time, grace_minutes, half_day_hours,
-                  timezone, is_default, created_at, updated_at
+        r#"SELECT id, company_id, name, start_time, end_time, grace_minutes, unpaid_break_minutes,
+                  half_day_hours, timezone, is_default, created_at, updated_at
            FROM company_work_schedules WHERE company_id = $1 ORDER BY id"#,
         company_id,
     )
@@ -180,6 +180,7 @@ pub async fn leave_types(
     let rows = sqlx::query_as!(
         LeaveTypeExport,
         r#"SELECT id, company_id, name, description, default_days, is_paid, is_active,
+                  max_carry_forward, carry_forward_expiry_months, is_system,
                   created_at, updated_at
            FROM leave_types WHERE company_id = $1 ORDER BY id"#,
         company_id,
@@ -233,7 +234,7 @@ pub async fn claims(
         ClaimExport,
         r#"SELECT id, employee_id, company_id, title, description, amount, category,
                   receipt_url, receipt_file_name, expense_date, status,
-                  submitted_at, review_notes, created_at, updated_at
+                  submitted_at, payroll_run_id, review_notes, created_at, updated_at
            FROM claims WHERE company_id = $1 ORDER BY id"#,
         company_id,
     )
@@ -271,7 +272,7 @@ pub async fn payroll_runs(
                   total_socso_employee, total_socso_employer,
                   total_eis_employee, total_eis_employer,
                   total_pcb, total_zakat, employee_count, version, notes,
-                  created_at, updated_at
+                  cancelled_at, cancel_reason, created_at, updated_at
            FROM payroll_runs WHERE company_id = $1 ORDER BY id"#,
         company_id,
     )
@@ -287,7 +288,7 @@ pub async fn payroll_items(
     let rows = sqlx::query_as!(
         PayrollItemExport,
         r#"SELECT pi.id, pi.payroll_run_id, pi.employee_id,
-                  pi.basic_salary, pi.gross_salary, pi.total_allowances, pi.total_overtime,
+                  pi.basic_salary, pi.gross_salary, pi.taxable_gross, pi.total_allowances, pi.total_overtime,
                   pi.total_bonus, pi.total_commission, pi.total_claims,
                   pi.epf_employee, pi.epf_employer, pi.socso_employee, pi.socso_employer,
                   pi.eis_employee, pi.eis_employer, pi.pcb_amount, pi.zakat_amount,
@@ -652,14 +653,15 @@ pub async fn insert_company_work_schedule(
 ) -> AppResult<()> {
     sqlx::query!(
         r#"INSERT INTO company_work_schedules (id, company_id, name, start_time, end_time,
-               grace_minutes, half_day_hours, timezone, is_default, created_at, updated_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"#,
+               grace_minutes, unpaid_break_minutes, half_day_hours, timezone, is_default, created_at, updated_at)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)"#,
         id,
         company_id,
         ws.name,
         ws.start_time,
         ws.end_time,
         ws.grace_minutes,
+        ws.unpaid_break_minutes,
         ws.half_day_hours,
         ws.timezone,
         ws.is_default,
@@ -921,7 +923,7 @@ pub async fn insert_salary_history(
         s.reason,
         s.change_type,
         s.notes,
-        s.approved_by,
+        None::<Uuid>,
         s.approved_at,
         s.created_at,
     )
@@ -967,8 +969,8 @@ pub async fn insert_leave_type(
 ) -> AppResult<()> {
     sqlx::query!(
         r#"INSERT INTO leave_types (id, company_id, name, description, default_days, is_paid, is_active,
-               created_at, updated_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)"#,
+               max_carry_forward, carry_forward_expiry_months, is_system, created_at, updated_at)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)"#,
         id,
         company_id,
         lt.name,
@@ -976,6 +978,9 @@ pub async fn insert_leave_type(
         lt.default_days,
         lt.is_paid,
         lt.is_active,
+        lt.max_carry_forward,
+        lt.carry_forward_expiry_months,
+        lt.is_system,
         lt.created_at,
         lt.updated_at,
     )
@@ -1049,13 +1054,14 @@ pub async fn insert_claim(
     id: Uuid,
     employee_id: Uuid,
     company_id: Uuid,
+    payroll_run_id: Option<Uuid>,
     cl: &ClaimExport,
 ) -> AppResult<()> {
     sqlx::query!(
         r#"INSERT INTO claims (id, employee_id, company_id, title, description, amount, category,
-               receipt_url, receipt_file_name, expense_date, status, submitted_at,
+               receipt_url, receipt_file_name, expense_date, status, submitted_at, payroll_run_id,
                review_notes, created_at, updated_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)"#,
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)"#,
         id,
         employee_id,
         company_id,
@@ -1068,6 +1074,7 @@ pub async fn insert_claim(
         cl.expense_date,
         cl.status,
         cl.submitted_at,
+        payroll_run_id,
         cl.review_notes,
         cl.created_at,
         cl.updated_at,
@@ -1122,8 +1129,9 @@ pub async fn insert_payroll_run(
                total_socso_employee, total_socso_employer,
                total_eis_employee, total_eis_employer,
                total_pcb, total_zakat, employee_count, version, notes,
-               created_at, updated_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::text::payroll_status,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)"#,
+               created_at, updated_at, cancelled_at, cancel_reason)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::text::payroll_status,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25::timestamptz,
+                       CASE WHEN $9 = 'cancelled' THEN COALESCE($26::timestamptz, $25::timestamptz) ELSE $26::timestamptz END, $27)"#,
         id,
         company_id,
         payroll_group_id,
@@ -1149,6 +1157,8 @@ pub async fn insert_payroll_run(
         pr.notes,
         pr.created_at,
         pr.updated_at,
+        pr.cancelled_at,
+        pr.cancel_reason,
     )
     .execute(executor)
     .await?;
@@ -1164,7 +1174,7 @@ pub async fn insert_payroll_item(
 ) -> AppResult<()> {
     sqlx::query!(
         r#"INSERT INTO payroll_items (id, payroll_run_id, employee_id,
-               basic_salary, gross_salary, total_allowances, total_overtime,
+               basic_salary, gross_salary, taxable_gross, total_allowances, total_overtime,
                total_bonus, total_commission, total_claims,
                epf_employee, epf_employer, socso_employee, socso_employer,
                eis_employee, eis_employer, pcb_amount, zakat_amount,
@@ -1177,12 +1187,13 @@ pub async fn insert_payroll_item(
                working_days, days_worked, is_prorated,
                created_at, updated_at)
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
-                       $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39)"#,
+                       $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40)"#,
         id,
         payroll_run_id,
         employee_id,
         pi.basic_salary,
         pi.gross_salary,
+        pi.taxable_gross,
         pi.total_allowances,
         pi.total_overtime,
         pi.total_bonus,

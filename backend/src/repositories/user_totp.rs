@@ -13,7 +13,7 @@ pub async fn upsert_pending(
     executor: impl Executor<'_, Database = Postgres>,
     user_id: Uuid,
     secret_encrypted: &str,
-) -> AppResult<UserTotp> {
+) -> AppResult<Option<UserTotp>> {
     let row = sqlx::query_as!(
         UserTotp,
         r#"INSERT INTO user_totp (user_id, secret_encrypted, enabled, confirmed_at, last_used_step, failed_attempts, locked_until)
@@ -26,11 +26,12 @@ pub async fn upsert_pending(
             failed_attempts = 0,
             locked_until = NULL,
             updated_at = NOW()
+        WHERE user_totp.enabled = FALSE
         RETURNING *"#,
         user_id,
         secret_encrypted,
     )
-    .fetch_one(executor)
+    .fetch_optional(executor)
     .await?;
     Ok(row)
 }
@@ -38,10 +39,12 @@ pub async fn upsert_pending(
 pub async fn confirm(
     executor: impl Executor<'_, Database = Postgres>,
     user_id: Uuid,
+    last_used_step: i64,
 ) -> AppResult<()> {
     sqlx::query!(
-        "UPDATE user_totp SET enabled = true, confirmed_at = NOW(), updated_at = NOW() WHERE user_id = $1",
+        "UPDATE user_totp SET enabled = true, confirmed_at = NOW(), last_used_step = $2, updated_at = NOW() WHERE user_id = $1",
         user_id,
+        last_used_step,
     )
     .execute(executor)
     .await?;
@@ -132,10 +135,14 @@ pub async fn record_failure(
 ) -> AppResult<()> {
     sqlx::query!(
         r#"UPDATE user_totp
-           SET failed_attempts = failed_attempts + 1,
+           SET failed_attempts = CASE
+                   WHEN locked_until IS NOT NULL AND locked_until <= NOW() THEN 1
+                   ELSE failed_attempts + 1
+               END,
                locked_until = CASE
-                   WHEN failed_attempts + 1 >= $2
-                   THEN NOW() + ($3 * INTERVAL '1 minute')
+                   WHEN locked_until IS NOT NULL AND locked_until <= NOW() THEN
+                       CASE WHEN 1 >= $2 THEN NOW() + ($3 * INTERVAL '1 minute') ELSE NULL END
+                   WHEN failed_attempts + 1 >= $2 THEN NOW() + ($3 * INTERVAL '1 minute')
                    ELSE locked_until
                END,
                updated_at = NOW()

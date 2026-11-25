@@ -48,6 +48,17 @@ const POSITIVE_NUMERIC_PAYROLL_KEYS: &[&str] = &[
     "max_overtime_hours_per_day",
 ];
 
+pub(crate) fn parse_positive_decimal(value: &serde_json::Value) -> Option<Decimal> {
+    let parsed = match value {
+        serde_json::Value::String(text) => Decimal::from_str_exact(text.trim()).ok(),
+        // The seed stores these as JSON strings and the UI posts strings, but a
+        // bare number is the same intent and rejecting it would be pedantry.
+        serde_json::Value::Number(number) => Decimal::from_str_exact(&number.to_string()).ok(),
+        _ => None,
+    };
+    parsed.filter(|d| *d > Decimal::ZERO)
+}
+
 /// Reject a value that would make the payroll arithmetic wrong before it is
 /// stored, rather than defaulting around it on every read.
 ///
@@ -65,21 +76,14 @@ pub(crate) fn validate_numeric_payroll_setting(
         return Ok(());
     }
 
-    let parsed = match value {
-        serde_json::Value::String(text) => Decimal::from_str_exact(text.trim()).ok(),
-        // The seed stores these as JSON strings and the UI posts strings, but a
-        // bare number is the same intent and rejecting it would be pedantry.
-        serde_json::Value::Number(number) => Decimal::from_str_exact(&number.to_string()).ok(),
-        _ => None,
-    };
-
-    match parsed {
-        Some(decimal) if decimal > Decimal::ZERO => Ok(()),
-        _ => Err(AppError::BadRequest(format!(
+    if parse_positive_decimal(value).is_some() {
+        Ok(())
+    } else {
+        Err(AppError::BadRequest(format!(
             "Setting payroll/{key} must be a number greater than zero, but {value} was supplied. \
              It divides or multiplies overtime and unpaid-leave pay, so zero, a blank and a \
              non-numeric value are all unusable."
-        ))),
+        )))
     }
 }
 
@@ -112,12 +116,7 @@ pub(crate) async fn overtime_settings_on(
         get_setting(&mut *conn, company_id, "payroll", key)
             .await
             .ok()
-            .and_then(|s| {
-                s.value
-                    .as_str()
-                    .and_then(|v| Decimal::from_str_exact(v).ok())
-            })
-            .filter(|v| !v.is_zero())
+            .and_then(|s| parse_positive_decimal(&s.value))
     }
 
     let defaults = OvertimeSettings::statutory_defaults();

@@ -79,8 +79,8 @@ pub async fn auto_absent_targets(
 
 fn resolve_pagination(q: &AttendanceListQuery) -> (i64, i64, i64) {
     let per_page = q.per_page.unwrap_or(50).clamp(1, 200);
-    let page = q.page.unwrap_or(1).max(1);
-    let offset = (page - 1) * per_page;
+    let page = q.page.unwrap_or(1).clamp(1, 100_000);
+    let offset = (page - 1).saturating_mul(per_page);
     (page, per_page, offset)
 }
 
@@ -345,9 +345,9 @@ pub async fn export_rows(
         date_to: q.date_to,
         status: q.status.clone(),
         method: q.method.clone(),
-        open_only: None,
-        outside_geofence_only: None,
-        offsite_network_only: None,
+        open_only: q.open_only,
+        outside_geofence_only: q.outside_geofence_only,
+        offsite_network_only: q.offsite_network_only,
         page: None,
         per_page: None,
     };

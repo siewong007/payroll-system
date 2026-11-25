@@ -233,6 +233,23 @@ fn rewrite_attachment_urls(backup: &mut CompanyBackup, plan: &files::RestorePlan
         }
     }
 
+    if let Some(stored_url) = backup.company.logo_url.clone() {
+        if stored_url.is_empty() {
+            backup.company.logo_url = None;
+        } else {
+            match restored_attachment_url(plan, &stored_url) {
+                Some(url) => backup.company.logo_url = Some(url),
+                None => {
+                    backup.company.logo_url = None;
+                    broken.push(format!(
+                        "company.logo_url lost its file link: {}.",
+                        dropped_link_reason(plan, &stored_url)
+                    ));
+                }
+            }
+        }
+    }
+
     broken
 }
 
@@ -627,12 +644,23 @@ pub async fn import_company(
         )
         .await?;
     }
+    for pr in &backup.payroll_runs {
+        backup_repo::insert_payroll_run(
+            &mut *tx,
+            r(pr.id, "payroll_runs.id")?,
+            new_company_id,
+            r(pr.payroll_group_id, "payroll_runs.payroll_group_id")?,
+            pr,
+        )
+        .await?;
+    }
     for cl in &backup.claims {
         backup_repo::insert_claim(
             &mut *tx,
             r(cl.id, "claims.id")?,
             r(cl.employee_id, "claims.employee_id")?,
             new_company_id,
+            ro(cl.payroll_run_id, "claims.payroll_run_id")?,
             cl,
         )
         .await?;
@@ -644,16 +672,6 @@ pub async fn import_company(
             r(ot.employee_id, "overtime_applications.employee_id")?,
             new_company_id,
             ot,
-        )
-        .await?;
-    }
-    for pr in &backup.payroll_runs {
-        backup_repo::insert_payroll_run(
-            &mut *tx,
-            r(pr.id, "payroll_runs.id")?,
-            new_company_id,
-            r(pr.payroll_group_id, "payroll_runs.payroll_group_id")?,
-            pr,
         )
         .await?;
     }

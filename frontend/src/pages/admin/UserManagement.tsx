@@ -20,7 +20,7 @@ import {
 } from '@/lib/roles';
 import { useToast } from '@/lib/toast';
 import { getErrorMessage } from '@/lib/utils';
-import type { AppRole, UserWithCompanies } from '@/types';
+import type { UserWithCompanies } from '@/types';
 
 const PER_PAGE = 20;
 
@@ -59,10 +59,11 @@ export function UserManagement() {
     error: queryError,
     refetch,
   } = useQuery({
-    queryKey: ['admin-users', companyFilter, search, page],
+    queryKey: ['admin-users', companyFilter, roleFilter, search, page],
     queryFn: () =>
       listUsers({
         companyId: companyFilter === 'all' ? undefined : companyFilter,
+        role: roleFilter === 'all' ? undefined : roleFilter,
         search: search || undefined,
         page,
         perPage: PER_PAGE,
@@ -112,11 +113,7 @@ export function UserManagement() {
     onError: (err: unknown) => setReset2faError(getErrorMessage(err, t('users.reset2faFailed'))),
   });
 
-  // Search, company filter and pagination are resolved by the server; the role
-  // filter narrows within the fetched page, which is bounded to PER_PAGE.
-  const rows = (usersPage?.data ?? []).filter(
-    (u) => roleFilter === 'all' || (u.roles ?? []).includes(roleFilter as AppRole),
-  );
+  const rows = usersPage?.data ?? [];
 
   const resetToFirstPage = <T,>(setter: (value: T) => void) => (value: T) => {
     setter(value);
@@ -195,7 +192,7 @@ export function UserManagement() {
         <select
           aria-label={t('users.filterByRole')}
           value={roleFilter}
-          onChange={(e) => setRoleFilter(e.target.value)}
+          onChange={(e) => resetToFirstPage(setRoleFilter)(e.target.value)}
           className="form-input w-full sm:w-auto"
         >
           <option value="all">{t('users.allRoles')}</option>

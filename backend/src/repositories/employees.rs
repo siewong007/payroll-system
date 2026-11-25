@@ -20,15 +20,16 @@ pub async fn count(
     department: Option<&str>,
     is_active: Option<bool>,
 ) -> AppResult<i64> {
+    let escaped = search.map(crate::repositories::escape_like);
     let count = sqlx::query_scalar!(
         r#"SELECT COUNT(*) AS "count!" FROM employees
         WHERE company_id = $1 AND deleted_at IS NULL
         AND ($2::bool IS NULL OR is_active = $2)
-        AND ($3::text IS NULL OR lower(full_name::text || ' ' || employee_number::text) LIKE '%' || lower($3) || '%')
+        AND ($3::text IS NULL OR lower(full_name::text || ' ' || employee_number::text) LIKE '%' || lower($3) || '%' ESCAPE '\')
         AND ($4::text IS NULL OR department = $4)"#,
         company_id,
         is_active,
-        search,
+        escaped.as_deref(),
         department,
     )
     .fetch_one(executor)
@@ -45,6 +46,7 @@ pub async fn list(
     limit: i64,
     offset: i64,
 ) -> AppResult<Vec<Employee>> {
+    let escaped = search.map(crate::repositories::escape_like);
     let employees = sqlx::query_as!(
         Employee,
         r#"SELECT id, company_id, employee_number, full_name, ic_number, passport_number,
@@ -62,13 +64,13 @@ pub async fn list(
         FROM employees
         WHERE company_id = $1 AND deleted_at IS NULL
         AND ($2::bool IS NULL OR is_active = $2)
-        AND ($3::text IS NULL OR lower(full_name::text || ' ' || employee_number::text) LIKE '%' || lower($3) || '%')
+        AND ($3::text IS NULL OR lower(full_name::text || ' ' || employee_number::text) LIKE '%' || lower($3) || '%' ESCAPE '\')
         AND ($4::text IS NULL OR department = $4)
         ORDER BY employee_number ASC
         LIMIT $5 OFFSET $6"#,
         company_id,
         is_active,
-        search,
+        escaped.as_deref(),
         department,
         limit,
         offset,
@@ -76,6 +78,35 @@ pub async fn list(
     .fetch_all(executor)
     .await?;
     Ok(employees)
+}
+
+pub async fn get_locked(
+    executor: impl Executor<'_, Database = Postgres>,
+    id: Uuid,
+    company_id: Uuid,
+) -> AppResult<Option<Employee>> {
+    let employee = sqlx::query_as!(
+        Employee,
+        r#"SELECT id, company_id, employee_number, full_name, ic_number, passport_number,
+            date_of_birth, gender::text AS "gender?", nationality, race::text AS "race?", residency_status::text AS "residency_status!",
+            marital_status::text AS "marital_status?", email, phone, address_line1, address_line2, city, state, postcode,
+            department, designation, cost_centre, branch, employment_type::text AS "employment_type!",
+            date_joined, probation_start, probation_end, confirmation_date,
+            date_resigned, resignation_reason, basic_salary, hourly_rate, daily_rate,
+            bank_name, bank_account_number, bank_account_type,
+            tax_identification_number, epf_number, socso_number, eis_number,
+            working_spouse, num_children, epf_category, is_muslim, zakat_eligible,
+            zakat_monthly_amount, ptptn_monthly_amount, tabung_haji_amount,
+            hrdf_contribution, payroll_group_id, salary_group, is_active,
+            deleted_at, created_at, updated_at, created_by, updated_by
+        FROM employees WHERE id = $1 AND company_id = $2 AND deleted_at IS NULL
+        FOR UPDATE"#,
+        id,
+        company_id,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(employee)
 }
 
 pub async fn get(
@@ -166,7 +197,7 @@ pub async fn get_active_status(
     id: Uuid,
 ) -> AppResult<Option<bool>> {
     let status = sqlx::query_scalar!(
-        r#"SELECT is_active AS "is_active!" FROM employees WHERE id = $1"#,
+        r#"SELECT (COALESCE(is_active, FALSE) AND deleted_at IS NULL) AS "is_active!" FROM employees WHERE id = $1"#,
         id,
     )
     .fetch_optional(executor)
@@ -174,13 +205,30 @@ pub async fn get_active_status(
     Ok(status)
 }
 
-/// Count of active employees for a company.
+/// Lock an employee row inside an open transaction to serialize concurrent
+/// leave overlap checks and balance reservations.
+pub async fn lock_for_update(
+    executor: impl Executor<'_, Database = Postgres>,
+    employee_id: Uuid,
+    company_id: Uuid,
+) -> AppResult<()> {
+    sqlx::query_scalar!(
+        "SELECT id FROM employees WHERE id = $1 AND company_id = $2 FOR UPDATE",
+        employee_id,
+        company_id,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(())
+}
+
+/// Count of active, non-deleted employees for a company.
 pub async fn count_active(
     executor: impl Executor<'_, Database = Postgres>,
     company_id: Uuid,
 ) -> AppResult<i64> {
     let count = sqlx::query_scalar!(
-        r#"SELECT COUNT(*) AS "count!" FROM employees WHERE company_id = $1 AND is_active = TRUE"#,
+        r#"SELECT COUNT(*) AS "count!" FROM employees WHERE company_id = $1 AND is_active = TRUE AND deleted_at IS NULL"#,
         company_id,
     )
     .fetch_one(executor)
@@ -188,13 +236,13 @@ pub async fn count_active(
     Ok(count)
 }
 
-/// Count of distinct non-null departments among active employees for a company.
+/// Count of distinct non-null departments among active, non-deleted employees.
 pub async fn count_distinct_departments(
     executor: impl Executor<'_, Database = Postgres>,
     company_id: Uuid,
 ) -> AppResult<i64> {
     let count = sqlx::query_scalar!(
-        r#"SELECT COUNT(DISTINCT department) AS "count!" FROM employees WHERE company_id = $1 AND is_active = TRUE AND department IS NOT NULL"#,
+        r#"SELECT COUNT(DISTINCT department) AS "count!" FROM employees WHERE company_id = $1 AND is_active = TRUE AND deleted_at IS NULL AND department IS NOT NULL"#,
         company_id,
     )
     .fetch_one(executor)
@@ -615,7 +663,7 @@ pub async fn update(
             eis_number = COALESCE($38, eis_number),
             working_spouse = COALESCE($39, working_spouse),
             num_children = COALESCE($40, num_children),
-            epf_category = COALESCE($41, epf_category),
+            epf_category = CASE WHEN $53::bool THEN NULL ELSE COALESCE($41, epf_category) END,
             is_muslim = COALESCE($42, is_muslim),
             zakat_eligible = COALESCE($43, zakat_eligible),
             zakat_monthly_amount = COALESCE($44, zakat_monthly_amount),
@@ -692,6 +740,7 @@ pub async fn update(
         req.is_active,
         updated_by,
         req.clear_date_resigned.unwrap_or(false),
+        req.clear_epf_category.unwrap_or(false),
     )
     .fetch_one(executor)
     .await?;

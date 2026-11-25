@@ -80,8 +80,9 @@ impl JobProgress {
     pub async fn tick(&self, done: i32) {
         let total = self.total.load(Ordering::Relaxed);
         let step = self.step.load(Ordering::Relaxed).max(1);
-        let prev = self.last_written.swap(done, Ordering::Relaxed);
+        let prev = self.last_written.load(Ordering::Relaxed);
         if done >= total || done - prev >= step {
+            self.last_written.store(done, Ordering::Relaxed);
             let _ = background_jobs::set_progress(&self.pool, self.job_id, done, total).await;
         }
     }
@@ -125,23 +126,56 @@ async fn execute<Fut>(pool: PgPool, job_id: Uuid, work: Fut)
 where
     Fut: std::future::Future<Output = AppResult<serde_json::Value>> + Send + 'static,
 {
-    match background_jobs::mark_running(&pool, job_id).await {
+    let mut marked = None;
+    for attempt in 0..3 {
+        match background_jobs::mark_running(&pool, job_id).await {
+            Ok(v) => {
+                marked = Some(Ok(v));
+                break;
+            }
+            Err(e) => {
+                marked = Some(Err(e));
+                if attempt < 2 {
+                    tokio::time::sleep(std::time::Duration::from_millis(50 * (attempt + 1))).await;
+                }
+            }
+        }
+    }
+
+    match marked.expect("at least one attempt") {
         Ok(true) => {}
         Ok(false) => {
             warn!(%job_id, "job already claimed; dropping duplicate executor");
             return;
         }
         Err(e) => {
-            // The row stays `pending` and the boot-time recovery will mark it
-            // failed — noisy but never silently lost.
             error!(%job_id, error = %e, "could not mark background job running");
+            let _ = background_jobs::fail(&pool, job_id, "Internal server error").await;
             return;
         }
     }
 
     match tokio::spawn(work).await {
         Ok(Ok(result)) => {
-            if let Err(e) = background_jobs::succeed(&pool, job_id, result).await {
+            let mut last_err = None;
+            for attempt in 0..3 {
+                match background_jobs::succeed(&pool, job_id, result.clone()).await {
+                    Ok(()) => {
+                        last_err = None;
+                        break;
+                    }
+                    Err(e) => {
+                        last_err = Some(e);
+                        if attempt < 2 {
+                            tokio::time::sleep(std::time::Duration::from_millis(
+                                50 * (attempt + 1),
+                            ))
+                            .await;
+                        }
+                    }
+                }
+            }
+            if let Some(e) = last_err {
                 error!(%job_id, error = %e, "job finished but its result was not recorded");
             }
         }
@@ -151,16 +185,38 @@ where
             // carries no internals a raw `to_string` might.
             let (_, message) = e.client_response();
             warn!(%job_id, error = %e, "background job failed");
-            if let Err(write_err) = background_jobs::fail(&pool, job_id, &message).await {
-                error!(%job_id, error = %write_err, "job failure was not recorded");
+            for attempt in 0..3 {
+                match background_jobs::fail(&pool, job_id, &message).await {
+                    Ok(()) => break,
+                    Err(write_err) => {
+                        if attempt == 2 {
+                            error!(%job_id, error = %write_err, "job failure was not recorded");
+                        } else {
+                            tokio::time::sleep(std::time::Duration::from_millis(
+                                50 * (attempt + 1),
+                            ))
+                            .await;
+                        }
+                    }
+                }
             }
         }
         Err(join_err) => {
             error!(%job_id, error = %join_err, "background job task panicked or was aborted");
-            if let Err(write_err) =
-                background_jobs::fail(&pool, job_id, "Internal server error").await
-            {
-                error!(%job_id, error = %write_err, "job panic failure was not recorded");
+            for attempt in 0..3 {
+                match background_jobs::fail(&pool, job_id, "Internal server error").await {
+                    Ok(()) => break,
+                    Err(write_err) => {
+                        if attempt == 2 {
+                            error!(%job_id, error = %write_err, "job panic failure was not recorded");
+                        } else {
+                            tokio::time::sleep(std::time::Duration::from_millis(
+                                50 * (attempt + 1),
+                            ))
+                            .await;
+                        }
+                    }
+                }
             }
         }
     }
@@ -228,6 +284,8 @@ pub async fn submit_payroll_run(
 /// `result` — the same body the synchronous endpoint used to return.
 pub async fn submit_employee_import(
     pool: &PgPool,
+    mailer: &crate::services::email_service::SharedMailer,
+    config: &crate::core::config::AppConfig,
     company_id: Uuid,
     user_id: Uuid,
     req: ImportConfirmRequest,
@@ -248,6 +306,8 @@ pub async fn submit_employee_import(
 
     let job_id = job.id;
     let task_pool = pool.clone();
+    let task_mailer = mailer.clone();
+    let task_config = config.clone();
     tokio::spawn(async move {
         execute(task_pool.clone(), job_id, async move {
             let progress = JobProgress::new(task_pool.clone(), job_id);
@@ -258,6 +318,7 @@ pub async fn submit_employee_import(
                 req,
                 Some(&audit_meta),
                 Some(&progress),
+                Some((&task_mailer, &task_config)),
             )
             .await?;
             serde_json::to_value(&response)

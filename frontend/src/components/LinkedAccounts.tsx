@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link2 } from 'lucide-react';
@@ -9,17 +9,25 @@ import {
   unlinkOAuth2Provider,
 } from '@/api/oauth2';
 import { getErrorMessage } from '@/lib/utils';
+import { useTurnstileWaiter } from '@/lib/useTurnstileWaiter';
 import { GoogleIcon } from '@/components/ui/GoogleIcon';
 import { Modal } from '@/components/ui/Modal';
-import { TurnstileWidget, type TurnstileWidgetRef } from '@/components/TurnstileWidget';
+import { TurnstileWidget } from '@/components/TurnstileWidget';
 
 export function LinkedAccounts() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [error, setError] = useState('');
+  const [linking, setLinking] = useState(false);
   const [confirmingUnlink, setConfirmingUnlink] = useState(false);
-  const turnstileRef = useRef<TurnstileWidgetRef>(null);
-  const turnstileToken = useRef<string | undefined>(undefined);
+  const {
+    widgetRef: turnstileRef,
+    waitForToken: waitForTurnstileToken,
+    handleVerify: handleTurnstileVerify,
+    handleExpire: handleTurnstileExpire,
+    handleError: handleTurnstileError,
+    resetWidget: resetTurnstileWidget,
+  } = useTurnstileWaiter();
 
   const { data: accounts = [], isLoading } = useQuery({
     queryKey: ['oauth2-accounts'],
@@ -45,16 +53,26 @@ export function LinkedAccounts() {
   });
 
   const startLink = async () => {
+    if (linking) return;
     setError('');
+    setLinking(true);
     try {
       // The /oauth2/link route navigates back to this page on success.
-      sessionStorage.setItem('oauth2_link_return', window.location.pathname + window.location.search);
-      const token = turnstileToken.current;
-      turnstileToken.current = undefined;
+      try {
+        sessionStorage.setItem('oauth2_link_return', window.location.pathname + window.location.search);
+      } catch {
+        // Ignore restricted storage.
+      }
+      const token = await waitForTurnstileToken();
       window.location.href = await getGoogleAuthorizeUrl('link', token);
     } catch (err) {
-      sessionStorage.removeItem('oauth2_link_return');
-      turnstileRef.current?.reset();
+      try {
+        sessionStorage.removeItem('oauth2_link_return');
+      } catch {
+        // Ignore restricted storage.
+      }
+      resetTurnstileWidget();
+      setLinking(false);
       setError(getErrorMessage(err, t('auth.googleUnavailable')));
     }
   };
@@ -125,20 +143,15 @@ export function LinkedAccounts() {
             <div className="flex flex-col items-start sm:items-end gap-2 max-w-full overflow-x-auto">
               <TurnstileWidget
                 ref={turnstileRef}
-                onVerify={(t) => {
-                  turnstileToken.current = t;
-                }}
-                onExpire={() => {
-                  turnstileToken.current = undefined;
-                }}
-                onError={() => {
-                  turnstileToken.current = undefined;
-                }}
+                onVerify={handleTurnstileVerify}
+                onExpire={handleTurnstileExpire}
+                onError={handleTurnstileError}
               />
               <button
                 type="button"
                 onClick={startLink}
-                className="min-h-10 text-sm font-semibold text-[var(--accent-1)] hover:underline whitespace-nowrap"
+                disabled={linking}
+                className="min-h-10 text-sm font-semibold text-[var(--accent-1)] hover:underline disabled:opacity-50 whitespace-nowrap"
               >
                 {t('auth.linkedAccounts.linkAccount')}
               </button>

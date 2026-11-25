@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
@@ -60,6 +60,10 @@ function ProfileDetails({ profile, initialTab }: { profile: Profile; initialTab:
   const { t } = useTranslation();
   const [mobileTab, setMobileTab] = useState<MobileTab>(initialTab);
   const [revealed, setRevealed] = useState(false);
+
+  useEffect(() => {
+    setMobileTab(initialTab);
+  }, [initialTab]);
 
   const enumLabel = (group: string, value: string | null | undefined) =>
     value ? t(`enums.${group}.${value}`, { defaultValue: value }) : null;

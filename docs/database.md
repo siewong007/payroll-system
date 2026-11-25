@@ -44,7 +44,7 @@ benefit without vendor-specific application branches.
 2. `1001_data.sql` — system/reference data, explicitly unverified academic
    statutory fixtures, and idempotent legacy repairs. It intentionally contains
    no demo company, personal data, known password, or privileged account.
-3. `1002_*.sql` through `1030_*.sql` — immutable forward production migrations
+3. `1002_*.sql` through `1033_*.sql` — immutable forward production migrations
    covering TOTP 2FA (`1002`), user sessions (`1003`), kiosk-scoped QR tokens
    (`1004`), attendance & payroll generation reworks (`1005`–`1006`), user
    groups (`1007`), audit retention FKs (`1008`), authorized upload ownership &

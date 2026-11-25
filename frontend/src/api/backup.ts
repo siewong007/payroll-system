@@ -1,18 +1,13 @@
 import api from './client';
+import { triggerBlobDownload } from '@/lib/download';
 import type { ImportResult } from '@/types';
 
 export async function exportCompanyBackup(companyId?: string): Promise<void> {
   const params = companyId ? { company_id: companyId } : {};
   const response = await api.get('/admin/backup/export', { params, responseType: 'blob' });
-  const url = window.URL.createObjectURL(new Blob([response.data]));
-  const a = document.createElement('a');
-  a.href = url;
   const disposition = response.headers['content-disposition'];
-  a.download = disposition?.split('filename=')[1]?.replace(/"/g, '') || 'backup.json';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  window.URL.revokeObjectURL(url);
+  const filename = disposition?.split('filename=')[1]?.replace(/"/g, '') || 'backup.json';
+  triggerBlobDownload(response.data, filename);
 }
 
 export async function importCompanyBackup(

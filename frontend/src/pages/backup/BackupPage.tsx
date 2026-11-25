@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Download, Upload, FileJson, CheckCircle2, AlertTriangle, Loader2, X } from 'lucide-react';
 import { exportCompanyBackup, importCompanyBackup } from '@/api/backup';
 import { listCompanies } from '@/api/admin';
@@ -12,6 +12,8 @@ import { useAuth } from '@/context/AuthContext';
 import { hasAnyRole } from '@/lib/roles';
 import type { ImportResult } from '@/types';
 
+const BACKUP_FILE_MAX_BYTES = 100 * 1024 * 1024;
+
 interface BackupPreviewMetadata {
   format_version: string;
   exported_at: string;
@@ -21,6 +23,7 @@ interface BackupPreviewMetadata {
 
 export function BackupPage() {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
   const toast = useToast();
   const { user } = useAuth();
   const isSuperAdmin = hasAnyRole(user, ['super_admin']);
@@ -40,6 +43,7 @@ export function BackupPage() {
   const [previewError, setPreviewError] = useState('');
   const [createNewCompany, setCreateNewCompany] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const fileReadSeqRef = useRef(0);
 
   const {
     data: companies,
@@ -73,6 +77,7 @@ export function BackupPage() {
   };
 
   const clearSelectedFile = () => {
+    fileReadSeqRef.current += 1;
     setSelectedFile(null);
     setPreview(null);
     setPreviewError('');
@@ -83,14 +88,20 @@ export function BackupPage() {
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    const seq = ++fileReadSeqRef.current;
     setSelectedFile(file);
     setImportResult(null);
     setImportError('');
     setPreview(null);
     setPreviewError('');
     setConfirmTargetName('');
+    if (file.size > BACKUP_FILE_MAX_BYTES) {
+      setPreviewError(t('backup.fileTooLarge'));
+      return;
+    }
     try {
       const text = typeof file.text === 'function' ? await file.text() : await new Response(file).text();
+      if (fileReadSeqRef.current !== seq) return;
       const parsed = JSON.parse(text) as {
         metadata?: {
           format_version?: unknown;
@@ -118,6 +129,7 @@ export function BackupPage() {
         total_records: totalRecordsCount,
       });
     } catch {
+      if (fileReadSeqRef.current !== seq) return;
       setPreviewError(t('backup.invalidFile'));
     }
   };
@@ -128,7 +140,7 @@ export function BackupPage() {
     (!importCompanyId || !targetCompany || confirmTargetName.trim() !== targetCompany.name);
 
   const handleImport = async () => {
-    if (!selectedFile || previewError || overwriteBlocked) return;
+    if (!selectedFile || !preview || previewError || overwriteBlocked) return;
     setImporting(true);
     setImportResult(null);
     setImportError('');
@@ -140,6 +152,7 @@ export function BackupPage() {
       );
       setImportResult(result);
       clearSelectedFile();
+      await queryClient.invalidateQueries();
       toast.success(result.is_overwrite ? t('backup.overwritten') : t('backup.importSuccess'));
     } catch (err: unknown) {
       const msg = getErrorMessage(err, t('backup.importFailed'));
@@ -408,7 +421,7 @@ export function BackupPage() {
               <button
                 type="button"
                 onClick={() => { void handleImport(); }}
-                disabled={!selectedFile || importing || Boolean(previewError) || overwriteBlocked}
+                disabled={!selectedFile || !preview || importing || Boolean(previewError) || overwriteBlocked}
                 className="inline-flex items-center gap-2 px-4 py-2.5 min-h-[44px] bg-amber-600 text-white text-sm font-medium rounded-xl hover:bg-amber-700 disabled:opacity-50 transition-all"
               >
                 {importing ? (

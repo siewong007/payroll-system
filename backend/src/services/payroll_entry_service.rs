@@ -31,8 +31,14 @@ fn validate_payroll_entry(
         ));
     }
 
-    if item_type.trim().is_empty() {
+    let normalized_type = item_type.trim();
+    if normalized_type.is_empty() {
         return Err(AppError::BadRequest("Item type is required".into()));
+    }
+    if matches!(normalized_type, "overtime" | "claim_reimbursement") {
+        return Err(AppError::BadRequest(format!(
+            "Item type '{normalized_type}' is managed automatically by approvals and cannot be created manually"
+        )));
     }
 
     if description.trim().is_empty() {

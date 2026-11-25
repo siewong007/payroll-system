@@ -54,7 +54,7 @@ export function CheckInCard() {
   const hasEmployee = Boolean(user?.employee_id);
   const hasCompany = Boolean(user?.company_id);
 
-  const { data: method } = useQuery({
+  const { data: method, isError: methodFailed, refetch: refetchMethod } = useQuery({
     queryKey: ['attendance-method'],
     queryFn: getAttendanceMethod,
     enabled: hasCompany && hasEmployee,
@@ -244,7 +244,7 @@ export function CheckInCard() {
 
   // Never offer a check-in button on a failed fetch: showing "Not checked in"
   // when we don't know invites a second attempt that fails as a duplicate.
-  if (todayFailed) {
+  if (todayFailed || methodFailed) {
     return (
       <Shell>
         <div className="flex items-start gap-3 mb-4">
@@ -256,7 +256,13 @@ export function CheckInCard() {
             </p>
           </div>
         </div>
-        <button onClick={() => void refetchToday()} className="w-full min-h-14 rounded-2xl bg-white text-teal-900 font-semibold flex items-center justify-center gap-2 active:scale-[0.98] transition-transform">
+        <button
+          onClick={() => {
+            if (todayFailed) void refetchToday();
+            if (methodFailed) void refetchMethod();
+          }}
+          className="w-full min-h-14 rounded-2xl bg-white text-teal-900 font-semibold flex items-center justify-center gap-2 active:scale-[0.98] transition-transform"
+        >
           <RefreshCw className="w-4 h-4" /> {t('common.retry')}
         </button>
       </Shell>

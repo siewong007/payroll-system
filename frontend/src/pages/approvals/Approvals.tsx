@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useConfirm } from '@/lib/confirm';
@@ -61,12 +61,14 @@ import {
 import { LeaveCrudModal } from './LeaveCrudModal';
 import { ClaimCrudModal } from './ClaimCrudModal';
 import { OvertimeCrudModal } from './OvertimeCrudModal';
+import type { LeaveType } from '@/types';
 
 const fmt = formatMYR;
 const statusBadge = (status: string) => <RequestStatusBadge status={status} />;
 
 /** Rows per page in the approval inboxes. */
 const PER_PAGE = 20;
+const EMPTY_LEAVE_TYPES: LeaveType[] = [];
 
 export function Approvals() {
   const { t } = useTranslation();
@@ -80,22 +82,8 @@ export function Approvals() {
   const resolvedUrlTab: 'leave' | 'claims' | 'overtime' =
     urlTabParam === 'claims' || urlTabParam === 'overtime' ? urlTabParam : 'leave';
   const [tab, setTabState] = useState<'leave' | 'claims' | 'overtime'>(resolvedUrlTab);
-  const setTab = (next: 'leave' | 'claims' | 'overtime') => {
-    setTabState(next);
-    const params = new URLSearchParams(searchParams);
-    if (next === 'leave') params.delete('tab');
-    else params.set('tab', next);
-    setSearchParams(params, { replace: true });
-  };
-  useEffect(() => {
-    setTabState((current) => (current === resolvedUrlTab ? current : resolvedUrlTab));
-  }, [resolvedUrlTab]);
   const [statusFilter, setStatusFilter] = useState<string>('pending');
   const [page, setPageState] = useState(1);
-  const setPage = (nextPage: number) => {
-    setPageState(nextPage);
-    setSelectedApprovalIds([]);
-  };
   const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
   const [leaveEditor, setLeaveEditor] = useState<LeaveRequestWithEmployee | null>(null);
   const [claimEditor, setClaimEditor] = useState<ClaimWithEmployee | null>(null);
@@ -105,6 +93,28 @@ export function Approvals() {
   const [showLeaveModal, setShowLeaveModal] = useState(false);
   const [showClaimModal, setShowClaimModal] = useState(false);
   const [showOvertimeModal, setShowOvertimeModal] = useState(false);
+  const prevUrlTabRef = useRef(resolvedUrlTab);
+
+  const setTab = (next: 'leave' | 'claims' | 'overtime') => {
+    setTabState(next);
+    const params = new URLSearchParams(searchParams);
+    if (next === 'leave') params.delete('tab');
+    else params.set('tab', next);
+    setSearchParams(params, { replace: true });
+  };
+  useEffect(() => {
+    if (prevUrlTabRef.current === resolvedUrlTab) return;
+    prevUrlTabRef.current = resolvedUrlTab;
+    setTabState(resolvedUrlTab);
+    setStatusFilter('pending');
+    setSelectedApprovalIds([]);
+    setPageState(1);
+    setBulkError('');
+  }, [resolvedUrlTab]);
+  const setPage = (nextPage: number) => {
+    setPageState(nextPage);
+    setSelectedApprovalIds([]);
+  };
   const queryClient = useQueryClient();
 
   // Maker-checker. The server is the gate — `approve_claim` / `approve_leave` /
@@ -117,7 +127,7 @@ export function Approvals() {
     user?.employee_id === employeeId &&
     !(user?.roles ?? []).includes('super_admin');
 
-  const { data: leaveTypes = [] } = useQuery({
+  const { data: leaveTypes = EMPTY_LEAVE_TYPES } = useQuery({
     queryKey: ['approval-leave-types'],
     queryFn: getLeaveTypes,
     enabled: canManageApprovals && (tab === 'leave' || showLeaveModal),

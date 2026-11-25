@@ -24,12 +24,36 @@ pub async fn list_filtered(
     limit: i64,
     offset: i64,
 ) -> AppResult<Vec<AuditLogWithUser>> {
-    // `entity_id` answers "what happened to *this* record". Without it the only
-    // entity-scoped read was `list_for_run`, hardcoded to payroll runs — so an
-    // attendance correction's `reason`, which CLAUDE.md requires be stored in the
-    // audit trail rather than on the record, was written somewhere no manager
-    // could query it back from. `idx_audit_logs_entity (entity_type, entity_id)`
-    // already serves the predicate.
+    list_filtered_scoped(
+        executor,
+        company_id,
+        entity_type,
+        entity_id,
+        action,
+        user_id,
+        start_date,
+        end_date,
+        false,
+        limit,
+        offset,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn list_filtered_scoped(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    entity_type: Option<&str>,
+    entity_id: Option<Uuid>,
+    action: Option<&str>,
+    user_id: Option<Uuid>,
+    start_date: Option<NaiveDate>,
+    end_date: Option<NaiveDate>,
+    hide_privileged: bool,
+    limit: i64,
+    offset: i64,
+) -> AppResult<Vec<AuditLogWithUser>> {
     let logs = sqlx::query_as!(
         AuditLogWithUser,
         r#"SELECT al.id, al.user_id, al.action, al.entity_type, al.entity_id,
@@ -45,6 +69,17 @@ pub async fn list_filtered(
         AND ($5::uuid IS NULL OR al.user_id = $5)
         AND ($6::date IS NULL OR al.created_at >= $6::date)
         AND ($7::date IS NULL OR al.created_at < ($7::date + INTERVAL '1 day'))
+        AND NOT (
+            $10::bool AND (
+                (u.id IS NOT NULL AND u.roles && ARRAY['admin', 'super_admin']::varchar[])
+                OR (
+                    al.entity_type = 'user' AND (
+                        (al.old_values->'roles') ?| ARRAY['admin', 'super_admin']
+                        OR (al.new_values->'roles') ?| ARRAY['admin', 'super_admin']
+                    )
+                )
+            )
+        )
         ORDER BY al.created_at DESC
         LIMIT $8 OFFSET $9"#,
         company_id,
@@ -56,6 +91,7 @@ pub async fn list_filtered(
         end_date,
         limit,
         offset,
+        hide_privileged,
     )
     .fetch_all(executor)
     .await?;

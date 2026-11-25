@@ -66,8 +66,10 @@ pub async fn update_company(
 ) -> AppResult<Json<Company>> {
     auth.require_permission(Permission::ManageCompanies)?;
     require_super_admin(&auth)?;
+    let access = crate::services::upload_service::access_from_auth(&auth, company_id);
     let company =
-        company_service::update_company(&state.pool, company_id, req, auth.0.sub, None).await?;
+        company_service::update_company(&state.pool, company_id, req, auth.0.sub, &access, None)
+            .await?;
     Ok(Json(company))
 }
 
@@ -92,18 +94,34 @@ pub async fn list_users(
     auth.require_permission(Permission::ViewUserDirectory)?;
 
     let is_super_admin = auth.has_any_role(&["super_admin"]);
-    let page = query.page.unwrap_or(1).max(1);
-    let per_page = query.per_page.unwrap_or(20).clamp(1, 100);
-    let offset = (page - 1) * per_page;
+    // When `ViewUserDirectory` comes only from an active-company user group (not
+    // from the user's global role), scope the directory strictly to that active
+    // company so group grants in Company A cannot inspect Company B's users.
+    let company_filter = if !is_super_admin
+        && !crate::core::permission::roles_grant(&auth.0.roles, Permission::ViewUserDirectory)
+    {
+        let active_company_id = auth.company_id()?;
+        if let Some(requested) = query.company_id
+            && requested != active_company_id
+        {
+            return Err(AppError::Forbidden(
+                "Not authorized: directory access is scoped to your active company".into(),
+            ));
+        }
+        Some(active_company_id)
+    } else {
+        query.company_id
+    };
 
-    // The company filter is honoured for both roles: a company admin's own
-    // visibility is already restricted to companies they belong to, so the
-    // filter narrows within that set rather than widening it.
+    let page = query.page.unwrap_or(1).clamp(1, 100_000);
+    let per_page = query.per_page.unwrap_or(20).clamp(1, 100);
+    let offset = (page - 1).saturating_mul(per_page);
+
     let (data, total) = user_service::list_users_with_role(
         &state.pool,
         is_super_admin,
         auth.0.sub,
-        query.company_id,
+        company_filter,
         query.search.as_deref(),
         query.role.as_deref(),
         user_service::hides_privileged_users(&auth),

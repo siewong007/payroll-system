@@ -172,7 +172,8 @@ async fn google_callback_inner(
                     ));
                 }
 
-                // No linked account — auto-link by verified email match
+                // No linked account — verify user and employee are active, then
+                // ensure no other Google account is already linked.
                 let user = oauth2_service::find_user_by_email(&state.pool, google_email)
                     .await?
                     .ok_or_else(|| {
@@ -181,6 +182,14 @@ async fn google_callback_inner(
                                 .into(),
                         )
                     })?;
+                let user = auth_service::get_active_user(&state.pool, user.id).await?;
+                let existing_accounts =
+                    oauth2_service::list_linked_accounts(&state.pool, user.id).await?;
+                if existing_accounts.iter().any(|a| a.provider == "google") {
+                    return Err(AppError::Unauthorized(
+                        "A different Google account is already linked to this user.".into(),
+                    ));
+                }
 
                 // Auto-link the Google account to this user
                 oauth2_service::link_oauth2_account(
@@ -421,7 +430,18 @@ pub async fn link_google(
         ));
     }
 
-    oauth2_service::link_oauth2_account(
+    let current_links = oauth2_service::list_linked_accounts(&state.pool, auth.0.sub).await?;
+    if current_links.iter().any(|a| a.provider == "google")
+        && oauth2_service::find_oauth2_account(&state.pool, "google", &google_user.sub)
+            .await?
+            .is_none()
+    {
+        return Err(AppError::Conflict(
+            "A Google account is already linked to your profile".into(),
+        ));
+    }
+
+    let account = oauth2_service::link_oauth2_account(
         &state.pool,
         auth.0.sub,
         "google",
@@ -435,11 +455,14 @@ pub async fn link_google(
     )
     .await?;
 
-    let accounts = oauth2_service::list_linked_accounts(&state.pool, auth.0.sub).await?;
-    let linked = accounts
-        .into_iter()
-        .find(|a| a.provider == "google")
-        .ok_or_else(|| AppError::Internal("Failed to fetch linked account".into()))?;
+    let linked = crate::models::oauth2::LinkedAccount {
+        id: account.id,
+        provider: account.provider,
+        provider_email: account.provider_email,
+        provider_name: account.provider_name,
+        avatar_url: account.avatar_url,
+        linked_at: account.created_at,
+    };
 
     let _ = audit_service::log_action_with_metadata(
         &state.pool,

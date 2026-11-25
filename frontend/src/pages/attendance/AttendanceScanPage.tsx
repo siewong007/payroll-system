@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   CheckCircle2, XCircle, Loader2, MapPin, QrCode, Info, RefreshCw, Navigation, WifiOff, Clock,
 } from 'lucide-react';
@@ -29,6 +30,7 @@ type State =
 
 export function AttendanceScanPage() {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { isAuthenticated, isLoading: authLoading, user } = useAuth();
@@ -38,65 +40,19 @@ export function AttendanceScanPage() {
   const [error, setError] = useState('');
   const [record, setRecord] = useState<{ check_in_at: string } | null>(null);
   const [attempt, setAttempt] = useState(0);
+  const tRef = useRef(t);
+  useEffect(() => {
+    tRef.current = t;
+  }, [t]);
+  const inflightKeyRef = useRef<string | null>(null);
 
   const portalOnly = hasOnlyEmployeeRole(user);
   const attendanceHref = portalOnly ? '/portal/attendance' : '/my/attendance';
   const fallbackHref = portalOnly ? '/portal/attendance' : '/';
 
-  const runCheckIn = useCallback(async () => {
-    if (!token) return;
-
-    // Ask the server whether coordinates matter before paying for a fix.
-    let needsLocation: boolean;
-    try {
-      const method = await getAttendanceMethod();
-      needsLocation = method.geofence_mode !== 'none';
-    } catch {
-      // Bootstrap unavailable — try for a fix, the server decides anyway.
-      needsLocation = true;
-    }
-
-    setState(needsLocation ? 'locating' : 'checking-in');
-    const geo = await getGeolocationResult(needsLocation);
-
-    setState('checking-in');
-    try {
-      const result = await checkInQr(token, geo.coords?.latitude, geo.coords?.longitude);
-      setRecord(result);
-      setState('success');
-    } catch (e: unknown) {
-      const err = e as { response?: { status?: number; data?: { error?: string } } };
-      const raw = err.response?.data?.error;
-      const message = getErrorMessage(e, t('attendance.scan.checkInFailed'));
-      setError(message);
-
-      switch (classifyCheckInError(raw ?? message)) {
-        case 'already-checked-in':
-          setState('already-checked-in');
-          break;
-        case 'outside-geofence':
-          setState('outside-geofence');
-          break;
-        case 'offsite-network':
-          setState('offsite-network');
-          break;
-        case 'expired-code':
-          setState('expired-code');
-          break;
-        case 'stale-session':
-          setState('stale-session');
-          break;
-        case 'location-permission':
-          if (geo.errorCode === 2 || geo.errorCode === 3) {
-            setError(t('attendance.checkin.locationTimeout'));
-          }
-          setState('location-required');
-          break;
-        default:
-          setState('error');
-      }
-    }
-  }, [token, t]); // eslint-disable-line react-hooks/exhaustive-deps -- Babel cannot identify setError as a stable React setter.
+  const userId = user?.id;
+  const userEmployeeId = user?.employee_id;
+  const mustChangePassword = user?.must_change_password;
 
   useEffect(() => {
     if (!token) {
@@ -114,20 +70,94 @@ export function AttendanceScanPage() {
       return;
     }
 
-    if (user?.must_change_password) {
+    if (mustChangePassword) {
       navigate('/change-password', { replace: true });
       return;
     }
 
-    if (!user?.employee_id) {
+    if (!userEmployeeId) {
       setState('no-employee');
-      setError(t('attendance.scan.noEmployeeProfile'));
+      setError(tRef.current('attendance.scan.noEmployeeProfile'));
       return;
     }
 
-    void runCheckIn();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- t must not re-arm a check-in attempt on language switch; the visible text is re-rendered anyway via state
-  }, [token, authLoading, isAuthenticated, navigate, user, runCheckIn, attempt]);
+    let cancelled = false;
+    const checkInKey = `${token}:${userId ?? ''}:${attempt}`;
+    if (inflightKeyRef.current === checkInKey) return;
+    inflightKeyRef.current = checkInKey;
+
+    const executeCheckIn = async () => {
+      try {
+        // Ask the server whether coordinates matter before paying for a fix.
+        let needsLocation: boolean;
+        try {
+          const method = await getAttendanceMethod();
+          needsLocation = method.geofence_mode !== 'none';
+        } catch {
+          // Bootstrap unavailable — try for a fix, the server decides anyway.
+          needsLocation = true;
+        }
+
+        if (cancelled) return;
+        setState(needsLocation ? 'locating' : 'checking-in');
+        const geo = await getGeolocationResult(needsLocation);
+        if (cancelled) return;
+
+        setState('checking-in');
+        try {
+          const result = await checkInQr(token, geo.coords?.latitude, geo.coords?.longitude);
+          if (cancelled) return;
+          setRecord(result);
+          setState('success');
+          void queryClient.invalidateQueries({ queryKey: ['attendance-today'] });
+          void queryClient.invalidateQueries({ queryKey: ['attendance-my'] });
+        } catch (e: unknown) {
+          if (cancelled) return;
+          const err = e as { response?: { status?: number; data?: { error?: string } } };
+          const raw = err.response?.data?.error;
+          const message = getErrorMessage(e, tRef.current('attendance.scan.checkInFailed'));
+          setError(message);
+
+          switch (classifyCheckInError(raw ?? message)) {
+            case 'already-checked-in':
+              setState('already-checked-in');
+              void queryClient.invalidateQueries({ queryKey: ['attendance-today'] });
+              void queryClient.invalidateQueries({ queryKey: ['attendance-my'] });
+              break;
+            case 'outside-geofence':
+              setState('outside-geofence');
+              break;
+            case 'offsite-network':
+              setState('offsite-network');
+              break;
+            case 'expired-code':
+              setState('expired-code');
+              break;
+            case 'stale-session':
+              setState('stale-session');
+              break;
+            case 'location-permission':
+              if (geo.errorCode === 2 || geo.errorCode === 3) {
+                setError(tRef.current('attendance.checkin.locationTimeout'));
+              }
+              setState('location-required');
+              break;
+            default:
+              setState('error');
+          }
+        }
+      } finally {
+        if (inflightKeyRef.current === checkInKey) {
+          inflightKeyRef.current = null;
+        }
+      }
+    };
+
+    void executeCheckIn();
+    return () => {
+      cancelled = true;
+    };
+  }, [token, authLoading, isAuthenticated, navigate, userId, userEmployeeId, mustChangePassword, queryClient, attempt]);
 
   const formatTime = (iso: string) => formatTimeSeconds(iso);
 

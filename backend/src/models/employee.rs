@@ -221,6 +221,8 @@ pub struct UpdateEmployeeRequest {
     /// it — the reason is meaningless without a date. Same tri-state rationale
     /// as `clear_check_out` on an attendance correction.
     pub clear_date_resigned: Option<bool>,
+    /// Explicitly clear `epf_category` so EPF reverts to age/residency/date derivation.
+    pub clear_epf_category: Option<bool>,
 }
 
 #[derive(Debug, Serialize, sqlx::FromRow)]

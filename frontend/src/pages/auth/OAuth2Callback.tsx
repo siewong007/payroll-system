@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import api from '@/api/client';
 import { useAuth } from '@/context/AuthContext';
 import { hasOnlyEmployeeRole } from '@/lib/roles';
-import { safeRedirectPath } from '@/lib/utils';
+import { safeRedirectPath, translateServerMessage } from '@/lib/utils';
 import { TwoFactorPrompt } from '@/components/TwoFactorPrompt';
 import { BrandLogo } from '@/components/ui/BrandLogo';
 import type { LoginResponse, User } from '@/types';
@@ -76,7 +76,7 @@ export function OAuth2Callback() {
     const serverError = params.get('error');
 
     if (serverError) {
-      setError(serverError);
+      setError(translateServerMessage(serverError));
       return;
     }
 
@@ -95,6 +95,7 @@ export function OAuth2Callback() {
     }
 
     if (user) {
+      callbackParams = null;
       goPostLogin(user);
       return;
     }
@@ -107,12 +108,15 @@ export function OAuth2Callback() {
 
     promise
       .then((data) => {
+        inflightRefresh = null;
+        callbackParams = null;
         if (cancelled) return;
         setSession(data.token, data.user);
         goPostLogin(data.user);
       })
       .catch(() => {
         inflightRefresh = null;
+        callbackParams = null;
         if (!cancelled) {
           setError(t('auth.oauth.processFailed'));
         }

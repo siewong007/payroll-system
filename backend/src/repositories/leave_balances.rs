@@ -245,7 +245,7 @@ pub async fn upsert_carried_forward(
         r#"INSERT INTO leave_balances (employee_id, leave_type_id, year, entitled_days, carried_forward)
                 VALUES ($1, $2, $3, $4, $5)
                 ON CONFLICT (employee_id, leave_type_id, year)
-                DO UPDATE SET carried_forward = $5, entitled_days = $4, updated_at = NOW()"#,
+                DO UPDATE SET carried_forward = $5, updated_at = NOW()"#,
         employee_id,
         leave_type_id,
         year,

@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO leave_types (id, company_id, name, description, default_days, is_paid, is_active,\n               max_carry_forward, carry_forward_expiry_months, is_system, created_at, updated_at)\n               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Varchar",
+        "Text",
+        "Numeric",
+        "Bool",
+        "Bool",
+        "Numeric",
+        "Int4",
+        "Bool",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6ab3d88df5c47dc271eed8cc4fdf9b4e7a9b786261eaf04869b2e160df22a176"
+}

@@ -59,11 +59,10 @@ describe('Sidebar role-based navigation', () => {
 
     const links = navLinks();
     expect(links).toEqual(
-      expect.arrayContaining(['Company', 'Employees', 'Teams', 'Calendar', 'Attendance', 'Approvals', 'Reports', 'Roles']),
+      expect.arrayContaining(['Company', 'Employees', 'Teams', 'Calendar', 'Attendance', 'Approvals', 'Reports', 'Roles', 'User Groups']),
     );
     expect(links).not.toContain('Companies');
     expect(links).not.toContain('Users');
-    expect(links).not.toContain('User Groups');
     expect(links).not.toContain('Backup');
   });
 
@@ -73,7 +72,7 @@ describe('Sidebar role-based navigation', () => {
 
     const links = navLinks();
     expect(links).toEqual(
-      expect.arrayContaining(['Companies', 'Users', 'Roles', 'Attendance Settings', 'Audit Trail', 'Backup']),
+      expect.arrayContaining(['Companies', 'Users', 'Roles', 'Attendance Settings', 'Platform Settings', 'Audit Trail', 'Backup']),
     );
     // Every tenant-scoped entry is hidden; the platform-wide Payroll and
     // Reports entries stay because super_admin is on their allow-lists.
@@ -81,6 +80,22 @@ describe('Sidebar role-based navigation', () => {
       expect(links).not.toContain(hidden);
     }
     expect(links).toEqual(expect.arrayContaining(['Payroll', 'Reports']));
+  });
+
+  it('hides company-scoped links when super_admin has no active company', () => {
+    authMocks.useAuth.mockReturnValue({
+      user: asUser(['super_admin'], { company_id: null }),
+      logout: vi.fn(),
+    });
+    renderWithProviders(<Sidebar />);
+
+    const links = navLinks();
+    expect(links).toEqual(
+      expect.arrayContaining(['Companies', 'Users', 'Roles', 'Attendance Settings', 'Platform Settings', 'Backup']),
+    );
+    for (const companyScoped of ['Payroll', 'Reports', 'User Groups', 'Audit Trail']) {
+      expect(links).not.toContain(companyScoped);
+    }
   });
 
   it('shows Payroll only to roles that may see payroll figures', () => {
@@ -246,13 +261,25 @@ describe('CompanySwitcher', () => {
     { id: 'company-2', name: 'Beta Holdings' },
   ];
 
-  it('stays hidden when the user belongs to a single company', async () => {
+  it('stays hidden when the user belongs to a single assigned company', async () => {
     adminMocks.getMyCompanies.mockResolvedValue([companies[0]]);
     const { container } = renderWithProviders(<CompanySwitcher />);
 
     await waitFor(() => expect(adminMocks.getMyCompanies).toHaveBeenCalled());
-    // A switcher with one option is a no-op control.
+    // A switcher with one option that is already active is a no-op control.
     expect(container).toBeEmptyDOMElement();
+  });
+
+  it('stays visible when the user has one available company and company_id is null', async () => {
+    authMocks.useAuth.mockReturnValue({
+      user: asUser(['super_admin'], { company_id: null }),
+      switchCompany: vi.fn(),
+      logout: vi.fn(),
+    });
+    adminMocks.getMyCompanies.mockResolvedValue([companies[0]]);
+    renderWithProviders(<CompanySwitcher />);
+
+    expect(await screen.findByText('Select Company')).toBeInTheDocument();
   });
 
   it('stays hidden when the user belongs to no company', async () => {

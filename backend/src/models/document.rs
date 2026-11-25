@@ -76,6 +76,7 @@ pub struct CreateDocumentCategoryRequest {
 #[derive(Debug, Deserialize)]
 pub struct DocumentListQuery {
     pub employee_id: Option<Uuid>,
+    pub company_wide: Option<bool>,
     pub category_id: Option<Uuid>,
     pub status: Option<String>,
     pub search: Option<String>,

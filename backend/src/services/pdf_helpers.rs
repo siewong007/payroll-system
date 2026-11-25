@@ -77,8 +77,8 @@ pub fn add_text_right(
     y: f32,
     text: &str,
 ) {
-    let approx_width = text.len() as f32 * size * 0.22;
-    let x = right_x - approx_width;
+    let approx_width = text.chars().count() as f32 * size * 0.22;
+    let x = (right_x - approx_width).max(10.0);
     add_text(ops, font, size, x, y, text);
 }
 

@@ -12,8 +12,15 @@ pub async fn list_for_year(
     company_id: Uuid,
     year: i32,
 ) -> AppResult<Vec<Holiday>> {
-    let start = NaiveDate::from_ymd_opt(year, 1, 1).expect("valid year start");
-    let end = NaiveDate::from_ymd_opt(year, 12, 31).expect("valid year end");
+    if !(1900..=2100).contains(&year) {
+        return Err(crate::core::error::AppError::BadRequest(
+            "Year must be between 1900 and 2100".into(),
+        ));
+    }
+    let start = NaiveDate::from_ymd_opt(year, 1, 1)
+        .ok_or_else(|| crate::core::error::AppError::BadRequest("Invalid year".into()))?;
+    let end = NaiveDate::from_ymd_opt(year, 12, 31)
+        .ok_or_else(|| crate::core::error::AppError::BadRequest("Invalid year".into()))?;
     list_in_span(executor, company_id, start, end).await
 }
 
@@ -82,6 +89,7 @@ async fn list_in_span(
             if let Some(occurrence) =
                 NaiveDate::from_ymd_opt(year, holiday.date.month(), holiday.date.day())
                 && occurrence >= start
+                && occurrence <= end
                 && occurrence >= holiday.date
             {
                 out.push(Holiday {

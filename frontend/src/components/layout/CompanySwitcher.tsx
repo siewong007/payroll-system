@@ -38,9 +38,11 @@ export function CompanySwitcher() {
     };
   }, []);
 
-  // Hide if user has only 0 or 1 companies — switcher would be a no-op.
-  // Visible to super_admin and admin alike when they have multi-company access.
-  if (!companies || companies.length <= 1) return null;
+  // Hide only when there are 0 companies, or 1 company that is already active.
+  // An unassigned user with 1 accessible company still needs to select it.
+  if (!companies || companies.length === 0 || (companies.length === 1 && user?.company_id === companies[0].id)) {
+    return null;
+  }
 
   const current = companies.find((c) => c.id === user?.company_id);
 

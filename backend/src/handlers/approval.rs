@@ -77,6 +77,7 @@ pub async fn create_leave_request(
     Json(req): Json<AdminLeaveRequest>,
 ) -> AppResult<Json<LeaveRequest>> {
     let company_id = auth.authorize(Permission::ManageApprovals)?;
+    let access = crate::services::upload_service::access_from_auth(&auth, company_id);
     let leave = approval_service::create_leave_request_admin(
         &state.pool,
         company_id,
@@ -91,6 +92,7 @@ pub async fn create_leave_request(
             attachment_name: req.attachment_name,
         },
         auth.0.sub,
+        &access,
         Some(&audit_meta),
     )
     .await?;
@@ -105,12 +107,14 @@ pub async fn update_leave_request(
     Json(req): Json<UpdateLeaveRequest>,
 ) -> AppResult<Json<LeaveRequest>> {
     let company_id = auth.authorize(Permission::ManageApprovals)?;
+    let access = crate::services::upload_service::access_from_auth(&auth, company_id);
     let leave = approval_service::update_leave_request_admin(
         &state.pool,
         company_id,
         id,
         req,
         auth.0.sub,
+        &access,
         Some(&audit_meta),
     )
     .await?;
@@ -226,6 +230,7 @@ pub async fn create_claim(
     Json(req): Json<AdminClaimRequest>,
 ) -> AppResult<Json<Claim>> {
     let company_id = auth.authorize(Permission::ManageApprovals)?;
+    let access = crate::services::upload_service::access_from_auth(&auth, company_id);
     let claim = approval_service::create_claim_admin(
         &state.pool,
         company_id,
@@ -240,6 +245,7 @@ pub async fn create_claim(
             expense_date: req.expense_date,
         },
         auth.0.sub,
+        &access,
         Some(&audit_meta),
     )
     .await?;
@@ -254,12 +260,14 @@ pub async fn update_claim(
     Json(req): Json<UpdateClaimRequest>,
 ) -> AppResult<Json<ClaimWithEmployee>> {
     let company_id = auth.authorize(Permission::ManageApprovals)?;
+    let access = crate::services::upload_service::access_from_auth(&auth, company_id);
     let claim = approval_service::update_claim_admin(
         &state.pool,
         company_id,
         id,
         req,
         auth.0.sub,
+        &access,
         Some(&audit_meta),
     )
     .await?;

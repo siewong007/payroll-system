@@ -29,14 +29,15 @@ pub async fn list(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    let page = query.page.unwrap_or(1).max(1);
-    let per_page = query.per_page.unwrap_or(20).min(100);
-    let offset = (page - 1) * per_page;
+    let page = query.page.unwrap_or(1).clamp(1, 100_000);
+    let per_page = query.per_page.unwrap_or(20).clamp(1, 100);
+    let offset = (page - 1).saturating_mul(per_page);
 
     let (documents, total) = document_service::list_documents(
         &state.pool,
         company_id,
         query.employee_id,
+        query.company_wide,
         query.category_id,
         query.status.as_deref(),
         query.search.as_deref(),
@@ -82,14 +83,9 @@ pub async fn create(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    let doc = document_service::create_document(
-        &state.pool,
-        company_id,
-        req,
-        auth.0.sub,
-        can_view_confidential(&auth),
-    )
-    .await?;
+    let access = crate::services::upload_service::access_from_auth(&auth, company_id);
+    let doc = document_service::create_document(&state.pool, company_id, req, auth.0.sub, &access)
+        .await?;
     Ok(Json(doc))
 }
 
@@ -178,7 +174,7 @@ pub async fn expiring(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    let days = query.days.unwrap_or(30);
+    let days = query.days.unwrap_or(30).clamp(1, 3650);
     let docs = document_service::get_expiring_documents(
         &state.pool,
         company_id,

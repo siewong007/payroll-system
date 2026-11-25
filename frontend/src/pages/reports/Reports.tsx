@@ -354,20 +354,43 @@ export function Reports() {
   }, [hasInitializedPeriods, periodsQuery.data]);
 
   useEffect(() => {
-    if (yearOptions.length === 0 || yearOptions.includes(year)) {
+    if (!periodsQuery.data || yearOptions.length === 0 || yearOptions.includes(year)) {
       return;
     }
 
-    setYearState(yearOptions[yearOptions.length - 1]);
-  }, [year, yearOptions]);
+    const clampedYear = yearOptions[yearOptions.length - 1];
+    setYearState(clampedYear);
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.set('year', String(clampedYear));
+        return next;
+      },
+      { replace: true },
+    );
+  }, [periodsQuery.data, setSearchParams, year, yearOptions]);
 
   useEffect(() => {
-    if (!['department', 'statutory'].includes(tab) || monthOptions.length === 0 || monthOptions.includes(month)) {
+    if (
+      !periodsQuery.data ||
+      !['department', 'statutory'].includes(tab) ||
+      monthOptions.length === 0 ||
+      monthOptions.includes(month)
+    ) {
       return;
     }
 
-    setMonthState(monthOptions[monthOptions.length - 1]);
-  }, [month, monthOptions, tab]);
+    const clampedMonth = monthOptions[monthOptions.length - 1];
+    setMonthState(clampedMonth);
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.set('month', String(clampedMonth));
+        return next;
+      },
+      { replace: true },
+    );
+  }, [month, monthOptions, periodsQuery.data, setSearchParams, tab]);
 
   const payrollQuery = useQuery({
     queryKey: ['report-payroll', year],
@@ -552,7 +575,7 @@ export function Reports() {
                   isLoading={payrollQuery.isLoading}
                   emptyMessage={t('reports.noPayrollData', { year })}
                   emptyIcon={<FileText className="w-8 h-8 text-gray-300 dark:text-slate-600" aria-hidden="true" />}
-                  rowKey={(r) => r.period}
+                  rowKey={(r, i) => `${r.period}-${i}`}
                   summaryTitle={(r) => t('reports.payrollForPeriod', { period: r.period })}
                   renderSummary={(r) => (
                     <div className="grid grid-cols-2 gap-4">

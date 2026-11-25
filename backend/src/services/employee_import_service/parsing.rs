@@ -229,13 +229,14 @@ fn resolve_headers(raw_headers: &[String]) -> Vec<Option<&'static str>> {
     raw_headers
         .iter()
         .map(|h| {
-            let normalized = h.trim().to_lowercase();
+            let normalized = h.trim_start_matches('\u{FEFF}').trim().to_lowercase();
             alias_map.get(&normalized).copied()
         })
         .collect()
 }
 
 pub fn parse_csv(data: &[u8]) -> AppResult<(Vec<String>, Vec<Vec<String>>)> {
+    let data = data.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(data);
     let mut rdr = csv::ReaderBuilder::new()
         .flexible(true)
         .trim(csv::Trim::All)
@@ -318,6 +319,33 @@ fn validate_xlsx_archive(data: &[u8]) -> AppResult<()> {
     Ok(())
 }
 
+fn excel_serial_to_date(serial: f64) -> Option<chrono::NaiveDate> {
+    if !serial.is_finite() || !(1.0..=2_958_465.0).contains(&serial) {
+        return None;
+    }
+    let whole = serial.floor() as i64;
+    // Excel's 1900 epoch counts 1900-02-29 as serial 60, so dates >= 60 anchor
+    // to 1899-12-30.
+    let epoch = if whole >= 60 {
+        chrono::NaiveDate::from_ymd_opt(1899, 12, 30)?
+    } else {
+        chrono::NaiveDate::from_ymd_opt(1899, 12, 31)?
+    };
+    epoch.checked_add_signed(chrono::Duration::days(whole))
+}
+
+fn format_xlsx_cell(cell: &calamine::Data) -> String {
+    match cell {
+        calamine::Data::DateTime(dt) => excel_serial_to_date(dt.as_f64())
+            .map(|d| d.format("%Y-%m-%d").to_string())
+            .unwrap_or_else(|| cell.to_string()),
+        calamine::Data::DateTimeIso(s) => s.trim().get(..10).unwrap_or(s.trim()).to_string(),
+        _ => cell.to_string(),
+    }
+    .trim()
+    .to_string()
+}
+
 pub fn parse_xlsx(data: &[u8]) -> AppResult<(Vec<String>, Vec<Vec<String>>)> {
     validate_xlsx_archive(data)?;
 
@@ -348,10 +376,7 @@ pub fn parse_xlsx(data: &[u8]) -> AppResult<(Vec<String>, Vec<Vec<String>>)> {
         .next()
         .ok_or_else(|| AppError::BadRequest("Excel file has no headers".into()))?;
 
-    let headers: Vec<String> = header_row
-        .iter()
-        .map(|cell| cell.to_string().trim().to_string())
-        .collect();
+    let headers: Vec<String> = header_row.iter().map(format_xlsx_cell).collect();
 
     if headers.is_empty() || headers.iter().all(|h| h.is_empty()) {
         return Err(AppError::BadRequest(
@@ -361,10 +386,7 @@ pub fn parse_xlsx(data: &[u8]) -> AppResult<(Vec<String>, Vec<Vec<String>>)> {
 
     let mut rows = Vec::new();
     for row in row_iter {
-        let cells: Vec<String> = row
-            .iter()
-            .map(|cell| cell.to_string().trim().to_string())
-            .collect();
+        let cells: Vec<String> = row.iter().map(format_xlsx_cell).collect();
         if cells.iter().all(|s| s.is_empty()) {
             continue;
         }

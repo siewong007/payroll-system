@@ -92,6 +92,16 @@
         "ordinal": 17,
         "name": "updated_by",
         "type_info": "Uuid"
+      },
+      {
+        "ordinal": 18,
+        "name": "overtime_application_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 19,
+        "name": "leave_request_id",
+        "type_info": "Uuid"
       }
     ],
     "parameters": {
@@ -128,6 +138,8 @@
       true,
       false,
       false,
+      true,
+      true,
       true,
       true
     ]

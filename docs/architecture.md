@@ -228,7 +228,7 @@ localized across `en`, `ms`, `zh-CN`, and `zh-TW`.
 
 The canonical database consists of the `1000_schema.sql` and `1001_data.sql`
 consolidated baseline followed by immutable numbered forward migrations
-(`1002`–`1030`). It uses native UUIDv7 identifiers, targeted
+(`1002`–`1033`). It uses native UUIDv7 identifiers, targeted
 partial/covering/trigram indexes, relational constraints, and multicolumn
 optimizer statistics. See [database.md](database.md) for exact compatibility and
 verification rules, and [legal/malaysian-statutory-compliance.md](legal/malaysian-statutory-compliance.md)

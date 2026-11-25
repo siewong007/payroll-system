@@ -26,6 +26,7 @@ pub async fn list_page_for_admin(
     offset: i64,
     hide_privileged: bool,
 ) -> AppResult<Vec<UserRow>> {
+    let escaped = search.map(crate::repositories::escape_like);
     let rows = sqlx::query_as!(
         UserRow,
         r#"SELECT u.id, u.email, u.full_name, u.roles, u.company_id,
@@ -39,14 +40,14 @@ pub async fn list_page_for_admin(
                     SELECT company_id FROM user_companies WHERE user_id = $1)
                   AND ($2::uuid IS NULL OR uc.company_id = $2))
               AND ($3::text IS NULL
-                    OR u.full_name ILIKE '%' || $3 || '%'
-                    OR u.email ILIKE '%' || $3 || '%')
+                    OR u.full_name ILIKE '%' || $3 || '%' ESCAPE '\'
+                    OR u.email ILIKE '%' || $3 || '%' ESCAPE '\')
               AND NOT ($6::bool AND u.roles && ARRAY['admin', 'super_admin']::varchar[])
             ORDER BY u.created_at DESC
             LIMIT $4 OFFSET $5"#,
         caller_id,
         company_id,
-        search,
+        escaped.as_deref(),
         limit,
         offset,
         hide_privileged,
@@ -64,6 +65,7 @@ pub async fn count_for_admin(
     search: Option<&str>,
     hide_privileged: bool,
 ) -> AppResult<i64> {
+    let escaped = search.map(crate::repositories::escape_like);
     let total = sqlx::query_scalar!(
         r#"SELECT COUNT(*) AS "count!"
             FROM users u
@@ -75,12 +77,12 @@ pub async fn count_for_admin(
                     SELECT company_id FROM user_companies WHERE user_id = $1)
                   AND ($2::uuid IS NULL OR uc.company_id = $2))
               AND ($3::text IS NULL
-                    OR u.full_name ILIKE '%' || $3 || '%'
-                    OR u.email ILIKE '%' || $3 || '%')
+                    OR u.full_name ILIKE '%' || $3 || '%' ESCAPE '\'
+                    OR u.email ILIKE '%' || $3 || '%' ESCAPE '\')
               AND NOT ($4::bool AND u.roles && ARRAY['admin', 'super_admin']::varchar[])"#,
         caller_id,
         company_id,
-        search,
+        escaped.as_deref(),
         hide_privileged,
     )
     .fetch_one(executor)
@@ -100,6 +102,7 @@ pub async fn list_page_for_admin_by_role(
     offset: i64,
     hide_privileged: bool,
 ) -> AppResult<Vec<UserRow>> {
+    let escaped = search.map(crate::repositories::escape_like);
     let rows = sqlx::query_as::<_, UserRow>(
         r#"SELECT u.id, u.email, u.full_name, u.roles, u.company_id,
                 u.employee_id, u.is_active, u.created_at
@@ -112,8 +115,8 @@ pub async fn list_page_for_admin_by_role(
                     SELECT company_id FROM user_companies WHERE user_id = $1)
                   AND ($2::uuid IS NULL OR uc.company_id = $2))
               AND ($3::text IS NULL
-                    OR u.full_name ILIKE '%' || $3 || '%'
-                    OR u.email ILIKE '%' || $3 || '%')
+                    OR u.full_name ILIKE '%' || $3 || '%' ESCAPE '\'
+                    OR u.email ILIKE '%' || $3 || '%' ESCAPE '\')
               AND $4 = ANY(u.roles)
               AND NOT ($7::bool AND u.roles && ARRAY['admin', 'super_admin']::varchar[])
             ORDER BY u.created_at DESC
@@ -121,7 +124,7 @@ pub async fn list_page_for_admin_by_role(
     )
     .bind(caller_id)
     .bind(company_id)
-    .bind(search)
+    .bind(escaped.as_deref())
     .bind(role)
     .bind(limit)
     .bind(offset)
@@ -140,6 +143,7 @@ pub async fn count_for_admin_by_role(
     role: &str,
     hide_privileged: bool,
 ) -> AppResult<i64> {
+    let escaped = search.map(crate::repositories::escape_like);
     let total = sqlx::query_scalar::<_, i64>(
         r#"SELECT COUNT(*)
             FROM users u
@@ -151,14 +155,14 @@ pub async fn count_for_admin_by_role(
                     SELECT company_id FROM user_companies WHERE user_id = $1)
                   AND ($2::uuid IS NULL OR uc.company_id = $2))
               AND ($3::text IS NULL
-                    OR u.full_name ILIKE '%' || $3 || '%'
-                    OR u.email ILIKE '%' || $3 || '%')
+                    OR u.full_name ILIKE '%' || $3 || '%' ESCAPE '\'
+                    OR u.email ILIKE '%' || $3 || '%' ESCAPE '\')
               AND $4 = ANY(u.roles)
               AND NOT ($5::bool AND u.roles && ARRAY['admin', 'super_admin']::varchar[])"#,
     )
     .bind(caller_id)
     .bind(company_id)
-    .bind(search)
+    .bind(escaped.as_deref())
     .bind(role)
     .bind(hide_privileged)
     .fetch_one(executor)

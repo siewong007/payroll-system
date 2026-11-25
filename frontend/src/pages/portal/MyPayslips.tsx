@@ -148,7 +148,14 @@ export function MyPayslips() {
             onChange={(e) => setSelectedPeriod({ year: Number(e.target.value), month })}
             className="form-input !w-auto"
           >
-            {Array.from({ length: 6 }, (_, i) => new Date().getFullYear() - 3 + i)
+            {Array.from(
+              new Set([
+                ...Array.from({ length: 6 }, (_, i) => new Date().getFullYear() - 3 + i),
+                ...sortedPayslips.map((p) => p.period_year),
+                year,
+              ]),
+            )
+              .sort((a, b) => a - b)
               .map((y) => <option key={y} value={y}>{y}</option>)}
           </select>
           <button

@@ -22,6 +22,33 @@ function modeDesc(mode: string, t: TFunction) {
   return t(`attendance.geofence.modes.${mode}.desc`, { defaultValue: '' });
 }
 
+function validateLocationCoords(
+  latStr: string,
+  lngStr: string,
+  radiusStr: string,
+  t: TFunction,
+): { latitude: number; longitude: number; radius_meters: number } | { error: string } {
+  const latitude = Number(latStr.trim());
+  const longitude = Number(lngStr.trim());
+  if (
+    !latStr.trim() ||
+    !lngStr.trim() ||
+    !Number.isFinite(latitude) ||
+    !Number.isFinite(longitude) ||
+    latitude < -90 ||
+    latitude > 90 ||
+    longitude < -180 ||
+    longitude > 180
+  ) {
+    return { error: t('attendance.geofence.invalidCoords') };
+  }
+  const radius = Number(radiusStr.trim());
+  if (!radiusStr.trim() || !Number.isInteger(radius) || radius < 10 || radius > 10000) {
+    return { error: t('attendance.geofence.invalidRadius') };
+  }
+  return { latitude, longitude, radius_meters: radius };
+}
+
 function AddLocationForm({ onClose }: { onClose: () => void }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -30,12 +57,8 @@ function AddLocationForm({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState('');
 
   const mutation = useMutation({
-    mutationFn: () => createLocation({
-      name: form.name.trim(),
-      latitude: parseFloat(form.latitude),
-      longitude: parseFloat(form.longitude),
-      radius_meters: parseInt(form.radius_meters, 10) || 200,
-    }),
+    mutationFn: (payload: { name: string; latitude: number; longitude: number; radius_meters: number }) =>
+      createLocation(payload),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['geofence-locations'] });
       void queryClient.invalidateQueries({ queryKey: ['attendance-method'] });
@@ -45,6 +68,19 @@ function AddLocationForm({ onClose }: { onClose: () => void }) {
       setError(getErrorMessage(e, t('attendance.geofence.addFailed')));
     },
   });
+
+  const handleAdd = () => {
+    const validated = validateLocationCoords(form.latitude, form.longitude, form.radius_meters, t);
+    if ('error' in validated) {
+      setError(validated.error);
+      return;
+    }
+    setError('');
+    mutation.mutate({
+      name: form.name.trim(),
+      ...validated,
+    });
+  };
 
   const handleUseCurrentLocation = () => {
     if (typeof navigator === 'undefined' || !navigator.geolocation) {
@@ -138,7 +174,7 @@ function AddLocationForm({ onClose }: { onClose: () => void }) {
         </button>
         <button
           type="button"
-          onClick={() => mutation.mutate()}
+          onClick={handleAdd}
           disabled={!form.name.trim() || !form.latitude.trim() || !form.longitude.trim() || mutation.isPending}
           className="btn-primary flex-1 !py-2"
         >
@@ -163,12 +199,8 @@ function LocationRow({ loc }: { loc: CompanyLocation }) {
   const [error, setError] = useState('');
 
   const updateMut = useMutation({
-    mutationFn: () => updateLocation(loc.id, {
-      name: form.name.trim(),
-      latitude: parseFloat(form.latitude),
-      longitude: parseFloat(form.longitude),
-      radius_meters: parseInt(form.radius_meters, 10) || 200,
-    }),
+    mutationFn: (payload: { name: string; latitude: number; longitude: number; radius_meters: number }) =>
+      updateLocation(loc.id, payload),
     onSuccess: () => {
       setError('');
       setEditing(false);
@@ -176,6 +208,19 @@ function LocationRow({ loc }: { loc: CompanyLocation }) {
     },
     onError: (e) => setError(getErrorMessage(e, t('attendance.geofence.updateFailed'))),
   });
+
+  const handleSave = () => {
+    const validated = validateLocationCoords(form.latitude, form.longitude, form.radius_meters, t);
+    if ('error' in validated) {
+      setError(validated.error);
+      return;
+    }
+    setError('');
+    updateMut.mutate({
+      name: form.name.trim(),
+      ...validated,
+    });
+  };
 
   const deleteMut = useMutation({
     mutationFn: () => deleteLocation(loc.id),
@@ -245,7 +290,7 @@ function LocationRow({ loc }: { loc: CompanyLocation }) {
           </button>
           <button
             type="button"
-            onClick={() => updateMut.mutate()}
+            onClick={handleSave}
             disabled={!form.name.trim() || !form.latitude.trim() || !form.longitude.trim() || updateMut.isPending}
             className="btn-primary !py-1.5 !min-h-9"
           >
@@ -268,7 +313,16 @@ function LocationRow({ loc }: { loc: CompanyLocation }) {
         </div>
         <button
           type="button"
-          onClick={() => setEditing(true)}
+          onClick={() => {
+            setForm({
+              name: loc.name,
+              latitude: String(loc.latitude),
+              longitude: String(loc.longitude),
+              radius_meters: String(loc.radius_meters),
+            });
+            setError('');
+            setEditing(true);
+          }}
           className="text-gray-400 dark:text-slate-500 hover:text-gray-700 dark:hover:text-slate-200 p-2 rounded-lg transition-colors"
           title={t('attendance.geofence.editLocation')}
           aria-label={t('attendance.geofence.editLocation')}

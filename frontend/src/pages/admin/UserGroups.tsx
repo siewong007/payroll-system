@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Plus, Search, Trash2, UserPlus, Users } from 'lucide-react';
@@ -13,6 +13,17 @@ import { useConfirm } from '@/lib/confirm';
 import { usePermissions } from '@/lib/usePermissions';
 import { useToast } from '@/lib/toast';
 import { getErrorMessage } from '@/lib/utils';
+
+const PLATFORM_ONLY_PERMISSIONS = new Set<PermissionKey>([
+  'manage_users',
+  'manage_companies',
+  'manage_backups',
+  'manage_platform_settings',
+]);
+const PAYROLL_PREPARE_PERMISSIONS = new Set<PermissionKey>([
+  'manage_payroll_draft',
+  'submit_payroll',
+]);
 
 /**
  * User groups grant permissions on top of roles.
@@ -56,6 +67,7 @@ export function UserGroups() {
   const permissionsByGroup = useMemo(() => {
     const grouped = new Map<string, PermissionDescriptor[]>();
     for (const permission of matrix.data?.permissions ?? []) {
+      if (PLATFORM_ONLY_PERMISSIONS.has(permission.key)) continue;
       const list = grouped.get(permission.group) ?? [];
       list.push(permission);
       grouped.set(permission.group, list);
@@ -79,7 +91,7 @@ export function UserGroups() {
     );
   }
 
-  if (groups.isError) {
+  if (groups.isError || matrix.isError) {
     return (
       <div className="space-y-6">
         <PageHeader title={t('userGroups.title')} subtitle={t('userGroups.subtitle')} />
@@ -87,9 +99,16 @@ export function UserGroups() {
           <EmptyState
             icon={AlertTriangle}
             title={t('userGroups.loadFailed')}
-            description={getErrorMessage(groups.error, t('common.error'))}
+            description={getErrorMessage(groups.error ?? matrix.error, t('common.error'))}
             action={
-              <button type="button" onClick={() => void groups.refetch()} className="btn-secondary">
+              <button
+                type="button"
+                onClick={() => {
+                  if (groups.isError) void groups.refetch();
+                  if (matrix.isError) void matrix.refetch();
+                }}
+                className="btn-secondary"
+              >
                 {t('common.retry')}
               </button>
             }
@@ -262,8 +281,16 @@ function GroupEditor({
   const { t } = useTranslation();
   const [name, setName] = useState(group?.name ?? '');
   const [description, setDescription] = useState(group?.description ?? '');
+  const [isActive, setIsActive] = useState(group?.is_active ?? true);
   const [selected, setSelected] = useState<PermissionKey[]>(group?.permissions ?? []);
   const [error, setError] = useState<string | null>(null);
+
+  const hasPreparePermission = selected.some((k) => PAYROLL_PREPARE_PERMISSIONS.has(k));
+  const hasApprovePermission = selected.includes('approve_payroll');
+
+  const isPermissionDisabled = (key: PermissionKey) =>
+    (key === 'approve_payroll' && hasPreparePermission && !hasApprovePermission) ||
+    (PAYROLL_PREPARE_PERMISSIONS.has(key) && hasApprovePermission && !selected.includes(key));
 
   const save = useMutation({
     mutationFn: async () => {
@@ -272,7 +299,8 @@ function GroupEditor({
       if (group) {
         return userGroupsApi.update(group.id, {
           name: trimmedName,
-          description: trimmedDesc || undefined,
+          description: trimmedDesc,
+          is_active: isActive,
           permissions: selected,
         });
       }
@@ -289,6 +317,7 @@ function GroupEditor({
   });
 
   function toggle(key: PermissionKey) {
+    if (isPermissionDisabled(key)) return;
     setSelected((current) =>
       current.includes(key) ? current.filter((k) => k !== key) : [...current, key],
     );
@@ -358,28 +387,49 @@ function GroupEditor({
           )}
         </FormField>
 
+        {group && (
+          <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-slate-200 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={isActive}
+              onChange={(e) => setIsActive(e.target.checked)}
+              className="rounded border-gray-300 dark:border-slate-600 text-[var(--accent-1)] focus:ring-[var(--ring)]"
+            />
+            {t('userGroups.activeLabel')}
+          </label>
+        )}
+
         <div className="space-y-3">
-          <p className="text-xs font-medium text-gray-500 dark:text-slate-400">{t('userGroups.permissionsGranted')}</p>
+          <div className="space-y-1">
+            <p className="text-xs font-medium text-gray-500 dark:text-slate-400">{t('userGroups.permissionsGranted')}</p>
+            {(hasPreparePermission || hasApprovePermission) && (
+              <p className="text-xs text-amber-600 dark:text-amber-400">{t('userGroups.payrollSeparationHint')}</p>
+            )}
+          </div>
           {[...permissionsByGroup.entries()].map(([groupName, permissions]) => (
             <Fragment key={groupName}>
               <p className="text-[10px] uppercase tracking-wider font-semibold text-gray-400 dark:text-slate-500">
                 {t(`permissions.groups.${groupName.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`, { defaultValue: groupName })}
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                {permissions.map((permission) => (
-                  <label
-                    key={permission.key}
-                    className="flex items-center gap-2 text-sm text-gray-700 dark:text-slate-200 cursor-pointer"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selected.includes(permission.key)}
-                      onChange={() => toggle(permission.key)}
-                      className="rounded border-gray-300 dark:border-slate-600 text-[var(--accent-1)] focus:ring-[var(--ring)]"
-                    />
-                    {t(`permissions.labels.${permission.key}`, { defaultValue: permission.label })}
-                  </label>
-                ))}
+                {permissions.map((permission) => {
+                  const disabled = isPermissionDisabled(permission.key);
+                  return (
+                    <label
+                      key={permission.key}
+                      className={`flex items-center gap-2 text-sm text-gray-700 dark:text-slate-200 ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selected.includes(permission.key)}
+                        disabled={disabled}
+                        onChange={() => toggle(permission.key)}
+                        className="rounded border-gray-300 dark:border-slate-600 text-[var(--accent-1)] focus:ring-[var(--ring)]"
+                      />
+                      {t(`permissions.labels.${permission.key}`, { defaultValue: permission.label })}
+                    </label>
+                  );
+                })}
               </div>
             </Fragment>
           ))}
@@ -403,8 +453,14 @@ function GroupMembersModal({
   const toast = useToast();
   const confirmDialog = useConfirm();
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [addingUserId, setAddingUserId] = useState<string | null>(null);
   const [removingUserId, setRemovingUserId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 250);
+    return () => window.clearTimeout(timer);
+  }, [search]);
 
   const membersQuery = useQuery({
     queryKey: ['user-group-members', group.id],
@@ -412,8 +468,8 @@ function GroupMembersModal({
   });
 
   const usersQuery = useQuery({
-    queryKey: ['admin-users', 'group-picker'],
-    queryFn: () => listUsers({ perPage: 100 }),
+    queryKey: ['admin-users', 'group-picker', debouncedSearch],
+    queryFn: () => listUsers({ search: debouncedSearch || undefined, perPage: 50 }),
     enabled: canManageUsers,
   });
 

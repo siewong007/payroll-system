@@ -1,10 +1,12 @@
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { forgotPassword } from '@/api/admin';
 import { BrandLogo } from '@/components/ui/BrandLogo';
 import { LanguageSwitcher } from '@/components/ui/LanguageSwitcher';
-import { TurnstileWidget, type TurnstileWidgetRef } from '@/components/TurnstileWidget';
+import { TurnstileWidget } from '@/components/TurnstileWidget';
+import { useTurnstileWaiter } from '@/lib/useTurnstileWaiter';
+import { getErrorMessage } from '@/lib/utils';
 
 export function ForgotPassword() {
   const { t } = useTranslation();
@@ -12,21 +14,26 @@ export function ForgotPassword() {
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const turnstileRef = useRef<TurnstileWidgetRef>(null);
-  const turnstileToken = useRef<string | undefined>(undefined);
+  const {
+    widgetRef: turnstileRef,
+    waitForToken: waitForTurnstileToken,
+    handleVerify: handleTurnstileVerify,
+    handleExpire: handleTurnstileExpire,
+    handleError: handleTurnstileError,
+    resetWidget: resetTurnstileWidget,
+  } = useTurnstileWaiter();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setLoading(true);
-    const token = turnstileToken.current;
-    turnstileToken.current = undefined;
     try {
+      const token = await waitForTurnstileToken();
       await forgotPassword(email, token);
       setSubmitted(true);
-    } catch {
-      turnstileRef.current?.reset();
-      setError(t('auth.forgot.failed'));
+    } catch (err: unknown) {
+      resetTurnstileWidget();
+      setError(getErrorMessage(err, t('auth.forgot.failed')));
     } finally {
       setLoading(false);
     }
@@ -88,15 +95,9 @@ export function ForgotPassword() {
               <div className="flex justify-center">
                 <TurnstileWidget
                   ref={turnstileRef}
-                  onVerify={(t) => {
-                    turnstileToken.current = t;
-                  }}
-                  onExpire={() => {
-                    turnstileToken.current = undefined;
-                  }}
-                  onError={() => {
-                    turnstileToken.current = undefined;
-                  }}
+                  onVerify={handleTurnstileVerify}
+                  onExpire={handleTurnstileExpire}
+                  onError={handleTurnstileError}
                 />
               </div>
 

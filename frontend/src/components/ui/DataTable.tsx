@@ -82,7 +82,8 @@ export function DataTable<T>({
   isRowSelectable,
 }: DataTableProps<T>) {
   const { t } = useTranslation();
-  const [selectedRow, setSelectedRow] = useState<T | null>(null);
+  const [selectedSummary, setSelectedSummary] = useState<{ row: T; key: string } | null>(null);
+  const selectedRow = selectedSummary?.row ?? null;
   const [internalPage, setInternalPage] = useState(1);
   const [sortState, setSortState] = useState<{ key: string; dir: 'asc' | 'desc' } | null>(null);
   const selectAllRef = useRef<HTMLInputElement>(null);
@@ -117,9 +118,10 @@ export function DataTable<T>({
   const totalPages = Math.ceil(totalItems / perPage);
   // Clamp before slicing so no frame is ever blank.
   const safePage = Math.min(Math.max(1, currentPage), Math.max(1, totalPages));
-  const displayData = isServerSide
-    ? data
-    : sortedData.slice((safePage - 1) * perPage, safePage * perPage);
+  const displayData = useMemo(
+    () => (isServerSide ? data : sortedData.slice((safePage - 1) * perPage, safePage * perPage)),
+    [data, isServerSide, perPage, safePage, sortedData],
+  );
 
   const colCount = columns.length + (renderActions ? 1 : 0) + (selectable ? 1 : 0);
 
@@ -144,15 +146,17 @@ export function DataTable<T>({
     return String(index);
   }, [rowKey]);
 
-  const handleRowClick = (row: T) => {
-    if (!disableRowClick) setSelectedRow(row);
+  const handleRowClick = (row: T, index: number) => {
+    if (!disableRowClick) {
+      setSelectedSummary({ row, key: getKey(row, index) });
+    }
   };
 
-  const handleRowKeyDown = (e: React.KeyboardEvent<HTMLElement>, row: T) => {
+  const handleRowKeyDown = (e: React.KeyboardEvent<HTMLElement>, row: T, index: number) => {
     if (disableRowClick || e.target !== e.currentTarget) return;
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
-      handleRowClick(row);
+      handleRowClick(row, index);
     }
   };
 
@@ -165,10 +169,9 @@ export function DataTable<T>({
   };
 
   const selectedKeySet = new Set(selectedRowKeys);
-  const selectableDisplayData = selectable
-    ? displayData.filter((row) => isRowSelectable?.(row) ?? true)
+  const selectableDisplayKeys = selectable
+    ? displayData.flatMap((row, index) => ((isRowSelectable?.(row) ?? true) ? [getKey(row, index)] : []))
     : [];
-  const selectableDisplayKeys = selectableDisplayData.map((row, index) => getKey(row, index));
   const selectedDisplayCount = selectableDisplayKeys.filter((key) => selectedKeySet.has(key)).length;
   const hasSelectableRows = selectableDisplayKeys.length > 0;
   const allDisplayRowsSelected = hasSelectableRows && selectedDisplayCount === selectableDisplayKeys.length;
@@ -205,22 +208,22 @@ export function DataTable<T>({
   };
 
   useEffect(() => {
-    if (!selectedRow) {
+    if (!selectedSummary) {
       return;
     }
 
-    const selectedKey = getKey(selectedRow, -1);
-    const nextSelectedRow = data.find((row, index) => getKey(row, index) === selectedKey) ?? null;
+    const nextSelectedRow =
+      displayData.find((row, index) => getKey(row, index) === selectedSummary.key) ?? null;
 
     if (!nextSelectedRow) {
-      setSelectedRow(null);
+      setSelectedSummary(null);
       return;
     }
 
-    if (nextSelectedRow !== selectedRow) {
-      setSelectedRow(nextSelectedRow);
+    if (nextSelectedRow !== selectedSummary.row) {
+      setSelectedSummary({ row: nextSelectedRow, key: selectedSummary.key });
     }
-  }, [data, getKey, selectedRow]);
+  }, [displayData, getKey, selectedSummary]);
 
   const modalTitle = typeof resolvedSummaryTitle === 'function' && selectedRow
     ? resolvedSummaryTitle(selectedRow)
@@ -270,6 +273,7 @@ export function DataTable<T>({
               {selectable ? (
                 <label className="inline-flex min-h-11 items-center gap-2.5 text-xs font-medium text-gray-700 dark:text-slate-200 cursor-pointer">
                   <input
+                    ref={selectAllRef}
                     type="checkbox"
                     checked={allDisplayRowsSelected}
                     disabled={!hasSelectableRows}
@@ -326,13 +330,13 @@ export function DataTable<T>({
                 <div
                   key={getKey(row, idx)}
                   tabIndex={!disableRowClick ? 0 : undefined}
-                  onKeyDown={(e) => handleRowKeyDown(e, row)}
+                  onKeyDown={(e) => handleRowKeyDown(e, row, idx)}
                   className={`p-4 transition-colors ${
                     !disableRowClick
                       ? 'cursor-pointer active:bg-[var(--accent-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ring)]'
                       : ''
                   }`}
-                  onClick={() => handleRowClick(row)}
+                  onClick={() => handleRowClick(row, idx)}
                 >
                   {/* Primary fields */}
                   <div className="flex items-start justify-between gap-3">
@@ -472,13 +476,13 @@ export function DataTable<T>({
                   <tr
                     key={getKey(row, idx)}
                     tabIndex={!disableRowClick ? 0 : undefined}
-                    onKeyDown={(e) => handleRowKeyDown(e, row)}
+                    onKeyDown={(e) => handleRowKeyDown(e, row, idx)}
                     className={`hover:bg-[var(--accent-soft)] transition-colors ${
                       !disableRowClick
                         ? 'cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ring)]'
                         : ''
                     }`}
-                    onClick={() => handleRowClick(row)}
+                    onClick={() => handleRowClick(row, idx)}
                   >
                     {selectable && (
                       <td className="px-6 py-4" onClick={(e) => e.stopPropagation()}>
@@ -572,13 +576,13 @@ export function DataTable<T>({
       {/* Summary Modal */}
       <Modal
         open={selectedRow !== null}
-        onClose={() => setSelectedRow(null)}
+        onClose={() => setSelectedSummary(null)}
         title={modalTitle}
-        footer={selectedRow && renderSummaryFooter ? renderSummaryFooter(selectedRow, () => setSelectedRow(null)) : undefined}
+        footer={selectedRow && renderSummaryFooter ? renderSummaryFooter(selectedRow, () => setSelectedSummary(null)) : undefined}
       >
         {selectedRow && (
           renderSummary ? (
-            renderSummary(selectedRow, () => setSelectedRow(null))
+            renderSummary(selectedRow, () => setSelectedSummary(null))
           ) : (
             <div className="space-y-5">
               {columns
