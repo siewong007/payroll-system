@@ -6,32 +6,68 @@
       {
         "ordinal": 0,
         "name": "id",
-        "type_info": "Uuid"
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "id"
+          }
+        }
       },
       {
         "ordinal": 1,
         "name": "pcb_amount",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "pcb_amount"
+          }
+        }
       },
       {
         "ordinal": 2,
         "name": "total_deductions",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "total_deductions"
+          }
+        }
       },
       {
         "ordinal": 3,
         "name": "net_salary",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "net_salary"
+          }
+        }
       },
       {
         "ordinal": 4,
         "name": "ytd_pcb",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "ytd_pcb"
+          }
+        }
       },
       {
         "ordinal": 5,
         "name": "ytd_net",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "ytd_net"
+          }
+        }
       }
     ],
     "parameters": {

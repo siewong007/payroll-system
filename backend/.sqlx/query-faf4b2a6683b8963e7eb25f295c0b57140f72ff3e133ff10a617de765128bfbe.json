@@ -6,32 +6,68 @@
       {
         "ordinal": 0,
         "name": "id",
-        "type_info": "Uuid"
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "working_day_config",
+            "name": "id"
+          }
+        }
       },
       {
         "ordinal": 1,
         "name": "company_id",
-        "type_info": "Uuid"
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "working_day_config",
+            "name": "company_id"
+          }
+        }
       },
       {
         "ordinal": 2,
         "name": "day_of_week",
-        "type_info": "Int2"
+        "type_info": "Int2",
+        "origin": {
+          "Table": {
+            "table": "working_day_config",
+            "name": "day_of_week"
+          }
+        }
       },
       {
         "ordinal": 3,
         "name": "is_working_day",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "working_day_config",
+            "name": "is_working_day"
+          }
+        }
       },
       {
         "ordinal": 4,
         "name": "created_at",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "working_day_config",
+            "name": "created_at"
+          }
+        }
       },
       {
         "ordinal": 5,
         "name": "updated_at",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "working_day_config",
+            "name": "updated_at"
+          }
+        }
       }
     ],
     "parameters": {

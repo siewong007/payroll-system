@@ -6,32 +6,68 @@
       {
         "ordinal": 0,
         "name": "wage_from",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "socso_rates",
+            "name": "wage_from"
+          }
+        }
       },
       {
         "ordinal": 1,
         "name": "wage_to",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "socso_rates",
+            "name": "wage_to"
+          }
+        }
       },
       {
         "ordinal": 2,
         "name": "first_cat_employee",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "socso_rates",
+            "name": "first_cat_employee"
+          }
+        }
       },
       {
         "ordinal": 3,
         "name": "first_cat_employer",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "socso_rates",
+            "name": "first_cat_employer"
+          }
+        }
       },
       {
         "ordinal": 4,
         "name": "second_cat_employer",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "socso_rates",
+            "name": "second_cat_employer"
+          }
+        }
       },
       {
         "ordinal": 5,
         "name": "effective_from",
-        "type_info": "Date"
+        "type_info": "Date",
+        "origin": {
+          "Table": {
+            "table": "socso_rates",
+            "name": "effective_from"
+          }
+        }
       }
     ],
     "parameters": {

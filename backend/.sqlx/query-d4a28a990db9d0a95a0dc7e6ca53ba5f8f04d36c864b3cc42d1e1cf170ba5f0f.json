@@ -6,87 +6,189 @@
       {
         "ordinal": 0,
         "name": "employee_name",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "full_name"
+          }
+        }
       },
       {
         "ordinal": 1,
         "name": "ic_number",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "ic_number"
+          }
+        }
       },
       {
         "ordinal": 2,
         "name": "passport_number",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "passport_number"
+          }
+        }
       },
       {
         "ordinal": 3,
         "name": "tax_identification_number",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "tax_identification_number"
+          }
+        }
       },
       {
         "ordinal": 4,
         "name": "epf_number",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "epf_number"
+          }
+        }
       },
       {
         "ordinal": 5,
         "name": "socso_number",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "socso_number"
+          }
+        }
       },
       {
         "ordinal": 6,
         "name": "eis_number",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "eis_number"
+          }
+        }
       },
       {
         "ordinal": 7,
         "name": "gross_salary",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "gross_salary"
+          }
+        }
       },
       {
         "ordinal": 8,
         "name": "total_overtime",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "total_overtime"
+          }
+        }
       },
       {
         "ordinal": 9,
         "name": "unpaid_leave_deduction",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "unpaid_leave_deduction"
+          }
+        }
       },
       {
         "ordinal": 10,
         "name": "epf_employee",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "epf_employee"
+          }
+        }
       },
       {
         "ordinal": 11,
         "name": "epf_employer",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "epf_employer"
+          }
+        }
       },
       {
         "ordinal": 12,
         "name": "socso_employee",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "socso_employee"
+          }
+        }
       },
       {
         "ordinal": 13,
         "name": "socso_employer",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "socso_employer"
+          }
+        }
       },
       {
         "ordinal": 14,
         "name": "eis_employee",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "eis_employee"
+          }
+        }
       },
       {
         "ordinal": 15,
         "name": "eis_employer",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "eis_employer"
+          }
+        }
       },
       {
         "ordinal": 16,
         "name": "pcb_amount",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "pcb_amount"
+          }
+        }
       }
     ],
     "parameters": {

@@ -6,57 +6,123 @@
       {
         "ordinal": 0,
         "name": "id",
-        "type_info": "Uuid"
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "salary_history",
+            "name": "id"
+          }
+        }
       },
       {
         "ordinal": 1,
         "name": "employee_id",
-        "type_info": "Uuid"
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "salary_history",
+            "name": "employee_id"
+          }
+        }
       },
       {
         "ordinal": 2,
         "name": "old_salary",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "salary_history",
+            "name": "old_salary"
+          }
+        }
       },
       {
         "ordinal": 3,
         "name": "new_salary",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "salary_history",
+            "name": "new_salary"
+          }
+        }
       },
       {
         "ordinal": 4,
         "name": "effective_date",
-        "type_info": "Date"
+        "type_info": "Date",
+        "origin": {
+          "Table": {
+            "table": "salary_history",
+            "name": "effective_date"
+          }
+        }
       },
       {
         "ordinal": 5,
         "name": "reason",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "salary_history",
+            "name": "reason"
+          }
+        }
       },
       {
         "ordinal": 6,
         "name": "change_type",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "salary_history",
+            "name": "change_type"
+          }
+        }
       },
       {
         "ordinal": 7,
         "name": "notes",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "salary_history",
+            "name": "notes"
+          }
+        }
       },
       {
         "ordinal": 8,
         "name": "approved_by",
-        "type_info": "Uuid"
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "salary_history",
+            "name": "approved_by"
+          }
+        }
       },
       {
         "ordinal": 9,
         "name": "approved_at",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "salary_history",
+            "name": "approved_at"
+          }
+        }
       },
       {
         "ordinal": 10,
         "name": "created_at",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "salary_history",
+            "name": "created_at"
+          }
+        }
       }
     ],
     "parameters": {

@@ -402,13 +402,13 @@ async fn summary_counts_distinct_days_with_status_precedence() {
 
     // Day 2: a split shift — two present sessions on one local date.
     for (start, end) in [("08:00", "12:00"), ("13:00", "17:00")] {
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             r#"INSERT INTO attendance_records
                (company_id, employee_id, check_in_at, check_out_at, method, status)
                VALUES ($1, $2, ($3::date + TIME '{start}')::timestamp AT TIME ZONE 'Asia/Kuala_Lumpur',
                        ($3::date + TIME '{end}')::timestamp AT TIME ZONE 'Asia/Kuala_Lumpur',
                        'manual', 'present')"#,
-        ))
+        )))
         .bind(company_id)
         .bind(employee_id)
         .bind(day2)

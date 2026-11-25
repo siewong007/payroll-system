@@ -1465,7 +1465,7 @@ mod tests {
 
         for table in ["employee_allowances", "salary_history", "tp3_records"] {
             let statement = format!("SELECT count(*) FROM {table} WHERE company_id = $1");
-            let restored: i64 = sqlx::query_scalar(&statement)
+            let restored: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(statement))
                 .bind(result.new_company_id)
                 .fetch_one(&pool)
                 .await

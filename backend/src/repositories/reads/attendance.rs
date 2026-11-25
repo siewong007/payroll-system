@@ -85,7 +85,7 @@ fn resolve_pagination(q: &AttendanceListQuery) -> (i64, i64, i64) {
 }
 
 /// `ar.check_in_at >= <local midnight of date, in tz>`
-fn push_date_from(qb: &mut QueryBuilder<'_, Postgres>, tz: &str, date_from: NaiveDate) {
+fn push_date_from(qb: &mut QueryBuilder<Postgres>, tz: &str, date_from: NaiveDate) {
     qb.push(" AND ar.check_in_at >= (");
     qb.push_bind(date_from);
     qb.push("::date)::timestamp AT TIME ZONE ");
@@ -93,7 +93,7 @@ fn push_date_from(qb: &mut QueryBuilder<'_, Postgres>, tz: &str, date_from: Naiv
 }
 
 /// `ar.check_in_at < <local midnight after date, in tz>` (inclusive local date)
-fn push_date_to(qb: &mut QueryBuilder<'_, Postgres>, tz: &str, date_to: NaiveDate) {
+fn push_date_to(qb: &mut QueryBuilder<Postgres>, tz: &str, date_to: NaiveDate) {
     qb.push(" AND ar.check_in_at < (");
     qb.push_bind(date_to);
     qb.push("::date + 1)::timestamp AT TIME ZONE ");
@@ -101,7 +101,7 @@ fn push_date_to(qb: &mut QueryBuilder<'_, Postgres>, tz: &str, date_to: NaiveDat
 }
 
 /// Shared optional filters for the admin list / export queries.
-fn push_list_filters(qb: &mut QueryBuilder<'_, Postgres>, tz: &str, q: &AttendanceListQuery) {
+fn push_list_filters(qb: &mut QueryBuilder<Postgres>, tz: &str, q: &AttendanceListQuery) {
     if let Some(eid) = q.employee_id {
         qb.push(" AND ar.employee_id = ");
         qb.push_bind(eid);
@@ -203,7 +203,7 @@ pub async fn list_for_employee(
 ) -> AppResult<PaginatedAttendance<AttendanceRecord>> {
     let (page, per_page, offset) = resolve_pagination(q);
 
-    let push_filters = |qb: &mut QueryBuilder<'_, Postgres>| {
+    let push_filters = |qb: &mut QueryBuilder<Postgres>| {
         if let Some(df) = q.date_from {
             push_date_from(qb, tz, df);
         }

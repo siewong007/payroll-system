@@ -6,22 +6,46 @@
       {
         "ordinal": 0,
         "name": "chargeable_income_from",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "pcb_brackets",
+            "name": "chargeable_income_from"
+          }
+        }
       },
       {
         "ordinal": 1,
         "name": "chargeable_income_to",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "pcb_brackets",
+            "name": "chargeable_income_to"
+          }
+        }
       },
       {
         "ordinal": 2,
         "name": "tax_rate_percent",
-        "type_info": "Numeric"
+        "type_info": "Numeric",
+        "origin": {
+          "Table": {
+            "table": "pcb_brackets",
+            "name": "tax_rate_percent"
+          }
+        }
       },
       {
         "ordinal": 3,
         "name": "cumulative_tax",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "pcb_brackets",
+            "name": "cumulative_tax"
+          }
+        }
       }
     ],
     "parameters": {

@@ -6,7 +6,13 @@
       {
         "ordinal": 0,
         "name": "timezone",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "company_work_schedules",
+            "name": "timezone"
+          }
+        }
       }
     ],
     "parameters": {

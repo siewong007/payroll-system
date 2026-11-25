@@ -264,13 +264,13 @@ async fn overtime_hours_check_rejects_out_of_range_insert() {
     let employee_id = seed_employee(&pool, company_id, None, 300_000).await;
 
     for hours in ["0", "-50", "25"] {
-        let error = sqlx::query(&format!(
+        let error = sqlx::query(sqlx::AssertSqlSafe(format!(
             r#"
             INSERT INTO overtime_applications (
                 employee_id, company_id, ot_date, start_time, end_time, hours, ot_type
             ) VALUES ($1, $2, $3, TIME '09:00', TIME '11:00', {hours}, 'normal')
             "#
-        ))
+        )))
         .bind(employee_id)
         .bind(company_id)
         .bind(NaiveDate::from_ymd_opt(2026, 3, 4).unwrap())

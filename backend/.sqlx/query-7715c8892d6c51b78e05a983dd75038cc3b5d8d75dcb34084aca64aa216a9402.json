@@ -6,32 +6,68 @@
       {
         "ordinal": 0,
         "name": "category",
-        "type_info": "Bpchar"
+        "type_info": "Bpchar",
+        "origin": {
+          "Table": {
+            "table": "epf_rates",
+            "name": "category"
+          }
+        }
       },
       {
         "ordinal": 1,
         "name": "wage_from",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "epf_rates",
+            "name": "wage_from"
+          }
+        }
       },
       {
         "ordinal": 2,
         "name": "wage_to",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "epf_rates",
+            "name": "wage_to"
+          }
+        }
       },
       {
         "ordinal": 3,
         "name": "employee_contribution",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "epf_rates",
+            "name": "employee_contribution"
+          }
+        }
       },
       {
         "ordinal": 4,
         "name": "employer_contribution",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "epf_rates",
+            "name": "employer_contribution"
+          }
+        }
       },
       {
         "ordinal": 5,
         "name": "effective_from",
-        "type_info": "Date"
+        "type_info": "Date",
+        "origin": {
+          "Table": {
+            "table": "epf_rates",
+            "name": "effective_from"
+          }
+        }
       }
     ],
     "parameters": {

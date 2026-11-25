@@ -6,12 +6,24 @@
       {
         "ordinal": 0,
         "name": "period_year",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "payroll_runs",
+            "name": "period_year"
+          }
+        }
       },
       {
         "ordinal": 1,
         "name": "period_month",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "payroll_runs",
+            "name": "period_month"
+          }
+        }
       }
     ],
     "parameters": {

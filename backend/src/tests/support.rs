@@ -106,7 +106,7 @@ pub async fn test_pool() -> Option<PgPool> {
                 let statement = format!(
                     "UPDATE {table} SET rule_set_id = (SELECT id FROM statutory_rule_sets WHERE dataset_key = $1)"
                 );
-                sqlx::query(&statement)
+                sqlx::query(sqlx::AssertSqlSafe(statement))
                     .bind(dataset_key)
                     .execute(&mut *tx)
                     .await

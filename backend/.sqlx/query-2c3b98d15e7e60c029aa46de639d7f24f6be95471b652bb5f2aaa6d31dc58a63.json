@@ -6,7 +6,8 @@
       {
         "ordinal": 0,
         "name": "action!",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": "Expression"
       }
     ],
     "parameters": {

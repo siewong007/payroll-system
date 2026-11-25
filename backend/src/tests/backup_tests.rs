@@ -124,7 +124,7 @@ async fn login_state(pool: &PgPool, user_id: Uuid) -> LoginState {
 }
 
 /// Run a one-parameter scalar query returning a timestamp.
-async fn timestamp_of(pool: &PgPool, sql: &str, company_id: Uuid) -> DateTime<Utc> {
+async fn timestamp_of(pool: &PgPool, sql: &'static str, company_id: Uuid) -> DateTime<Utc> {
     sqlx::query_scalar(sql)
         .bind(company_id)
         .fetch_one(pool)
@@ -133,7 +133,7 @@ async fn timestamp_of(pool: &PgPool, sql: &str, company_id: Uuid) -> DateTime<Ut
 }
 
 /// Run a one-parameter scalar query returning a count.
-async fn count_of(pool: &PgPool, sql: &str, id: Uuid) -> i64 {
+async fn count_of(pool: &PgPool, sql: &'static str, id: Uuid) -> i64 {
     sqlx::query_scalar(sql)
         .bind(id)
         .fetch_one(pool)

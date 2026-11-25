@@ -6,102 +6,222 @@
       {
         "ordinal": 0,
         "name": "id",
-        "type_info": "Uuid"
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "id"
+          }
+        }
       },
       {
         "ordinal": 1,
         "name": "company_id",
-        "type_info": "Uuid"
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "company_id"
+          }
+        }
       },
       {
         "ordinal": 2,
         "name": "employee_id",
-        "type_info": "Uuid"
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "employee_id"
+          }
+        }
       },
       {
         "ordinal": 3,
         "name": "check_in_at",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "check_in_at"
+          }
+        }
       },
       {
         "ordinal": 4,
         "name": "check_out_at",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "check_out_at"
+          }
+        }
       },
       {
         "ordinal": 5,
         "name": "method",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "method"
+          }
+        }
       },
       {
         "ordinal": 6,
         "name": "status",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "status"
+          }
+        }
       },
       {
         "ordinal": 7,
         "name": "latitude",
-        "type_info": "Float8"
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "latitude"
+          }
+        }
       },
       {
         "ordinal": 8,
         "name": "longitude",
-        "type_info": "Float8"
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "longitude"
+          }
+        }
       },
       {
         "ordinal": 9,
         "name": "checkout_latitude",
-        "type_info": "Float8"
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "checkout_latitude"
+          }
+        }
       },
       {
         "ordinal": 10,
         "name": "checkout_longitude",
-        "type_info": "Float8"
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "checkout_longitude"
+          }
+        }
       },
       {
         "ordinal": 11,
         "name": "notes",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "notes"
+          }
+        }
       },
       {
         "ordinal": 12,
         "name": "qr_token_id",
-        "type_info": "Uuid"
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "qr_token_id"
+          }
+        }
       },
       {
         "ordinal": 13,
         "name": "created_by",
-        "type_info": "Uuid"
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "created_by"
+          }
+        }
       },
       {
         "ordinal": 14,
         "name": "hours_worked",
-        "type_info": "Numeric"
+        "type_info": "Numeric",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "hours_worked"
+          }
+        }
       },
       {
         "ordinal": 15,
         "name": "overtime_hours",
-        "type_info": "Numeric"
+        "type_info": "Numeric",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "overtime_hours"
+          }
+        }
       },
       {
         "ordinal": 16,
         "name": "is_outside_geofence",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "is_outside_geofence"
+          }
+        }
       },
       {
         "ordinal": 17,
         "name": "is_offsite_network",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "is_offsite_network"
+          }
+        }
       },
       {
         "ordinal": 18,
         "name": "created_at",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "created_at"
+          }
+        }
       },
       {
         "ordinal": 19,
         "name": "updated_at",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "attendance_records",
+            "name": "updated_at"
+          }
+        }
       }
     ],
     "parameters": {

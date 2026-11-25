@@ -6,287 +6,604 @@
       {
         "ordinal": 0,
         "name": "id",
-        "type_info": "Uuid"
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "id"
+          }
+        }
       },
       {
         "ordinal": 1,
         "name": "company_id",
-        "type_info": "Uuid"
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "company_id"
+          }
+        }
       },
       {
         "ordinal": 2,
         "name": "employee_number",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "employee_number"
+          }
+        }
       },
       {
         "ordinal": 3,
         "name": "full_name",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "full_name"
+          }
+        }
       },
       {
         "ordinal": 4,
         "name": "ic_number",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "ic_number"
+          }
+        }
       },
       {
         "ordinal": 5,
         "name": "passport_number",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "passport_number"
+          }
+        }
       },
       {
         "ordinal": 6,
         "name": "date_of_birth",
-        "type_info": "Date"
+        "type_info": "Date",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "date_of_birth"
+          }
+        }
       },
       {
         "ordinal": 7,
         "name": "gender?",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": "Expression"
       },
       {
         "ordinal": 8,
         "name": "nationality",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "nationality"
+          }
+        }
       },
       {
         "ordinal": 9,
         "name": "race?",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": "Expression"
       },
       {
         "ordinal": 10,
         "name": "residency_status!",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": "Expression"
       },
       {
         "ordinal": 11,
         "name": "marital_status?",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": "Expression"
       },
       {
         "ordinal": 12,
         "name": "email",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "email"
+          }
+        }
       },
       {
         "ordinal": 13,
         "name": "phone",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "phone"
+          }
+        }
       },
       {
         "ordinal": 14,
         "name": "address_line1",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "address_line1"
+          }
+        }
       },
       {
         "ordinal": 15,
         "name": "address_line2",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "address_line2"
+          }
+        }
       },
       {
         "ordinal": 16,
         "name": "city",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "city"
+          }
+        }
       },
       {
         "ordinal": 17,
         "name": "state",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "state"
+          }
+        }
       },
       {
         "ordinal": 18,
         "name": "postcode",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "postcode"
+          }
+        }
       },
       {
         "ordinal": 19,
         "name": "department",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "department"
+          }
+        }
       },
       {
         "ordinal": 20,
         "name": "designation",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "designation"
+          }
+        }
       },
       {
         "ordinal": 21,
         "name": "cost_centre",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "cost_centre"
+          }
+        }
       },
       {
         "ordinal": 22,
         "name": "branch",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "branch"
+          }
+        }
       },
       {
         "ordinal": 23,
         "name": "employment_type!",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": "Expression"
       },
       {
         "ordinal": 24,
         "name": "date_joined",
-        "type_info": "Date"
+        "type_info": "Date",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "date_joined"
+          }
+        }
       },
       {
         "ordinal": 25,
         "name": "probation_start",
-        "type_info": "Date"
+        "type_info": "Date",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "probation_start"
+          }
+        }
       },
       {
         "ordinal": 26,
         "name": "probation_end",
-        "type_info": "Date"
+        "type_info": "Date",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "probation_end"
+          }
+        }
       },
       {
         "ordinal": 27,
         "name": "confirmation_date",
-        "type_info": "Date"
+        "type_info": "Date",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "confirmation_date"
+          }
+        }
       },
       {
         "ordinal": 28,
         "name": "date_resigned",
-        "type_info": "Date"
+        "type_info": "Date",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "date_resigned"
+          }
+        }
       },
       {
         "ordinal": 29,
         "name": "resignation_reason",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "resignation_reason"
+          }
+        }
       },
       {
         "ordinal": 30,
         "name": "basic_salary",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "basic_salary"
+          }
+        }
       },
       {
         "ordinal": 31,
         "name": "hourly_rate",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "hourly_rate"
+          }
+        }
       },
       {
         "ordinal": 32,
         "name": "daily_rate",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "daily_rate"
+          }
+        }
       },
       {
         "ordinal": 33,
         "name": "bank_name",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "bank_name"
+          }
+        }
       },
       {
         "ordinal": 34,
         "name": "bank_account_number",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "bank_account_number"
+          }
+        }
       },
       {
         "ordinal": 35,
         "name": "bank_account_type",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "bank_account_type"
+          }
+        }
       },
       {
         "ordinal": 36,
         "name": "tax_identification_number",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "tax_identification_number"
+          }
+        }
       },
       {
         "ordinal": 37,
         "name": "epf_number",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "epf_number"
+          }
+        }
       },
       {
         "ordinal": 38,
         "name": "socso_number",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "socso_number"
+          }
+        }
       },
       {
         "ordinal": 39,
         "name": "eis_number",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "eis_number"
+          }
+        }
       },
       {
         "ordinal": 40,
         "name": "working_spouse",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "working_spouse"
+          }
+        }
       },
       {
         "ordinal": 41,
         "name": "num_children",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "num_children"
+          }
+        }
       },
       {
         "ordinal": 42,
         "name": "epf_category",
-        "type_info": "Bpchar"
+        "type_info": "Bpchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "epf_category"
+          }
+        }
       },
       {
         "ordinal": 43,
         "name": "is_muslim",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "is_muslim"
+          }
+        }
       },
       {
         "ordinal": 44,
         "name": "zakat_eligible",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "zakat_eligible"
+          }
+        }
       },
       {
         "ordinal": 45,
         "name": "zakat_monthly_amount",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "zakat_monthly_amount"
+          }
+        }
       },
       {
         "ordinal": 46,
         "name": "ptptn_monthly_amount",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "ptptn_monthly_amount"
+          }
+        }
       },
       {
         "ordinal": 47,
         "name": "tabung_haji_amount",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "tabung_haji_amount"
+          }
+        }
       },
       {
         "ordinal": 48,
         "name": "hrdf_contribution",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "hrdf_contribution"
+          }
+        }
       },
       {
         "ordinal": 49,
         "name": "payroll_group_id",
-        "type_info": "Uuid"
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "payroll_group_id"
+          }
+        }
       },
       {
         "ordinal": 50,
         "name": "salary_group",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "salary_group"
+          }
+        }
       },
       {
         "ordinal": 51,
         "name": "is_active",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "is_active"
+          }
+        }
       },
       {
         "ordinal": 52,
         "name": "deleted_at",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "deleted_at"
+          }
+        }
       },
       {
         "ordinal": 53,
         "name": "created_at",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "created_at"
+          }
+        }
       },
       {
         "ordinal": 54,
         "name": "updated_at",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "updated_at"
+          }
+        }
       },
       {
         "ordinal": 55,
         "name": "created_by",
-        "type_info": "Uuid"
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "created_by"
+          }
+        }
       },
       {
         "ordinal": 56,
         "name": "updated_by",
-        "type_info": "Uuid"
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "updated_by"
+          }
+        }
       }
     ],
     "parameters": {

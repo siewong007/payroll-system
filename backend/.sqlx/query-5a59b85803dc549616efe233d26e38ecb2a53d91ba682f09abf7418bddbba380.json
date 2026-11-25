@@ -6,7 +6,13 @@
       {
         "ordinal": 0,
         "name": "code_verifier",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "oauth2_states",
+            "name": "code_verifier"
+          }
+        }
       }
     ],
     "parameters": {

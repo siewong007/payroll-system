@@ -6,202 +6,442 @@
       {
         "ordinal": 0,
         "name": "id",
-        "type_info": "Uuid"
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "id"
+          }
+        }
       },
       {
         "ordinal": 1,
         "name": "payroll_run_id",
-        "type_info": "Uuid"
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "payroll_run_id"
+          }
+        }
       },
       {
         "ordinal": 2,
         "name": "employee_id",
-        "type_info": "Uuid"
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "employee_id"
+          }
+        }
       },
       {
         "ordinal": 3,
         "name": "basic_salary",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "basic_salary"
+          }
+        }
       },
       {
         "ordinal": 4,
         "name": "gross_salary",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "gross_salary"
+          }
+        }
       },
       {
         "ordinal": 5,
         "name": "total_allowances",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "total_allowances"
+          }
+        }
       },
       {
         "ordinal": 6,
         "name": "total_overtime",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "total_overtime"
+          }
+        }
       },
       {
         "ordinal": 7,
         "name": "total_bonus",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "total_bonus"
+          }
+        }
       },
       {
         "ordinal": 8,
         "name": "total_commission",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "total_commission"
+          }
+        }
       },
       {
         "ordinal": 9,
         "name": "total_claims",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "total_claims"
+          }
+        }
       },
       {
         "ordinal": 10,
         "name": "epf_employee",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "epf_employee"
+          }
+        }
       },
       {
         "ordinal": 11,
         "name": "epf_employer",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "epf_employer"
+          }
+        }
       },
       {
         "ordinal": 12,
         "name": "socso_employee",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "socso_employee"
+          }
+        }
       },
       {
         "ordinal": 13,
         "name": "socso_employer",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "socso_employer"
+          }
+        }
       },
       {
         "ordinal": 14,
         "name": "eis_employee",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "eis_employee"
+          }
+        }
       },
       {
         "ordinal": 15,
         "name": "eis_employer",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "eis_employer"
+          }
+        }
       },
       {
         "ordinal": 16,
         "name": "pcb_amount",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "pcb_amount"
+          }
+        }
       },
       {
         "ordinal": 17,
         "name": "zakat_amount",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "zakat_amount"
+          }
+        }
       },
       {
         "ordinal": 18,
         "name": "ptptn_amount",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "ptptn_amount"
+          }
+        }
       },
       {
         "ordinal": 19,
         "name": "tabung_haji_amount",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "tabung_haji_amount"
+          }
+        }
       },
       {
         "ordinal": 20,
         "name": "total_loan_deductions",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "total_loan_deductions"
+          }
+        }
       },
       {
         "ordinal": 21,
         "name": "total_other_deductions",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "total_other_deductions"
+          }
+        }
       },
       {
         "ordinal": 22,
         "name": "unpaid_leave_deduction",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "unpaid_leave_deduction"
+          }
+        }
       },
       {
         "ordinal": 23,
         "name": "unpaid_leave_days",
-        "type_info": "Numeric"
+        "type_info": "Numeric",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "unpaid_leave_days"
+          }
+        }
       },
       {
         "ordinal": 24,
         "name": "total_deductions",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "total_deductions"
+          }
+        }
       },
       {
         "ordinal": 25,
         "name": "net_salary",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "net_salary"
+          }
+        }
       },
       {
         "ordinal": 26,
         "name": "employer_cost",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "employer_cost"
+          }
+        }
       },
       {
         "ordinal": 27,
         "name": "ytd_gross",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "ytd_gross"
+          }
+        }
       },
       {
         "ordinal": 28,
         "name": "ytd_epf_employee",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "ytd_epf_employee"
+          }
+        }
       },
       {
         "ordinal": 29,
         "name": "ytd_pcb",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "ytd_pcb"
+          }
+        }
       },
       {
         "ordinal": 30,
         "name": "ytd_socso_employee",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "ytd_socso_employee"
+          }
+        }
       },
       {
         "ordinal": 31,
         "name": "ytd_eis_employee",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "ytd_eis_employee"
+          }
+        }
       },
       {
         "ordinal": 32,
         "name": "ytd_zakat",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "ytd_zakat"
+          }
+        }
       },
       {
         "ordinal": 33,
         "name": "ytd_net",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "ytd_net"
+          }
+        }
       },
       {
         "ordinal": 34,
         "name": "working_days",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "working_days"
+          }
+        }
       },
       {
         "ordinal": 35,
         "name": "days_worked",
-        "type_info": "Numeric"
+        "type_info": "Numeric",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "days_worked"
+          }
+        }
       },
       {
         "ordinal": 36,
         "name": "is_prorated",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "is_prorated"
+          }
+        }
       },
       {
         "ordinal": 37,
         "name": "created_at",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "created_at"
+          }
+        }
       },
       {
         "ordinal": 38,
         "name": "updated_at",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "updated_at"
+          }
+        }
       },
       {
         "ordinal": 39,
         "name": "taxable_gross",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "taxable_gross"
+          }
+        }
       }
     ],
     "parameters": {

@@ -85,7 +85,7 @@ jobs:
         # below dies with "no such command: sqlx". Version tracks the `sqlx`
         # dependency in backend/Cargo.toml. rust-cache restores this binary on
         # later runs, so the build cost is paid once.
-        run: cargo install sqlx-cli --version ^0.8 --no-default-features --features rustls,postgres --locked
+        run: cargo install sqlx-cli --version ^0.9 --no-default-features --features rustls,postgres --locked
       - name: Apply migrations
         # `prepare --check` expands every query!/query_as! macro against a live
         # schema, so the service container must be migrated first — otherwise it
@@ -280,7 +280,7 @@ jobs:
           workspaces: backend
 
       - name: Install sqlx-cli
-        run: cargo install sqlx-cli --version ^0.8 --no-default-features --features rustls,postgres --locked
+        run: cargo install sqlx-cli --version ^0.9 --no-default-features --features rustls,postgres --locked
 
       - name: Apply full chain from empty, then prove re-run is a no-op
         working-directory: backend

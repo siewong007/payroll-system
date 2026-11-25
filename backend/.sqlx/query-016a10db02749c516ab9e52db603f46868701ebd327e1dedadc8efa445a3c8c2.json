@@ -6,122 +6,266 @@
       {
         "ordinal": 0,
         "name": "id",
-        "type_info": "Uuid"
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "id"
+          }
+        }
       },
       {
         "ordinal": 1,
         "name": "name",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "name"
+          }
+        }
       },
       {
         "ordinal": 2,
         "name": "registration_number",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "registration_number"
+          }
+        }
       },
       {
         "ordinal": 3,
         "name": "tax_number",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "tax_number"
+          }
+        }
       },
       {
         "ordinal": 4,
         "name": "epf_number",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "epf_number"
+          }
+        }
       },
       {
         "ordinal": 5,
         "name": "socso_code",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "socso_code"
+          }
+        }
       },
       {
         "ordinal": 6,
         "name": "eis_code",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "eis_code"
+          }
+        }
       },
       {
         "ordinal": 7,
         "name": "hrdf_number",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "hrdf_number"
+          }
+        }
       },
       {
         "ordinal": 8,
         "name": "address_line1",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "address_line1"
+          }
+        }
       },
       {
         "ordinal": 9,
         "name": "address_line2",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "address_line2"
+          }
+        }
       },
       {
         "ordinal": 10,
         "name": "city",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "city"
+          }
+        }
       },
       {
         "ordinal": 11,
         "name": "state",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "state"
+          }
+        }
       },
       {
         "ordinal": 12,
         "name": "postcode",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "postcode"
+          }
+        }
       },
       {
         "ordinal": 13,
         "name": "country",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "country"
+          }
+        }
       },
       {
         "ordinal": 14,
         "name": "phone",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "phone"
+          }
+        }
       },
       {
         "ordinal": 15,
         "name": "email",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "email"
+          }
+        }
       },
       {
         "ordinal": 16,
         "name": "logo_url",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "logo_url"
+          }
+        }
       },
       {
         "ordinal": 17,
         "name": "hrdf_enabled",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "hrdf_enabled"
+          }
+        }
       },
       {
         "ordinal": 18,
         "name": "unpaid_leave_divisor",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "unpaid_leave_divisor"
+          }
+        }
       },
       {
         "ordinal": 19,
         "name": "is_active",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "is_active"
+          }
+        }
       },
       {
         "ordinal": 20,
         "name": "created_at",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "created_at"
+          }
+        }
       },
       {
         "ordinal": 21,
         "name": "updated_at",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "updated_at"
+          }
+        }
       },
       {
         "ordinal": 22,
         "name": "created_by",
-        "type_info": "Uuid"
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "created_by"
+          }
+        }
       },
       {
         "ordinal": 23,
         "name": "updated_by",
-        "type_info": "Uuid"
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "updated_by"
+          }
+        }
       }
     ],
     "parameters": {

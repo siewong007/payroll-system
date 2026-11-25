@@ -142,7 +142,7 @@ pub async fn unprocessed_entry_count(
 /// sample — the action item carries `count` separately.
 async fn employee_flags(
     executor: impl Executor<'_, Database = Postgres>,
-    where_clause: &str,
+    where_clause: &'static str,
     company_id: Uuid,
     limit: i64,
 ) -> AppResult<(i64, Vec<ActionEmployeeRef>)> {
@@ -157,7 +157,7 @@ async fn employee_flags(
         ORDER BY full_name
         LIMIT $2"#
     );
-    let rows = sqlx::query_as::<_, (Uuid, String, String, i64)>(&sql)
+    let rows = sqlx::query_as::<_, (Uuid, String, String, i64)>(sqlx::AssertSqlSafe(sql))
         .bind(company_id)
         .bind(limit)
         .fetch_all(executor)

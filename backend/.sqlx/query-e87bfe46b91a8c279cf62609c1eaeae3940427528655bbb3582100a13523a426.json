@@ -6,12 +6,24 @@
       {
         "ordinal": 0,
         "name": "relief_type",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "pcb_reliefs",
+            "name": "relief_type"
+          }
+        }
       },
       {
         "ordinal": 1,
         "name": "amount",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "pcb_reliefs",
+            "name": "amount"
+          }
+        }
       }
     ],
     "parameters": {

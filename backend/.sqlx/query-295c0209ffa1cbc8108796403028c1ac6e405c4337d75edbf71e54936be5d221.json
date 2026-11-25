@@ -6,62 +6,134 @@
       {
         "ordinal": 0,
         "name": "id",
-        "type_info": "Uuid"
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "leave_types",
+            "name": "id"
+          }
+        }
       },
       {
         "ordinal": 1,
         "name": "company_id",
-        "type_info": "Uuid"
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "leave_types",
+            "name": "company_id"
+          }
+        }
       },
       {
         "ordinal": 2,
         "name": "name",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "leave_types",
+            "name": "name"
+          }
+        }
       },
       {
         "ordinal": 3,
         "name": "description",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "leave_types",
+            "name": "description"
+          }
+        }
       },
       {
         "ordinal": 4,
         "name": "default_days",
-        "type_info": "Numeric"
+        "type_info": "Numeric",
+        "origin": {
+          "Table": {
+            "table": "leave_types",
+            "name": "default_days"
+          }
+        }
       },
       {
         "ordinal": 5,
         "name": "is_paid",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "leave_types",
+            "name": "is_paid"
+          }
+        }
       },
       {
         "ordinal": 6,
         "name": "is_active",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "leave_types",
+            "name": "is_active"
+          }
+        }
       },
       {
         "ordinal": 7,
         "name": "max_carry_forward",
-        "type_info": "Numeric"
+        "type_info": "Numeric",
+        "origin": {
+          "Table": {
+            "table": "leave_types",
+            "name": "max_carry_forward"
+          }
+        }
       },
       {
         "ordinal": 8,
         "name": "carry_forward_expiry_months",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "leave_types",
+            "name": "carry_forward_expiry_months"
+          }
+        }
       },
       {
         "ordinal": 9,
         "name": "is_system",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "leave_types",
+            "name": "is_system"
+          }
+        }
       },
       {
         "ordinal": 10,
         "name": "created_at",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "leave_types",
+            "name": "created_at"
+          }
+        }
       },
       {
         "ordinal": 11,
         "name": "updated_at",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "leave_types",
+            "name": "updated_at"
+          }
+        }
       }
     ],
     "parameters": {

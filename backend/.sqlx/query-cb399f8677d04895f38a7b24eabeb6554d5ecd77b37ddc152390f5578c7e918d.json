@@ -6,62 +6,134 @@
       {
         "ordinal": 0,
         "name": "id",
-        "type_info": "Uuid"
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "company_work_schedules",
+            "name": "id"
+          }
+        }
       },
       {
         "ordinal": 1,
         "name": "company_id",
-        "type_info": "Uuid"
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "company_work_schedules",
+            "name": "company_id"
+          }
+        }
       },
       {
         "ordinal": 2,
         "name": "name",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "company_work_schedules",
+            "name": "name"
+          }
+        }
       },
       {
         "ordinal": 3,
         "name": "start_time",
-        "type_info": "Time"
+        "type_info": "Time",
+        "origin": {
+          "Table": {
+            "table": "company_work_schedules",
+            "name": "start_time"
+          }
+        }
       },
       {
         "ordinal": 4,
         "name": "end_time",
-        "type_info": "Time"
+        "type_info": "Time",
+        "origin": {
+          "Table": {
+            "table": "company_work_schedules",
+            "name": "end_time"
+          }
+        }
       },
       {
         "ordinal": 5,
         "name": "grace_minutes",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "company_work_schedules",
+            "name": "grace_minutes"
+          }
+        }
       },
       {
         "ordinal": 6,
         "name": "unpaid_break_minutes",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "company_work_schedules",
+            "name": "unpaid_break_minutes"
+          }
+        }
       },
       {
         "ordinal": 7,
         "name": "half_day_hours",
-        "type_info": "Numeric"
+        "type_info": "Numeric",
+        "origin": {
+          "Table": {
+            "table": "company_work_schedules",
+            "name": "half_day_hours"
+          }
+        }
       },
       {
         "ordinal": 8,
         "name": "timezone",
-        "type_info": "Varchar"
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "company_work_schedules",
+            "name": "timezone"
+          }
+        }
       },
       {
         "ordinal": 9,
         "name": "is_default",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "company_work_schedules",
+            "name": "is_default"
+          }
+        }
       },
       {
         "ordinal": 10,
         "name": "created_at",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "company_work_schedules",
+            "name": "created_at"
+          }
+        }
       },
       {
         "ordinal": 11,
         "name": "updated_at",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "company_work_schedules",
+            "name": "updated_at"
+          }
+        }
       }
     ],
     "parameters": {
