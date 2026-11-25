@@ -1,4 +1,6 @@
-const CACHE_NAME = 'payrollmy-shell-v1';
+const CACHE_NAME = 'payrollmy-shell-v2';
+const ASSETS_CACHE = 'payrollmy-assets-v1';
+const CACHE_PREFIXES = ['payrollmy-shell-', 'payrollmy-assets-'];
 const PRECACHE_URLS = ['/offline.html', '/icons/icon-192.png', '/icons/badge-72.png'];
 const DEFAULT_NOTIFICATION_URL = '/portal/notifications';
 
@@ -13,22 +15,29 @@ self.addEventListener('install', (event) => {
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches
-      .keys()
-      .then((keys) =>
-        Promise.all(
-          keys
-            .filter((key) => key.startsWith('payrollmy-shell-') && key !== CACHE_NAME)
-            .map((key) => caches.delete(key)),
+    Promise.all([
+      self.registration?.navigationPreload?.enable?.().catch(() => undefined),
+      caches
+        .keys()
+        .then((keys) =>
+          Promise.all(
+            keys
+              .filter(
+                (key) =>
+                  CACHE_PREFIXES.some((prefix) => key.startsWith(prefix)) &&
+                  key !== CACHE_NAME &&
+                  key !== ASSETS_CACHE,
+              )
+              .map((key) => caches.delete(key)),
+          ),
         ),
-      )
-      .then(() => self.clients.claim()),
+    ]).then(() => self.clients.claim()),
   );
 });
 
 self.addEventListener('fetch', (event) => {
   const { request } = event;
-  if (request.method !== 'GET' || request.mode !== 'navigate') {
+  if (request.method !== 'GET') {
     return;
   }
 
@@ -43,17 +52,46 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  if (url.pathname.startsWith('/assets/')) {
+    event.respondWith(
+      caches.open(ASSETS_CACHE).then(async (cache) => {
+        const cached = await cache.match(request);
+        if (cached) {
+          return cached;
+        }
+        const response = await fetch(request);
+        if (response.ok && response.type === 'basic') {
+          void cache.put(request, response.clone());
+        }
+        return response;
+      }),
+    );
+    return;
+  }
+
+  if (request.mode !== 'navigate') {
+    return;
+  }
+
   event.respondWith(
-    fetch(request).catch(async () => {
-      const cached = await caches.match('/offline.html');
-      return (
-        cached ||
-        new Response('Offline', {
-          status: 503,
-          headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-        })
-      );
-    }),
+    (async () => {
+      try {
+        const preloaded = await event.preloadResponse;
+        if (preloaded) {
+          return preloaded;
+        }
+        return await fetch(request);
+      } catch {
+        const cached = await caches.match('/offline.html');
+        return (
+          cached ||
+          new Response('Offline', {
+            status: 503,
+            headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+          })
+        );
+      }
+    })(),
   );
 });
 

@@ -36,12 +36,12 @@ import { CompanySwitcher } from './CompanySwitcher';
 import { LanguageSwitcher } from '@/components/ui/LanguageSwitcher';
 import { AppearanceSwitcher } from '@/components/ui/AppearanceSwitcher';
 import { openCommandPalette } from '@/lib/commandPalette';
-import { AnimatePresence, motion } from 'framer-motion';
 import { BrandLogo } from '@/components/ui/BrandLogo';
 import { getAccessToken } from '@/api/client';
-import { getDashboardSummary } from '@/api/dashboard';
+import { getPendingApprovalCounts } from '@/api/approvals';
 import { hasAnyRole, roleList, type AppRole } from '@/lib/roles';
 import { userCan } from '@/lib/usePermissions';
+import { useMediaQuery } from '@/lib/useMediaQuery';
 import type { PermissionKey } from '@/api/permissions';
 
 const SIDEBAR_COLLAPSED_KEY = 'payroll-sidebar-collapsed';
@@ -71,7 +71,7 @@ const navigation = [
   { nameKey: 'nav.myPortal', href: '/portal/profile', icon: Sparkles, requiresEmployeeProfile: true, section: 'personal' },
   { nameKey: 'nav.companies', href: '/companies', icon: Building2, requires: 'manage_companies', section: 'admin' },
   { nameKey: 'nav.users', href: '/users', icon: UserCog, requires: 'manage_users', section: 'admin' },
-  { nameKey: 'nav.roles', href: '/roles', icon: Shield, requires: 'manage_users', section: 'admin' },
+  { nameKey: 'nav.roles', href: '/roles', icon: Shield, requires: 'view_user_directory', section: 'admin' },
   { nameKey: 'nav.userGroups', href: '/user-groups', icon: Users2, requires: 'manage_users', section: 'admin' },
   { nameKey: 'nav.attendanceSettings', href: '/admin/attendance-settings', icon: ScanLine, requires: 'manage_platform_settings', section: 'admin' },
   { nameKey: 'nav.auditTrail', href: '/audit-trail', icon: ScrollText, requires: 'view_audit_log', section: 'admin' },
@@ -101,10 +101,12 @@ function SidebarContent({
   onClose,
   collapsed = false,
   onToggleCollapse,
+  pendingApprovals = 0,
 }: {
   onClose?: () => void;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
+  pendingApprovals?: number;
 }) {
   const location = useLocation();
   const { user, logout } = useAuth();
@@ -125,27 +127,6 @@ function SidebarContent({
     return true;
   });
 
-  const canSeeApprovalsBadge =
-    Boolean(getAccessToken()) &&
-    Boolean(user?.company_id) &&
-    !user?.must_change_password &&
-    userCan(user, 'view_approvals') &&
-    !hasAnyRole(user, ['super_admin']);
-
-  const { data: dashSummary } = useQuery({
-    queryKey: ['dashboard-summary', 7],
-    queryFn: () => getDashboardSummary(7),
-    enabled: canSeeApprovalsBadge,
-    staleTime: 60_000,
-    refetchInterval: 60_000,
-  });
-
-  const pendingApprovals = dashSummary
-    ? dashSummary.needs_attention.pending_leave +
-      dashSummary.needs_attention.pending_claims +
-      dashSummary.needs_attention.pending_overtime
-    : 0;
-
   return (
     <aside
       className={`relative flex flex-col h-full overflow-hidden bg-slate-950 text-slate-100 border-r border-white/10 transition-[width] duration-200 ${
@@ -153,17 +134,13 @@ function SidebarContent({
       }`}
     >
       {/* Aurora glow inside the rail */}
-      <div aria-hidden className="pointer-events-none absolute inset-0">
-        <div className="absolute -top-24 -left-16 h-64 w-64 rounded-full bg-indigo-600/25 blur-3xl animate-float-a" />
-        <div className="absolute top-1/2 -right-24 h-72 w-72 rounded-full bg-violet-600/20 blur-3xl animate-float-b" />
-        <div className="absolute -bottom-20 left-6 h-56 w-56 rounded-full bg-fuchsia-600/10 blur-3xl" />
-      </div>
+      <div aria-hidden className="aurora-rail pointer-events-none absolute inset-0" />
 
       {/* Logo + collapse / close */}
       <div className={`relative border-b border-white/10 flex items-center justify-between ${collapsed ? 'p-3.5 justify-center' : 'p-5'}`}>
         {!collapsed && (
           <div className="min-w-0">
-            <BrandLogo variant="lockup-light" className="h-8 w-auto brightness-125 drop-shadow-md" />
+            <BrandLogo variant="lockup-dark" priority className="h-8 w-auto rounded-lg drop-shadow-md" />
             <span className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-indigo-200">
               <span className="glow-dot" />
               {t('nav.adminConsoleBadge')}
@@ -183,9 +160,10 @@ function SidebarContent({
         )}
         {onClose && (
           <button
+            type="button"
             onClick={onClose}
             aria-label={t('a11y.closeMenu')}
-            className="md:hidden p-2 -mr-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-all-fast"
+            className="md:hidden min-h-11 min-w-11 inline-flex items-center justify-center -mr-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-all-fast"
           >
             <X className="w-5 h-5" />
           </button>
@@ -193,7 +171,19 @@ function SidebarContent({
       </div>
 
       {/* Company Switcher + Quick Search */}
-      {!collapsed && (
+      {collapsed ? (
+        <div className="px-2.5 pt-2">
+          <button
+            type="button"
+            onClick={openCommandPalette}
+            title={`${t('nav.quickSearch')} (⌘K)`}
+            aria-label={t('nav.quickSearch')}
+            className="flex w-full min-h-10 items-center justify-center rounded-xl border border-white/10 bg-white/[0.04] p-2 text-slate-400 transition-all hover:border-indigo-400/30 hover:bg-white/[0.08] hover:text-slate-200"
+          >
+            <Search className="h-4 w-4 shrink-0 text-indigo-300" aria-hidden="true" />
+          </button>
+        </div>
+      ) : (
         <div className="relative">
           <CompanySwitcher />
           <div className="px-3 pt-2">
@@ -249,18 +239,10 @@ function SidebarContent({
                       }`}
                     >
                       {isActive && (
-                        <motion.span
-                          layoutId={onClose ? 'admin-nav-active-mobile' : 'admin-nav-active'}
-                          className="absolute inset-0 rounded-xl bg-white/10 ring-1 ring-white/15 shadow-[0_0_20px_-6px_var(--glow)]"
-                          transition={{ type: 'spring', stiffness: 420, damping: 34 }}
-                        />
+                        <span className="absolute inset-0 rounded-xl bg-white/10 ring-1 ring-white/15 shadow-[0_0_20px_-6px_var(--glow)]" />
                       )}
                       {isActive && (
-                        <motion.span
-                          layoutId={onClose ? 'admin-nav-bar-mobile' : 'admin-nav-bar'}
-                          className="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-[3px] rounded-full bg-gradient-to-b from-indigo-400 to-violet-400 shadow-[0_0_10px_var(--glow)]"
-                          transition={{ type: 'spring', stiffness: 420, damping: 34 }}
-                        />
+                        <span className="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-[3px] rounded-full bg-gradient-to-b from-indigo-400 to-violet-400 shadow-[0_0_10px_var(--glow)]" />
                       )}
                       <item.icon
                         className={`relative w-[18px] h-[18px] shrink-0 transition-colors ${
@@ -354,17 +336,45 @@ function SidebarContent({
             </div>
           </div>
         )}
-        <div className={`flex items-center ${collapsed ? 'flex-col gap-2' : 'gap-3'}`}>
-          <div className="w-9 h-9 rounded-full bg-gradient-to-br from-indigo-500 to-violet-500 ring-2 ring-white/15 shadow-[0_0_16px_-4px_var(--glow)] flex items-center justify-center text-sm font-semibold text-white shrink-0">
-            {user?.full_name?.[0] || 'U'}
-          </div>
-          <div className={collapsed ? 'sr-only' : 'flex-1 min-w-0'}>
-            <p className="text-sm font-semibold text-white truncate">{user?.full_name || t('common.user')}</p>
-            <p className="text-xs text-slate-400 truncate capitalize">
-              {roleList(user).map((role) => t(`roles.${role}`)).join(', ')}
-            </p>
-          </div>
+        <div className={`flex items-center ${collapsed ? 'flex-col gap-2' : 'gap-2'}`}>
+          <Link
+            to="/account"
+            onClick={onClose}
+            title={t('nav.accountSecurity')}
+            aria-label={collapsed ? t('nav.accountSecurity') : undefined}
+            className={`group flex items-center min-w-0 rounded-xl transition-colors hover:bg-white/10 ${
+              collapsed ? 'p-1.5 justify-center' : 'flex-1 gap-3 p-1.5 -m-1.5'
+            }`}
+          >
+            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-indigo-500 to-violet-500 ring-2 ring-white/15 shadow-[0_0_16px_-4px_var(--glow)] flex items-center justify-center text-sm font-semibold text-white shrink-0">
+              {user?.full_name?.[0] || 'U'}
+            </div>
+            <div className={collapsed ? 'sr-only' : 'flex-1 min-w-0'}>
+              <p className="text-sm font-semibold text-white truncate group-hover:text-indigo-200 transition-colors">
+                {user?.full_name || t('common.user')}
+              </p>
+              <p className="text-xs text-slate-400 truncate capitalize">
+                {roleList(user).map((role) => t(`roles.${role}`)).join(', ')}
+              </p>
+            </div>
+          </Link>
+          {!collapsed && (
+            <Link
+              to="/account"
+              onClick={onClose}
+              title={t('nav.accountSecurity')}
+              aria-label={t('nav.accountSecurity')}
+              className={`p-2 rounded-lg transition-all-fast shrink-0 ${
+                location.pathname === '/account'
+                  ? 'text-indigo-300 bg-white/10'
+                  : 'text-slate-400 hover:text-white hover:bg-white/10'
+              }`}
+            >
+              <Shield className="w-4 h-4" />
+            </Link>
+          )}
           <button
+            type="button"
             onClick={logout}
             title={t('nav.signOut')}
             aria-label={t('nav.signOut')}
@@ -379,7 +389,26 @@ function SidebarContent({
 }
 
 export function Sidebar({ open, onClose }: SidebarProps) {
+  const { user } = useAuth();
+  const isDesktop = useMediaQuery('(min-width: 768px)', true);
   const [collapsed, setCollapsed] = useState<boolean>(() => readCollapsed());
+
+  const canSeeApprovalsBadge =
+    Boolean(getAccessToken()) &&
+    Boolean(user?.company_id) &&
+    !user?.must_change_password &&
+    userCan(user, 'view_approvals') &&
+    !hasAnyRole(user, ['super_admin']);
+
+  const { data: approvalCounts } = useQuery({
+    queryKey: ['approvals-pending-count'],
+    queryFn: getPendingApprovalCounts,
+    enabled: canSeeApprovalsBadge,
+    staleTime: 60_000,
+    refetchInterval: 60_000,
+  });
+
+  const pendingApprovals = approvalCounts?.total ?? 0;
 
   const toggleCollapse = () => {
     setCollapsed((prev) => {
@@ -396,34 +425,28 @@ export function Sidebar({ open, onClose }: SidebarProps) {
   return (
     <>
       {/* Desktop sidebar */}
-      <div className="hidden md:flex">
-        <SidebarContent collapsed={collapsed} onToggleCollapse={toggleCollapse} />
-      </div>
+      {isDesktop && (
+        <div className="hidden md:flex">
+          <SidebarContent
+            collapsed={collapsed}
+            onToggleCollapse={toggleCollapse}
+            pendingApprovals={pendingApprovals}
+          />
+        </div>
+      )}
 
       {/* Mobile drawer */}
-      <AnimatePresence>
-        {open && (
-          <>
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.2 }}
-              className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-40 md:hidden"
-              onClick={onClose}
-            />
-            <motion.div
-              initial={{ x: '-100%' }}
-              animate={{ x: 0 }}
-              exit={{ x: '-100%' }}
-              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-              className="fixed inset-y-0 left-0 z-50 md:hidden h-[100dvh]"
-            >
-              <SidebarContent onClose={onClose} />
-            </motion.div>
-          </>
-        )}
-      </AnimatePresence>
+      {open && (
+        <>
+          <div
+            className="animate-fade-in fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-40 md:hidden"
+            onClick={onClose}
+          />
+          <div className="animate-slide-in-left fixed inset-y-0 left-0 z-50 md:hidden h-[100dvh]">
+            <SidebarContent onClose={onClose} pendingApprovals={pendingApprovals} />
+          </div>
+        </>
+      )}
     </>
   );
 }

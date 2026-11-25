@@ -1,11 +1,11 @@
 import { useState } from 'react';
-import { useTranslation } from 'react-i18next';
+import { Trans, useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Clock, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Clock, CheckCircle2, AlertCircle, RefreshCw } from 'lucide-react';
 import { getDefaultSchedule, upsertDefaultSchedule } from '@/api/workSchedule';
 import { TimeSelector } from '@/components/ui/TimeSelector';
 import { FormField } from '@/components/ui/FormField';
-import { Trans } from 'react-i18next';
+import { getErrorMessage } from '@/lib/utils';
 
 const TIMEZONES = [
   'Asia/Kuala_Lumpur',
@@ -36,31 +36,38 @@ export function WorkScheduleCard() {
   const [toast, setToast] = useState('');
   const [toastType, setToastType] = useState<'success' | 'error'>('success');
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error: loadError, refetch } = useQuery({
     queryKey: ['work-schedule-default'],
     queryFn: getDefaultSchedule,
   });
 
   const schedule = data?.schedule;
+  const scheduleKey = schedule
+    ? `${schedule.company_id}:${schedule.id}:${schedule.updated_at}`
+    : 'default';
 
-  const [form, setForm] = useState({
-    start_time: '09:00',
-    end_time: '18:00',
-    grace_minutes: 15,
-    timezone: 'Asia/Kuala_Lumpur',
-  });
+  const [drafts, setDrafts] = useState<{
+    key: string;
+    start_time?: string;
+    end_time?: string;
+    grace_minutes?: number;
+    timezone?: string;
+  }>({ key: 'default' });
 
-  // Sync from server once
-  const [synced, setSynced] = useState(false);
-  if (schedule && !synced) {
-    setForm({
-      start_time: timeToHHMM(schedule.start_time),
-      end_time: timeToHHMM(schedule.end_time),
-      grace_minutes: schedule.grace_minutes,
-      timezone: schedule.timezone,
-    });
-    setSynced(true);
-  }
+  const activeDraft = drafts.key === scheduleKey ? drafts : { key: scheduleKey };
+  const form = {
+    start_time: activeDraft.start_time ?? timeToHHMM(schedule?.start_time),
+    end_time: activeDraft.end_time ?? (schedule ? timeToHHMM(schedule.end_time) : '18:00'),
+    grace_minutes: activeDraft.grace_minutes ?? schedule?.grace_minutes ?? 15,
+    timezone: activeDraft.timezone ?? schedule?.timezone ?? 'Asia/Kuala_Lumpur',
+  };
+
+  const timezoneOptions =
+    form.timezone && !TIMEZONES.includes(form.timezone) ? [form.timezone, ...TIMEZONES] : TIMEZONES;
+
+  const updateForm = (patch: Partial<Omit<typeof drafts, 'key'>>) => {
+    setDrafts({ ...activeDraft, key: scheduleKey, ...patch });
+  };
 
   const mutation = useMutation({
     mutationFn: () => upsertDefaultSchedule({
@@ -70,15 +77,17 @@ export function WorkScheduleCard() {
       timezone: form.timezone,
     }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['work-schedule-default'] });
+      setDrafts({ key: 'default' });
+      void queryClient.invalidateQueries({ queryKey: ['work-schedule-default'] });
+      void queryClient.invalidateQueries({ queryKey: ['attendance-method'] });
       setToast(t('attendance.schedule.saved'));
       setToastType('success');
       setTimeout(() => setToast(''), 3000);
     },
-    onError: () => {
-      setToast(t('attendance.schedule.saveFailed'));
+    onError: (err) => {
+      setToast(getErrorMessage(err, t('attendance.schedule.saveFailed')));
       setToastType('error');
-      setTimeout(() => setToast(''), 3000);
+      setTimeout(() => setToast(''), 5000);
     },
   });
 
@@ -86,6 +95,21 @@ export function WorkScheduleCard() {
     return (
       <div className="card p-6 flex items-center justify-center h-48">
         <div className="spinner" />
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="card p-6 flex flex-col items-center justify-center gap-3 h-48 text-center">
+        <AlertCircle className="w-8 h-8 text-red-500" />
+        <p className="text-sm text-gray-600 dark:text-slate-300">
+          {getErrorMessage(loadError, t('attendance.schedule.loadFailed'))}
+        </p>
+        <button type="button" onClick={() => void refetch()} className="btn-secondary !py-1.5">
+          <RefreshCw className="w-3.5 h-3.5" />
+          {t('common.retry')}
+        </button>
       </div>
     );
   }
@@ -107,13 +131,13 @@ export function WorkScheduleCard() {
           <TimeSelector
             label={t('attendance.schedule.startTime')}
             value={form.start_time}
-            onChange={(value) => setForm(p => ({ ...p, start_time: value }))}
+            onChange={(value) => updateForm({ start_time: value })}
             minuteStep={15}
           />
           <TimeSelector
             label={t('attendance.schedule.endTime')}
             value={form.end_time}
-            onChange={(value) => setForm(p => ({ ...p, end_time: value }))}
+            onChange={(value) => updateForm({ end_time: value })}
             minuteStep={15}
           />
         </div>
@@ -130,7 +154,7 @@ export function WorkScheduleCard() {
               min={0}
               max={120}
               value={form.grace_minutes}
-              onChange={e => setForm(p => ({ ...p, grace_minutes: parseInt(e.target.value) || 0 }))}
+              onChange={e => updateForm({ grace_minutes: Math.max(0, Math.min(120, parseInt(e.target.value, 10) || 0)) })}
               className="form-input !w-32"
             />
           )}
@@ -142,10 +166,10 @@ export function WorkScheduleCard() {
             <select
               {...aria}
               value={form.timezone}
-              onChange={e => setForm(p => ({ ...p, timezone: e.target.value }))}
+              onChange={e => updateForm({ timezone: e.target.value })}
               className="form-input"
             >
-              {TIMEZONES.map(tz => (
+              {timezoneOptions.map(tz => (
                 <option key={tz} value={tz}>{tz.replace('_', ' ')}</option>
               ))}
             </select>
@@ -155,17 +179,21 @@ export function WorkScheduleCard() {
 
       {/* Save */}
       <div className="flex items-center justify-between gap-3 px-5 sm:px-6 py-4 border-t border-gray-100 dark:border-slate-800 bg-gray-50/70 dark:bg-slate-950/50">
-        <div className="min-w-0 h-5">
+        <div className="min-w-0 min-h-5">
           {toast && (
-            <span className={`flex items-center gap-1.5 text-sm font-medium ${
-              toastType === 'success' ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'
-            }`}>
+            <span
+              role={toastType === 'error' ? 'alert' : 'status'}
+              className={`flex items-center gap-1.5 text-sm font-medium ${
+                toastType === 'success' ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'
+              }`}
+            >
               {toastType === 'success' ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />}
               <span className="truncate">{toast}</span>
             </span>
           )}
         </div>
         <button
+          type="button"
           onClick={() => mutation.mutate()}
           disabled={mutation.isPending}
           className="btn-primary shrink-0 whitespace-nowrap"

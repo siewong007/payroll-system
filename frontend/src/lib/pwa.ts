@@ -19,6 +19,7 @@ const INSTALL_DISMISS_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 
 let deferredInstallPrompt: BeforeInstallPromptEvent | null = null;
 let listenersAttached = false;
+let swRegistrationPromise: Promise<ServiceWorkerRegistration | null> | null = null;
 const promptSubscribers = new Set<() => void>();
 
 function notifyPromptSubscribers(): void {
@@ -70,6 +71,7 @@ export function subscribeInstallPrompt(listener: () => void): () => void {
 
 export function resetPwaStoreForTests(): void {
   deferredInstallPrompt = null;
+  swRegistrationPromise = null;
   promptSubscribers.clear();
   if (typeof window !== 'undefined' && listenersAttached) {
     window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
@@ -150,22 +152,43 @@ export function getNotificationStatus(
   return window.Notification.permission;
 }
 
-export async function registerServiceWorker(): Promise<ServiceWorkerRegistration | null> {
+export function registerServiceWorker(): Promise<ServiceWorkerRegistration | null> {
   if (
     typeof window === 'undefined' ||
     !('serviceWorker' in navigator) ||
     window.isSecureContext === false
   ) {
-    return null;
+    return Promise.resolve(null);
   }
-  try {
-    return await navigator.serviceWorker.register('/sw.js', {
-      scope: '/',
-      updateViaCache: 'none',
-    });
-  } catch {
-    return null;
+  if (!swRegistrationPromise) {
+    swRegistrationPromise = navigator.serviceWorker
+      .register('/sw.js', {
+        scope: '/',
+        updateViaCache: 'none',
+      })
+      .catch(() => {
+        swRegistrationPromise = null;
+        return null;
+      });
   }
+  return swRegistrationPromise;
+}
+
+export function registerServiceWorkerOnLoad(
+  onReady?: (registration: ServiceWorkerRegistration | null) => void,
+): () => void {
+  if (typeof window === 'undefined') {
+    return () => {};
+  }
+  const run = () => {
+    void registerServiceWorker().then((registration) => onReady?.(registration));
+  };
+  if (document.readyState === 'complete') {
+    run();
+    return () => {};
+  }
+  window.addEventListener('load', run, { once: true });
+  return () => window.removeEventListener('load', run);
 }
 
 /**

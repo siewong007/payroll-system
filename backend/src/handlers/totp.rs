@@ -71,6 +71,7 @@ pub async fn regenerate_backup_codes(
         &state.pool,
         auth.0.sub,
         &req.password,
+        &state.config.totp_encryption_key,
         Some(&audit_meta),
     )
     .await?;

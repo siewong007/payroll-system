@@ -136,3 +136,11 @@ pub struct ClaimWithEmployee {
     pub employee_name: Option<String>,
     pub employee_number: Option<String>,
 }
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PendingApprovalCountResponse {
+    pub pending_leave: i64,
+    pub pending_claims: i64,
+    pub pending_overtime: i64,
+    pub total: i64,
+}

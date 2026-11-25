@@ -1,4 +1,3 @@
-import { motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import type { LucideIcon } from 'lucide-react';
 
@@ -31,7 +30,7 @@ export function SettingsNav({
         if (items.length === 0) return null;
         return (
           <div key={group} className="contents lg:block">
-            <p className="hidden lg:block px-3 pt-4 pb-1.5 first:pt-0 text-[10px] font-semibold uppercase tracking-widest text-gray-400">
+            <p className="hidden lg:block px-3 pt-4 pb-1.5 first:pt-0 text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500">
               {t(`settings.groups.${group.toLowerCase()}`)}
             </p>
             {items.map((item) => {
@@ -41,22 +40,19 @@ export function SettingsNav({
                   key={item.id}
                   type="button"
                   onClick={() => onSelect(item.id)}
-                  aria-current={isActive ? 'true' : undefined}
-                  className={`relative flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm whitespace-nowrap transition-all-fast ${
+                  aria-current={isActive ? 'page' : undefined}
+                  className={`relative flex items-center gap-2.5 min-h-10 px-3 py-2 rounded-xl text-sm whitespace-nowrap transition-all-fast ${
                     isActive
-                      ? 'text-gray-900 font-medium'
-                      : 'text-gray-500 hover:text-gray-800 hover:bg-black/[0.03]'
+                      ? 'text-gray-900 dark:text-slate-100 font-medium'
+                      : 'text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200 hover:bg-black/[0.03] dark:hover:bg-white/[0.05]'
                   }`}
                 >
                   {isActive && (
-                    <motion.span
-                      layoutId="settings-nav-active"
-                      className="absolute inset-0 rounded-xl bg-[var(--accent-soft)] ring-1 ring-black/5"
-                      transition={{ type: 'spring', stiffness: 420, damping: 34 }}
-                    />
+                    <span className="absolute inset-0 rounded-xl bg-[var(--accent-soft)] ring-1 ring-black/5 dark:ring-white/10" />
                   )}
                   <item.icon
-                    className={`relative w-4 h-4 ${isActive ? 'text-[var(--accent-1)]' : 'text-gray-400'}`}
+                    aria-hidden="true"
+                    className={`relative w-4 h-4 ${isActive ? 'text-[var(--accent-1)]' : 'text-gray-400 dark:text-slate-500'}`}
                   />
                   <span className="relative">{item.label}</span>
                 </button>

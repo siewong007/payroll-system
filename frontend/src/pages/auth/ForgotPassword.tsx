@@ -1,8 +1,9 @@
 import { useRef, useState } from 'react';
 import { Link } from 'react-router';
-import { motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import { forgotPassword } from '@/api/admin';
+import { BrandLogo } from '@/components/ui/BrandLogo';
+import { LanguageSwitcher } from '@/components/ui/LanguageSwitcher';
 import { TurnstileWidget, type TurnstileWidgetRef } from '@/components/TurnstileWidget';
 
 export function ForgotPassword() {
@@ -32,39 +33,32 @@ export function ForgotPassword() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100">
-      <motion.div
-        className="w-full max-w-md px-4"
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.3 }}
-      >
-        <div className="bg-white rounded-2xl shadow p-6 sm:p-8">
+    <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-slate-950 py-6">
+      <div className="animate-page-enter w-full max-w-md px-4 space-y-5">
+        <div className="bg-white dark:bg-slate-900 dark:border dark:border-slate-800 rounded-2xl shadow p-6 sm:p-8">
           <div className="text-center mb-8">
-            <div className="w-12 h-12 bg-black rounded-xl flex items-center justify-center mx-auto mb-4">
-              <span className="text-white font-bold text-lg">P</span>
-            </div>
-            <h1 className="text-xl font-semibold text-gray-900">{t('auth.forgot.title')}</h1>
-            <p className="text-sm text-gray-400 mt-1">
+            <BrandLogo variant="lockup-dark" priority className="h-10 w-auto mx-auto mb-4 rounded-xl" />
+            <h1 className="text-xl font-semibold text-gray-900 dark:text-slate-100">{t('auth.forgot.title')}</h1>
+            <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">
               {t('auth.forgot.subtitle')}
             </p>
           </div>
 
           {submitted ? (
             <div className="text-center space-y-4">
-              <div className="w-16 h-16 bg-green-50 rounded-full flex items-center justify-center mx-auto">
-                <svg className="w-8 h-8 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <div className="w-16 h-16 bg-green-50 dark:bg-emerald-500/15 rounded-full flex items-center justify-center mx-auto">
+                <svg className="w-8 h-8 text-green-500 dark:text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                 </svg>
               </div>
               <div>
-                <p className="text-sm text-gray-600">
+                <p className="text-sm text-gray-600 dark:text-slate-300">
                   {t('auth.forgot.sentBody')}
                 </p>
               </div>
               <Link
                 to="/login"
-                className="inline-block text-sm text-black font-medium hover:underline"
+                className="inline-block text-sm text-black dark:text-indigo-400 font-medium hover:underline"
               >
                 {t('auth.backToLogin')}
               </Link>
@@ -72,53 +66,60 @@ export function ForgotPassword() {
           ) : (
             <form onSubmit={handleSubmit} className="space-y-5">
               {error && (
-                <div className="bg-red-50 text-red-600 text-sm px-4 py-3 rounded-xl">
+                <div role="alert" className="bg-red-50 dark:bg-red-500/10 border border-red-100 dark:border-red-500/30 text-red-600 dark:text-red-300 text-sm px-4 py-3 rounded-xl">
                   {error}
                 </div>
               )}
 
               <div>
-                <label className="form-label">{t('auth.email')}</label>
+                <label className="form-label" htmlFor="forgot-email">{t('auth.email')}</label>
                 <input
+                  id="forgot-email"
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="border p-2.5 rounded-lg w-full text-sm outline-none focus:border-black transition-colors"
+                  className="form-input"
                   placeholder={t('auth.emailPlaceholder')}
+                  autoComplete="email"
                   required
                 />
               </div>
 
-              <TurnstileWidget
-                ref={turnstileRef}
-                onVerify={(t) => {
-                  turnstileToken.current = t;
-                }}
-                onExpire={() => {
-                  turnstileToken.current = undefined;
-                }}
-                onError={() => {
-                  turnstileToken.current = undefined;
-                }}
-              />
+              <div className="flex justify-center">
+                <TurnstileWidget
+                  ref={turnstileRef}
+                  onVerify={(t) => {
+                    turnstileToken.current = t;
+                  }}
+                  onExpire={() => {
+                    turnstileToken.current = undefined;
+                  }}
+                  onError={() => {
+                    turnstileToken.current = undefined;
+                  }}
+                />
+              </div>
 
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full bg-black text-white py-2.5 rounded-xl font-semibold hover:bg-gray-800 disabled:opacity-50 transition-all"
+                className="btn-primary w-full"
               >
                 {loading ? t('auth.submitting') : t('auth.forgot.submit')}
               </button>
 
               <div className="text-center">
-                <Link to="/login" className="text-sm text-gray-500 hover:text-gray-700">
+                <Link to="/login" className="text-sm text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200">
                   {t('auth.backToLogin')}
                 </Link>
               </div>
             </form>
           )}
         </div>
-      </motion.div>
+        <div className="flex justify-center">
+          <LanguageSwitcher />
+        </div>
+      </div>
     </div>
   );
 }

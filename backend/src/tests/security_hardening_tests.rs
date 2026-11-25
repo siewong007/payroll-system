@@ -602,13 +602,20 @@ async fn totp_replay_lockout_backup_codes_and_passkey_challenge_binding() {
         "5 failures must trigger future lockout"
     );
 
-    user_totp_backup_codes::insert_many(&pool, user_a, &[String::from("$2b$10$hash")])
+    let lookup_hash = "0".repeat(64);
+    user_totp_backup_codes::insert_many(
+        &pool,
+        user_a,
+        &[String::from("$2b$10$hash")],
+        std::slice::from_ref(&lookup_hash),
+    )
+    .await
+    .expect("insert backup code");
+    let code_row = user_totp_backup_codes::find_unused_by_lookup(&pool, user_a, &lookup_hash)
         .await
-        .expect("insert backup code");
-    let codes = user_totp_backup_codes::find_unused(&pool, user_a)
-        .await
-        .unwrap();
-    let code_id = codes[0].id;
+        .unwrap()
+        .expect("inserted backup code");
+    let code_id = code_row.id;
     assert!(
         user_totp_backup_codes::mark_used(&pool, code_id)
             .await

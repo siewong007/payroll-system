@@ -95,7 +95,7 @@ export function TwoFactorSetup() {
     return (
       <div className="card">
         <div className="flex justify-center py-8">
-          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-gray-900" />
+          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-gray-900 dark:border-slate-200" />
         </div>
       </div>
     );
@@ -105,7 +105,7 @@ export function TwoFactorSetup() {
     <div className="card">
       <div className="section-header">
         <div className="flex items-center gap-2">
-          <ShieldCheck className="w-4 h-4 text-gray-400" />
+          <ShieldCheck className="w-4 h-4 text-gray-400 dark:text-slate-400" />
           <span className="section-title">{t('auth.twoFactor.setupTitle')}</span>
         </div>
         {status?.enabled ? (
@@ -115,32 +115,36 @@ export function TwoFactorSetup() {
         )}
       </div>
 
-      <p className="text-sm text-gray-500 mb-4">
+      <p className="text-sm text-gray-500 dark:text-slate-400 mb-4">
         {t('auth.twoFactor.description')}
       </p>
 
       {error && (
-        <div className="bg-red-50 text-red-600 text-sm px-4 py-3 rounded-xl mb-4">{error}</div>
+        <div role="alert" className="bg-red-50 dark:bg-red-500/10 border border-red-100 dark:border-red-500/30 text-red-600 dark:text-red-300 text-sm px-4 py-3 rounded-xl mb-4">
+          {error}
+        </div>
       )}
       {success && (
-        <div className="bg-green-50 text-green-600 text-sm px-4 py-3 rounded-xl mb-4">{success}</div>
+        <div role="status" className="bg-green-50 dark:bg-emerald-500/10 border border-green-100 dark:border-emerald-500/30 text-green-600 dark:text-emerald-300 text-sm px-4 py-3 rounded-xl mb-4">
+          {success}
+        </div>
       )}
 
       {view === 'backup_codes' && (
         <div className="space-y-4">
-          <div className="bg-amber-50 text-amber-800 text-sm px-4 py-3 rounded-xl">
+          <div className="bg-amber-50 dark:bg-amber-500/15 border border-amber-200/70 dark:border-amber-500/30 text-amber-800 dark:text-amber-200 text-sm px-4 py-3 rounded-xl">
             {t('auth.twoFactor.backupWarning')}
           </div>
-          <div className="grid grid-cols-2 gap-2 p-4 bg-gray-50 rounded-xl font-mono text-sm">
+          <div className="grid grid-cols-2 gap-2 p-4 bg-gray-50 dark:bg-slate-800 text-gray-900 dark:text-slate-100 border border-gray-200/80 dark:border-slate-700 rounded-xl font-mono text-sm">
             {backupCodes.map((code) => (
               <div key={code}>{code}</div>
             ))}
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <button
               type="button"
               onClick={handleCopyBackupCodes}
-              className="flex items-center gap-2 text-sm font-medium text-gray-700 hover:text-gray-900 border border-gray-300 rounded-lg px-3 py-2"
+              className="min-h-10 flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-slate-200 hover:text-gray-900 dark:hover:text-white border border-gray-300 dark:border-slate-700 rounded-lg px-3 py-2"
             >
               {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
               {copied ? t('auth.twoFactor.copied') : t('auth.twoFactor.copy')}
@@ -148,7 +152,7 @@ export function TwoFactorSetup() {
             <button
               type="button"
               onClick={handleDownloadBackupCodes}
-              className="flex items-center gap-2 text-sm font-medium text-gray-700 hover:text-gray-900 border border-gray-300 rounded-lg px-3 py-2"
+              className="min-h-10 flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-slate-200 hover:text-gray-900 dark:hover:text-white border border-gray-300 dark:border-slate-700 rounded-lg px-3 py-2"
             >
               <Download className="w-4 h-4" />
               {t('auth.twoFactor.download')}
@@ -253,7 +257,8 @@ export function TwoFactorSetup() {
                 setPassword('');
                 setError('');
               }}
-              className="px-4 py-2.5 text-sm font-medium text-gray-500 hover:text-gray-700"
+              aria-label={t('common.cancel')}
+              className="min-h-11 min-w-11 inline-flex items-center justify-center text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 rounded-lg"
             >
               <X className="w-4 h-4" />
             </button>
@@ -265,7 +270,7 @@ export function TwoFactorSetup() {
         <>
           {status?.enabled ? (
             <div className="space-y-3">
-              <div className="flex items-center gap-2 text-sm text-green-700 bg-green-50 px-4 py-3 rounded-xl">
+              <div className="flex items-center gap-2 text-sm text-green-700 dark:text-emerald-300 bg-green-50 dark:bg-emerald-500/10 border border-green-100 dark:border-emerald-500/30 px-4 py-3 rounded-xl">
                 <ShieldCheck className="w-4 h-4 shrink-0" />
                 {t('auth.twoFactor.enabledBanner')}
               </div>
@@ -273,14 +278,14 @@ export function TwoFactorSetup() {
                 <button
                   type="button"
                   onClick={() => setView('regenerating')}
-                  className="text-sm font-medium text-gray-700 hover:text-gray-900 border border-gray-300 rounded-lg px-3 py-2"
+                  className="min-h-10 text-sm font-medium text-gray-700 dark:text-slate-200 hover:text-gray-900 dark:hover:text-white border border-gray-300 dark:border-slate-700 rounded-lg px-3 py-2"
                 >
                   {t('auth.twoFactor.regenerate')}
                 </button>
                 <button
                   type="button"
                   onClick={() => setView('disabling')}
-                  className="flex items-center gap-2 text-sm font-medium text-red-600 hover:text-red-700 border border-gray-300 rounded-lg px-3 py-2"
+                  className="min-h-10 flex items-center gap-2 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 border border-gray-300 dark:border-slate-700 rounded-lg px-3 py-2"
                 >
                   <ShieldOff className="w-4 h-4" />
                   {t('auth.twoFactor.disable')}
@@ -292,7 +297,7 @@ export function TwoFactorSetup() {
               type="button"
               onClick={() => beginMutation.mutate()}
               disabled={beginMutation.isPending}
-              className="flex items-center gap-2 text-sm font-medium text-black hover:text-gray-600 transition-colors"
+              className="min-h-10 flex items-center gap-2 text-sm font-semibold text-[var(--accent-1)] hover:opacity-80 transition-opacity"
             >
               <ShieldCheck className="w-4 h-4" />
               {beginMutation.isPending ? t('auth.twoFactor.starting') : t('auth.twoFactor.enable')}

@@ -42,7 +42,6 @@ vi.mock('@/api/attendance', () => ({
   checkOut: vi.fn(),
 }));
 
-vi.mock('@/api/workSchedule', () => ({ getDefaultSchedule: vi.fn() }));
 vi.mock('@/lib/webauthn', () => ({ getPasskeyCredential: vi.fn() }));
 vi.mock('@/api/company', () => ({
   getCompany: vi.fn(), updateCompany: vi.fn(), getCompanyStats: vi.fn(),
@@ -51,7 +50,6 @@ vi.mock('@/api/company', () => ({
 import {
   beginFaceIdCheckIn, checkInFaceId, checkInQr, checkOut, getAttendanceMethod, getMyTodayAttendance,
 } from '@/api/attendance';
-import { getDefaultSchedule } from '@/api/workSchedule';
 import { getCompany, getCompanyStats } from '@/api/company';
 import { getPasskeyCredential } from '@/lib/webauthn';
 import type { AuthenticationResponseJSON } from '@/lib/webauthn';
@@ -248,7 +246,6 @@ function renderCard(user: User | null = employee) {
 
 const methodMock = vi.mocked(getAttendanceMethod);
 const todayMock = vi.mocked(getMyTodayAttendance);
-const scheduleMock = vi.mocked(getDefaultSchedule);
 
 // A stand-in for a completed WebAuthn assertion. These tests only assert that
 // the ceremony ran and that the challenge id was forwarded, so the field values
@@ -273,13 +270,14 @@ function setMethod(method: 'qr_code' | 'face_id', geofence: 'none' | 'warn' | 'e
     geofence_mode: geofence,
     network_mode: 'none',
     timezone: 'Asia/Kuala_Lumpur',
+    shift_start_time: '09:00:00',
+    grace_minutes: 15,
   });
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   camera.onScan = null;
-  scheduleMock.mockResolvedValue({ schedule: null });
   todayMock.mockResolvedValue({ record: null });
   setMethod('qr_code');
 });

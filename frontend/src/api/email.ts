@@ -2,6 +2,7 @@ import api from './client';
 import type {
   EmailTemplate,
   CreateEmailTemplateRequest,
+  UpdateEmailTemplateRequest,
   EmailLog,
   SendLetterRequest,
   PreviewLetterRequest,
@@ -18,6 +19,15 @@ export async function getEmailTemplates(letterType?: string): Promise<EmailTempl
 export async function createEmailTemplate(req: CreateEmailTemplateRequest): Promise<EmailTemplate> {
   const { data } = await api.post('/email/templates', req);
   return data;
+}
+
+export async function updateEmailTemplate(id: string, req: UpdateEmailTemplateRequest): Promise<EmailTemplate> {
+  const { data } = await api.put(`/email/templates/${id}`, req);
+  return data;
+}
+
+export async function deleteEmailTemplate(id: string): Promise<void> {
+  await api.delete(`/email/templates/${id}`);
 }
 
 // Preview & Send

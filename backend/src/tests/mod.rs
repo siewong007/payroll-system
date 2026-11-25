@@ -5,6 +5,7 @@ mod auth_audit_tests;
 mod backup_tests;
 mod email_privacy_tests;
 mod employee_lifecycle_tests;
+mod export_and_report_tests;
 mod extractor_tests;
 mod holiday_expansion_tests;
 mod import_atomicity_tests;

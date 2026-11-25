@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Outlet, Navigate } from 'react-router';
 import { Menu, Search } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
@@ -14,6 +14,17 @@ export function AppLayout() {
   const { user, isAuthenticated, isLoading } = useAuth();
   const { t } = useTranslation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // Sync shell accent class to <html> so portaled modals, ConfirmDialog, and
+  // CommandPalette inherit --accent-1/--accent-2/--ring in both light and dark modes.
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.add('theme-admin');
+    root.classList.remove('theme-portal');
+    return () => {
+      root.classList.remove('theme-admin');
+    };
+  }, []);
 
   if (isLoading) {
     return (
@@ -36,7 +47,7 @@ export function AppLayout() {
   }
 
   return (
-    <div className="theme-admin relative isolate flex h-screen overflow-hidden bg-[var(--background)]">
+    <div className="theme-admin relative isolate flex h-[100dvh] overflow-hidden bg-[var(--background)]">
       <a
         href="#main-content"
         className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:rounded-lg focus:bg-indigo-600 focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-white focus:shadow-lg"
@@ -44,11 +55,7 @@ export function AppLayout() {
         {t('a11y.skipToContent')}
       </a>
       {/* Ambient aurora behind the whole console */}
-      <div aria-hidden className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
-        <div className="ambient-blob animate-float-a -top-32 left-1/4 h-96 w-96 bg-indigo-300/40" />
-        <div className="ambient-blob animate-float-b top-1/3 -right-40 h-[28rem] w-[28rem] bg-violet-300/30" />
-        <div className="ambient-blob animate-float-a -bottom-32 left-1/2 h-80 w-80 bg-sky-300/30" />
-      </div>
+      <div aria-hidden className="aurora-admin pointer-events-none absolute inset-0 -z-10" />
 
       <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
@@ -62,7 +69,7 @@ export function AppLayout() {
           >
             <Menu className="w-5 h-5" />
           </button>
-          <BrandLogo variant="lockup-dark" className="h-7 w-auto dark:brightness-125" />
+          <BrandLogo variant="lockup-dark" priority className="h-7 w-auto dark:brightness-125" />
           <div className="ml-auto flex items-center gap-2">
             <button
               type="button"
@@ -80,7 +87,7 @@ export function AppLayout() {
         </div>
 
         <main id="main-content" tabIndex={-1} className="flex-1 overflow-auto focus:outline-none">
-          <div className="max-w-7xl mx-auto px-4 py-4 md:px-8 md:py-8">
+          <div className="max-w-7xl mx-auto px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] md:px-8 md:py-8">
             <PwaInstallBanner />
             <PageTransition>
               <Outlet />

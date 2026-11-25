@@ -347,3 +347,87 @@ async fn leaver_is_not_paid_in_periods_after_they_left() {
         "expected an empty-population error, got: {err:?}"
     );
 }
+
+#[tokio::test]
+async fn employee_numeric_and_date_invariants_are_validated_on_create_and_update() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+
+    let company_id = seed_company(&pool).await;
+    let user_id = seed_user(&pool, company_id, "hr_manager").await;
+
+    let mut bad_salary: crate::models::employee::CreateEmployeeRequest =
+        serde_json::from_value(json!({
+            "employee_number": format!("NEG-{}", Uuid::new_v4()),
+            "full_name": "Invalid Salary",
+            "date_joined": "2024-01-10",
+            "basic_salary": -100
+        }))
+        .expect("valid CreateEmployeeRequest");
+
+    let err = employee_service::create_employee(&pool, company_id, bad_salary, user_id, None)
+        .await
+        .expect_err("negative salary must be rejected");
+    assert!(format!("{err:?}").contains("Basic salary cannot be negative"));
+
+    bad_salary = serde_json::from_value(json!({
+        "employee_number": format!("PROB-{}", Uuid::new_v4()),
+        "full_name": "Invalid Probation",
+        "date_joined": "2024-01-10",
+        "basic_salary": 300000,
+        "probation_start": "2024-03-01",
+        "probation_end": "2024-02-01"
+    }))
+    .expect("valid CreateEmployeeRequest");
+
+    let err = employee_service::create_employee(&pool, company_id, bad_salary, user_id, None)
+        .await
+        .expect_err("probation end before start must be rejected");
+    assert!(format!("{err:?}").contains("Probation end date cannot be earlier"));
+
+    let employee_id = seed_employee(&pool, company_id, None, 300_000).await;
+
+    for (payload, needle) in [
+        (
+            json!({ "hourly_rate": -1 }),
+            "Hourly rate cannot be negative",
+        ),
+        (json!({ "daily_rate": -1 }), "Daily rate cannot be negative"),
+        (
+            json!({ "num_children": 31 }),
+            "Number of children must be between 0 and 30",
+        ),
+        (
+            json!({ "zakat_monthly_amount": -5 }),
+            "Monthly Zakat amount cannot be negative",
+        ),
+        (
+            json!({ "ptptn_monthly_amount": -5 }),
+            "Monthly PTPTN amount cannot be negative",
+        ),
+        (
+            json!({ "tabung_haji_amount": -5 }),
+            "Monthly Tabung Haji amount cannot be negative",
+        ),
+        (
+            json!({ "confirmation_date": "2019-12-31" }),
+            "Confirmation date cannot be earlier than join date",
+        ),
+    ] {
+        let err = employee_service::update_employee(
+            &pool,
+            employee_id,
+            company_id,
+            update_request(payload),
+            user_id,
+            None,
+        )
+        .await
+        .expect_err("invalid employee field must be rejected on update");
+        assert!(
+            format!("{err:?}").contains(needle),
+            "expected '{needle}', got {err:?}"
+        );
+    }
+}

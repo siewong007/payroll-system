@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { Html5Qrcode as Html5QrcodeInstance } from 'html5-qrcode';
-import { AlertCircle, Flashlight, Keyboard, Loader2, X } from 'lucide-react';
+import { AlertCircle, Camera, Flashlight, Keyboard, Loader2, RefreshCw, X } from 'lucide-react';
 import { parseScanToken } from '@/lib/attendance';
 import { getErrorMessage } from '@/lib/utils';
 
@@ -9,6 +9,8 @@ interface QrScanSheetProps {
   onClose: () => void;
   /** Fired once per scan with the extracted token. The parent submits it. */
   onToken: (token: string) => void;
+  /** Clears any active parent submit error when user explicitly retries the scan. */
+  onRetryScan?: () => void;
   /** Fired when the camera is live — the parent uses it to pre-warm the GPS fix. */
   onCameraReady?: () => void;
   /** True while the parent's check-in request is in flight. */
@@ -26,12 +28,13 @@ interface QrScanSheetProps {
  * employee out of the portal shell and re-fetching the attendance method that
  * had been in the React Query cache seconds earlier.
  */
-export function QrScanSheet({ onClose, onToken, onCameraReady, busy, errorText }: QrScanSheetProps) {
+export function QrScanSheet({ onClose, onToken, onRetryScan, onCameraReady, busy, errorText }: QrScanSheetProps) {
   const { t } = useTranslation();
   // html5-qrcode addresses its mount point by id, so give each instance its own.
   const readerId = `qr-reader-${useId().replace(/:/g, '')}`;
 
   const [phase, setPhase] = useState<'starting' | 'scanning' | 'failed'>('starting');
+  const [cameraAttempt, setCameraAttempt] = useState(0);
   const [cameraError, setCameraError] = useState('');
   const [scanError, setScanError] = useState('');
   const [torchOn, setTorchOn] = useState(false);
@@ -39,18 +42,61 @@ export function QrScanSheet({ onClose, onToken, onCameraReady, busy, errorText }
   const [manualOpen, setManualOpen] = useState(false);
   const [manualCode, setManualCode] = useState('');
 
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
   const scannerRef = useRef<Html5QrcodeInstance | null>(null);
   // The success callback fires repeatedly while the code stays in frame.
   const claimedRef = useRef(false);
+  const lastSubmittedTokenRef = useRef<string | null>(null);
+  const lastRejectedTokenRef = useRef<string | null>(null);
   // Hold the latest callbacks so the camera effect can stay mounted across the
   // parent's re-renders. Synced in an effect rather than during render — the
   // React Compiler lint rejects a ref write in the render pass.
   const onTokenRef = useRef(onToken);
   const onCameraReadyRef = useRef(onCameraReady);
+  const onCloseRef = useRef(onClose);
   useEffect(() => {
     onTokenRef.current = onToken;
     onCameraReadyRef.current = onCameraReady;
+    onCloseRef.current = onClose;
   });
+
+  // Escape close, focus restoration, focus trap & body scroll lock
+  useEffect(() => {
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    closeButtonRef.current?.focus();
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onCloseRef.current();
+        return;
+      }
+      if (e.key !== 'Tab' || !dialogRef.current) return;
+      const focusables = dialogRef.current.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      );
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      document.body.style.overflow = prevOverflow;
+      previousFocus?.focus();
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -63,7 +109,11 @@ export function QrScanSheet({ onClose, onToken, onCameraReady, busy, errorText }
         setScanError(parsed.error);
         return;
       }
+      if (parsed.token === lastRejectedTokenRef.current) {
+        return;
+      }
       claimedRef.current = true;
+      lastSubmittedTokenRef.current = parsed.token;
       setScanError('');
       onTokenRef.current(parsed.token);
     };
@@ -135,11 +185,17 @@ export function QrScanSheet({ onClose, onToken, onCameraReady, busy, errorText }
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- t is stable; adding it would restart the camera
-  }, [readerId]);
+  }, [readerId, cameraAttempt]);
 
-  // A rejected token must be scannable again.
+  // Prevent 10fps infinite resubmission of the same rejected token while still
+  // allowing a different QR token immediately or the same one after "Scan again".
   useEffect(() => {
-    if (errorText) claimedRef.current = false;
+    if (errorText) {
+      lastRejectedTokenRef.current = lastSubmittedTokenRef.current;
+      claimedRef.current = false;
+    } else {
+      lastRejectedTokenRef.current = null;
+    }
   }, [errorText]);
 
   const toggleTorch = useCallback(async () => {
@@ -162,25 +218,51 @@ export function QrScanSheet({ onClose, onToken, onCameraReady, busy, errorText }
       setScanError(parsed.error);
       return;
     }
+    lastRejectedTokenRef.current = null;
+    lastSubmittedTokenRef.current = parsed.token;
     claimedRef.current = true;
     setScanError('');
     onTokenRef.current(parsed.token);
   };
 
+  const handleRetryCamera = () => {
+    setCameraError('');
+    setTorchAvailable(false);
+    setTorchOn(false);
+    setPhase('starting');
+    setManualOpen(false);
+    setCameraAttempt((n) => n + 1);
+  };
+
+  const handleScanAgain = () => {
+    lastRejectedTokenRef.current = null;
+    claimedRef.current = false;
+    setScanError('');
+    onRetryScan?.();
+  };
+
   const message = errorText || scanError;
 
   return (
-    <div className="fixed inset-0 z-[60] bg-black text-white flex flex-col" role="dialog" aria-modal="true" aria-label={t('attendance.qr.ariaLabel')}>
+    <div
+      ref={dialogRef}
+      className="fixed inset-0 z-[60] bg-black text-white flex flex-col"
+      role="dialog"
+      aria-modal="true"
+      aria-label={t('attendance.qr.ariaLabel')}
+    >
       {/* Header */}
       <div className="flex items-center justify-between px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-3 shrink-0">
         <div>
           <p className="text-sm font-semibold">{t('attendance.qr.title')}</p>
-          <p className="text-xs text-white/60">{t('attendance.qr.subtitle')}</p>
+          <p className="text-xs text-white/70">{t('attendance.qr.subtitle')}</p>
         </div>
         <button
+          ref={closeButtonRef}
+          type="button"
           onClick={onClose}
           aria-label={t('attendance.qr.close')}
-          className="w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors"
+          className="w-11 h-11 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors"
         >
           <X className="w-5 h-5" />
         </button>
@@ -201,12 +283,23 @@ export function QrScanSheet({ onClose, onToken, onCameraReady, busy, errorText }
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-black px-8 text-center">
             <AlertCircle className="w-10 h-10 text-amber-400" />
             <p className="text-sm text-white/80">{cameraError}</p>
-            <button
-              onClick={() => setManualOpen(true)}
-              className="px-4 py-2.5 rounded-xl bg-white text-gray-900 text-sm font-semibold"
-            >
-              {t('attendance.qr.enterCode')}
-            </button>
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <button
+                type="button"
+                onClick={handleRetryCamera}
+                className="inline-flex items-center gap-2 px-4 py-2.5 min-h-11 rounded-xl bg-white/15 text-white text-sm font-semibold hover:bg-white/25"
+              >
+                <RefreshCw className="w-4 h-4" />
+                {t('attendance.qr.tryCameraAgain')}
+              </button>
+              <button
+                type="button"
+                onClick={() => setManualOpen(true)}
+                className="px-4 py-2.5 min-h-11 rounded-xl bg-white text-gray-900 text-sm font-semibold"
+              >
+                {t('attendance.qr.enterCode')}
+              </button>
+            </div>
           </div>
         )}
 
@@ -237,40 +330,65 @@ export function QrScanSheet({ onClose, onToken, onCameraReady, busy, errorText }
       {/* Footer */}
       <div className="shrink-0 px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] space-y-3">
         {message && (
-          <div className="flex items-start gap-2 rounded-2xl bg-red-500/15 border border-red-500/30 px-4 py-3 text-sm text-red-100">
-            <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
-            <span>{message}</span>
+          <div role="alert" className="flex items-start justify-between gap-2 rounded-2xl bg-red-500/20 border border-red-500/40 px-4 py-3 text-sm text-red-100">
+            <div className="flex items-start gap-2 min-w-0">
+              <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+              <span>{message}</span>
+            </div>
+            {errorText && (
+              <button
+                type="button"
+                onClick={handleScanAgain}
+                className="shrink-0 text-xs font-semibold underline underline-offset-2 text-white hover:text-emerald-300"
+              >
+                {t('attendance.qr.scanAgain')}
+              </button>
+            )}
           </div>
         )}
 
         {manualOpen ? (
-          <div className="flex gap-2">
-            <input
-              value={manualCode}
-              onChange={(e) => setManualCode(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') submitManual(); }}
-              placeholder={t('attendance.qr.codePlaceholder')}
-              aria-label={t('attendance.qr.codeAria')}
-              autoComplete="off"
-              autoCapitalize="none"
-              spellCheck={false}
-              className="flex-1 min-w-0 rounded-xl bg-white/10 border border-white/20 px-3 py-2.5 text-sm placeholder:text-white/40 focus:outline-none focus:border-emerald-400"
-            />
-            <button
-              onClick={submitManual}
-              disabled={!manualCode.trim() || busy}
-              className="px-4 rounded-xl bg-white text-gray-900 text-sm font-semibold disabled:opacity-40"
-            >
-              {t('attendance.qr.go')}
-            </button>
+          <div className="space-y-2">
+            <div className="flex gap-2">
+              <input
+                value={manualCode}
+                onChange={(e) => setManualCode(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') submitManual(); }}
+                placeholder={t('attendance.qr.codePlaceholder')}
+                aria-label={t('attendance.qr.codeAria')}
+                autoComplete="off"
+                autoCapitalize="none"
+                spellCheck={false}
+                className="flex-1 min-w-0 rounded-xl bg-white/10 border border-white/20 px-3 py-2.5 text-base sm:text-sm text-white placeholder:text-white/50 focus:outline-none focus:border-emerald-400"
+              />
+              <button
+                type="button"
+                onClick={submitManual}
+                disabled={!manualCode.trim() || busy}
+                className="px-4 min-h-11 rounded-xl bg-white text-gray-900 text-sm font-semibold disabled:opacity-40"
+              >
+                {t('attendance.qr.go')}
+              </button>
+            </div>
+            <div className="flex justify-center">
+              <button
+                type="button"
+                onClick={() => setManualOpen(false)}
+                className="inline-flex items-center gap-1.5 text-xs text-white/75 hover:text-white py-1"
+              >
+                <Camera className="w-3.5 h-3.5" />
+                {phase === 'failed' ? t('common.cancel') : t('attendance.qr.backToCamera')}
+              </button>
+            </div>
           </div>
         ) : (
           <div className="flex items-center justify-center gap-2">
             {torchAvailable && (
               <button
+                type="button"
                 onClick={() => void toggleTorch()}
                 aria-pressed={torchOn}
-                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-colors ${
+                className={`flex items-center gap-2 px-4 py-2.5 min-h-11 rounded-xl text-sm font-medium transition-colors ${
                   torchOn ? 'bg-amber-400 text-gray-900' : 'bg-white/10 text-white hover:bg-white/20'
                 }`}
               >
@@ -279,8 +397,9 @@ export function QrScanSheet({ onClose, onToken, onCameraReady, busy, errorText }
               </button>
             )}
             <button
+              type="button"
               onClick={() => setManualOpen(true)}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/10 text-white text-sm font-medium hover:bg-white/20 transition-colors"
+              className="flex items-center gap-2 px-4 py-2.5 min-h-11 rounded-xl bg-white/10 text-white text-sm font-medium hover:bg-white/20 transition-colors"
             >
               <Keyboard className="w-4 h-4" />
               {t('attendance.qr.enterCodeShort')}

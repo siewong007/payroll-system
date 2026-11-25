@@ -15,13 +15,14 @@ export interface RoleMeta {
  * than a role that silently renders as a raw identifier.
  */
 export const ROLE_META: Record<AppRole, RoleMeta> = {
-  super_admin: { badgeClass: 'bg-purple-100 text-purple-700' },
-  admin: { badgeClass: 'bg-indigo-100 text-indigo-700' },
-  payroll_admin: { badgeClass: 'bg-blue-100 text-blue-700' },
-  hr_manager: { badgeClass: 'bg-green-100 text-green-700' },
-  finance: { badgeClass: 'bg-amber-100 text-amber-700' },
-  exec: { badgeClass: 'bg-gray-100 text-gray-700' },
-  employee: { badgeClass: 'bg-sky-100 text-sky-700' },
+  super_admin: { badgeClass: 'bg-purple-100 text-purple-700 dark:bg-purple-500/20 dark:text-purple-300' },
+  admin: { badgeClass: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300' },
+  manager: { badgeClass: 'bg-teal-100 text-teal-700 dark:bg-teal-500/20 dark:text-teal-300' },
+  payroll_admin: { badgeClass: 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-300' },
+  hr_manager: { badgeClass: 'bg-green-100 text-green-700 dark:bg-emerald-500/20 dark:text-emerald-300' },
+  finance: { badgeClass: 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300' },
+  exec: { badgeClass: 'bg-gray-100 text-gray-700 dark:bg-slate-700/70 dark:text-slate-200' },
+  employee: { badgeClass: 'bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300' },
 };
 
 export const ALL_ROLES: AppRole[] = Object.keys(ROLE_META) as AppRole[];
@@ -83,6 +84,16 @@ export const REPORT_ROLES: AppRole[] = ALL_ROLES.filter((role) => role !== 'exec
 export const SUPER_ADMIN_ROLES: AppRole[] = ['super_admin'];
 export const ADMIN_DATA_ROLES: AppRole[] = ['super_admin', 'admin'];
 /**
+ * Roles hidden from any directory viewer who holds none of them. Mirrors the
+ * backend's `user_service::hides_privileged_users`; the API already filters
+ * these users out, this only keeps the UI from offering them as a filter.
+ */
+export const PRIVILEGED_USER_ROLES: AppRole[] = ['super_admin', 'admin'];
+
+export function hidesPrivilegedUsers(value: MaybeAppRole): boolean {
+  return !hasAnyRole(value, PRIVILEGED_USER_ROLES);
+}
+/**
  * May read company-wide attendance (records, summary, CSV export — which
  * carry every colleague's movements and GPS coordinates). Mirrors the
  * backend's `require_attendance_viewer` allow-list exactly.
@@ -90,6 +101,7 @@ export const ADMIN_DATA_ROLES: AppRole[] = ['super_admin', 'admin'];
 export const ATTENDANCE_VIEW_ROLES: AppRole[] = [
   'super_admin',
   'admin',
+  'manager',
   'hr_manager',
   'payroll_admin',
   'finance',

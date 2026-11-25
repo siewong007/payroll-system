@@ -1,25 +1,45 @@
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
-import { DollarSign, Edit, MapPin, Shield, TrendingDown, TrendingUp } from 'lucide-react';
+import { AlertTriangle, DollarSign, Edit, Lock, MapPin, Shield, TrendingDown, TrendingUp } from 'lucide-react';
 import { getEmployee, getSalaryHistory } from '@/api/employees';
-import { useAuth } from '@/context/AuthContext';
-import { canAccessPayrollData } from '@/lib/roles';
-import { formatDate, formatMYR } from '@/lib/utils';
+import { usePermissions } from '@/lib/usePermissions';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { formatDate, formatMYR, getErrorMessage } from '@/lib/utils';
 
-function InfoField({ label, value }: { label: string; value: string | null | undefined }) {
+function InfoField({
+  label,
+  value,
+  restricted = false,
+}: {
+  label: string;
+  value: string | null | undefined;
+  restricted?: boolean;
+}) {
+  const { t } = useTranslation();
   return (
-    <div>
-      <p className="text-xs text-gray-400 uppercase tracking-wide">{label}</p>
-      <p className="text-sm font-medium text-gray-900 mt-0.5">{value || '-'}</p>
+    <div className="min-w-0">
+      <p className="text-xs text-gray-500 dark:text-slate-400 uppercase tracking-wide">{label}</p>
+      {restricted ? (
+        <span className="inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded-md text-xs font-medium bg-gray-100 text-gray-600 dark:bg-slate-800 dark:text-slate-300">
+          <Lock className="w-3 h-3" />
+          {t('employees.restricted')}
+        </span>
+      ) : (
+        <p className="text-sm font-medium text-gray-900 dark:text-slate-100 mt-0.5 break-words">{value || '-'}</p>
+      )}
     </div>
   );
 }
 
 export function EmployeeProfile({ employeeId }: { employeeId: string }) {
   const { t } = useTranslation();
-  const { user } = useAuth();
-  const canViewPayroll = canAccessPayrollData(user);
-  const { data: employee, isLoading } = useQuery({
+  const { can } = usePermissions();
+  const canViewPayroll = can('view_payroll');
+  const canManageEmployees = can('manage_employees');
+  const canViewSalaryHistory = can('view_salary_history');
+  const showPersonalSensitive = canViewPayroll || canManageEmployees;
+
+  const { data: employee, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['employee', employeeId],
     queryFn: () => getEmployee(employeeId),
   });
@@ -27,13 +47,36 @@ export function EmployeeProfile({ employeeId }: { employeeId: string }) {
   const { data: salaryHistory } = useQuery({
     queryKey: ['salaryHistory', employeeId],
     queryFn: () => getSalaryHistory(employeeId),
-    enabled: canViewPayroll,
+    enabled: canViewSalaryHistory,
   });
 
-  if (isLoading || !employee) {
+  if (isLoading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-gray-900" />
+        <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-gray-900 dark:border-slate-200" />
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <EmptyState
+        icon={AlertTriangle}
+        title={t('employees.loadFailed')}
+        description={getErrorMessage(error, t('employees.loadFailed'))}
+        action={
+          <button type="button" onClick={() => refetch()} className="btn-primary">
+            {t('common.retry')}
+          </button>
+        }
+      />
+    );
+  }
+
+  if (!employee) {
+    return (
+      <div className="text-center text-sm text-gray-500 dark:text-slate-400 py-12">
+        {t('employees.notFound')}
       </div>
     );
   }
@@ -41,18 +84,20 @@ export function EmployeeProfile({ employeeId }: { employeeId: string }) {
   return (
     <div className="space-y-7">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="text-lg font-bold text-gray-900">{employee.full_name}</h3>
-          <p className="text-sm text-gray-500">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <h3 className="text-lg font-bold text-gray-900 dark:text-slate-100 break-words">{employee.full_name}</h3>
+          <p className="text-sm text-gray-500 dark:text-slate-400 break-words">
             {employee.employee_number} &middot;{' '}
             {employee.department || t('employees.noDepartment')} &middot;{' '}
             {employee.designation || t('employees.noDesignation')}
           </p>
         </div>
         <span
-          className={`inline-flex px-2.5 py-1 rounded-full text-xs font-medium ${
-            employee.is_active ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
+          className={`inline-flex px-2.5 py-1 rounded-full text-xs font-medium shrink-0 ${
+            employee.is_active
+              ? 'bg-green-50 text-green-700 dark:bg-emerald-500/15 dark:text-emerald-300'
+              : 'bg-red-50 text-red-700 dark:bg-red-500/15 dark:text-red-300'
           }`}
         >
           {employee.is_active ? t('common.active') : t('common.inactive')}
@@ -61,14 +106,15 @@ export function EmployeeProfile({ employeeId }: { employeeId: string }) {
 
       {/* Personal */}
       <section>
-        <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-4 flex items-center gap-2">
+        <h4 className="text-xs font-bold text-gray-500 dark:text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-2">
           <Edit className="w-3.5 h-3.5" /> {t('employees.sections.personal')}
         </h4>
-        <div className="grid grid-cols-2 gap-x-8 gap-y-4">
-          <InfoField label={t('employees.fields.nric')} value={employee.ic_number} />
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4">
+          <InfoField label={t('employees.fields.nric')} value={employee.ic_number} restricted={!showPersonalSensitive} />
           <InfoField
             label={t('employees.fields.dateOfBirth')}
             value={employee.date_of_birth ? formatDate(employee.date_of_birth) : null}
+            restricted={!showPersonalSensitive}
           />
           <InfoField
             label={t('employees.fields.gender')}
@@ -98,36 +144,43 @@ export function EmployeeProfile({ employeeId }: { employeeId: string }) {
             }
           />
           <InfoField label={t('employees.fields.email')} value={employee.email} />
-          <InfoField label={t('employees.fields.phone')} value={employee.phone} />
+          <InfoField label={t('employees.fields.phone')} value={employee.phone} restricted={!showPersonalSensitive} />
         </div>
       </section>
 
       {/* Address */}
-      {(employee.address_line1 || employee.city || employee.state) && (
+      {(!showPersonalSensitive || employee.address_line1 || employee.city || employee.state) && (
         <section>
-          <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-4 flex items-center gap-2">
+          <h4 className="text-xs font-bold text-gray-500 dark:text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-2">
             <MapPin className="w-3.5 h-3.5" /> {t('employees.sections.address')}
           </h4>
-          <p className="text-sm text-gray-900">
-            {[
-              employee.address_line1,
-              employee.address_line2,
-              employee.city,
-              employee.state,
-              employee.postcode,
-            ]
-              .filter(Boolean)
-              .join(', ')}
-          </p>
+          {!showPersonalSensitive ? (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-gray-100 text-gray-600 dark:bg-slate-800 dark:text-slate-300">
+              <Lock className="w-3 h-3" />
+              {t('employees.restricted')}
+            </span>
+          ) : (
+            <p className="text-sm text-gray-900 dark:text-slate-100 break-words">
+              {[
+                employee.address_line1,
+                employee.address_line2,
+                employee.city,
+                employee.state,
+                employee.postcode,
+              ]
+                .filter(Boolean)
+                .join(', ')}
+            </p>
+          )}
         </section>
       )}
 
       {/* Employment & Salary */}
       <section>
-        <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-4 flex items-center gap-2">
+        <h4 className="text-xs font-bold text-gray-500 dark:text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-2">
           <DollarSign className="w-3.5 h-3.5" /> {t('employees.sections.employment')}
         </h4>
-        <div className="grid grid-cols-2 gap-x-8 gap-y-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4">
           <InfoField
             label={t('employees.fields.employmentType')}
             value={
@@ -152,8 +205,8 @@ export function EmployeeProfile({ employeeId }: { employeeId: string }) {
               value={formatMYR(employee.basic_salary)}
             />
           )}
-          <InfoField label={t('employees.fields.bank')} value={employee.bank_name} />
-          <InfoField label={t('employees.fields.accountNo')} value={employee.bank_account_number} />
+          <InfoField label={t('employees.fields.bank')} value={employee.bank_name} restricted={!showPersonalSensitive} />
+          <InfoField label={t('employees.fields.accountNo')} value={employee.bank_account_number} restricted={!showPersonalSensitive} />
           <InfoField label={t('employees.fields.costCentre')} value={employee.cost_centre} />
           <InfoField label={t('employees.fields.branch')} value={employee.branch} />
         </div>
@@ -161,10 +214,10 @@ export function EmployeeProfile({ employeeId }: { employeeId: string }) {
 
       {canViewPayroll && (
         <section>
-          <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-4 flex items-center gap-2">
+          <h4 className="text-xs font-bold text-gray-500 dark:text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-2">
             <Shield className="w-3.5 h-3.5" /> {t('employees.sections.statutory')}
           </h4>
-          <div className="grid grid-cols-2 gap-x-8 gap-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4">
             <InfoField
               label={t('employees.fields.tin')}
               value={employee.tax_identification_number}
@@ -221,61 +274,67 @@ export function EmployeeProfile({ employeeId }: { employeeId: string }) {
       )}
 
       {/* Salary History */}
-      {canViewPayroll && salaryHistory && salaryHistory.length > 0 && (
+      {canViewSalaryHistory && salaryHistory && salaryHistory.length > 0 && (
         <section>
-          <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-4 flex items-center gap-2">
+          <h4 className="text-xs font-bold text-gray-500 dark:text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-2">
             <DollarSign className="w-3.5 h-3.5" /> {t('employees.sections.salaryHistory')}
           </h4>
-          <div className="rounded-2xl shadow overflow-hidden">
+          <div className="overflow-x-auto rounded-2xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900">
             <table className="w-full text-sm">
-              <thead className="bg-gray-50">
+              <thead className="bg-gray-50 dark:bg-slate-800/70">
                 <tr>
-                  <th className="text-left px-4 py-2 text-xs font-medium text-gray-500 uppercase">
+                  <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase whitespace-nowrap">
                     {t('employees.salaryTable.date')}
                   </th>
-                  <th className="text-right px-4 py-2 text-xs font-medium text-gray-500 uppercase">
+                  <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase whitespace-nowrap">
                     {t('employees.salaryTable.old')}
                   </th>
-                  <th className="text-right px-4 py-2 text-xs font-medium text-gray-500 uppercase">
+                  <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase whitespace-nowrap">
                     {t('employees.salaryTable.new')}
                   </th>
-                  <th className="text-right px-4 py-2 text-xs font-medium text-gray-500 uppercase">
+                  <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase whitespace-nowrap">
                     {t('employees.salaryTable.change')}
                   </th>
-                  <th className="text-left px-4 py-2 text-xs font-medium text-gray-500 uppercase">
+                  <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase">
                     {t('employees.salaryTable.reason')}
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
+              <tbody className="divide-y divide-gray-100 dark:divide-slate-800">
                 {salaryHistory.map((h) => {
-                  const pctChange = ((h.new_salary - h.old_salary) / h.old_salary) * 100;
-                  const isIncrease = pctChange >= 0;
+                  const pctChange = h.old_salary > 0
+                    ? ((h.new_salary - h.old_salary) / h.old_salary) * 100
+                    : null;
+                  const isIncrease = pctChange !== null && pctChange >= 0;
                   return (
                     <tr key={h.id}>
-                      <td className="px-4 py-2.5">{formatDate(h.effective_date)}</td>
-                      <td className="px-4 py-2.5 text-right text-gray-500">
+                      <td className="px-4 py-2.5 text-gray-700 dark:text-slate-300 whitespace-nowrap">{formatDate(h.effective_date)}</td>
+                      <td className="px-4 py-2.5 text-right text-gray-500 dark:text-slate-400 tabular-nums whitespace-nowrap">
                         {formatMYR(h.old_salary)}
                       </td>
-                      <td className="px-4 py-2.5 text-right font-medium">
+                      <td className="px-4 py-2.5 text-right font-medium text-gray-900 dark:text-slate-100 tabular-nums whitespace-nowrap">
                         {formatMYR(h.new_salary)}
                       </td>
-                      <td className="px-4 py-2.5 text-right">
-                        <span
-                          className={`inline-flex items-center gap-0.5 ${
-                            isIncrease ? 'text-green-600' : 'text-red-600'
-                          }`}
-                        >
-                          {isIncrease ? (
-                            <TrendingUp className="w-3 h-3" />
-                          ) : (
-                            <TrendingDown className="w-3 h-3" />
-                          )}
-                          {isIncrease ? '+' : ''}
-                          {pctChange.toFixed(1)}%
-                        </span>
+                      <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap">
+                        {pctChange === null ? (
+                          <span className="text-gray-400 dark:text-slate-500">{'\u2014'}</span>
+                        ) : (
+                          <span
+                            className={`inline-flex items-center gap-0.5 ${
+                              isIncrease ? 'text-green-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'
+                            }`}
+                          >
+                            {isIncrease ? (
+                              <TrendingUp className="w-3 h-3" />
+                            ) : (
+                              <TrendingDown className="w-3 h-3" />
+                            )}
+                            {isIncrease ? '+' : ''}
+                            {pctChange.toFixed(1)}%
+                          </span>
+                        )}
                       </td>
-                      <td className="px-4 py-2.5 text-gray-500">{h.reason || '-'}</td>
+                      <td className="px-4 py-2.5 text-gray-500 dark:text-slate-400">{h.reason || '-'}</td>
                     </tr>
                   );
                 })}

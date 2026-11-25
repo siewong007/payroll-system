@@ -64,6 +64,9 @@ required_payload=(
   payroll-backup.sh
   payroll-backup.service
   payroll-backup.timer
+  payroll-watchdog.sh
+  payroll-watchdog.service
+  payroll-watchdog.timer
   SHA256SUMS
   images/backend.tar.gz
 )
@@ -171,8 +174,12 @@ install_release_files() {
   install -m 0750 "$RELEASE_DIR/payroll-backup.sh" "$APP_DIR/payroll-backup.sh"
   install -m 0644 "$RELEASE_DIR/payroll-backup.service" /etc/systemd/system/payroll-backup.service
   install -m 0644 "$RELEASE_DIR/payroll-backup.timer" /etc/systemd/system/payroll-backup.timer
+  install -m 0750 "$RELEASE_DIR/payroll-watchdog.sh" "$APP_DIR/payroll-watchdog.sh"
+  install -m 0644 "$RELEASE_DIR/payroll-watchdog.service" /etc/systemd/system/payroll-watchdog.service
+  install -m 0644 "$RELEASE_DIR/payroll-watchdog.timer" /etc/systemd/system/payroll-watchdog.timer
   systemctl daemon-reload
   systemctl enable --now payroll-backup.timer >/dev/null 2>&1 || true
+  systemctl enable --now payroll-watchdog.timer >/dev/null 2>&1 || true
 
   # The backend image runs as uid/gid 10001 (see infra/Dockerfile). Bind-mounted
   # application state must stay writable by that non-root user.
@@ -257,8 +264,13 @@ deploy_tag() {
   wait_for_healthy payroll-db || return 1
   wait_for_healthy payroll-backend || return 1
   # Verify from the HOST (not just the container healthcheck) so a missing port
-  # publish is caught before Caddy is pointed at an unreachable upstream.
-  curl -fsS http://127.0.0.1:8080/api/health/ready >/dev/null || return 1
+  # publish or stale container revision is caught before Caddy stays pointed at it.
+  local ready_body
+  ready_body=$(curl -fsS http://127.0.0.1:8080/api/health/ready) || return 1
+  if ! grep -Eq "\"revision\"[[:space:]]*:[[:space:]]*\"${target_tag}\"" <<<"$ready_body"; then
+    log "Readiness revision mismatch on 127.0.0.1:8080 (expected $target_tag): $ready_body"
+    return 1
+  fi
 }
 
 show_diagnostics() {

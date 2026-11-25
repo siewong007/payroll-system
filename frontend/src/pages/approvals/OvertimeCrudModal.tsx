@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -7,6 +7,7 @@ import {
   type OvertimeWithEmployee,
 } from '@/api/approvals';
 import { EmployeePicker } from '@/components/employees/EmployeePicker';
+import { FormField } from '@/components/ui/FormField';
 import { Modal } from '@/components/ui/Modal';
 import { TimeSelector } from '@/components/ui/TimeSelector';
 import { formatEmployeeLabel } from '@/lib/employeeFields';
@@ -36,6 +37,7 @@ export function OvertimeCrudModal({
   onSaved: () => void;
 }) {
   const { t } = useTranslation();
+  const formId = useId();
   const queryClient = useQueryClient();
   const [form, setForm] = useState<AdminCreateOvertimeRequest>({
     employee_id: '',
@@ -137,6 +139,8 @@ export function OvertimeCrudModal({
       return;
     }
 
+    const trimmedReason = form.reason?.trim() || '';
+
     if (item) {
       updateMutation.mutate({
         id: item.id,
@@ -147,7 +151,7 @@ export function OvertimeCrudModal({
           end_time: form.end_time,
           hours: form.hours,
           ot_type: form.ot_type,
-          reason: form.reason,
+          reason: trimmedReason,
         },
       });
       return;
@@ -155,7 +159,7 @@ export function OvertimeCrudModal({
 
     createMutation.mutate({
       ...form,
-      reason: form.reason || undefined,
+      reason: trimmedReason || undefined,
     });
   };
 
@@ -165,12 +169,13 @@ export function OvertimeCrudModal({
       onClose={onClose}
       title={modalTitle}
       footer={
-        <div className="flex justify-end gap-3">
-          <button onClick={onClose} className="btn-secondary">
+        <div className="flex flex-col-reverse sm:flex-row justify-end gap-3">
+          <button type="button" onClick={onClose} className="btn-secondary">
             {t('common.cancel')}
           </button>
           <button
-            onClick={submit}
+            type="submit"
+            form={formId}
             disabled={createMutation.isPending || updateMutation.isPending}
             className="btn-primary"
           >
@@ -183,59 +188,73 @@ export function OvertimeCrudModal({
         </div>
       }
     >
-      <div className="space-y-4">
+      <form
+        id={formId}
+        onSubmit={(e) => {
+          e.preventDefault();
+          submit();
+        }}
+        className="space-y-4"
+      >
         {error && (
-          <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          <div role="alert" className="rounded-lg border border-red-200 dark:border-red-500/30 bg-red-50 dark:bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-300">
             {error}
           </div>
         )}
 
-        <div>
-          <label className="form-label">{t('common.employee')} *</label>
-          <EmployeePicker
-            key={item?.id ?? 'new'}
-            value={form.employee_id}
-            onChange={(id) => setForm((prev) => ({ ...prev, employee_id: id }))}
-            initialLabel={
-              item ? formatEmployeeLabel(item.employee_name, item.employee_number) : undefined
-            }
-          />
-        </div>
+        <FormField label={t('common.employee')} required>
+          {(aria) => (
+            <EmployeePicker
+              key={item?.id ?? 'new'}
+              id={aria.id}
+              aria-describedby={aria['aria-describedby']}
+              value={form.employee_id}
+              onChange={(id) => setForm((prev) => ({ ...prev, employee_id: id }))}
+              initialLabel={
+                item ? formatEmployeeLabel(item.employee_name, item.employee_number) : undefined
+              }
+            />
+          )}
+        </FormField>
 
-        <div>
-          <label className="form-label">{t('approvals.otDate')} *</label>
-          <input
-            type="date"
-            value={form.ot_date}
-            onChange={(event) => setForm((prev) => ({ ...prev, ot_date: event.target.value }))}
-            className="form-input"
-          />
-        </div>
+        <FormField label={t('approvals.otDate')} required>
+          {(aria) => (
+            <input
+              {...aria}
+              type="date"
+              value={form.ot_date}
+              onChange={(event) => setForm((prev) => ({ ...prev, ot_date: event.target.value }))}
+              className="form-input"
+              required
+            />
+          )}
+        </FormField>
 
         <div>
           <label className="form-label">{t('approvals.otType')} *</label>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
             {(['normal', 'rest_day', 'public_holiday'] as const).map((type) => (
               <label
                 key={type}
-                className={`flex flex-col items-center gap-1 px-3 py-3 rounded-lg border-2 cursor-pointer transition-all text-center ${
+                className={`flex flex-col items-center gap-1 px-3 py-3 rounded-lg border-2 cursor-pointer transition-all text-center focus-within:ring-2 focus-within:ring-black dark:focus-within:ring-slate-400 ${
                   form.ot_type === type
                     ? type === 'public_holiday'
-                      ? 'border-red-400 bg-red-50'
+                      ? 'border-red-400 bg-red-50 dark:bg-red-500/15 dark:border-red-400 text-red-900 dark:text-red-200'
                       : type === 'rest_day'
-                        ? 'border-blue-400 bg-blue-50'
-                        : 'border-gray-900 bg-gray-50'
-                    : 'border-gray-200 hover:border-gray-300'
+                        ? 'border-blue-400 bg-blue-50 dark:bg-blue-500/15 dark:border-blue-400 text-blue-900 dark:text-blue-200'
+                        : 'border-gray-900 dark:border-slate-300 bg-gray-50 dark:bg-slate-800 text-gray-900 dark:text-slate-100'
+                    : 'border-gray-200 dark:border-slate-700 hover:border-gray-300 dark:hover:border-slate-600 text-gray-700 dark:text-slate-300'
                 }`}
               >
                 <input
                   type="radio"
+                  name={`${formId}-ot_type`}
                   checked={form.ot_type === type}
                   onChange={() => setForm((prev) => ({ ...prev, ot_type: type }))}
                   className="sr-only"
                 />
                 <span className="text-xs font-medium">{t(`enums.otType.${type}`)}</span>
-                <span className="text-[10px] text-gray-400">
+                <span className="text-[10px] text-gray-500 dark:text-slate-400">
                   {type === 'normal' ? '1.5x' : type === 'rest_day' ? '2.0x' : '3.0x'}
                 </span>
               </label>
@@ -243,7 +262,7 @@ export function OvertimeCrudModal({
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <TimeSelector
             label={`${t('common.startTime')} *`}
             value={form.start_time}
@@ -257,22 +276,24 @@ export function OvertimeCrudModal({
         </div>
 
         {form.hours > 0 && (
-          <div className="bg-gray-50 rounded-lg p-3 text-center">
-            <span className="text-2xl font-bold text-gray-900">{form.hours}</span>
-            <span className="text-sm text-gray-400 ml-1">{t('common.hours')}</span>
+          <div className="bg-gray-50 dark:bg-slate-800/70 rounded-lg p-3 text-center">
+            <span className="text-2xl font-bold text-gray-900 dark:text-slate-100 tabular-nums">{form.hours}</span>
+            <span className="text-sm text-gray-500 dark:text-slate-400 ml-1">{t('common.hours')}</span>
           </div>
         )}
 
-        <div>
-          <label className="form-label">{t('common.reason')}</label>
-          <textarea
-            value={form.reason}
-            onChange={(event) => setForm((prev) => ({ ...prev, reason: event.target.value }))}
-            rows={3}
-            className="form-input"
-          />
-        </div>
-      </div>
+        <FormField label={t('common.reason')}>
+          {(aria) => (
+            <textarea
+              {...aria}
+              value={form.reason}
+              onChange={(event) => setForm((prev) => ({ ...prev, reason: event.target.value }))}
+              rows={3}
+              className="form-input"
+            />
+          )}
+        </FormField>
+      </form>
     </Modal>
   );
 }

@@ -97,18 +97,29 @@ jobs:
           [[ "$DEPLOY_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$DEPLOY_SHA"
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
       - name: Build linux/amd64 backend image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: infra/Dockerfile
+          platforms: linux/amd64
+          pull: true
+          load: true
+          push: false
+          tags: 'payroll-backend:${{ env.DEPLOY_SHA }}'
+          labels: 'org.opencontainers.image.revision=${{ env.DEPLOY_SHA }}'
+          build-args: |
+            GIT_SHA=${{ env.DEPLOY_SHA }}
+          cache-from: type=gha,scope=backend-docker
+          cache-to: type=gha,mode=max,scope=backend-docker
+
+      - name: Verify built backend image architecture
         shell: bash
         run: |
           set -euo pipefail
-          docker build \
-            --platform linux/amd64 \
-            --pull \
-            --label "org.opencontainers.image.revision=$DEPLOY_SHA" \
-            --tag "payroll-backend:$DEPLOY_SHA" \
-            --file infra/Dockerfile \
-            .
-
           test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' \
             "payroll-backend:$DEPLOY_SHA")" = "linux/amd64"
 
@@ -125,12 +136,16 @@ jobs:
           cp deploy/deploy.sh "$bundle_dir/deploy.sh"
           cp deploy/docker-compose.prod.yml "$bundle_dir/docker-compose.prod.yml"
           cp deploy/migrate-database.sh "$bundle_dir/migrate-database.sh"
-          # deploy.sh refuses to start unless these three are in the tarball.
+          # deploy.sh refuses to start unless these units are in the tarball.
           cp deploy/payroll-backup.sh "$bundle_dir/payroll-backup.sh"
           cp deploy/payroll-backup.service "$bundle_dir/payroll-backup.service"
           cp deploy/payroll-backup.timer "$bundle_dir/payroll-backup.timer"
+          cp deploy/payroll-watchdog.sh "$bundle_dir/payroll-watchdog.sh"
+          cp deploy/payroll-watchdog.service "$bundle_dir/payroll-watchdog.service"
+          cp deploy/payroll-watchdog.timer "$bundle_dir/payroll-watchdog.timer"
           for payload in deploy.sh docker-compose.prod.yml payroll-backup.sh \
-                         payroll-backup.service payroll-backup.timer; do
+                         payroll-backup.service payroll-backup.timer \
+                         payroll-watchdog.sh payroll-watchdog.service payroll-watchdog.timer; do
             test -f "$bundle_dir/$payload"
           done
 
@@ -271,11 +286,15 @@ jobs:
             echo "PUBLIC_DNS_CUTOVER is not true; localhost health checks passed and public HTTPS was skipped."
             exit 0
           fi
-          curl --fail --silent --show-error \
+          ready_body=$(curl --fail --silent --show-error \
             --retry 20 --retry-delay 5 --retry-all-errors \
             --max-time 20 \
-            https://api.payrollmy.com/api/health >/dev/null
-          echo "Public HTTPS health check passed through Cloudflare."
+            https://api.payrollmy.com/api/health/ready)
+          if ! grep -Eq "\"revision\"[[:space:]]*:[[:space:]]*\"${DEPLOY_SHA}\"" <<<"$ready_body"; then
+            echo "Public readiness revision mismatch (expected $DEPLOY_SHA): $ready_body" >&2
+            exit 1
+          fi
+          echo "Public HTTPS readiness check passed for revision $DEPLOY_SHA through Cloudflare."
 
       - name: Remove remote transfer files
         if: always()

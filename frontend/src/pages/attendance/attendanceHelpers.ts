@@ -6,6 +6,22 @@ import {
   formatDateTime as formatDateTimeL,
 } from '@/lib/format';
 
+const zoneDateFormatters = new Map<string, Intl.DateTimeFormat>();
+
+function getZoneDateFormatter(timeZone?: string): Intl.DateTimeFormat {
+  const key = timeZone ?? '';
+  let formatter = zoneDateFormatters.get(key);
+  if (!formatter) {
+    // i18n-ok: en-CA produces ISO YYYY-MM-DD for API params, not display.
+    formatter = new Intl.DateTimeFormat(
+      'en-CA',
+      timeZone ? { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' } : undefined,
+    );
+    zoneDateFormatters.set(key, formatter);
+  }
+  return formatter;
+}
+
 /**
  * Today's date on the *company* calendar, not the viewer's. Attendance days
  * are bucketed in the company timezone server-side, so a viewer in another
@@ -13,15 +29,9 @@ import {
  */
 export function todayInZone(timeZone: string | undefined): string {
   try {
-    // i18n-ok: en-CA produces ISO YYYY-MM-DD for API params, not display.
-    return new Intl.DateTimeFormat('en-CA', {
-      timeZone: timeZone || 'Asia/Kuala_Lumpur',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    }).format(new Date());
+    return getZoneDateFormatter(timeZone || 'Asia/Kuala_Lumpur').format(new Date());
   } catch {
-    return new Intl.DateTimeFormat('en-CA').format(new Date()); // i18n-ok
+    return getZoneDateFormatter().format(new Date());
   }
 }
 
@@ -30,16 +40,16 @@ export function firstOfMonth(day: string): string {
 }
 
 export const STATUS_COLORS = {
-  present: 'bg-emerald-100 text-emerald-700',
-  late: 'bg-amber-100  text-amber-700',
-  absent: 'bg-red-100    text-red-700',
-  half_day: 'bg-blue-100   text-blue-700',
+  present: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300',
+  late: 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300',
+  absent: 'bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-300',
+  half_day: 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-300',
 } as const;
 
 export const METHOD_CONFIG = {
-  qr_code: { icon: QrCode, color: 'text-violet-600' },
-  face_id: { icon: Fingerprint, color: 'text-sky-600' },
-  manual: { icon: User, color: 'text-gray-500' },
+  qr_code: { icon: QrCode, color: 'text-violet-600 dark:text-violet-400' },
+  face_id: { icon: Fingerprint, color: 'text-sky-600 dark:text-sky-400' },
+  manual: { icon: User, color: 'text-gray-500 dark:text-slate-400' },
 } as const;
 
 export function attStatusLabel(status: string): string {

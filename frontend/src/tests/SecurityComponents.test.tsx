@@ -26,6 +26,7 @@ vi.mock('@/api/geofence', () => geofenceMocks);
 import { TwoFactorPrompt } from '@/components/TwoFactorPrompt';
 import { SessionManagement } from '@/components/SessionManagement';
 import { GeofenceCard } from '@/components/attendance/GeofenceCard';
+import { ConfirmProvider } from '@/components/ui/ConfirmDialog';
 
 const user: User = {
   id: 'user-1',
@@ -40,7 +41,11 @@ function renderWithClient(ui: ReactNode) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return {
     queryClient,
-    ...render(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>),
+    ...render(
+      <QueryClientProvider client={queryClient}>
+        <ConfirmProvider>{ui}</ConfirmProvider>
+      </QueryClientProvider>,
+    ),
   };
 }
 
@@ -407,6 +412,7 @@ describe('GeofenceCard', () => {
 
     await screen.findByText('HQ Office');
     await typer.click(screen.getByTitle('Remove location'));
+    await typer.click(await screen.findByRole('button', { name: 'Delete' }));
 
     await waitFor(() => expect(geofenceMocks.deleteLocation).toHaveBeenCalledWith('loc-1'));
     await waitFor(() => expect(geofenceMocks.listLocations).toHaveBeenCalledTimes(2));

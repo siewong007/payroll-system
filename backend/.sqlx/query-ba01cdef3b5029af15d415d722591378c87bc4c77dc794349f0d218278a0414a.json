@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE email_logs SET status = 'failed', error_message = 'SMTP not configured'\n            WHERE id = $1 RETURNING *",
+  "query": "UPDATE email_logs\n           SET status = 'pending', attempts = $2, next_retry_at = $3, error_message = $4\n           WHERE id = $1 RETURNING *",
   "describe": {
     "columns": [
       {
@@ -72,11 +72,29 @@
         "ordinal": 13,
         "name": "created_by",
         "type_info": "Uuid"
+      },
+      {
+        "ordinal": 14,
+        "name": "attempts",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 15,
+        "name": "max_attempts",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 16,
+        "name": "next_retry_at",
+        "type_info": "Timestamptz"
       }
     ],
     "parameters": {
       "Left": [
-        "Uuid"
+        "Uuid",
+        "Int4",
+        "Timestamptz",
+        "Text"
       ]
     },
     "nullable": [
@@ -93,8 +111,11 @@
       true,
       true,
       false,
+      true,
+      false,
+      false,
       true
     ]
   },
-  "hash": "5a50d625af88b1f6a48b2a77c5fe3b3eeb083201bf27df1577e79e832f39d3a1"
+  "hash": "ba01cdef3b5029af15d415d722591378c87bc4c77dc794349f0d218278a0414a"
 }

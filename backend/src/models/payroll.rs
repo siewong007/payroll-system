@@ -458,8 +458,8 @@ pub(crate) struct BulkPayrollData {
     /// Attendance-derived overtime bucketed by the local date's type — a
     /// rest-day or public-holiday shift earns its own multiplier instead of
     /// being flattened into `normal`.
-    pub(crate) attendance_ot_hours: HashMap<Uuid, Vec<(String, f64)>>,
-    pub(crate) approved_ot: HashMap<Uuid, Vec<(String, f64)>>,
+    pub(crate) attendance_ot_hours: HashMap<Uuid, Vec<(String, Decimal)>>,
+    pub(crate) approved_ot: HashMap<Uuid, Vec<(String, Decimal)>>,
     /// The individual claims this run will reimburse, not a per-employee sum.
     /// The engine used to SUM inside its transaction and then re-run the same
     /// predicate to mark them paid, so a claim approved between the two was
@@ -704,14 +704,14 @@ pub struct EmployeeHours {
     /// Which multiplier the day earns: `normal`, `rest_day` or
     /// `public_holiday` (plan item 12).
     pub day_type: String,
-    pub hours: f64,
+    pub hours: Decimal,
 }
 
 #[derive(Debug)]
 pub struct EmployeeOtTypeHours {
     pub employee_id: Uuid,
     pub ot_type: String,
-    pub hours: f64,
+    pub hours: Decimal,
 }
 
 #[derive(Debug)]

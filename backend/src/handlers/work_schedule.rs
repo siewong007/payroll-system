@@ -18,6 +18,7 @@ pub async fn list_schedules(
     auth: AuthUser,
 ) -> AppResult<Json<Vec<WorkSchedule>>> {
     let company_id = auth.company_id()?;
+    auth.require_permission(Permission::ManageWorkSchedules)?;
 
     let schedules = work_schedule_service::list_schedules(&state.pool, company_id).await?;
     Ok(Json(schedules))
@@ -29,6 +30,7 @@ pub async fn get_default_schedule(
     auth: AuthUser,
 ) -> AppResult<Json<serde_json::Value>> {
     let company_id = auth.company_id()?;
+    auth.require_permission(Permission::ManageWorkSchedules)?;
 
     let schedule = work_schedule_service::get_default_schedule(&state.pool, company_id).await?;
     Ok(Json(serde_json::json!({ "schedule": schedule })))

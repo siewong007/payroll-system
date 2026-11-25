@@ -9,7 +9,7 @@ import {
   type UserSession,
 } from '@/api/sessions';
 import { deviceLabel, parseUserAgent } from '@/lib/userAgent';
-import { formatDate, formatRelativeTime } from '@/lib/utils';
+import { formatDate, formatRelativeTime, getErrorMessage } from '@/lib/utils';
 import { Modal } from '@/components/ui/Modal';
 
 const DEVICE_ICONS = { desktop: Monitor, mobile: Smartphone, tablet: Tablet, unknown: Globe } as const;
@@ -23,15 +23,28 @@ export function SessionManagement() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [confirmingOthers, setConfirmingOthers] = useState(false);
+  const [revokingId, setRevokingId] = useState<string | null>(null);
+  const [error, setError] = useState('');
   const { data: sessions = [], isLoading } = useQuery({ queryKey: ['sessions'], queryFn: getSessions });
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['sessions'] });
-  const revoke = useMutation({ mutationFn: revokeSession, onSuccess: invalidate });
+  const revoke = useMutation({
+    mutationFn: revokeSession,
+    onMutate: (id) => {
+      setError('');
+      setRevokingId(id);
+    },
+    onSuccess: invalidate,
+    onError: (err) => setError(getErrorMessage(err, t('common.error'))),
+    onSettled: () => setRevokingId(null),
+  });
   const revokeOthers = useMutation({
     mutationFn: revokeOtherSessions,
+    onMutate: () => setError(''),
     onSuccess: () => {
       setConfirmingOthers(false);
       invalidate();
     },
+    onError: (err) => setError(getErrorMessage(err, t('common.error'))),
   });
   const otherSessions = sessions.filter((session) => !session.current);
 
@@ -39,58 +52,65 @@ export function SessionManagement() {
     <section className="card">
       <div className="section-header">
         <div className="flex items-center gap-2">
-          <ShieldCheck className="w-4 h-4 text-gray-400" />
+          <ShieldCheck className="w-4 h-4 text-gray-400 dark:text-slate-400" />
           <span className="section-title">{t('auth.sessions.title')}</span>
         </div>
         {otherSessions.length > 0 && (
           <button
             type="button"
             onClick={() => setConfirmingOthers(true)}
-            className="ml-auto text-sm font-medium text-red-600 hover:text-red-700 whitespace-nowrap"
+            className="ml-auto min-h-10 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 whitespace-nowrap"
           >
             {t('auth.sessions.signOutOthers')}
           </button>
         )}
       </div>
 
-      <p className="text-sm text-gray-500 mb-4">
+      <p className="text-sm text-gray-500 dark:text-slate-400 mb-4">
         {t('auth.sessions.description')}
       </p>
+
+      {error && (
+        <div role="alert" className="mb-4 bg-red-50 dark:bg-red-500/10 border border-red-100 dark:border-red-500/30 text-red-600 dark:text-red-300 text-sm px-4 py-3 rounded-xl">
+          {error}
+        </div>
+      )}
 
       {isLoading ? (
         <div className="space-y-3" aria-hidden>
           {[0, 1].map((i) => (
             <div key={i} className="flex items-center gap-3 py-2">
-              <div className="w-9 h-9 rounded-xl bg-gray-100" />
+              <div className="w-9 h-9 rounded-xl bg-gray-100 dark:bg-slate-800" />
               <div className="flex-1 space-y-2">
-                <div className="h-3 w-40 rounded bg-gray-100" />
-                <div className="h-2.5 w-56 rounded bg-gray-50" />
+                <div className="h-3 w-40 rounded bg-gray-100 dark:bg-slate-800" />
+                <div className="h-2.5 w-56 rounded bg-gray-50 dark:bg-slate-800/70" />
               </div>
             </div>
           ))}
         </div>
       ) : sessions.length === 0 ? (
-        <p className="py-3 text-sm text-gray-500">{t('auth.sessions.empty')}</p>
+        <p className="py-3 text-sm text-gray-500 dark:text-slate-400">{t('auth.sessions.empty')}</p>
       ) : (
-        <div className="divide-y divide-gray-100">
+        <div className="divide-y divide-gray-100 dark:divide-slate-800">
           {sessions.map((session) => {
             const parsed = parseUserAgent(session.user_agent);
             const Icon = session.current ? Laptop : DEVICE_ICONS[parsed.deviceType];
+            const isRowBusy = revokingId === session.id;
             return (
               <div key={session.id} className="py-4 flex items-center gap-3">
                 <div className="w-9 h-9 rounded-xl bg-[var(--accent-soft)] flex items-center justify-center shrink-0">
-                  <Icon className="w-[18px] h-[18px] text-gray-600" />
+                  <Icon className="w-[18px] h-[18px] text-gray-600 dark:text-slate-300" />
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap gap-2 items-center">
-                    <span className="text-sm font-medium text-gray-900">{deviceLabel(parsed)}</span>
+                    <span className="text-sm font-medium text-gray-900 dark:text-slate-100">{deviceLabel(parsed)}</span>
                     {session.current && (
                       <span className="badge badge-approved inline-flex items-center gap-1.5">
                         <span className="glow-dot" /> {t('auth.sessions.thisDevice')}
                       </span>
                     )}
                   </div>
-                  <p className="text-xs text-gray-500 mt-1">
+                  <p className="text-xs text-gray-500 dark:text-slate-400 mt-1 break-words">
                     {session.ip_address ?? t('auth.sessions.ipUnknown')} · {t('auth.sessions.signedIn', { date: formatDate(session.created_at) })} · {lastActive(session, t)}
                   </p>
                 </div>
@@ -99,8 +119,8 @@ export function SessionManagement() {
                     type="button"
                     aria-label={t('auth.sessions.signOutDevice')}
                     onClick={() => revoke.mutate(session.id)}
-                    disabled={revoke.isPending}
-                    className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all-fast disabled:opacity-50"
+                    disabled={isRowBusy}
+                    className="min-h-11 min-w-11 inline-flex items-center justify-center text-gray-400 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-all-fast disabled:opacity-50"
                   >
                     <LogOut className="w-4 h-4" />
                   </button>
@@ -134,7 +154,7 @@ export function SessionManagement() {
           </div>
         }
       >
-        <p className="text-sm text-gray-600">
+        <p className="text-sm text-gray-600 dark:text-slate-300">
           {t('auth.sessions.signOutBody', { count: otherSessions.length })}
         </p>
       </Modal>

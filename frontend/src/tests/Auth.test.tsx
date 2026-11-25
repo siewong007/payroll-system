@@ -96,6 +96,20 @@ describe('AuthProvider', () => {
     expect(result.current.isAuthenticated).toBe(false);
   });
 
+  it.each(['/terms', '/privacy', '/compliance'])(
+    'does not churn the refresh endpoint on public legal route %s',
+    async (legalPath) => {
+      window.history.replaceState(null, '', legalPath);
+      const { result } = renderAuth();
+
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+      expect(apiMocks.post).not.toHaveBeenCalled();
+      expect(apiMocks.setAccessToken).not.toHaveBeenCalled();
+      expect(result.current.isAuthenticated).toBe(false);
+    },
+  );
+
   it('logs in and stores only the display user in localStorage', async () => {
     const { result } = renderAuth();
     await waitFor(() => expect(result.current.isLoading).toBe(false));

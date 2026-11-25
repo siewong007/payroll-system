@@ -1,9 +1,15 @@
-import { useState, useEffect, useCallback, type ReactNode } from 'react';
+import { useState, useEffect, useCallback, useMemo, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { User, LoginResponse, MfaRequiredResponse } from '@/types';
 import api, { setAccessToken } from '@/api/client';
 import { verifyTwoFactorLogin } from '@/api/totp';
 import { AuthContext, type LoginResult } from './AuthContext';
+
+const PUBLIC_NO_SESSION_ROUTES = new Set(['/kiosk', '/terms', '/privacy', '/compliance']);
+
+function shouldSkipSessionRestore(pathname: string): boolean {
+  return PUBLIC_NO_SESSION_ROUTES.has(pathname) || pathname.startsWith('/kiosk/');
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -12,9 +18,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
 
   // On mount, try to restore session via cookie-based refresh.
-  // Skip on the public kiosk path so a tablet without a session doesn't churn /auth/refresh.
+  // Skip on public unauthenticated paths (kiosk tablets and static legal pages)
+  // so they don't churn /auth/refresh or trigger an unnecessary CORS preflight.
   useEffect(() => {
-    if (window.location.pathname === '/kiosk' || window.location.pathname.startsWith('/kiosk/')) {
+    if (shouldSkipSessionRestore(window.location.pathname)) {
       setIsLoading(false);
       return;
     }
@@ -37,7 +44,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     };
 
-    restoreSession();
+    void restoreSession();
   }, []);
 
   const setSession = useCallback((newToken: string, newUser: User) => {
@@ -47,34 +54,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('user', JSON.stringify(newUser));
   }, []);
 
-  const login = async (
-    email: string,
-    password: string,
-    turnstileToken?: string,
-  ): Promise<LoginResult> => {
-    const { data } = await api.post<LoginResponse | MfaRequiredResponse>('/auth/login', {
-      email,
-      password,
-      turnstile_token: turnstileToken,
-    });
+  const login = useCallback(
+    async (email: string, password: string, turnstileToken?: string): Promise<LoginResult> => {
+      const { data } = await api.post<LoginResponse | MfaRequiredResponse>('/auth/login', {
+        email,
+        password,
+        turnstile_token: turnstileToken,
+      });
 
-    if ('requires_2fa' in data && data.requires_2fa) {
-      return { status: 'mfa_required', mfaToken: data.mfa_token };
-    }
+      if ('requires_2fa' in data && data.requires_2fa) {
+        return { status: 'mfa_required', mfaToken: data.mfa_token };
+      }
 
-    // Refresh token is set as httpOnly cookie by the server
-    setSession(data.token, data.user);
-    return { status: 'success', user: data.user };
-  };
+      // Refresh token is set as httpOnly cookie by the server
+      setSession(data.token, data.user);
+      return { status: 'success', user: data.user };
+    },
+    [setSession],
+  );
 
-  const completeTwoFactorLogin = async (mfaToken: string, code: string): Promise<User> => {
-    const data = await verifyTwoFactorLogin(mfaToken, code);
-    // Refresh token is set as httpOnly cookie by the server
-    setSession(data.token, data.user);
-    return data.user;
-  };
+  const completeTwoFactorLogin = useCallback(
+    async (mfaToken: string, code: string): Promise<User> => {
+      const data = await verifyTwoFactorLogin(mfaToken, code);
+      // Refresh token is set as httpOnly cookie by the server
+      setSession(data.token, data.user);
+      return data.user;
+    },
+    [setSession],
+  );
 
-  const logout = async () => {
+  const logout = useCallback(async () => {
     try {
       // Server reads refresh token from cookie and revokes it
       await api.post('/auth/logout');
@@ -87,33 +96,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem('user');
     sessionStorage.clear();
     queryClient.clear();
-  };
+  }, [queryClient]);
 
-  const switchCompany = async (companyId: string) => {
-    const { data } = await api.put<LoginResponse>('/auth/switch-company', { company_id: companyId });
-    setAccessToken(data.token);
-    setToken(data.token);
-    setUser(data.user);
-    localStorage.setItem('user', JSON.stringify(data.user));
-    queryClient.removeQueries();
-    await queryClient.invalidateQueries();
-  };
-
-  return (
-    <AuthContext.Provider
-      value={{
-        user,
-        token,
-        login,
-        completeTwoFactorLogin,
-        logout,
-        switchCompany,
-        setSession,
-        isAuthenticated: !!token,
-        isLoading,
-      }}
-    >
-      {children}
-    </AuthContext.Provider>
+  const switchCompany = useCallback(
+    async (companyId: string) => {
+      const { data } = await api.put<LoginResponse>('/auth/switch-company', { company_id: companyId });
+      setAccessToken(data.token);
+      setToken(data.token);
+      setUser(data.user);
+      localStorage.setItem('user', JSON.stringify(data.user));
+      queryClient.removeQueries();
+      await queryClient.invalidateQueries();
+    },
+    [queryClient],
   );
+
+  const value = useMemo(
+    () => ({
+      user,
+      token,
+      login,
+      completeTwoFactorLogin,
+      logout,
+      switchCompany,
+      setSession,
+      isAuthenticated: !!token,
+      isLoading,
+    }),
+    [user, token, login, completeTwoFactorLogin, logout, switchCompany, setSession, isLoading],
+  );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

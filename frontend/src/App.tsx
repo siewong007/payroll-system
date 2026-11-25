@@ -1,17 +1,14 @@
-import { Suspense, lazy, type ComponentType, type ReactNode } from 'react';
+import { Suspense, lazy, useEffect, type ComponentType, type ReactNode } from 'react';
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router';
 import { MutationCache, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from '@/context/AuthProvider';
 import { useAuth } from '@/context/AuthContext';
 import { ThemeProvider } from '@/context/ThemeProvider';
 import { PwaProvider } from '@/context/PwaProvider';
-import { AppLayout } from '@/components/layout/AppLayout';
-import { PortalLayout } from '@/components/layout/PortalLayout';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { ToastProvider } from '@/components/ui/Toast';
 import { ConfirmProvider } from '@/components/ui/ConfirmDialog';
 import { PromptProvider } from '@/components/ui/PromptDialog';
-import { CommandPalette } from '@/components/ui/CommandPalette';
 import { OfflineBanner } from '@/components/ui/OfflineBanner';
 import { toast } from '@/lib/toast';
 import { ForbiddenPage, NotFoundPage } from '@/pages/errors/ErrorPage';
@@ -28,6 +25,9 @@ function lazyNamed<T extends ComponentType<Record<string, never>>>(
   return lazy(async () => ({ default: (await loader())[exportName] }));
 }
 
+const AppLayout = lazyNamed(() => import('@/components/layout/AppLayout'), 'AppLayout');
+const PortalLayout = lazyNamed(() => import('@/components/layout/PortalLayout'), 'PortalLayout');
+const CommandPalette = lazyNamed(() => import('@/components/ui/CommandPalette'), 'CommandPalette');
 const Login = lazyNamed(() => import('@/pages/auth/Login'), 'Login');
 const OAuth2Callback = lazyNamed(() => import('@/pages/auth/OAuth2Callback'), 'OAuth2Callback');
 const OAuth2Link = lazyNamed(() => import('@/pages/auth/OAuth2Link'), 'OAuth2Link');
@@ -46,6 +46,10 @@ const PayrollDetail = lazyNamed(() => import('@/pages/payroll/PayrollDetail'), '
 const DocumentList = lazyNamed(() => import('@/pages/documents/DocumentList'), 'DocumentList');
 const CompanyProfile = lazyNamed(() => import('@/pages/company/CompanyProfile'), 'CompanyProfile');
 const SettingsPage = lazyNamed(() => import('@/pages/settings/SettingsPage'), 'SettingsPage');
+const AccountSecurityPage = lazyNamed(
+  () => import('@/pages/settings/AccountSecurityPage'),
+  'AccountSecurityPage',
+);
 const Approvals = lazyNamed(() => import('@/pages/approvals/Approvals'), 'Approvals');
 const Reports = lazyNamed(() => import('@/pages/reports/Reports'), 'Reports');
 const CalendarPage = lazyNamed(() => import('@/pages/calendar/CalendarPage'), 'CalendarPage');
@@ -150,7 +154,72 @@ function RouteErrorBoundary({ children }: { children: ReactNode }) {
   return <ErrorBoundary key={location.pathname}>{children}</ErrorBoundary>;
 }
 
+function AuthenticatedCommandPalette() {
+  const { isAuthenticated } = useAuth();
+  if (!isAuthenticated) return null;
+  return (
+    <Suspense fallback={null}>
+      <CommandPalette />
+    </Suspense>
+  );
+}
+
+let didPrefetchInitialRoute = false;
+function prefetchInitialRoute() {
+  if (didPrefetchInitialRoute || typeof window === 'undefined') return;
+  didPrefetchInitialRoute = true;
+  const path = window.location.pathname;
+  if (path === '/login') {
+    void import('@/pages/auth/Login');
+    return;
+  }
+  if (path === '/terms' || path === '/privacy' || path === '/compliance') {
+    void import('@/pages/legal/LegalPage');
+    return;
+  }
+  if (path === '/kiosk' || path.startsWith('/kiosk/')) {
+    void import('@/pages/attendance/AttendanceKioskPublic');
+    return;
+  }
+  if (path.startsWith('/portal')) {
+    void import('@/components/layout/PortalLayout');
+    if (path === '/portal/attendance') void import('@/pages/portal/MyAttendance');
+    else if (path === '/portal/payslips') void import('@/pages/portal/MyPayslips');
+    else if (path === '/portal/leave') void import('@/pages/portal/Leave');
+    else void import('@/pages/portal/MyProfile');
+    return;
+  }
+  try {
+    const rawUser = localStorage.getItem('user');
+    if (!rawUser) {
+      if (path === '/' || path === '') {
+        void import('@/pages/auth/Login');
+      }
+      return;
+    }
+    const parsed = JSON.parse(rawUser) as { roles?: string[] };
+    const roles = parsed.roles ?? [];
+    if (roles.length === 1 && roles[0] === 'employee') {
+      void import('@/components/layout/PortalLayout');
+      void import('@/pages/portal/MyProfile');
+    } else {
+      void import('@/components/layout/AppLayout');
+      if (roles.includes('super_admin')) {
+        void import('@/pages/admin/CompanyManagement');
+      } else if (path === '/' || path === '/dashboard') {
+        void import('@/pages/dashboard/DashboardPage');
+      }
+    }
+  } catch {
+    // Ignore malformed localStorage display user cache.
+  }
+}
+
 export default function App() {
+  useEffect(() => {
+    prefetchInitialRoute();
+  }, []);
+
   return (
     <ThemeProvider>
       <QueryClientProvider client={queryClient}>
@@ -161,7 +230,7 @@ export default function App() {
                 <ConfirmProvider>
                   <PromptProvider>
                     <OfflineBanner />
-                    <CommandPalette />
+                    <AuthenticatedCommandPalette />
                     <RouteErrorBoundary>
                     <Suspense fallback={<RouteFallback />}>
                     <Routes>
@@ -304,6 +373,7 @@ export default function App() {
                       </PermissionGuard>
                     )}
                   />
+                  <Route path={ROUTES.ACCOUNT} element={<AccountSecurityPage />} />
                   <Route
                     path={ROUTES.COMPANIES}
                     element={(
@@ -323,7 +393,7 @@ export default function App() {
                   <Route
                     path={ROUTES.ROLES}
                     element={(
-                      <PermissionGuard requires="manage_users">
+                      <PermissionGuard requires="view_user_directory">
                         <RoleManagement />
                       </PermissionGuard>
                     )}

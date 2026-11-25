@@ -1,0 +1,11 @@
+# Security advisory policy for local `cargo deny check advisories`
+# Keep ignore entries synchronized with `.github/audit-ignores.json`.
+
+[advisories]
+version = 2
+ignore = [
+    # Pulled into Cargo.lock only via uncompiled sqlx-mysql backend; crate uses postgres only.
+    "RUSTSEC-2023-0071",
+    # Pulled into Cargo.lock only via uncompiled sqlx-sqlite backend; crate uses postgres only.
+    "RUSTSEC-2026-0459",
+]

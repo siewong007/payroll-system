@@ -133,10 +133,16 @@ describe('PermissionGuard route matrix', () => {
       denies: ['admin', 'payroll_admin', 'hr_manager', 'finance', 'exec', 'employee'],
     },
     {
-      route: '/users, /roles',
+      route: '/users',
       requires: 'manage_users',
       admits: ['super_admin'],
       denies: ['admin', 'payroll_admin', 'hr_manager', 'finance', 'exec', 'employee'],
+    },
+    {
+      route: '/roles',
+      requires: 'view_user_directory',
+      admits: ['super_admin', 'admin', 'manager'],
+      denies: ['payroll_admin', 'hr_manager', 'finance', 'exec', 'employee'],
     },
     {
       route: '/backup',

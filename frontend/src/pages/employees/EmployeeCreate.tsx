@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -7,13 +7,14 @@ import type { EmployeeAccountInfo } from '@/api/employees';
 import { getPayrollGroups } from '@/api/payroll';
 import { getErrorMessage, todayLocalDate } from '@/lib/utils';
 import { stripPayrollFields } from '@/lib/employeeFields';
+import { usePermissions } from '@/lib/usePermissions';
+import { useToast } from '@/lib/toast';
+import { FormField } from '@/components/ui/FormField';
 import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { UnsavedChangesBar } from '@/components/ui/UnsavedChangesBar';
 import { useUnsavedChanges } from '@/lib/useUnsavedChanges';
 import type { CreateEmployeeRequest } from '@/types';
-import { useAuth } from '@/context/AuthContext';
-import { canAccessPayrollData } from '@/lib/roles';
 
 const BANKS = [
   'Maybank', 'CIMB Bank', 'Public Bank', 'RHB Bank', 'Hong Leong Bank',
@@ -25,9 +26,10 @@ const BANKS = [
 export function EmployeeCreate() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const toast = useToast();
   const queryClient = useQueryClient();
-  const { user } = useAuth();
-  const canViewPayroll = canAccessPayrollData(user);
+  const { can } = usePermissions();
+  const canViewPayroll = can('view_payroll');
 
   const { data: payrollGroups } = useQuery({
     queryKey: ['payrollGroups'],
@@ -35,42 +37,81 @@ export function EmployeeCreate() {
     enabled: canViewPayroll,
   });
 
-  const [form, setForm] = useState<CreateEmployeeRequest>({
+  const [initialJoinedDate] = useState(() => todayLocalDate());
+  const initialForm = useMemo<CreateEmployeeRequest>(() => ({
     employee_number: '',
     full_name: '',
-    date_joined: todayLocalDate(),
+    date_joined: initialJoinedDate,
     basic_salary: 0,
-  });
+  }), [initialJoinedDate]);
 
+  const [form, setForm] = useState<CreateEmployeeRequest>(initialForm);
   const [salaryDisplay, setSalaryDisplay] = useState('');
+  const [zakatDisplay, setZakatDisplay] = useState('');
+  const [ptptnDisplay, setPtptnDisplay] = useState('');
   const [accountDialog, setAccountDialog] = useState<EmployeeAccountInfo | null>(null);
 
   const mutation = useMutation({
     mutationFn: createEmployee,
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['employees'] });
+      queryClient.invalidateQueries({ queryKey: ['employees-picker'] });
       if (data.account) {
         setAccountDialog(data.account);
       } else {
+        toast.success(t('employees.createSuccess'));
         navigate('/employees');
       }
     },
   });
 
   const isDirty =
-    Boolean(form.employee_number.trim() || form.full_name.trim() || salaryDisplay.trim()) &&
+    (JSON.stringify(form) !== JSON.stringify(initialForm) ||
+      salaryDisplay !== '' ||
+      zakatDisplay !== '' ||
+      ptptnDisplay !== '') &&
     accountDialog === null &&
     !mutation.isSuccess;
   useUnsavedChanges(isDirty);
 
-  const updateField = (field: string, value: unknown) => {
+  const updateField = <K extends keyof CreateEmployeeRequest>(
+    field: K,
+    value: CreateEmployeeRequest[K],
+  ) => {
     setForm((prev) => ({ ...prev, [field]: value }));
   };
 
   const handleSalaryChange = (value: string) => {
     setSalaryDisplay(value);
-    const ringgit = parseFloat(value) || 0;
-    updateField('basic_salary', Math.round(ringgit * 100)); // Convert to sen
+    const parsed = parseFloat(value);
+    const ringgit = Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
+    updateField('basic_salary', Math.round(ringgit * 100));
+  };
+
+  const handleZakatChange = (value: string) => {
+    setZakatDisplay(value);
+    if (!value.trim()) {
+      updateField('zakat_monthly_amount', undefined);
+      return;
+    }
+    const parsed = parseFloat(value);
+    updateField(
+      'zakat_monthly_amount',
+      Number.isFinite(parsed) ? Math.round(Math.max(0, parsed) * 100) : undefined,
+    );
+  };
+
+  const handlePtptnChange = (value: string) => {
+    setPtptnDisplay(value);
+    if (!value.trim()) {
+      updateField('ptptn_monthly_amount', undefined);
+      return;
+    }
+    const parsed = parseFloat(value);
+    updateField(
+      'ptptn_monthly_amount',
+      Number.isFinite(parsed) ? Math.round(Math.max(0, parsed) * 100) : undefined,
+    );
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -82,9 +123,12 @@ export function EmployeeCreate() {
     mutation.mutate(
       canViewPayroll
         ? form
-        : { ...stripPayrollFields(form), basic_salary: 0 } as CreateEmployeeRequest,
+        : ({ ...stripPayrollFields(form), basic_salary: 0 } as CreateEmployeeRequest),
     );
   };
+
+  const cardClass =
+    'bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-gray-200 dark:border-slate-800 p-6';
 
   return (
     <div>
@@ -98,315 +142,471 @@ export function EmployeeCreate() {
 
       <form onSubmit={handleSubmit} className="space-y-8 max-w-4xl">
         {mutation.isError && (
-          <div className="bg-red-50 text-red-600 text-sm px-4 py-3 rounded-lg">
+          <div className="bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-300 border border-red-200 dark:border-red-500/30 text-sm px-4 py-3 rounded-lg">
             {getErrorMessage(mutation.error, t('employees.createFailed'))}
           </div>
         )}
 
         {/* Personal Information */}
-        <section className="bg-white rounded-2xl shadow p-6">
-          <h2 className="text-lg font-semibold mb-4">{t('employees.form.personalInfo')}</h2>
+        <section className={cardClass}>
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-slate-100 mb-4">{t('employees.form.personalInfo')}</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                {t('employees.form.employeeNumber')} *
-              </label>
-              <input
-                type="text"
-                value={form.employee_number}
-                onChange={(e) => updateField('employee_number', e.target.value)}
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
-                required
-                placeholder={t('employees.form.employeeNumberPlaceholder')}
-              />
+            <FormField label={t('employees.form.employeeNumber')} required>
+              {(aria) => (
+                <input
+                  {...aria}
+                  type="text"
+                  value={form.employee_number}
+                  onChange={(e) => updateField('employee_number', e.target.value)}
+                  className="form-input"
+                  required
+                  placeholder={t('employees.form.employeeNumberPlaceholder')}
+                />
+              )}
+            </FormField>
+            <FormField label={t('employees.form.fullName')} required>
+              {(aria) => (
+                <input
+                  {...aria}
+                  type="text"
+                  value={form.full_name}
+                  onChange={(e) => updateField('full_name', e.target.value)}
+                  className="form-input"
+                  required
+                />
+              )}
+            </FormField>
+            <FormField label={t('employees.form.icNumber')}>
+              {(aria) => (
+                <input
+                  {...aria}
+                  type="text"
+                  value={form.ic_number || ''}
+                  onChange={(e) => updateField('ic_number', e.target.value || undefined)}
+                  className="form-input"
+                  placeholder={t('employees.form.icNumberPlaceholder')}
+                />
+              )}
+            </FormField>
+            <FormField label={t('employees.fields.dateOfBirth')}>
+              {(aria) => (
+                <input
+                  {...aria}
+                  type="date"
+                  value={form.date_of_birth || ''}
+                  onChange={(e) => updateField('date_of_birth', e.target.value || undefined)}
+                  className="form-input"
+                />
+              )}
+            </FormField>
+            <FormField label={t('employees.fields.gender')}>
+              {(aria) => (
+                <select
+                  {...aria}
+                  value={form.gender || ''}
+                  onChange={(e) => updateField('gender', e.target.value || undefined)}
+                  className="form-input"
+                >
+                  <option value="">{t('common.select')}</option>
+                  <option value="male">{t('enums.gender.male')}</option>
+                  <option value="female">{t('enums.gender.female')}</option>
+                </select>
+              )}
+            </FormField>
+            <FormField label={t('employees.fields.race')}>
+              {(aria) => (
+                <select
+                  {...aria}
+                  value={form.race || ''}
+                  onChange={(e) => updateField('race', e.target.value || undefined)}
+                  className="form-input"
+                >
+                  <option value="">{t('common.select')}</option>
+                  <option value="malay">{t('enums.race.malay')}</option>
+                  <option value="chinese">{t('enums.race.chinese')}</option>
+                  <option value="indian">{t('enums.race.indian')}</option>
+                  <option value="other">{t('enums.race.other')}</option>
+                </select>
+              )}
+            </FormField>
+            <FormField label={t('employees.fields.nationality')}>
+              {(aria) => (
+                <input
+                  {...aria}
+                  type="text"
+                  value={form.nationality || ''}
+                  onChange={(e) => updateField('nationality', e.target.value || undefined)}
+                  placeholder={t('employees.form.nationalityPlaceholder')}
+                  className="form-input"
+                />
+              )}
+            </FormField>
+            <FormField label={t('employees.fields.maritalStatus')}>
+              {(aria) => (
+                <select
+                  {...aria}
+                  value={form.marital_status || ''}
+                  onChange={(e) => updateField('marital_status', e.target.value || undefined)}
+                  className="form-input"
+                >
+                  <option value="">{t('common.select')}</option>
+                  <option value="single">{t('enums.maritalStatus.single')}</option>
+                  <option value="married">{t('enums.maritalStatus.married')}</option>
+                  <option value="divorced">{t('enums.maritalStatus.divorced')}</option>
+                  <option value="widowed">{t('enums.maritalStatus.widowed')}</option>
+                </select>
+              )}
+            </FormField>
+            <FormField label={t('common.email')}>
+              {(aria) => (
+                <input
+                  {...aria}
+                  type="email"
+                  value={form.email || ''}
+                  onChange={(e) => updateField('email', e.target.value || undefined)}
+                  className="form-input"
+                />
+              )}
+            </FormField>
+            <FormField label={t('employees.fields.phone')}>
+              {(aria) => (
+                <input
+                  {...aria}
+                  type="tel"
+                  value={form.phone || ''}
+                  onChange={(e) => updateField('phone', e.target.value || undefined)}
+                  className="form-input"
+                />
+              )}
+            </FormField>
+          </div>
+        </section>
+
+        {/* Address */}
+        <section className={cardClass}>
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-slate-100 mb-4">{t('employees.sections.address')}</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="md:col-span-2">
+              <FormField label={t('employees.form.addressLine1')}>
+                {(aria) => (
+                  <input
+                    {...aria}
+                    type="text"
+                    value={form.address_line1 || ''}
+                    onChange={(e) => updateField('address_line1', e.target.value || undefined)}
+                    className="form-input"
+                  />
+                )}
+              </FormField>
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                {t('employees.form.fullName')} *
-              </label>
-              <input
-                type="text"
-                value={form.full_name}
-                onChange={(e) => updateField('full_name', e.target.value)}
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
-                required
-              />
+            <div className="md:col-span-2">
+              <FormField label={t('employees.form.addressLine2')}>
+                {(aria) => (
+                  <input
+                    {...aria}
+                    type="text"
+                    value={form.address_line2 || ''}
+                    onChange={(e) => updateField('address_line2', e.target.value || undefined)}
+                    className="form-input"
+                  />
+                )}
+              </FormField>
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">{t('employees.form.icNumber')}</label>
-              <input
-                type="text"
-                value={form.ic_number || ''}
-                onChange={(e) => updateField('ic_number', e.target.value)}
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
-                placeholder={t('employees.form.icNumberPlaceholder')}
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">{t('employees.fields.dateOfBirth')}</label>
-              <input
-                type="date"
-                value={form.date_of_birth || ''}
-                onChange={(e) => updateField('date_of_birth', e.target.value)}
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">{t('employees.fields.gender')}</label>
-              <select
-                value={form.gender || ''}
-                onChange={(e) => updateField('gender', e.target.value || undefined)}
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
-              >
-                <option value="">{t('common.select')}</option>
-                <option value="male">{t('enums.gender.male')}</option>
-                <option value="female">{t('enums.gender.female')}</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">{t('employees.fields.race')}</label>
-              <select
-                value={form.race || ''}
-                onChange={(e) => updateField('race', e.target.value || undefined)}
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
-              >
-                <option value="">{t('common.select')}</option>
-                <option value="malay">{t('enums.race.malay')}</option>
-                <option value="chinese">{t('enums.race.chinese')}</option>
-                <option value="indian">{t('enums.race.indian')}</option>
-                <option value="other">{t('enums.race.other')}</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">{t('employees.fields.maritalStatus')}</label>
-              <select
-                value={form.marital_status || ''}
-                onChange={(e) => updateField('marital_status', e.target.value || undefined)}
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
-              >
-                <option value="">{t('common.select')}</option>
-                <option value="single">{t('enums.maritalStatus.single')}</option>
-                <option value="married">{t('enums.maritalStatus.married')}</option>
-                <option value="divorced">{t('enums.maritalStatus.divorced')}</option>
-                <option value="widowed">{t('enums.maritalStatus.widowed')}</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.email')}</label>
-              <input
-                type="email"
-                value={form.email || ''}
-                onChange={(e) => updateField('email', e.target.value)}
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">{t('employees.fields.phone')}</label>
-              <input
-                type="tel"
-                value={form.phone || ''}
-                onChange={(e) => updateField('phone', e.target.value)}
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
-              />
-            </div>
+            <FormField label={t('employees.form.city')}>
+              {(aria) => (
+                <input
+                  {...aria}
+                  type="text"
+                  value={form.city || ''}
+                  onChange={(e) => updateField('city', e.target.value || undefined)}
+                  className="form-input"
+                />
+              )}
+            </FormField>
+            <FormField label={t('employees.form.state')}>
+              {(aria) => (
+                <input
+                  {...aria}
+                  type="text"
+                  value={form.state || ''}
+                  onChange={(e) => updateField('state', e.target.value || undefined)}
+                  className="form-input"
+                />
+              )}
+            </FormField>
+            <FormField label={t('employees.form.postcode')}>
+              {(aria) => (
+                <input
+                  {...aria}
+                  type="text"
+                  value={form.postcode || ''}
+                  onChange={(e) => updateField('postcode', e.target.value || undefined)}
+                  className="form-input"
+                />
+              )}
+            </FormField>
           </div>
         </section>
 
         {/* Employment */}
-        <section className="bg-white rounded-2xl shadow p-6">
-          <h2 className="text-lg font-semibold mb-4">{t('employees.form.employmentDetails')}</h2>
+        <section className={cardClass}>
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-slate-100 mb-4">{t('employees.form.employmentDetails')}</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">{t('employees.fields.department')}</label>
-              <input
-                type="text"
-                value={form.department || ''}
-                onChange={(e) => updateField('department', e.target.value)}
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">{t('employees.fields.designation')}</label>
-              <input
-                type="text"
-                value={form.designation || ''}
-                onChange={(e) => updateField('designation', e.target.value)}
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">{t('employees.fields.employmentType')}</label>
-              <select
-                value={form.employment_type || 'permanent'}
-                onChange={(e) => updateField('employment_type', e.target.value)}
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
-              >
-                <option value="permanent">{t('enums.employmentType.permanent')}</option>
-                <option value="contract">{t('enums.employmentType.contract')}</option>
-                <option value="part_time">{t('enums.employmentType.part_time')}</option>
-                <option value="intern">{t('enums.employmentType.intern')}</option>
-                <option value="daily_rated">{t('enums.employmentType.daily_rated')}</option>
-                <option value="hourly_rated">{t('enums.employmentType.hourly_rated')}</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">{t('employees.fields.dateJoined')} *</label>
-              <input
-                type="date"
-                value={form.date_joined}
-                onChange={(e) => updateField('date_joined', e.target.value)}
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
-                required
-              />
-            </div>
+            <FormField label={t('employees.fields.department')}>
+              {(aria) => (
+                <input
+                  {...aria}
+                  type="text"
+                  value={form.department || ''}
+                  onChange={(e) => updateField('department', e.target.value || undefined)}
+                  className="form-input"
+                />
+              )}
+            </FormField>
+            <FormField label={t('employees.fields.designation')}>
+              {(aria) => (
+                <input
+                  {...aria}
+                  type="text"
+                  value={form.designation || ''}
+                  onChange={(e) => updateField('designation', e.target.value || undefined)}
+                  className="form-input"
+                />
+              )}
+            </FormField>
+            <FormField label={t('employees.fields.employmentType')}>
+              {(aria) => (
+                <select
+                  {...aria}
+                  value={form.employment_type || 'permanent'}
+                  onChange={(e) => updateField('employment_type', e.target.value)}
+                  className="form-input"
+                >
+                  <option value="permanent">{t('enums.employmentType.permanent')}</option>
+                  <option value="contract">{t('enums.employmentType.contract')}</option>
+                  <option value="part_time">{t('enums.employmentType.part_time')}</option>
+                  <option value="intern">{t('enums.employmentType.intern')}</option>
+                  <option value="daily_rated">{t('enums.employmentType.daily_rated')}</option>
+                  <option value="hourly_rated">{t('enums.employmentType.hourly_rated')}</option>
+                </select>
+              )}
+            </FormField>
+            <FormField label={t('employees.fields.dateJoined')} required>
+              {(aria) => (
+                <input
+                  {...aria}
+                  type="date"
+                  value={form.date_joined}
+                  onChange={(e) => updateField('date_joined', e.target.value)}
+                  className="form-input"
+                  required
+                />
+              )}
+            </FormField>
             {canViewPayroll && (
               <>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('employees.form.basicSalaryRm')} *</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={salaryDisplay}
-                    onChange={(e) => handleSalaryChange(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
-                    required
-                    placeholder={t('employees.form.salaryPlaceholder')}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('employees.form.payrollGroup')}</label>
-                  <select
-                    value={form.payroll_group_id || ''}
-                    onChange={(e) => updateField('payroll_group_id', e.target.value || undefined)}
-                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
-                  >
-                    <option value="">{t('common.select')}</option>
-                    {payrollGroups?.map((g) => (
-                      <option key={g.id} value={g.id}>
-                        {g.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                <FormField label={t('employees.form.basicSalaryRm')} required>
+                  {(aria) => (
+                    <input
+                      {...aria}
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={salaryDisplay}
+                      onChange={(e) => handleSalaryChange(e.target.value)}
+                      className="form-input"
+                      required
+                      placeholder={t('employees.form.salaryPlaceholder')}
+                    />
+                  )}
+                </FormField>
+                <FormField label={t('employees.form.payrollGroup')}>
+                  {(aria) => (
+                    <select
+                      {...aria}
+                      value={form.payroll_group_id || ''}
+                      onChange={(e) => updateField('payroll_group_id', e.target.value || undefined)}
+                      className="form-input"
+                    >
+                      <option value="">{t('common.select')}</option>
+                      {payrollGroups?.map((g) => (
+                        <option key={g.id} value={g.id}>
+                          {g.name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </FormField>
               </>
             )}
+            <FormField label={t('employees.fields.costCentre')}>
+              {(aria) => (
+                <input
+                  {...aria}
+                  type="text"
+                  value={form.cost_centre || ''}
+                  onChange={(e) => updateField('cost_centre', e.target.value || undefined)}
+                  className="form-input"
+                />
+              )}
+            </FormField>
+            <FormField label={t('employees.fields.branch')}>
+              {(aria) => (
+                <input
+                  {...aria}
+                  type="text"
+                  value={form.branch || ''}
+                  onChange={(e) => updateField('branch', e.target.value || undefined)}
+                  className="form-input"
+                />
+              )}
+            </FormField>
           </div>
         </section>
 
         {/* Banking — payroll-sensitive server-side ("banking decides where
             salary lands"), so it is offered only to a role that can save it. */}
         {canViewPayroll && (
-          <section className="bg-white rounded-2xl shadow p-6">
-            <h2 className="text-lg font-semibold mb-4">{t('employees.form.bankingDetails')}</h2>
+          <section className={cardClass}>
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-slate-100 mb-4">{t('employees.form.bankingDetails')}</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">{t('employees.form.bankName')}</label>
-                <select
-                  value={form.bank_name || ''}
-                  onChange={(e) => updateField('bank_name', e.target.value || undefined)}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
-                >
-                  <option value="">{t('employees.form.selectBank')}</option>
-                  {BANKS.map((b) => (
-                    <option key={b} value={b}>{b}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">{t('employees.form.accountNumber')}</label>
-                <input
-                  type="text"
-                  value={form.bank_account_number || ''}
-                  onChange={(e) => updateField('bank_account_number', e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
-                />
-              </div>
+              <FormField label={t('employees.form.bankName')}>
+                {(aria) => (
+                  <select
+                    {...aria}
+                    value={form.bank_name || ''}
+                    onChange={(e) => updateField('bank_name', e.target.value || undefined)}
+                    className="form-input"
+                  >
+                    <option value="">{t('employees.form.selectBank')}</option>
+                    {BANKS.map((b) => (
+                      <option key={b} value={b}>{b}</option>
+                    ))}
+                  </select>
+                )}
+              </FormField>
+              <FormField label={t('employees.form.accountNumber')}>
+                {(aria) => (
+                  <input
+                    {...aria}
+                    type="text"
+                    value={form.bank_account_number || ''}
+                    onChange={(e) => updateField('bank_account_number', e.target.value || undefined)}
+                    className="form-input"
+                  />
+                )}
+              </FormField>
             </div>
           </section>
         )}
 
         {canViewPayroll && (
-          <section className="bg-white rounded-2xl shadow p-6">
-            <h2 className="text-lg font-semibold mb-4">{t('employees.form.statutoryTax')}</h2>
+          <section className={cardClass}>
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-slate-100 mb-4">{t('employees.form.statutoryTax')}</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">{t('employees.fields.epfNumber')}</label>
-              <input
-                type="text"
-                value={form.epf_number || ''}
-                onChange={(e) => updateField('epf_number', e.target.value)}
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">{t('employees.fields.socsoNumber')}</label>
-              <input
-                type="text"
-                value={form.socso_number || ''}
-                onChange={(e) => updateField('socso_number', e.target.value)}
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">{t('employees.fields.eisNumber')}</label>
-              <input
-                type="text"
-                value={form.eis_number || ''}
-                onChange={(e) => updateField('eis_number', e.target.value)}
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">{t('employees.fields.epfCategory')}</label>
-              <select
-                value={form.epf_category ?? ''}
-                onChange={(e) => updateField('epf_category', e.target.value || undefined)}
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
-              >
-                <option value="">{t('enums.epfCategory.auto')}</option>
-                <option value="A">{t('enums.epfCategory.A')}</option>
-                <option value="B">{t('enums.epfCategory.B')}</option>
-                <option value="C">{t('enums.epfCategory.C')}</option>
-                <option value="D">{t('enums.epfCategory.D')}</option>
-                <option value="E">{t('enums.epfCategory.E')}</option>
-                <option value="F">{t('enums.epfCategory.F')}</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">{t('employees.fields.residency')}</label>
-              <select
-                value={form.residency_status || 'citizen'}
-                onChange={(e) => updateField('residency_status', e.target.value)}
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
-              >
-                <option value="citizen">{t('enums.residency.citizen')}</option>
-                <option value="permanent_resident">{t('enums.residency.permanent_resident')}</option>
-                <option value="foreigner">{t('enums.residency.foreigner')}</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">{t('employees.fields.workingSpouse')}</label>
-              <select
-                value={form.working_spouse ? 'yes' : 'no'}
-                onChange={(e) => updateField('working_spouse', e.target.value === 'yes')}
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
-              >
-                <option value="no">{t('common.no')}</option>
-                <option value="yes">{t('common.yes')}</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">{t('employees.form.numChildren')}</label>
-              <input
-                type="number"
-                min="0"
-                value={form.num_children ?? 0}
-                onChange={(e) => updateField('num_children', parseInt(e.target.value) || 0)}
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-black outline-none"
-              />
-            </div>
-              <div className="flex items-center gap-4 pt-6">
-                <label className="flex items-center gap-2">
+              <FormField label={t('employees.fields.tin')}>
+                {(aria) => (
+                  <input
+                    {...aria}
+                    type="text"
+                    value={form.tax_identification_number || ''}
+                    onChange={(e) => updateField('tax_identification_number', e.target.value || undefined)}
+                    className="form-input"
+                  />
+                )}
+              </FormField>
+              <FormField label={t('employees.fields.epfNumber')}>
+                {(aria) => (
+                  <input
+                    {...aria}
+                    type="text"
+                    value={form.epf_number || ''}
+                    onChange={(e) => updateField('epf_number', e.target.value || undefined)}
+                    className="form-input"
+                  />
+                )}
+              </FormField>
+              <FormField label={t('employees.fields.socsoNumber')}>
+                {(aria) => (
+                  <input
+                    {...aria}
+                    type="text"
+                    value={form.socso_number || ''}
+                    onChange={(e) => updateField('socso_number', e.target.value || undefined)}
+                    className="form-input"
+                  />
+                )}
+              </FormField>
+              <FormField label={t('employees.fields.eisNumber')}>
+                {(aria) => (
+                  <input
+                    {...aria}
+                    type="text"
+                    value={form.eis_number || ''}
+                    onChange={(e) => updateField('eis_number', e.target.value || undefined)}
+                    className="form-input"
+                  />
+                )}
+              </FormField>
+              <FormField label={t('employees.fields.epfCategory')}>
+                {(aria) => (
+                  <select
+                    {...aria}
+                    value={form.epf_category ?? ''}
+                    onChange={(e) => updateField('epf_category', e.target.value || undefined)}
+                    className="form-input"
+                  >
+                    <option value="">{t('enums.epfCategory.auto')}</option>
+                    <option value="A">{t('enums.epfCategory.A')}</option>
+                    <option value="B">{t('enums.epfCategory.B')}</option>
+                    <option value="C">{t('enums.epfCategory.C')}</option>
+                    <option value="D">{t('enums.epfCategory.D')}</option>
+                    <option value="E">{t('enums.epfCategory.E')}</option>
+                    <option value="F">{t('enums.epfCategory.F')}</option>
+                  </select>
+                )}
+              </FormField>
+              <FormField label={t('employees.fields.residency')}>
+                {(aria) => (
+                  <select
+                    {...aria}
+                    value={form.residency_status || 'citizen'}
+                    onChange={(e) => updateField('residency_status', e.target.value)}
+                    className="form-input"
+                  >
+                    <option value="citizen">{t('enums.residency.citizen')}</option>
+                    <option value="permanent_resident">{t('enums.residency.permanent_resident')}</option>
+                    <option value="foreigner">{t('enums.residency.foreigner')}</option>
+                  </select>
+                )}
+              </FormField>
+              <FormField label={t('employees.fields.workingSpouse')}>
+                {(aria) => (
+                  <select
+                    {...aria}
+                    value={form.working_spouse ? 'yes' : 'no'}
+                    onChange={(e) => updateField('working_spouse', e.target.value === 'yes')}
+                    className="form-input"
+                  >
+                    <option value="no">{t('common.no')}</option>
+                    <option value="yes">{t('common.yes')}</option>
+                  </select>
+                )}
+              </FormField>
+              <FormField label={t('employees.form.numChildren')}>
+                {(aria) => (
+                  <input
+                    {...aria}
+                    type="number"
+                    min="0"
+                    value={form.num_children ?? 0}
+                    onChange={(e) => updateField('num_children', Math.max(0, parseInt(e.target.value, 10) || 0))}
+                    className="form-input"
+                  />
+                )}
+              </FormField>
+              <div className="md:col-span-2 flex flex-wrap items-center gap-6 pt-2">
+                <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
                     checked={form.is_muslim || false}
@@ -415,43 +615,80 @@ export function EmployeeCreate() {
                       if (!e.target.checked) {
                         updateField('zakat_eligible', false);
                         updateField('zakat_monthly_amount', undefined);
+                        setZakatDisplay('');
                       }
                     }}
-                    className="rounded"
+                    className="rounded border-gray-300 dark:border-slate-700"
                   />
-                  <span className="text-sm">{t('employees.fields.muslim')}</span>
+                  <span className="text-sm text-gray-700 dark:text-slate-200">{t('employees.fields.muslim')}</span>
                 </label>
                 {form.is_muslim && (
-                  <label className="flex items-center gap-2">
+                  <label className="flex items-center gap-2 cursor-pointer">
                     <input
                       type="checkbox"
                       checked={form.zakat_eligible || false}
-                      onChange={(e) => updateField('zakat_eligible', e.target.checked)}
-                      className="rounded"
+                      onChange={(e) => {
+                        updateField('zakat_eligible', e.target.checked);
+                        if (!e.target.checked) {
+                          updateField('zakat_monthly_amount', undefined);
+                          setZakatDisplay('');
+                        }
+                      }}
+                      className="rounded border-gray-300 dark:border-slate-700"
                     />
-                    <span className="text-sm">{t('employees.form.zakatEligible')}</span>
+                    <span className="text-sm text-gray-700 dark:text-slate-200">{t('employees.form.zakatEligible')}</span>
                   </label>
                 )}
               </div>
+              {form.is_muslim && form.zakat_eligible && (
+                <FormField label={t('employees.fields.zakatMonthly')}>
+                  {(aria) => (
+                    <input
+                      {...aria}
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={zakatDisplay}
+                      onChange={(e) => handleZakatChange(e.target.value)}
+                      placeholder="0.00"
+                      className="form-input"
+                    />
+                  )}
+                </FormField>
+              )}
+              <FormField label={t('employees.fields.ptptnMonthly')}>
+                {(aria) => (
+                  <input
+                    {...aria}
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={ptptnDisplay}
+                    onChange={(e) => handlePtptnChange(e.target.value)}
+                    placeholder="0.00"
+                    className="form-input"
+                  />
+                )}
+              </FormField>
             </div>
           </section>
         )}
 
         {/* Submit */}
-        <div className="flex gap-4">
-          <button
-            type="submit"
-            disabled={mutation.isPending}
-            className="btn-primary"
-          >
-            {mutation.isPending ? t('common.creating') : t('employees.createSubmit')}
-          </button>
+        <div className="flex flex-col-reverse sm:flex-row gap-3">
           <button
             type="button"
             onClick={() => navigate('/employees')}
             className="btn-secondary"
           >
             {t('common.cancel')}
+          </button>
+          <button
+            type="submit"
+            disabled={mutation.isPending}
+            className="btn-primary"
+          >
+            {mutation.isPending ? t('common.creating') : t('employees.createSubmit')}
           </button>
         </div>
 
@@ -472,7 +709,7 @@ export function EmployeeCreate() {
         maxWidth="max-w-md"
         footer={
           <div className="flex justify-end">
-            <button onClick={() => navigate('/employees')} className="btn-primary">
+            <button type="button" onClick={() => navigate('/employees')} className="btn-primary">
               {t('common.done')}
             </button>
           </div>

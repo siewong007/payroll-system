@@ -42,7 +42,9 @@ const SAME_AS_EN = new Set([
   'portal.payslips.ytdPcb', 'portal.payslips.ytdZakat',
   'companies.phonePlaceholder', 'companies.emailPlaceholder',
   'attendanceSettings.faceIdTitle', 'approvals.summaryTitle',
-  'reports.cols.zakat', 'teams.tag', 'settings.units.min',
+  'reports.cols.socso', 'reports.cols.eis', 'reports.cols.pcb', 'reports.cols.zakat',
+  'reports.statutoryFiles.socso', 'reports.statutoryFiles.eis', 'reports.statutoryFiles.pcb',
+  'teams.tag', 'settings.units.min',
 ]);
 
 // language.* autonyms intentionally carry each locale's own script

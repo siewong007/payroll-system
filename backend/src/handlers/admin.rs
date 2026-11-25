@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 use crate::core::app_state::AppState;
 use crate::core::auth::{AuthUser, Permission};
+use crate::core::config::{BUILD_REVISION, BUILD_VERSION};
 use crate::core::error::{AppError, AppResult};
 use crate::core::extract::ValidatedJson;
 use crate::models::audit::AuditRequestMeta;
@@ -13,12 +14,16 @@ use crate::models::company::{Company, CreateCompanyRequest, UpdateCompanyRequest
 use crate::models::pagination::PaginatedResponse;
 use crate::models::totp::{AdminTotpResetRequest, TwoFactorPolicyRequest, TwoFactorPolicyResponse};
 use crate::models::user_company::{CreateUserRequest, UpdateUserRequest, UserWithCompanies};
-use crate::services::{auth_service, company_service, totp_service, user_service};
+use crate::repositories::reads::system as system_reads;
+use crate::services::{
+    auth_service, company_service, job_health_service, totp_service, user_service,
+};
 
 #[derive(Debug, serde::Deserialize)]
 pub struct UserListQuery {
     pub company_id: Option<Uuid>,
     pub search: Option<String>,
+    pub role: Option<String>,
     pub page: Option<i64>,
     pub per_page: Option<i64>,
 }
@@ -94,12 +99,14 @@ pub async fn list_users(
     // The company filter is honoured for both roles: a company admin's own
     // visibility is already restricted to companies they belong to, so the
     // filter narrows within that set rather than widening it.
-    let (data, total) = user_service::list_users(
+    let (data, total) = user_service::list_users_with_role(
         &state.pool,
         is_super_admin,
         auth.0.sub,
         query.company_id,
         query.search.as_deref(),
+        query.role.as_deref(),
+        user_service::hides_privileged_users(&auth),
         per_page,
         offset,
     )
@@ -204,4 +211,28 @@ pub async fn set_2fa_policy(
         auth_service::set_two_factor_policy(&state.pool, req, auth.0.sub, Some(&audit_meta))
             .await?;
     Ok(Json(status))
+}
+
+// ─── Operational platform health (items 25 & 70) ───
+
+pub async fn get_platform_health(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> AppResult<Json<serde_json::Value>> {
+    auth.require_permission(Permission::ManagePlatformSettings)?;
+    require_super_admin(&auth)?;
+
+    let (latest_migration_version, migration_count) =
+        system_reads::get_migration_status(&state.pool).await?;
+    let jobs = job_health_service::read_admin_job_health(&state.pool).await?;
+    let queues = system_reads::operational_queue_counts(&state.pool).await?;
+
+    Ok(Json(serde_json::json!({
+        "version": BUILD_VERSION,
+        "revision": BUILD_REVISION,
+        "latest_migration_version": latest_migration_version,
+        "migration_count": migration_count,
+        "jobs": jobs,
+        "queues": queues,
+    })))
 }

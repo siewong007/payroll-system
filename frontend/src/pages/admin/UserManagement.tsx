@@ -1,13 +1,24 @@
 import { useState } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Users, Search, Plus, Pencil, Trash2 } from 'lucide-react';
-import { listUsers, listCompanies, deleteUser } from '@/api/admin';
+import { AlertTriangle, KeyRound, Users, Search, Plus, Pencil, Trash2 } from 'lucide-react';
+import { listUsers, listCompanies, deleteUser, resetUser2fa } from '@/api/admin';
 import { useAuth } from '@/context/AuthContext';
 import { DataTable, type Column } from '@/components/ui/DataTable';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { FormField } from '@/components/ui/FormField';
 import { Modal } from '@/components/ui/Modal';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { UserFormModal } from './UserFormModal';
-import { ALL_ROLES, roleBadgeClass, roleLabel } from '@/lib/roles';
+import {
+  ALL_ROLES,
+  PRIVILEGED_USER_ROLES,
+  hasAnyRole,
+  hidesPrivilegedUsers,
+  roleBadgeClass,
+  roleLabel,
+} from '@/lib/roles';
+import { useToast } from '@/lib/toast';
 import { getErrorMessage } from '@/lib/utils';
 import type { AppRole, UserWithCompanies } from '@/types';
 
@@ -25,7 +36,9 @@ const roleBadge = (role: string) => (
 export function UserManagement() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const toast = useToast();
   const { user: currentUser } = useAuth();
+  const isSuperAdmin = hasAnyRole(currentUser, ['super_admin']);
 
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
@@ -35,8 +48,17 @@ export function UserManagement() {
   const [editUser, setEditUser] = useState<UserWithCompanies | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<UserWithCompanies | null>(null);
   const [deleteError, setDeleteError] = useState('');
+  const [reset2faTarget, setReset2faTarget] = useState<UserWithCompanies | null>(null);
+  const [reset2faPassword, setReset2faPassword] = useState('');
+  const [reset2faError, setReset2faError] = useState('');
 
-  const { data: usersPage, isLoading } = useQuery({
+  const {
+    data: usersPage,
+    isLoading,
+    isError,
+    error: queryError,
+    refetch,
+  } = useQuery({
     queryKey: ['admin-users', companyFilter, search, page],
     queryFn: () =>
       listUsers({
@@ -64,13 +86,30 @@ export function UserManagement() {
     setDeleteError('');
   };
 
+  const closeReset2fa = () => {
+    setReset2faTarget(null);
+    setReset2faPassword('');
+    setReset2faError('');
+  };
+
   const deleteMutation = useMutation({
     mutationFn: (userId: string) => deleteUser(userId),
     onSuccess: () => {
       refreshUsers();
+      toast.success(t('users.deleteSuccess'));
       closeDelete();
     },
     onError: (err: unknown) => setDeleteError(getErrorMessage(err, t('users.deleteFailed'))),
+  });
+
+  const reset2faMutation = useMutation({
+    mutationFn: ({ userId, password }: { userId: string; password: string }) =>
+      resetUser2fa(userId, password),
+    onSuccess: () => {
+      toast.success(t('users.reset2faSuccess'));
+      closeReset2fa();
+    },
+    onError: (err: unknown) => setReset2faError(getErrorMessage(err, t('users.reset2faFailed'))),
   });
 
   // Search, company filter and pagination are resolved by the server; the role
@@ -89,9 +128,9 @@ export function UserManagement() {
       key: 'full_name',
       header: t('common.name'),
       primary: true,
-      render: (u) => <span className="font-semibold text-gray-900">{u.full_name}</span>,
+      render: (u) => <span className="font-semibold text-gray-900 dark:text-slate-100">{u.full_name}</span>,
     },
-    { key: 'email', header: t('common.email'), primary: true, render: (u) => <span className="text-gray-500">{u.email}</span> },
+    { key: 'email', header: t('common.email'), primary: true, render: (u) => <span className="text-gray-500 dark:text-slate-400 break-all">{u.email}</span> },
     {
       key: 'roles',
       header: t('users.role'),
@@ -102,11 +141,11 @@ export function UserManagement() {
       header: t('common.company'),
       render: (u) =>
         u.companies.length === 0 ? (
-          <span className="text-gray-300">&mdash;</span>
+          <span className="text-gray-300 dark:text-slate-600">&mdash;</span>
         ) : (
           <div className="flex flex-wrap gap-1">
             {u.companies.map((c) => (
-              <span key={c.id} className="text-xs px-2 py-0.5 bg-gray-100 rounded-full text-gray-600">
+              <span key={c.id} className="text-xs px-2 py-0.5 bg-gray-100 dark:bg-slate-800 rounded-full text-gray-600 dark:text-slate-300">
                 {c.name}
               </span>
             ))}
@@ -127,21 +166,21 @@ export function UserManagement() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="page-header">
-          <h1 className="page-title">{t('users.title')}</h1>
-          <p className="page-subtitle">{t('users.subtitle')}</p>
-        </div>
-        <button onClick={() => setShowCreate(true)} className="btn-primary w-full sm:w-auto">
-          <Plus className="w-4 h-4" aria-hidden="true" /> {t('users.addUser')}
-        </button>
-      </div>
+      <PageHeader
+        title={t('users.title')}
+        subtitle={t('users.subtitle')}
+        actions={
+          <button type="button" onClick={() => setShowCreate(true)} className="btn-primary w-full sm:w-auto">
+            <Plus className="w-4 h-4" aria-hidden="true" /> {t('users.addUser')}
+          </button>
+        }
+      />
 
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-3">
-        <div className="relative flex-1 min-w-[200px] max-w-sm">
+        <div className="relative w-full sm:flex-1 sm:min-w-[200px] sm:max-w-sm">
           <Search
-            className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400"
+            className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 dark:text-slate-500"
             aria-hidden="true"
           />
           <input
@@ -157,10 +196,12 @@ export function UserManagement() {
           aria-label={t('users.filterByRole')}
           value={roleFilter}
           onChange={(e) => setRoleFilter(e.target.value)}
-          className="form-input w-auto"
+          className="form-input w-full sm:w-auto"
         >
           <option value="all">{t('users.allRoles')}</option>
-          {ALL_ROLES.map((role) => (
+          {ALL_ROLES.filter(
+            (role) => !hidesPrivilegedUsers(currentUser) || !PRIVILEGED_USER_ROLES.includes(role),
+          ).map((role) => (
             <option key={role} value={role}>
               {roleLabel(role)}
             </option>
@@ -171,7 +212,7 @@ export function UserManagement() {
             aria-label={t('users.filterByCompany')}
             value={companyFilter}
             onChange={(e) => resetToFirstPage(setCompanyFilter)(e.target.value)}
-            className="form-input w-auto"
+            className="form-input w-full sm:w-auto"
           >
             <option value="all">{t('users.allCompanies')}</option>
             {companies.map((c) => (
@@ -183,42 +224,73 @@ export function UserManagement() {
         )}
       </div>
 
-      <DataTable
-        columns={columns}
-        data={rows}
-        total={usersPage?.total ?? 0}
-        page={page}
-        onPageChange={setPage}
-        perPage={PER_PAGE}
-        isLoading={isLoading}
-        emptyMessage={t('users.empty')}
-        emptyIcon={<Users className="w-10 h-10 opacity-40" aria-hidden="true" />}
-        disableRowClick
-        renderActions={(u) => (
-          <div className="flex items-center justify-center gap-1">
-            <button
-              onClick={() => setEditUser(u)}
-              aria-label={t('common.editName', { name: u.full_name })}
-              className="text-sm text-gray-500 hover:text-gray-900 px-2 py-1 rounded hover:bg-gray-100 transition-colors inline-flex items-center gap-1"
-            >
-              <Pencil className="w-3.5 h-3.5" aria-hidden="true" /> {t('common.edit')}
-            </button>
-            {/* The backend refuses self-deletion; hiding it keeps that 400 unreachable. */}
-            {u.id !== currentUser?.id && (
-              <button
-                onClick={() => {
-                  setDeleteError('');
-                  setDeleteTarget(u);
-                }}
-                aria-label={t('common.deleteName', { name: u.full_name })}
-                className="text-sm text-gray-500 hover:text-red-600 px-2 py-1 rounded hover:bg-red-50 transition-colors inline-flex items-center gap-1"
-              >
-                <Trash2 className="w-3.5 h-3.5" aria-hidden="true" /> {t('common.delete')}
+      {isError ? (
+        <div className="card">
+          <EmptyState
+            icon={AlertTriangle}
+            title={t('users.loadFailed')}
+            description={getErrorMessage(queryError, t('common.error'))}
+            action={
+              <button type="button" onClick={() => refetch()} className="btn-secondary">
+                {t('common.retry')}
               </button>
-            )}
-          </div>
-        )}
-      />
+            }
+          />
+        </div>
+      ) : (
+        <DataTable
+          columns={columns}
+          data={rows}
+          total={usersPage?.total ?? 0}
+          page={page}
+          onPageChange={setPage}
+          perPage={PER_PAGE}
+          isLoading={isLoading}
+          emptyMessage={t('users.empty')}
+          emptyIcon={<Users className="w-10 h-10 opacity-40" aria-hidden="true" />}
+          disableRowClick
+          renderActions={(u) => (
+            <div className="flex flex-wrap items-center justify-center gap-1">
+              <button
+                type="button"
+                onClick={() => setEditUser(u)}
+                aria-label={t('common.editName', { name: u.full_name })}
+                className="text-sm text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100 min-h-10 sm:min-h-8 px-2 py-1 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors inline-flex items-center gap-1"
+              >
+                <Pencil className="w-3.5 h-3.5" aria-hidden="true" /> {t('common.edit')}
+              </button>
+              {isSuperAdmin && u.id !== currentUser?.id && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setReset2faTarget(u);
+                    setReset2faPassword('');
+                    setReset2faError('');
+                  }}
+                  aria-label={t('users.reset2faFor', { name: u.full_name })}
+                  className="text-sm text-amber-600 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-300 min-h-10 sm:min-h-8 px-2 py-1 rounded-lg hover:bg-amber-50 dark:hover:bg-amber-500/10 transition-colors inline-flex items-center gap-1"
+                >
+                  <KeyRound className="w-3.5 h-3.5" aria-hidden="true" /> {t('users.reset2fa')}
+                </button>
+              )}
+              {/* The backend refuses self-deletion; hiding it keeps that 400 unreachable. */}
+              {u.id !== currentUser?.id && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDeleteError('');
+                    setDeleteTarget(u);
+                  }}
+                  aria-label={t('common.deleteName', { name: u.full_name })}
+                  className="text-sm text-gray-500 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 min-h-10 sm:min-h-8 px-2 py-1 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors inline-flex items-center gap-1"
+                >
+                  <Trash2 className="w-3.5 h-3.5" aria-hidden="true" /> {t('common.delete')}
+                </button>
+              )}
+            </div>
+          )}
+        />
+      )}
 
       <UserFormModal
         mode="create"
@@ -230,6 +302,7 @@ export function UserManagement() {
         onClose={() => setShowCreate(false)}
         onSaved={() => {
           refreshUsers();
+          toast.success(t('users.createSuccess'));
           setShowCreate(false);
         }}
       />
@@ -246,10 +319,74 @@ export function UserManagement() {
           onClose={() => setEditUser(null)}
           onSaved={() => {
             refreshUsers();
+            toast.success(t('users.updateSuccess'));
             setEditUser(null);
           }}
         />
       )}
+
+      <Modal
+        open={reset2faTarget !== null}
+        onClose={closeReset2fa}
+        title={t('users.reset2faTitle')}
+        maxWidth="max-w-md"
+        footer={
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <button type="button" onClick={closeReset2fa} className="btn-secondary">
+              {t('common.cancel')}
+            </button>
+            <button
+              type="submit"
+              form="reset-2fa-form"
+              disabled={!reset2faPassword || reset2faMutation.isPending}
+              className="px-4 py-2 min-h-[44px] text-sm font-medium text-white bg-amber-600 hover:bg-amber-700 rounded-xl transition-colors disabled:opacity-50"
+            >
+              {reset2faMutation.isPending ? t('common.saving') : t('users.reset2fa')}
+            </button>
+          </div>
+        }
+      >
+        {reset2faTarget && (
+          <form
+            id="reset-2fa-form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!reset2faPassword) return;
+              setReset2faError('');
+              reset2faMutation.mutate({ userId: reset2faTarget.id, password: reset2faPassword });
+            }}
+            className="space-y-4"
+          >
+            {reset2faError && (
+              <div
+                role="alert"
+                className="p-3 bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-300 text-sm rounded-lg border border-red-100 dark:border-red-500/25"
+              >
+                {reset2faError}
+              </div>
+            )}
+            <p className="text-sm text-gray-600 dark:text-slate-300">
+              <Trans
+                i18nKey="users.reset2faDescription"
+                values={{ name: reset2faTarget.full_name }}
+                components={{ b: <span className="font-medium text-gray-900 dark:text-slate-100" /> }}
+              />
+            </p>
+            <FormField label={t('users.confirmWithYourPassword')} required>
+              {(aria) => (
+                <input
+                  {...aria}
+                  type="password"
+                  value={reset2faPassword}
+                  onChange={(e) => setReset2faPassword(e.target.value)}
+                  className="form-input"
+                  autoComplete="current-password"
+                />
+              )}
+            </FormField>
+          </form>
+        )}
+      </Modal>
 
       <Modal
         open={deleteTarget !== null}
@@ -257,14 +394,15 @@ export function UserManagement() {
         title={t('users.deleteTitle')}
         maxWidth="max-w-sm"
         footer={
-          <div className="flex justify-end gap-3">
-            <button onClick={closeDelete} className="btn-secondary">
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <button type="button" onClick={closeDelete} className="btn-secondary">
               {t('common.cancel')}
             </button>
             <button
+              type="button"
               onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
               disabled={deleteMutation.isPending}
-              className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-xl transition-colors disabled:opacity-50"
+              className="px-4 py-2 min-h-[44px] text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-xl transition-colors disabled:opacity-50"
             >
               {deleteMutation.isPending ? t('common.deleting') : t('common.delete')}
             </button>
@@ -274,16 +412,16 @@ export function UserManagement() {
         {deleteError && (
           <div
             role="alert"
-            className="mb-4 p-3 bg-red-50 text-red-700 text-sm rounded-lg border border-red-100"
+            className="mb-4 p-3 bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-300 text-sm rounded-lg border border-red-100 dark:border-red-500/25"
           >
             {deleteError}
           </div>
         )}
-        <p className="text-sm text-gray-500">
+        <p className="text-sm text-gray-500 dark:text-slate-400">
           <Trans
             i18nKey="users.deleteBody"
             values={{ name: deleteTarget?.full_name }}
-            components={{ b: <span className="font-medium text-gray-900" /> }}
+            components={{ b: <span className="font-medium text-gray-900 dark:text-slate-100" /> }}
           />
         </p>
       </Modal>

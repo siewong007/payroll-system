@@ -24,7 +24,7 @@ export function LegalPage() {
   const backHref = isAuthenticated
     ? hasOnlyEmployeeRole(user)
       ? '/portal'
-      : '/dashboard'
+      : '/'
     : '/login';
 
   const tabs: { id: LegalTab; href: string; icon: typeof Scale; labelKey: string }[] = [
@@ -80,20 +80,20 @@ export function LegalPage() {
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100">
       <header className="sticky top-0 z-30 border-b border-slate-200/80 dark:border-slate-800 bg-white/85 dark:bg-slate-900/85 backdrop-blur-xl">
-        <div className="max-w-5xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-4">
+        <div className="max-w-5xl mx-auto px-4 sm:px-6 min-h-16 py-2 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3 sm:gap-4 min-w-0">
             <Link
               to={backHref}
-              className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white transition-colors"
+              className="inline-flex items-center gap-1.5 min-h-10 text-sm font-medium text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white transition-colors shrink-0"
             >
               <ArrowLeft className="w-4 h-4" />
               <span>{isAuthenticated ? t('legal.header.backToApp') : t('legal.header.backToLogin')}</span>
             </Link>
             <span className="hidden sm:inline text-slate-300 dark:text-slate-700">|</span>
-            <BrandLogo variant="lockup-dark" className="hidden sm:block h-7 w-auto dark:brightness-125" />
+            <BrandLogo variant="lockup-dark" className="hidden sm:block h-7 w-auto rounded-lg" />
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <AppearanceSwitcher />
             <LanguageSwitcher />
           </div>

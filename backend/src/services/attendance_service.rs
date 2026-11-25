@@ -150,7 +150,12 @@ pub async fn get_attendance_bootstrap(
     let effective = get_effective_method(pool, company_id).await?;
     let geofence_mode = geofence_service::get_geofence_mode(pool, company_id).await?;
     let network_mode = attendance_network_service::get_mode(pool, company_id).await?;
-    let timezone = get_company_timezone(pool, company_id).await;
+    let default_schedule = company_work_schedules::get_default(pool, company_id).await?;
+    let timezone = timezone::sanitize(default_schedule.as_ref().map(|s| s.timezone.clone()));
+    let shift_start_time = default_schedule
+        .as_ref()
+        .map(|s| s.start_time.format("%H:%M:%S").to_string());
+    let grace_minutes = default_schedule.map(|s| s.grace_minutes);
 
     Ok(AttendanceMethodResponse {
         method: effective.method,
@@ -159,6 +164,8 @@ pub async fn get_attendance_bootstrap(
         geofence_mode,
         network_mode,
         timezone,
+        shift_start_time,
+        grace_minutes,
     })
 }
 
@@ -835,14 +842,25 @@ pub async fn get_my_attendance(
     attendance_reads::list_for_employee(pool, employee_id, &tz, q).await
 }
 
-/// Get today's check-in for the current employee (if any)
+/// Get today's check-in for the current employee (if any), falling back to an
+/// open check-in started within the last 24 hours for overnight/night-shift workers.
 pub async fn get_today_checkin(
     pool: &PgPool,
     employee_id: Uuid,
     company_id: Uuid,
 ) -> AppResult<Option<AttendanceRecord>> {
     let tz = get_company_timezone(pool, company_id).await;
-    attendance_records::get_today(pool, employee_id, &tz).await
+    if let Some(record) = attendance_records::get_today(pool, employee_id, &tz).await? {
+        return Ok(Some(record));
+    }
+    if let Some((record, _, _)) =
+        attendance_records::find_open_with_local_date(pool, employee_id, &tz).await?
+        && record.company_id == company_id
+        && Utc::now() - record.check_in_at <= chrono::Duration::hours(24)
+    {
+        return Ok(Some(record));
+    }
+    Ok(None)
 }
 
 pub async fn manual_attendance(

@@ -74,7 +74,12 @@ fn ensure_user_permission_invariants(
     candidate_keys: &[String],
 ) -> AppResult<()> {
     let is_super_admin = user_roles.iter().any(|r| r == "super_admin");
-    let is_restricted = user_roles.iter().any(|r| r == "exec" || r == "employee");
+    // Mirrors the request-time strip in `AuthUser::from_request_parts`: these
+    // roles never receive payroll capabilities through a group, so refuse the
+    // grant up front rather than store one that silently does nothing.
+    let is_restricted = user_roles
+        .iter()
+        .any(|r| r == "exec" || r == "employee" || r == "manager");
 
     let mut has_submit = false;
     let mut has_approve = false;
@@ -94,7 +99,8 @@ fn ensure_user_permission_invariants(
         if let Some(perm) = parse_permission(key) {
             if is_restricted && perm.is_payroll_capability() {
                 return Err(AppError::BadRequest(
-                    "Payroll capabilities cannot be granted to exec or employee accounts".into(),
+                    "Payroll capabilities cannot be granted to exec, employee or manager accounts"
+                        .into(),
                 ));
             }
             if perm == Permission::SubmitPayroll {
@@ -302,9 +308,10 @@ pub async fn list_members(
     pool: &PgPool,
     company_id: Uuid,
     group_id: Uuid,
+    hide_privileged: bool,
 ) -> AppResult<Vec<UserGroupMember>> {
     get_group(pool, company_id, group_id).await?;
-    user_groups::list_members(pool, company_id, group_id).await
+    user_groups::list_members(pool, company_id, group_id, hide_privileged).await
 }
 
 pub async fn add_member(

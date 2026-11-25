@@ -1,10 +1,16 @@
 import '@testing-library/jest-dom';
 import { cleanup } from '@testing-library/react';
 import { afterEach, vi } from 'vitest';
-// Initializes the i18n instance so components using t() render English copy
-// instead of raw keys. i18n tests re-init/change language explicitly.
-import '@/i18n';
-import i18n from '@/i18n';
+// Preload the English bundle synchronously so tests reading i18n.t() during
+// module/component setup render localized copy immediately.
+import en from '@/i18n/locales/en';
+import i18n, { i18nReady } from '@/i18n';
+
+i18n.addResourceBundle('en', 'translation', en, true, true);
+await i18nReady;
+if (i18n.language !== 'en') {
+  await i18n.changeLanguage('en');
+}
 
 afterEach(() => {
   // A test that switches language must not leak the locale into the next one.

@@ -196,6 +196,7 @@ pub async fn create(
     // is `email_service`'s job: the letter carries the account's initial
     // password and the service is what decides that the stored copy must not.
     employee_service::dispatch_welcome_email_if_created(
+        &state.mailer,
         &state.config,
         &state.pool,
         company_id,

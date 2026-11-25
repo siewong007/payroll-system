@@ -8,7 +8,8 @@ use crate::core::app_state::AppState;
 use crate::core::auth::{AuthUser, Permission};
 use crate::core::error::AppResult;
 use crate::models::approval::{
-    AdminClaimRequest, AdminLeaveRequest, AdminOvertimeRequest, ReviewRequest, StatusQuery,
+    AdminClaimRequest, AdminLeaveRequest, AdminOvertimeRequest, PendingApprovalCountResponse,
+    ReviewRequest, StatusQuery,
 };
 use crate::models::pagination::PaginatedResponse;
 use crate::models::portal::{
@@ -31,6 +32,17 @@ fn reviewer(auth: &AuthUser) -> Reviewer {
         user_id: auth.0.sub,
         may_self_approve: auth.has_any_role(&["super_admin"]),
     }
+}
+
+// ─── Pending Counts ───
+
+pub async fn pending_counts(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> AppResult<Json<PendingApprovalCountResponse>> {
+    let company_id = auth.authorize(Permission::ViewApprovals)?;
+    let counts = approval_service::get_pending_counts(&state.pool, company_id).await?;
+    Ok(Json(counts))
 }
 
 // ─── Leave ───

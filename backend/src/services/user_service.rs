@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use crate::core::auth::AuthUser;
 use crate::core::error::{AppError, AppResult};
 use crate::models::audit::AuditRequestMeta;
 use crate::models::user_company::{
@@ -28,6 +29,7 @@ use crate::repositories::{audit_logs, refresh_tokens, user_companies, user_sessi
 const VALID_ROLES: &[&str] = &[
     "super_admin",
     "admin",
+    "manager",
     "payroll_admin",
     "hr_manager",
     "finance",
@@ -270,31 +272,105 @@ pub async fn create_user(
     Ok(user)
 }
 
+/// Roles whose holders are hidden from callers who hold none of them.
+const PRIVILEGED_ROLES: &[&str] = &["admin", "super_admin"];
+
+/// Whether `auth` must not be shown users holding `admin` or `super_admin`.
+///
+/// True for every directory viewer who is not themselves an admin — in
+/// practice the `manager` role, plus anyone granted `ViewUserDirectory`
+/// through a group. Expressed as "holds none of the privileged roles" rather
+/// than "is a manager", so a role added later is hidden-from by default.
+pub fn hides_privileged_users(auth: &AuthUser) -> bool {
+    !auth.has_any_role(PRIVILEGED_ROLES)
+}
+
+#[allow(clippy::too_many_arguments)]
 pub async fn list_users(
     pool: &PgPool,
     caller_is_super_admin: bool,
     caller_id: Uuid,
     company_id: Option<Uuid>,
     search: Option<&str>,
+    hide_privileged: bool,
+    limit: i64,
+    offset: i64,
+) -> AppResult<(Vec<UserWithCompanies>, i64)> {
+    list_users_with_role(
+        pool,
+        caller_is_super_admin,
+        caller_id,
+        company_id,
+        search,
+        None,
+        hide_privileged,
+        limit,
+        offset,
+    )
+    .await
+}
+
+/// `hide_privileged` is ignored for a super-admin caller, who sees everyone.
+#[allow(clippy::too_many_arguments)]
+pub async fn list_users_with_role(
+    pool: &PgPool,
+    caller_is_super_admin: bool,
+    caller_id: Uuid,
+    company_id: Option<Uuid>,
+    search: Option<&str>,
+    role: Option<&str>,
+    hide_privileged: bool,
     limit: i64,
     offset: i64,
 ) -> AppResult<(Vec<UserWithCompanies>, i64)> {
     let search = search.map(str::trim).filter(|term| !term.is_empty());
+    let role = role.map(str::trim).filter(|r| !r.is_empty());
 
-    let (rows, total) = if caller_is_super_admin {
-        (
+    let (rows, total) = match (caller_is_super_admin, role) {
+        (true, Some(role)) => (
+            users::list_page_by_role(pool, company_id, search, role, limit, offset).await?,
+            users::count_all_by_role(pool, company_id, search, role).await?,
+        ),
+        (true, None) => (
             users::list_page(pool, company_id, search, limit, offset).await?,
             users::count_all(pool, company_id, search).await?,
-        )
-    } else {
-        // A company admin sees only users who share a company with them.
-        (
-            user_management::list_page_for_admin(
-                pool, caller_id, company_id, search, limit, offset,
+        ),
+        (false, Some(role)) => (
+            user_management::list_page_for_admin_by_role(
+                pool,
+                caller_id,
+                company_id,
+                search,
+                role,
+                limit,
+                offset,
+                hide_privileged,
             )
             .await?,
-            user_management::count_for_admin(pool, caller_id, company_id, search).await?,
-        )
+            user_management::count_for_admin_by_role(
+                pool,
+                caller_id,
+                company_id,
+                search,
+                role,
+                hide_privileged,
+            )
+            .await?,
+        ),
+        (false, None) => (
+            user_management::list_page_for_admin(
+                pool,
+                caller_id,
+                company_id,
+                search,
+                limit,
+                offset,
+                hide_privileged,
+            )
+            .await?,
+            user_management::count_for_admin(pool, caller_id, company_id, search, hide_privileged)
+                .await?,
+        ),
     };
 
     let mut result: Vec<UserWithCompanies> = rows.into_iter().map(UserRow::into_user).collect();

@@ -256,6 +256,7 @@ pub async fn list_members(
     executor: impl Executor<'_, Database = Postgres>,
     company_id: Uuid,
     group_id: Uuid,
+    hide_privileged: bool,
 ) -> AppResult<Vec<UserGroupMember>> {
     let members = sqlx::query_as!(
         UserGroupMember,
@@ -265,9 +266,11 @@ pub async fn list_members(
         JOIN user_groups g ON g.id = m.group_id
         JOIN users u ON u.id = m.user_id
         WHERE m.group_id = $1 AND g.company_id = $2 AND u.deleted_at IS NULL
+          AND NOT ($3::bool AND u.roles && ARRAY['admin', 'super_admin']::varchar[])
         ORDER BY u.full_name"#,
         group_id,
         company_id,
+        hide_privileged,
     )
     .fetch_all(executor)
     .await?;

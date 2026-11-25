@@ -12,6 +12,7 @@ const adminMocks = vi.hoisted(() => ({
   createUser: vi.fn(),
   updateUser: vi.fn(),
   deleteUser: vi.fn(),
+  resetUser2fa: vi.fn(),
 }));
 
 vi.mock('@/context/AuthContext', () => ({ useAuth: authMocks.useAuth }));
@@ -327,6 +328,22 @@ describe('UserManagement — delete', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
 
     await waitFor(() => expect(adminMocks.deleteUser).toHaveBeenCalledWith('user-1'));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+});
+
+describe('UserManagement — reset 2FA', () => {
+  it('allows super_admin to reset another user 2FA after confirming password', async () => {
+    renderPage([target, self]);
+    await findRow('Ahmad Target');
+    adminMocks.resetUser2fa.mockResolvedValue({ ok: true });
+
+    await userEvent.click(within(table()).getByRole('button', { name: 'Reset 2FA for Ahmad Target' }));
+    const dialog = await screen.findByRole('dialog');
+    await userEvent.type(within(dialog).getByLabelText(/confirm with your password/i), 'SuperSecret123!');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Reset 2FA' }));
+
+    await waitFor(() => expect(adminMocks.resetUser2fa).toHaveBeenCalledWith('user-1', 'SuperSecret123!'));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   });
 });

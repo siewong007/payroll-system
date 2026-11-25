@@ -32,6 +32,20 @@ export interface ClaimWithEmployee extends Claim {
 
 export type { OvertimeWithEmployee };
 
+export interface OvertimeWithEmployeeResult {
+  overtime: OvertimeWithEmployee;
+}
+
+export interface PendingApprovalCounts {
+  pending_leave: number;
+  pending_claims: number;
+  pending_overtime: number;
+  total: number;
+}
+
+export const getPendingApprovalCounts = () =>
+  api.get<PendingApprovalCounts>('/approvals/pending-count').then(r => r.data);
+
 export const getLeaveRequests = (params: ApprovalListParams = {}) =>
   api
     .get<PaginatedResponse<LeaveRequestWithEmployee>>('/approvals/leave', { params })

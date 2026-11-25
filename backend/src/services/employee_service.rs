@@ -35,6 +35,70 @@ pub async fn get_employee(pool: &PgPool, id: Uuid, company_id: Uuid) -> AppResul
         .ok_or_else(|| AppError::NotFound("Employee not found".into()))
 }
 
+#[allow(clippy::too_many_arguments)]
+fn validate_employee_fields(
+    basic_salary: i64,
+    hourly_rate: Option<i64>,
+    daily_rate: Option<i64>,
+    num_children: Option<i32>,
+    zakat_monthly_amount: Option<i64>,
+    ptptn_monthly_amount: Option<i64>,
+    tabung_haji_amount: Option<i64>,
+    date_joined: chrono::NaiveDate,
+    probation_start: Option<chrono::NaiveDate>,
+    probation_end: Option<chrono::NaiveDate>,
+    confirmation_date: Option<chrono::NaiveDate>,
+) -> AppResult<()> {
+    if basic_salary < 0 {
+        return Err(AppError::Validation(
+            "Basic salary cannot be negative".into(),
+        ));
+    }
+    if hourly_rate.is_some_and(|v| v < 0) {
+        return Err(AppError::Validation(
+            "Hourly rate cannot be negative".into(),
+        ));
+    }
+    if daily_rate.is_some_and(|v| v < 0) {
+        return Err(AppError::Validation("Daily rate cannot be negative".into()));
+    }
+    if num_children.is_some_and(|v| !(0..=30).contains(&v)) {
+        return Err(AppError::Validation(
+            "Number of children must be between 0 and 30".into(),
+        ));
+    }
+    if zakat_monthly_amount.is_some_and(|v| v < 0) {
+        return Err(AppError::Validation(
+            "Monthly Zakat amount cannot be negative".into(),
+        ));
+    }
+    if ptptn_monthly_amount.is_some_and(|v| v < 0) {
+        return Err(AppError::Validation(
+            "Monthly PTPTN amount cannot be negative".into(),
+        ));
+    }
+    if tabung_haji_amount.is_some_and(|v| v < 0) {
+        return Err(AppError::Validation(
+            "Monthly Tabung Haji amount cannot be negative".into(),
+        ));
+    }
+    if let (Some(start), Some(end)) = (probation_start, probation_end)
+        && end < start
+    {
+        return Err(AppError::Validation(
+            "Probation end date cannot be earlier than probation start date".into(),
+        ));
+    }
+    if let Some(conf) = confirmation_date
+        && conf < date_joined
+    {
+        return Err(AppError::Validation(
+            "Confirmation date cannot be earlier than join date".into(),
+        ));
+    }
+    Ok(())
+}
+
 pub async fn create_employee(
     pool: &PgPool,
     company_id: Uuid,
@@ -42,6 +106,20 @@ pub async fn create_employee(
     created_by: Uuid,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<(Employee, Option<EmployeeAccountInfo>)> {
+    validate_employee_fields(
+        req.basic_salary,
+        req.hourly_rate,
+        req.daily_rate,
+        req.num_children,
+        req.zakat_monthly_amount,
+        req.ptptn_monthly_amount,
+        req.tabung_haji_amount,
+        req.date_joined,
+        req.probation_start,
+        req.probation_end,
+        None,
+    )?;
+
     // Check for duplicate employee number within the same company
     if employees::exists_by_number(pool, company_id, &req.employee_number).await? {
         return Err(AppError::Conflict(format!(
@@ -287,6 +365,20 @@ pub async fn update_employee(
         )));
     }
 
+    validate_employee_fields(
+        req.basic_salary.unwrap_or(existing.basic_salary),
+        req.hourly_rate.or(existing.hourly_rate),
+        req.daily_rate.or(existing.daily_rate),
+        req.num_children.or(existing.num_children),
+        req.zakat_monthly_amount.or(existing.zakat_monthly_amount),
+        req.ptptn_monthly_amount.or(existing.ptptn_monthly_amount),
+        req.tabung_haji_amount.or(existing.tabung_haji_amount),
+        existing.date_joined,
+        req.probation_start.or(existing.probation_start),
+        req.probation_end.or(existing.probation_end),
+        req.confirmation_date.or(existing.confirmation_date),
+    )?;
+
     // The employee row is written first, and both writes share one transaction.
     //
     // This is not a race — it was deterministic. `employees::update` casts
@@ -449,6 +541,7 @@ pub async fn create_tp3(
 /// Spawn asynchronous welcome email delivery when employee creation also
 /// provisioned a brand-new user account with an email address.
 pub async fn dispatch_welcome_email_if_created(
+    mailer: &crate::services::email_service::SharedMailer,
     config: &crate::core::config::AppConfig,
     pool: &PgPool,
     company_id: Uuid,
@@ -467,6 +560,7 @@ pub async fn dispatch_welcome_email_if_created(
     };
 
     let company = crate::services::company_service::get_company(pool, company_id).await?;
+    let mailer = mailer.clone();
     let config = config.clone();
     let pool = pool.clone();
     let company_name = company.name;
@@ -478,27 +572,26 @@ pub async fn dispatch_welcome_email_if_created(
         .clone()
         .unwrap_or_else(|| "(your IC number)".to_string());
 
-    tokio::spawn(async move {
-        if let Err(e) = crate::services::email_service::send_welcome_email(
-            &config,
-            &pool,
-            company_id,
-            &company_name,
+    if let Err(e) = crate::services::email_service::send_welcome_email(
+        &mailer,
+        &config,
+        &pool,
+        company_id,
+        &company_name,
+        emp_id,
+        &emp_name,
+        &email,
+        &default_pw,
+        actor_id,
+    )
+    .await
+    {
+        tracing::error!(
+            "Failed to dispatch welcome email for employee {}: {}",
             emp_id,
-            &emp_name,
-            &email,
-            &default_pw,
-            actor_id,
-        )
-        .await
-        {
-            tracing::error!(
-                "Failed to send welcome email for employee {}: {}",
-                emp_id,
-                e
-            );
-        }
-    });
+            e
+        );
+    }
 
     Ok(())
 }

@@ -1,0 +1,11 @@
+[Unit]
+Description=Payroll operational watchdog timer (every 5 minutes)
+
+[Timer]
+OnCalendar=*:0/5
+RandomizedDelaySec=15s
+Persistent=true
+Unit=payroll-watchdog.service
+
+[Install]
+WantedBy=timers.target

@@ -1,13 +1,15 @@
-import { useEffect } from 'react';
+import { useEffect, useId, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
-import { motion, useReducedMotion } from 'framer-motion';
 import { X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { getPayslipBreakdown } from '@/api/payroll';
-import { formatMYR } from '@/lib/utils';
+import { formatMYR, getErrorMessage } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/Skeleton';
 import type { PayrollItemDetail } from '@/types';
+
+const FOCUSABLE =
+  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 export function PayslipBreakdownDrawer({
   runId,
@@ -19,57 +21,94 @@ export function PayslipBreakdownDrawer({
   onClose: () => void;
 }) {
   const { t } = useTranslation();
-  const prefersReduced = useReducedMotion();
-  const { data, isLoading, isError } = useQuery({
+  const titleId = useId();
+  const drawerRef = useRef<HTMLDivElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['payslipBreakdown', runId, employeeId],
     queryFn: () => getPayslipBreakdown(runId, employeeId),
   });
 
   useEffect(() => {
+    const previousFocus = document.activeElement as HTMLElement | null;
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
+
+    const focusTimer = window.requestAnimationFrame(() => {
+      closeButtonRef.current?.focus();
+    });
+
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.stopPropagation();
-        onClose();
+        onCloseRef.current();
+        return;
+      }
+
+      if (e.key !== 'Tab') return;
+      const dialog = drawerRef.current;
+      if (!dialog) return;
+
+      const focusableEls = dialog.querySelectorAll<HTMLElement>(FOCUSABLE);
+      if (focusableEls.length === 0) {
+        e.preventDefault();
+        return;
+      }
+
+      const first = focusableEls[0];
+      const last = focusableEls[focusableEls.length - 1];
+
+      if (e.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) {
+        e.preventDefault();
+        first.focus();
       }
     };
+
     document.addEventListener('keydown', onKeyDown);
     return () => {
+      window.cancelAnimationFrame(focusTimer);
       document.body.style.overflow = prevOverflow;
       document.removeEventListener('keydown', onKeyDown);
+      previousFocus?.focus?.();
     };
-  }, [onClose]);
+  }, []);
 
   const earnings = data?.lines.filter((line) => line.category === 'earning') ?? [];
   const deductions = data?.lines.filter((line) => line.category === 'deduction') ?? [];
 
   const drawer = (
-    <div className="fixed inset-0 z-[55] flex justify-end bg-slate-950/50 backdrop-blur-sm" onClick={onClose}>
-      <motion.div
-        initial={prefersReduced ? { opacity: 0 } : { x: '100%' }}
-        animate={{ opacity: 1, x: 0 }}
-        transition={{ type: 'spring', stiffness: 380, damping: 34 }}
-        className="flex h-full w-full max-w-lg flex-col overflow-y-auto bg-white/95 dark:bg-slate-900/95 shadow-2xl ring-1 ring-black/5 dark:ring-white/10 backdrop-blur-2xl"
+    <div className="animate-fade-in fixed inset-0 z-[55] flex justify-end bg-slate-950/50 backdrop-blur-sm" onClick={onClose}>
+      <div
+        ref={drawerRef}
+        className="animate-slide-in-right flex h-full w-full max-w-lg flex-col overflow-y-auto bg-white dark:bg-slate-900 shadow-2xl ring-1 ring-black/5 dark:ring-white/10"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
-        aria-label={t('payroll.breakdown.title')}
+        aria-labelledby={titleId}
       >
-        <div className="sticky top-0 z-10 flex items-start justify-between border-b border-gray-200 dark:border-slate-800 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md px-6 py-4">
-          <div>
-            <h2 className="font-semibold text-gray-900 dark:text-slate-100">
+        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-gray-200 dark:border-slate-800 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md px-6 py-3.5">
+          <div className="min-w-0 pr-2">
+            <h2 id={titleId} className="font-semibold text-gray-900 dark:text-slate-100 truncate">
               {data?.employee_name ?? t('payroll.breakdown.title')}
             </h2>
-            {data && <p className="text-xs text-gray-400 dark:text-slate-500">{data.employee_number}</p>}
+            {data && <p className="text-xs text-gray-500 dark:text-slate-400">{data.employee_number}</p>}
           </div>
           <button
+            ref={closeButtonRef}
             type="button"
             onClick={onClose}
-            className="rounded-lg p-1.5 text-gray-500 hover:bg-gray-100 dark:text-slate-400 dark:hover:bg-slate-800 transition-colors"
+            className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 dark:text-slate-400 dark:hover:bg-slate-800 transition-colors"
             aria-label={t('payroll.breakdown.close')}
           >
-            <X className="h-4 w-4" />
+            <X className="h-4 w-4" aria-hidden="true" />
           </button>
         </div>
 
@@ -83,7 +122,18 @@ export function PayslipBreakdownDrawer({
           </div>
         )}
         {isError && (
-          <p className="px-6 py-8 text-sm text-red-600 dark:text-red-400">{t('payroll.breakdown.failed')}</p>
+          <div className="m-6 rounded-xl border border-red-200 dark:border-red-900/60 bg-red-50/70 dark:bg-red-950/30 p-4" role="alert">
+            <p className="text-sm text-red-700 dark:text-red-300">
+              {getErrorMessage(error, t('payroll.breakdown.failed'))}
+            </p>
+            <button
+              type="button"
+              onClick={() => void refetch()}
+              className="btn-secondary mt-3 min-h-11 sm:min-h-9"
+            >
+              {t('common.retry')}
+            </button>
+          </div>
         )}
 
         {data && (
@@ -108,7 +158,7 @@ export function PayslipBreakdownDrawer({
             </div>
           </div>
         )}
-      </motion.div>
+      </div>
     </div>
   );
 

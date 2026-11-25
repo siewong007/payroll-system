@@ -28,9 +28,9 @@ export function CompanyCategorySection({
     <div className="card !p-0 overflow-hidden">
       <div className="p-6 pb-0">
         <h2 className="section-title">{title}</h2>
-        <p className="text-sm text-gray-500 mt-1 mb-4">{description}</p>
+        <p className="text-sm text-gray-500 dark:text-slate-400 mt-1 mb-4">{description}</p>
       </div>
-      <div className="px-6 divide-y divide-gray-100 [&>*]:py-4">
+      <div className="px-6 divide-y divide-gray-100 dark:divide-slate-800 [&>*]:py-4">
         {settings.map((s) => (
           <SettingField
             key={s.key}
@@ -41,8 +41,8 @@ export function CompanyCategorySection({
         ))}
       </div>
       {dirtyCount > 0 && (
-        <div className="sticky bottom-0 flex items-center justify-between gap-3 px-6 py-3.5 border-t border-gray-200/80 bg-white/85 backdrop-blur">
-          <span className="text-sm text-gray-500">
+        <div className="sticky bottom-0 flex flex-wrap items-center justify-between gap-3 px-6 py-3.5 border-t border-gray-200/80 dark:border-slate-800 bg-white/85 dark:bg-slate-900/90 backdrop-blur">
+          <span className="text-sm text-gray-500 dark:text-slate-400">
             {t('settings.unsavedChanges', { count: dirtyCount })}
           </span>
           <div className="flex gap-2">
@@ -74,28 +74,32 @@ function SettingField({
   onChange: (val: unknown) => void;
 }) {
   const { t } = useTranslation();
+  const inputId = `setting-${setting.category}-${setting.key}`;
   const isBool = typeof setting.value === 'boolean';
   const isNumber = typeof setting.value === 'number' || (typeof setting.value === 'string' && !isNaN(Number(setting.value)));
+  const fieldClass =
+    'px-3 py-2 border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-100 rounded-lg text-sm focus:ring-2 focus:ring-[var(--ring)] outline-none';
 
   // Rest time: show with "minutes" suffix
   if (setting.key === 'rest_time_minutes') {
     return (
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
         <div>
-          <label className="text-sm font-medium text-gray-900">{setting.label || setting.key}</label>
-          {setting.description && <p className="text-xs text-gray-500 mt-0.5">{setting.description}</p>}
+          <label htmlFor={inputId} className="text-sm font-medium text-gray-900 dark:text-slate-100">{setting.label || setting.key}</label>
+          {setting.description && <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">{setting.description}</p>}
         </div>
         <div className="flex items-center gap-2">
           <input
+            id={inputId}
             type="number"
             value={String(value ?? '')}
             onChange={(e) => onChange(e.target.value)}
             min="0"
             max="180"
             step="15"
-            className="px-3 py-2 border border-gray-300 rounded-lg text-sm text-right focus:ring-1 focus:ring-black outline-none w-24"
+            className={`${fieldClass} text-right w-24`}
           />
-          <span className="text-sm text-gray-500">{t('settings.units.min')}</span>
+          <span className="text-sm text-gray-500 dark:text-slate-400">{t('settings.units.min')}</span>
         </div>
       </div>
     );
@@ -104,22 +108,23 @@ function SettingField({
   // Effective hours: show as read-hint
   if (setting.key === 'effective_hours_per_day') {
     return (
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
         <div>
-          <label className="text-sm font-medium text-gray-900">{setting.label || setting.key}</label>
-          {setting.description && <p className="text-xs text-gray-500 mt-0.5">{setting.description}</p>}
+          <label htmlFor={inputId} className="text-sm font-medium text-gray-900 dark:text-slate-100">{setting.label || setting.key}</label>
+          {setting.description && <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">{setting.description}</p>}
         </div>
         <div className="flex items-center gap-2">
           <input
+            id={inputId}
             type="number"
             value={String(value ?? '')}
             onChange={(e) => onChange(e.target.value)}
             min="1"
             max="24"
             step="0.5"
-            className="px-3 py-2 border border-gray-300 rounded-lg text-sm text-right focus:ring-1 focus:ring-black outline-none w-24"
+            className={`${fieldClass} text-right w-24`}
           />
-          <span className="text-sm text-gray-500">{t('settings.units.hrs')}</span>
+          <span className="text-sm text-gray-500 dark:text-slate-400">{t('settings.units.hrs')}</span>
         </div>
       </div>
     );
@@ -128,15 +133,16 @@ function SettingField({
   // Special handling for rounding_method
   if (setting.key === 'rounding_method') {
     return (
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
         <div>
-          <label className="text-sm font-medium text-gray-900">{setting.label || setting.key}</label>
-          {setting.description && <p className="text-xs text-gray-500 mt-0.5">{setting.description}</p>}
+          <label htmlFor={inputId} className="text-sm font-medium text-gray-900 dark:text-slate-100">{setting.label || setting.key}</label>
+          {setting.description && <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">{setting.description}</p>}
         </div>
         <select
+          id={inputId}
           value={String(value ?? '')}
           onChange={(e) => onChange(e.target.value)}
-          className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-1 focus:ring-black outline-none w-40"
+          className={`${fieldClass} w-full sm:w-44`}
         >
           <option value="nearest">{t('settings.rounding.nearest')}</option>
           <option value="up">{t('settings.rounding.up')}</option>
@@ -149,15 +155,16 @@ function SettingField({
   // Special handling for payslip_template
   if (setting.key === 'payslip_template') {
     return (
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
         <div>
-          <label className="text-sm font-medium text-gray-900">{setting.label || setting.key}</label>
-          {setting.description && <p className="text-xs text-gray-500 mt-0.5">{setting.description}</p>}
+          <label htmlFor={inputId} className="text-sm font-medium text-gray-900 dark:text-slate-100">{setting.label || setting.key}</label>
+          {setting.description && <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">{setting.description}</p>}
         </div>
         <select
+          id={inputId}
           value={String(value ?? '')}
           onChange={(e) => onChange(e.target.value)}
-          className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-1 focus:ring-black outline-none w-40"
+          className={`${fieldClass} w-full sm:w-44`}
         >
           <option value="default">{t('common.default')}</option>
           <option value="detailed">{t('settings.template.detailed')}</option>
@@ -169,16 +176,19 @@ function SettingField({
 
   if (isBool) {
     return (
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-4">
         <div>
-          <label className="text-sm font-medium text-gray-900">{setting.label || setting.key}</label>
-          {setting.description && <p className="text-xs text-gray-500 mt-0.5">{setting.description}</p>}
+          <label htmlFor={inputId} className="text-sm font-medium text-gray-900 dark:text-slate-100">{setting.label || setting.key}</label>
+          {setting.description && <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">{setting.description}</p>}
         </div>
         <button
+          id={inputId}
           type="button"
+          role="switch"
+          aria-checked={Boolean(value)}
           onClick={() => onChange(!value)}
-          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-            value ? 'bg-black' : 'bg-gray-300'
+          className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] ${
+            value ? 'bg-black dark:bg-[var(--accent-1)]' : 'bg-gray-300 dark:bg-slate-600'
           }`}
         >
           <span
@@ -193,33 +203,35 @@ function SettingField({
 
   if (isNumber && !setting.key.includes('format') && !setting.key.includes('currency')) {
     return (
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
         <div>
-          <label className="text-sm font-medium text-gray-900">{setting.label || setting.key}</label>
-          {setting.description && <p className="text-xs text-gray-500 mt-0.5">{setting.description}</p>}
+          <label htmlFor={inputId} className="text-sm font-medium text-gray-900 dark:text-slate-100">{setting.label || setting.key}</label>
+          {setting.description && <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">{setting.description}</p>}
         </div>
         <input
+          id={inputId}
           type="number"
           value={String(value ?? '')}
           onChange={(e) => onChange(e.target.value)}
           step="any"
-          className="px-3 py-2 border border-gray-300 rounded-lg text-sm text-right focus:ring-1 focus:ring-black outline-none w-32"
+          className={`${fieldClass} text-right w-32`}
         />
       </div>
     );
   }
 
   return (
-    <div className="flex items-center justify-between">
+    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
       <div>
-        <label className="text-sm font-medium text-gray-900">{setting.label || setting.key}</label>
-        {setting.description && <p className="text-xs text-gray-500 mt-0.5">{setting.description}</p>}
+        <label htmlFor={inputId} className="text-sm font-medium text-gray-900 dark:text-slate-100">{setting.label || setting.key}</label>
+        {setting.description && <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">{setting.description}</p>}
       </div>
       <input
+        id={inputId}
         type="text"
         value={String(value ?? '')}
         onChange={(e) => onChange(e.target.value)}
-        className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-1 focus:ring-black outline-none w-48"
+        className={`${fieldClass} w-full sm:w-52`}
       />
     </div>
   );

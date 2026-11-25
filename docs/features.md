@@ -108,19 +108,19 @@ repository.
 
 ## Reporting, localization, legal, and operations
 
-| Capability                                                      | Status     | Notes                                                                                                 |
-| --------------------------------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------- |
-| Payroll, department, leave, claims, statutory reports           | End to end | Reachable reports page and formula-neutralised export actions                                         |
-| Workspace dashboard (`/dashboard`)                              | End to end | Headcount, pending approvals, attendance exceptions, YTD statutory breakdown, and shortcuts           |
-| Four-locale internationalization (`en`, `ms`, `zh-CN`, `zh-TW`) | End to end | Full UI + server-error translation parity, script-purity tests, and CI hardcoded-string scanner       |
-| Dark/light/system theme & global command palette (`⌘K`)         | End to end | Accessible across Admin and Portal shells                                                             |
-| Terms, Privacy/PDPA Notice, and 2026 Statutory Guide            | End to end | Public & in-app routes (`/terms`, `/privacy`, `/compliance`) plus `docs/legal/*`                      |
-| Audit trail & PDPA retention purges                             | End to end | Filtered administrative view plus automated daily retention purges (7-year `2,555`-day audit horizon) |
-| Company JSON backup/export and restore/import                   | End to end | Tenant-bound restore with `upload_path` filename sanitization and magic-byte verification             |
-| Settings and platform attendance defaults                       | End to end | Company and super-admin flows                                                                         |
-| Liveness and database-readiness probes                          | End to end | Readiness checks connectivity and migration presence                                                  |
-| PostgreSQL schema/reference & forward migrations                | End to end | Consolidated `1000`/`1001` baseline plus immutable forward chain `1002`–`1030`; no demo credentials   |
-| Docker Compose and GitHub Actions                               | End to end | Both pin PostgreSQL 19 Beta 2 and enforce forward-only migration immutability                         |
+| Capability                                                      | Status     | Notes                                                                                                                                                                    |
+| --------------------------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Payroll, department, leave, claims, statutory reports           | End to end | Reachable reports page and formula-neutralised export actions                                                                                                            |
+| Workspace dashboard (`/dashboard`)                              | End to end | Headcount, pending approvals, attendance exceptions, YTD statutory breakdown, and shortcuts                                                                              |
+| Four-locale internationalization (`en`, `ms`, `zh-CN`, `zh-TW`) | End to end | Full UI + server-error translation parity, script-purity tests, and CI hardcoded-string scanner                                                                          |
+| Dark/light/system theme & global command palette (`⌘K`)         | End to end | Accessible across Admin and Portal shells                                                                                                                                |
+| Terms, Privacy/PDPA Notice, and 2026 Statutory Guide            | End to end | Public & in-app routes (`/terms`, `/privacy`, `/compliance`) plus `docs/legal/*`                                                                                         |
+| Audit trail & PDPA retention purges                             | End to end | Filtered administrative view plus automated daily retention purges (7-year `2,555`-day audit horizon)                                                                    |
+| Company JSON backup/export and restore/import                   | End to end | Tenant-bound restore with `upload_path` filename sanitization and magic-byte verification                                                                                |
+| Settings and platform attendance defaults                       | End to end | Company and super-admin flows                                                                                                                                            |
+| Liveness, readiness, and platform health telemetry              | End to end | Readiness checks DB/migrations, running build `revision`, and background-job heartbeats; `super_admin` `/admin/platform/health` surfaces queue depth and last job errors |
+| PostgreSQL schema/reference & forward migrations                | End to end | Consolidated `1000`/`1001` baseline plus immutable forward chain `1002`–`1032`; no demo credentials                                                                      |
+| Docker Compose and GitHub Actions                               | End to end | Both pin PostgreSQL 19 Beta 2 and enforce forward-only migration immutability                                                                                            |
 
 ## Explicit non-features
 

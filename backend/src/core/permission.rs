@@ -285,6 +285,7 @@ impl Permission {
 pub const ALL_ROLES: &[&str] = &[
     "super_admin",
     "admin",
+    "manager",
     "payroll_admin",
     "hr_manager",
     "finance",
@@ -302,6 +303,43 @@ const SUPER_ADMIN: &[Permission] = P::ALL;
 /// always been unable to read payroll figures despite the Role Management
 /// screen claiming otherwise.
 const ADMIN: &[Permission] = &[
+    P::ViewEmployees,
+    P::ManageEmployees,
+    P::ViewAttendance,
+    P::ManageAttendance,
+    P::GenerateAttendanceQr,
+    P::ManageKiosks,
+    P::SetCompanyAttendanceMethod,
+    P::ManageAttendanceNetworks,
+    P::ViewTeams,
+    P::ManageTeams,
+    P::ViewCalendar,
+    P::ManageCalendar,
+    P::ViewApprovals,
+    P::ManageApprovals,
+    P::ViewReports,
+    P::ViewDocuments,
+    P::ManageDocuments,
+    P::ViewEmailLogs,
+    P::ManageEmailTemplates,
+    P::SendLetters,
+    P::ManageCompanySettings,
+    P::ManageWorkSchedules,
+    P::ManageGeofence,
+    P::ViewUserDirectory,
+    P::ViewAuditLog,
+];
+
+/// Company manager: every company-management capability except payroll, and
+/// excluding the platform-only set that only `super_admin` holds. Also
+/// excludes `ImportEmployees`, because a bulk import writes `basic_salary` and
+/// bank details with no payroll-privilege check.
+///
+/// The second half of the role is a visibility rule, not a permission: a
+/// caller who holds neither `admin` nor `super_admin` is never shown users who
+/// hold those roles in the user directory or group member lists (see
+/// `user_service::hides_privileged_users`).
+const MANAGER: &[Permission] = &[
     P::ViewEmployees,
     P::ManageEmployees,
     P::ViewAttendance,
@@ -421,6 +459,7 @@ pub fn role_permissions(role: &str) -> &'static [Permission] {
     match role {
         "super_admin" => SUPER_ADMIN,
         "admin" => ADMIN,
+        "manager" => MANAGER,
         "payroll_admin" => PAYROLL_ADMIN,
         "hr_manager" => HR_MANAGER,
         "finance" => FINANCE,
@@ -578,6 +617,38 @@ mod tests {
             assert!(
                 !(granted.contains(&P::SubmitPayroll) && granted.contains(&P::ApprovePayroll)),
                 "{role} can both submit and approve payroll"
+            );
+        }
+    }
+
+    /// `manager` holds every company-management capability but no payroll or
+    /// salary figure, and nothing reserved for the platform owner.
+    #[test]
+    fn manager_holds_no_payroll_or_platform_permission() {
+        for permission in role_permissions("manager") {
+            assert!(
+                !permission.is_payroll_capability(),
+                "manager must not hold payroll capability {permission:?}"
+            );
+            assert!(
+                !permission.is_platform_only(),
+                "manager must not hold platform-only {permission:?}"
+            );
+        }
+        assert!(
+            !role_permissions("manager").contains(&P::ImportEmployees),
+            "bulk import writes salaries without a payroll check"
+        );
+    }
+
+    /// Every non-payroll, non-platform capability `admin` has, `manager` has.
+    #[test]
+    fn manager_covers_every_admin_management_permission() {
+        let manager = perms("manager");
+        for permission in role_permissions("admin") {
+            assert!(
+                manager.contains(permission),
+                "manager is missing {permission:?}"
             );
         }
     }

@@ -20,6 +20,11 @@ export function OfflineBanner() {
     };
   }, []);
 
+  // Dark standalone wall kiosks render their own dark-friendly transient status.
+  if (typeof window !== 'undefined' && window.location.pathname.startsWith('/kiosk')) {
+    return null;
+  }
+
   if (!isOffline) {
     return null;
   }

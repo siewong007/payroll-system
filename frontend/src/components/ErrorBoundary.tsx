@@ -133,21 +133,21 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     }
 
     return (
-      <main className="flex min-h-screen items-center justify-center bg-gray-50 px-4 py-12">
+      <main className="flex min-h-screen items-center justify-center bg-gray-50 dark:bg-slate-950 px-4 py-12">
         <section className="w-full max-w-lg text-center" aria-labelledby="boundary-title">
-          <div className="mx-auto mb-6 flex h-14 w-14 items-center justify-center rounded-2xl bg-red-50 text-red-700 ring-8 ring-red-100">
+          <div className="mx-auto mb-6 flex h-14 w-14 items-center justify-center rounded-2xl bg-red-50 dark:bg-red-500/15 text-red-700 dark:text-red-300 ring-8 ring-red-100 dark:ring-red-500/20">
             <AlertTriangle className="h-7 w-7" aria-hidden="true" />
           </div>
 
-          <h1 id="boundary-title" className="text-3xl font-bold tracking-tight text-gray-950 sm:text-4xl">
+          <h1 id="boundary-title" className="text-3xl font-bold tracking-tight text-gray-950 dark:text-slate-50 sm:text-4xl">
             {i18n.t('errors.boundary.title')}
           </h1>
-          <p className="mx-auto mt-4 max-w-md text-base leading-7 text-gray-600">
+          <p className="mx-auto mt-4 max-w-md text-base leading-7 text-gray-600 dark:text-slate-300">
             {i18n.t('errors.boundary.body')}
           </p>
 
           {import.meta.env.DEV && (
-            <p className="mx-auto mt-4 max-w-full overflow-x-auto rounded-lg border border-gray-200 bg-white px-3 py-2 text-left font-mono text-xs text-gray-500">
+            <p className="mx-auto mt-4 max-w-full overflow-x-auto rounded-lg border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 text-left font-mono text-xs text-gray-500 dark:text-slate-400">
               {error.message}
             </p>
           )}

@@ -125,9 +125,10 @@ async fn admin_user_list_includes_employee_only_accounts_in_shared_company() {
         .await
         .expect("link employee company");
 
-    let (users_page, _) = user_service::list_users(&pool, false, admin_id, None, None, 100, 0)
-        .await
-        .expect("list users for admin");
+    let (users_page, _) =
+        user_service::list_users(&pool, false, admin_id, None, None, false, 100, 0)
+            .await
+            .expect("list users for admin");
     let employee = users_page
         .iter()
         .find(|user| user.id == employee_user_id)
@@ -166,7 +167,7 @@ async fn admin_list_does_not_leak_companies_outside_the_callers_tenant() {
         .await
         .expect("link foreign");
 
-    let (page, _) = user_service::list_users(&pool, false, admin_id, None, None, 100, 0)
+    let (page, _) = user_service::list_users(&pool, false, admin_id, None, None, false, 100, 0)
         .await
         .expect("list users for admin");
     let seen = page
@@ -195,10 +196,18 @@ async fn list_users_paginates_and_reports_the_total() {
             .expect("link");
     }
 
-    let (page, total) =
-        user_service::list_users(&pool, true, super_admin_id, Some(company_id), None, 2, 0)
-            .await
-            .expect("list page");
+    let (page, total) = user_service::list_users(
+        &pool,
+        true,
+        super_admin_id,
+        Some(company_id),
+        None,
+        false,
+        2,
+        0,
+    )
+    .await
+    .expect("list page");
 
     assert_eq!(page.len(), 2, "limit must bound the returned rows");
     assert_eq!(total, 3, "total counts every match, not just the page");
@@ -227,6 +236,7 @@ async fn list_users_search_matches_name_and_email() {
         super_admin_id,
         Some(company_id),
         Some("searchable-target"),
+        false,
         50,
         0,
     )
@@ -742,10 +752,18 @@ async fn deleted_user_is_hidden_and_cannot_be_restored_by_a_matching_email() {
             .is_none(),
         "a deleted user must not authenticate"
     );
-    let (page, _) =
-        user_service::list_users(&pool, true, super_admin_id, Some(company_id), None, 100, 0)
-            .await
-            .expect("list filtered users");
+    let (page, _) = user_service::list_users(
+        &pool,
+        true,
+        super_admin_id,
+        Some(company_id),
+        None,
+        false,
+        100,
+        0,
+    )
+    .await
+    .expect("list filtered users");
     assert!(
         page.iter().all(|user| user.id != user_id),
         "a deleted user must not reappear in the company user list"
@@ -867,4 +885,83 @@ async fn user_administration_writes_audit_rows() {
             "expected a '{expected}' audit row, got {actions:?}"
         );
     }
+}
+
+/// A manager sees the company's users but never one holding `admin` or
+/// `super_admin` — not in the page, not in the total, and not by asking for
+/// that role explicitly.
+#[tokio::test]
+async fn manager_list_hides_admin_and_super_admin_users() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+
+    let manager_id = seed_user(&pool, company_id, "manager").await;
+    let admin_id = seed_user(&pool, company_id, "admin").await;
+    let super_admin_id = seed_user(&pool, company_id, "super_admin").await;
+    let hr_id = seed_user(&pool, company_id, "hr_manager").await;
+    for user in [manager_id, admin_id, super_admin_id, hr_id] {
+        user_companies::insert(&pool, user, company_id)
+            .await
+            .expect("link company");
+    }
+
+    let (page, total) = user_service::list_users(
+        &pool,
+        false,
+        manager_id,
+        Some(company_id),
+        None,
+        true,
+        100,
+        0,
+    )
+    .await
+    .expect("list users for manager");
+    let ids: Vec<Uuid> = page.iter().map(|user| user.id).collect();
+    assert!(ids.contains(&manager_id) && ids.contains(&hr_id));
+    assert!(!ids.contains(&admin_id), "manager must not see admin users");
+    assert!(
+        !ids.contains(&super_admin_id),
+        "manager must not see super_admin users"
+    );
+    assert_eq!(
+        total,
+        ids.len() as i64,
+        "count must match the filtered page"
+    );
+
+    for role in ["admin", "super_admin"] {
+        let (page, total) = user_service::list_users_with_role(
+            &pool,
+            false,
+            manager_id,
+            Some(company_id),
+            None,
+            Some(role),
+            true,
+            100,
+            0,
+        )
+        .await
+        .expect("role-filtered list for manager");
+        assert!(page.is_empty(), "role filter must not reveal {role} users");
+        assert_eq!(total, 0);
+    }
+
+    // The same company as seen by an admin still includes everyone.
+    let (admin_page, _) = user_service::list_users(
+        &pool,
+        false,
+        admin_id,
+        Some(company_id),
+        None,
+        false,
+        100,
+        0,
+    )
+    .await
+    .expect("list users for admin");
+    assert!(admin_page.iter().any(|user| user.id == super_admin_id));
 }

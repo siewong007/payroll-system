@@ -59,11 +59,12 @@ describe('Sidebar role-based navigation', () => {
 
     const links = navLinks();
     expect(links).toEqual(
-      expect.arrayContaining(['Company', 'Employees', 'Teams', 'Calendar', 'Attendance', 'Approvals', 'Reports']),
+      expect.arrayContaining(['Company', 'Employees', 'Teams', 'Calendar', 'Attendance', 'Approvals', 'Reports', 'Roles']),
     );
     expect(links).not.toContain('Companies');
     expect(links).not.toContain('Users');
-    expect(links).not.toContain('Roles');
+    expect(links).not.toContain('User Groups');
+    expect(links).not.toContain('Backup');
   });
 
   it('gives super_admin only the administration rail, not the tenant workspace', () => {
@@ -115,6 +116,7 @@ describe('Sidebar role-based navigation', () => {
 
     expect(navLinks()).not.toContain('Audit Trail');
     expect(navLinks()).not.toContain('Backup');
+    expect(navLinks()).not.toContain('Roles');
   });
 
   it('shows Audit Trail to an admin but not Backup', () => {

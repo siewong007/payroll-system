@@ -7,14 +7,17 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::core::error::AppResult;
-use crate::models::dashboard::{DashboardSummary, DepartmentCount, NeedsAttention};
-use crate::repositories::clock;
-use crate::repositories::employees as employee_repo;
+use crate::core::timezone;
+use crate::models::dashboard::{
+    DashboardSummary, DepartmentCount, NeedsAttention, PendingApprovalCounts, YtdEmployerTotals,
+};
 use crate::repositories::reads::dashboard as dashboard_reads;
 use crate::services::attendance_service;
 
 /// Assemble the dashboard summary. When `can_access_payroll` is false, payroll
 /// figures are blanked (None / 0) so the `exec` role never sees them.
+/// When `can_view_approvals` is false (e.g. `finance`), pending approval counts
+/// are zeroed so `all_clear` does not flag queues the caller cannot open.
 ///
 /// `window_days` sizes the attendance half of `needs_attention`; the approval
 /// queue depths it carries are deliberately unwindowed.
@@ -22,27 +25,66 @@ pub async fn summary(
     pool: &PgPool,
     company_id: Uuid,
     can_access_payroll: bool,
+    can_view_approvals: bool,
     window_days: i64,
 ) -> AppResult<DashboardSummary> {
-    let total_employees = employee_repo::count(pool, company_id, None, None, None).await?;
-    let active_employees = employee_repo::count(pool, company_id, None, None, Some(true)).await?;
-
-    let last_payroll = dashboard_reads::last_payroll(pool, company_id).await?;
-
     let current_year = chrono::Utc::now().year();
-    let ytd = dashboard_reads::ytd_employer_totals(pool, company_id, current_year).await?;
 
-    let departments = dashboard_reads::department_counts(pool, company_id).await?;
+    let payroll_fut = async {
+        if can_access_payroll {
+            tokio::try_join!(
+                dashboard_reads::last_payroll(pool, company_id),
+                dashboard_reads::ytd_employer_totals(pool, company_id, current_year),
+            )
+        } else {
+            Ok((
+                None,
+                YtdEmployerTotals {
+                    total_gross: 0,
+                    total_epf_employer: 0,
+                    total_socso_employer: 0,
+                    total_eis_employer: 0,
+                },
+            ))
+        }
+    };
 
-    // Bucket the exception window on the company's own calendar, so "last 7
-    // days" here means the same 7 days the attendance list shows.
-    let tz = attendance_service::get_company_timezone(pool, company_id).await;
-    let (today, _) = clock::date_and_time_in_tz(pool, &tz).await?;
-    let date_from = today - chrono::Duration::days(window_days - 1);
-    let exceptions =
-        dashboard_reads::attendance_exception_totals(pool, company_id, &tz, date_from, today)
-            .await?;
-    let pending = dashboard_reads::pending_approval_counts(pool, company_id).await?;
+    let exceptions_fut = async {
+        // Bucket the exception window on the company's own calendar, so "last 7
+        // days" here means the same 7 days the attendance list shows.
+        let tz = attendance_service::get_company_timezone(pool, company_id).await;
+        let parsed_tz = timezone::parse(&tz).unwrap_or(chrono_tz::Asia::Kuala_Lumpur);
+        let today = chrono::Utc::now().with_timezone(&parsed_tz).date_naive();
+        let date_from = today - chrono::Duration::days(window_days - 1);
+        dashboard_reads::attendance_exception_totals(pool, company_id, &tz, date_from, today).await
+    };
+
+    let pending_fut = async {
+        if can_view_approvals {
+            dashboard_reads::pending_approval_counts(pool, company_id).await
+        } else {
+            Ok(PendingApprovalCounts {
+                pending_leave: 0,
+                pending_claims: 0,
+                pending_overtime: 0,
+            })
+        }
+    };
+
+    let (
+        (total_employees, active_employees),
+        (last_payroll, ytd),
+        departments,
+        pending,
+        exceptions,
+    ) = tokio::try_join!(
+        dashboard_reads::employee_headcount(pool, company_id),
+        payroll_fut,
+        dashboard_reads::department_counts(pool, company_id),
+        pending_fut,
+        exceptions_fut,
+    )?;
+
     let needs_attention = NeedsAttention::new(window_days, exceptions, pending);
 
     Ok(DashboardSummary {

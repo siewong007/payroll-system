@@ -13,7 +13,7 @@ export function LanguageSwitcher({ dark = false }: { dark?: boolean }) {
   return (
     <label
       className={`flex items-center gap-2 text-xs ${
-        dark ? 'text-slate-400' : 'text-gray-500'
+        dark ? 'text-slate-400' : 'text-gray-500 dark:text-slate-400'
       }`}
     >
       <Languages className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
@@ -25,7 +25,7 @@ export function LanguageSwitcher({ dark = false }: { dark?: boolean }) {
         className={`w-full min-w-0 rounded-lg border px-2 py-1.5 text-xs font-medium transition-colors focus:outline-none focus:ring-2 ${
           dark
             ? 'border-white/15 bg-white/5 text-slate-200 hover:bg-white/10 focus:ring-indigo-400/40 [&>option]:bg-slate-900'
-            : 'border-gray-200 bg-white/80 text-gray-700 hover:bg-white focus:ring-teal-400/40'
+            : 'border-gray-200 bg-white/80 text-gray-700 hover:bg-white focus:ring-teal-400/40 dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-200 dark:hover:bg-slate-800 dark:[&>option]:bg-slate-900'
         }`}
       >
         {SUPPORTED_LOCALES.map((locale) => (

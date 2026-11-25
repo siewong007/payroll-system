@@ -1,0 +1,17 @@
+[Unit]
+Description=Payroll operational readiness & disk watchdog
+Documentation=file:///opt/payroll/payroll-watchdog.sh
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/payroll/payroll-watchdog.sh
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=yes
+ReadWritePaths=/opt/payroll/logs
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

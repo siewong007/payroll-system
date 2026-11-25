@@ -30,6 +30,7 @@ export const ROUTES = {
   REPORTS: '/reports',
   LETTERS: '/letters',
   SETTINGS: '/settings',
+  ACCOUNT: '/account',
   COMPANIES: '/companies',
   USERS: '/users',
   ROLES: '/roles',

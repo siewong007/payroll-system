@@ -1,21 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router';
+import { Link, useLocation } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AnimatePresence, motion } from 'framer-motion';
 import {
-  AlertCircle, CheckCircle2, Fingerprint, LogOut, MapPin, QrCode, RefreshCw, ScanLine, TriangleAlert,
+  AlertCircle, CheckCircle2, Fingerprint, LogOut, MapPin, QrCode, RefreshCw, ScanLine, TriangleAlert, Wifi, X,
 } from 'lucide-react';
 import {
   beginFaceIdCheckIn, checkInFaceId, checkInQr, checkOut, getAttendanceMethod, getMyTodayAttendance,
+  type AttendanceMethodResponse, type AttendanceRecord,
 } from '@/api/attendance';
-import { getDefaultSchedule } from '@/api/workSchedule';
 import { getPasskeyCredential } from '@/lib/webauthn';
 import { useAuth } from '@/context/AuthContext';
 import { getErrorMessage } from '@/lib/utils';
 import {
   buzz, classifyCheckInError, deriveTodayState, formatDuration, formatScheduleTime, formatZonedClock,
-  formatZonedDateLine, formatZonedTime, getGeolocation, parseScheduleTime, shiftStanding, zonedParts,
+  formatZonedDateLine, formatZonedDateTime, formatZonedTime, getGeolocationResult, isPriorLocalDay,
+  parseScheduleTime, shiftStanding, zonedParts, type GeolocationResult, type TodayState,
 } from '@/lib/attendance';
 import { QrScanSheet } from './QrScanSheet';
 
@@ -35,9 +35,9 @@ type Feedback = { tone: 'success' | 'error' | 'info'; text: string; href?: strin
 export function CheckInCard() {
   const { t } = useTranslation();
   const { user } = useAuth();
+  const location = useLocation();
   const queryClient = useQueryClient();
 
-  const [now, setNow] = useState(() => new Date());
   const [scanning, setScanning] = useState(false);
   const [confirmingOut, setConfirmingOut] = useState(false);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
@@ -48,36 +48,34 @@ export function CheckInCard() {
    * rather than after the decode removes an up-to-8-second stall between
    * "code recognised" and "checked in".
    */
-  const warmCoordsRef = useRef<Promise<GeolocationCoordinates | null> | null>(null);
+  const warmCoordsRef = useRef<Promise<GeolocationResult> | null>(null);
+  const lastGeoErrorRef = useRef<number | null>(null);
 
-  const { data: method } = useQuery({ queryKey: ['attendance-method'], queryFn: getAttendanceMethod });
+  const hasEmployee = Boolean(user?.employee_id);
+  const hasCompany = Boolean(user?.company_id);
+
+  const { data: method } = useQuery({
+    queryKey: ['attendance-method'],
+    queryFn: getAttendanceMethod,
+    enabled: hasCompany && hasEmployee,
+  });
   const { data: today, isError: todayFailed, isLoading: todayLoading, refetch: refetchToday } = useQuery({
     queryKey: ['attendance-today'],
     queryFn: getMyTodayAttendance,
+    enabled: hasEmployee,
     refetchInterval: 60_000,
-  });
-  // Advisory only — the card still works without it, so failures stay silent.
-  const { data: scheduleData } = useQuery({
-    queryKey: ['work-schedule-default'],
-    queryFn: getDefaultSchedule,
-    staleTime: 5 * 60_000,
-    retry: false,
   });
 
   const tz = method?.timezone || FALLBACK_TZ;
   const needsLocation = (method?.geofence_mode ?? 'none') !== 'none';
+  const showWifiHint = method?.network_mode === 'enforce' || method?.network_mode === 'warn';
   const record = today?.record ?? null;
   const state = deriveTodayState(record);
-
-  // Live clock. A punch-clock screen that cannot tell you the time it is about
-  // to record is missing its single most reassuring element.
-  useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(id);
-  }, []);
+  const historyHref = location.pathname.startsWith('/portal') ? '/portal/attendance' : '/my/attendance';
+  const profileSecurityHref = location.pathname.startsWith('/portal') ? '/portal/profile?section=security' : '/account';
 
   useEffect(() => {
-    if (!feedback) return;
+    if (!feedback || feedback.tone === 'error') return;
     const id = setTimeout(() => setFeedback(null), 6000);
     return () => clearTimeout(id);
   }, [feedback]);
@@ -113,7 +111,7 @@ export function CheckInCard() {
         refreshAttendance();
         return { tone: 'info', text: t('attendance.checkin.alreadyIn') };
       case 'stale-session':
-        return { tone: 'error', text: message, href: '/portal/attendance', hrefLabel: t('attendance.checkin.viewHistory') };
+        return { tone: 'error', text: message, href: historyHref, hrefLabel: t('attendance.checkin.viewHistory') };
       case 'outside-geofence':
         return { tone: 'error', text: message };
       case 'offsite-network':
@@ -126,13 +124,29 @@ export function CheckInCard() {
           text: t('attendance.checkin.offsiteSuffix', { message }),
         };
       case 'location-permission':
+        if (lastGeoErrorRef.current === 2 || lastGeoErrorRef.current === 3) {
+          return { tone: 'error', text: t('attendance.checkin.locationTimeout') };
+        }
         return { tone: 'error', text: t('attendance.checkin.locationRequired') };
       case 'no-passkey':
-        return { tone: 'error', text: message, href: '/portal/profile', hrefLabel: t('attendance.checkin.addPasskey') };
+        return { tone: 'error', text: message, href: profileSecurityHref, hrefLabel: t('attendance.checkin.addPasskey') };
       default:
         return { tone: 'error', text: message };
     }
-  }, [refreshAttendance, t]);
+  }, [historyHref, profileSecurityHref, refreshAttendance, t]);
+
+  const resolveCoords = useCallback(async (allowWarm: boolean): Promise<GeolocationCoordinates | null> => {
+    if (allowWarm && warmCoordsRef.current) {
+      const warm = await warmCoordsRef.current;
+      lastGeoErrorRef.current = warm.errorCode;
+      if (warm.coords) return warm.coords;
+      // Warm fix failed or timed out while the sheet opened — retry fresh.
+      warmCoordsRef.current = null;
+    }
+    const fresh = await getGeolocationResult(needsLocation);
+    lastGeoErrorRef.current = fresh.errorCode;
+    return fresh.coords;
+  }, [needsLocation]);
 
   const faceIdMut = useMutation({
     mutationFn: async () => {
@@ -140,7 +154,7 @@ export function CheckInCard() {
       // prompt waits until after it rather than racing the biometric sheet.
       const { challenge_id, options } = await beginFaceIdCheckIn();
       const credential = await getPasskeyCredential(options.publicKey);
-      const coords = await getGeolocation(needsLocation);
+      const coords = await resolveCoords(false);
       return checkInFaceId(challenge_id, credential, coords?.latitude, coords?.longitude);
     },
     onSuccess: (rec) => succeed(t('attendance.checkin.checkedInAt', { time: formatZonedTime(rec.check_in_at, tz) })),
@@ -152,7 +166,7 @@ export function CheckInCard() {
 
   const qrMut = useMutation({
     mutationFn: async (token: string) => {
-      const coords = await (warmCoordsRef.current ?? getGeolocation(needsLocation));
+      const coords = await resolveCoords(true);
       return checkInQr(token, coords?.latitude, coords?.longitude);
     },
     onSuccess: (rec) => {
@@ -177,7 +191,7 @@ export function CheckInCard() {
 
   const checkOutMut = useMutation({
     mutationFn: async () => {
-      const coords = await getGeolocation(needsLocation);
+      const coords = await resolveCoords(false);
       return checkOut(coords?.latitude, coords?.longitude);
     },
     onSuccess: (rec) => {
@@ -189,7 +203,7 @@ export function CheckInCard() {
     onError: (err) => {
       setConfirmingOut(false);
       buzz(120);
-      setFeedback({ tone: 'error', text: getErrorMessage(err, t('attendance.checkin.checkOutFailed')) });
+      setFeedback(explain(err, t('attendance.checkin.checkOutFailed')));
     },
   });
 
@@ -197,6 +211,7 @@ export function CheckInCard() {
 
   const handleCheckIn = () => {
     setFeedback(null);
+    lastGeoErrorRef.current = null;
     // Waiting for the method to load before branching. Reading `method` while
     // it is still undefined used to open the QR camera at a Face ID company.
     if (!method) return;
@@ -209,22 +224,6 @@ export function CheckInCard() {
     }
   };
 
-  // ── Derived display ────────────────────────────────────────────────────────
-
-  const dateLine = formatZonedDateLine(now, tz);
-  const clock = formatZonedClock(now, tz);
-  const { hour, minute } = zonedParts(now, tz);
-  const schedule = scheduleData?.schedule ?? null;
-  const standing = shiftStanding(hour * 60 + minute, parseScheduleTime(schedule?.start_time), schedule?.grace_minutes ?? 0);
-  const startLabel = formatScheduleTime(schedule?.start_time);
-
-  const elapsed = record?.check_in_at && state === 'checked-in'
-    ? formatDuration(now.getTime() - new Date(record.check_in_at).getTime())
-    : null;
-
-  const methodLabel = method?.method === 'face_id' ? t('attendance.checkin.faceId') : t('attendance.checkin.qrCode');
-  const MethodIcon = method?.method === 'face_id' ? Fingerprint : QrCode;
-
   // ── Blocking states ────────────────────────────────────────────────────────
 
   if (user && !user.employee_id) {
@@ -234,7 +233,7 @@ export function CheckInCard() {
           <AlertCircle className="w-5 h-5 text-amber-300 shrink-0 mt-0.5" />
           <div>
             <h2 className="font-semibold">{t('attendance.checkin.notSetUpTitle')}</h2>
-            <p className="text-sm text-white/70 mt-1">
+            <p className="text-sm text-white/75 mt-1">
               {t('attendance.checkin.notSetUpBody')}
             </p>
           </div>
@@ -252,7 +251,7 @@ export function CheckInCard() {
           <AlertCircle className="w-5 h-5 text-amber-300 shrink-0 mt-0.5" />
           <div>
             <h2 className="font-semibold">{t('attendance.checkin.loadFailedTitle')}</h2>
-            <p className="text-sm text-white/70 mt-1">
+            <p className="text-sm text-white/75 mt-1">
               {t('attendance.checkin.loadFailedBody')}
             </p>
           </div>
@@ -267,57 +266,47 @@ export function CheckInCard() {
   return (
     <>
       <Shell>
-        {/* Date + method */}
-        <div className="flex items-start justify-between gap-3">
-          <p className="text-sm text-white/70">{dateLine}</p>
-          {method && (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-medium text-white/80 shrink-0">
-              <MethodIcon className="w-3 h-3" /> {methodLabel}
-            </span>
-          )}
-        </div>
-
-        {/* Clock / elapsed */}
-        <div className="mt-3">
-          {state === 'checked-in' && elapsed ? (
-            <>
-              <p className="text-4xl sm:text-5xl font-bold tabular-nums leading-none">{elapsed}</p>
-              <p className="text-sm text-white/70 mt-2">
-                {t('attendance.checkin.onTheClockSince', { time: formatZonedTime(record?.check_in_at, tz) })}
-                {record?.status === 'late' && <span className="text-amber-300"> · {t('attendance.checkin.markedLate')}</span>}
-              </p>
-            </>
-          ) : (
-            <>
-              <p className="text-4xl sm:text-5xl font-bold tabular-nums leading-none" aria-label={t('attendance.checkin.currentTime', { time: clock })}>
-                {clock}
-              </p>
-              <p className="text-sm text-white/70 mt-2">
-                {state === 'checked-out' ? (
-                  <>
-                    {formatZonedTime(record?.check_in_at, tz)} – {formatZonedTime(record?.check_out_at, tz)}
-                    {record?.hours_worked && <> · {t('attendance.checkin.hoursShort', { count: record.hours_worked })}</>}
-                  </>
-                ) : startLabel && standing.kind !== 'unknown' ? (
-                  <>
-                    {t('attendance.checkin.shiftStarts', { time: startLabel })}
-                    {standing.kind === 'late'
-                      ? <span className="text-amber-300"> · {t('attendance.checkin.pastGrace', { duration: formatDuration(standing.minutes * 60_000) })}</span>
-                      : <span className="text-emerald-300"> · {t('attendance.checkin.onTime')}</span>}
-                  </>
-                ) : (
-                  t('attendance.checkin.ready')
-                )}
-              </p>
-            </>
-          )}
-        </div>
+        <CheckInClockDisplay
+          state={state}
+          record={record}
+          tz={tz}
+          method={method}
+        />
 
         {/* Absent notice */}
         {state === 'absent' && (
           <div className="mt-4 flex items-start gap-2 rounded-2xl bg-amber-400/15 border border-amber-300/30 px-3 py-2.5 text-sm text-amber-100">
             <TriangleAlert className="w-4 h-4 mt-0.5 shrink-0" />
             <span>{t('attendance.checkin.absentNotice')}</span>
+          </div>
+        )}
+
+        {/* Inline persistent error/info feedback on the card */}
+        {feedback && feedback.tone === 'error' && (
+          <div
+            role="alert"
+            className="mt-4 flex items-start gap-2.5 rounded-2xl bg-red-950/60 border border-red-300/30 px-3.5 py-3 text-sm text-red-100"
+          >
+            <AlertCircle className="w-4 h-4 mt-0.5 shrink-0 text-red-300" />
+            <div className="flex-1 min-w-0">
+              <p>{feedback.text}</p>
+              {feedback.href && (
+                <Link
+                  to={feedback.href}
+                  className="inline-block mt-1 font-semibold text-white underline underline-offset-2"
+                >
+                  {feedback.hrefLabel}
+                </Link>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => setFeedback(null)}
+              aria-label={t('attendance.checkin.dismiss')}
+              className="p-1 -m-1 rounded-lg text-red-200 hover:text-white hover:bg-white/10"
+            >
+              <X className="w-4 h-4" />
+            </button>
           </div>
         )}
 
@@ -338,7 +327,7 @@ export function CheckInCard() {
                   : <><LogOut className="w-5 h-5" /> {t('attendance.checkin.checkOut')}</>}
             </button>
           ) : state === 'checked-out' ? (
-            <div className="w-full min-h-14 rounded-2xl bg-white/10 border border-white/20 flex items-center justify-center gap-2 text-sm font-medium text-white/80">
+            <div className="w-full min-h-14 rounded-2xl bg-white/10 border border-white/20 flex items-center justify-center gap-2 text-sm font-medium text-white/85">
               <CheckCircle2 className="w-5 h-5 text-emerald-300" /> {t('attendance.checkin.allDone')}
             </div>
           ) : (
@@ -358,54 +347,175 @@ export function CheckInCard() {
           )}
         </div>
 
-        {needsLocation && state !== 'checked-out' && (
-          <p className="mt-3 flex items-center justify-center gap-1.5 text-[11px] text-white/50">
-            <MapPin className="w-3 h-3" />
-            {method?.geofence_mode === 'enforce'
-              ? t('attendance.checkin.locationEnforced')
-              : t('attendance.checkin.locationRecorded')}
-          </p>
+        {(needsLocation || showWifiHint) && state !== 'checked-out' && (
+          <div className="mt-3 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-[11px] text-white/60">
+            {needsLocation && (
+              <span className="flex items-center gap-1.5">
+                <MapPin className="w-3 h-3 shrink-0" />
+                {method?.geofence_mode === 'enforce'
+                  ? t('attendance.checkin.locationEnforced')
+                  : t('attendance.checkin.locationRecorded')}
+              </span>
+            )}
+            {showWifiHint && (
+              <span className="flex items-center gap-1.5">
+                <Wifi className="w-3 h-3 shrink-0" />
+                {t('attendance.checkin.networkHint')}
+              </span>
+            )}
+          </div>
         )}
       </Shell>
 
-      {/* Feedback — anchored bottom, clear of the mobile tab bar and within
-          thumb reach of the button that produced it. */}
-      <AnimatePresence>
-        {feedback && (
-          <motion.div
-            role="status"
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 12 }}
-            transition={{ duration: 0.18, ease: 'easeOut' }}
-            className="fixed inset-x-4 z-[70] mx-auto max-w-md bottom-[calc(4.75rem+env(safe-area-inset-bottom))] md:bottom-6"
-          >
-            <div className={`flex items-start gap-2.5 rounded-2xl px-4 py-3 text-sm text-white shadow-xl ${
-              feedback.tone === 'success' ? 'bg-emerald-600' : feedback.tone === 'info' ? 'bg-sky-600' : 'bg-red-600'
-            }`}>
-              {feedback.tone === 'error'
-                ? <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
-                : <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0" />}
-              <span className="flex-1">{feedback.text}</span>
-              {feedback.href && (
-                <Link to={feedback.href} className="font-semibold underline underline-offset-2 shrink-0">
-                  {feedback.hrefLabel}
-                </Link>
-              )}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* Success / Info feedback pill */}
+      {feedback && feedback.tone !== 'error' && (
+        <div
+          role="status"
+          className="animate-slide-up-sm fixed inset-x-4 z-[70] mx-auto max-w-md bottom-[calc(4.75rem+env(safe-area-inset-bottom))] md:bottom-6"
+        >
+          <div className={`flex items-start gap-2.5 rounded-2xl px-4 py-3 text-sm text-white shadow-xl ${
+            feedback.tone === 'success' ? 'bg-emerald-600' : 'bg-sky-600'
+          }`}>
+            <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0" />
+            <span className="flex-1">{feedback.text}</span>
+            {feedback.href && (
+              <Link to={feedback.href} className="font-semibold underline underline-offset-2 shrink-0">
+                {feedback.hrefLabel}
+              </Link>
+            )}
+          </div>
+        </div>
+      )}
 
       {scanning && (
         <QrScanSheet
           busy={qrMut.isPending}
           errorText={scanErrorText}
-          onClose={() => { setScanning(false); setScanErrorText(''); }}
-          onCameraReady={() => { warmCoordsRef.current = getGeolocation(needsLocation); }}
+          onRetryScan={() => setScanErrorText('')}
+          onClose={() => { setScanning(false); setScanErrorText(''); warmCoordsRef.current = null; }}
+          onCameraReady={() => {
+            if (needsLocation) {
+              warmCoordsRef.current = getGeolocationResult(true);
+            }
+          }}
           onToken={(token) => { setScanErrorText(''); qrMut.mutate(token); }}
         />
       )}
+    </>
+  );
+}
+
+/** Isolated 1-second clock/elapsed ticker so CheckInCard buttons & scanner sheet stay calm. */
+function CheckInClockDisplay({
+  state,
+  record,
+  tz,
+  method,
+}: {
+  state: TodayState;
+  record: AttendanceRecord | null;
+  tz: string;
+  method: AttendanceMethodResponse | undefined;
+}) {
+  const { t } = useTranslation();
+  const [now, setNow] = useState(() => new Date());
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const dateLine = formatZonedDateLine(now, tz);
+  const clock = formatZonedClock(now, tz);
+  const { hour, minute } = zonedParts(now, tz);
+  const standing = shiftStanding(
+    hour * 60 + minute,
+    parseScheduleTime(method?.shift_start_time),
+    method?.grace_minutes ?? 0,
+  );
+  const startLabel = formatScheduleTime(method?.shift_start_time);
+
+  const elapsed =
+    record?.check_in_at && state === 'checked-in'
+      ? formatDuration(now.getTime() - new Date(record.check_in_at).getTime())
+      : null;
+  const overnight = record?.check_in_at && state === 'checked-in'
+    ? isPriorLocalDay(record.check_in_at, tz, now)
+    : false;
+
+  const methodLabel =
+    method?.method === 'face_id' ? t('attendance.checkin.faceId') : t('attendance.checkin.qrCode');
+  const MethodIcon = method?.method === 'face_id' ? Fingerprint : QrCode;
+
+  return (
+    <>
+      {/* Date + method */}
+      <div className="flex items-start justify-between gap-3">
+        <p className="text-sm text-white/75">{dateLine}</p>
+        {method && (
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-medium text-white/85 shrink-0">
+            <MethodIcon className="w-3 h-3" /> {methodLabel}
+          </span>
+        )}
+      </div>
+
+      {/* Clock / elapsed */}
+      <div className="mt-3">
+        {state === 'checked-in' && elapsed ? (
+          <>
+            <p className="text-4xl sm:text-5xl font-bold tabular-nums leading-none">{elapsed}</p>
+            <p className="text-sm text-white/75 mt-2">
+              {overnight
+                ? t('attendance.checkin.onTheClockSinceDate', {
+                    dateTime: formatZonedDateTime(record?.check_in_at, tz),
+                  })
+                : t('attendance.checkin.onTheClockSince', {
+                    time: formatZonedTime(record?.check_in_at, tz),
+                  })}
+              {record?.status === 'late' && (
+                <span className="text-amber-300"> · {t('attendance.checkin.markedLate')}</span>
+              )}
+            </p>
+          </>
+        ) : (
+          <>
+            <p
+              className="text-4xl sm:text-5xl font-bold tabular-nums leading-none"
+              aria-label={t('attendance.checkin.currentTime', { time: clock })}
+            >
+              {clock}
+            </p>
+            <p className="text-sm text-white/75 mt-2">
+              {state === 'checked-out' ? (
+                <>
+                  {formatZonedTime(record?.check_in_at, tz)} –{' '}
+                  {formatZonedTime(record?.check_out_at, tz)}
+                  {record?.hours_worked && (
+                    <> · {t('attendance.checkin.hoursShort', { count: record.hours_worked })}</>
+                  )}
+                </>
+              ) : startLabel && standing.kind !== 'unknown' ? (
+                <>
+                  {t('attendance.checkin.shiftStarts', { time: startLabel })}
+                  {standing.kind === 'late' ? (
+                    <span className="text-amber-300">
+                      {' '}
+                      ·{' '}
+                      {t('attendance.checkin.pastGrace', {
+                        duration: formatDuration(standing.minutes * 60_000),
+                      })}
+                    </span>
+                  ) : (
+                    <span className="text-emerald-300"> · {t('attendance.checkin.onTime')}</span>
+                  )}
+                </>
+              ) : (
+                t('attendance.checkin.ready')
+              )}
+            </p>
+          </>
+        )}
+      </div>
     </>
   );
 }

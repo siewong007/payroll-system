@@ -97,24 +97,47 @@ export async function getPortalHolidays(year?: number): Promise<Holiday[]> {
   return data;
 }
 
+function isIosTouchDevice(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return (
+    /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) ||
+    Boolean((navigator as { standalone?: boolean }).standalone)
+  );
+}
+
+function triggerBlobDownload(data: BlobPart, filename: string, mimeType: string): void {
+  const blob = data instanceof Blob && data.type ? data : new Blob([data], { type: mimeType });
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.rel = 'noopener noreferrer';
+  const ios = isIosTouchDevice();
+  if (ios) {
+    a.target = '_blank';
+  }
+  a.style.display = 'none';
+  document.body?.appendChild(a);
+  a.click();
+  if (typeof a.remove === 'function') {
+    a.remove();
+  }
+  if (ios) {
+    window.setTimeout(() => window.URL.revokeObjectURL(url), 10_000);
+  } else {
+    window.URL.revokeObjectURL(url);
+  }
+}
+
 // Payslip PDF Download
 export async function downloadPayslipPdf(payslipId: string): Promise<void> {
   const res = await api.get(`/portal/payslips/${payslipId}/pdf`, { responseType: 'blob' });
-  const url = window.URL.createObjectURL(new Blob([res.data]));
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `payslip_${payslipId}.pdf`;
-  a.click();
-  window.URL.revokeObjectURL(url);
+  triggerBlobDownload(res.data, `payslip_${payslipId}.pdf`, 'application/pdf');
 }
 
 // Leave ICS Export
 export async function exportLeaveIcs(): Promise<void> {
   const res = await api.get('/portal/leave/export-ics', { responseType: 'blob' });
-  const url = window.URL.createObjectURL(new Blob([res.data]));
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'leave_calendar.ics';
-  a.click();
-  window.URL.revokeObjectURL(url);
+  triggerBlobDownload(res.data, 'leave_calendar.ics', 'text/calendar;charset=utf-8');
 }

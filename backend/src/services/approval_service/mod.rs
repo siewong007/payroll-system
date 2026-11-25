@@ -9,7 +9,9 @@ mod common;
 mod leave;
 mod overtime;
 
-pub use common::{Reviewer, ensure_overtime_hours_within_window, validate_overtime_type};
+pub use common::{
+    Reviewer, ensure_overtime_hours_within_window, get_pending_counts, validate_overtime_type,
+};
 
 pub use claim::{
     ClaimWithEmployee, approve_claim, cancel_claim_admin, create_claim_admin, delete_claim_admin,

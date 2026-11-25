@@ -133,3 +133,21 @@ pub async fn department_counts(
     .await?;
     Ok(rows)
 }
+
+/// Total (non-deleted) and active employee headcounts in a single scan.
+pub async fn employee_headcount(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+) -> AppResult<(i64, i64)> {
+    let counts = sqlx::query_as::<_, (i64, i64)>(
+        r#"SELECT
+            COUNT(*),
+            COUNT(*) FILTER (WHERE is_active = TRUE)
+        FROM employees
+        WHERE company_id = $1 AND deleted_at IS NULL"#,
+    )
+    .bind(company_id)
+    .fetch_one(executor)
+    .await?;
+    Ok(counts)
+}

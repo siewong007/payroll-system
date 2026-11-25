@@ -702,20 +702,27 @@ fn email_log_summary(status: &str, error_message: Option<&str>) -> EmailLogSumma
 
 #[test]
 fn a_delivered_letter_answers_with_the_log_row() {
-    let sent = send_outcome(email_log_summary("sent", None)).expect("a sent letter succeeds");
-    assert_eq!(sent.0.status, "sent");
+    let (status, body) =
+        send_outcome(email_log_summary("sent", None)).expect("a sent letter succeeds");
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body.0.status, "sent");
 }
 
-/// The reported defect: on a deployment without SMTP every letter came back 200
-/// with `status: "failed"`, and the composer read the 200 as delivery.
+#[test]
+fn a_queued_letter_answers_accepted_for_outbox_retry() {
+    let (status, body) = send_outcome(email_log_summary("pending", Some("temporary error")))
+        .expect("a queued outbox retry answers 202 Accepted");
+    assert_eq!(status, StatusCode::ACCEPTED);
+    assert_eq!(body.0.status, "pending");
+}
+
+/// A permanently failed letter (such as unconfigured SMTP or exhausted retries)
+/// must answer 502 with the reason rather than 200.
 #[test]
 fn an_unsent_letter_is_a_502_that_names_the_reason() {
     for (status, reason) in [
         ("failed", "SMTP not configured"),
         ("failed", "connection refused by mail.example.invalid"),
-        // A row still `pending` means the process died mid-send. Unknown is not
-        // sent, and answering 200 would claim otherwise.
-        ("pending", "still queued"),
     ] {
         let outcome = send_outcome(email_log_summary(status, Some(reason)));
         let err = outcome.expect_err("only a sent letter may answer 2xx");

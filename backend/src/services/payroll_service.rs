@@ -345,7 +345,7 @@ async fn build_action_queue(pool: &PgPool, company_id: Uuid) -> AppResult<Vec<Pa
             count: unprocessed,
             message: "Staged payroll entries not yet consumed by a run".into(),
             detail: None,
-            link: Some("/payroll/entries".into()),
+            link: Some("/payroll/process".into()),
             employees: Vec::new(),
         });
     }

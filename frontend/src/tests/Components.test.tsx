@@ -1,8 +1,23 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const uploadMocks = vi.hoisted(() => ({
+  fetchUploadObjectUrl: vi.fn(),
+}));
+
+vi.mock('@/api/uploads', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/api/uploads')>()),
+  fetchUploadObjectUrl: uploadMocks.fetchUploadObjectUrl,
+}));
+
+import { AttachmentLink } from '@/components/ui/AttachmentPreview';
 import { Modal } from '@/components/ui/Modal';
 import { TimeSelector } from '@/components/ui/TimeSelector';
+
+beforeEach(() => {
+  uploadMocks.fetchUploadObjectUrl.mockReset();
+});
 
 describe('TimeSelector', () => {
   it('renders the controlled time and emits independently updated hour and minute values', async () => {
@@ -74,5 +89,30 @@ describe('Modal', () => {
     expect(overlay).not.toBeNull();
     await user.click(overlay as HTMLElement);
     expect(onClose).toHaveBeenCalledOnce();
+  });
+});
+
+describe('AttachmentLink', () => {
+  it('does not fetch managed uploads on mount and fetches only when clicked', async () => {
+    const user = userEvent.setup();
+    const fakeTab = { opener: {} as unknown, closed: false, location: { href: '' }, close: vi.fn() };
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(fakeTab as unknown as Window);
+    uploadMocks.fetchUploadObjectUrl.mockResolvedValue('blob:https://payrollmy.com/receipt-1');
+
+    try {
+      render(<AttachmentLink url="/api/uploads/receipt-1.pdf">View receipt</AttachmentLink>);
+
+      expect(uploadMocks.fetchUploadObjectUrl).not.toHaveBeenCalled();
+
+      await user.click(screen.getByRole('button', { name: 'View receipt' }));
+
+      await waitFor(() =>
+        expect(uploadMocks.fetchUploadObjectUrl).toHaveBeenCalledWith('/api/uploads/receipt-1.pdf'),
+      );
+      expect(fakeTab.opener).toBeNull();
+      expect(fakeTab.location.href).toBe('blob:https://payrollmy.com/receipt-1');
+    } finally {
+      openSpy.mockRestore();
+    }
   });
 });

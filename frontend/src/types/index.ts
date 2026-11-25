@@ -1,6 +1,6 @@
 import type { PermissionKey } from '@/api/permissions';
 
-export type AppRole = 'super_admin' | 'admin' | 'payroll_admin' | 'hr_manager' | 'finance' | 'exec' | 'employee';
+export type AppRole = 'super_admin' | 'admin' | 'manager' | 'payroll_admin' | 'hr_manager' | 'finance' | 'exec' | 'employee';
 
 export interface User {
   id: string;
@@ -911,6 +911,13 @@ export interface CreateEmailTemplateRequest {
   letter_type: LetterType;
   subject: string;
   body_html: string;
+}
+
+export interface UpdateEmailTemplateRequest {
+  name?: string;
+  subject?: string;
+  body_html?: string;
+  is_active?: boolean;
 }
 
 // Mirrors the backend `EmailLogSummary`. `body_html` is deliberately absent:

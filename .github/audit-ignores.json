@@ -1,0 +1,25 @@
+{
+  "ignores": [
+    {
+      "id": "RUSTSEC-2023-0071",
+      "ecosystem": "cargo",
+      "package": "rsa",
+      "reason": "Pulled into Cargo.lock only via uncompiled sqlx-mysql backend; crate enables only sqlx postgres feature.",
+      "expires": "2026-12-31"
+    },
+    {
+      "id": "RUSTSEC-2026-0459",
+      "ecosystem": "cargo",
+      "package": "libsqlite3-sys",
+      "reason": "Pulled into Cargo.lock only via uncompiled sqlx-sqlite backend; crate enables only sqlx postgres feature.",
+      "expires": "2026-12-31"
+    },
+    {
+      "id": "GHSA-fc5q-39xc-vjpf",
+      "ecosystem": "bun",
+      "package": "picomatch",
+      "reason": "Dev-only transitive dependency of vite/vitest (tinyglobby -> fdir -> picomatch); not bundled into production browser assets.",
+      "expires": "2027-02-28"
+    }
+  ]
+}

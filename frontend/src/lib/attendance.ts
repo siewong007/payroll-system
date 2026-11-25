@@ -99,28 +99,105 @@ export function parseScanToken(decoded: string): { token: string } | { error: st
 
 // ─── Geolocation ──────────────────────────────────────────────────────────────
 
+export interface GeolocationResult {
+  coords: GeolocationCoordinates | null;
+  /** 1 = PERMISSION_DENIED, 2 = POSITION_UNAVAILABLE, 3 = TIMEOUT, null = skipped/resolved */
+  errorCode: number | null;
+}
+
 /**
- * Best-effort position that never rejects.
+ * Best-effort position that distinguishes permission denial from GPS timeout/unavailable.
  *
  * `needed` is false when the company has geofencing off — the server discards
  * coordinates then, so blocking a kiosk queue on a GPS fix buys nothing.
  * `maximumAge` accepts a recent cached fix rather than forcing a cold lock.
  */
-export function getGeolocation(needed: boolean): Promise<GeolocationCoordinates | null> {
+export function getGeolocationResult(needed: boolean): Promise<GeolocationResult> {
   return new Promise((resolve) => {
-    if (!needed || !navigator.geolocation) {
-      resolve(null);
+    if (!needed || typeof navigator === 'undefined' || !navigator.geolocation) {
+      resolve({ coords: null, errorCode: null });
       return;
     }
     navigator.geolocation.getCurrentPosition(
-      (pos) => resolve(pos.coords),
-      () => resolve(null),
+      (pos) => resolve({ coords: pos.coords, errorCode: null }),
+      (err) => resolve({ coords: null, errorCode: typeof err?.code === 'number' ? err.code : 2 }),
       { timeout: 8000, maximumAge: 60_000 }
     );
   });
 }
 
+/**
+ * Best-effort position that never rejects.
+ */
+export function getGeolocation(needed: boolean): Promise<GeolocationCoordinates | null> {
+  return getGeolocationResult(needed).then((res) => res.coords);
+}
+
 // ─── Company-timezone clock ───────────────────────────────────────────────────
+
+const zonedFormatters = new Map<string, Intl.DateTimeFormat>();
+
+function getZonedFormatter(
+  locale: string,
+  timeZone: string | undefined,
+  key: string,
+  options: Intl.DateTimeFormatOptions,
+): Intl.DateTimeFormat {
+  const cacheKey = `${locale}|${timeZone ?? ''}|${key}`;
+  let formatter = zonedFormatters.get(cacheKey);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat(locale, timeZone ? { ...options, timeZone } : options);
+    zonedFormatters.set(cacheKey, formatter);
+  }
+  return formatter;
+}
+
+/** Returns ISO YYYY-MM-DD for an instant in the given timezone. */
+export function zonedDateKey(dateOrIso: Date | string, timeZone?: string): string {
+  const date = typeof dateOrIso === 'string' ? new Date(dateOrIso) : dateOrIso;
+  try {
+    // i18n-ok: en-CA produces canonical YYYY-MM-DD keys for comparison.
+    return getZonedFormatter('en-CA', timeZone || undefined, 'dateKey', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(date);
+  } catch {
+    return getZonedFormatter('en-CA', undefined, 'dateKey', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(date);
+  }
+}
+
+/** True when `iso` falls on a different earlier calendar day than `now` in `timeZone`. */
+export function isPriorLocalDay(iso: string | null | undefined, timeZone: string, now: Date = new Date()): boolean {
+  if (!iso) return false;
+  return zonedDateKey(iso, timeZone) < zonedDateKey(now, timeZone);
+}
+
+/** Localized short date+time label (e.g. "26 Jul, 10:00 PM") in `timeZone`. */
+export function formatZonedDateTime(iso: string | null | undefined, timeZone: string): string {
+  if (!iso) return '—';
+  const locale = intlLocale();
+  const date = new Date(iso);
+  try {
+    return getZonedFormatter(locale, timeZone, 'dateTime', {
+      day: 'numeric',
+      month: 'short',
+      hour: 'numeric',
+      minute: '2-digit',
+    }).format(date);
+  } catch {
+    return getZonedFormatter(locale, undefined, 'dateTime', {
+      day: 'numeric',
+      month: 'short',
+      hour: 'numeric',
+      minute: '2-digit',
+    }).format(date);
+  }
+}
 
 /**
  * Wall-clock parts in the company's timezone.
@@ -133,8 +210,7 @@ export function getGeolocation(needed: boolean): Promise<GeolocationCoordinates 
 export function zonedParts(date: Date, timeZone: string): { hour: number; minute: number; second: number } {
   try {
     // i18n-ok: en-GB is internal numeric parsing (hour 0-23), never displayed.
-    const parts = new Intl.DateTimeFormat('en-GB', {
-      timeZone,
+    const parts = getZonedFormatter('en-GB', timeZone, 'parts', {
       hour12: false,
       hour: '2-digit',
       minute: '2-digit',
@@ -159,28 +235,36 @@ export function formatZonedClock(date: Date, timeZone: string): string {
 /** "9:41 AM" in the company's timezone — for recorded times. */
 export function formatZonedTime(iso: string | null | undefined, timeZone: string): string {
   if (!iso) return '—';
+  const locale = intlLocale();
+  const date = new Date(iso);
   try {
-    return new Date(iso).toLocaleTimeString(intlLocale(), {
-      timeZone,
+    return getZonedFormatter(locale, timeZone, 'time', {
       hour: 'numeric',
       minute: '2-digit',
-    });
+    }).format(date);
   } catch {
-    return new Date(iso).toLocaleTimeString(intlLocale(), { hour: 'numeric', minute: '2-digit' });
+    return getZonedFormatter(locale, undefined, 'time', {
+      hour: 'numeric',
+      minute: '2-digit',
+    }).format(date);
   }
 }
 
 /** "Monday, 27 July" in the company's timezone — for the date line. */
 export function formatZonedDateLine(date: Date, timeZone: string): string {
+  const locale = intlLocale();
   try {
-    return date.toLocaleDateString(intlLocale(), {
-      timeZone,
+    return getZonedFormatter(locale, timeZone, 'dateLine', {
       weekday: 'long',
       day: 'numeric',
       month: 'long',
-    });
+    }).format(date);
   } catch {
-    return date.toLocaleDateString(intlLocale(), { weekday: 'long', day: 'numeric', month: 'long' });
+    return getZonedFormatter(locale, undefined, 'dateLine', {
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
+    }).format(date);
   }
 }
 

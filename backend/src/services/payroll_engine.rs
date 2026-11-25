@@ -269,12 +269,12 @@ async fn gather_run_inputs(
             .collect();
 
     // 3. Batch fetch attendance OT hours, bucketed by the local date's type
-    let mut attendance_ot_map: HashMap<Uuid, Vec<(String, f64)>> = HashMap::new();
+    let mut attendance_ot_map: HashMap<Uuid, Vec<(String, Decimal)>> = HashMap::new();
     for row in
         payroll_reads::attendance_ot_hours(&mut *conn, &employee_ids, period_start, period_end, &tz)
             .await?
     {
-        if row.hours > 0.0 {
+        if row.hours > Decimal::ZERO {
             attendance_ot_map
                 .entry(row.employee_id)
                 .or_default()
@@ -283,7 +283,7 @@ async fn gather_run_inputs(
     }
 
     // 3b. Batch fetch approved overtime applications
-    let mut approved_ot_map: HashMap<Uuid, Vec<(String, f64)>> = HashMap::new();
+    let mut approved_ot_map: HashMap<Uuid, Vec<(String, Decimal)>> = HashMap::new();
     for row in
         payroll_reads::approved_ot_totals(&mut *conn, &employee_ids, period_start, period_end)
             .await?
@@ -1419,8 +1419,7 @@ fn compute_payslip(
         .get(&emp.id)
         .map(|buckets| {
             let mut total = 0i64;
-            for (ot_type, hours) in buckets {
-                let hours = Decimal::try_from(*hours).unwrap_or_default();
+            for &(ref ot_type, hours) in buckets {
                 let multiplier = ot.multiplier_for(ot_type);
                 let rating = ot.rate_overtime(emp.hourly_rate, emp.basic_salary, ot_type, hours);
                 overtime_lines.push(PayslipLine::earning(
@@ -1442,8 +1441,7 @@ fn compute_payslip(
     // Approved OT applications with type-based rate multipliers
     let approved_ot_pay = if let Some(ot_entries) = bulk.approved_ot.get(&emp.id) {
         let mut total = 0i64;
-        for (ot_type, hours) in ot_entries {
-            let hours = Decimal::try_from(*hours).unwrap_or_default();
+        for &(ref ot_type, hours) in ot_entries {
             let multiplier = ot.multiplier_for(ot_type);
             let rating = ot.rate_overtime(emp.hourly_rate, emp.basic_salary, ot_type, hours);
             let amount = rating.amount_sen;
@@ -2253,9 +2251,9 @@ mod payslip_golden_tests {
         bulk.approved_ot.insert(
             emp.id,
             vec![
-                ("normal".to_string(), 2.0),
-                ("rest_day".to_string(), 2.0),
-                ("public_holiday".to_string(), 1.0),
+                ("normal".to_string(), rust_decimal_macros::dec!(2.0)),
+                ("rest_day".to_string(), rust_decimal_macros::dec!(2.0)),
+                ("public_holiday".to_string(), rust_decimal_macros::dec!(1.0)),
             ],
         );
 
@@ -2419,8 +2417,11 @@ mod payslip_golden_tests {
                 );
             }
             if ot_hours > 0.0 {
-                bulk.attendance_ot_hours
-                    .insert(emp.id, vec![("normal".to_string(), ot_hours)]);
+                let ot_dec = Decimal::try_from(ot_hours).unwrap_or_default();
+                if ot_dec > Decimal::ZERO {
+                    bulk.attendance_ot_hours
+                        .insert(emp.id, vec![("normal".to_string(), ot_dec)]);
+                }
             }
             if unpaid > 0 {
                 bulk.variable_deductions.insert(emp.id, unpaid);

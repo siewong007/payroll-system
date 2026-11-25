@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router';
+import { Link, useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import api from '@/api/client';
 import { useAuth } from '@/context/AuthContext';
 import { hasOnlyEmployeeRole } from '@/lib/roles';
+import { safeRedirectPath } from '@/lib/utils';
 import { TwoFactorPrompt } from '@/components/TwoFactorPrompt';
 import { BrandLogo } from '@/components/ui/BrandLogo';
 import type { LoginResponse, User } from '@/types';
@@ -36,6 +37,16 @@ function takeCallbackParams(): URLSearchParams {
   return callbackParams ?? fromHash;
 }
 
+function consumeOAuth2Redirect(): string | null {
+  try {
+    const target = safeRedirectPath(sessionStorage.getItem('oauth2_login_redirect'));
+    sessionStorage.removeItem('oauth2_login_redirect');
+    return target;
+  } catch {
+    return null;
+  }
+}
+
 export function OAuth2Callback() {
   const navigate = useNavigate();
   const { t } = useTranslation();
@@ -45,11 +56,12 @@ export function OAuth2Callback() {
 
   const goPostLogin = useCallback(
     (loggedInUser: User) => {
+      const storedRedirect = consumeOAuth2Redirect();
       if (loggedInUser.must_change_password) {
         navigate('/change-password', { replace: true });
         return;
       }
-      navigate(hasOnlyEmployeeRole(loggedInUser) ? '/portal' : '/', { replace: true });
+      navigate(storedRedirect ?? (hasOnlyEmployeeRole(loggedInUser) ? '/portal' : '/'), { replace: true });
     },
     [navigate],
   );
@@ -113,17 +125,17 @@ export function OAuth2Callback() {
 
   if (error) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-100">
-        <div className="bg-white rounded-2xl shadow p-8 max-w-md w-full text-center space-y-4">
-          <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto">
-            <svg className="w-8 h-8 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-slate-950 px-4">
+        <div role="alert" className="bg-white dark:bg-slate-900 dark:border dark:border-slate-800 rounded-2xl shadow p-8 max-w-md w-full text-center space-y-4">
+          <div className="w-16 h-16 bg-red-50 dark:bg-red-500/15 rounded-full flex items-center justify-center mx-auto">
+            <svg className="w-8 h-8 text-red-500 dark:text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
           </div>
-          <p className="text-sm text-gray-600">{error}</p>
-          <a href="/login" className="inline-block text-sm text-black font-medium hover:underline">
+          <p className="text-sm text-gray-600 dark:text-slate-300">{error}</p>
+          <Link to="/login" className="inline-block text-sm text-black dark:text-indigo-400 font-medium hover:underline">
             {t('auth.backToLogin')}
-          </a>
+          </Link>
         </div>
       </div>
     );
@@ -131,11 +143,11 @@ export function OAuth2Callback() {
 
   if (mfaToken) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-100">
-        <div className="w-full max-w-md px-4">
-          <div className="bg-white rounded-2xl shadow p-6 sm:p-8">
+      <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-slate-950 px-4">
+        <div className="w-full max-w-md">
+          <div className="bg-white dark:bg-slate-900 dark:border dark:border-slate-800 rounded-2xl shadow p-6 sm:p-8">
             <div className="text-center mb-8">
-              <BrandLogo variant="lockup-dark" className="h-12 w-auto mx-auto mb-4" />
+              <BrandLogo variant="lockup-dark" className="h-12 w-auto mx-auto mb-4 rounded-xl" />
             </div>
             <TwoFactorPrompt mfaToken={mfaToken} onSuccess={goPostLogin} />
           </div>
@@ -145,8 +157,8 @@ export function OAuth2Callback() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100">
-      <div className="text-gray-500">{t('auth.oauth.completing')}</div>
+    <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-slate-950 px-4">
+      <div className="text-gray-500 dark:text-slate-400">{t('auth.oauth.completing')}</div>
     </div>
   );
 }

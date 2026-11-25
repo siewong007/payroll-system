@@ -12,7 +12,7 @@ use crate::models::user_group::{
     AddUserGroupMemberRequest, CreateUserGroupRequest, UpdateUserGroupRequest, UserGroup,
     UserGroupMember, UserGroupWithDetail,
 };
-use crate::services::{audit_service::AuditRequestMeta, user_group_service};
+use crate::services::{audit_service::AuditRequestMeta, user_group_service, user_service};
 
 // Managing a group means handing out capabilities, so it is gated on the same
 // permission as managing users rather than a weaker one — a group is a way to
@@ -103,7 +103,13 @@ pub async fn list_members(
 ) -> AppResult<Json<Vec<UserGroupMember>>> {
     let company_id = auth.authorize(Permission::ViewUserDirectory)?;
     Ok(Json(
-        user_group_service::list_members(&state.pool, company_id, group_id).await?,
+        user_group_service::list_members(
+            &state.pool,
+            company_id,
+            group_id,
+            user_service::hides_privileged_users(&auth),
+        )
+        .await?,
     ))
 }
 

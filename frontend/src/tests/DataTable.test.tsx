@@ -653,3 +653,41 @@ describe('DataTable row keys', () => {
     expect(onChange).toHaveBeenLastCalledWith(['custom-Employee 1']);
   });
 });
+
+describe('DataTable responsive single-branch rendering', () => {
+  it('renders only desktop table on desktop viewports and only mobile cards on mobile viewports', () => {
+    const originalMatchMedia = window.matchMedia;
+    try {
+      window.matchMedia = vi.fn().mockImplementation(() => ({
+        matches: true,
+        media: '(min-width: 768px)',
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      }));
+      const { unmount } = render(<DataTable columns={columns} data={makeRows(2)} />);
+      expect(screen.getByRole('table')).toBeInTheDocument();
+      expect(screen.getAllByText('Employee 1')).toHaveLength(1);
+      unmount();
+
+      window.matchMedia = vi.fn().mockImplementation(() => ({
+        matches: false,
+        media: '(min-width: 768px)',
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      }));
+      render(<DataTable columns={columns} data={makeRows(2)} />);
+      expect(screen.queryByRole('table')).not.toBeInTheDocument();
+      expect(screen.getAllByText('Employee 1')).toHaveLength(1);
+    } finally {
+      window.matchMedia = originalMatchMedia;
+    }
+  });
+});

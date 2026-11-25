@@ -144,7 +144,7 @@ export function Overtime() {
   const handleCancel = async (app: OvertimeApplication) => {
     const ok = await confirmDialog({
       description: t('portal.overtime.cancelConfirm'),
-      confirmLabel: t('common.cancel'),
+      confirmLabel: t('portal.overtime.cancelApplication'),
       variant: 'warning',
     });
     if (ok) {
@@ -208,26 +208,26 @@ export function Overtime() {
       </div>
 
       {/* Applications List */}
-      <div className="bg-white rounded-2xl border border-gray-200">
-        <div className="flex items-center justify-between gap-3 px-6 py-4 border-b border-gray-100">
-          <h3 className="text-sm font-semibold text-gray-900">{t('portal.overtime.myApplications')}</h3>
+      <div className="card !p-0 overflow-hidden">
+        <div className="flex items-center justify-between gap-3 px-4 sm:px-6 py-4 border-b border-gray-100 dark:border-slate-800">
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-slate-100">{t('portal.overtime.myApplications')}</h3>
           {applications.length > 0 && (
-            <label className="inline-flex items-center gap-2 text-xs font-medium text-gray-500">
+            <label className="inline-flex items-center gap-2 text-xs font-medium text-gray-500 dark:text-slate-400 cursor-pointer">
               <input
                 ref={selectAllRef}
                 type="checkbox"
                 checked={allDisplayedSelected}
                 onChange={toggleAllDisplayedOvertime}
-                className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-900"
+                className="h-4 w-4 rounded border-gray-300 dark:border-slate-600 text-gray-900 dark:text-teal-500 focus:ring-teal-500"
               />
               {t('common.selectAll')}
             </label>
           )}
         </div>
         {selectedOvertimeIds.length > 0 && (
-          <div className="border-b border-gray-100 bg-gray-50">
-            <div className="flex flex-col gap-2 px-6 py-3 sm:flex-row sm:items-center sm:justify-between">
-              <span className="text-sm font-medium text-gray-700">{t('common.selected', { count: selectedOvertimeIds.length })}</span>
+          <div className="border-b border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/60">
+            <div className="flex flex-col gap-2 px-4 sm:px-6 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <span className="text-sm font-medium text-gray-700 dark:text-slate-200">{t('common.selected', { count: selectedOvertimeIds.length })}</span>
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
@@ -261,7 +261,7 @@ export function Overtime() {
                     }
                   }}
                   disabled={selectedDeletableIds.length === 0 || bulkDeleteMutation.isPending}
-                  className="btn-secondary !py-2 text-sm text-red-600 hover:!bg-red-50 disabled:opacity-50"
+                  className="btn-secondary !py-2 text-sm text-red-600 dark:text-red-400 hover:!bg-red-50 dark:hover:!bg-red-500/10 disabled:opacity-50"
                 >
                   <Trash2 className="w-4 h-4" />
                   {bulkDeleteMutation.isPending ? t('common.deleting') : t('common.deleteSelected')}
@@ -269,68 +269,72 @@ export function Overtime() {
               </div>
             </div>
             {bulkError && (
-              <div role="alert" className="px-6 pb-3 text-sm text-red-700">{bulkError}</div>
+              <div role="alert" className="px-4 sm:px-6 pb-3 text-sm text-red-700 dark:text-red-300">{bulkError}</div>
             )}
           </div>
         )}
         {isLoading ? (
-          <div className="p-8 text-center text-sm text-gray-400">{t('common.loading')}</div>
+          <div className="p-8 text-center text-sm text-gray-400 dark:text-slate-400">{t('common.loading')}</div>
         ) : applications.length === 0 ? (
           <div className="p-12 text-center">
-            <Clock className="w-10 h-10 text-gray-200 mx-auto mb-3" />
-            <p className="text-sm text-gray-400">{t('portal.overtime.empty')}</p>
+            <Clock className="w-10 h-10 text-gray-200 dark:text-slate-700 mx-auto mb-3" />
+            <p className="text-sm text-gray-500 dark:text-slate-400">{t('portal.overtime.empty')}</p>
           </div>
         ) : (
-          <div className="divide-y divide-gray-100">
+          <div className="divide-y divide-gray-100 dark:divide-slate-800">
             {applications.map((app) => (
-              <div key={app.id} className="px-6 py-4">
-                <div className="flex items-start justify-between">
-                  <div className="flex items-start gap-3">
+              <div key={app.id} className="px-4 sm:px-6 py-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start gap-3 min-w-0">
                     <input
                       type="checkbox"
                       checked={selectedOvertimeIds.includes(app.id)}
                       onChange={() => toggleOvertimeSelection(app.id)}
-                      className="mt-1 h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-900"
+                      className="mt-1 h-4 w-4 rounded border-gray-300 dark:border-slate-600 text-gray-900 dark:text-teal-500 focus:ring-teal-500"
                       aria-label={t('portal.overtime.selectAria', { date: formatDate(app.ot_date) })}
                     />
-                    <div className="space-y-1">
-                    <div className="flex items-center gap-3">
-                      <span className="text-sm font-semibold text-gray-900">{formatDate(app.ot_date)}</span>
-                      {statusBadge(app.status)}
-                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                        app.ot_type === 'public_holiday' ? 'bg-red-100 text-red-700' :
-                        app.ot_type === 'rest_day' ? 'bg-blue-100 text-blue-700' :
-                        'bg-gray-100 text-gray-600'
-                      }`}>
-                        {otTypeLabel(app.ot_type)} ({otTypeMultiplier(app.ot_type)})
-                      </span>
-                    </div>
-                    <p className="text-sm text-gray-500">
-                      {app.start_time?.slice(0, 5)} — {app.end_time?.slice(0, 5)}
-                      <span className="ml-2 font-medium text-gray-700">{t('attendance.hoursShort', { value: Number(app.hours) })}</span>
-                    </p>
-                    {app.reason && <p className="text-sm text-gray-400">{app.reason}</p>}
-                    {app.review_notes && (
-                      <p className="text-sm text-amber-600 mt-1">{t('portal.overtime.reviewNote', { notes: app.review_notes })}</p>
-                    )}
+                    <div className="space-y-1 min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-semibold text-gray-900 dark:text-slate-100">{formatDate(app.ot_date)}</span>
+                        {statusBadge(app.status)}
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                          app.ot_type === 'public_holiday' ? 'bg-red-100 dark:bg-red-500/20 text-red-700 dark:text-red-300' :
+                          app.ot_type === 'rest_day' ? 'bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-300' :
+                          'bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-slate-300'
+                        }`}>
+                          {otTypeLabel(app.ot_type)} ({otTypeMultiplier(app.ot_type)})
+                        </span>
+                      </div>
+                      <p className="text-sm text-gray-500 dark:text-slate-400">
+                        {app.start_time?.slice(0, 5)} — {app.end_time?.slice(0, 5)}
+                        <span className="ml-2 font-medium text-gray-700 dark:text-slate-200">{t('attendance.hoursShort', { value: Number(app.hours) })}</span>
+                      </p>
+                      {app.reason && <p className="text-sm text-gray-500 dark:text-slate-400">{app.reason}</p>}
+                      {app.review_notes && (
+                        <p className="text-sm text-amber-600 dark:text-amber-400 mt-1">{t('portal.overtime.reviewNote', { notes: app.review_notes })}</p>
+                      )}
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1 shrink-0">
                     {canCancel(app) && (
                       <button
+                        type="button"
                         onClick={() => handleCancel(app)}
                         disabled={cancelMutation.isPending}
-                        className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50"
-                        title={t('common.cancel')}
+                        aria-label={t('portal.overtime.cancelApplication')}
+                        className="min-h-10 min-w-10 inline-flex items-center justify-center rounded-lg text-gray-400 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10"
+                        title={t('portal.overtime.cancelApplication')}
                       >
                         <X className="w-4 h-4" />
                       </button>
                     )}
                     {app.status === 'cancelled' && (
                       <button
+                        type="button"
                         onClick={() => handleDelete(app)}
                         disabled={deleteMutation.isPending}
-                        className="p-1.5 rounded-lg text-red-500 hover:text-red-700 hover:bg-red-50"
+                        aria-label={t('common.deletePermanently')}
+                        className="min-h-10 min-w-10 inline-flex items-center justify-center rounded-lg text-red-500 dark:text-red-400 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-500/10"
                         title={t('common.deletePermanently')}
                       >
                         <Trash2 className="w-4 h-4" />
@@ -351,8 +355,9 @@ export function Overtime() {
         title={t('portal.overtime.modalTitle')}
         footer={
           <div className="flex justify-end gap-3">
-            <button onClick={() => setShowModal(false)} className="btn-secondary">{t('common.cancel')}</button>
+            <button type="button" onClick={() => setShowModal(false)} className="btn-secondary">{t('common.cancel')}</button>
             <button
+              type="button"
               onClick={handleSubmit}
               disabled={createMutation.isPending}
               className="btn-primary"
@@ -364,8 +369,9 @@ export function Overtime() {
       >
         <div className="space-y-4">
           <div>
-            <label className="form-label">{t('portal.overtime.otDate')} *</label>
+            <label className="form-label" htmlFor="ot-date">{t('portal.overtime.otDate')} *</label>
             <input
+              id="ot-date"
               type="date"
               value={form.ot_date}
               onChange={(e) => setForm({ ...form, ot_date: e.target.value })}
@@ -374,33 +380,37 @@ export function Overtime() {
           </div>
 
           <div>
-            <label className="form-label">{t('portal.overtime.otType')} *</label>
-            <div className="grid grid-cols-3 gap-2">
-              {(['normal', 'rest_day', 'public_holiday'] as const).map((t) => (
+            <span className="form-label">{t('portal.overtime.otType')} *</span>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              {(['normal', 'rest_day', 'public_holiday'] as const).map((otType) => (
                 <label
-                  key={t}
-                  className={`flex flex-col items-center gap-1 px-3 py-3 rounded-lg border-2 cursor-pointer transition-all text-center ${
-                    form.ot_type === t
-                      ? t === 'public_holiday' ? 'border-red-400 bg-red-50' : t === 'rest_day' ? 'border-blue-400 bg-blue-50' : 'border-gray-900 bg-gray-50'
-                      : 'border-gray-200 hover:border-gray-300'
+                  key={otType}
+                  className={`flex sm:flex-col items-center justify-between sm:justify-center gap-1 px-3 py-3 rounded-lg border-2 cursor-pointer transition-all text-center ${
+                    form.ot_type === otType
+                      ? otType === 'public_holiday'
+                        ? 'border-red-400 dark:border-red-500 bg-red-50 dark:bg-red-500/15 text-red-900 dark:text-red-200'
+                        : otType === 'rest_day'
+                          ? 'border-blue-400 dark:border-blue-500 bg-blue-50 dark:bg-blue-500/15 text-blue-900 dark:text-blue-200'
+                          : 'border-gray-900 dark:border-teal-400 bg-gray-50 dark:bg-teal-500/15 text-gray-900 dark:text-slate-100'
+                      : 'border-gray-200 dark:border-slate-700 hover:border-gray-300 dark:hover:border-slate-600 text-gray-700 dark:text-slate-200'
                   }`}
                 >
                   <input
                     type="radio"
                     name="ot_type"
-                    value={t}
-                    checked={form.ot_type === t}
-                    onChange={() => setForm({ ...form, ot_type: t })}
+                    value={otType}
+                    checked={form.ot_type === otType}
+                    onChange={() => setForm({ ...form, ot_type: otType })}
                     className="sr-only"
                   />
-                  <span className="text-xs font-medium">{otTypeLabel(t)}</span>
-                  <span className="text-[10px] text-gray-400">{otTypeMultiplier(t)}</span>
+                  <span className="text-xs font-medium">{otTypeLabel(otType)}</span>
+                  <span className="text-[10px] text-gray-500 dark:text-slate-400">{otTypeMultiplier(otType)}</span>
                 </label>
               ))}
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <TimeSelector
               label={t('portal.overtime.startTime')}
               value={form.start_time}
@@ -414,15 +424,16 @@ export function Overtime() {
           </div>
 
           {form.hours > 0 && (
-            <div className="bg-gray-50 rounded-lg p-3 text-center">
-              <span className="text-2xl font-bold text-gray-900">{form.hours}</span>
-              <span className="text-sm text-gray-400 ml-1">{t('portal.overtime.hoursUnit')}</span>
+            <div className="bg-gray-50 dark:bg-slate-800/80 rounded-lg p-3 text-center">
+              <span className="text-2xl font-bold text-gray-900 dark:text-slate-100 tabular-nums">{form.hours}</span>
+              <span className="text-sm text-gray-500 dark:text-slate-400 ml-1">{t('portal.overtime.hoursUnit')}</span>
             </div>
           )}
 
           <div>
-            <label className="form-label">{t('common.reason')}</label>
+            <label className="form-label" htmlFor="ot-reason">{t('common.reason')}</label>
             <textarea
+              id="ot-reason"
               value={form.reason}
               onChange={(e) => setForm({ ...form, reason: e.target.value })}
               className="form-input"
@@ -431,10 +442,10 @@ export function Overtime() {
             />
           </div>
 
-          {formError && <p className="text-sm text-red-600">{formError}</p>}
+          {formError && <p role="alert" className="text-sm text-red-600 dark:text-red-400">{formError}</p>}
 
           {createMutation.isError && (
-            <p className="text-sm text-red-600">{getErrorMessage(createMutation.error, t('portal.overtime.submitFailed'))}</p>
+            <p role="alert" className="text-sm text-red-600 dark:text-red-400">{getErrorMessage(createMutation.error, t('portal.overtime.submitFailed'))}</p>
           )}
         </div>
       </Modal>

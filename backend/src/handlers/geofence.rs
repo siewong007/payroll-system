@@ -18,6 +18,7 @@ pub async fn list_locations(
     auth: AuthUser,
 ) -> AppResult<Json<Vec<CompanyLocation>>> {
     let company_id = auth.company_id()?;
+    auth.require_permission(Permission::ManageGeofence)?;
 
     let locs = geofence_service::list_locations(&state.pool, company_id).await?;
     Ok(Json(locs))
@@ -88,6 +89,7 @@ pub async fn get_mode(
     auth: AuthUser,
 ) -> AppResult<Json<serde_json::Value>> {
     let company_id = auth.company_id()?;
+    auth.require_permission(Permission::ManageGeofence)?;
 
     let mode = geofence_service::get_geofence_mode(&state.pool, company_id).await?;
     Ok(Json(serde_json::json!({ "mode": mode })))

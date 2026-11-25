@@ -42,6 +42,7 @@ export type PermissionKey =
   | 'manage_company_settings'
   | 'manage_work_schedules'
   | 'manage_geofence'
+  | 'manage_attendance_networks'
   | 'view_user_directory'
   | 'manage_users'
   | 'manage_companies'

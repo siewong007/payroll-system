@@ -12,7 +12,7 @@ use super::{
     error::{AppError, AppResult},
     permission,
 };
-use crate::repositories::{employees, user_groups, user_sessions, users};
+use crate::repositories::reads::auth as auth_reads;
 
 /// Registered `iss`/`aud` claim values. Validating these on decode rejects
 /// tokens minted for a different service or audience even if they were signed
@@ -179,25 +179,31 @@ impl FromRequestParts<AppState> for AuthUser {
             .ok_or_else(|| AppError::Internal("JWT secret not configured".to_string()))?;
 
         let claims = verify_token(token, &secret.0)?;
-        let active_user = users::get_active_by_id(&state.pool, claims.sub)
-            .await?
-            .ok_or_else(|| AppError::Unauthorized("User account is no longer active".into()))?;
-        if let Some(eid) = claims.employee_id
-            && !matches!(
-                employees::get_active_status(&state.pool, eid).await?,
-                Some(true)
-            )
-        {
+        let ctx = auth_reads::resolve_request_context(
+            &state.pool,
+            claims.sub,
+            claims.employee_id,
+            claims.sid,
+            claims.company_id,
+        )
+        .await?;
+
+        if !ctx.user_active {
+            return Err(AppError::Unauthorized(
+                "User account is no longer active".into(),
+            ));
+        }
+        if claims.employee_id.is_some() && !matches!(ctx.employee_active, Some(true)) {
             return Err(AppError::Unauthorized(
                 "Employee account has been deleted".into(),
             ));
         }
-        if !user_sessions::is_active(&state.pool, claims.sub, claims.sid).await? {
+        if !ctx.session_active {
             return Err(AppError::Unauthorized(
                 "Session has expired or was revoked".into(),
             ));
         }
-        if active_user.must_change_password {
+        if ctx.must_change_password {
             let path = parts.uri.path();
             let allowed = matches!(
                 path,
@@ -219,24 +225,24 @@ impl FromRequestParts<AppState> for AuthUser {
         // to several companies does not carry one company's groups into
         // another. Skipped entirely when there is no company context — there is
         // nothing a group could be scoped to.
-        let group_permissions = match claims.company_id {
-            Some(company_id) => {
-                let keys =
-                    user_groups::effective_permissions(&state.pool, claims.sub, company_id).await?;
-                let has_restricted_role =
-                    claims.roles.iter().any(|r| r == "exec" || r == "employee");
-                // A key that no longer maps to a `Permission` is dropped rather
-                // than refused: a capability removed from the enum must not lock
-                // out every member of a group that still references it.
-                // Platform-only permissions and (for exec/employee) payroll
-                // capabilities are stripped unconditionally as defense-in-depth.
-                keys.iter()
-                    .filter_map(|key| Permission::ALL.iter().find(|p| p.as_str() == key).copied())
-                    .filter(|p| !p.is_platform_only())
-                    .filter(|p| !has_restricted_role || !p.is_payroll_capability())
-                    .collect()
-            }
-            None => Vec::new(),
+        let group_permissions = if claims.company_id.is_some() {
+            let has_restricted_role = claims
+                .roles
+                .iter()
+                .any(|r| r == "exec" || r == "employee" || r == "manager");
+            // A key that no longer maps to a `Permission` is dropped rather
+            // than refused: a capability removed from the enum must not lock
+            // out every member of a group that still references it.
+            // Platform-only permissions and (for exec/employee/manager) payroll
+            // capabilities are stripped unconditionally as defense-in-depth.
+            ctx.group_permissions
+                .iter()
+                .filter_map(|key| Permission::ALL.iter().find(|p| p.as_str() == key).copied())
+                .filter(|p| !p.is_platform_only())
+                .filter(|p| !has_restricted_role || !p.is_payroll_capability())
+                .collect()
+        } else {
+            Vec::new()
         };
 
         Ok(AuthUser(claims, group_permissions))

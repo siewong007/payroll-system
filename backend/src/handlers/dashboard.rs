@@ -4,7 +4,7 @@ use axum::{
 };
 
 use crate::core::app_state::AppState;
-use crate::core::auth::AuthUser;
+use crate::core::auth::{AuthUser, Permission};
 use crate::core::error::{AppError, AppResult};
 use crate::models::dashboard::{DashboardQuery, DashboardSummary};
 use crate::services::dashboard_service;
@@ -20,9 +20,16 @@ pub async fn summary(
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
     let can_access_payroll = auth.is_payroll_privileged();
+    let can_view_approvals = auth.can(Permission::ViewApprovals);
 
     Ok(Json(
-        dashboard_service::summary(&state.pool, company_id, can_access_payroll, q.window_days())
-            .await?,
+        dashboard_service::summary(
+            &state.pool,
+            company_id,
+            can_access_payroll,
+            can_view_approvals,
+            q.window_days(),
+        )
+        .await?,
     ))
 }

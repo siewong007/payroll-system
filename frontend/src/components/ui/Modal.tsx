@@ -1,6 +1,5 @@
-import { useEffect, useRef, useCallback, useId } from 'react';
+import { useEffect, useRef, useId } from 'react';
 import { createPortal } from 'react-dom';
-import { motion, AnimatePresence } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import { X } from 'lucide-react';
 
@@ -100,103 +99,95 @@ export function Modal({ open, onClose, title, children, footer, maxWidth = 'max-
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [instanceId, open, onClose]);
 
-  const handleAnimationComplete = useCallback(() => {
-    if (
-      open &&
-      openModalStack[openModalStack.length - 1] === instanceId &&
-      dialogRef.current &&
-      !dialogRef.current.contains(document.activeElement)
-    ) {
-      const firstFocusable = dialogRef.current.querySelector<HTMLElement>(FOCUSABLE);
-      (firstFocusable ?? dialogRef.current).focus();
-    }
+  useEffect(() => {
+    if (!open) return;
+    const raf = requestAnimationFrame(() => {
+      if (
+        openModalStack[openModalStack.length - 1] === instanceId &&
+        dialogRef.current &&
+        !dialogRef.current.contains(document.activeElement)
+      ) {
+        const firstFocusable = dialogRef.current.querySelector<HTMLElement>(FOCUSABLE);
+        (firstFocusable ?? dialogRef.current).focus();
+      }
+    });
+    return () => cancelAnimationFrame(raf);
   }, [instanceId, open]);
 
   const existingIndex = openModalStack.indexOf(instanceId);
   const stackIndex = open ? (existingIndex !== -1 ? existingIndex : openModalStack.length) : 0;
   const zIndex = 50 + stackIndex * 2;
 
-  const content = (
-    <AnimatePresence>
-      {open && (
-        <>
-          {/* Overlay — covers viewport via w-screen h-screen */}
-          <motion.div
-            ref={overlayRef}
-            style={{ zIndex }}
-            className="fixed top-0 left-0 w-screen h-screen bg-slate-950/50 backdrop-blur-md"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            onClick={onClose}
-            role="presentation"
-            aria-hidden="true"
-          />
+  const content = open ? (
+    <>
+      {/* Overlay — covers viewport via w-screen h-screen */}
+      <div
+        ref={overlayRef}
+        style={{ zIndex }}
+        className="animate-fade-in fixed top-0 left-0 w-screen h-screen bg-slate-950/55"
+        onClick={onClose}
+        role="presentation"
+        aria-hidden="true"
+      />
 
-          {/* Centering container — grid places modal in center */}
-          <motion.div
-            ref={containerRef}
-            style={{ zIndex: zIndex + 1 }}
-            className="fixed top-0 left-0 w-screen h-[100dvh] grid place-items-end sm:place-items-center p-0 sm:p-4 pointer-events-none"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
+      {/* Centering container — grid places modal in center */}
+      <div
+        ref={containerRef}
+        style={{ zIndex: zIndex + 1 }}
+        className="fixed top-0 left-0 w-screen h-[100dvh] grid place-items-end sm:place-items-center p-0 sm:p-4 pointer-events-none"
+      >
+        {/* Modal panel */}
+        <div
+          ref={dialogRef}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={title ? titleId : undefined}
+          tabIndex={-1}
+          className={`
+            animate-scale-in relative bg-white dark:bg-slate-900 ring-1 ring-black/5 dark:ring-white/10 w-full ${maxWidth} outline-none flex flex-col
+            shadow-2xl pointer-events-auto
+            rounded-t-2xl sm:rounded-2xl
+            max-h-[95dvh] sm:max-h-[85vh]
+          `}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Header */}
+          {title && (
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-slate-800 shrink-0">
+              <div className="absolute top-2 left-1/2 -translate-x-1/2 w-10 h-1 rounded-full bg-gray-300 dark:bg-slate-700 sm:hidden" />
+              <h2 id={titleId} className="text-lg font-semibold text-gray-900 dark:text-slate-100 pr-8">
+                {title}
+              </h2>
+              <button
+                type="button"
+                onClick={onClose}
+                aria-label={t('a11y.closeDialog')}
+                className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 inline-flex items-center justify-center -mr-2 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:text-slate-200 dark:hover:bg-slate-800 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+          )}
+
+          {/* Scrollable content */}
+          <div
+            className={`overflow-y-auto flex-1 px-6 overscroll-contain ${
+              footer ? 'py-5' : 'pt-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:pb-5'
+            }`}
           >
-            {/* Modal panel */}
-            <motion.div
-              ref={dialogRef}
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby={title ? titleId : undefined}
-              tabIndex={-1}
-              className={`
-                relative bg-white/95 dark:bg-slate-900/95 backdrop-blur-2xl ring-1 ring-black/5 dark:ring-white/10 w-full ${maxWidth} outline-none flex flex-col
-                shadow-2xl pointer-events-auto
-                rounded-t-2xl sm:rounded-2xl
-                max-h-[95dvh] sm:max-h-[85vh]
-              `}
-              initial={{ scale: 0.95, opacity: 0, y: 20 }}
-              animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.95, opacity: 0, y: 20 }}
-              transition={{ type: 'spring', stiffness: 380, damping: 30 }}
-              onClick={(e) => e.stopPropagation()}
-              onAnimationComplete={handleAnimationComplete}
-            >
-              {/* Header */}
-              {title && (
-                <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-slate-800 shrink-0">
-                  <div className="absolute top-2 left-1/2 -translate-x-1/2 w-10 h-1 rounded-full bg-gray-300 dark:bg-slate-700 sm:hidden" />
-                  <h2 id={titleId} className="text-lg font-semibold text-gray-900 dark:text-slate-100 pr-8">
-                    {title}
-                  </h2>
-                  <button
-                    type="button"
-                    onClick={onClose}
-                    aria-label={t('a11y.closeDialog')}
-                    className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:text-slate-200 dark:hover:bg-slate-800 transition-colors"
-                  >
-                    <X className="w-5 h-5" />
-                  </button>
-                </div>
-              )}
+            {children}
+          </div>
 
-              {/* Scrollable content */}
-              <div className="overflow-y-auto flex-1 px-6 py-5 overscroll-contain">{children}</div>
-
-              {/* Sticky footer */}
-              {footer && (
-                <div className="px-6 py-4 border-t border-gray-200/70 dark:border-slate-800 shrink-0 bg-gray-50/80 dark:bg-slate-950/60 rounded-b-2xl">
-                  {footer}
-                </div>
-              )}
-            </motion.div>
-          </motion.div>
-        </>
-      )}
-    </AnimatePresence>
-  );
+          {/* Sticky footer */}
+          {footer && (
+            <div className="px-6 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:pb-4 border-t border-gray-200/70 dark:border-slate-800 shrink-0 bg-gray-50/80 dark:bg-slate-950/60 sm:rounded-b-2xl">
+              {footer}
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  ) : null;
 
   if (typeof document === 'undefined') {
     return content;

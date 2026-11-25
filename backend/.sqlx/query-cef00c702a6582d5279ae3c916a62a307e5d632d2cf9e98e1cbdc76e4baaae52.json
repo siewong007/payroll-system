@@ -1,0 +1,131 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO email_logs\n        (company_id, employee_id, template_id, letter_type, recipient_email, recipient_name,\n         subject, body_html, status, error_message, attempts, max_attempts, next_retry_at, created_by)\n        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)\n        RETURNING *",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "company_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "employee_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "template_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 4,
+        "name": "letter_type",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "recipient_email",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "recipient_name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 7,
+        "name": "subject",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 8,
+        "name": "body_html",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "status",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 10,
+        "name": "error_message",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "sent_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 12,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 13,
+        "name": "created_by",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 14,
+        "name": "attempts",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 15,
+        "name": "max_attempts",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 16,
+        "name": "next_retry_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Text",
+        "Varchar",
+        "Text",
+        "Int4",
+        "Int4",
+        "Timestamptz",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      true,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "cef00c702a6582d5279ae3c916a62a307e5d632d2cf9e98e1cbdc76e4baaae52"
+}

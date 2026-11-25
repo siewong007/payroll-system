@@ -1,27 +1,51 @@
+import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, Edit, DollarSign, Shield } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Edit, DollarSign, Shield, Pencil, Lock } from 'lucide-react';
 import { getEmployee, getSalaryHistory } from '@/api/employees';
-import { formatMYR, formatDate } from '@/lib/utils';
-import { useAuth } from '@/context/AuthContext';
-import { canAccessPayrollData } from '@/lib/roles';
+import { formatMYR, formatDate, getErrorMessage } from '@/lib/utils';
+import { usePermissions } from '@/lib/usePermissions';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { EmployeeFormModal } from './EmployeeFormModal';
 
-const InfoField = ({ label, value }: { label: string; value: string | null | undefined }) => (
-  <div>
-    <p className="text-xs text-gray-400 uppercase tracking-wide">{label}</p>
-    <p className="text-sm font-medium mt-0.5">{value || '-'}</p>
-  </div>
-);
+function InfoField({
+  label,
+  value,
+  restricted = false,
+}: {
+  label: string;
+  value: string | null | undefined;
+  restricted?: boolean;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="min-w-0">
+      <p className="text-xs text-gray-500 dark:text-slate-400 uppercase tracking-wide">{label}</p>
+      {restricted ? (
+        <span className="inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded-md text-xs font-medium bg-gray-100 text-gray-600 dark:bg-slate-800 dark:text-slate-300">
+          <Lock className="w-3 h-3" />
+          {t('employees.restricted')}
+        </span>
+      ) : (
+        <p className="text-sm font-medium text-gray-900 dark:text-slate-100 mt-0.5 break-words">{value || '-'}</p>
+      )}
+    </div>
+  );
+}
 
 export function EmployeeDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { t } = useTranslation();
-  const { user } = useAuth();
-  const canViewPayroll = canAccessPayrollData(user);
+  const { can } = usePermissions();
+  const canViewPayroll = can('view_payroll');
+  const canManageEmployees = can('manage_employees');
+  const canViewSalaryHistory = can('view_salary_history');
+  const showPersonalSensitive = canViewPayroll || canManageEmployees;
+  const [showEdit, setShowEdit] = useState(false);
 
-  const { data: employee, isLoading } = useQuery({
+  const { data: employee, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['employee', id],
     queryFn: () => getEmployee(id!),
     enabled: !!id,
@@ -30,19 +54,34 @@ export function EmployeeDetail() {
   const { data: salaryHistory } = useQuery({
     queryKey: ['salaryHistory', id],
     queryFn: () => getSalaryHistory(id!),
-    enabled: !!id && canViewPayroll,
+    enabled: !!id && canViewSalaryHistory,
   });
 
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-black" />
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-black dark:border-slate-200" />
       </div>
     );
   }
 
+  if (isError) {
+    return (
+      <EmptyState
+        icon={AlertTriangle}
+        title={t('employees.loadFailed')}
+        description={getErrorMessage(error, t('employees.loadFailed'))}
+        action={
+          <button type="button" onClick={() => refetch()} className="btn-primary">
+            {t('common.retry')}
+          </button>
+        }
+      />
+    );
+  }
+
   if (!employee) {
-    return <div className="text-center text-gray-500 py-12">{t('employees.notFound')}</div>;
+    return <div className="text-center text-gray-500 dark:text-slate-400 py-12">{t('employees.notFound')}</div>;
   }
 
   const empType = employee.employment_type
@@ -51,55 +90,86 @@ export function EmployeeDetail() {
   const residency = employee.residency_status
     ? t(`enums.residency.${employee.residency_status}`, { defaultValue: employee.residency_status.replaceAll('_', ' ') })
     : null;
+  const addressParts = [
+    employee.address_line1,
+    employee.address_line2,
+    employee.city,
+    employee.state,
+    employee.postcode,
+  ].filter(Boolean);
 
   return (
     <div>
       <button
+        type="button"
         onClick={() => navigate('/employees')}
-        className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700 mb-4"
+        className="inline-flex items-center gap-1.5 min-h-10 text-sm text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 mb-4"
       >
         <ArrowLeft className="w-4 h-4" /> {t('employees.backToList')}
       </button>
 
       {/* Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-6">
-        <div>
-          <h1 className="text-xl sm:text-2xl font-bold text-gray-900">{employee.full_name}</h1>
-          <p className="text-gray-500">
+        <div className="min-w-0">
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-slate-100 break-words">{employee.full_name}</h1>
+          <p className="text-sm text-gray-500 dark:text-slate-400 mt-0.5 break-words">
             {employee.employee_number} &middot; {employee.department || t('employees.noDepartment')} &middot;{' '}
             {employee.designation || t('employees.noDesignation')}
           </p>
         </div>
-        <span
-          className={`px-3 py-1 rounded-full text-sm font-medium ${
-            employee.is_active ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
-          }`}
-        >
-          {employee.is_active ? t('common.active') : t('common.inactive')}
-        </span>
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
+          <span
+            className={`inline-flex px-3 py-1 rounded-full text-sm font-medium ${
+              employee.is_active
+                ? 'bg-green-50 text-green-700 dark:bg-emerald-500/15 dark:text-emerald-300'
+                : 'bg-red-50 text-red-700 dark:bg-red-500/15 dark:text-red-300'
+            }`}
+          >
+            {employee.is_active ? t('common.active') : t('common.inactive')}
+          </span>
+          {canManageEmployees && (
+            <button
+              type="button"
+              onClick={() => setShowEdit(true)}
+              className="btn-primary"
+            >
+              <Pencil className="w-4 h-4" />
+              {t('employees.editEmployee')}
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Personal Info */}
-        <div className="bg-white rounded-2xl shadow p-6">
-          <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+        <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-gray-200 dark:border-slate-800 p-6">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-slate-100 mb-4 flex items-center gap-2">
             <Edit className="w-4 h-4" /> {t('employees.sections.personal')}
           </h2>
           <div className="space-y-3">
-            <InfoField label={t('employees.fields.nric')} value={employee.ic_number} />
-            <InfoField label={t('employees.fields.dateOfBirth')} value={employee.date_of_birth ? formatDate(employee.date_of_birth) : null} />
+            <InfoField label={t('employees.fields.nric')} value={employee.ic_number} restricted={!showPersonalSensitive} />
+            <InfoField label={t('employees.fields.dateOfBirth')} value={employee.date_of_birth ? formatDate(employee.date_of_birth) : null} restricted={!showPersonalSensitive} />
             <InfoField label={t('employees.fields.gender')} value={employee.gender ? t(`enums.gender.${employee.gender}`, { defaultValue: employee.gender }) : null} />
             <InfoField label={t('employees.fields.race')} value={employee.race ? t(`enums.race.${employee.race}`, { defaultValue: employee.race }) : null} />
             <InfoField label={t('employees.fields.nationality')} value={employee.nationality} />
             <InfoField label={t('employees.fields.maritalStatus')} value={employee.marital_status ? t(`enums.maritalStatus.${employee.marital_status}`, { defaultValue: employee.marital_status }) : null} />
             <InfoField label={t('employees.fields.email')} value={employee.email} />
-            <InfoField label={t('employees.fields.phone')} value={employee.phone} />
+            <InfoField label={t('employees.fields.phone')} value={employee.phone} restricted={!showPersonalSensitive} />
+            {(addressParts.length > 0 || !showPersonalSensitive) && (
+              <div className="pt-1 border-t border-gray-100 dark:border-slate-800">
+                <InfoField
+                  label={t('employees.sections.address')}
+                  value={addressParts.join(', ')}
+                  restricted={!showPersonalSensitive}
+                />
+              </div>
+            )}
           </div>
         </div>
 
         {/* Employment & Salary */}
-        <div className="bg-white rounded-2xl shadow p-6">
-          <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+        <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-gray-200 dark:border-slate-800 p-6">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-slate-100 mb-4 flex items-center gap-2">
             <DollarSign className="w-4 h-4" /> {t('employees.sections.employment')}
           </h2>
           <div className="space-y-3">
@@ -113,16 +183,16 @@ export function EmployeeDetail() {
               <InfoField label={t('employees.fields.resignationReason')} value={employee.resignation_reason} />
             )}
             {canViewPayroll && <InfoField label={t('employees.fields.basicSalary')} value={formatMYR(employee.basic_salary)} />}
-            <InfoField label={t('employees.fields.bank')} value={employee.bank_name} />
-            <InfoField label={t('employees.fields.accountNo')} value={employee.bank_account_number} />
+            <InfoField label={t('employees.fields.bank')} value={employee.bank_name} restricted={!showPersonalSensitive} />
+            <InfoField label={t('employees.fields.accountNo')} value={employee.bank_account_number} restricted={!showPersonalSensitive} />
             <InfoField label={t('employees.fields.costCentre')} value={employee.cost_centre} />
             <InfoField label={t('employees.fields.branch')} value={employee.branch} />
           </div>
         </div>
 
         {canViewPayroll && (
-          <div className="bg-white rounded-2xl shadow p-6">
-            <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-gray-200 dark:border-slate-800 p-6">
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-slate-100 mb-4 flex items-center gap-2">
               <Shield className="w-4 h-4" /> {t('employees.sections.statutory')}
             </h2>
             <div className="space-y-3">
@@ -147,43 +217,58 @@ export function EmployeeDetail() {
       </div>
 
       {/* Salary History */}
-      {canViewPayroll && salaryHistory && salaryHistory.length > 0 && (
-        <div className="bg-white rounded-2xl shadow p-6 mt-6">
-          <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+      {canViewSalaryHistory && salaryHistory && salaryHistory.length > 0 && (
+        <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-gray-200 dark:border-slate-800 p-6 mt-6">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-slate-100 mb-4 flex items-center gap-2">
             <DollarSign className="w-4 h-4" /> {t('employees.sections.salaryHistory')}
           </h2>
-          <table className="w-full">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="text-left px-4 py-2 text-xs font-medium text-gray-500 uppercase">{t('employees.salaryTable.date')}</th>
-                <th className="text-right px-4 py-2 text-xs font-medium text-gray-500 uppercase">{t('employees.salaryTable.oldSalary')}</th>
-                <th className="text-right px-4 py-2 text-xs font-medium text-gray-500 uppercase">{t('employees.salaryTable.newSalary')}</th>
-                <th className="text-right px-4 py-2 text-xs font-medium text-gray-500 uppercase">{t('employees.salaryTable.change')}</th>
-                <th className="text-left px-4 py-2 text-xs font-medium text-gray-500 uppercase">{t('employees.salaryTable.reason')}</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {salaryHistory.map((h) => {
-                const pctChange = ((h.new_salary - h.old_salary) / h.old_salary) * 100;
-                return (
-                  <tr key={h.id}>
-                    <td className="px-4 py-3 text-sm">{formatDate(h.effective_date)}</td>
-                    <td className="px-4 py-3 text-sm text-right">{formatMYR(h.old_salary)}</td>
-                    <td className="px-4 py-3 text-sm text-right font-medium">{formatMYR(h.new_salary)}</td>
-                    <td className="px-4 py-3 text-sm text-right">
-                      <span className={pctChange >= 0 ? 'text-green-600' : 'text-red-600'}>
-                        {pctChange >= 0 ? '+' : ''}{pctChange.toFixed(1)}%
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-500">{h.reason || '-'}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <div className="overflow-x-auto rounded-xl border border-gray-100 dark:border-slate-800">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 dark:bg-slate-800/70">
+                <tr>
+                  <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase whitespace-nowrap">{t('employees.salaryTable.date')}</th>
+                  <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase whitespace-nowrap">{t('employees.salaryTable.oldSalary')}</th>
+                  <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase whitespace-nowrap">{t('employees.salaryTable.newSalary')}</th>
+                  <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase whitespace-nowrap">{t('employees.salaryTable.change')}</th>
+                  <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase">{t('employees.salaryTable.reason')}</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 dark:divide-slate-800">
+                {salaryHistory.map((h) => {
+                  const pctChange = h.old_salary > 0
+                    ? ((h.new_salary - h.old_salary) / h.old_salary) * 100
+                    : null;
+                  return (
+                    <tr key={h.id}>
+                      <td className="px-4 py-3 text-gray-700 dark:text-slate-300 whitespace-nowrap">{formatDate(h.effective_date)}</td>
+                      <td className="px-4 py-3 text-right text-gray-600 dark:text-slate-400 tabular-nums whitespace-nowrap">{formatMYR(h.old_salary)}</td>
+                      <td className="px-4 py-3 text-right font-medium text-gray-900 dark:text-slate-100 tabular-nums whitespace-nowrap">{formatMYR(h.new_salary)}</td>
+                      <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap">
+                        {pctChange === null ? (
+                          <span className="text-gray-400 dark:text-slate-500">{'\u2014'}</span>
+                        ) : (
+                          <span className={pctChange >= 0 ? 'text-green-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}>
+                            {pctChange >= 0 ? '+' : ''}{pctChange.toFixed(1)}%
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-gray-500 dark:text-slate-400">{h.reason || '-'}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
+      {showEdit && (
+        <EmployeeFormModal
+          mode="edit"
+          employeeId={employee.id}
+          onClose={() => setShowEdit(false)}
+        />
+      )}
     </div>
   );
 }

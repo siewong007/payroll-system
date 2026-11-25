@@ -285,30 +285,25 @@ pub async fn forgot_password(
     let result =
         password_reset_service::request_reset(&state.pool, &req.email, Some(&audit_meta)).await?;
 
-    // Send reset email if user exists (fire-and-forget, don't reveal whether email exists)
+    // Send reset email asynchronously if user exists — never block the HTTP
+    // response on SMTP or expose account existence through response timing.
     if let Some((user_email, user_name, raw_token)) = result {
         let reset_url = format!(
             "{}/reset-password?token={}",
             state.config.frontend_url, raw_token
         );
         let body_html = email_service::password_reset_html(&user_name, &reset_url);
-
-        // Log but don't fail the request if email sending fails
-        if let Err(e) = email_service::send_system_email(
-            &state.config,
-            &user_email,
-            &user_name,
-            "Reset your PayrollMY password",
-            &body_html,
-        )
-        .await
-        {
-            tracing::error!(
-                "Failed to send password reset email to {}: {}",
-                crate::core::redact::email(&user_email),
-                e
-            );
-        }
+        let mailer = state.mailer.clone();
+        tokio::spawn(async move {
+            email_service::send_system_email_with_retry(
+                mailer,
+                user_email,
+                user_name,
+                "Reset your PayrollMY password".to_string(),
+                body_html,
+            )
+            .await;
+        });
     }
 
     Ok(Json(serde_json::json!({

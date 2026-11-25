@@ -1,9 +1,12 @@
 import { Fragment } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
-import { Check, X } from 'lucide-react';
+import { AlertTriangle, Check, X } from 'lucide-react';
 import { permissionsApi, type PermissionDescriptor, type RoleDescriptor } from '@/api/permissions';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { ROLE_META, SINGLE_COMPANY_ROLES, roleBadgeClass, roleLabel } from '@/lib/roles';
+import { getErrorMessage } from '@/lib/utils';
 import type { AppRole } from '@/types';
 
 /**
@@ -19,6 +22,7 @@ import type { AppRole } from '@/types';
 const ROLE_DESCRIPTION_KEYS: Record<AppRole, string> = {
   super_admin: 'roles.descriptions.super_admin',
   admin: 'roles.descriptions.admin',
+  manager: 'roles.descriptions.manager',
   payroll_admin: 'roles.descriptions.payroll_admin',
   hr_manager: 'roles.descriptions.hr_manager',
   finance: 'roles.descriptions.finance',
@@ -38,7 +42,7 @@ function groupOrder(permissions: PermissionDescriptor[]): string[] {
 
 export function RoleManagement() {
   const { t } = useTranslation();
-  const { data, isLoading, isError, error } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['auth', 'permissions', 'matrix'],
     queryFn: permissionsApi.matrix,
     staleTime: 5 * 60_000,
@@ -54,10 +58,20 @@ export function RoleManagement() {
 
   if (isError || !data) {
     return (
-      <div className="card p-5">
-        <p className="text-sm text-red-600">
-          {t('roles.matrixLoadFailed')}{error instanceof Error ? `: ${error.message}` : '.'}
-        </p>
+      <div className="space-y-6">
+        <PageHeader title={t('roles.title')} subtitle={t('roles.subtitle')} />
+        <div className="card">
+          <EmptyState
+            icon={AlertTriangle}
+            title={t('roles.matrixLoadFailed')}
+            description={getErrorMessage(error, t('common.error'))}
+            action={
+              <button type="button" onClick={() => refetch()} className="btn-secondary">
+                {t('common.retry')}
+              </button>
+            }
+          />
+        </div>
       </div>
     );
   }
@@ -68,34 +82,29 @@ export function RoleManagement() {
 
   return (
     <div className="space-y-6">
-      <div className="page-header">
-        <h1 className="page-title">{t('roles.title')}</h1>
-        <p className="page-subtitle">
-          {t('roles.subtitle')}
-        </p>
-      </div>
+      <PageHeader title={t('roles.title')} subtitle={t('roles.subtitle')} />
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         {roles.map((role) => {
           const multiCompany = !SINGLE_COMPANY_ROLES.includes(role.key);
           return (
             <div key={role.key} className="card p-5 space-y-3">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2">
                 <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${roleBadgeClass(role.key)}`}>
                   {roleLabel(role.key)}
                 </span>
                 {multiCompany ? (
-                  <span className="text-[10px] uppercase tracking-wider text-green-600 font-semibold">
+                  <span className="text-[10px] uppercase tracking-wider text-green-600 dark:text-emerald-400 font-semibold">
                     {t('roles.multiCompany')}
                   </span>
                 ) : (
-                  <span className="text-[10px] uppercase tracking-wider text-gray-400 font-semibold">
+                  <span className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-slate-500 font-semibold">
                     {t('roles.singleCompany')}
                   </span>
                 )}
               </div>
-              <p className="text-sm text-gray-500">{ROLE_DESCRIPTION_KEYS[role.key] ? t(ROLE_DESCRIPTION_KEYS[role.key]) : ''}</p>
-              <p className="text-xs text-gray-400">
+              <p className="text-sm text-gray-500 dark:text-slate-400">{ROLE_DESCRIPTION_KEYS[role.key] ? t(ROLE_DESCRIPTION_KEYS[role.key]) : ''}</p>
+              <p className="text-xs text-gray-400 dark:text-slate-500">
                 {role.permissions.length === 0
                   ? t('roles.noPermissions')
                   : t('roles.permissionCount', { count: role.permissions.length })}
@@ -106,8 +115,8 @@ export function RoleManagement() {
       </div>
 
       <div className="card p-0 overflow-hidden">
-        <div className="p-5 border-b border-gray-100">
-          <h2 className="text-base font-semibold text-gray-900">{t('roles.matrixTitle')}</h2>
+        <div className="p-5 border-b border-gray-100 dark:border-slate-800">
+          <h2 className="text-base font-semibold text-gray-900 dark:text-slate-100">{t('roles.matrixTitle')}</h2>
         </div>
         {/* Wide table: scrolls within its own container so the page body never
             scrolls sideways on a narrow viewport. */}
@@ -115,7 +124,7 @@ export function RoleManagement() {
           <table className="data-table">
             <thead>
               <tr>
-                <th className="sticky left-0 bg-gray-50 z-10">{t('roles.permission')}</th>
+                <th className="sticky left-0 bg-gray-50 dark:bg-slate-800 z-10">{t('roles.permission')}</th>
                 {roles.map((role) => (
                   <th key={role.key} className="text-center whitespace-nowrap">
                     <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${roleBadgeClass(role.key)}`}>
@@ -130,7 +139,7 @@ export function RoleManagement() {
                 <Fragment key={group}>
                   <tr>
                     <td
-                      className="sticky left-0 bg-gray-50 z-10 text-xs font-semibold uppercase tracking-wider text-gray-500"
+                      className="sticky left-0 bg-gray-50 dark:bg-slate-800 z-10 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400"
                       colSpan={roles.length + 1}
                     >
                       {t(`permissions.groups.${groupKey(group)}`, { defaultValue: group })}
@@ -140,19 +149,19 @@ export function RoleManagement() {
                     .filter((permission) => permission.group === group)
                     .map((permission) => (
                       <tr key={permission.key}>
-                        <td className="sticky left-0 bg-white z-10 font-medium text-gray-700">
+                        <td className="sticky left-0 bg-white dark:bg-slate-900 z-10 font-medium text-gray-700 dark:text-slate-200">
                           {t(`permissions.labels.${permission.key}`, { defaultValue: permission.label })}
                         </td>
                         {roles.map((role) => (
                           <td key={role.key} className="text-center">
                             {grantedBy.get(role.key)?.has(permission.key) ? (
                               <Check
-                                className="w-4 h-4 text-green-500 mx-auto"
+                                className="w-4 h-4 text-green-500 dark:text-emerald-400 mx-auto"
                                 aria-label={t('roles.can', { role: roleLabel(role.key), permission: t(`permissions.labels.${permission.key}`, { defaultValue: permission.label }) })}
                               />
                             ) : (
                               <X
-                                className="w-4 h-4 text-gray-200 mx-auto"
+                                className="w-4 h-4 text-gray-200 dark:text-slate-700 mx-auto"
                                 aria-label={t('roles.cannot', { role: roleLabel(role.key), permission: t(`permissions.labels.${permission.key}`, { defaultValue: permission.label }) })}
                               />
                             )}
@@ -163,13 +172,13 @@ export function RoleManagement() {
                 </Fragment>
               ))}
               <tr>
-                <td className="sticky left-0 bg-white z-10 font-medium text-gray-700">{t('roles.multiCompany')}</td>
+                <td className="sticky left-0 bg-white dark:bg-slate-900 z-10 font-medium text-gray-700 dark:text-slate-200">{t('roles.multiCompany')}</td>
                 {roles.map((role) => (
                   <td key={role.key} className="text-center">
                     {SINGLE_COMPANY_ROLES.includes(role.key) ? (
-                      <X className="w-4 h-4 text-gray-200 mx-auto" />
+                      <X className="w-4 h-4 text-gray-200 dark:text-slate-700 mx-auto" />
                     ) : (
-                      <Check className="w-4 h-4 text-green-500 mx-auto" />
+                      <Check className="w-4 h-4 text-green-500 dark:text-emerald-400 mx-auto" />
                     )}
                   </td>
                 ))}
@@ -180,7 +189,7 @@ export function RoleManagement() {
       </div>
 
       {Object.keys(ROLE_META).length !== roles.length && (
-        <p className="text-xs text-amber-600">
+        <p className="text-xs text-amber-600 dark:text-amber-400">
           {t('roles.countMismatch', { api: roles.length, known: Object.keys(ROLE_META).length })}
         </p>
       )}

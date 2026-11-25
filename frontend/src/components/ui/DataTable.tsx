@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Modal } from './Modal';
 import { Skeleton } from './Skeleton';
+import { useMediaQuery } from '@/lib/useMediaQuery';
 
 export interface Column<T> {
   key: string;
@@ -243,12 +244,66 @@ export function DataTable<T>({
   };
 
   const skeletonRows = Math.min(perPage, 5);
+  const sortableColumns = !isServerSide ? columns.filter((c) => Boolean(c.sortValue)) : [];
+  const mobileSortValue = sortState ? `${sortState.key}:${sortState.dir}` : '';
+  const handleMobileSortChange = (raw: string) => {
+    if (!raw) {
+      setSortState(null);
+      return;
+    }
+    const idx = raw.lastIndexOf(':');
+    const key = raw.slice(0, idx);
+    const dir = raw.slice(idx + 1) as 'asc' | 'desc';
+    setSortState({ key, dir });
+  };
+
+  const isDesktop = useMediaQuery('(min-width: 768px)', true);
 
   return (
     <>
       <div className="card !p-0 overflow-hidden">
-        {/* Mobile card view */}
+        {!isDesktop ? (
+        /* Mobile card view */
         <div className="md:hidden">
+          {!isLoading && (selectable || sortableColumns.length > 0) && displayData.length > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 dark:border-slate-800 bg-gray-50/80 dark:bg-slate-900/60 px-4 py-2">
+              {selectable ? (
+                <label className="inline-flex min-h-11 items-center gap-2.5 text-xs font-medium text-gray-700 dark:text-slate-200 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={allDisplayRowsSelected}
+                    disabled={!hasSelectableRows}
+                    onChange={toggleDisplaySelection}
+                    className="h-4 w-4 rounded border-gray-300 text-[var(--accent-1)] focus:ring-[var(--ring)] disabled:opacity-40"
+                    aria-label={t('common.selectAll')}
+                  />
+                  <span>{t('common.selectAll')}</span>
+                </label>
+              ) : (
+                <span />
+              )}
+              {sortableColumns.length > 0 && (
+                <select
+                  aria-label={t('ux.table.sortLabel')}
+                  value={mobileSortValue}
+                  onChange={(e) => handleMobileSortChange(e.target.value)}
+                  className="min-h-10 rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2.5 py-1 text-xs font-medium text-gray-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                >
+                  <option value="">{t('ux.table.sortDefault')}</option>
+                  {sortableColumns.map((col) => (
+                    <optgroup key={col.key} label={col.header}>
+                      <option value={`${col.key}:asc`}>
+                        {t('ux.table.sortAscOption', { column: col.header })}
+                      </option>
+                      <option value={`${col.key}:desc`}>
+                        {t('ux.table.sortDescOption', { column: col.header })}
+                      </option>
+                    </optgroup>
+                  ))}
+                </select>
+              )}
+            </div>
+          )}
           {isLoading ? (
             <div className="divide-y divide-gray-100 dark:divide-slate-800 p-4 space-y-3" role="status">
               <span className="sr-only">{t('common.loading')}</span>
@@ -282,7 +337,7 @@ export function DataTable<T>({
                   {/* Primary fields */}
                   <div className="flex items-start justify-between gap-3">
                     {selectable && (
-                      <div className="pt-0.5" onClick={(e) => e.stopPropagation()}>
+                      <div className="-m-2 inline-flex min-h-11 min-w-11 items-center justify-center shrink-0" onClick={(e) => e.stopPropagation()}>
                         <input
                           type="checkbox"
                           checked={selectedKeySet.has(getKey(row, idx))}
@@ -322,8 +377,8 @@ export function DataTable<T>({
             </div>
           )}
         </div>
-
-        {/* Desktop table view */}
+        ) : (
+        /* Desktop table view */
         <div className="hidden md:block overflow-x-auto">
           <table className="w-full">
             <thead className="bg-gray-50/80 dark:bg-slate-900/60 text-left border-b border-gray-100 dark:border-slate-800">
@@ -458,6 +513,7 @@ export function DataTable<T>({
             </tbody>
           </table>
         </div>
+        )}
 
         {/* Pagination */}
         {(totalPages > 1 || currentPage > 1) && !isLoading && (
@@ -467,10 +523,11 @@ export function DataTable<T>({
             </span>
             <div className="flex items-center gap-1">
               <button
+                type="button"
                 onClick={() => setCurrentPage(Math.max(1, safePage - 1))}
                 disabled={safePage === 1}
                 aria-label={t('a11y.previousPage')}
-                className="p-2 sm:p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                className="min-h-11 min-w-11 sm:min-h-8 sm:min-w-8 inline-flex items-center justify-center rounded-lg hover:bg-gray-200 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
                 <ChevronLeft className="w-4 h-4" />
               </button>
@@ -483,8 +540,10 @@ export function DataTable<T>({
                     <span key={`e${i}`} className="px-1 text-gray-400">...</span>
                   ) : (
                     <button
+                      type="button"
                       key={p}
                       onClick={() => setCurrentPage(p)}
+                      aria-current={p === safePage ? 'page' : undefined}
                       className={`min-w-[32px] h-8 rounded-lg text-sm font-medium transition-all ${
                         p === safePage
                           ? 'bg-gradient-to-br from-[var(--accent-1)] to-[var(--accent-2)] text-white shadow-sm'
@@ -497,10 +556,11 @@ export function DataTable<T>({
                 )}
               </div>
               <button
+                type="button"
                 onClick={() => setCurrentPage(Math.min(Math.max(1, totalPages), safePage + 1))}
                 disabled={safePage >= Math.max(1, totalPages)}
                 aria-label={t('a11y.nextPage')}
-                className="p-2 sm:p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                className="min-h-11 min-w-11 sm:min-h-8 sm:min-w-8 inline-flex items-center justify-center rounded-lg hover:bg-gray-200 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
                 <ChevronRight className="w-4 h-4" />
               </button>

@@ -358,6 +358,7 @@ pub fn create_router(state: AppState) -> Router {
             "/admin/platform/2fa-policy",
             get(admin::get_2fa_policy).put(admin::set_2fa_policy),
         )
+        .route("/admin/platform/health", get(admin::get_platform_health))
         // Employees
         .route("/employees", get(employee::list).post(employee::create))
         .route(
@@ -492,6 +493,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/notifications/read-all", put(notification::mark_all_read))
         .route("/notifications/{id}/read", put(notification::mark_read))
         // Approval Workflows (admin)
+        .route("/approvals/pending-count", get(approval::pending_counts))
         .route(
             "/approvals/leave",
             get(approval::list_leave_requests).post(approval::create_leave_request),

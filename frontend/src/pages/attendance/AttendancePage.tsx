@@ -1,7 +1,8 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { useSearchParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useToast } from '@/lib/toast';
+import { useConfirm } from '@/lib/confirm';
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import {
   Clock,
@@ -20,6 +21,9 @@ import {
   Timer,
   Download,
   ListChecks,
+  Settings,
+  Link2,
+  WifiOff,
 } from 'lucide-react';
 import {
   getAttendanceMethod,
@@ -29,13 +33,14 @@ import {
   setCompanyAttendanceMethod,
   type AttendanceRecordWithEmployee,
 } from '@/api/attendance';
-import { useAuth } from '@/context/AuthContext';
-import { hasAnyRole } from '@/lib/roles';
+import { usePermissions } from '@/lib/usePermissions';
+import { zonedDateKey } from '@/lib/attendance';
 import { getErrorMessage } from '@/lib/utils';
 import { EmployeePicker } from '@/components/employees/EmployeePicker';
 import { WorkScheduleCard } from '@/components/attendance/WorkScheduleCard';
 import { GeofenceCard } from '@/components/attendance/GeofenceCard';
 import { NetworkCard } from '@/components/attendance/NetworkCard';
+import { KioskCredentialsModal } from './KioskCredentialsModal';
 import {
   METHOD_CONFIG,
   STATUS_COLORS,
@@ -55,43 +60,57 @@ import { EditAttendanceModal, ManualEntryModal, RecordCard } from './AttendanceR
  *  the initial state as filters are added. */
 const NO_FILTERS = {
   date_from: '', date_to: '', status: '', method: '', employee_id: '',
-  open_only: false, outside_geofence_only: false,
+  open_only: false, outside_geofence_only: false, offsite_network_only: false,
 };
 
 export function AttendancePage() {
   const { t } = useTranslation();
   const toast = useToast();
-  const [searchParams] = useSearchParams();
-  const { user } = useAuth();
+  const confirmDialog = useConfirm();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { can } = usePermissions();
   const queryClient = useQueryClient();
+
   const urlStatus = searchParams.get('status') ?? '';
   const urlOpenOnly = searchParams.get('open_only') === '1';
   const urlOutsideGeofence = searchParams.get('outside_geofence') === '1';
+  const urlOffsiteNetwork = searchParams.get('offsite_network') === '1';
+  const urlTab = searchParams.get('tab');
 
-  const [tab, setTab] = useState<'records' | 'summary'>('records');
-  const [filters, setFilters] = useState(() => ({
-    ...NO_FILTERS,
-    status: urlStatus,
-    open_only: urlOpenOnly,
-    outside_geofence_only: urlOutsideGeofence,
-  }));
+  const canView = can('view_attendance');
+  const canEdit = can('manage_attendance');
+  const canGenerateQr = can('generate_attendance_qr');
+  const canManageKiosks = can('manage_kiosks');
+  const canManageSchedule = can('manage_work_schedules');
+  const canManageGeofence = can('manage_geofence');
+  const canManageNetworks = can('manage_attendance_networks');
+  const canConfigure = canManageSchedule || canManageGeofence || canManageNetworks;
+
+  const initialTab: 'records' | 'summary' | 'settings' =
+    urlTab === 'settings' && canConfigure
+      ? 'settings'
+      : urlTab === 'summary'
+        ? 'summary'
+        : 'records';
+
+  const [tab, setTab] = useState<'records' | 'summary' | 'settings'>(initialTab);
+  const [filterOverrides, setFilterOverrides] = useState<typeof NO_FILTERS | null>(null);
   const [page, setPage] = useState(1);
 
-  const prevUrlFilterKey = useRef(`${urlStatus}|${urlOpenOnly}|${urlOutsideGeofence}`);
-  useEffect(() => {
-    const nextKey = `${urlStatus}|${urlOpenOnly}|${urlOutsideGeofence}`;
-    if (prevUrlFilterKey.current === nextKey) return;
-    prevUrlFilterKey.current = nextKey;
-    setTab('records');
-    setFilters((prev) => ({
-      ...prev,
-      status: urlStatus,
-      open_only: urlOpenOnly,
-      outside_geofence_only: urlOutsideGeofence,
-    }));
-    setPage(1);
-  }, [urlStatus, urlOpenOnly, urlOutsideGeofence]);
+  const filters = useMemo<typeof NO_FILTERS>(
+    () =>
+      filterOverrides ?? {
+        ...NO_FILTERS,
+        status: urlStatus,
+        open_only: urlOpenOnly,
+        outside_geofence_only: urlOutsideGeofence,
+        offsite_network_only: urlOffsiteNetwork,
+      },
+    [filterOverrides, urlStatus, urlOpenOnly, urlOutsideGeofence, urlOffsiteNetwork],
+  );
+
   const [showManual, setShowManual] = useState(false);
+  const [showHeaderKiosks, setShowHeaderKiosks] = useState(false);
   const [editRecord, setEditRecord] = useState<AttendanceRecordWithEmployee | null>(null);
   const [exporting, setExporting] = useState(false);
   const [pageError, setPageError] = useState('');
@@ -101,9 +120,14 @@ export function AttendancePage() {
   const { data: method } = useQuery({
     queryKey: ['attendance-method'],
     queryFn: getAttendanceMethod,
+    enabled: canView || canConfigure || canManageKiosks || canGenerateQr,
   });
 
-  const today = todayInZone(method?.timezone);
+  const timeZone = method?.timezone || 'Asia/Kuala_Lumpur';
+  const today = todayInZone(timeZone);
+
+  const canSwitchMethod =
+    Boolean(method?.allow_company_override) && can('set_company_attendance_method');
 
   const { data: result, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['attendance-records', filters, page],
@@ -115,39 +139,23 @@ export function AttendancePage() {
       employee_id: filters.employee_id || undefined,
       open_only:   filters.open_only   || undefined,
       outside_geofence_only: filters.outside_geofence_only || undefined,
+      offsite_network_only: filters.offsite_network_only || undefined,
       page,
       per_page:  perPage,
     }),
-    // Keep the previous page rendered while the next one loads instead of
-    // collapsing the table into a spinner on every click.
+    enabled: canView,
     placeholderData: keepPreviousData,
   });
 
   const records = result?.data ?? [];
   const totalPages = result?.total_pages ?? 1;
   const total = result?.total ?? 0;
-  const forbidden = (error as { response?: { status?: number } } | null)?.response?.status === 403;
-
-  // Capability sets mirroring the backend gates, so we never render a control
-  // whose endpoint will 403. Previously one broad `isAdmin` showed payroll_admin
-  // and exec buttons that always failed, and hid Export from finance which the
-  // backend allows.
-  const canView = hasAnyRole(user, ['super_admin', 'admin', 'hr_manager', 'payroll_admin', 'finance', 'exec']);
-  const canEdit = hasAnyRole(user, ['super_admin', 'admin', 'hr_manager']);
-  const canManageKiosks = hasAnyRole(user, ['super_admin', 'admin', 'hr_manager', 'payroll_admin']);
-  const canGenerateQr = canManageKiosks;
-  const canConfigure = hasAnyRole(user, ['super_admin', 'admin', 'hr_manager']);
-
-  // The settings page tells super admins that company admins can switch method
-  // here when override is enabled. Until now nothing called the endpoint, so
-  // that documented flow was impossible.
-  const canSwitchMethod =
-    Boolean(method?.allow_company_override) && hasAnyRole(user, ['super_admin', 'admin']);
+  const forbidden = !canView || (error as { response?: { status?: number } } | null)?.response?.status === 403;
 
   const methodMut = useMutation({
-    mutationFn: (m: string) => setCompanyAttendanceMethod(m),
+    mutationFn: (m: string | null) => setCompanyAttendanceMethod(m),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['attendance-method'] });
+      void queryClient.invalidateQueries({ queryKey: ['attendance-method'] });
       setPageError('');
     },
     onError: (e) => setPageError(getErrorMessage(e, t('attendance.page.methodFailed'))),
@@ -156,8 +164,8 @@ export function AttendancePage() {
   const backfillMut = useMutation({
     mutationFn: (date: string) => runAbsentMarking(date),
     onSuccess: (res) => {
-      queryClient.invalidateQueries({ queryKey: ['attendance-records'] });
-      queryClient.invalidateQueries({ queryKey: ['attendance-summary'] });
+      void queryClient.invalidateQueries({ queryKey: ['attendance-records'] });
+      void queryClient.invalidateQueries({ queryKey: ['attendance-summary'] });
       setPageError('');
       setBackfillDate('');
       toast.success(t('attendance.page.backfillDone', { count: res.marked, date: res.date }));
@@ -166,60 +174,106 @@ export function AttendancePage() {
   });
 
   // Reset to page 1 when filters change
-  const updateFilter = (key: string, value: string | boolean) => {
-    setFilters(p => ({ ...p, [key]: value }));
+  const updateFilter = (key: keyof typeof NO_FILTERS, value: string | boolean) => {
+    setFilterOverrides((prev) => ({ ...(prev ?? filters), [key]: value }));
     setPage(1);
   };
 
-  const hasFilters = useMemo(
-    () => Boolean(
-      filters.date_from || filters.date_to || filters.status ||
-      filters.method || filters.employee_id || filters.open_only ||
-      filters.outside_geofence_only
-    ),
-    [filters],
+  const clearFilters = () => {
+    setFilterOverrides(NO_FILTERS);
+    if (urlStatus || urlOpenOnly || urlOutsideGeofence || urlOffsiteNetwork) {
+      const next = new URLSearchParams(searchParams);
+      next.delete('status');
+      next.delete('open_only');
+      next.delete('outside_geofence');
+      next.delete('offsite_network');
+      setSearchParams(next, { replace: true });
+    }
+    setPage(1);
+  };
+
+  const hasFilters = Boolean(
+    filters.date_from || filters.date_to || filters.status ||
+    filters.method || filters.employee_id || filters.open_only ||
+    filters.outside_geofence_only || filters.offsite_network_only
   );
 
   const showOpenSessions = () => {
     setTab('records');
-    setFilters({ ...NO_FILTERS, open_only: true });
+    setFilterOverrides({ ...NO_FILTERS, open_only: true });
     setPage(1);
   };
 
+  const handleBackfill = async () => {
+    if (!backfillDate) return;
+    const ok = await confirmDialog({
+      description: t('attendance.page.backfillConfirm', { date: backfillDate }),
+      confirmLabel: t('attendance.page.markAbsences'),
+      variant: 'warning',
+    });
+    if (ok) {
+      backfillMut.mutate(backfillDate);
+    }
+  };
+
+  const tabItems = [
+    { key: 'records' as const, label: t('attendance.page.tabs.records'), icon: Clock },
+    { key: 'summary' as const, label: t('attendance.page.tabs.summary'), icon: ListChecks },
+    ...(canConfigure
+      ? [{ key: 'settings' as const, label: t('attendance.page.tabs.settings'), icon: Settings }]
+      : []),
+  ];
+
+  const showQrPanel = method?.method === 'qr_code' && (canGenerateQr || canManageKiosks);
+
   return (
     <div>
-      {/* Header — actions drop to their own row on phones rather than
-          squeezing the title into a two-line button stack. */}
+      {/* Header */}
       <div className="flex flex-col gap-3 mb-6 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
-          <h1 className="text-2xl font-bold text-gray-900">{t('attendance.page.title')}</h1>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-slate-100">{t('attendance.page.title')}</h1>
           {method && (
-            <div className="text-sm text-gray-500 mt-0.5 flex items-center gap-1.5">
+            <div className="text-sm text-gray-500 dark:text-slate-400 mt-0.5 flex flex-wrap items-center gap-1.5">
               <span>{t('attendance.page.method')}</span>
               {canSwitchMethod ? (
                 <select
-                  value={method.method}
-                  onChange={e => methodMut.mutate(e.target.value)}
+                  value={method.is_company_override ? method.method : ''}
+                  onChange={e => methodMut.mutate(e.target.value || null)}
                   disabled={methodMut.isPending}
-                  className="px-2 py-0.5 border border-gray-200 rounded-lg text-sm font-medium text-gray-700 outline-none focus:ring-1 focus:ring-black disabled:opacity-50"
+                  aria-label={t('attendance.page.method')}
+                  className="form-input !w-auto !py-1 !px-2 text-sm font-medium disabled:opacity-50"
                 >
+                  <option value="">{`${attMethodLabel(method.method)} (${t('attendance.page.methodDefault')})`}</option>
                   <option value="qr_code">{attMethodLabel('qr_code')}</option>
                   <option value="face_id">{attMethodLabel('face_id')}</option>
                 </select>
               ) : (
-                <span className="font-medium text-gray-700">
+                <span className="font-medium text-gray-700 dark:text-slate-200">
                   {attMethodLabel(method.method)}
                 </span>
               )}
               {method.is_company_override && (
-                <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">{t('attendance.page.companyOverride')}</span>
+                <span className="text-xs bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300 px-1.5 py-0.5 rounded">
+                  {t('attendance.page.companyOverride')}
+                </span>
               )}
             </div>
           )}
         </div>
-        <div className="flex gap-2 shrink-0">
-          {canView && (
+        <div className="flex flex-wrap gap-2 shrink-0">
+          {canManageKiosks && method?.method !== 'qr_code' && (
             <button
+              type="button"
+              onClick={() => setShowHeaderKiosks(true)}
+              className="btn-secondary flex-1 sm:flex-none !py-2 !min-h-10"
+            >
+              <Link2 className="w-4 h-4 shrink-0" />
+              {t('attendance.kioskModal.title')}
+            </button>
+          )}
+          {canView && tab === 'records' && (
+            <button
+              type="button"
               onClick={async () => {
                 setExporting(true);
                 setPageError('');
@@ -232,15 +286,13 @@ export function AttendancePage() {
                     employee_id: filters.employee_id || undefined,
                   });
                 } catch (e) {
-                  // Previously try/finally with no catch: a failed export was an
-                  // unhandled rejection and the admin saw nothing at all.
                   setPageError(getErrorMessage(e, t('attendance.page.exportFailed')));
                 } finally {
                   setExporting(false);
                 }
               }}
               disabled={exporting}
-              className="flex flex-1 sm:flex-none items-center justify-center gap-2 whitespace-nowrap text-sm font-medium px-4 py-2 rounded-xl border border-gray-300 hover:bg-gray-50 transition-colors disabled:opacity-50"
+              className="btn-secondary flex-1 sm:flex-none !py-2 !min-h-10"
             >
               <Download className="w-4 h-4 shrink-0" />
               {exporting ? t('common.exporting') : t('attendance.page.exportCsv')}
@@ -248,8 +300,9 @@ export function AttendancePage() {
           )}
           {canEdit && (
             <button
+              type="button"
               onClick={() => setShowManual(true)}
-              className="flex flex-1 sm:flex-none items-center justify-center gap-2 whitespace-nowrap bg-black text-white text-sm font-medium px-4 py-2 rounded-xl hover:bg-gray-800 transition-colors"
+              className="btn-primary flex-1 sm:flex-none !py-2 !min-h-10"
             >
               <Plus className="w-4 h-4 shrink-0" />
               {t('attendance.page.manualEntry')}
@@ -259,81 +312,84 @@ export function AttendancePage() {
       </div>
 
       {pageError && (
-        <div className="mb-4 px-4 py-3 rounded-xl bg-red-50 border border-red-200 text-sm text-red-700 flex items-center gap-2">
+        <div role="alert" className="mb-4 px-4 py-3 rounded-xl bg-red-50 dark:bg-red-500/15 border border-red-200 dark:border-red-500/30 text-sm text-red-700 dark:text-red-300 flex items-center gap-2">
           <AlertCircle className="w-4 h-4 shrink-0" />
           {pageError}
         </div>
       )}
 
-      <StatsBar today={today} onShowOpen={showOpenSessions} />
-
-      {/* Work Schedule, Geofence & Office Network */}
-      {canConfigure && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-          <WorkScheduleCard />
-          <GeofenceCard />
-          <NetworkCard />
-        </div>
-      )}
+      {canView && <StatsBar today={today} onShowOpen={showOpenSessions} />}
 
       {/* Tabs */}
-      <div className="flex items-center gap-1 mb-4 border-b border-gray-200">
-        {([
-          { key: 'records', label: t('attendance.page.tabs.records'), icon: Clock },
-          { key: 'summary', label: t('attendance.page.tabs.summary'), icon: ListChecks },
-        ] as const).map(t => (
-          <button
-            key={t.key}
-            onClick={() => setTab(t.key)}
-            className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
-              tab === t.key
-                ? 'border-black text-gray-900'
-                : 'border-transparent text-gray-500 hover:text-gray-800'
-            }`}
-          >
-            <t.icon className="w-4 h-4" />
-            {t.label}
-          </button>
-        ))}
+      <div role="tablist" aria-label={t('attendance.page.title')} className="flex items-center gap-1 mb-4 border-b border-gray-200 dark:border-slate-800 overflow-x-auto">
+        {tabItems.map(item => {
+          const selected = tab === item.key;
+          return (
+            <button
+              key={item.key}
+              type="button"
+              role="tab"
+              aria-selected={selected}
+              onClick={() => setTab(item.key)}
+              className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap shrink-0 ${
+                selected
+                  ? 'border-gray-900 dark:border-[var(--accent-1)] text-gray-900 dark:text-slate-100'
+                  : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200'
+              }`}
+            >
+              <item.icon className="w-4 h-4" />
+              {item.label}
+            </button>
+          );
+        })}
       </div>
 
-      {tab === 'summary' ? (
+      {tab === 'settings' && canConfigure ? (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {canManageSchedule && <WorkScheduleCard />}
+          {canManageGeofence && <GeofenceCard />}
+          {canManageNetworks && <NetworkCard enabled={canManageNetworks} />}
+        </div>
+      ) : tab === 'summary' ? (
         <SummaryTab today={today} canExport={canView} />
       ) : (
-      <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
+      <div className={`grid grid-cols-1 gap-6 ${showQrPanel ? 'xl:grid-cols-[300px_minmax(0,1fr)]' : ''}`}>
         {/* QR Panel — only in QR mode */}
-        {method?.method === 'qr_code' && canManageKiosks && (
-          <div className="xl:col-span-1">
-            <QrPanel canGenerate={canGenerateQr} />
+        {showQrPanel && (
+          <div>
+            <QrPanel canGenerate={canGenerateQr} canManageKiosks={canManageKiosks} />
           </div>
         )}
 
         {/* Records Table */}
-        <div className={method?.method === 'qr_code' && canManageKiosks ? 'xl:col-span-3' : 'xl:col-span-4'}>
-          <div className="bg-white rounded-2xl shadow">
+        <div className="min-w-0">
+          <div className="bg-white dark:bg-slate-900 border border-gray-200/80 dark:border-slate-800 rounded-2xl shadow-sm overflow-hidden">
             {/* Filters */}
-            <div className="flex flex-wrap items-center gap-2.5 sm:gap-3 p-4 sm:p-5 border-b border-gray-100">
-              <div className="flex w-full sm:w-auto items-center gap-2 text-sm text-gray-600">
+            <div className="flex flex-wrap items-center gap-2.5 sm:gap-3 p-4 sm:p-5 border-b border-gray-100 dark:border-slate-800">
+              <div className="flex w-full sm:w-auto items-center gap-2 text-sm text-gray-600 dark:text-slate-300">
                 <Filter className="w-4 h-4" /> {t('attendance.page.filters')}
               </div>
               <input
                 type="date"
                 value={filters.date_from}
                 onChange={e => updateFilter('date_from', e.target.value)}
-                className="min-w-[8.5rem] flex-1 sm:flex-none px-3 py-1.5 border border-gray-200 rounded-lg text-sm outline-none focus:ring-1 focus:ring-black"
+                aria-label={t('attendance.page.from')}
+                className="form-input !w-auto min-w-[8.5rem] flex-1 sm:flex-none !py-1.5"
                 placeholder={t('attendance.page.from')}
               />
               <input
                 type="date"
                 value={filters.date_to}
                 onChange={e => updateFilter('date_to', e.target.value)}
-                className="min-w-[8.5rem] flex-1 sm:flex-none px-3 py-1.5 border border-gray-200 rounded-lg text-sm outline-none focus:ring-1 focus:ring-black"
+                aria-label={t('attendance.page.to')}
+                className="form-input !w-auto min-w-[8.5rem] flex-1 sm:flex-none !py-1.5"
                 placeholder={t('attendance.page.to')}
               />
               <select
                 value={filters.status}
                 onChange={e => updateFilter('status', e.target.value)}
-                className="min-w-[8.5rem] flex-1 sm:flex-none px-3 py-1.5 border border-gray-200 rounded-lg text-sm outline-none focus:ring-1 focus:ring-black"
+                aria-label={t('attendance.page.allStatus')}
+                className="form-input !w-auto min-w-[8.5rem] flex-1 sm:flex-none !py-1.5"
               >
                 <option value="">{t('attendance.page.allStatus')}</option>
                 <option value="present">{attStatusLabel('present')}</option>
@@ -344,47 +400,50 @@ export function AttendancePage() {
               <select
                 value={filters.method}
                 onChange={e => updateFilter('method', e.target.value)}
-                className="min-w-[8.5rem] flex-1 sm:flex-none px-3 py-1.5 border border-gray-200 rounded-lg text-sm outline-none focus:ring-1 focus:ring-black"
+                aria-label={t('attendance.page.allMethods')}
+                className="form-input !w-auto min-w-[8.5rem] flex-1 sm:flex-none !py-1.5"
               >
                 <option value="">{t('attendance.page.allMethods')}</option>
                 <option value="qr_code">{attMethodLabel('qr_code')}</option>
                 <option value="face_id">{attMethodLabel('face_id')}</option>
                 <option value="manual">{attMethodLabel('manual')}</option>
               </select>
-              <label className="flex w-full sm:w-auto items-center gap-1.5 text-sm text-gray-600 cursor-pointer select-none">
+              <label className="flex w-full sm:w-auto items-center gap-1.5 text-sm text-gray-600 dark:text-slate-300 cursor-pointer select-none">
                 <input
                   type="checkbox"
                   checked={filters.open_only}
                   onChange={e => updateFilter('open_only', e.target.checked)}
-                  className="rounded border-gray-300"
+                  className="rounded border-gray-300 dark:border-slate-600"
                 />
                 {t('attendance.page.openOnly')}
               </label>
-              {/* The off-site flag was stored and shown per row, but with no
-                  predicate the only way to find these was to page the whole
-                  list hunting for the warning icon. */}
-              <label className="flex w-full sm:w-auto items-center gap-1.5 text-sm text-gray-600 cursor-pointer select-none">
+              <label className="flex w-full sm:w-auto items-center gap-1.5 text-sm text-gray-600 dark:text-slate-300 cursor-pointer select-none">
                 <input
                   type="checkbox"
                   checked={filters.outside_geofence_only}
                   onChange={e => updateFilter('outside_geofence_only', e.target.checked)}
-                  className="rounded border-gray-300"
+                  className="rounded border-gray-300 dark:border-slate-600"
                 />
                 {t('attendance.page.offsiteOnly')}
               </label>
+              <label className="flex w-full sm:w-auto items-center gap-1.5 text-sm text-gray-600 dark:text-slate-300 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={filters.offsite_network_only}
+                  onChange={e => updateFilter('offsite_network_only', e.target.checked)}
+                  className="rounded border-gray-300 dark:border-slate-600"
+                />
+                {t('attendance.page.offsiteNetworkOnly')}
+              </label>
               {hasFilters && (
                 <button
-                  onClick={() => {
-                    setFilters(NO_FILTERS);
-                    setPage(1);
-                  }}
-                  className="text-xs text-gray-500 hover:text-gray-900 underline"
+                  type="button"
+                  onClick={clearFilters}
+                  className="text-xs text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100 underline"
                 >
                   {t('common.clear')}
                 </button>
               )}
-              {/* Employee filter — the API always accepted employee_id; without
-                  a control, auditing one person meant paging the whole company. */}
               <div className="w-full sm:w-72">
                 <EmployeePicker
                   value={filters.employee_id}
@@ -394,10 +453,10 @@ export function AttendancePage() {
               </div>
             </div>
 
-            {/* Backfill a day the daily absence job missed (e.g. deploy window) */}
+            {/* Backfill */}
             {canEdit && (
-              <div className="flex flex-wrap items-center gap-2 px-4 sm:px-5 py-3 border-b border-gray-100 bg-gray-50/60">
-                <span className="text-xs text-gray-500">
+              <div className="flex flex-wrap items-center gap-2 px-4 sm:px-5 py-3 border-b border-gray-100 dark:border-slate-800 bg-gray-50/60 dark:bg-slate-950/40">
+                <span className="text-xs text-gray-500 dark:text-slate-400">
                   {t('attendance.page.backfillHint')}
                 </span>
                 <input
@@ -405,16 +464,18 @@ export function AttendancePage() {
                   value={backfillDate}
                   max={today}
                   onChange={e => setBackfillDate(e.target.value)}
-                  className="px-2.5 py-1 border border-gray-200 rounded-lg text-xs outline-none focus:ring-1 focus:ring-black"
+                  aria-label={t('attendance.page.markAbsences')}
+                  className="form-input !w-auto !py-1 !px-2.5 text-xs"
                 />
                 <button
-                  onClick={() => backfillDate && backfillMut.mutate(backfillDate)}
+                  type="button"
+                  onClick={() => void handleBackfill()}
                   disabled={!backfillDate || backfillMut.isPending}
-                  className="text-xs font-medium px-3 py-1 rounded-lg border border-gray-300 bg-white hover:bg-gray-100 transition-colors disabled:opacity-40"
+                  className="btn-secondary !py-1 !px-3 !min-h-8 text-xs"
                 >
                   {backfillMut.isPending ? t('common.running') : t('attendance.page.markAbsences')}
                 </button>
-                <span className="text-xs text-gray-400">
+                <span className="text-xs text-gray-400 dark:text-slate-500">
                   {t('attendance.page.backfillSafe')}
                 </span>
               </div>
@@ -423,44 +484,44 @@ export function AttendancePage() {
             {/* Table */}
             {isLoading ? (
               <div className="flex items-center justify-center h-48">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-black" />
+                <div className="spinner" />
               </div>
-            ) : isError ? (
-              // A 403 or a network failure must not render as "no records" —
-              // that told an unauthorized user their company had no attendance.
-              <div className="flex flex-col items-center justify-center h-48 gap-2 text-gray-600 px-6 text-center">
-                <AlertCircle className="w-8 h-8 text-red-400" />
+            ) : isError || !canView ? (
+              <div className="flex flex-col items-center justify-center h-48 gap-2 text-gray-600 dark:text-slate-300 px-6 text-center">
+                <AlertCircle className="w-8 h-8 text-red-500" />
                 <p className="text-sm">
                   {forbidden
                     ? t('attendance.page.forbidden')
                     : t('attendance.page.loadFailed')}
                 </p>
                 {!forbidden && (
-                  <button onClick={() => refetch()} className="text-sm font-medium text-gray-900 hover:underline">
+                  <button type="button" onClick={() => refetch()} className="text-sm font-medium text-gray-900 dark:text-slate-100 hover:underline">
                     {t('common.retry')}
                   </button>
                 )}
               </div>
             ) : records.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-48 text-gray-400">
+              <div className="flex flex-col items-center justify-center h-48 text-gray-400 dark:text-slate-500 px-4 text-center">
                 <Calendar className="w-10 h-10 mb-2 opacity-40" />
                 <p className="text-sm">
                   {filters.open_only
                     ? t('attendance.page.emptyOpen')
                     : filters.outside_geofence_only
                       ? t('attendance.page.emptyOffsite')
-                      : t('attendance.page.empty')}
+                      : filters.offsite_network_only
+                        ? t('attendance.page.emptyOffnetwork')
+                        : t('attendance.page.empty')}
                 </p>
               </div>
             ) : (
               <>
-                {/* Cards below lg, table above — see RecordCard. */}
-                <div className="divide-y divide-gray-100 lg:hidden">
+                <div className="divide-y divide-gray-100 dark:divide-slate-800 lg:hidden">
                   {records.map(r => (
                     <RecordCard
                       key={r.id}
                       record={r}
                       canEdit={canEdit}
+                      timeZone={timeZone}
                       onEdit={() => setEditRecord(r)}
                     />
                   ))}
@@ -469,61 +530,87 @@ export function AttendancePage() {
                 <div className="hidden lg:block overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
-                      <tr className="border-b border-gray-100">
-                        {[t('common.date'), t('common.employee'), t('attendance.records.checkIn'), t('attendance.records.checkOut'), t('attendance.summary.hours'), t('attendance.records.method'), t('common.status'), t('attendance.records.location'), ''].map(h => (
-                          <th key={h} className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">
+                      <tr className="border-b border-gray-100 dark:border-slate-800">
+                        {[
+                          t('common.date'),
+                          t('common.employee'),
+                          t('attendance.records.checkIn'),
+                          t('attendance.records.checkOut'),
+                          t('attendance.summary.hours'),
+                          t('attendance.records.method'),
+                          t('common.status'),
+                          t('attendance.records.location'),
+                          ...(canEdit ? [''] : []),
+                        ].map((h, idx) => (
+                          <th key={`${h}-${idx}`} className="px-5 py-3 text-left text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider whitespace-nowrap">
                             {h}
                           </th>
                         ))}
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-gray-50">
+                    <tbody className="divide-y divide-gray-100 dark:divide-slate-800/80">
                       {records.map(r => {
                         const statusCfg = STATUS_COLORS[r.status as keyof typeof STATUS_COLORS];
                         const methodCfg = METHOD_CONFIG[r.method as keyof typeof METHOD_CONFIG];
                         const MethodIcon = methodCfg?.icon ?? MoreVertical;
+                        const isAbsentPlaceholder = r.status === 'absent';
+                        const overnightOut =
+                          !isAbsentPlaceholder &&
+                          Boolean(r.check_out_at) &&
+                          zonedDateKey(r.check_out_at as string, timeZone) > zonedDateKey(r.check_in_at, timeZone);
+
                         return (
-                          <tr key={r.id} className="hover:bg-gray-50/50 transition-colors">
-                            <td className="px-5 py-3.5 whitespace-nowrap text-gray-600">
+                          <tr key={r.id} className="hover:bg-gray-50/70 dark:hover:bg-slate-800/40 transition-colors">
+                            <td className="px-5 py-3.5 whitespace-nowrap text-gray-600 dark:text-slate-300">
                               {formatDate(r.check_in_at)}
                             </td>
                             <td className="px-5 py-3.5">
-                              <div className="font-medium text-gray-900">{r.full_name}</div>
-                              <div className="text-xs text-gray-400">{r.employee_number}</div>
+                              <div className="font-medium text-gray-900 dark:text-slate-100">{r.full_name}</div>
+                              <div className="text-xs text-gray-400 dark:text-slate-500">{r.employee_number}</div>
+                              {r.notes && (
+                                <div className="text-xs text-gray-500 dark:text-slate-400 truncate max-w-[220px]" title={r.notes}>
+                                  {r.notes}
+                                </div>
+                              )}
                             </td>
-                            <td className="px-5 py-3.5 tabular-nums text-gray-700">
+                            <td className="px-5 py-3.5 tabular-nums text-gray-700 dark:text-slate-200 whitespace-nowrap">
                               <div className="flex items-center gap-1.5">
-                                <LogIn className="w-3.5 h-3.5 text-emerald-500" />
-                                {formatTime(r.check_in_at)}
+                                <LogIn className="w-3.5 h-3.5 text-emerald-500 dark:text-emerald-400" />
+                                {isAbsentPlaceholder ? '—' : formatTime(r.check_in_at)}
                               </div>
                             </td>
-                            <td className="px-5 py-3.5 tabular-nums text-gray-700">
+                            <td className="px-5 py-3.5 tabular-nums text-gray-700 dark:text-slate-200 whitespace-nowrap">
                               <div className="flex items-center gap-1.5">
-                                <LogOut className="w-3.5 h-3.5 text-gray-400" />
-                                {formatTime(r.check_out_at)}
+                                <LogOut className="w-3.5 h-3.5 text-gray-400 dark:text-slate-500" />
+                                {isAbsentPlaceholder ? '—' : formatTime(r.check_out_at)}
+                                {overnightOut && (
+                                  <span className="rounded bg-gray-100 dark:bg-slate-800 px-1 py-px text-[10px] font-medium text-gray-600 dark:text-slate-300">
+                                    {t('attendance.records.nextDay')}
+                                  </span>
+                                )}
                               </div>
                             </td>
-                            <td className="px-5 py-3.5 tabular-nums text-gray-700">
+                            <td className="px-5 py-3.5 tabular-nums text-gray-700 dark:text-slate-200 whitespace-nowrap">
                               {r.hours_worked != null ? (
                                 <div className="text-xs">
                                   <span>{t('attendance.hoursShort', { value: Number(r.hours_worked).toFixed(1) })}</span>
                                   {r.overtime_hours != null && Number(r.overtime_hours) > 0 && (
-                                    <span className="ml-1 text-amber-600 font-medium">
+                                    <span className="ml-1 text-amber-600 dark:text-amber-400 font-medium">
                                       <Timer className="w-3 h-3 inline" /> {t('attendance.hoursOtShort', { value: Number(r.overtime_hours).toFixed(1) })}
                                     </span>
                                   )}
                                 </div>
                               ) : (
-                                <span className="text-gray-300 text-xs">---</span>
+                                <span className="text-gray-300 dark:text-slate-600 text-xs">—</span>
                               )}
                             </td>
-                            <td className="px-5 py-3.5">
-                              <div className={`flex items-center gap-1.5 ${methodCfg?.color ?? ''}`}>
+                            <td className="px-5 py-3.5 whitespace-nowrap">
+                              <div className={`flex items-center gap-1.5 ${methodCfg?.color ?? 'text-gray-600 dark:text-slate-300'}`}>
                                 <MethodIcon className="w-3.5 h-3.5" />
                                 <span className="text-xs font-medium">{methodCfg ? attMethodLabel(r.method) : r.method}</span>
                               </div>
                             </td>
-                            <td className="px-5 py-3.5">
+                            <td className="px-5 py-3.5 whitespace-nowrap">
                               <div className="flex items-center gap-1.5">
                                 {statusCfg && (
                                   <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${statusCfg}`}>
@@ -531,33 +618,55 @@ export function AttendancePage() {
                                   </span>
                                 )}
                                 {r.is_outside_geofence && (
-                                  <span title={t('attendance.records.outsideGeofence')} className="text-amber-500">
-                                    <AlertTriangle className="w-3.5 h-3.5" />
+                                  <span title={t('attendance.records.outsideGeofence')} className="text-amber-500 dark:text-amber-400">
+                                    <AlertTriangle className="w-3.5 h-3.5" aria-label={t('attendance.records.outsideGeofence')} />
+                                  </span>
+                                )}
+                                {r.is_offsite_network && (
+                                  <span title={t('attendance.records.offsiteNetwork')} className="text-amber-600 dark:text-amber-400">
+                                    <WifiOff className="w-3.5 h-3.5" aria-label={t('attendance.records.offsiteNetwork')} />
                                   </span>
                                 )}
                               </div>
                             </td>
-                            <td className="px-5 py-3.5">
-                              {r.latitude && r.longitude ? (
-                                <a
-                                  href={`https://maps.google.com/?q=${r.latitude},${r.longitude}`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="flex items-center gap-1 text-sky-600 hover:text-sky-700 text-xs"
-                                >
-                                  <MapPin className="w-3.5 h-3.5" />
-                                  {t('common.view')}
-                                </a>
+                            <td className="px-5 py-3.5 whitespace-nowrap">
+                              {(r.latitude && r.longitude) || (r.checkout_latitude && r.checkout_longitude) ? (
+                                <div className="flex flex-col gap-1 text-xs">
+                                  {r.latitude && r.longitude && (
+                                    <a
+                                      href={`https://maps.google.com/?q=${r.latitude},${r.longitude}`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="flex items-center gap-1 text-sky-600 dark:text-sky-400 hover:text-sky-700 dark:hover:text-sky-300"
+                                    >
+                                      <MapPin className="w-3.5 h-3.5 shrink-0" />
+                                      {t('attendance.records.checkInLocation')}
+                                    </a>
+                                  )}
+                                  {r.checkout_latitude && r.checkout_longitude && (
+                                    <a
+                                      href={`https://maps.google.com/?q=${r.checkout_latitude},${r.checkout_longitude}`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="flex items-center gap-1 text-teal-600 dark:text-teal-400 hover:text-teal-700 dark:hover:text-teal-300"
+                                    >
+                                      <MapPin className="w-3.5 h-3.5 shrink-0" />
+                                      {t('attendance.records.checkOutLocation')}
+                                    </a>
+                                  )}
+                                </div>
                               ) : (
-                                <span className="text-gray-300 text-xs">---</span>
+                                <span className="text-gray-300 dark:text-slate-600 text-xs">—</span>
                               )}
                             </td>
                             {canEdit && (
-                              <td className="px-3 py-3.5">
+                              <td className="px-3 py-3.5 text-right">
                                 <button
+                                  type="button"
                                   onClick={() => setEditRecord(r)}
-                                  className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+                                  className="min-h-10 min-w-10 inline-flex items-center justify-center rounded-lg text-gray-400 dark:text-slate-500 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors"
                                   title={t('attendance.records.editRecord')}
+                                  aria-label={t('attendance.records.editRecord')}
                                 >
                                   <Pencil className="w-3.5 h-3.5" />
                                 </button>
@@ -572,15 +681,17 @@ export function AttendancePage() {
 
                 {/* Pagination */}
                 {totalPages > 1 && (
-                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-4 sm:px-5 py-3 border-t border-gray-100">
-                    <p className="text-xs text-gray-500">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-4 sm:px-5 py-3 border-t border-gray-100 dark:border-slate-800">
+                    <p className="text-xs text-gray-500 dark:text-slate-400">
                       {t('common.showing', { from: (page - 1) * perPage + 1, to: Math.min(page * perPage, total), total })}
                     </p>
                     <div className="flex items-center justify-center gap-1">
                       <button
+                        type="button"
                         onClick={() => setPage(p => Math.max(1, p - 1))}
                         disabled={page <= 1}
-                        className="p-1.5 rounded-lg hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
+                        aria-label={t('common.previousPage')}
+                        className="min-h-10 min-w-10 flex items-center justify-center rounded-lg text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed"
                       >
                         <ChevronLeft className="w-4 h-4" />
                       </button>
@@ -593,9 +704,12 @@ export function AttendancePage() {
                         return (
                           <button
                             key={p}
+                            type="button"
                             onClick={() => setPage(p)}
-                            className={`w-8 h-8 rounded-lg text-xs font-medium transition-colors ${
-                              p === page ? 'bg-black text-white' : 'hover:bg-gray-100 text-gray-600'
+                            className={`w-10 h-10 rounded-lg text-xs font-medium transition-colors ${
+                              p === page
+                                ? 'bg-gray-900 text-white dark:bg-[var(--accent-1)] dark:text-white'
+                                : 'hover:bg-gray-100 dark:hover:bg-slate-800 text-gray-600 dark:text-slate-300'
                             }`}
                           >
                             {p}
@@ -603,9 +717,11 @@ export function AttendancePage() {
                         );
                       })}
                       <button
+                        type="button"
                         onClick={() => setPage(p => Math.min(totalPages, p + 1))}
                         disabled={page >= totalPages}
-                        className="p-1.5 rounded-lg hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
+                        aria-label={t('common.nextPage')}
+                        className="min-h-10 min-w-10 flex items-center justify-center rounded-lg text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed"
                       >
                         <ChevronRight className="w-4 h-4" />
                       </button>
@@ -620,6 +736,7 @@ export function AttendancePage() {
       )}
 
       {showManual && <ManualEntryModal onClose={() => setShowManual(false)} />}
+      {showHeaderKiosks && <KioskCredentialsModal onClose={() => setShowHeaderKiosks(false)} />}
       {editRecord && <EditAttendanceModal record={editRecord} onClose={() => setEditRecord(null)} />}
     </div>
   );

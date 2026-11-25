@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, Printer, Download, FileText } from 'lucide-react';
 import { getMyPayslips, getMyProfile, downloadPayslipPdf } from '@/api/portal';
-import { formatMYR } from '@/lib/utils';
+import { formatMYR, getErrorMessage } from '@/lib/utils';
 import { formatDateLong, formatPeriod, monthName } from '@/lib/format';
 import { KpiSkeletonGrid, Skeleton } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -11,9 +11,18 @@ import type { MyPayslip, Employee } from '@/types';
 
 const MONTH_NUMBERS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 
+function maskAccountNumber(account: string | null | undefined): string {
+  if (!account) return '—';
+  const trimmed = account.trim();
+  if (trimmed.length <= 4) return '••••';
+  return `•••• ${trimmed.slice(-4)}`;
+}
+
 export function MyPayslips() {
   const { t } = useTranslation();
   const [selectedPeriod, setSelectedPeriod] = useState<{ year: number; month: number } | null>(null);
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState('');
 
   const { data: payslips, isLoading } = useQuery({
     queryKey: ['my-payslips'],
@@ -82,16 +91,38 @@ export function MyPayslips() {
           <h1 className="page-title">{profile?.full_name || t('common.employee')}</h1>
         </div>
         {currentPayslip && (
-          <div className="flex items-center gap-2 no-print">
-            <button onClick={() => downloadPayslipPdf(currentPayslip.id)} className="btn-secondary">
-              <Download className="w-4 h-4" /> {t('portal.payslips.downloadPdf')}
+          <div className="flex flex-wrap items-center gap-2 no-print">
+            <button
+              type="button"
+              disabled={downloading}
+              onClick={async () => {
+                setDownloadError('');
+                setDownloading(true);
+                try {
+                  await downloadPayslipPdf(currentPayslip.id);
+                } catch (err) {
+                  setDownloadError(getErrorMessage(err, t('portal.payslips.downloadFailed')));
+                } finally {
+                  setDownloading(false);
+                }
+              }}
+              className="btn-secondary"
+            >
+              <Download className="w-4 h-4" />
+              {downloading ? t('common.loading') : t('portal.payslips.downloadPdf')}
             </button>
-            <button onClick={() => window.print()} className="btn-primary">
+            <button type="button" onClick={() => window.print()} className="btn-primary">
               <Printer className="w-4 h-4" /> {t('portal.payslips.print')}
             </button>
           </div>
         )}
       </div>
+
+      {downloadError && (
+        <div role="alert" className="no-print bg-red-50 dark:bg-red-500/10 border border-red-100 dark:border-red-500/30 text-red-600 dark:text-red-300 text-sm px-4 py-3 rounded-xl">
+          {downloadError}
+        </div>
+      )}
 
       {/* Period Navigation + Recent Available Pills */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between no-print">
@@ -170,7 +201,7 @@ const Row = ({ label, amount, indent, bold, negative }: {
   label: string; amount: number; indent?: boolean; bold?: boolean; negative?: boolean;
 }) => (
   <div className={`flex justify-between py-2 ${indent ? 'pl-4' : ''} ${bold ? 'font-semibold border-t border-gray-200 dark:border-slate-800 pt-3 mt-1' : ''}`}>
-    <span className={`text-sm ${indent ? 'text-gray-400 italic' : 'text-gray-600 dark:text-slate-300'}`}>{label}</span>
+    <span className={`text-sm ${indent ? 'text-gray-500 dark:text-slate-400 italic' : 'text-gray-600 dark:text-slate-300'}`}>{label}</span>
     <span className={`text-sm tabular-nums ${bold ? 'font-bold text-gray-900 dark:text-slate-100' : 'font-medium text-gray-800 dark:text-slate-200'} ${negative ? '!text-red-600 dark:!text-red-400' : ''}`}>
       {negative ? '-' : ''}{formatMYR(Math.abs(amount))}
     </span>
@@ -322,8 +353,11 @@ function PayslipDetail({ payslip, profile }: { payslip: MyPayslip; profile: Empl
           </div>
 
           {profile?.bank_name && (
-            <p className="text-xs text-gray-400 dark:text-slate-500 mt-4 italic">
-              {t('portal.payslips.paidByBank', { bank: profile.bank_name, account: profile.bank_account_number })}
+            <p className="text-xs text-gray-500 dark:text-slate-400 mt-4 italic">
+              {t('portal.payslips.paidByBank', {
+                bank: profile.bank_name,
+                account: maskAccountNumber(profile.bank_account_number),
+              })}
             </p>
           )}
         </div>

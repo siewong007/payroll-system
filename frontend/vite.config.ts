@@ -17,14 +17,16 @@ export default defineConfig({
         codeSplitting: {
           groups: [
             {
+              debugName: 'app-chunks',
               name(moduleId) {
                 if (moduleId.includes('/src/i18n/locales/en')) return 'locale-en'
                 if (moduleId.includes('/src/i18n/locales/ms')) return 'locale-ms'
                 if (moduleId.includes('/src/i18n/locales/zh-CN')) return 'locale-zh-cn'
                 if (moduleId.includes('/src/i18n/locales/zh-TW')) return 'locale-zh-tw'
+                if (moduleId.includes('/src/i18n/serverErrorMap')) return 'server-error-map'
                 if (moduleId.includes('node_modules')) {
                   if (moduleId.includes('html5-qrcode')) return 'vendor-qr'
-                  if (moduleId.includes('framer-motion')) return 'vendor-motion'
+                  if (moduleId.includes('/axios/')) return 'vendor-http'
                   if (moduleId.includes('lucide-react')) return 'vendor-icons'
                   if (moduleId.includes('@tanstack')) return 'vendor-tanstack'
                   if (
@@ -58,5 +60,11 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: './src/tests/setup.ts',
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'lcov'],
+      include: ['src/**/*.{ts,tsx}'],
+      exclude: ['src/tests/**', 'src/types/**'],
+    },
   },
 })

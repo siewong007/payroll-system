@@ -1,3 +1,4 @@
+use chrono::Utc;
 use lettre::address::AddressError;
 use lettre::message::Mailbox;
 use lettre::message::header::ContentType;
@@ -191,90 +192,145 @@ fn from_mailbox(config: &AppConfig) -> AppResult<Mailbox> {
         .map_err(|e| AppError::Internal(format!("Invalid from address: {}", e)))
 }
 
-/// Send a letter and record it, storing the message verbatim.
-#[allow(clippy::too_many_arguments)]
-pub async fn send_email(
-    config: &AppConfig,
-    pool: &PgPool,
-    company_id: Uuid,
-    employee_id: Option<Uuid>,
-    template_id: Option<Uuid>,
-    letter_type: &str,
-    recipient_email: &str,
-    recipient_name: &str,
-    subject: &str,
-    body_html: &str,
-    created_by: Uuid,
-) -> AppResult<EmailLog> {
-    send_email_with_stored_body(
-        config,
-        pool,
-        company_id,
-        employee_id,
-        template_id,
-        letter_type,
-        recipient_email,
-        recipient_name,
-        subject,
-        body_html,
-        body_html,
-        created_by,
-    )
-    .await
+#[derive(Clone)]
+struct MailerInner {
+    transport: AsyncSmtpTransport<Tokio1Executor>,
+    from: Mailbox,
 }
 
-/// Send a letter while recording a *different* body in `email_logs`.
-///
-/// Needed because the log row is written before the SMTP attempt and survives
-/// it — on a deployment with SMTP disabled it is the only thing that happens —
-/// so anything in the message that must not be retained has to be replaced
-/// before the insert, not after. Today the welcome letter is the only caller:
-/// its body carries the account's initial password.
-#[allow(clippy::too_many_arguments)]
-pub async fn send_email_with_stored_body(
-    config: &AppConfig,
-    pool: &PgPool,
-    company_id: Uuid,
-    employee_id: Option<Uuid>,
-    template_id: Option<Uuid>,
-    letter_type: &str,
-    recipient_email: &str,
-    recipient_name: &str,
-    subject: &str,
-    body_html: &str,
-    stored_body_html: &str,
-    created_by: Uuid,
-) -> AppResult<EmailLog> {
-    // Validated before anything is written. A recipient address the mail
-    // library cannot parse used to be discovered *after* `insert_pending`, on
-    // an error path that never marked the row terminal — so the only trace a
-    // mistyped address left was a log row stuck at `pending` for ever. There is
-    // no backend validation anywhere else on the letter path: the frontend's
-    // `includes('@')` was it.
-    let clean_subject = sanitize_header_text(subject);
-    let clean_name = sanitize_header_text(recipient_name);
-    let to = mailbox(&clean_name, recipient_email).map_err(|_| {
-        AppError::Validation(format!("{recipient_email} is not a valid email address"))
-    })?;
+/// Shared, pooled SMTP transport built once at boot and cloned cheaply via
+/// `AppState`.
+#[derive(Clone)]
+pub struct SharedMailer {
+    inner: Option<MailerInner>,
+    init_error: Option<String>,
+}
 
-    // Every remaining fallible step happens before the insert, so that nothing
-    // between the row appearing and its terminal status can fail. That ordering
-    // is the fix: four `Err` paths used to sit inside that gap.
-    let prepared = if config.smtp_enabled() {
+impl SharedMailer {
+    pub fn from_config(config: &AppConfig) -> Self {
+        if !config.smtp_enabled() {
+            return Self {
+                inner: None,
+                init_error: None,
+            };
+        }
+        let from = match from_mailbox(config) {
+            Ok(m) => m,
+            Err(e) => {
+                let msg = format!("{e}");
+                tracing::error!(error = %msg, "Invalid SMTP From address; mailer disabled");
+                return Self {
+                    inner: None,
+                    init_error: Some(msg),
+                };
+            }
+        };
+        let transport = match build_transport(config) {
+            Ok(t) => t,
+            Err(e) => {
+                let msg = format!("{e}");
+                tracing::error!(error = %msg, "Failed to initialize SMTP transport; mailer disabled");
+                return Self {
+                    inner: None,
+                    init_error: Some(msg),
+                };
+            }
+        };
+        Self {
+            inner: Some(MailerInner { transport, from }),
+            init_error: None,
+        }
+    }
+
+    pub fn disabled() -> Self {
+        Self {
+            inner: None,
+            init_error: None,
+        }
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.inner.is_some()
+    }
+
+    async fn send_raw(
+        &self,
+        to_name: &str,
+        to_email: &str,
+        subject: &str,
+        body_html: &str,
+    ) -> Result<(), String> {
+        let Some(ref inner) = self.inner else {
+            return Err(self
+                .init_error
+                .clone()
+                .unwrap_or_else(|| "SMTP not configured".to_string()));
+        };
+        let clean_subject = sanitize_header_text(subject);
+        let to =
+            mailbox(to_name, to_email).map_err(|e| format!("Invalid recipient address: {e}"))?;
         let email = Message::builder()
-            .from(from_mailbox(config)?)
+            .from(inner.from.clone())
             .to(to)
             .subject(&clean_subject)
             .header(ContentType::TEXT_HTML)
             .body(body_html.to_string())
-            .map_err(|e| AppError::Internal(format!("Failed to build email: {}", e)))?;
+            .map_err(|e| format!("Failed to build email: {e}"))?;
+        inner
+            .transport
+            .send(email)
+            .await
+            .map(|_| ())
+            .map_err(|e| format!("{e}"))
+    }
+}
 
-        Some((email, build_transport(config)?))
-    } else {
-        None
-    };
+/// Send a letter using the shared mailer and record it in `email_logs`.
+#[allow(clippy::too_many_arguments)]
+pub async fn send_email(
+    mailer: &SharedMailer,
+    config: &AppConfig,
+    pool: &PgPool,
+    company_id: Uuid,
+    employee_id: Option<Uuid>,
+    template_id: Option<Uuid>,
+    letter_type: &str,
+    recipient_email: &str,
+    recipient_name: &str,
+    subject: &str,
+    body_html: &str,
+    created_by: Uuid,
+) -> AppResult<EmailLog> {
+    let clean_subject = sanitize_header_text(subject);
+    let clean_name = sanitize_header_text(recipient_name);
+    let _ = mailbox(&clean_name, recipient_email).map_err(|_| {
+        AppError::Validation(format!("{recipient_email} is not a valid email address"))
+    })?;
 
-    let log = email_logs::insert_pending(
+    if !config.smtp_enabled() {
+        let log = email_logs::insert_with_delivery_state(
+            pool,
+            company_id,
+            employee_id,
+            template_id,
+            letter_type,
+            recipient_email,
+            &clean_name,
+            &clean_subject,
+            body_html,
+            "failed",
+            Some("SMTP not configured"),
+            0,
+            0,
+            None,
+            created_by,
+        )
+        .await?;
+        tracing::warn!("SMTP not configured, email logged but not sent: {}", log.id);
+        return Ok(log);
+    }
+
+    let log = email_logs::insert_with_delivery_state(
         pool,
         company_id,
         employee_id,
@@ -283,21 +339,21 @@ pub async fn send_email_with_stored_body(
         recipient_email,
         &clean_name,
         &clean_subject,
-        stored_body_html,
+        body_html,
+        "pending",
+        None,
+        0,
+        3,
+        Some(Utc::now()),
         created_by,
     )
     .await?;
 
-    // SMTP disabled is the documented production default, and the letter is
-    // still recorded — it just never becomes `sent`.
-    let Some((email, transport)) = prepared else {
-        let log = email_logs::mark_failed_not_configured(pool, log.id).await?;
-        tracing::warn!("SMTP not configured, email logged but not sent: {}", log.id);
-        return Ok(log);
-    };
-
-    match transport.send(email).await {
-        Ok(_) => {
+    match mailer
+        .send_raw(&clean_name, recipient_email, &clean_subject, body_html)
+        .await
+    {
+        Ok(()) => {
             let log = email_logs::mark_sent(pool, log.id).await?;
             tracing::info!(
                 "Email sent successfully: {} to {}",
@@ -306,57 +362,193 @@ pub async fn send_email_with_stored_body(
             );
             Ok(log)
         }
-        Err(e) => {
-            let error_msg = format!("{}", e);
-            let log = email_logs::mark_failed(pool, log.id, &error_msg).await?;
-            tracing::error!("Failed to send email {}: {}", log.id, error_msg);
+        Err(error_msg) => {
+            let next_retry = Utc::now() + chrono::Duration::seconds(60);
+            let log = email_logs::schedule_retry(pool, log.id, 1, next_retry, &error_msg).await?;
+            tracing::warn!(
+                email_id = %log.id,
+                error = %error_msg,
+                "Initial SMTP delivery failed; queued in outbox for retry"
+            );
             Ok(log)
         }
     }
 }
 
-// ── System Email (no DB logging, no company context) ──────────────────
-
-pub async fn send_system_email(
+/// Queue an email in `email_logs` for background outbox delivery without
+/// blocking the caller on SMTP.
+#[allow(clippy::too_many_arguments)]
+pub async fn enqueue_email(
     config: &AppConfig,
+    pool: &PgPool,
+    company_id: Uuid,
+    employee_id: Option<Uuid>,
+    template_id: Option<Uuid>,
+    letter_type: &str,
     recipient_email: &str,
     recipient_name: &str,
     subject: &str,
     body_html: &str,
-) -> AppResult<()> {
-    if !config.smtp_enabled() {
-        tracing::warn!(
-            "SMTP not configured, skipping system email to {}",
-            crate::core::redact::email(recipient_email)
-        );
-        return Ok(());
-    }
-
+    created_by: Uuid,
+) -> AppResult<EmailLog> {
     let clean_subject = sanitize_header_text(subject);
-    let to = mailbox(recipient_name, recipient_email).map_err(|_| {
+    let clean_name = sanitize_header_text(recipient_name);
+    let _ = mailbox(&clean_name, recipient_email).map_err(|_| {
         AppError::Validation(format!("{recipient_email} is not a valid email address"))
     })?;
 
-    let email = Message::builder()
-        .from(from_mailbox(config)?)
-        .to(to)
-        .subject(&clean_subject)
-        .header(ContentType::TEXT_HTML)
-        .body(body_html.to_string())
-        .map_err(|e| AppError::Internal(format!("Failed to build email: {}", e)))?;
+    if !config.smtp_enabled() {
+        return email_logs::insert_with_delivery_state(
+            pool,
+            company_id,
+            employee_id,
+            template_id,
+            letter_type,
+            recipient_email,
+            &clean_name,
+            &clean_subject,
+            body_html,
+            "failed",
+            Some("SMTP not configured"),
+            0,
+            0,
+            None,
+            created_by,
+        )
+        .await;
+    }
 
-    let transport = build_transport(config)?;
+    email_logs::insert_with_delivery_state(
+        pool,
+        company_id,
+        employee_id,
+        template_id,
+        letter_type,
+        recipient_email,
+        &clean_name,
+        &clean_subject,
+        body_html,
+        "pending",
+        None,
+        0,
+        3,
+        Some(Utc::now()),
+        created_by,
+    )
+    .await
+}
 
-    transport
-        .send(email)
-        .await
-        .map_err(|e| AppError::Internal(format!("Failed to send email: {}", e)))?;
+/// Deliver a batch of due outbox emails with exponential retry backoff
+/// (`60s` -> `300s`, failing permanently on attempt `>= max_attempts`).
+pub async fn process_outbox_batch(
+    pool: &PgPool,
+    mailer: &SharedMailer,
+    limit: i64,
+) -> AppResult<(usize, usize)> {
+    if !mailer.is_enabled() {
+        return Ok((0, 0));
+    }
+    let rows = email_logs::claim_due_outbox(pool, limit).await?;
+    let mut sent = 0usize;
+    let mut failed = 0usize;
 
-    tracing::info!(
-        "System email sent to {}",
-        crate::core::redact::email(recipient_email)
+    for row in rows {
+        let recipient_name = row.recipient_name.as_deref().unwrap_or("");
+        match mailer
+            .send_raw(
+                recipient_name,
+                &row.recipient_email,
+                &row.subject,
+                &row.body_html,
+            )
+            .await
+        {
+            Ok(()) => {
+                email_logs::mark_sent(pool, row.id).await?;
+                sent += 1;
+            }
+            Err(err) => {
+                failed += 1;
+                if row.attempts >= row.max_attempts {
+                    email_logs::mark_failed(pool, row.id, &err).await?;
+                    tracing::error!(
+                        email_id = %row.id,
+                        attempts = row.attempts,
+                        "Outbox email exceeded max attempts and was marked failed: {}",
+                        err
+                    );
+                } else {
+                    let backoff_secs =
+                        60i64 * 5i64.saturating_pow((row.attempts - 1).max(0) as u32);
+                    let next_retry = Utc::now() + chrono::Duration::seconds(backoff_secs);
+                    email_logs::schedule_retry(pool, row.id, row.attempts, next_retry, &err)
+                        .await?;
+                    tracing::warn!(
+                        email_id = %row.id,
+                        attempts = row.attempts,
+                        next_retry_at = %next_retry,
+                        "Outbox email send failed; scheduled retry: {}",
+                        err
+                    );
+                }
+            }
+        }
+    }
+
+    Ok((sent, failed))
+}
+
+// ── System Email (no DB logging, no company context) ──────────────────
+
+pub async fn send_system_email_with_retry(
+    mailer: SharedMailer,
+    recipient_email: String,
+    recipient_name: String,
+    subject: String,
+    body_html: String,
+) {
+    if !mailer.is_enabled() {
+        tracing::warn!(
+            "SMTP not configured, skipping system email to {}",
+            crate::core::redact::email(&recipient_email)
+        );
+        return;
+    }
+
+    const BACKOFF_SECS: [u64; 3] = [0, 5, 20];
+    let mut last_err = String::new();
+    for (idx, delay) in BACKOFF_SECS.iter().enumerate() {
+        if *delay > 0 {
+            tokio::time::sleep(std::time::Duration::from_secs(*delay)).await;
+        }
+        match mailer
+            .send_raw(&recipient_name, &recipient_email, &subject, &body_html)
+            .await
+        {
+            Ok(()) => {
+                tracing::info!(
+                    attempt = idx + 1,
+                    "System email sent to {}",
+                    crate::core::redact::email(&recipient_email)
+                );
+                return;
+            }
+            Err(err) => {
+                last_err = err;
+                tracing::warn!(
+                    attempt = idx + 1,
+                    to = %crate::core::redact::email(&recipient_email),
+                    error = %last_err,
+                    "System email attempt failed"
+                );
+            }
+        }
+    }
+    tracing::error!(
+        to = %crate::core::redact::email(&recipient_email),
+        error = %last_err,
+        "Exhausted retries sending system email"
     );
-    Ok(())
 }
 
 // ── Password Reset Email ──────────────────────────────────────────────
@@ -489,10 +681,12 @@ pub fn welcome_log_html(
 
 /// Compose and send the welcome letter for a freshly provisioned portal account.
 ///
-/// It lives in the service because it decides *what is retained*, not merely
-/// what is rendered — the handler has no business making that call.
+/// Always stores the password-redacted body in `email_logs` with `max_attempts = 1`
+/// so the DB outbox worker can never re-send a redacted letter; when SMTP is
+/// enabled, transient retries happen solely in-memory with the credential.
 #[allow(clippy::too_many_arguments)]
 pub async fn send_welcome_email(
+    mailer: &SharedMailer,
     config: &AppConfig,
     pool: &PgPool,
     company_id: Uuid,
@@ -503,7 +697,11 @@ pub async fn send_welcome_email(
     default_password: &str,
     created_by: Uuid,
 ) -> AppResult<EmailLog> {
-    let subject = format!("Welcome to {} - PayrollMY", company_name);
+    let clean_subject = sanitize_header_text(&format!("Welcome to {} - PayrollMY", company_name));
+    let clean_name = sanitize_header_text(employee_name);
+    let _ = mailbox(&clean_name, login_email)
+        .map_err(|_| AppError::Validation(format!("{login_email} is not a valid email address")))?;
+
     let body_html = default_welcome_html(
         employee_name,
         company_name,
@@ -518,21 +716,87 @@ pub async fn send_welcome_email(
         login_email,
     );
 
-    send_email_with_stored_body(
-        config,
+    if !config.smtp_enabled() || !mailer.is_enabled() {
+        return email_logs::insert_with_delivery_state(
+            pool,
+            company_id,
+            Some(employee_id),
+            None,
+            "welcome",
+            login_email,
+            &clean_name,
+            &clean_subject,
+            &stored_body_html,
+            "failed",
+            Some("SMTP not configured"),
+            0,
+            1,
+            None,
+            created_by,
+        )
+        .await;
+    }
+
+    // Notice `next_retry_at = NULL` and `max_attempts = 1`: DB outbox never
+    // picks up redacted welcome logs; retries run in-memory below.
+    let log = email_logs::insert_with_delivery_state(
         pool,
         company_id,
         Some(employee_id),
         None,
         "welcome",
         login_email,
-        employee_name,
-        &subject,
-        &body_html,
+        &clean_name,
+        &clean_subject,
         &stored_body_html,
+        "pending",
+        None,
+        0,
+        1,
+        None,
         created_by,
     )
-    .await
+    .await?;
+
+    let mailer = mailer.clone();
+    let pool = pool.clone();
+    let log_id = log.id;
+    let to_email = login_email.to_string();
+    let subject = clean_subject;
+    tokio::spawn(async move {
+        const BACKOFF_SECS: [u64; 3] = [0, 5, 20];
+        let mut last_err = String::new();
+        for delay in BACKOFF_SECS {
+            if delay > 0 {
+                tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
+            }
+            match mailer
+                .send_raw(&clean_name, &to_email, &subject, &body_html)
+                .await
+            {
+                Ok(()) => {
+                    let _ = email_logs::mark_sent(&pool, log_id).await;
+                    tracing::info!(
+                        email_id = %log_id,
+                        to = %crate::core::redact::email(&to_email),
+                        "Welcome email sent"
+                    );
+                    return;
+                }
+                Err(err) => {
+                    last_err = err;
+                }
+            }
+        }
+        let _ = email_logs::mark_failed(&pool, log_id, &last_err).await;
+        tracing::error!(
+            email_id = %log_id,
+            error = %last_err,
+            "Failed to send welcome email after retries"
+        );
+    });
+
+    Ok(log)
 }
 
 fn welcome_html(

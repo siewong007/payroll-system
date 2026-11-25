@@ -61,6 +61,9 @@ pub struct EmailLog {
     pub sent_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub created_by: Option<Uuid>,
+    pub attempts: i32,
+    pub max_attempts: i32,
+    pub next_retry_at: Option<DateTime<Utc>>,
 }
 
 /// An `email_logs` row without `body_html` — the shape every API response uses.

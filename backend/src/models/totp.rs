@@ -21,6 +21,7 @@ pub struct TotpBackupCode {
     pub id: Uuid,
     pub user_id: Uuid,
     pub code_hash: String,
+    pub code_lookup_hash: Option<String>,
     pub used_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
 }

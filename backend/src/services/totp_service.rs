@@ -1,4 +1,6 @@
+use sha2::{Digest, Sha256};
 use sqlx::PgPool;
+use std::fmt::Write as _;
 use totp_rs::{Algorithm, Secret, TOTP};
 use uuid::Uuid;
 
@@ -59,6 +61,22 @@ async fn hash_backup_codes(codes: Vec<String>) -> AppResult<Vec<String>> {
     .await
     .map_err(|e| AppError::Internal(format!("Backup code hashing task failed: {e}")))?
     .map_err(|_| AppError::Internal("Failed to hash backup codes".into()))
+}
+
+fn backup_code_lookup_hash(encryption_key: &str, user_id: Uuid, normalized_code: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"totp-backup-lookup-v1:");
+    hasher.update(encryption_key.as_bytes());
+    hasher.update(b":");
+    hasher.update(user_id.to_string().as_bytes());
+    hasher.update(b":");
+    hasher.update(normalized_code.as_bytes());
+    let digest = hasher.finalize();
+    let mut hex = String::with_capacity(64);
+    for b in digest {
+        let _ = write!(&mut hex, "{b:02x}");
+    }
+    hex
 }
 
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
@@ -165,12 +183,16 @@ pub async fn confirm_setup_with_session(
     }
 
     let backup_codes = generate_backup_codes();
+    let lookup_hashes: Vec<String> = backup_codes
+        .iter()
+        .map(|code| backup_code_lookup_hash(encryption_key, user_id, code))
+        .collect();
     let hashes = hash_backup_codes(backup_codes.clone()).await?;
 
     let mut tx = pool.begin().await?;
     user_totp::confirm(&mut *tx, user_id).await?;
     user_totp_backup_codes::delete_for_user(&mut *tx, user_id).await?;
-    user_totp_backup_codes::insert_many(&mut *tx, user_id, &hashes).await?;
+    user_totp_backup_codes::insert_many(&mut *tx, user_id, &hashes, &lookup_hashes).await?;
     if let Some(sid) = current_session_id {
         user_sessions::revoke_others(&mut *tx, user_id, sid).await?;
         refresh_tokens::revoke_other_sessions(&mut *tx, user_id, sid).await?;
@@ -268,20 +290,40 @@ pub async fn verify_login_code(
     }
 
     let normalized = trimmed.to_ascii_uppercase();
-    let unused = user_totp_backup_codes::find_unused(pool, user_id).await?;
-    let candidates: Vec<(Uuid, String)> = unused.into_iter().map(|c| (c.id, c.code_hash)).collect();
+    let lookup_hash = backup_code_lookup_hash(encryption_key, user_id, &normalized);
 
-    let matched_id = tokio::task::spawn_blocking(move || {
-        candidates.into_iter().find_map(|(id, hash)| {
-            if bcrypt::verify(&normalized, &hash).unwrap_or(false) {
-                Some(id)
-            } else {
-                None
-            }
-        })
-    })
-    .await
-    .map_err(|e| AppError::Internal(format!("Backup code verification task failed: {e}")))?;
+    let matched_id = if let Some(candidate) =
+        user_totp_backup_codes::find_unused_by_lookup(pool, user_id, &lookup_hash).await?
+    {
+        let hash = candidate.code_hash;
+        let code_check = normalized.clone();
+        let valid = tokio::task::spawn_blocking(move || bcrypt::verify(&code_check, &hash))
+            .await
+            .map_err(|e| AppError::Internal(format!("Backup code verification task failed: {e}")))?
+            .unwrap_or(false);
+        if valid { Some(candidate.id) } else { None }
+    } else {
+        // Fallback ONLY for legacy rows without `code_lookup_hash` so
+        // pre-migration backup codes remain valid.
+        let legacy = user_totp_backup_codes::find_unused_legacy(pool, user_id).await?;
+        let candidates: Vec<(Uuid, String)> =
+            legacy.into_iter().map(|c| (c.id, c.code_hash)).collect();
+        if candidates.is_empty() {
+            None
+        } else {
+            tokio::task::spawn_blocking(move || {
+                candidates.into_iter().find_map(|(id, hash)| {
+                    if bcrypt::verify(&normalized, &hash).unwrap_or(false) {
+                        Some(id)
+                    } else {
+                        None
+                    }
+                })
+            })
+            .await
+            .map_err(|e| AppError::Internal(format!("Backup code verification task failed: {e}")))?
+        }
+    };
 
     if let Some(id) = matched_id
         && user_totp_backup_codes::mark_used(pool, id).await?
@@ -334,6 +376,7 @@ pub async fn regenerate_backup_codes(
     pool: &PgPool,
     user_id: Uuid,
     password: &str,
+    encryption_key: &str,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<Vec<String>> {
     let user = verify_password(pool, user_id, password).await?;
@@ -343,11 +386,15 @@ pub async fn regenerate_backup_codes(
     }
 
     let codes = generate_backup_codes();
+    let lookup_hashes: Vec<String> = codes
+        .iter()
+        .map(|code| backup_code_lookup_hash(encryption_key, user_id, code))
+        .collect();
     let hashes = hash_backup_codes(codes.clone()).await?;
 
     let mut tx = pool.begin().await?;
     user_totp_backup_codes::delete_for_user(&mut *tx, user_id).await?;
-    user_totp_backup_codes::insert_many(&mut *tx, user_id, &hashes).await?;
+    user_totp_backup_codes::insert_many(&mut *tx, user_id, &hashes, &lookup_hashes).await?;
     tx.commit().await?;
 
     let _ = audit_service::log_action_with_metadata(

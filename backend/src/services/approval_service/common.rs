@@ -6,9 +6,24 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::core::error::{AppError, AppResult};
+use crate::models::approval::PendingApprovalCountResponse;
 use crate::repositories::{
-    employees as employee_repo, leave_types as leave_type_repo, users as user_repo,
+    employees as employee_repo, leave_types as leave_type_repo,
+    reads::dashboard as dashboard_reads, users as user_repo,
 };
+
+pub async fn get_pending_counts(
+    pool: &PgPool,
+    company_id: Uuid,
+) -> AppResult<PendingApprovalCountResponse> {
+    let counts = dashboard_reads::pending_approval_counts(pool, company_id).await?;
+    Ok(PendingApprovalCountResponse {
+        pending_leave: counts.pending_leave,
+        pending_claims: counts.pending_claims,
+        pending_overtime: counts.pending_overtime,
+        total: counts.pending_leave + counts.pending_claims + counts.pending_overtime,
+    })
+}
 
 pub(super) fn ensure_positive_amount(amount: i64) -> AppResult<()> {
     if amount <= 0 {

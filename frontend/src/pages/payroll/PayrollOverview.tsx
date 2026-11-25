@@ -3,9 +3,11 @@ import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, ArrowRight, Ban, Info } from 'lucide-react';
 import { getPayrollOverview } from '@/api/payroll';
-import { formatMYR } from '@/lib/utils';
-import { formatPeriod } from '@/lib/format';
+import { usePermissions } from '@/lib/usePermissions';
+import { formatMYR, getErrorMessage } from '@/lib/utils';
+import { formatNumber, formatPeriod } from '@/lib/format';
 import { PAYROLL_STATUS_STYLES, payrollStatusLabel } from './statusMeta';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { KpiSkeletonGrid } from '@/components/ui/Skeleton';
 import type { PayrollActionItem } from '@/types';
@@ -26,20 +28,22 @@ function KpiCard({ label, value, sub }: { label: string; value: string; sub?: st
   );
 }
 
-function ActionRow({ item }: { item: PayrollActionItem }) {
+function ActionRow({ item, canManageDraft }: { item: PayrollActionItem; canManageDraft: boolean }) {
   const { t } = useTranslation();
   const style = SEVERITY_STYLES[item.severity] ?? SEVERITY_STYLES.info;
   const Icon = style.icon;
+  const canFollowLink =
+    Boolean(item.link) && (!item.link?.startsWith('/payroll/process') || canManageDraft);
   const inner = (
     <div className={`flex items-start gap-3 rounded-xl border px-4 py-3 ${style.badge}`}>
-      <Icon className="w-4 h-4 mt-0.5 shrink-0" />
+      <Icon className="w-4 h-4 mt-0.5 shrink-0" aria-hidden="true" />
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm font-medium">
             {t(`payroll.actions.${item.code}`, { detail: item.detail, defaultValue: item.message })}
           </span>
-          <span className="text-xs font-semibold rounded-full bg-white/70 px-2 py-0.5">
-            {item.count}
+          <span className="text-xs font-semibold rounded-full bg-white/70 dark:bg-slate-900/60 px-2 py-0.5 tabular-nums">
+            {formatNumber(item.count)}
           </span>
         </div>
         {item.employees.length > 0 && (
@@ -49,15 +53,26 @@ function ActionRow({ item }: { item: PayrollActionItem }) {
           </p>
         )}
       </div>
-      {item.link && <ArrowRight className="w-4 h-4 mt-0.5 shrink-0 opacity-60" />}
+      {canFollowLink && <ArrowRight className="w-4 h-4 mt-0.5 shrink-0 opacity-60" aria-hidden="true" />}
     </div>
   );
-  return item.link ? <Link to={item.link}>{inner}</Link> : inner;
+  return canFollowLink && item.link ? (
+    <Link
+      to={item.link}
+      className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-1)]"
+    >
+      {inner}
+    </Link>
+  ) : (
+    inner
+  );
 }
 
 export function PayrollOverview() {
   const { t } = useTranslation();
-  const { data, isLoading, error } = useQuery({
+  const { can } = usePermissions();
+  const canManageDraft = can('manage_payroll_draft');
+  const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['payrollOverview'],
     queryFn: getPayrollOverview,
   });
@@ -72,7 +87,23 @@ export function PayrollOverview() {
   }
 
   if (error || !data) {
-    return <div className="text-center text-gray-500 py-12">{t('payroll.overview.loadFailed')}</div>;
+    return (
+      <div className="space-y-6">
+        <PageHeader title={t('payroll.overview.title')} />
+        <div className="card">
+          <EmptyState
+            icon={AlertTriangle}
+            title={t('payroll.overview.loadFailed')}
+            description={getErrorMessage(error, t('payroll.overview.loadFailed'))}
+            action={
+              <button type="button" onClick={() => void refetch()} className="btn-primary">
+                {t('common.retry')}
+              </button>
+            }
+          />
+        </div>
+      </div>
+    );
   }
 
   const current = data.current_period;
@@ -91,22 +122,23 @@ export function PayrollOverview() {
         }
         actions={
           <Link to="/payroll/runs" className="btn-primary w-full sm:w-auto">
-            {t('payroll.overview.allRuns')} <ArrowRight className="w-4 h-4" />
+            {t('payroll.overview.allRuns')} <ArrowRight className="w-4 h-4" aria-hidden="true" />
           </Link>
         }
       />
 
       {!current ? (
-        <div className="card p-8 text-center">
+        <div className="card p-8 text-center mb-6">
           <p className="text-gray-700 dark:text-slate-200 font-medium">{t('payroll.overview.emptyTitle')}</p>
           <p className="text-gray-500 dark:text-slate-400 text-sm mt-1">
-            {t('payroll.overview.emptyBody')}
+            {canManageDraft ? t('payroll.overview.emptyBody') : t('payroll.overview.emptyBodyReadOnly')}
           </p>
           <Link
-            to="/payroll/runs"
+            to={canManageDraft ? '/payroll/process' : '/payroll/runs'}
             className="inline-flex items-center gap-2 mt-4 btn-secondary"
           >
-            {t('payroll.overview.goToRuns')} <ArrowRight className="w-4 h-4" />
+            {canManageDraft ? t('payroll.overview.processFirstRun') : t('payroll.overview.goToRuns')}{' '}
+            <ArrowRight className="w-4 h-4" aria-hidden="true" />
           </Link>
         </div>
       ) : (
@@ -115,7 +147,7 @@ export function PayrollOverview() {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
             <KpiCard
               label={t('payroll.overview.kpi.employeesPaid')}
-              value={String(current.employee_count)}
+              value={formatNumber(current.employee_count)}
               sub={variance && variance.headcount_delta !== 0
                 ? t('payroll.overview.vsPrior', {
                     delta: `${variance.headcount_delta > 0 ? '+' : ''}${variance.headcount_delta}`,
@@ -153,36 +185,41 @@ export function PayrollOverview() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
         {/* Pipeline */}
-        <div className="bg-white rounded-2xl shadow border border-gray-200 p-5">
-          <h2 className="text-sm font-semibold text-gray-900 mb-3">{t('payroll.overview.pipelineTitle')}</h2>
+        <div className="card !p-5">
+          <h2 className="text-sm font-semibold text-gray-900 dark:text-slate-100 mb-3">
+            {t('payroll.overview.pipelineTitle')}
+          </h2>
           {data.pipeline.length === 0 ? (
-            <p className="text-sm text-gray-400">{t('payroll.overview.pipelineEmpty')}</p>
+            <p className="text-sm text-gray-500 dark:text-slate-400">{t('payroll.overview.pipelineEmpty')}</p>
           ) : (
             <div className="flex flex-wrap gap-2">
               {data.pipeline.map((row) => (
-                <span
+                <Link
                   key={row.status}
-                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium ${PAYROLL_STATUS_STYLES[row.status] ?? 'bg-gray-100 text-gray-700'}`}
+                  to={`/payroll/runs?status=${encodeURIComponent(row.status)}`}
+                  className={`inline-flex items-center gap-1.5 min-h-9 px-3 py-1.5 rounded-full text-sm font-medium transition-opacity hover:opacity-85 ${PAYROLL_STATUS_STYLES[row.status] ?? 'bg-gray-100 text-gray-700 dark:bg-slate-800 dark:text-slate-300'}`}
                 >
                   {payrollStatusLabel(row.status)}
-                  <span className="font-bold">{row.count}</span>
-                </span>
+                  <span className="font-bold tabular-nums">{formatNumber(row.count)}</span>
+                </Link>
               ))}
             </div>
           )}
           {data.recent_runs.length > 0 && (
-            <ul className="mt-4 divide-y divide-gray-100">
+            <ul className="mt-4 divide-y divide-gray-100 dark:divide-slate-800">
               {data.recent_runs.map((run) => (
                 <li key={run.id}>
                   <Link
                     to={`/payroll/${run.id}`}
-                    className="flex items-center justify-between py-2 text-sm hover:bg-gray-50 -mx-2 px-2 rounded-lg"
+                    className="flex min-h-11 items-center justify-between gap-3 py-2 text-sm text-gray-900 dark:text-slate-100 hover:bg-gray-50 dark:hover:bg-slate-800/60 -mx-2 px-2 rounded-lg transition-colors"
                   >
-                    <span className="font-medium">
+                    <span className="font-medium truncate">
                       {formatPeriod(run.period_year, run.period_month)}
                     </span>
-                    <span className="text-gray-500 tabular-nums">{formatMYR(run.total_net)}</span>
-                    <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${PAYROLL_STATUS_STYLES[run.status] ?? ''}`}>
+                    <span className="text-gray-500 dark:text-slate-400 tabular-nums shrink-0">
+                      {formatMYR(run.total_net)}
+                    </span>
+                    <span className={`inline-flex shrink-0 px-2 py-0.5 rounded-full text-xs font-medium ${PAYROLL_STATUS_STYLES[run.status] ?? ''}`}>
                       {payrollStatusLabel(run.status)}
                     </span>
                   </Link>
@@ -193,16 +230,18 @@ export function PayrollOverview() {
         </div>
 
         {/* Action queue */}
-        <div className="bg-white rounded-2xl shadow border border-gray-200 p-5">
-          <h2 className="text-sm font-semibold text-gray-900 mb-3">{t('payroll.overview.attentionTitle')}</h2>
+        <div className="card !p-5">
+          <h2 className="text-sm font-semibold text-gray-900 dark:text-slate-100 mb-3">
+            {t('payroll.overview.attentionTitle')}
+          </h2>
           {data.action_queue.length === 0 ? (
-            <p className="text-sm text-gray-400">
+            <p className="text-sm text-gray-500 dark:text-slate-400">
               {t('payroll.overview.attentionEmpty')}
             </p>
           ) : (
             <div className="space-y-2">
               {data.action_queue.map((item) => (
-                <ActionRow key={item.code} item={item} />
+                <ActionRow key={item.code} item={item} canManageDraft={canManageDraft} />
               ))}
             </div>
           )}
@@ -211,14 +250,16 @@ export function PayrollOverview() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Trend */}
-        <div className="bg-white rounded-2xl shadow border border-gray-200 p-5 overflow-x-auto">
-          <h2 className="text-sm font-semibold text-gray-900 mb-3">{t('payroll.overview.trendTitle')}</h2>
+        <div className="card !p-5 overflow-x-auto">
+          <h2 className="text-sm font-semibold text-gray-900 dark:text-slate-100 mb-3">
+            {t('payroll.overview.trendTitle')}
+          </h2>
           {data.trend.length === 0 ? (
-            <p className="text-sm text-gray-400">{t('payroll.overview.trendEmpty')}</p>
+            <p className="text-sm text-gray-500 dark:text-slate-400">{t('payroll.overview.trendEmpty')}</p>
           ) : (
-            <table className="w-full text-sm">
+            <table className="w-full text-sm text-gray-900 dark:text-slate-100">
               <thead>
-                <tr className="text-left text-xs text-gray-400 border-b border-gray-100">
+                <tr className="text-left text-xs text-gray-500 dark:text-slate-400 border-b border-gray-100 dark:border-slate-800">
                   <th className="py-2 font-medium">{t('payroll.columns.period')}</th>
                   <th className="py-2 font-medium text-right">{t('payroll.columns.employees')}</th>
                   <th className="py-2 font-medium text-right">{t('payroll.columns.gross')}</th>
@@ -230,15 +271,15 @@ export function PayrollOverview() {
                 {data.trend.map((period) => (
                   <tr
                     key={`${period.period_year}-${period.period_month}`}
-                    className="border-b border-gray-50 last:border-0"
+                    className="border-b border-gray-50 dark:border-slate-800/60 last:border-0"
                   >
-                    <td className="py-2 font-medium">
+                    <td className="py-2 font-medium whitespace-nowrap">
                       {formatPeriod(period.period_year, period.period_month)}
                     </td>
-                    <td className="py-2 text-right tabular-nums">{period.employee_count}</td>
-                    <td className="py-2 text-right tabular-nums">{formatMYR(period.total_gross)}</td>
-                    <td className="py-2 text-right tabular-nums">{formatMYR(period.total_net)}</td>
-                    <td className="py-2 text-right tabular-nums">{formatMYR(period.total_employer_cost)}</td>
+                    <td className="py-2 text-right tabular-nums">{formatNumber(period.employee_count)}</td>
+                    <td className="py-2 text-right tabular-nums whitespace-nowrap">{formatMYR(period.total_gross)}</td>
+                    <td className="py-2 text-right tabular-nums whitespace-nowrap">{formatMYR(period.total_net)}</td>
+                    <td className="py-2 text-right tabular-nums whitespace-nowrap">{formatMYR(period.total_employer_cost)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -247,21 +288,21 @@ export function PayrollOverview() {
         </div>
 
         {/* Department split */}
-        <div className="bg-white rounded-2xl shadow border border-gray-200 p-5 overflow-x-auto">
-          <h2 className="text-sm font-semibold text-gray-900 mb-3">
+        <div className="card !p-5 overflow-x-auto">
+          <h2 className="text-sm font-semibold text-gray-900 dark:text-slate-100 mb-3">
             {t('payroll.overview.deptTitle')}
             {current && (
-              <span className="text-gray-400 font-normal">
+              <span className="text-gray-500 dark:text-slate-400 font-normal">
                 {' '}— {formatPeriod(current.period_year, current.period_month)}
               </span>
             )}
           </h2>
           {data.departments.length === 0 ? (
-            <p className="text-sm text-gray-400">{t('payroll.overview.deptEmpty')}</p>
+            <p className="text-sm text-gray-500 dark:text-slate-400">{t('payroll.overview.deptEmpty')}</p>
           ) : (
-            <table className="w-full text-sm">
+            <table className="w-full text-sm text-gray-900 dark:text-slate-100">
               <thead>
-                <tr className="text-left text-xs text-gray-400 border-b border-gray-100">
+                <tr className="text-left text-xs text-gray-500 dark:text-slate-400 border-b border-gray-100 dark:border-slate-800">
                   <th className="py-2 font-medium">{t('employees.fields.department')}</th>
                   <th className="py-2 font-medium text-right">{t('payroll.columns.employees')}</th>
                   <th className="py-2 font-medium text-right">{t('payroll.columns.gross')}</th>
@@ -270,11 +311,11 @@ export function PayrollOverview() {
               </thead>
               <tbody>
                 {data.departments.map((row) => (
-                  <tr key={row.department ?? '—'} className="border-b border-gray-50 last:border-0">
+                  <tr key={row.department ?? '—'} className="border-b border-gray-50 dark:border-slate-800/60 last:border-0">
                     <td className="py-2 font-medium">{row.department ?? t('payroll.overview.unassigned')}</td>
-                    <td className="py-2 text-right tabular-nums">{row.employee_count}</td>
-                    <td className="py-2 text-right tabular-nums">{formatMYR(row.total_gross)}</td>
-                    <td className="py-2 text-right tabular-nums">{formatMYR(row.total_employer_cost)}</td>
+                    <td className="py-2 text-right tabular-nums">{formatNumber(row.employee_count)}</td>
+                    <td className="py-2 text-right tabular-nums whitespace-nowrap">{formatMYR(row.total_gross)}</td>
+                    <td className="py-2 text-right tabular-nums whitespace-nowrap">{formatMYR(row.total_employer_cost)}</td>
                   </tr>
                 ))}
               </tbody>

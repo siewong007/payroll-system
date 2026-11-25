@@ -7,6 +7,37 @@ import i18n, { intlLocale } from '@/i18n';
  * digits and grouping follow the UI locale.
  */
 
+const dateTimeFormatters = new Map<string, Intl.DateTimeFormat>();
+const numberFormatters = new Map<string, Intl.NumberFormat>();
+
+function getDateFormatter(
+  locale: string,
+  key: string,
+  options: Intl.DateTimeFormatOptions,
+): Intl.DateTimeFormat {
+  const cacheKey = `${locale}|${key}`;
+  let formatter = dateTimeFormatters.get(cacheKey);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat(locale, options);
+    dateTimeFormatters.set(cacheKey, formatter);
+  }
+  return formatter;
+}
+
+function getNumberFormatter(
+  locale: string,
+  key: string,
+  options?: Intl.NumberFormatOptions,
+): Intl.NumberFormat {
+  const cacheKey = `${locale}|${key}`;
+  let formatter = numberFormatters.get(cacheKey);
+  if (!formatter) {
+    formatter = new Intl.NumberFormat(locale, options);
+    numberFormatters.set(cacheKey, formatter);
+  }
+  return formatter;
+}
+
 const DATE_SHORT: Intl.DateTimeFormatOptions = {
   day: '2-digit',
   month: '2-digit',
@@ -54,70 +85,77 @@ const TIME_SECONDS: Intl.DateTimeFormatOptions = {
 
 const TIME_HOUR: Intl.DateTimeFormatOptions = { hour: 'numeric', minute: '2-digit' };
 
+const MYR_OPTIONS: Intl.NumberFormatOptions = {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+};
+
 function toDate(value: string | Date): Date {
   return value instanceof Date ? value : new Date(value);
 }
 
 /** DD/MM/YYYY-style short date (locale-ordered). */
 export function formatDate(value: string | Date): string {
-  return new Intl.DateTimeFormat(intlLocale(), DATE_SHORT).format(toDate(value));
+  return getDateFormatter(intlLocale(), 'short', DATE_SHORT).format(toDate(value));
 }
 
 /** "16 September 2026" — locale long form. */
 export function formatDateLong(value: string | Date): string {
-  return new Intl.DateTimeFormat(intlLocale(), DATE_LONG).format(toDate(value));
+  return getDateFormatter(intlLocale(), 'long', DATE_LONG).format(toDate(value));
 }
 
 /** "16 Sep 2026" — locale medium form. */
 export function formatDateMedium(value: string | Date): string {
-  return new Intl.DateTimeFormat(intlLocale(), DATE_MEDIUM).format(toDate(value));
+  return getDateFormatter(intlLocale(), 'medium', DATE_MEDIUM).format(toDate(value));
 }
 
 /** "16 Sep" — no year, for compact ranges. */
 export function formatDateDayMonth(value: string | Date): string {
-  return new Intl.DateTimeFormat(intlLocale(), DATE_DAY_MONTH).format(toDate(value));
+  return getDateFormatter(intlLocale(), 'dayMonth', DATE_DAY_MONTH).format(toDate(value));
 }
 
 /** "Wednesday, 16 September". */
 export function formatDateWeekday(value: string | Date): string {
-  return new Intl.DateTimeFormat(intlLocale(), DATE_WEEKDAY_LONG).format(toDate(value));
+  return getDateFormatter(intlLocale(), 'weekdayLong', DATE_WEEKDAY_LONG).format(toDate(value));
 }
 
 /** Date + time, e.g. "16 Sep 2026, 02:30 PM". */
 export function formatDateTime(value: string | Date): string {
-  return new Intl.DateTimeFormat(intlLocale(), DATETIME).format(toDate(value));
+  return getDateFormatter(intlLocale(), 'datetime', DATETIME).format(toDate(value));
 }
 
 /** "02:30 PM" / "14:30" depending on locale conventions. */
 export function formatTime(value: string | Date): string {
-  return new Intl.DateTimeFormat(intlLocale(), TIME).format(toDate(value));
+  return getDateFormatter(intlLocale(), 'time', TIME).format(toDate(value));
 }
 
 export function formatTimeSeconds(value: string | Date): string {
-  return new Intl.DateTimeFormat(intlLocale(), TIME_SECONDS).format(toDate(value));
+  return getDateFormatter(intlLocale(), 'timeSec', TIME_SECONDS).format(toDate(value));
 }
 
 /** Non-padded hour form ("2:30 PM") used by attendance displays. */
 export function formatTimeHour(value: string | Date): string {
-  return new Intl.DateTimeFormat(intlLocale(), TIME_HOUR).format(toDate(value));
+  return getDateFormatter(intlLocale(), 'timeHour', TIME_HOUR).format(toDate(value));
 }
 
 /** Grouped number, no decimals: 1,234 / 1.234 / 1,234 per locale. */
 export function formatNumber(value: number): string {
-  return new Intl.NumberFormat(intlLocale()).format(value);
+  return getNumberFormatter(intlLocale(), 'int').format(value);
 }
 
 /** Localized month name for a 1-12 month number ("September" / "九月"). */
-export function monthName(month: number, style: 'short' | 'long' = 'long'): string {
-  return new Intl.DateTimeFormat(intlLocale(), { month: style })
-    .format(new Date(2000, month - 1, 1));
+export function monthName(month: number, style: 'short' | 'long' = 'long', locale?: string): string {
+  return getDateFormatter(intlLocale(locale), `month:${style}`, { month: style }).format(
+    new Date(2000, month - 1, 1),
+  );
 }
 
 /** Localized weekday name for a JS day-of-week (0 = Sunday). */
-export function weekdayName(day: number, style: 'short' | 'long' = 'short'): string {
+export function weekdayName(day: number, style: 'short' | 'long' = 'short', locale?: string): string {
   // 2000-01-02 was a Sunday, so day N lands on weekday N.
-  return new Intl.DateTimeFormat(intlLocale(), { weekday: style })
-    .format(new Date(2000, 0, 2 + day));
+  return getDateFormatter(intlLocale(locale), `weekday:${style}`, { weekday: style }).format(
+    new Date(2000, 0, 2 + day),
+  );
 }
 
 /** "September 2026" / "2026年9月" — a payroll period (month + year). */
@@ -132,10 +170,7 @@ export function formatPeriod(year: number, month: number): string {
 /** Sen → "RM 1,234.56". The currency is fixed MYR; only formatting localizes. */
 export function formatMYR(sen: number): string {
   const ringgit = sen / 100;
-  return `RM ${new Intl.NumberFormat(intlLocale(), {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(ringgit)}`;
+  return `RM ${getNumberFormatter(intlLocale(), 'myr', MYR_OPTIONS).format(ringgit)}`;
 }
 
 /**

@@ -539,8 +539,13 @@ pub async fn change_password(
 /// Roles whose holders can move tenant money or export tenant PII. When the
 /// platform enables 2FA enforcement, these roles must hold a working second
 /// factor before any session is minted (plan item 36).
-pub const TWO_FACTOR_REQUIRED_ROLES: &[&str] =
-    &["super_admin", "admin", "payroll_admin", "finance"];
+pub const TWO_FACTOR_REQUIRED_ROLES: &[&str] = &[
+    "super_admin",
+    "admin",
+    "manager",
+    "payroll_admin",
+    "finance",
+];
 
 const TWO_FACTOR_REQUIRED_GROUP_PERMS: &[&str] = &[
     "view_payroll",

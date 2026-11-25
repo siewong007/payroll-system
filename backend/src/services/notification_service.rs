@@ -17,6 +17,7 @@ pub trait NotificationChannel: Send + Sync {
 
 pub struct EmailNotificationChannel {
     pub config: crate::core::config::AppConfig,
+    pub mailer: crate::services::email_service::SharedMailer,
 }
 
 impl NotificationChannel for EmailNotificationChannel {
@@ -32,6 +33,7 @@ impl NotificationChannel for EmailNotificationChannel {
         let (email, full_name) = user_repo::name_and_email(pool, user_id).await?;
 
         crate::services::email_service::send_email(
+            &self.mailer,
             &self.config,
             pool,
             company_id,

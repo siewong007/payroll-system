@@ -96,7 +96,9 @@ async fn the_welcome_email_log_never_holds_the_initial_password() {
     let actor_id = seed_user(&pool, company_id, "hr_manager").await;
     let ic = "880101105566";
 
+    let mailer = email_service::SharedMailer::disabled();
     let log = email_service::send_welcome_email(
+        &mailer,
         &test_config(),
         &pool,
         company_id,
@@ -128,7 +130,9 @@ async fn the_email_log_list_does_not_ship_bodies() {
     let marker = format!("distinctive-body-{}", Uuid::new_v4());
     let body = format!("<p>{marker}</p>");
 
+    let mailer = email_service::SharedMailer::disabled();
     let log = email_service::send_email(
+        &mailer,
         &test_config(),
         &pool,
         company_id,
@@ -162,4 +166,62 @@ async fn the_email_log_list_does_not_ship_bodies() {
         "the list must not carry bodies"
     );
     assert!(!wire.contains(&marker));
+}
+
+#[tokio::test]
+async fn enqueue_email_tracks_retry_state_when_smtp_disabled_and_validates_address() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let actor_id = seed_user(&pool, company_id, "hr_manager").await;
+    let cfg = test_config();
+
+    let log = email_service::enqueue_email(
+        &cfg,
+        &pool,
+        company_id,
+        None,
+        None,
+        "leave_approved",
+        "emp@example.invalid",
+        "Employee Name",
+        "Leave Approved",
+        "<p>Approved</p>",
+        actor_id,
+    )
+    .await
+    .expect("enqueue_email with disabled SMTP records failed without erroring");
+    assert_eq!(log.status, "failed");
+    assert_eq!(log.attempts, 0);
+    assert_eq!(log.max_attempts, 0);
+
+    // Enabling SMTP in config causes enqueue_email to persist a pending outbox row ready for retry.
+    let mut smtp_cfg = cfg;
+    smtp_cfg.smtp_host = Some("smtp.example.invalid".into());
+    smtp_cfg.smtp_from_email = Some("noreply@example.invalid".into());
+    let queued = email_service::enqueue_email(
+        &smtp_cfg,
+        &pool,
+        company_id,
+        None,
+        None,
+        "claim_approved",
+        "emp@example.invalid",
+        "Employee Name",
+        "Claim Approved",
+        "<p>Queued</p>",
+        actor_id,
+    )
+    .await
+    .expect("enqueue_email with SMTP configured queues pending row");
+    assert_eq!(queued.status, "pending");
+    assert_eq!(queued.max_attempts, 3);
+    assert!(queued.next_retry_at.is_some());
+
+    // Claiming due outbox rows updates attempts and lease atomically.
+    let claimed = crate::repositories::email_logs::claim_due_outbox(&pool, 50)
+        .await
+        .expect("claim outbox");
+    assert!(claimed.iter().any(|r| r.id == queued.id && r.attempts == 1));
 }

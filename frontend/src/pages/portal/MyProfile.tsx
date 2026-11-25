@@ -1,9 +1,12 @@
 import { useState } from 'react';
+import { useSearchParams } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { User, MapPin, Briefcase, Shield, CreditCard, Eye, EyeOff } from 'lucide-react';
 import { getMyProfile } from '@/api/portal';
 import { formatMYR, formatDate } from '@/lib/utils';
+import { ChangePasswordCard } from '@/components/ChangePasswordCard';
+import { TwoFactorSetup } from '@/components/TwoFactorSetup';
 import { PasskeyManagement } from '@/components/PasskeyManagement';
 import { SessionManagement } from '@/components/SessionManagement';
 import { LinkedAccounts } from '@/components/LinkedAccounts';
@@ -33,15 +36,29 @@ const SectionIcon = ({ icon: Icon, label, num }: { icon: React.ElementType; labe
   <div className="section-header">
     <span className="section-number">{num}</span>
     <div className="flex items-center gap-2">
-      <Icon className="w-4 h-4 text-gray-400" />
+      <Icon className="w-4 h-4 text-gray-400 dark:text-slate-400" />
       <span className="section-title">{label}</span>
     </div>
   </div>
 );
 
-function ProfileDetails({ profile }: { profile: Profile }) {
+function SecurityAndAppCards() {
+  return (
+    <>
+      <AppInstallCard />
+      <NotificationActivationCard />
+      <ChangePasswordCard />
+      <TwoFactorSetup />
+      <PasskeyManagement />
+      <LinkedAccounts />
+      <SessionManagement />
+    </>
+  );
+}
+
+function ProfileDetails({ profile, initialTab }: { profile: Profile; initialTab: MobileTab }) {
   const { t } = useTranslation();
-  const [mobileTab, setMobileTab] = useState<MobileTab>('personal');
+  const [mobileTab, setMobileTab] = useState<MobileTab>(initialTab);
   const [revealed, setRevealed] = useState(false);
 
   const enumLabel = (group: string, value: string | null | undefined) =>
@@ -64,7 +81,7 @@ function ProfileDetails({ profile }: { profile: Profile }) {
           type="button"
           onClick={() => setRevealed((prev) => !prev)}
           aria-pressed={revealed}
-          className="btn-secondary !py-2 !min-h-9 self-start sm:self-auto text-xs"
+          className="btn-secondary !py-2 !min-h-10 self-start sm:self-auto text-xs"
         >
           {revealed ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
           {revealed ? t('ux.profile.hideSensitive') : t('ux.profile.showSensitive')}
@@ -75,7 +92,7 @@ function ProfileDetails({ profile }: { profile: Profile }) {
         {t('portal.profile.managedByAdmin')}
       </div>
 
-      {/* Mobile section tabs to prevent long 8-card scroll */}
+      {/* Mobile section tabs to prevent long multi-card scroll; shrink-0 keeps long Malay labels legible */}
       <div className="lg:hidden flex items-center gap-1 rounded-2xl bg-white/80 dark:bg-slate-900/80 p-1 ring-1 ring-gray-200/70 dark:ring-slate-800 overflow-x-auto">
         {tabs.map((item) => {
           const active = mobileTab === item.key;
@@ -85,7 +102,7 @@ function ProfileDetails({ profile }: { profile: Profile }) {
               type="button"
               onClick={() => setMobileTab(item.key)}
               aria-pressed={active}
-              className={`flex-1 whitespace-nowrap rounded-xl px-3 py-2 text-xs font-semibold transition-all ${
+              className={`min-h-10 shrink-0 sm:flex-1 whitespace-nowrap rounded-xl px-3 py-2 text-xs font-semibold leading-tight transition-all ${
                 active
                   ? 'bg-gradient-to-r from-[var(--accent-1)] to-[var(--accent-2)] text-white shadow-xs'
                   : 'text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100'
@@ -175,11 +192,7 @@ function ProfileDetails({ profile }: { profile: Profile }) {
           </div>
 
           <div className={`space-y-6 ${mobileTab === 'statutory' ? 'hidden lg:block' : ''}`}>
-            <AppInstallCard />
-            <NotificationActivationCard />
-            <PasskeyManagement />
-            <LinkedAccounts />
-            <SessionManagement />
+            <SecurityAndAppCards />
           </div>
         </div>
       </div>
@@ -189,6 +202,11 @@ function ProfileDetails({ profile }: { profile: Profile }) {
 
 export function MyProfile() {
   const { t } = useTranslation();
+  const [searchParams] = useSearchParams();
+  const section = searchParams.get('section');
+  const initialTab: MobileTab =
+    section === 'security' || section === 'statutory' ? section : 'personal';
+
   const { data: profile, isLoading } = useQuery({
     queryKey: ['my-profile'],
     queryFn: getMyProfile,
@@ -218,9 +236,16 @@ export function MyProfile() {
           </div>
         </div>
       ) : !profile ? (
-        <div className="text-center py-12 text-gray-400">{t('portal.profile.notFound')}</div>
+        <div className="space-y-6">
+          <div className="card text-center py-8 text-gray-500 dark:text-slate-400">
+            {t('portal.profile.notFound')}
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <SecurityAndAppCards />
+          </div>
+        </div>
       ) : (
-        <ProfileDetails profile={profile} />
+        <ProfileDetails profile={profile} initialTab={initialTab} />
       )}
     </div>
   );

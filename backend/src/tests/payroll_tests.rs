@@ -1,4 +1,6 @@
 use chrono::NaiveDate;
+use rust_decimal::Decimal;
+use rust_decimal_macros::dec;
 
 use crate::services::pdf_helpers::unclassified_earnings;
 use crate::services::{payroll_engine, payroll_service};
@@ -1118,8 +1120,12 @@ async fn payroll_reads_survive_an_employee_whose_only_overtime_is_null() {
         .iter()
         .find(|r| r.employee_id == employee_id)
         .map(|r| r.hours)
-        .unwrap_or(0.0);
-    assert_eq!(hours, 0.0, "unrated hours read as zero, not as an error");
+        .unwrap_or(Decimal::ZERO);
+    assert_eq!(
+        hours,
+        Decimal::ZERO,
+        "unrated hours read as zero, not as an error"
+    );
 }
 
 /// The preview tells the operator a correction is owed, without blocking the run.
@@ -2325,14 +2331,14 @@ async fn attendance_overtime_is_bucketed_by_day_type() {
     .await
     .expect("bucketed read");
 
-    let bucket = |day_type: &str| -> f64 {
+    let bucket = |day_type: &str| -> Decimal {
         rows.iter()
             .find(|r| r.employee_id == employee_id && r.day_type == day_type)
             .map(|r| r.hours)
-            .unwrap_or(0.0)
+            .unwrap_or(Decimal::ZERO)
     };
 
-    assert!((bucket("normal") - 2.0).abs() < 1e-9);
-    assert!((bucket("rest_day") - 3.0).abs() < 1e-9);
-    assert!((bucket("public_holiday") - 1.5).abs() < 1e-9);
+    assert_eq!(bucket("normal"), dec!(2));
+    assert_eq!(bucket("rest_day"), dec!(3));
+    assert_eq!(bucket("public_holiday"), dec!(1.5));
 }

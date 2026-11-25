@@ -312,7 +312,7 @@ pub async fn approve_claim(
             &details,
             "The approved amount will be included in your next payroll.",
         );
-        let _ = email_service::send_email(
+        let _ = email_service::enqueue_email(
             config,
             pool,
             company_id,

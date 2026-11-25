@@ -1,6 +1,9 @@
+import { useState } from 'react';
 import { ExternalLink, FileText } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
+import { fetchUploadObjectUrl, isManagedUploadUrl } from '@/api/uploads';
+import { toast } from '@/lib/toast';
 import { useAuthorizedFile } from '@/lib/useAuthorizedFile';
 import { isImageUrl } from '@/lib/utils';
 
@@ -78,6 +81,8 @@ export function AttachmentPreview({ url, name }: { url: string; name: string | n
             <img
               src={href}
               alt={displayName}
+              loading="lazy"
+              decoding="async"
               className="max-w-full max-h-64 rounded-lg border border-gray-200 object-contain bg-gray-50"
             />
           </a>
@@ -113,11 +118,10 @@ export function AttachmentPreview({ url, name }: { url: string; name: string | n
 }
 
 /**
- * An anchor to an uploaded file, for the compact list rows that show a link
- * rather than a preview.
+ * An interactive trigger for an uploaded file inside compact list/table rows.
  *
- * Renders as plain text while the file loads or if it is unreadable, so a row
- * never offers a link that would open a broken tab.
+ * Managed `/api/uploads/<name>` blobs are fetched strictly on click (never on
+ * mount), avoiding dozens of background binary downloads when viewing a table.
  */
 export function AttachmentLink({
   url,
@@ -128,19 +132,72 @@ export function AttachmentLink({
   className?: string;
   children: React.ReactNode;
 }) {
-  const file = useAuthorizedFile(url);
+  const { t } = useTranslation();
+  const [loading, setLoading] = useState(false);
 
-  if (file.status !== 'ready') {
-    return (
-      <span className={className} aria-busy={file.status === 'loading'}>
-        {children}
-      </span>
-    );
+  if (!url) {
+    return <span className={className}>{children}</span>;
   }
 
+  if (!isManagedUploadUrl(url)) {
+    if (/^https?:\/\//i.test(url)) {
+      return (
+        <a
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          className={className}
+        >
+          {children}
+        </a>
+      );
+    }
+    return <span className={className}>{children}</span>;
+  }
+
+  const handleOpen = async (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+    if (loading) return;
+    setLoading(true);
+    // Open synchronously inside the click gesture so Safari/iOS don't block the tab.
+    const tab = window.open('', '_blank');
+    if (tab) {
+      tab.opener = null;
+    }
+    try {
+      const objectUrl = await fetchUploadObjectUrl(url);
+      if (tab && !tab.closed) {
+        tab.location.href = objectUrl;
+      } else {
+        const a = document.createElement('a');
+        a.href = objectUrl;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      }
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+    } catch {
+      if (tab && !tab.closed) {
+        tab.close();
+      }
+      toast.error(t('common.fileUnavailableAccess'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
-    <a href={file.href} target="_blank" rel="noopener noreferrer" className={className}>
+    <button
+      type="button"
+      onClick={handleOpen}
+      disabled={loading}
+      aria-busy={loading}
+      className={className}
+    >
       {children}
-    </a>
+    </button>
   );
 }

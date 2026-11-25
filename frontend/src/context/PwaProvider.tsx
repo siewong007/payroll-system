@@ -1,4 +1,6 @@
 import {
+  Suspense,
+  lazy,
   useCallback,
   useEffect,
   useMemo,
@@ -18,6 +20,7 @@ import {
   isIosPlatform,
   isRunningStandalone,
   registerServiceWorker,
+  registerServiceWorkerOnLoad,
   requestNotificationPermission,
   showLocalNotification,
   subscribeInstallPrompt,
@@ -25,7 +28,10 @@ import {
   type NotificationStatus,
 } from '@/lib/pwa';
 import { toast } from '@/lib/toast';
-import { InstallAppModal } from '@/components/pwa/InstallAppModal';
+
+const InstallAppModal = lazy(() =>
+  import('@/components/pwa/InstallAppModal').then((m) => ({ default: m.InstallAppModal })),
+);
 
 export function PwaProvider({ children }: { children: ReactNode }) {
   const { t } = useTranslation();
@@ -87,7 +93,7 @@ export function PwaProvider({ children }: { children: ReactNode }) {
     media?.addEventListener?.('change', handleMediaChange);
 
     let mounted = true;
-    void registerServiceWorker().then((registration) => {
+    const cancelSwOnLoad = registerServiceWorkerOnLoad((registration) => {
       if (mounted && registration) {
         setSwReady(true);
       }
@@ -95,6 +101,7 @@ export function PwaProvider({ children }: { children: ReactNode }) {
 
     return () => {
       mounted = false;
+      cancelSwOnLoad();
       unsubscribePrompt();
       window.removeEventListener('appinstalled', handleAppInstalled);
       window.removeEventListener('focus', syncEnvironment);
@@ -172,7 +179,7 @@ export function PwaProvider({ children }: { children: ReactNode }) {
         await showLocalNotification(t('pwa.notifications.welcomeTitle'), {
           body: t('pwa.notifications.welcomeBody'),
           tag: 'payrollmy-enabled',
-          url: '/portal/notifications',
+          url: window.location.pathname.startsWith('/portal') ? '/portal/notifications' : '/',
         });
       } else if (permission === 'denied') {
         toast.warning(t('pwa.notifications.blockedToast'));
@@ -188,7 +195,7 @@ export function PwaProvider({ children }: { children: ReactNode }) {
     const sent = await showLocalNotification(t('pwa.notifications.testTitle'), {
       body: t('pwa.notifications.testBody'),
       tag: 'payrollmy-test',
-      url: '/portal/notifications',
+      url: window.location.pathname.startsWith('/portal') ? '/portal/notifications' : '/',
     });
     if (sent) {
       toast.success(t('pwa.notifications.testSentToast'));
@@ -243,7 +250,11 @@ export function PwaProvider({ children }: { children: ReactNode }) {
   return (
     <PwaContext.Provider value={value}>
       {children}
-      <InstallAppModal />
+      {installModalOpen && (
+        <Suspense fallback={null}>
+          <InstallAppModal />
+        </Suspense>
+      )}
     </PwaContext.Provider>
   );
 }

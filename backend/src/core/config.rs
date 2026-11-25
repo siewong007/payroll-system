@@ -1,5 +1,15 @@
 use std::env;
 
+/// Git commit SHA injected at image build time (`--build-arg GIT_SHA=...`),
+/// or `"dev"` for un-stamped local builds.
+pub const BUILD_REVISION: &str = match option_env!("APP_BUILD_SHA") {
+    Some(sha) if !sha.is_empty() => sha,
+    _ => "dev",
+};
+
+/// Package version from `Cargo.toml`.
+pub const BUILD_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 #[derive(Clone)]
 pub struct AppConfig {
     pub database_url: String,

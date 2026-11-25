@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useSearchParams } from 'react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
+  AlertTriangle,
   Bell,
   Calculator,
   Check,
@@ -15,9 +16,15 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import { getSettings, bulkUpdateSettings } from '@/api/settings';
 import type { CompanySetting, SettingUpdate } from '@/types';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { SessionManagement } from '@/components/SessionManagement';
 import { AppInstallCard } from '@/components/pwa/AppInstallCard';
 import { NotificationActivationCard } from '@/components/pwa/NotificationActivationCard';
+import { useConfirm } from '@/lib/confirm';
+import { useToast } from '@/lib/toast';
+import { useUnsavedChanges } from '@/lib/useUnsavedChanges';
+import { getErrorMessage } from '@/lib/utils';
 import { SettingsNav, type SettingsNavItem } from './SettingsNav';
 import { CompanyCategorySection } from './CompanyCategorySection';
 import { SecuritySection } from './SecuritySection';
@@ -38,11 +45,21 @@ const ACCOUNT_SECTIONS = ['security', 'sessions', 'app'];
 export function SettingsPage() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const toast = useToast();
+  const confirm = useConfirm();
   const [searchParams, setSearchParams] = useSearchParams();
   const [edits, setEdits] = useState<Record<string, unknown>>({});
   const [saved, setSaved] = useState(false);
 
-  const { data: settings, isLoading } = useQuery({
+  useUnsavedChanges(Object.keys(edits).length > 0);
+
+  const {
+    data: settings,
+    isLoading,
+    isError,
+    error: loadError,
+    refetch,
+  } = useQuery({
     queryKey: ['settings'],
     queryFn: () => getSettings(),
   });
@@ -84,7 +101,11 @@ export function SettingsPage() {
       queryClient.invalidateQueries({ queryKey: ['settings'] });
       setEdits({});
       setSaved(true);
+      toast.success(t('common.saved'));
       setTimeout(() => setSaved(false), 2000);
+    },
+    onError: (err: unknown) => {
+      toast.error(getErrorMessage(err, t('settings.saveFailed')));
     },
   });
 
@@ -106,6 +127,21 @@ export function SettingsPage() {
       Object.fromEntries(Object.entries(prev).filter(([k]) => !k.startsWith(active + '/'))),
     );
 
+  const handleSelectSection = async (id: string) => {
+    if (id === active) return;
+    if (activeEdits().length > 0) {
+      const ok = await confirm({
+        title: t('common.discard'),
+        description: t('settings.discardConfirm'),
+        confirmLabel: t('common.discard'),
+        variant: 'warning',
+      });
+      if (!ok) return;
+      handleDiscard();
+    }
+    setSearchParams({ section: id });
+  };
+
   const isWorkspace = WORKSPACE_ORDER.includes(active);
 
   if (isLoading) {
@@ -118,23 +154,39 @@ export function SettingsPage() {
 
   return (
     <div>
-      <div className="page-header flex items-center justify-between mb-6">
-        <div>
-          <h1 className="page-title">{t('settings.title')}</h1>
-          <p className="page-subtitle">{t('settings.subtitle')}</p>
+      <PageHeader
+        title={t('settings.title')}
+        subtitle={t('settings.subtitle')}
+        actions={
+          saved ? (
+            <span className="flex items-center gap-1 text-sm text-green-600 dark:text-emerald-400 font-medium">
+              <Check className="w-4 h-4" /> {t('common.saved')}
+            </span>
+          ) : undefined
+        }
+      />
+
+      {isError && (
+        <div className="card mb-6">
+          <EmptyState
+            compact
+            icon={AlertTriangle}
+            title={t('settings.loadFailed')}
+            description={getErrorMessage(loadError, t('common.error'))}
+            action={
+              <button type="button" onClick={() => refetch()} className="btn-secondary">
+                {t('common.retry')}
+              </button>
+            }
+          />
         </div>
-        {saved && (
-          <span className="flex items-center gap-1 text-sm text-green-600 font-medium">
-            <Check className="w-4 h-4" /> {t('common.saved')}
-          </span>
-        )}
-      </div>
+      )}
 
       <div className="lg:grid lg:grid-cols-[220px_1fr] lg:gap-6 lg:items-start">
         <SettingsNav
           sections={sections}
           active={active}
-          onSelect={(id) => setSearchParams({ section: id })}
+          onSelect={(id) => { void handleSelectSection(id); }}
         />
 
         <div key={active} className="mt-4 lg:mt-0 animate-fade-up">
@@ -152,7 +204,7 @@ export function SettingsPage() {
           ) : (
             <>
               <h2 className="section-title">{t(`settings.sections.${active}.label`)}</h2>
-              <p className="text-sm text-gray-500 mt-1 mb-4">{t(`settings.sections.${active}.description`)}</p>
+              <p className="text-sm text-gray-500 dark:text-slate-400 mt-1 mb-4">{t(`settings.sections.${active}.description`)}</p>
               {active === 'security' ? (
                 <SecuritySection />
               ) : active === 'sessions' ? (

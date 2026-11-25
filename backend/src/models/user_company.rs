@@ -36,7 +36,7 @@ pub struct UserWithCompanies {
 /// because `companies` has no corresponding column, and the compile-checked
 /// `query_as!` macro requires every struct field to map to one: repos return this
 /// projection and the service assembles it (filling `companies` separately).
-#[derive(Debug)]
+#[derive(Debug, sqlx::FromRow)]
 pub struct UserRow {
     pub id: Uuid,
     pub email: String,

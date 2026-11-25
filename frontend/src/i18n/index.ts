@@ -1,10 +1,6 @@
-import i18n from 'i18next';
+import i18n, { type BackendModule, type ResourceLanguage } from 'i18next';
 import { initReactI18next } from 'react-i18next';
 import LanguageDetector from 'i18next-browser-languagedetector';
-import en from './locales/en';
-import ms from './locales/ms';
-import zhCN from './locales/zh-CN';
-import zhTW from './locales/zh-TW';
 
 export const SUPPORTED_LOCALES = ['en', 'ms', 'zh-CN', 'zh-TW'] as const;
 export type AppLocale = (typeof SUPPORTED_LOCALES)[number];
@@ -14,6 +10,13 @@ export const LOCALE_LABELS: Record<AppLocale, string> = {
   ms: 'Bahasa Melayu',
   'zh-CN': '简体中文',
   'zh-TW': '繁體中文',
+};
+
+const LOCALE_LOADERS: Record<AppLocale, () => Promise<{ default: ResourceLanguage }>> = {
+  en: () => import('./locales/en') as Promise<{ default: ResourceLanguage }>,
+  ms: () => import('./locales/ms') as Promise<{ default: ResourceLanguage }>,
+  'zh-CN': () => import('./locales/zh-CN') as Promise<{ default: ResourceLanguage }>,
+  'zh-TW': () => import('./locales/zh-TW') as Promise<{ default: ResourceLanguage }>,
 };
 
 /**
@@ -40,7 +43,7 @@ export function intlLocale(locale: string = i18n.language): string {
  * Chinese is resolved by *script*, not region: any Traditional-codepoint
  * locale (TW/HK/MO/Hant) lands on zh-TW; everything else Chinese on zh-CN.
  */
-function normalizeLocale(lng: string): string {
+function normalizeLocale(lng: string): AppLocale {
   const l = lng.toLowerCase();
   if (l.startsWith('zh')) {
     return l.includes('hant') || l.endsWith('-tw') || l.endsWith('-hk') || l.endsWith('-mo')
@@ -51,20 +54,44 @@ function normalizeLocale(lng: string): string {
   return 'en';
 }
 
-i18n
+const localeBackend: BackendModule = {
+  type: 'backend',
+  init() {},
+  read(language, namespace, callback) {
+    const normalized = normalizeLocale(language);
+    if (i18n.hasResourceBundle(normalized, namespace)) {
+      callback(null, i18n.getResourceBundle(normalized, namespace) as ResourceLanguage);
+      return;
+    }
+    LOCALE_LOADERS[normalized]()
+      .then((mod) => callback(null, mod.default))
+      .catch((err: unknown) => {
+        if (normalized !== 'en') {
+          LOCALE_LOADERS.en()
+            .then((mod) => callback(null, mod.default))
+            .catch(() => callback(err as Error, false));
+          return;
+        }
+        callback(err as Error, false);
+      });
+  },
+};
+
+export const i18nReady: Promise<unknown> = i18n
   .use(LanguageDetector)
+  .use(localeBackend)
   .use(initReactI18next)
   .init({
-    resources: {
-      en: { translation: en },
-      ms: { translation: ms },
-      'zh-CN': { translation: zhCN },
-      'zh-TW': { translation: zhTW },
-    },
     supportedLngs: [...SUPPORTED_LOCALES],
-    fallbackLng: 'en',
+    load: 'currentOnly',
+    // Every supported locale enforces 100% key parity via TypeScript (`Messages`)
+    // and `i18n.test.ts`, so non-English boots do not need to preload `en`.
+    fallbackLng: (code: string) =>
+      SUPPORTED_LOCALES.includes(code as AppLocale) ? [] : ['en'],
+    partialBundledLanguages: true,
     interpolation: { escapeValue: false },
     returnEmptyString: false,
+    react: { useSuspense: false },
     detection: {
       order: ['localStorage', 'navigator'],
       caches: ['localStorage'],
@@ -72,5 +99,12 @@ i18n
       convertDetectedLanguage: normalizeLocale,
     },
   });
+
+export async function ensureLocaleLoaded(lng: string): Promise<void> {
+  const normalized = normalizeLocale(lng);
+  if (i18n.hasResourceBundle(normalized, 'translation')) return;
+  const mod = await LOCALE_LOADERS[normalized]();
+  i18n.addResourceBundle(normalized, 'translation', mod.default, true, true);
+}
 
 export default i18n;

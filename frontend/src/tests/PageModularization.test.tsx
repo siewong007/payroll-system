@@ -165,12 +165,12 @@ describe('Characterization tests before page modularization', () => {
       expect(reportsMocks.getPayrollSummary).toHaveBeenCalled();
     });
 
-    await user.click(screen.getByRole('button', { name: i18n.t('reports.tabs.leave') }));
+    await user.click(screen.getByRole('tab', { name: i18n.t('reports.tabs.leave') }));
     await waitFor(() => {
       expect(reportsMocks.getLeaveReport).toHaveBeenCalled();
     });
 
-    await user.click(screen.getByRole('button', { name: i18n.t('reports.tabs.eaForm') }));
+    await user.click(screen.getByRole('tab', { name: i18n.t('reports.tabs.eaForm') }));
     await waitFor(() => {
       expect(reportsMocks.getEaEmployees).toHaveBeenCalled();
     });

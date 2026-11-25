@@ -39,7 +39,7 @@ cargo test                  # integration tests require DATABASE_URL + JWT_SECRE
 cargo test <name>           # run a single test by substring
 ```
 
-Migrations live in `backend/migrations/` and are embedded via `sqlx::migrate!` — they run on every `cargo run`. Versions `1000_schema.sql` and `1001_data.sql` form the consolidated baseline, followed by immutable numbered forward migrations (`1002_*.sql` through `1030_*.sql`). Every deployed migration is strictly immutable (enforced by CI); future production changes must add the next numbered migration file, and returning to two files requires an explicit, tested rebaseline.
+Migrations live in `backend/migrations/` and are embedded via `sqlx::migrate!` — they run on every `cargo run`. Versions `1000_schema.sql` and `1001_data.sql` form the consolidated baseline, followed by immutable numbered forward migrations (`1002_*.sql` through `1032_*.sql`). Every deployed migration is strictly immutable (enforced by CI); future production changes must add the next numbered migration file, and returning to two files requires an explicit, tested rebaseline.
 
 Data access lives in `backend/src/repositories/` (including `reads/` projections); handlers and services must not embed request-time SQL. Some queries use the compile-time-checked `sqlx::query!`/`query_as!` macros (the payroll engine and repository helpers are migrated; other legacy queries still use runtime `query`/`query_as` and are being migrated incrementally). These macros are verified against the committed `backend/.sqlx/` offline cache, so CI lint and the Docker build need no database (`SQLX_OFFLINE=true`). **After adding or changing a macro query, regenerate the cache** against a migrated DB and commit it:
 
@@ -77,20 +77,21 @@ Browser → Vite dev proxy (or Cloudflare → host Caddy in prod) → Axum at `/
 - `services/` — business logic and orchestration (e.g. `payroll_engine`, `pcb_calculator`, `epf_service`, `eis_service`, `socso_service`, `attendance_service`). Services compose repository calls, own transactions, and return `AppResult<T>`.
 - `models/` — data structs and SQLx result/DTO projections. Naming is by domain (`employee.rs`, `payroll.rs`, `attendance.rs`, `user_company.rs`, etc.).
 - `repositories/` — per-table SQL operations plus `reads/` for cross-table projections. Request-time SQL belongs here; see `docs/architecture.md`.
-- `core/` — cross-cutting: `app_state` (shared `AppState { pool, config, webauthn }`), `auth` (JWT + `AuthUser` extractor), `config` (env loading), `db` (pool + migrate), `cookie`, `error` (`AppError` → HTTP via `IntoResponse`).
+- `core/` — cross-cutting: `app_state` (shared `AppState { pool, config, webauthn, mailer }`), `auth` (JWT + `AuthUser` extractor), `config` (env loading + `BUILD_REVISION`), `db` (pool + migrate), `cookie`, `error` (`AppError` → HTTP via `IntoResponse`).
 
 Errors: every fallible path returns `AppResult<T>` (`Result<T, AppError>`). `AppError::Database` wraps `sqlx::Error` via `#[from]`, so use `?` freely. `AppError::Internal` is logged and returned as a generic 500; all other variants surface their message to the client.
 
-Auth: JWT in `Authorization: Bearer`, refresh token in httpOnly cookie. `AuthUser` is an Axum extractor; use `auth_user.deny_exec()?` on any payroll-sensitive handler — the `exec` role is read-mostly and must not see payroll figures. Role strings in claims: `super_admin`, `admin`, `payroll_admin`, `hr_manager`, `finance`, `exec`, `employee`. Multi-company users switch active company via `PUT /api/auth/switch-company`, which re-issues the JWT with a new `company_id`.
+Auth: JWT in `Authorization: Bearer`, refresh token in httpOnly cookie. `AuthUser` is an Axum extractor; always enforce allow-list capability checks via `auth.require_permission(Permission::...)` (or `auth.can(...)`) rather than role deny-lists — `exec` is read-only and holds no payroll/report permissions. Role strings in claims: `super_admin`, `admin`, `payroll_admin`, `hr_manager`, `finance`, `manager`, `exec`, `employee`. Multi-company users switch active company via `PUT /api/auth/switch-company`, which re-issues the JWT with a new `company_id`.
 
 Rate limiting is applied per-route group in `routes/mod.rs` via `tower_governor` — tighter limits on `/auth/login`, `/auth/forgot-password`, and OAuth2 endpoints.
 
 Bot protection is Cloudflare Turnstile (managed widget), enforced by `core::turnstile::verify` at the top of each unauthenticated, credential-free handler: `/auth/login`, `/auth/forgot-password`, `/auth/reset-password`, `/auth/passkey/check`, `/auth/passkey/{authenticate,discoverable}/begin`, and `/auth/oauth2/google/authorize`. Requests carry `turnstile_token` (body field; query param on the authorize GET). When `TURNSTILE_SECRET_KEY` is unset verification is skipped entirely — that is the intended dev/CI state; production sets it via `deploy/docker-compose.prod.yml` and the frontend gets `VITE_TURNSTILE_SITE_KEY` at build time. Failure modes are fail-closed: missing token 400, rejected token 403, Cloudflare unreachable 502. Deliberately NOT on `2fa/verify`, `validate-reset-token`, `refresh`, `kiosk/qr`, the passkey `complete` calls, or the OAuth callback — each is already credential-gated, downstream of a protected call, or cannot carry a token.
 
-Two background tasks spawn from `main.rs` alongside the `background_jobs` async executor (`payroll_run` and `employee_import` enqueue a row and return `202` for `GET /api/jobs/{id}` to poll):
+Three background loops spawn from `main.rs` alongside the `background_jobs` async executor (`payroll_run` and `employee_import` enqueue a row and return `202` for `GET /api/jobs/{id}` to poll):
 
 1. Daily PDPA-aligned retention cleanup of stale `refresh_tokens` (>30 days), unreferenced expired `attendance_qr_tokens` (>7 days), aged `attendance_network_observations`, `audit_logs` (>2,555 days / 7 years per ITA 1967 s.82), `notifications`, `email_logs`, `user_sessions`, and expired `bulk_import_sessions`.
 2. Daily catch-up auto-absent task at 12:30 PM Asia/Kuala_Lumpur (04:30 UTC via `core::schedule::next_daily_run_utc`, plus once at startup), evaluated per company timezone from the last bookmarked run while skipping approved `leave_requests`, non-working days, and public holidays.
+3. Transactional email outbox poller (15s tick using `FOR UPDATE SKIP LOCKED` and exponential retry backoff) reusing `AppState.mailer`. Each background task records health heartbeats surfaced on `/api/health/ready` and `/api/admin/platform/health`.
 
 ### Attendance subsystem (`services/attendance_service.rs`)
 

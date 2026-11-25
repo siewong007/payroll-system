@@ -19,6 +19,10 @@ export interface AttendanceMethodResponse {
   network_mode: 'none' | 'learn' | 'warn' | 'enforce';
   /** IANA timezone the company's attendance days are bucketed in */
   timezone: string;
+  /** Advisory default shift start time (`HH:MM:SS`) */
+  shift_start_time: string | null;
+  /** Advisory default shift grace minutes */
+  grace_minutes: number | null;
 }
 
 export interface QrTokenResponse {

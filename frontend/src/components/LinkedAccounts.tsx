@@ -48,7 +48,7 @@ export function LinkedAccounts() {
     setError('');
     try {
       // The /oauth2/link route navigates back to this page on success.
-      sessionStorage.setItem('oauth2_link_return', window.location.pathname);
+      sessionStorage.setItem('oauth2_link_return', window.location.pathname + window.location.search);
       const token = turnstileToken.current;
       turnstileToken.current = undefined;
       window.location.href = await getGoogleAuthorizeUrl('link', token);
@@ -70,57 +70,59 @@ export function LinkedAccounts() {
     <section className="card">
       <div className="section-header">
         <div className="flex items-center gap-2">
-          <Link2 className="w-4 h-4 text-gray-400" />
+          <Link2 className="w-4 h-4 text-gray-400 dark:text-slate-400" />
           <span className="section-title">{t('auth.linkedAccounts.title')}</span>
         </div>
         {google && <span className="badge badge-approved ml-auto">{t('auth.linkedAccounts.linkedBadge')}</span>}
       </div>
 
-      <p className="text-sm text-gray-500 mb-4">
+      <p className="text-sm text-gray-500 dark:text-slate-400 mb-4">
         {t('auth.linkedAccounts.description')}
       </p>
 
       {error && (
-        <div className="mb-4 bg-red-50 border border-red-100 text-red-600 text-sm px-4 py-3 rounded-xl">
+        <div role="alert" className="mb-4 bg-red-50 dark:bg-red-500/10 border border-red-100 dark:border-red-500/30 text-red-600 dark:text-red-300 text-sm px-4 py-3 rounded-xl">
           {error}
         </div>
       )}
 
-      <div className="py-4 flex items-center gap-3">
-        {google?.avatar_url && /^https:\/\//i.test(google.avatar_url) ? (
-          <img
-            src={google.avatar_url}
-            alt=""
-            referrerPolicy="no-referrer"
-            className="w-8 h-8 rounded-full"
-          />
-        ) : (
-          <GoogleIcon />
-        )}
-        <div className="min-w-0 flex-1">
-          <span className="text-sm font-medium text-gray-900">Google</span>{/* i18n-ok: brand name */}
-          <p className="text-xs text-gray-500 mt-1">
-            {isLoading
-              ? t('common.loading')
-              : google
-                ? google.provider_email
-                  ? t('auth.linkedAccounts.linkedAs', { email: google.provider_email })
-                  : t('auth.linkedAccounts.linked')
-                : t('auth.linkedAccounts.notLinked')}
-          </p>
+      <div className="py-4 flex flex-col sm:flex-row sm:items-center gap-3">
+        <div className="flex items-center gap-3 min-w-0 flex-1">
+          {google?.avatar_url && /^https:\/\//i.test(google.avatar_url) ? (
+            <img
+              src={google.avatar_url}
+              alt=""
+              referrerPolicy="no-referrer"
+              className="w-8 h-8 rounded-full shrink-0"
+            />
+          ) : (
+            <GoogleIcon />
+          )}
+          <div className="min-w-0 flex-1">
+            <span className="text-sm font-medium text-gray-900 dark:text-slate-100">Google</span>{/* i18n-ok: brand name */}
+            <p className="text-xs text-gray-500 dark:text-slate-400 mt-1 truncate">
+              {isLoading
+                ? t('common.loading')
+                : google
+                  ? google.provider_email
+                    ? t('auth.linkedAccounts.linkedAs', { email: google.provider_email })
+                    : t('auth.linkedAccounts.linked')
+                  : t('auth.linkedAccounts.notLinked')}
+            </p>
+          </div>
         </div>
         {google ? (
           <button
             type="button"
             onClick={() => setConfirmingUnlink(true)}
             disabled={unlink.isPending}
-            className="text-sm font-medium text-red-600 hover:text-red-700 disabled:opacity-50 whitespace-nowrap"
+            className="self-start sm:self-center min-h-10 px-2 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 disabled:opacity-50 whitespace-nowrap"
           >
             {unlink.isPending ? t('auth.linkedAccounts.unlinking') : t('auth.linkedAccounts.unlink')}
           </button>
         ) : (
           googleEnabled && (
-            <div className="flex flex-col items-end gap-2">
+            <div className="flex flex-col items-start sm:items-end gap-2 max-w-full overflow-x-auto">
               <TurnstileWidget
                 ref={turnstileRef}
                 onVerify={(t) => {
@@ -136,7 +138,7 @@ export function LinkedAccounts() {
               <button
                 type="button"
                 onClick={startLink}
-                className="text-sm font-medium text-black hover:underline whitespace-nowrap"
+                className="min-h-10 text-sm font-semibold text-[var(--accent-1)] hover:underline whitespace-nowrap"
               >
                 {t('auth.linkedAccounts.linkAccount')}
               </button>
@@ -166,7 +168,7 @@ export function LinkedAccounts() {
           </div>
         }
       >
-        <p className="text-sm text-gray-600">
+        <p className="text-sm text-gray-600 dark:text-slate-300">
           {t('auth.linkedAccounts.unlinkBody')}
         </p>
       </Modal>

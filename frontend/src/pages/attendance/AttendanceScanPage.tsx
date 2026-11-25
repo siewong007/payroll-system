@@ -1,24 +1,31 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
-import { CheckCircle2, XCircle, Loader2, MapPin, QrCode, Info, RefreshCw, Navigation } from 'lucide-react';
+import {
+  CheckCircle2, XCircle, Loader2, MapPin, QrCode, Info, RefreshCw, Navigation, WifiOff, Clock,
+} from 'lucide-react';
 import { checkInQr, getAttendanceMethod } from '@/api/attendance';
 import { useAuth } from '@/context/AuthContext';
 import { BrandLogo } from '@/components/ui/BrandLogo';
-import { classifyCheckInError, getGeolocation } from '@/lib/attendance';
+import { classifyCheckInError, getGeolocationResult } from '@/lib/attendance';
 import { getErrorMessage, translateServerMessage } from '@/lib/utils';
 import { formatTimeSeconds } from '@/lib/format';
+import { hasOnlyEmployeeRole } from '@/lib/roles';
 
 type State =
+  | 'authenticating'
   | 'locating'
   | 'checking-in'
   | 'success'
   | 'already-checked-in'
   | 'location-required'
   | 'outside-geofence'
+  | 'offsite-network'
+  | 'expired-code'
+  | 'stale-session'
+  | 'no-employee'
   | 'error'
-  | 'no-token'
-  | 'login-required';
+  | 'no-token';
 
 export function AttendanceScanPage() {
   const { t } = useTranslation();
@@ -27,10 +34,14 @@ export function AttendanceScanPage() {
   const { isAuthenticated, isLoading: authLoading, user } = useAuth();
   const token = searchParams.get('token');
 
-  const [state, setState] = useState<State>('locating');
+  const [state, setState] = useState<State>(token ? 'authenticating' : 'no-token');
   const [error, setError] = useState('');
   const [record, setRecord] = useState<{ check_in_at: string } | null>(null);
   const [attempt, setAttempt] = useState(0);
+
+  const portalOnly = hasOnlyEmployeeRole(user);
+  const attendanceHref = portalOnly ? '/portal/attendance' : '/my/attendance';
+  const fallbackHref = portalOnly ? '/portal/attendance' : '/';
 
   const runCheckIn = useCallback(async () => {
     if (!token) return;
@@ -46,11 +57,11 @@ export function AttendanceScanPage() {
     }
 
     setState(needsLocation ? 'locating' : 'checking-in');
-    const coords = await getGeolocation(needsLocation);
+    const geo = await getGeolocationResult(needsLocation);
 
     setState('checking-in');
     try {
-      const result = await checkInQr(token, coords?.latitude, coords?.longitude);
+      const result = await checkInQr(token, geo.coords?.latitude, geo.coords?.longitude);
       setRecord(result);
       setState('success');
     } catch (e: unknown) {
@@ -59,17 +70,30 @@ export function AttendanceScanPage() {
       const message = getErrorMessage(e, t('attendance.scan.checkInFailed'));
       setError(message);
 
-      // Branch on what actually went wrong. Every failure — including "you
-      // already checked in", which means attendance *was* recorded — used to
-      // show the same dead-end red card. Note that an enforce-mode rejection
-      // reads "…check in from an approved office location", so matching a bare
-      // /location/ sent an off-site employee to a "grant permission and retry"
-      // screen that could never succeed; `classifyCheckInError` splits the two.
       switch (classifyCheckInError(raw ?? message)) {
-        case 'already-checked-in': setState('already-checked-in'); break;
-        case 'outside-geofence':   setState('outside-geofence'); break;
-        case 'location-permission': setState('location-required'); break;
-        default:                   setState('error');
+        case 'already-checked-in':
+          setState('already-checked-in');
+          break;
+        case 'outside-geofence':
+          setState('outside-geofence');
+          break;
+        case 'offsite-network':
+          setState('offsite-network');
+          break;
+        case 'expired-code':
+          setState('expired-code');
+          break;
+        case 'stale-session':
+          setState('stale-session');
+          break;
+        case 'location-permission':
+          if (geo.errorCode === 2 || geo.errorCode === 3) {
+            setError(t('attendance.checkin.locationTimeout'));
+          }
+          setState('location-required');
+          break;
+        default:
+          setState('error');
       }
     }
   }, [token, t]); // eslint-disable-line react-hooks/exhaustive-deps -- Babel cannot identify setError as a stable React setter.
@@ -79,7 +103,10 @@ export function AttendanceScanPage() {
       setState('no-token');
       return;
     }
-    if (authLoading) return;
+    if (authLoading) {
+      setState('authenticating');
+      return;
+    }
 
     if (!isAuthenticated) {
       // Redirect to login, come back here after
@@ -93,7 +120,7 @@ export function AttendanceScanPage() {
     }
 
     if (!user?.employee_id) {
-      setState('error');
+      setState('no-employee');
       setError(t('attendance.scan.noEmployeeProfile'));
       return;
     }
@@ -107,24 +134,37 @@ export function AttendanceScanPage() {
   const retry = () => setAttempt((n) => n + 1);
 
   return (
-    <div className="theme-portal min-h-screen bg-[var(--background)] flex items-center justify-center p-6">
+    <div className="theme-portal min-h-screen bg-[var(--background)] text-[var(--foreground)] flex items-center justify-center p-6">
       <div className="w-full max-w-sm">
 
         {/* Logo */}
-        <BrandLogo variant="lockup-dark" className="h-10 w-auto mx-auto mb-8" />
+        <BrandLogo variant="lockup-light" className="h-10 w-auto mx-auto mb-8 dark:hidden" />
+        <BrandLogo variant="lockup-dark" className="hidden dark:block h-10 w-auto mx-auto mb-8 rounded-xl" />
 
         {/* Card */}
-        <div className="bg-white rounded-3xl shadow-lg p-8 flex flex-col items-center text-center gap-5">
+        <div className="bg-white dark:bg-slate-900 border border-gray-200/80 dark:border-slate-800 rounded-3xl shadow-lg p-8 flex flex-col items-center text-center gap-5">
+
+          {/* Authenticating */}
+          {state === 'authenticating' && (
+            <>
+              <div className="w-20 h-20 bg-gray-100 dark:bg-slate-800 rounded-full flex items-center justify-center">
+                <Loader2 className="w-9 h-9 text-teal-600 dark:text-teal-400 animate-spin" />
+              </div>
+              <div>
+                <h2 className="text-xl font-bold text-gray-900 dark:text-slate-100 mb-1">{t('common.loading')}</h2>
+              </div>
+            </>
+          )}
 
           {/* Locating */}
           {state === 'locating' && (
             <>
-              <div className="w-20 h-20 bg-sky-50 rounded-full flex items-center justify-center">
-                <MapPin className="w-9 h-9 text-sky-500 animate-pulse" />
+              <div className="w-20 h-20 bg-sky-50 dark:bg-sky-500/15 rounded-full flex items-center justify-center">
+                <MapPin className="w-9 h-9 text-sky-500 dark:text-sky-400 animate-pulse" />
               </div>
               <div>
-                <h2 className="text-xl font-bold text-gray-900 mb-1">{t('attendance.scan.locating')}</h2>
-                <p className="text-sm text-gray-500">{t('attendance.scan.locatingBody')}</p>
+                <h2 className="text-xl font-bold text-gray-900 dark:text-slate-100 mb-1">{t('attendance.scan.locating')}</h2>
+                <p className="text-sm text-gray-500 dark:text-slate-400">{t('attendance.scan.locatingBody')}</p>
               </div>
             </>
           )}
@@ -132,12 +172,12 @@ export function AttendanceScanPage() {
           {/* Checking in */}
           {state === 'checking-in' && (
             <>
-              <div className="w-20 h-20 bg-violet-50 rounded-full flex items-center justify-center">
-                <Loader2 className="w-9 h-9 text-violet-500 animate-spin" />
+              <div className="w-20 h-20 bg-violet-50 dark:bg-violet-500/15 rounded-full flex items-center justify-center">
+                <Loader2 className="w-9 h-9 text-violet-500 dark:text-violet-400 animate-spin" />
               </div>
               <div>
-                <h2 className="text-xl font-bold text-gray-900 mb-1">{t('attendance.scan.checkingIn')}</h2>
-                <p className="text-sm text-gray-500">{t('attendance.scan.checkingInBody')}</p>
+                <h2 className="text-xl font-bold text-gray-900 dark:text-slate-100 mb-1">{t('attendance.scan.checkingIn')}</h2>
+                <p className="text-sm text-gray-500 dark:text-slate-400">{t('attendance.scan.checkingInBody')}</p>
               </div>
             </>
           )}
@@ -145,24 +185,25 @@ export function AttendanceScanPage() {
           {/* Success */}
           {state === 'success' && (
             <>
-              <div className="w-20 h-20 bg-emerald-50 rounded-full flex items-center justify-center">
-                <CheckCircle2 className="w-10 h-10 text-emerald-500" />
+              <div className="w-20 h-20 bg-emerald-50 dark:bg-emerald-500/15 rounded-full flex items-center justify-center">
+                <CheckCircle2 className="w-10 h-10 text-emerald-500 dark:text-emerald-400" />
               </div>
               <div>
-                <h2 className="text-xl font-bold text-gray-900 mb-1">{t('attendance.scan.checkedIn')}</h2>
+                <h2 className="text-xl font-bold text-gray-900 dark:text-slate-100 mb-1">{t('attendance.scan.checkedIn')}</h2>
                 {record && (
-                  <p className="text-sm text-gray-500">
+                  <p className="text-sm text-gray-500 dark:text-slate-400">
                     {t('attendance.scan.welcome', { name: user?.full_name })}
                     <br />
                     {t('attendance.scan.atTime', { time: formatTime(record.check_in_at) })}
                   </p>
                 )}
               </div>
-              <div className="w-full bg-emerald-50 rounded-2xl p-4 text-emerald-700 text-sm">
+              <div className="w-full bg-emerald-50 dark:bg-emerald-500/15 rounded-2xl p-4 text-emerald-700 dark:text-emerald-200 text-sm">
                 {t('attendance.scan.recorded')}
               </div>
               <button
-                onClick={() => navigate('/portal/attendance')}
+                type="button"
+                onClick={() => navigate(attendanceHref)}
                 className="w-full py-3 bg-teal-700 text-white rounded-2xl text-sm font-semibold hover:bg-teal-800 transition-colors"
               >
                 {t('attendance.scan.viewMyAttendance')}
@@ -173,17 +214,18 @@ export function AttendanceScanPage() {
           {/* Already checked in — not a failure: attendance is recorded. */}
           {state === 'already-checked-in' && (
             <>
-              <div className="w-20 h-20 bg-sky-50 rounded-full flex items-center justify-center">
-                <Info className="w-10 h-10 text-sky-500" />
+              <div className="w-20 h-20 bg-sky-50 dark:bg-sky-500/15 rounded-full flex items-center justify-center">
+                <Info className="w-10 h-10 text-sky-500 dark:text-sky-400" />
               </div>
               <div>
-                <h2 className="text-xl font-bold text-gray-900 mb-1">{t('attendance.scan.alreadyTitle')}</h2>
-                <p className="text-sm text-gray-500">
+                <h2 className="text-xl font-bold text-gray-900 dark:text-slate-100 mb-1">{t('attendance.scan.alreadyTitle')}</h2>
+                <p className="text-sm text-gray-500 dark:text-slate-400">
                   {t('attendance.scan.alreadyBody')}
                 </p>
               </div>
               <button
-                onClick={() => navigate('/portal/attendance')}
+                type="button"
+                onClick={() => navigate(attendanceHref)}
                 className="w-full py-3 bg-teal-700 text-white rounded-2xl text-sm font-semibold hover:bg-teal-800 transition-colors"
               >
                 {t('attendance.scan.viewMyAttendance')}
@@ -194,51 +236,142 @@ export function AttendanceScanPage() {
           {/* Location required — actionable, with a retry on the same token. */}
           {state === 'location-required' && (
             <>
-              <div className="w-20 h-20 bg-amber-50 rounded-full flex items-center justify-center">
-                <MapPin className="w-10 h-10 text-amber-500" />
+              <div className="w-20 h-20 bg-amber-50 dark:bg-amber-500/15 rounded-full flex items-center justify-center">
+                <MapPin className="w-10 h-10 text-amber-500 dark:text-amber-400" />
               </div>
               <div>
-                <h2 className="text-xl font-bold text-gray-900 mb-1">{t('attendance.scan.locationNeeded')}</h2>
-                <p className="text-sm text-gray-500">{translateServerMessage(error)}</p>
+                <h2 className="text-xl font-bold text-gray-900 dark:text-slate-100 mb-1">{t('attendance.scan.locationNeeded')}</h2>
+                <p className="text-sm text-gray-500 dark:text-slate-400">{translateServerMessage(error)}</p>
               </div>
               <button
+                type="button"
                 onClick={retry}
                 className="w-full py-3 bg-teal-700 text-white rounded-2xl text-sm font-semibold hover:bg-teal-800 transition-colors flex items-center justify-center gap-2"
               >
                 <RefreshCw className="w-4 h-4" /> {t('attendance.scan.enableLocationRetry')}
               </button>
               <button
-                onClick={() => navigate('/portal/attendance')}
-                className="w-full py-3 border border-gray-200 text-gray-700 rounded-2xl text-sm font-semibold hover:bg-gray-50 transition-colors"
+                type="button"
+                onClick={() => navigate(attendanceHref)}
+                className="w-full py-3 border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-200 rounded-2xl text-sm font-semibold hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors"
               >
                 {t('attendance.scan.goToPortal')}
               </button>
             </>
           )}
 
-          {/* Off-site — the position was resolved fine, it just isn't an
-              approved one. Retrying from here is only useful after moving, so
-              the copy says so instead of blaming permissions. */}
+          {/* Off-site geofence */}
           {state === 'outside-geofence' && (
             <>
-              <div className="w-20 h-20 bg-amber-50 rounded-full flex items-center justify-center">
-                <Navigation className="w-10 h-10 text-amber-500" />
+              <div className="w-20 h-20 bg-amber-50 dark:bg-amber-500/15 rounded-full flex items-center justify-center">
+                <Navigation className="w-10 h-10 text-amber-500 dark:text-amber-400" />
               </div>
               <div>
-                <h2 className="text-xl font-bold text-gray-900 mb-1">{t('attendance.scan.notAtLocation')}</h2>
-                <p className="text-sm text-gray-500">{translateServerMessage(error)}</p>
+                <h2 className="text-xl font-bold text-gray-900 dark:text-slate-100 mb-1">{t('attendance.scan.notAtLocation')}</h2>
+                <p className="text-sm text-gray-500 dark:text-slate-400">{translateServerMessage(error)}</p>
               </div>
               <button
+                type="button"
                 onClick={retry}
                 className="w-full py-3 bg-teal-700 text-white rounded-2xl text-sm font-semibold hover:bg-teal-800 transition-colors flex items-center justify-center gap-2"
               >
                 <RefreshCw className="w-4 h-4" /> {t('attendance.scan.movedRetry')}
               </button>
               <button
-                onClick={() => navigate('/portal/attendance')}
-                className="w-full py-3 border border-gray-200 text-gray-700 rounded-2xl text-sm font-semibold hover:bg-gray-50 transition-colors"
+                type="button"
+                onClick={() => navigate(attendanceHref)}
+                className="w-full py-3 border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-200 rounded-2xl text-sm font-semibold hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors"
               >
                 {t('attendance.scan.goToPortal')}
+              </button>
+            </>
+          )}
+
+          {/* Off-network */}
+          {state === 'offsite-network' && (
+            <>
+              <div className="w-20 h-20 bg-amber-50 dark:bg-amber-500/15 rounded-full flex items-center justify-center">
+                <WifiOff className="w-10 h-10 text-amber-500 dark:text-amber-400" />
+              </div>
+              <div>
+                <h2 className="text-xl font-bold text-gray-900 dark:text-slate-100 mb-1">{t('attendance.scan.offsiteTitle')}</h2>
+                <p className="text-sm text-gray-500 dark:text-slate-400">
+                  {t('attendance.checkin.offsiteSuffix', { message: translateServerMessage(error) })}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={retry}
+                className="w-full py-3 bg-teal-700 text-white rounded-2xl text-sm font-semibold hover:bg-teal-800 transition-colors flex items-center justify-center gap-2"
+              >
+                <RefreshCw className="w-4 h-4" /> {t('common.retry')}
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate(attendanceHref)}
+                className="w-full py-3 border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-200 rounded-2xl text-sm font-semibold hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors"
+              >
+                {t('attendance.scan.goToPortal')}
+              </button>
+            </>
+          )}
+
+          {/* Expired or revoked token — open scanner to read a fresh kiosk code */}
+          {state === 'expired-code' && (
+            <>
+              <div className="w-20 h-20 bg-amber-50 dark:bg-amber-500/15 rounded-full flex items-center justify-center">
+                <Clock className="w-10 h-10 text-amber-500 dark:text-amber-400" />
+              </div>
+              <div>
+                <h2 className="text-xl font-bold text-gray-900 dark:text-slate-100 mb-1">{t('attendance.scan.expiredTitle')}</h2>
+                <p className="text-sm text-gray-500 dark:text-slate-400">{translateServerMessage(error)}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => navigate(attendanceHref)}
+                className="w-full py-3 bg-teal-700 text-white rounded-2xl text-sm font-semibold hover:bg-teal-800 transition-colors"
+              >
+                {t('attendance.scan.openScanner')}
+              </button>
+            </>
+          )}
+
+          {/* Unclosed previous session */}
+          {state === 'stale-session' && (
+            <>
+              <div className="w-20 h-20 bg-amber-50 dark:bg-amber-500/15 rounded-full flex items-center justify-center">
+                <Clock className="w-10 h-10 text-amber-500 dark:text-amber-400" />
+              </div>
+              <div>
+                <h2 className="text-xl font-bold text-gray-900 dark:text-slate-100 mb-1">{t('attendance.scan.failedTitle')}</h2>
+                <p className="text-sm text-gray-500 dark:text-slate-400">{translateServerMessage(error)}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => navigate(attendanceHref)}
+                className="w-full py-3 bg-teal-700 text-white rounded-2xl text-sm font-semibold hover:bg-teal-800 transition-colors"
+              >
+                {t('attendance.scan.viewMyAttendance')}
+              </button>
+            </>
+          )}
+
+          {/* Account without employee profile */}
+          {state === 'no-employee' && (
+            <>
+              <div className="w-20 h-20 bg-red-50 dark:bg-red-500/15 rounded-full flex items-center justify-center">
+                <XCircle className="w-10 h-10 text-red-500 dark:text-red-400" />
+              </div>
+              <div>
+                <h2 className="text-xl font-bold text-gray-900 dark:text-slate-100 mb-1">{t('attendance.scan.failedTitle')}</h2>
+                <p className="text-sm text-gray-500 dark:text-slate-400">{error}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => navigate(fallbackHref)}
+                className="w-full py-3 border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-200 rounded-2xl text-sm font-semibold hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors"
+              >
+                {portalOnly ? t('attendance.scan.goToPortal') : t('attendance.scan.backToHome')}
               </button>
             </>
           )}
@@ -246,22 +379,24 @@ export function AttendanceScanPage() {
           {/* Error */}
           {state === 'error' && (
             <>
-              <div className="w-20 h-20 bg-red-50 rounded-full flex items-center justify-center">
-                <XCircle className="w-10 h-10 text-red-500" />
+              <div className="w-20 h-20 bg-red-50 dark:bg-red-500/15 rounded-full flex items-center justify-center">
+                <XCircle className="w-10 h-10 text-red-500 dark:text-red-400" />
               </div>
               <div>
-                <h2 className="text-xl font-bold text-gray-900 mb-1">{t('attendance.scan.failedTitle')}</h2>
-                <p className="text-sm text-gray-500">{translateServerMessage(error)}</p>
+                <h2 className="text-xl font-bold text-gray-900 dark:text-slate-100 mb-1">{t('attendance.scan.failedTitle')}</h2>
+                <p className="text-sm text-gray-500 dark:text-slate-400">{translateServerMessage(error)}</p>
               </div>
               <button
+                type="button"
                 onClick={retry}
                 className="w-full py-3 bg-teal-700 text-white rounded-2xl text-sm font-semibold hover:bg-teal-800 transition-colors flex items-center justify-center gap-2"
               >
                 <RefreshCw className="w-4 h-4" /> {t('common.retry')}
               </button>
               <button
-                onClick={() => navigate('/portal/attendance')}
-                className="w-full py-3 border border-gray-200 text-gray-700 rounded-2xl text-sm font-semibold hover:bg-gray-50 transition-colors"
+                type="button"
+                onClick={() => navigate(attendanceHref)}
+                className="w-full py-3 border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-200 rounded-2xl text-sm font-semibold hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors"
               >
                 {t('attendance.scan.goToPortal')}
               </button>
@@ -271,13 +406,20 @@ export function AttendanceScanPage() {
           {/* No token */}
           {state === 'no-token' && (
             <>
-              <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center">
-                <QrCode className="w-9 h-9 text-gray-400" />
+              <div className="w-20 h-20 bg-gray-100 dark:bg-slate-800 rounded-full flex items-center justify-center">
+                <QrCode className="w-9 h-9 text-gray-400 dark:text-slate-500" />
               </div>
               <div>
-                <h2 className="text-xl font-bold text-gray-900 mb-1">{t('attendance.scan.invalidQr')}</h2>
-                <p className="text-sm text-gray-500">{t('attendance.scan.invalidQrBody')}</p>
+                <h2 className="text-xl font-bold text-gray-900 dark:text-slate-100 mb-1">{t('attendance.scan.invalidQr')}</h2>
+                <p className="text-sm text-gray-500 dark:text-slate-400">{t('attendance.scan.invalidQrBody')}</p>
               </div>
+              <button
+                type="button"
+                onClick={() => navigate(fallbackHref)}
+                className="w-full py-3 bg-teal-700 text-white rounded-2xl text-sm font-semibold hover:bg-teal-800 transition-colors"
+              >
+                {portalOnly ? t('attendance.scan.goToPortal') : t('attendance.scan.backToHome')}
+              </button>
             </>
           )}
         </div>

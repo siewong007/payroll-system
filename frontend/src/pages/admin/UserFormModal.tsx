@@ -186,11 +186,11 @@ export function UserFormModal({
       footer={
         <div className="flex flex-col gap-3">
           {willRevokeSessions && (
-            <p className="text-xs text-amber-700">
+            <p className="text-xs text-amber-700 dark:text-amber-400">
               {t('users.revokeSessionsWarning')}
             </p>
           )}
-          <div className="flex justify-end gap-3">
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
             <button type="button" onClick={onClose} className="btn-secondary">
               {t('common.cancel')}
             </button>
@@ -216,7 +216,7 @@ export function UserFormModal({
         {error && (
           <div
             role="alert"
-            className="p-3 bg-red-50 text-red-700 text-sm rounded-lg border border-red-100"
+            className="p-3 bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-300 text-sm rounded-lg border border-red-100 dark:border-red-500/25"
           >
             {error}
           </div>
@@ -265,17 +265,17 @@ export function UserFormModal({
         )}
 
         <FieldGroup legend={t('users.roles')} required>
-          <div className="grid grid-cols-2 gap-2 mt-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
             {selectableRoles.map((role) => (
               <label
                 key={role}
-                className="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm"
+                className="flex items-center gap-2 rounded-lg border border-gray-200 dark:border-slate-700 px-3 py-2 text-sm text-gray-700 dark:text-slate-200 hover:bg-gray-50 dark:hover:bg-slate-800/60 cursor-pointer"
               >
                 <input
                   type="checkbox"
                   checked={form.roles.includes(role)}
                   onChange={() => setRoles(role)}
-                  className="accent-black"
+                  className="accent-black dark:accent-[var(--accent-1)]"
                 />
                 {roleLabel(role)}
               </label>
@@ -306,9 +306,9 @@ export function UserFormModal({
         >
           <div className="space-y-2 mt-2 max-h-48 overflow-y-auto">
             {companiesLoading ? (
-              <p className="text-sm text-gray-400">{t('users.loadingCompanies')}</p>
+              <p className="text-sm text-gray-400 dark:text-slate-500">{t('users.loadingCompanies')}</p>
             ) : companiesError ? (
-              <div className="text-sm text-red-600">
+              <div className="text-sm text-red-600 dark:text-red-400">
                 {t('users.companiesLoadFailed')}{' '}
                 {onRetryCompanies && (
                   <button type="button" onClick={onRetryCompanies} className="underline">
@@ -317,7 +317,7 @@ export function UserFormModal({
                 )}
               </div>
             ) : companies.length === 0 ? (
-              <p className="text-sm text-gray-400">
+              <p className="text-sm text-gray-400 dark:text-slate-500">
                 {t('users.noCompanies')}
               </p>
             ) : (
@@ -326,8 +326,8 @@ export function UserFormModal({
                   key={company.id}
                   className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
                     form.company_ids.includes(company.id)
-                      ? 'border-black bg-gray-50'
-                      : 'border-gray-200 hover:border-gray-300'
+                      ? 'border-black dark:border-[var(--accent-1)] bg-gray-50 dark:bg-slate-800'
+                      : 'border-gray-200 dark:border-slate-700 hover:border-gray-300 dark:hover:border-slate-600'
                   }`}
                 >
                   <input
@@ -335,10 +335,10 @@ export function UserFormModal({
                     name="company"
                     checked={form.company_ids.includes(company.id)}
                     onChange={() => toggleCompany(company.id)}
-                    className="accent-black"
+                    className="accent-black dark:accent-[var(--accent-1)]"
                   />
-                  <Building2 className="w-4 h-4 text-gray-400" aria-hidden="true" />
-                  <span className="text-sm font-medium text-gray-700">{company.name}</span>
+                  <Building2 className="w-4 h-4 text-gray-400 dark:text-slate-500" aria-hidden="true" />
+                  <span className="text-sm font-medium text-gray-700 dark:text-slate-200">{company.name}</span>
                 </label>
               ))
             )}

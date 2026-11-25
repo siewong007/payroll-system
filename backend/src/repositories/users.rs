@@ -213,6 +213,68 @@ pub async fn count_all(
     Ok(total)
 }
 
+/// Role-filtered variant of `list_page` using runtime query binding so offline
+/// `.sqlx` query macro cache stays untouched while filtering server-side.
+pub async fn list_page_by_role(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Option<Uuid>,
+    search: Option<&str>,
+    role: &str,
+    limit: i64,
+    offset: i64,
+) -> AppResult<Vec<UserRow>> {
+    let users = sqlx::query_as::<_, UserRow>(
+        r#"SELECT u.id, u.email, u.full_name, u.roles, u.company_id,
+                u.employee_id, u.is_active, u.created_at
+            FROM users u
+            WHERE u.deleted_at IS NULL
+              AND ($1::uuid IS NULL OR EXISTS (
+                    SELECT 1 FROM user_companies uc
+                    WHERE uc.user_id = u.id AND uc.company_id = $1))
+              AND ($2::text IS NULL
+                    OR u.full_name ILIKE '%' || $2 || '%'
+                    OR u.email ILIKE '%' || $2 || '%')
+              AND $3 = ANY(u.roles)
+            ORDER BY u.created_at DESC
+            LIMIT $4 OFFSET $5"#,
+    )
+    .bind(company_id)
+    .bind(search)
+    .bind(role)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(executor)
+    .await?;
+    Ok(users)
+}
+
+/// Total matching `list_page_by_role`'s filters.
+pub async fn count_all_by_role(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Option<Uuid>,
+    search: Option<&str>,
+    role: &str,
+) -> AppResult<i64> {
+    let total = sqlx::query_scalar::<_, i64>(
+        r#"SELECT COUNT(*)
+            FROM users u
+            WHERE u.deleted_at IS NULL
+              AND ($1::uuid IS NULL OR EXISTS (
+                    SELECT 1 FROM user_companies uc
+                    WHERE uc.user_id = u.id AND uc.company_id = $1))
+              AND ($2::text IS NULL
+                    OR u.full_name ILIKE '%' || $2 || '%'
+                    OR u.email ILIKE '%' || $2 || '%')
+              AND $3 = ANY(u.roles)"#,
+    )
+    .bind(company_id)
+    .bind(search)
+    .bind(role)
+    .fetch_one(executor)
+    .await?;
+    Ok(total)
+}
+
 /// Number of live accounts holding `super_admin`. Checked inside the update and
 /// delete transactions so the platform can never be left unadministrable.
 pub async fn count_active_super_admins(

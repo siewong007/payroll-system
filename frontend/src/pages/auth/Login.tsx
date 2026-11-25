@@ -1,9 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, Navigate, Link, useSearchParams } from 'react-router';
 import type { User } from '@/types';
-import { AnimatePresence, motion } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronDown, Eye, EyeOff, Fingerprint, LifeBuoy, Smartphone } from 'lucide-react';
+import { ChevronDown, Eye, EyeOff, Fingerprint, LifeBuoy, ScanLine, Smartphone } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useTranslation } from 'react-i18next';
 import { LanguageSwitcher } from '@/components/ui/LanguageSwitcher';
@@ -75,7 +74,7 @@ export function Login() {
     });
   };
 
-  const { data: providers } = useQuery({
+  const { data: providers, isPending: providersPending } = useQuery({
     queryKey: ['oauth2-providers'],
     queryFn: getOAuth2Providers,
     staleTime: 300_000,
@@ -83,16 +82,15 @@ export function Login() {
 
   const googleProvider = providers?.find((p) => p.provider === 'google' && p.enabled);
 
-  // Check if email has passkeys when email changes
+  // Check if email has passkeys when email changes (only when Turnstile is off,
+  // because probing /auth/passkey/check steals the single-use Turnstile token).
   useEffect(() => {
-    if (!webauthnSupported || !email || !email.includes('@')) {
+    if (!webauthnSupported || turnstileEnabled() || !email || !email.includes('@')) {
       setHasPasskey(false);
       return;
     }
     const timer = setTimeout(async () => {
       try {
-        // Widget still minting — skip this probe; the next keystroke retries.
-        if (turnstileEnabled() && !turnstileToken.current) return;
         const { has_passkey } = await checkPasskey(email, takeTurnstileToken());
         setHasPasskey(has_passkey);
       } catch {
@@ -122,7 +120,12 @@ export function Login() {
     setError('');
     setLoading(true);
     try {
-      const result = await login(email, password, takeTurnstileToken());
+      const token = await waitForTurnstileToken();
+      if (turnstileEnabled() && !token) {
+        setError(t('auth.verificationSlow'));
+        return;
+      }
+      const result = await login(email, password, token);
       if (result.status === 'mfa_required') {
         setMfaToken(result.mfaToken);
       } else {
@@ -139,16 +142,21 @@ export function Login() {
     setError('');
     setPasskeyLoading(true);
     try {
+      const token = await waitForTurnstileToken();
+      if (turnstileEnabled() && !token) {
+        setError(t('auth.verificationSlow'));
+        return;
+      }
       let response;
 
       if (email && hasPasskey) {
         // Email-based flow: server sends allowCredentials for this user
-        const { challenge_id, options } = await passkeyAuthBegin(email, takeTurnstileToken());
+        const { challenge_id, options } = await passkeyAuthBegin(email, token);
         const credential = await getPasskeyCredential(options.publicKey);
         response = await passkeyAuthComplete(challenge_id, credential);
       } else {
         // Discoverable flow: browser shows all available passkeys for this site
-        const { challenge_id, options } = await passkeyDiscoverableBegin(takeTurnstileToken());
+        const { challenge_id, options } = await passkeyDiscoverableBegin(token);
         const credential = await getPasskeyCredential(options.publicKey);
         response = await passkeyDiscoverableComplete(challenge_id, credential);
       }
@@ -175,8 +183,15 @@ export function Login() {
         setError(t('auth.verificationSlow'));
         return;
       }
-      window.location.href = await getGoogleAuthorizeUrl(undefined, token);
+      if (redirectTo) {
+        sessionStorage.setItem('oauth2_login_redirect', redirectTo);
+      } else {
+        sessionStorage.removeItem('oauth2_login_redirect');
+      }
+      const authorizeUrl = await getGoogleAuthorizeUrl(undefined, token);
+      window.location.assign(authorizeUrl);
     } catch {
+      sessionStorage.removeItem('oauth2_login_redirect');
       setError(t('auth.googleUnavailable'));
     } finally {
       setGoogleLoading(false);
@@ -192,6 +207,10 @@ export function Login() {
     setLoading(true);
     try {
       const token = await waitForTurnstileToken();
+      if (turnstileEnabled() && !token) {
+        setError(t('auth.verificationSlow'));
+        return;
+      }
       const data = await codeLogin(email, codeValue.trim(), token);
       setSession(data.token, data.user);
       goPostLogin(data.user);
@@ -221,28 +240,30 @@ export function Login() {
     />
   );
 
-  return (
-    <div className="relative isolate min-h-screen flex items-center justify-center overflow-hidden bg-slate-950">
-      {/* Aurora backdrop — indigo hints at the admin console, teal at the portal */}
-      <div aria-hidden className="pointer-events-none absolute inset-0 -z-10">
-        <div className="ambient-blob animate-float-a -top-32 -left-24 h-[30rem] w-[30rem] bg-indigo-600/30" />
-        <div className="ambient-blob animate-float-b -bottom-40 -right-24 h-[32rem] w-[32rem] bg-teal-500/25" />
-        <div className="ambient-blob animate-float-a top-1/3 left-1/2 h-72 w-72 bg-violet-600/20" />
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_35%,rgba(2,6,23,0.55)_100%)]" />
-      </div>
+  const isQrScanRedirect = Boolean(redirectTo?.startsWith('/attendance/scan'));
 
-      <motion.div
-        className="w-full max-w-md px-4"
-        initial={{ opacity: 0, y: 24, scale: 0.98 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
-      >
-        <div className="bg-white/90 backdrop-blur-2xl ring-1 ring-white/40 rounded-3xl shadow-2xl p-6 sm:p-8">
+  return (
+    <div className="relative isolate min-h-screen flex items-center justify-center overflow-hidden bg-slate-950 py-6">
+      {/* Aurora backdrop — indigo hints at the admin console, teal at the portal */}
+      <div aria-hidden className="aurora-login pointer-events-none absolute inset-0 -z-10" />
+
+      <div className="animate-page-enter w-full max-w-md px-4">
+        <div className="bg-white/95 dark:bg-slate-900/95 ring-1 ring-white/40 dark:ring-slate-800 rounded-3xl shadow-2xl p-6 sm:p-8">
           {/* Logo */}
-          <div className="text-center mb-8">
-            <BrandLogo variant="lockup-dark" className="h-12 w-auto mx-auto mb-4" />
-            <p className="text-sm text-gray-500 mt-1">{t('auth.tagline')}</p>
+          <div className="text-center mb-6">
+            <BrandLogo variant="lockup-dark" priority className="h-12 w-auto mx-auto mb-4 rounded-xl" />
+            <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">{t('auth.tagline')}</p>
           </div>
+
+          {isQrScanRedirect && (
+            <div className="mb-5 flex items-start gap-3 rounded-2xl border border-teal-200 dark:border-teal-500/30 bg-teal-50 dark:bg-teal-500/10 p-3.5 text-left">
+              <ScanLine className="w-5 h-5 text-teal-600 dark:text-teal-300 shrink-0 mt-0.5" aria-hidden="true" />
+              <div className="text-xs leading-relaxed">
+                <p className="font-semibold text-teal-900 dark:text-teal-200">{t('auth.qrScanBannerTitle')}</p>
+                <p className="text-teal-800/90 dark:text-teal-300/90 mt-0.5">{t('auth.qrScanBannerBody')}</p>
+              </div>
+            </div>
+          )}
 
           {mfaToken ? (
             <TwoFactorPrompt
@@ -261,41 +282,50 @@ export function Login() {
                       setCodeValue('');
                       setError('');
                     }}
-                    className="text-sm text-gray-500 hover:text-gray-700"
+                    className="min-h-10 inline-flex items-center text-sm text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200"
                   >
                     ← {t('auth.backToOptions')}
                   </button>
 
                   {error && (
-                    <div className="animate-fade-up bg-red-50 border border-red-100 text-red-600 text-sm px-4 py-3 rounded-xl">
+                    <div
+                      id="login-error"
+                      role="alert"
+                      className="animate-fade-up bg-red-50 dark:bg-red-500/10 border border-red-100 dark:border-red-500/30 text-red-600 dark:text-red-300 text-sm px-4 py-3 rounded-xl"
+                    >
                       {error}
                     </div>
                   )}
 
                   <div>
-                    <label className="form-label">{t('auth.email')}</label>
+                    <label className="form-label" htmlFor="code-email">{t('auth.email')}</label>
                     <input
+                      id="code-email"
                       type="email"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
                       className="form-input"
                       placeholder={t('auth.emailPlaceholder')}
+                      aria-describedby={error ? 'login-error' : undefined}
                       required
                     />
                   </div>
 
                   <div>
-                    <label className="form-label">
+                    <label className="form-label" htmlFor="code-value">
                       {codeMethod === 'totp' ? t('auth.authenticatorCode') : t('auth.recoveryCode')}
                     </label>
                     <input
+                      id="code-value"
                       value={codeValue}
                       onChange={(e) => setCodeValue(e.target.value)}
                       className="form-input"
                       placeholder={
                         codeMethod === 'totp' ? t('auth.code6Placeholder') : t('auth.recoveryCodePlaceholder')
                       }
+                      inputMode={codeMethod === 'totp' ? 'numeric' : 'text'}
                       autoComplete="one-time-code"
+                      aria-describedby={error ? 'login-error' : undefined}
                       required
                     />
                   </div>
@@ -305,61 +335,87 @@ export function Login() {
                   <button
                     type="submit"
                     disabled={loading}
-                    className="w-full bg-gradient-to-r from-slate-900 to-slate-700 text-white py-2.5 rounded-xl font-semibold shadow-lg hover:shadow-[0_10px_30px_-8px_rgba(99,102,241,0.5),0_10px_30px_-8px_rgba(20,184,166,0.4)] hover:-translate-y-px active:translate-y-0 disabled:opacity-50 disabled:shadow-none transition-all"
+                    className="w-full min-h-11 bg-gradient-to-r from-slate-900 to-slate-700 dark:from-indigo-600 dark:to-indigo-500 text-white py-2.5 rounded-xl font-semibold shadow-lg hover:shadow-[0_10px_30px_-8px_rgba(99,102,241,0.5),0_10px_30px_-8px_rgba(20,184,166,0.4)] hover:-translate-y-px active:translate-y-0 disabled:opacity-50 disabled:shadow-none transition-all"
                   >
                     {loading ? t('auth.signingIn') : t('auth.signIn')}
                   </button>
                 </form>
               ) : (
                 <>
-                  {/* Third-party identity stays on its own */}
-                  {googleProvider && (
+                  {/* Third-party identity stays on its own; reserve height while probing */}
+                  {providersPending ? (
+                    <div
+                      className="h-[44px] w-full rounded-xl bg-gray-100 dark:bg-slate-800 animate-pulse"
+                      aria-hidden="true"
+                    />
+                  ) : googleProvider ? (
                     <button
                       type="button"
                       onClick={handleGoogleLogin}
                       disabled={googleLoading}
-                      className="w-full flex items-center justify-center gap-3 py-2.5 px-4 bg-white border border-gray-200 rounded-xl text-sm font-medium text-gray-700 hover:border-gray-300 hover:shadow-md hover:-translate-y-px disabled:opacity-50 transition-all"
+                      className="w-full min-h-11 flex items-center justify-center gap-3 py-2.5 px-4 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl text-sm font-medium text-gray-700 dark:text-slate-100 hover:border-gray-300 dark:hover:border-slate-600 hover:shadow-md hover:-translate-y-px disabled:opacity-50 transition-all"
                     >
                       <GoogleIcon />
                       {googleLoading ? t('auth.verifying') : t('auth.continueGoogle')}
                     </button>
-                  )}
+                  ) : null}
 
-                  <div className="flex items-center gap-3 my-6">
-                    <div className="h-px flex-1 bg-gray-200" />
-                    <span className="text-xs text-gray-400">{t('auth.otherWays')}</span>
-                    <div className="h-px flex-1 bg-gray-200" />
+                  <div className={`flex items-center gap-3 ${providersPending || googleProvider ? 'my-6' : 'mb-4 justify-center'}`}>
+                    {(providersPending || googleProvider) && (
+                      <div className="h-px flex-1 bg-gray-200 dark:bg-slate-700" />
+                    )}
+                    <span
+                      className={`text-xs ${
+                        providersPending || googleProvider
+                          ? 'text-gray-400 dark:text-slate-400'
+                          : 'font-medium text-gray-500 dark:text-slate-400'
+                      }`}
+                    >
+                      {t('auth.otherWays')}
+                    </span>
+                    {(providersPending || googleProvider) && (
+                      <div className="h-px flex-1 bg-gray-200 dark:bg-slate-700" />
+                    )}
                   </div>
 
                   <form onSubmit={handleSubmit} className="space-y-5">
                     {error && (
-                      <div className="animate-fade-up bg-red-50 border border-red-100 text-red-600 text-sm px-4 py-3 rounded-xl">
+                      <div
+                        id="login-error"
+                        role="alert"
+                        className="animate-fade-up bg-red-50 dark:bg-red-500/10 border border-red-100 dark:border-red-500/30 text-red-600 dark:text-red-300 text-sm px-4 py-3 rounded-xl"
+                      >
                         {error}
                       </div>
                     )}
 
                     <div>
-                      <label className="form-label">{t('auth.email')}</label>
+                      <label className="form-label" htmlFor="login-email">{t('auth.email')}</label>
                       <input
+                        id="login-email"
                         type="email"
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
                         className="form-input"
                         placeholder={t('auth.emailPlaceholder')}
+                        autoComplete="email"
+                        aria-describedby={error ? 'login-error' : undefined}
                         required
                       />
                     </div>
 
                     <div>
-                      <label className="form-label">{t('auth.password')}</label>
+                      <label className="form-label" htmlFor="login-password">{t('auth.password')}</label>
                       <div className="relative">
                         <input
+                          id="login-password"
                           type={showPassword ? 'text' : 'password'}
                           value={password}
                           onChange={(e) => setPassword(e.target.value)}
                           className="form-input pr-11"
                           placeholder={t('auth.passwordPlaceholder')}
                           autoComplete="current-password"
+                          aria-describedby={error ? 'login-error' : undefined}
                           required
                         />
                         <button
@@ -367,7 +423,7 @@ export function Login() {
                           onClick={() => setShowPassword((v) => !v)}
                           aria-label={showPassword ? t('a11y.hidePassword') : t('a11y.showPassword')}
                           aria-pressed={showPassword}
-                          className="absolute inset-y-0 right-0 flex items-center px-3 text-gray-400 hover:text-gray-600 transition-colors"
+                          className="absolute inset-y-0 right-0 flex items-center px-3 min-w-11 justify-center text-gray-400 dark:text-slate-400 hover:text-gray-600 dark:hover:text-slate-200 transition-colors"
                         >
                           {showPassword ? (
                             <EyeOff className="w-4 h-4" />
@@ -383,21 +439,21 @@ export function Login() {
                     <button
                       type="submit"
                       disabled={loading}
-                      className="w-full bg-gradient-to-r from-slate-900 to-slate-700 text-white py-2.5 rounded-xl font-semibold shadow-lg hover:shadow-[0_10px_30px_-8px_rgba(99,102,241,0.5),0_10px_30px_-8px_rgba(20,184,166,0.4)] hover:-translate-y-px active:translate-y-0 disabled:opacity-50 disabled:shadow-none transition-all"
+                      className="w-full min-h-11 bg-gradient-to-r from-slate-900 to-slate-700 dark:from-indigo-600 dark:to-indigo-500 text-white py-2.5 rounded-xl font-semibold shadow-lg hover:shadow-[0_10px_30px_-8px_rgba(99,102,241,0.5),0_10px_30px_-8px_rgba(20,184,166,0.4)] hover:-translate-y-px active:translate-y-0 disabled:opacity-50 disabled:shadow-none transition-all"
                     >
                       {loading ? t('auth.signingIn') : t('auth.signIn')}
                     </button>
 
-                    <div className="flex items-center justify-center gap-3 text-sm">
-                      <Link to="/forgot-password" className="text-gray-500 hover:text-gray-700">
+                    <div className="flex flex-wrap items-center justify-center gap-3 text-sm">
+                      <Link to="/forgot-password" className="text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200">
                         {t('auth.forgotPasswordLink')}
                       </Link>
-                      <span className="text-gray-300">·</span>
+                      <span className="text-gray-300 dark:text-slate-700">·</span>
                       <button
                         type="button"
                         onClick={() => setShowMoreOptions((v) => !v)}
                         aria-expanded={showMoreOptions}
-                        className="inline-flex items-center gap-1 text-gray-500 hover:text-gray-700"
+                        className="inline-flex items-center gap-1 min-h-10 text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200"
                       >
                         {t('auth.moreOptions')}
                         <ChevronDown
@@ -407,49 +463,41 @@ export function Login() {
                     </div>
                   </form>
 
-                  <AnimatePresence initial={false}>
-                    {showMoreOptions && (
-                      <motion.div
-                        initial={{ height: 0, opacity: 0 }}
-                        animate={{ height: 'auto', opacity: 1 }}
-                        exit={{ height: 0, opacity: 0 }}
-                        transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
-                        className="overflow-hidden"
+                  {showMoreOptions && (
+                    <div className="animate-fade-in overflow-hidden">
+                      <div
+                        className={`grid gap-2 pt-4 ${webauthnSupported ? 'grid-cols-1 sm:grid-cols-3' : 'grid-cols-1 sm:grid-cols-2'}`}
                       >
-                        <div
-                          className={`grid gap-2 pt-4 ${webauthnSupported ? 'grid-cols-3' : 'grid-cols-2'}`}
+                        {webauthnSupported && (
+                          <button
+                            type="button"
+                            onClick={handlePasskeyLogin}
+                            disabled={passkeyLoading}
+                            className="min-h-11 flex flex-col items-center justify-center gap-1.5 py-2.5 px-2 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl text-xs font-medium text-gray-600 dark:text-slate-200 hover:border-gray-300 dark:hover:border-slate-600 hover:shadow-sm disabled:opacity-50 transition-all"
+                          >
+                            <Fingerprint className="w-5 h-5" />
+                            {passkeyLoading ? t('auth.verifying') : t('auth.passkeySignIn')}
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setCodeMethod('totp')}
+                          className="min-h-11 flex flex-col items-center justify-center gap-1.5 py-2.5 px-2 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl text-xs font-medium text-gray-600 dark:text-slate-200 hover:border-gray-300 dark:hover:border-slate-600 hover:shadow-sm transition-all"
                         >
-                          {webauthnSupported && (
-                            <button
-                              type="button"
-                              onClick={handlePasskeyLogin}
-                              disabled={passkeyLoading}
-                              className="flex flex-col items-center gap-1.5 py-2.5 px-2 bg-white border border-gray-200 rounded-xl text-xs font-medium text-gray-600 hover:border-gray-300 hover:shadow-sm disabled:opacity-50 transition-all"
-                            >
-                              <Fingerprint className="w-5 h-5" />
-                              {passkeyLoading ? t('auth.verifying') : t('auth.passkeySignIn')}
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => setCodeMethod('totp')}
-                            className="flex flex-col items-center gap-1.5 py-2.5 px-2 bg-white border border-gray-200 rounded-xl text-xs font-medium text-gray-600 hover:border-gray-300 hover:shadow-sm transition-all"
-                          >
-                            <Smartphone className="w-5 h-5" />
-                            {t('auth.authenticator')}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setCodeMethod('backup')}
-                            className="flex flex-col items-center gap-1.5 py-2.5 px-2 bg-white border border-gray-200 rounded-xl text-xs font-medium text-gray-600 hover:border-gray-300 hover:shadow-sm transition-all"
-                          >
-                            <LifeBuoy className="w-5 h-5" />
-                            {t('auth.recoveryCode')}
-                          </button>
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
+                          <Smartphone className="w-5 h-5" />
+                          {t('auth.authenticator')}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setCodeMethod('backup')}
+                          className="min-h-11 flex flex-col items-center justify-center gap-1.5 py-2.5 px-2 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl text-xs font-medium text-gray-600 dark:text-slate-200 hover:border-gray-300 dark:hover:border-slate-600 hover:shadow-sm transition-all"
+                        >
+                          <LifeBuoy className="w-5 h-5" />
+                          {t('auth.recoveryCode')}
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </>
               )}
             </>
@@ -477,7 +525,7 @@ export function Login() {
             </Link>
           </div>
         </div>
-      </motion.div>
+      </div>
     </div>
   );
 }

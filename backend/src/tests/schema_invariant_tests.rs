@@ -581,3 +581,44 @@ async fn a_company_that_has_run_payroll_can_still_be_deleted() {
         .expect("count is readable");
     assert_eq!(survivors, 0, "the company row itself must be gone");
 }
+
+#[tokio::test]
+async fn employees_table_enforces_numeric_and_date_check_constraints() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+
+    let company_id = seed_company(&pool).await;
+    let employee_id = seed_employee(&pool, company_id, None, 300_000).await;
+
+    let neg_salary_err = sqlx::query("UPDATE employees SET basic_salary = -1 WHERE id = $1")
+        .bind(employee_id)
+        .execute(&pool)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        constraint_name(&neg_salary_err),
+        Some("employees_basic_salary_non_negative_check")
+    );
+
+    let kids_err = sqlx::query("UPDATE employees SET num_children = 99 WHERE id = $1")
+        .bind(employee_id)
+        .execute(&pool)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        constraint_name(&kids_err),
+        Some("employees_num_children_range_check")
+    );
+
+    let date_order_err =
+        sqlx::query("UPDATE employees SET date_resigned = date_joined - 1 WHERE id = $1")
+            .bind(employee_id)
+            .execute(&pool)
+            .await
+            .unwrap_err();
+    assert_eq!(
+        constraint_name(&date_order_err),
+        Some("employees_date_resigned_after_joined_check")
+    );
+}

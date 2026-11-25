@@ -108,5 +108,5 @@ export function TurnstileWidget({ onVerify, onExpire, onError, ref }: TurnstileW
   }, [sitekey]);
 
   if (!sitekey) return null;
-  return <div ref={containerRef} />;
+  return <div ref={containerRef} className="min-h-[65px]" />;
 }

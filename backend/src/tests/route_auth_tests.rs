@@ -84,6 +84,7 @@ pub(crate) async fn app_for(pool: sqlx::PgPool) -> axum::Router {
         pool,
         config: config.clone(),
         webauthn: test_webauthn(),
+        mailer: crate::services::email_service::SharedMailer::disabled(),
     };
 
     routes::create_router(state).layer(Extension(JwtSecret(config.jwt_secret)))
@@ -1046,4 +1047,127 @@ async fn a_traversal_filename_is_rejected_before_any_lookup() {
         StatusCode::BAD_REQUEST,
         "traversal attempt must be refused by path validation, not by lookup"
     );
+}
+
+#[tokio::test]
+async fn geofence_and_work_schedule_reads_enforce_permissions_while_bootstrap_stays_open() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let emp_id = seed_employee(&pool, company_id, None, 300_000).await;
+    let emp_token = token_for_employee(&pool, company_id, emp_id, "employee").await;
+    let exec_token = token_for(&pool, company_id, "exec").await;
+    let admin_token = token_for(&pool, company_id, "admin").await;
+    let app = app_for(pool).await;
+
+    for path in [
+        "/api/geofence/locations",
+        "/api/geofence/mode",
+        "/api/work-schedules",
+        "/api/work-schedules/default",
+    ] {
+        for (role, token) in [("employee", &emp_token), ("exec", &exec_token)] {
+            let resp = app
+                .clone()
+                .oneshot(request("GET", path, token, ""))
+                .await
+                .expect("gated route response");
+            assert_eq!(
+                resp.status(),
+                StatusCode::FORBIDDEN,
+                "{role} must receive 403 on {path}"
+            );
+        }
+
+        let admin_resp = app
+            .clone()
+            .oneshot(request("GET", path, &admin_token, ""))
+            .await
+            .expect("admin route response");
+        assert_eq!(
+            admin_resp.status(),
+            StatusCode::OK,
+            "admin must receive 200 on {path}"
+        );
+    }
+
+    // Employee still gets advisory schedule timing on /api/attendance/method.
+    let method_resp = app
+        .oneshot(request("GET", "/api/attendance/method", &emp_token, ""))
+        .await
+        .expect("bootstrap response");
+    assert_eq!(method_resp.status(), StatusCode::OK);
+    let body_bytes = axum::body::to_bytes(method_resp.into_body(), 1024 * 64)
+        .await
+        .expect("read body");
+    let body: serde_json::Value = serde_json::from_slice(&body_bytes).expect("json");
+    assert!(body.get("shift_start_time").is_some());
+    assert!(body.get("grace_minutes").is_some());
+}
+
+#[tokio::test]
+async fn ready_and_admin_platform_health_surface_revision_and_job_state() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let admin_token = token_for(&pool, company_id, "admin").await;
+    let emp_token = token_for(&pool, company_id, "employee").await;
+    let super_token = token_for(&pool, company_id, "super_admin").await;
+    let app = app_for(pool).await;
+
+    let ready_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/health/ready")
+                .body(Body::empty())
+                .expect("build ready request"),
+        )
+        .await
+        .expect("ready response");
+    assert_eq!(ready_resp.status(), StatusCode::OK);
+    let ready_bytes = axum::body::to_bytes(ready_resp.into_body(), 1024 * 64)
+        .await
+        .expect("ready body");
+    let ready_json: serde_json::Value = serde_json::from_slice(&ready_bytes).expect("json");
+    assert!(ready_json["revision"].is_string());
+    assert!(ready_json["version"].is_string());
+    assert!(ready_json["jobs"]["retention_cleanup"].is_object());
+    assert!(ready_json["jobs"]["auto_absent"].is_object());
+    assert!(ready_json["jobs"]["email_outbox"].is_object());
+
+    for (role, token) in [("admin", &admin_token), ("employee", &emp_token)] {
+        let resp = app
+            .clone()
+            .oneshot(request("GET", "/api/admin/platform/health", token, ""))
+            .await
+            .expect("forbidden response");
+        assert_eq!(
+            resp.status(),
+            StatusCode::FORBIDDEN,
+            "{role} must receive 403 on /api/admin/platform/health"
+        );
+    }
+
+    let ok_resp = app
+        .oneshot(request(
+            "GET",
+            "/api/admin/platform/health",
+            &super_token,
+            "",
+        ))
+        .await
+        .expect("platform health response");
+    assert_eq!(ok_resp.status(), StatusCode::OK);
+    let ok_bytes = axum::body::to_bytes(ok_resp.into_body(), 1024 * 64)
+        .await
+        .expect("platform health body");
+    let ok_json: serde_json::Value = serde_json::from_slice(&ok_bytes).expect("json");
+    assert!(ok_json["revision"].is_string());
+    assert!(ok_json["latest_migration_version"].is_i64());
+    assert!(ok_json["jobs"]["email_outbox"].is_object());
+    assert!(ok_json["queues"]["email_outbox_pending"].is_i64());
 }

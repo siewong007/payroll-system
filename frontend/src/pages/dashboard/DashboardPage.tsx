@@ -1,5 +1,5 @@
 import { Link, Navigate, useSearchParams } from 'react-router';
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import {
   AlertTriangle,
@@ -22,12 +22,19 @@ import { getDashboardSummary } from '@/api/dashboard';
 import { useAuth } from '@/context/AuthContext';
 import { SUPER_ADMIN_ROLES, hasAnyRole } from '@/lib/roles';
 import { userCan } from '@/lib/usePermissions';
+import { formatNumber, formatPeriod } from '@/lib/format';
 import { formatMYR, getErrorMessage } from '@/lib/utils';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { KpiSkeletonGrid, Skeleton } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
 
 const WINDOW_CHOICES = [7, 14, 30] as const;
+
+function formatDashboardPeriod(rawPeriod: string): string {
+  const match = rawPeriod.match(/^(\d{4})-(\d{2})$/);
+  if (!match) return rawPeriod;
+  return formatPeriod(Number(match[1]), Number(match[2]));
+}
 
 export function DashboardPage() {
   const { t } = useTranslation();
@@ -44,11 +51,13 @@ export function DashboardPage() {
   const canViewAttendance = userCan(user, 'view_attendance');
   const canViewEmployees = userCan(user, 'view_employees');
   const unassignedSuperAdmin = Boolean(user) && hasAnyRole(user, SUPER_ADMIN_ROLES) && !user?.company_id;
+  const subtitle = canViewPayroll ? t('ux.dashboard.subtitle') : t('ux.dashboard.subtitleNoPayroll');
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['dashboard-summary', windowDays],
     queryFn: () => getDashboardSummary(windowDays),
     enabled: !unassignedSuperAdmin,
+    placeholderData: keepPreviousData,
   });
 
   if (unassignedSuperAdmin) {
@@ -68,7 +77,7 @@ export function DashboardPage() {
   if (isLoading) {
     return (
       <div className="space-y-6">
-        <PageHeader title={t('ux.dashboard.title')} subtitle={t('ux.dashboard.subtitle')} />
+        <PageHeader title={t('ux.dashboard.title')} subtitle={subtitle} />
         <KpiSkeletonGrid count={canViewPayroll ? 4 : 2} />
         <div className="card space-y-4">
           <Skeleton className="h-5 w-44" />
@@ -86,7 +95,7 @@ export function DashboardPage() {
   if (error || !data) {
     return (
       <div className="space-y-6">
-        <PageHeader title={t('ux.dashboard.title')} subtitle={t('ux.dashboard.subtitle')} />
+        <PageHeader title={t('ux.dashboard.title')} subtitle={subtitle} />
         <div className="card">
           <EmptyState
             icon={AlertTriangle}
@@ -108,30 +117,34 @@ export function DashboardPage() {
     data.ytd_total_epf_employer + data.ytd_total_socso_employer + data.ytd_total_eis_employer;
 
   const attentionItems = [
-    {
-      key: 'pendingLeave',
-      label: t('ux.dashboard.pendingLeave'),
-      count: attention.pending_leave,
-      icon: Calendar,
-      href: canViewApprovals ? '/approvals?tab=leave' : undefined,
-      tone: 'amber' as const,
-    },
-    {
-      key: 'pendingClaims',
-      label: t('ux.dashboard.pendingClaims'),
-      count: attention.pending_claims,
-      icon: Receipt,
-      href: canViewApprovals ? '/approvals?tab=claims' : undefined,
-      tone: 'amber' as const,
-    },
-    {
-      key: 'pendingOvertime',
-      label: t('ux.dashboard.pendingOvertime'),
-      count: attention.pending_overtime,
-      icon: Clock,
-      href: canViewApprovals ? '/approvals?tab=overtime' : undefined,
-      tone: 'amber' as const,
-    },
+    ...(canViewApprovals
+      ? [
+          {
+            key: 'pendingLeave',
+            label: t('ux.dashboard.pendingLeave'),
+            count: attention.pending_leave,
+            icon: Calendar,
+            href: '/approvals?tab=leave',
+            tone: 'amber' as const,
+          },
+          {
+            key: 'pendingClaims',
+            label: t('ux.dashboard.pendingClaims'),
+            count: attention.pending_claims,
+            icon: Receipt,
+            href: '/approvals?tab=claims',
+            tone: 'amber' as const,
+          },
+          {
+            key: 'pendingOvertime',
+            label: t('ux.dashboard.pendingOvertime'),
+            count: attention.pending_overtime,
+            icon: Clock,
+            href: '/approvals?tab=overtime',
+            tone: 'amber' as const,
+          },
+        ]
+      : []),
     {
       key: 'openSessions',
       label: t('ux.dashboard.openSessions'),
@@ -189,9 +202,13 @@ export function DashboardPage() {
     <div className="space-y-6">
       <PageHeader
         title={t('ux.dashboard.title')}
-        subtitle={t('ux.dashboard.subtitle')}
+        subtitle={subtitle}
         actions={
-          <div className="inline-flex items-center rounded-xl bg-white/80 dark:bg-slate-900/80 p-1 ring-1 ring-gray-200/80 dark:ring-slate-800 shadow-xs">
+          <div
+            role="group"
+            aria-label={t('ux.dashboard.windowGroupLabel')}
+            className="inline-flex items-center rounded-xl bg-white/80 dark:bg-slate-900/80 p-1 ring-1 ring-gray-200/80 dark:ring-slate-800 shadow-xs"
+          >
             {WINDOW_CHOICES.map((days) => {
               const active = windowDays === days;
               return (
@@ -200,7 +217,7 @@ export function DashboardPage() {
                   type="button"
                   onClick={() => handleWindowChange(days)}
                   aria-pressed={active}
-                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-all ${
+                  className={`min-h-11 sm:min-h-9 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all ${
                     active
                       ? 'bg-gradient-to-br from-[var(--accent-1)] to-[var(--accent-2)] text-white shadow-sm'
                       : 'text-gray-600 hover:text-gray-900 dark:text-slate-400 dark:hover:text-slate-100'
@@ -222,10 +239,10 @@ export function DashboardPage() {
               {t('ux.dashboard.activeHeadcount')}
             </p>
             <p className="mt-1.5 text-2xl font-bold tabular-nums text-gray-900 dark:text-slate-100">
-              {data.active_employees}
+              {formatNumber(data.active_employees)}
             </p>
             <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">
-              {t('ux.dashboard.ofTotalHeadcount', { total: data.total_employees })}
+              {t('ux.dashboard.ofTotalHeadcount', { total: formatNumber(data.total_employees) })}
             </p>
           </div>
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent-1)]">
@@ -246,8 +263,8 @@ export function DashboardPage() {
                 <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">
                   {data.last_payroll_period
                     ? t('ux.dashboard.latestPayrollSub', {
-                        period: data.last_payroll_period,
-                        count: data.last_payroll_employee_count ?? 0,
+                        period: formatDashboardPeriod(data.last_payroll_period),
+                        paidCount: formatNumber(data.last_payroll_employee_count ?? 0),
                       })
                     : t('ux.dashboard.noPayrollYet')}
                 </p>
@@ -298,10 +315,10 @@ export function DashboardPage() {
                 {t('ux.dashboard.departmentsTitle')}
               </p>
               <p className="mt-1.5 text-2xl font-bold tabular-nums text-gray-900 dark:text-slate-100">
-                {data.departments.length}
+                {formatNumber(data.departments.length)}
               </p>
               <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">
-                {t('ux.dashboard.windowDays', { days: attention.window_days })}
+                {t('ux.dashboard.departmentsSub')}
               </p>
             </div>
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent-1)]">
@@ -347,19 +364,27 @@ export function DashboardPage() {
                     ? 'border-amber-200/70 bg-amber-50/70 text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200'
                     : 'border-indigo-200/70 bg-indigo-50/70 text-indigo-900 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-200';
               const content = (
-                <div className={`flex items-center justify-between gap-3 rounded-2xl border px-4 py-3.5 transition-all hover:-translate-y-0.5 ${toneClass}`}>
+                <div
+                  className={`flex items-center justify-between gap-3 rounded-2xl border px-4 py-3.5 transition-all ${
+                    item.href ? 'hover:-translate-y-0.5' : ''
+                  } ${toneClass}`}
+                >
                   <div className="flex items-center gap-3 min-w-0">
                     <Icon className="h-5 w-5 shrink-0 opacity-85" aria-hidden="true" />
                     <div className="min-w-0">
                       <p className="truncate text-xs font-medium opacity-85">{item.label}</p>
-                      <p className="text-xl font-bold tabular-nums leading-tight">{item.count}</p>
+                      <p className="text-xl font-bold tabular-nums leading-tight">{formatNumber(item.count)}</p>
                     </div>
                   </div>
                   {item.href && <ArrowRight className="h-4 w-4 shrink-0 opacity-60" aria-hidden="true" />}
                 </div>
               );
               return item.href ? (
-                <Link key={item.key} to={item.href}>
+                <Link
+                  key={item.key}
+                  to={item.href}
+                  className="block rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-1)]"
+                >
                   {content}
                 </Link>
               ) : (
@@ -391,7 +416,7 @@ export function DashboardPage() {
                         {label}
                       </span>
                       <span className="font-semibold tabular-nums text-gray-600 dark:text-slate-300">
-                        {dept.count}
+                        {formatNumber(dept.count)}
                       </span>
                     </div>
                     <div className="h-2 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-slate-800">

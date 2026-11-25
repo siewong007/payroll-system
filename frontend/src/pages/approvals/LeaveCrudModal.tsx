@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useMutation } from '@tanstack/react-query';
 import { Upload, X } from 'lucide-react';
@@ -9,10 +9,23 @@ import {
 } from '@/api/approvals';
 import { uploadFile } from '@/api/portal';
 import { EmployeePicker } from '@/components/employees/EmployeePicker';
+import { FormField } from '@/components/ui/FormField';
 import { Modal } from '@/components/ui/Modal';
 import { formatEmployeeLabel } from '@/lib/employeeFields';
 import { getErrorMessage } from '@/lib/utils';
 import type { AdminCreateLeaveRequest, LeaveType, UpdateLeaveRequest } from '@/types';
+
+const ALLOWED_UPLOAD_ACCEPT = '.jpg,.jpeg,.png,.gif,.webp,.pdf,.doc,.docx,.xls,.xlsx';
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+
+function inclusiveDaysBetween(start: string, end: string): number | null {
+  if (!start || !end || end < start) return null;
+  const [sy, sm, sd] = start.split('-').map(Number);
+  const [ey, em, ed] = end.split('-').map(Number);
+  if (!sy || !sm || !sd || !ey || !em || !ed) return null;
+  const diff = Math.round((Date.UTC(ey, em - 1, ed) - Date.UTC(sy, sm - 1, sd)) / 86_400_000) + 1;
+  return diff >= 1 ? diff : null;
+}
 
 export function LeaveCrudModal({
   open,
@@ -28,6 +41,7 @@ export function LeaveCrudModal({
   onSaved: () => void;
 }) {
   const { t } = useTranslation();
+  const formId = useId();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [form, setForm] = useState<AdminCreateLeaveRequest>({
     employee_id: '',
@@ -93,8 +107,23 @@ export function LeaveCrudModal({
     onError: (err: unknown) => setError(getErrorMessage(err, t('approvals.updateLeaveFailed'))),
   });
 
+  const handleDateChange = (field: 'start_date' | 'end_date', value: string) => {
+    setForm((prev) => {
+      const next = { ...prev, [field]: value };
+      const computed = inclusiveDaysBetween(next.start_date, next.end_date);
+      if (computed !== null) {
+        next.days = computed;
+      }
+      return next;
+    });
+  };
+
   const handleUpload = async (file: File) => {
     setError('');
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setError(t('approvals.fileTooLarge'));
+      return;
+    }
     setUploading(true);
     try {
       const result = await uploadFile(file);
@@ -116,11 +145,19 @@ export function LeaveCrudModal({
       !form.leave_type_id ||
       !form.start_date ||
       !form.end_date ||
+      !Number.isFinite(form.days) ||
       form.days <= 0
     ) {
       setError(t('approvals.leaveRequired'));
       return;
     }
+
+    if (form.end_date < form.start_date) {
+      setError(t('approvals.endBeforeStart'));
+      return;
+    }
+
+    const trimmedReason = form.reason?.trim() || '';
 
     if (item) {
       updateMutation.mutate({
@@ -131,7 +168,7 @@ export function LeaveCrudModal({
           start_date: form.start_date,
           end_date: form.end_date,
           days: form.days,
-          reason: form.reason,
+          reason: trimmedReason,
           attachment_url: form.attachment_url,
           attachment_name: form.attachment_name,
         },
@@ -141,7 +178,7 @@ export function LeaveCrudModal({
 
     createMutation.mutate({
       ...form,
-      reason: form.reason || undefined,
+      reason: trimmedReason || undefined,
       attachment_url: form.attachment_url || undefined,
       attachment_name: form.attachment_name || undefined,
     });
@@ -153,12 +190,13 @@ export function LeaveCrudModal({
       onClose={onClose}
       title={modalTitle}
       footer={
-        <div className="flex justify-end gap-3">
-          <button onClick={onClose} className="btn-secondary">
+        <div className="flex flex-col-reverse sm:flex-row justify-end gap-3">
+          <button type="button" onClick={onClose} className="btn-secondary">
             {t('common.cancel')}
           </button>
           <button
-            onClick={submit}
+            type="submit"
+            form={formId}
             disabled={createMutation.isPending || updateMutation.isPending || uploading}
             className="btn-primary"
           >
@@ -171,100 +209,124 @@ export function LeaveCrudModal({
         </div>
       }
     >
-      <div className="space-y-4">
+      <form
+        id={formId}
+        onSubmit={(e) => {
+          e.preventDefault();
+          submit();
+        }}
+        className="space-y-4"
+      >
         {error && (
-          <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          <div role="alert" className="rounded-lg border border-red-200 dark:border-red-500/30 bg-red-50 dark:bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-300">
             {error}
           </div>
         )}
 
-        <div>
-          <label className="form-label">{t('common.employee')} *</label>
-          {/* Keyed on the record so reopening the modal for a different request
-              inside the exit animation cannot leave the previous name on screen. */}
-          <EmployeePicker
-            key={item?.id ?? 'new'}
-            value={form.employee_id}
-            onChange={(id) => setForm((prev) => ({ ...prev, employee_id: id }))}
-            initialLabel={
-              item ? formatEmployeeLabel(item.employee_name, item.employee_number) : undefined
-            }
-          />
-        </div>
+        <FormField label={t('common.employee')} required>
+          {(aria) => (
+            /* Keyed on the record so reopening the modal for a different request
+               inside the exit animation cannot leave the previous name on screen. */
+            <EmployeePicker
+              key={item?.id ?? 'new'}
+              id={aria.id}
+              aria-describedby={aria['aria-describedby']}
+              value={form.employee_id}
+              onChange={(id) => setForm((prev) => ({ ...prev, employee_id: id }))}
+              initialLabel={
+                item ? formatEmployeeLabel(item.employee_name, item.employee_number) : undefined
+              }
+            />
+          )}
+        </FormField>
 
-        <div>
-          <label className="form-label">{t('approvals.leaveType')} *</label>
-          <select
-            value={form.leave_type_id}
-            onChange={(event) =>
-              setForm((prev) => ({ ...prev, leave_type_id: event.target.value }))
-            }
-            className="form-input"
-          >
-            <option value="">{t('approvals.selectLeaveType')}</option>
-            {leaveTypes.map((leaveType) => (
-              <option key={leaveType.id} value={leaveType.id}>
-                {leaveType.name}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="form-label">{t('common.startDate')} *</label>
-            <input
-              type="date"
-              value={form.start_date}
+        <FormField label={t('approvals.leaveType')} required>
+          {(aria) => (
+            <select
+              {...aria}
+              value={form.leave_type_id}
               onChange={(event) =>
-                setForm((prev) => ({ ...prev, start_date: event.target.value }))
+                setForm((prev) => ({ ...prev, leave_type_id: event.target.value }))
               }
               className="form-input"
-            />
-          </div>
-          <div>
-            <label className="form-label">{t('common.endDate')} *</label>
+            >
+              <option value="">{t('approvals.selectLeaveType')}</option>
+              {leaveTypes.map((leaveType) => (
+                <option key={leaveType.id} value={leaveType.id}>
+                  {leaveType.name}
+                </option>
+              ))}
+            </select>
+          )}
+        </FormField>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <FormField label={t('common.startDate')} required>
+            {(aria) => (
+              <input
+                {...aria}
+                type="date"
+                value={form.start_date}
+                onChange={(event) => handleDateChange('start_date', event.target.value)}
+                className="form-input"
+                required
+              />
+            )}
+          </FormField>
+          <FormField label={t('common.endDate')} required>
+            {(aria) => (
+              <input
+                {...aria}
+                type="date"
+                value={form.end_date}
+                min={form.start_date || undefined}
+                onChange={(event) => handleDateChange('end_date', event.target.value)}
+                className="form-input"
+                required
+              />
+            )}
+          </FormField>
+        </div>
+
+        <FormField label={t('approvals.days')} required>
+          {(aria) => (
             <input
-              type="date"
-              value={form.end_date}
-              onChange={(event) => setForm((prev) => ({ ...prev, end_date: event.target.value }))}
+              {...aria}
+              type="number"
+              min="0.5"
+              step="0.5"
+              value={form.days}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, days: Number(event.target.value) }))
+              }
+              className="form-input"
+              required
+            />
+          )}
+        </FormField>
+
+        <FormField label={t('common.reason')}>
+          {(aria) => (
+            <textarea
+              {...aria}
+              value={form.reason}
+              onChange={(event) => setForm((prev) => ({ ...prev, reason: event.target.value }))}
+              rows={3}
               className="form-input"
             />
-          </div>
-        </div>
-
-        <div>
-          <label className="form-label">{t('approvals.days')} *</label>
-          <input
-            type="number"
-            min="0.5"
-            step="0.5"
-            value={form.days}
-            onChange={(event) =>
-              setForm((prev) => ({ ...prev, days: Number(event.target.value) }))
-            }
-            className="form-input"
-          />
-        </div>
-
-        <div>
-          <label className="form-label">{t('common.reason')}</label>
-          <textarea
-            value={form.reason}
-            onChange={(event) => setForm((prev) => ({ ...prev, reason: event.target.value }))}
-            rows={3}
-            className="form-input"
-          />
-        </div>
+          )}
+        </FormField>
 
         <div>
           <label className="form-label">{t('approvals.attachment')}</label>
           <input
             ref={fileInputRef}
             type="file"
-            className="hidden"
+            accept={ALLOWED_UPLOAD_ACCEPT}
+            className="sr-only"
             onChange={(event) => {
               const file = event.target.files?.[0];
+              event.currentTarget.value = '';
               if (file) {
                 void handleUpload(file);
               }
@@ -286,17 +348,21 @@ export function LeaveCrudModal({
                 onClick={() =>
                   setForm((prev) => ({ ...prev, attachment_url: '', attachment_name: '' }))
                 }
-                className="p-2 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50"
+                aria-label={t('common.remove')}
+                title={t('common.remove')}
+                className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 flex items-center justify-center rounded-lg text-gray-400 dark:text-slate-500 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/15 transition-colors"
               >
                 <X className="w-4 h-4" />
               </button>
             )}
           </div>
-          {form.attachment_name && (
-            <p className="text-sm text-gray-500 mt-2">{form.attachment_name}</p>
+          {form.attachment_name ? (
+            <p className="text-sm text-gray-600 dark:text-slate-300 mt-2 break-all">{form.attachment_name}</p>
+          ) : (
+            <p className="text-xs text-gray-400 dark:text-slate-500 mt-1.5">{t('approvals.uploadHint')}</p>
           )}
         </div>
-      </div>
+      </form>
     </Modal>
   );
 }

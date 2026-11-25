@@ -66,16 +66,19 @@ async fn audit_letter_sent(
 /// the audit entry are the evidence of the attempt and must survive the failure.
 /// `BadGateway` (502) is the variant that surfaces its message to the client and
 /// says the fault is upstream rather than in the request.
-pub(crate) fn send_outcome(log: EmailLogSummary) -> AppResult<Json<EmailLogSummary>> {
-    if log.status == "sent" {
-        return Ok(Json(log));
+pub(crate) fn send_outcome(
+    log: EmailLogSummary,
+) -> AppResult<(axum::http::StatusCode, Json<EmailLogSummary>)> {
+    match log.status.as_str() {
+        "sent" => Ok((axum::http::StatusCode::OK, Json(log))),
+        "pending" => Ok((axum::http::StatusCode::ACCEPTED, Json(log))),
+        _ => Err(AppError::BadGateway(format!(
+            "The letter was not sent: {}",
+            log.error_message
+                .as_deref()
+                .unwrap_or("the mail server rejected it")
+        ))),
     }
-    Err(AppError::BadGateway(format!(
-        "The letter was not sent: {}",
-        log.error_message
-            .as_deref()
-            .unwrap_or("the mail server rejected it")
-    )))
 }
 
 // ── Templates ──────────────────────────────────────────────────────────
@@ -173,7 +176,11 @@ pub async fn preview_letter(
     auth: AuthUser,
     Json(req): Json<PreviewLetterRequest>,
 ) -> AppResult<Json<PreviewLetterResponse>> {
-    auth.require_permission(Permission::ManageEmailTemplates)?;
+    if !auth.can(Permission::ManageEmailTemplates) && !auth.can(Permission::SendLetters) {
+        return Err(AppError::Forbidden(
+            "Not authorized: email template or letter sending permission required".into(),
+        ));
+    }
     let company_id = auth
         .0
         .company_id
@@ -267,7 +274,7 @@ pub async fn send_letter(
     auth: AuthUser,
     audit_meta: AuditRequestMeta,
     Json(req): Json<SendLetterRequest>,
-) -> AppResult<Json<EmailLogSummary>> {
+) -> AppResult<(axum::http::StatusCode, Json<EmailLogSummary>)> {
     auth.require_permission(Permission::SendLetters)?;
     let company_id = auth
         .0
@@ -315,6 +322,7 @@ pub async fn send_letter(
         );
 
         let log = email_service::send_email(
+            &state.mailer,
             &state.config,
             &state.pool,
             company_id,
@@ -370,6 +378,7 @@ pub async fn send_letter(
         );
 
         let log = email_service::send_email(
+            &state.mailer,
             &state.config,
             &state.pool,
             company_id,

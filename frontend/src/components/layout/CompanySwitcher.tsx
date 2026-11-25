@@ -2,10 +2,11 @@ import { useQuery } from '@tanstack/react-query';
 import { Building2, Check, ChevronDown } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router';
-import { AnimatePresence, motion } from 'framer-motion';
 import { useAuth } from '@/context/AuthContext';
 import { useTranslation } from 'react-i18next';
 import { getMyCompanies } from '@/api/admin';
+import { toast } from '@/lib/toast';
+import { getErrorMessage } from '@/lib/utils';
 
 export function CompanySwitcher() {
   const { user, switchCompany } = useAuth();
@@ -21,13 +22,20 @@ export function CompanySwitcher() {
     enabled: !!user,
   });
 
-  // Close dropdown on outside click
+  // Close dropdown on outside click or Escape
   useEffect(() => {
-    const handler = (e: MouseEvent) => {
+    const onMouseDown = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onMouseDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onMouseDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
   }, []);
 
   // Hide if user has only 0 or 1 companies — switcher would be a no-op.
@@ -45,6 +53,8 @@ export function CompanySwitcher() {
     try {
       await switchCompany(companyId);
       navigate('/', { replace: true });
+    } catch (err) {
+      toast.error(getErrorMessage(err));
     } finally {
       setSwitching(false);
       setOpen(false);
@@ -54,8 +64,11 @@ export function CompanySwitcher() {
   return (
     <div ref={ref} className="relative px-3 mt-3 mb-1">
       <button
+        type="button"
         onClick={() => setOpen(!open)}
         disabled={switching}
+        aria-expanded={open}
+        aria-haspopup="listbox"
         className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 transition-all-fast text-left"
       >
         <Building2 className="w-4 h-4 text-indigo-300 shrink-0" />
@@ -67,35 +80,27 @@ export function CompanySwitcher() {
         />
       </button>
 
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            initial={{ opacity: 0, y: -6, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -6, scale: 0.98 }}
-            transition={{ duration: 0.16, ease: 'easeOut' }}
-            className="glass-dark absolute left-3 right-3 top-full mt-1.5 rounded-xl z-50 py-1 max-h-48 overflow-y-auto scrollbar-thin"
-          >
-            {companies.map((c) => {
-              const isCurrent = c.id === user?.company_id;
-              return (
-                <button
-                  key={c.id}
-                  onClick={() => handleSwitch(c.id)}
-                  className={`w-full flex items-center gap-2 text-left px-3 py-2.5 text-sm transition-colors ${
-                    isCurrent
-                      ? 'bg-indigo-500/15 text-indigo-200 font-medium'
-                      : 'text-slate-300 hover:bg-white/5 hover:text-white'
-                  }`}
-                >
-                  <span className="truncate flex-1">{c.name}</span>
-                  {isCurrent && <Check className="w-3.5 h-3.5 text-indigo-300 shrink-0" />}
-                </button>
-              );
-            })}
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {open && (
+        <div className="animate-drop-in glass-dark absolute left-3 right-3 top-full mt-1.5 rounded-xl z-50 py-1 max-h-48 overflow-y-auto scrollbar-thin">
+          {companies.map((c) => {
+            const isCurrent = c.id === user?.company_id;
+            return (
+              <button
+                key={c.id}
+                onClick={() => handleSwitch(c.id)}
+                className={`w-full flex items-center gap-2 text-left px-3 py-2.5 text-sm transition-colors ${
+                  isCurrent
+                    ? 'bg-indigo-500/15 text-indigo-200 font-medium'
+                    : 'text-slate-300 hover:bg-white/5 hover:text-white'
+                }`}
+              >
+                <span className="truncate flex-1">{c.name}</span>
+                {isCurrent && <Check className="w-3.5 h-3.5 text-indigo-300 shrink-0" />}
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

@@ -17,10 +17,13 @@ use webauthn_rs::prelude::*;
 
 use payroll_system::core::app_state::AppState;
 use payroll_system::core::auth::JwtSecret;
-use payroll_system::core::config::AppConfig;
+use payroll_system::core::config::{AppConfig, BUILD_REVISION, BUILD_VERSION};
 use payroll_system::core::db;
 use payroll_system::routes;
 use payroll_system::services;
+use payroll_system::services::job_health_service::{
+    self, JOB_AUTO_ABSENT, JOB_EMAIL_OUTBOX, JOB_RETENTION_CLEANUP,
+};
 
 /// Response for a caught handler panic.
 ///
@@ -112,7 +115,11 @@ async fn main() -> anyhow::Result<()> {
     // in-memory, so nothing else will ever finish them.
     services::job_service::recover_stale(&pool).await;
 
-    tracing::info!("Database connected; schema and reference data applied");
+    tracing::info!(
+        version = BUILD_VERSION,
+        revision = BUILD_REVISION,
+        "Database connected; schema and reference data applied"
+    );
 
     // CORS — restrict to configured frontend origin
     let frontend_origin: HeaderValue = config
@@ -127,7 +134,8 @@ async fn main() -> anyhow::Result<()> {
             axum::http::header::AUTHORIZATION,
             axum::http::header::CONTENT_TYPE,
         ])
-        .allow_credentials(true);
+        .allow_credentials(true)
+        .max_age(std::time::Duration::from_secs(7_200));
 
     // WebAuthn
     let rp_origin = Url::parse(&config.webauthn_rp_origin).expect("Invalid WEBAUTHN_RP_ORIGIN URL");
@@ -137,11 +145,13 @@ async fn main() -> anyhow::Result<()> {
         .build()
         .expect("Failed to build WebAuthn");
 
-    // App state
+    // Shared SMTP transport + App state
+    let mailer = services::email_service::SharedMailer::from_config(&config);
     let state = AppState {
         pool: pool.clone(),
         config: config.clone(),
         webauthn: Arc::new(webauthn),
+        mailer: mailer.clone(),
     };
 
     // Build router
@@ -252,20 +262,32 @@ async fn main() -> anyhow::Result<()> {
                 tracing::info!("retention cleanup: another instance holds lock; skipping tick");
                 continue;
             };
+            let mut cleanup_processed: u64 = 0;
+            let mut cleanup_errors: Vec<String> = Vec::new();
             tracing::info!("refresh-token cleanup: tick");
             match refresh_tokens::purge_stale(&cleanup_pool, REFRESH_TOKEN_RETENTION_DAYS).await {
                 Ok(rows) => {
+                    cleanup_processed += rows;
                     tracing::info!(rows, "refresh-token cleanup: completed");
                 }
-                Err(e) => tracing::error!("Failed to clean up refresh tokens: {}", e),
+                Err(e) => {
+                    tracing::error!("Failed to clean up refresh tokens: {}", e);
+                    cleanup_errors.push(format!("refresh_tokens: {e}"));
+                }
             }
 
             // A kiosk mints ~288 QR tokens/day; unreferenced expired ones are
             // dead weight. Tokens referenced by a check-in are kept as history.
             match attendance_qr_tokens::purge_expired(&cleanup_pool, QR_TOKEN_RETENTION_DAYS).await
             {
-                Ok(rows) => tracing::info!(rows, "qr-token cleanup: completed"),
-                Err(e) => tracing::error!("Failed to clean up attendance QR tokens: {}", e),
+                Ok(rows) => {
+                    cleanup_processed += rows;
+                    tracing::info!(rows, "qr-token cleanup: completed");
+                }
+                Err(e) => {
+                    tracing::error!("Failed to clean up attendance QR tokens: {}", e);
+                    cleanup_errors.push(format!("qr_tokens: {e}"));
+                }
             }
 
             // Attendance network observations are employees' home and mobile
@@ -278,17 +300,27 @@ async fn main() -> anyhow::Result<()> {
             )
             .await
             {
-                Ok(rows) => tracing::info!(rows, "network-observation cleanup: completed"),
+                Ok(rows) => {
+                    cleanup_processed += rows;
+                    tracing::info!(rows, "network-observation cleanup: completed");
+                }
                 Err(e) => {
-                    tracing::error!("Failed to clean up network observations: {}", e)
+                    tracing::error!("Failed to clean up network observations: {}", e);
+                    cleanup_errors.push(format!("network_observations: {e}"));
                 }
             }
 
             // A dismissal means "not right now". Letting them lapse is what
             // makes a block proposable again after an office moves.
             match attendance_network_observations::purge_expired_dismissals(&cleanup_pool).await {
-                Ok(rows) => tracing::info!(rows, "network-dismissal cleanup: completed"),
-                Err(e) => tracing::error!("Failed to clean up network dismissals: {}", e),
+                Ok(rows) => {
+                    cleanup_processed += rows;
+                    tracing::info!(rows, "network-dismissal cleanup: completed");
+                }
+                Err(e) => {
+                    tracing::error!("Failed to clean up network dismissals: {}", e);
+                    cleanup_errors.push(format!("network_dismissals: {e}"));
+                }
             }
 
             // Retention purges for the append-only tables (plan item 26).
@@ -302,8 +334,14 @@ async fn main() -> anyhow::Result<()> {
             )
             .await
             {
-                Ok(rows) => tracing::info!(rows, "audit-log retention: completed"),
-                Err(e) => tracing::error!("Failed to purge old audit logs: {}", e),
+                Ok(rows) => {
+                    cleanup_processed += rows;
+                    tracing::info!(rows, "audit-log retention: completed");
+                }
+                Err(e) => {
+                    tracing::error!("Failed to purge old audit logs: {}", e);
+                    cleanup_errors.push(format!("audit_logs: {e}"));
+                }
             }
 
             match payroll_system::repositories::notifications::purge_stale(
@@ -313,8 +351,14 @@ async fn main() -> anyhow::Result<()> {
             )
             .await
             {
-                Ok(rows) => tracing::info!(rows, "notification retention: completed"),
-                Err(e) => tracing::error!("Failed to purge stale notifications: {}", e),
+                Ok(rows) => {
+                    cleanup_processed += rows;
+                    tracing::info!(rows, "notification retention: completed");
+                }
+                Err(e) => {
+                    tracing::error!("Failed to purge stale notifications: {}", e);
+                    cleanup_errors.push(format!("notifications: {e}"));
+                }
             }
 
             match payroll_system::repositories::email_logs::purge_older_than(
@@ -323,8 +367,14 @@ async fn main() -> anyhow::Result<()> {
             )
             .await
             {
-                Ok(rows) => tracing::info!(rows, "email-log retention: completed"),
-                Err(e) => tracing::error!("Failed to purge old email logs: {}", e),
+                Ok(rows) => {
+                    cleanup_processed += rows;
+                    tracing::info!(rows, "email-log retention: completed");
+                }
+                Err(e) => {
+                    tracing::error!("Failed to purge old email logs: {}", e);
+                    cleanup_errors.push(format!("email_logs: {e}"));
+                }
             }
 
             match payroll_system::repositories::user_sessions::purge_stale(
@@ -334,15 +384,27 @@ async fn main() -> anyhow::Result<()> {
             )
             .await
             {
-                Ok(rows) => tracing::info!(rows, "session retention: completed"),
-                Err(e) => tracing::error!("Failed to purge stale sessions: {}", e),
+                Ok(rows) => {
+                    cleanup_processed += rows;
+                    tracing::info!(rows, "session retention: completed");
+                }
+                Err(e) => {
+                    tracing::error!("Failed to purge stale sessions: {}", e);
+                    cleanup_errors.push(format!("user_sessions: {e}"));
+                }
             }
 
             match payroll_system::repositories::bulk_import_sessions::purge_expired(&cleanup_pool)
                 .await
             {
-                Ok(rows) => tracing::info!(rows, "import-session retention: completed"),
-                Err(e) => tracing::error!("Failed to purge expired import sessions: {}", e),
+                Ok(rows) => {
+                    cleanup_processed += rows;
+                    tracing::info!(rows, "import-session retention: completed");
+                }
+                Err(e) => {
+                    tracing::error!("Failed to purge expired import sessions: {}", e);
+                    cleanup_errors.push(format!("bulk_import_sessions: {e}"));
+                }
             }
 
             match payroll_system::repositories::password_reset_requests::delete_expired_older_than_days(
@@ -351,20 +413,32 @@ async fn main() -> anyhow::Result<()> {
             )
             .await
             {
-                Ok(rows) => tracing::info!(rows, "password-reset cleanup: completed"),
-                Err(e) => tracing::error!("Failed to purge old password reset requests: {}", e),
+                Ok(rows) => {
+                    cleanup_processed += rows;
+                    tracing::info!(rows, "password-reset cleanup: completed");
+                }
+                Err(e) => {
+                    tracing::error!("Failed to purge old password reset requests: {}", e);
+                    cleanup_errors.push(format!("password_reset_requests: {e}"));
+                }
             }
 
             match payroll_system::repositories::passkey_challenges::delete_expired(&cleanup_pool)
                 .await
             {
                 Ok(()) => tracing::info!("passkey-challenge cleanup: completed"),
-                Err(e) => tracing::error!("Failed to clean up passkey challenges: {}", e),
+                Err(e) => {
+                    tracing::error!("Failed to clean up passkey challenges: {}", e);
+                    cleanup_errors.push(format!("passkey_challenges: {e}"));
+                }
             }
 
             match payroll_system::repositories::oauth2_states::delete_expired(&cleanup_pool).await {
                 Ok(()) => tracing::info!("oauth2-state cleanup: completed"),
-                Err(e) => tracing::error!("Failed to clean up oauth2 states: {}", e),
+                Err(e) => {
+                    tracing::error!("Failed to clean up oauth2 states: {}", e);
+                    cleanup_errors.push(format!("oauth2_states: {e}"));
+                }
             }
 
             match payroll_system::repositories::background_jobs::delete_finished_older_than_days(
@@ -373,9 +447,29 @@ async fn main() -> anyhow::Result<()> {
             )
             .await
             {
-                Ok(rows) => tracing::info!(rows, "background-job retention: completed"),
-                Err(e) => tracing::error!("Failed to purge old background jobs: {}", e),
+                Ok(rows) => {
+                    cleanup_processed += rows;
+                    tracing::info!(rows, "background-job retention: completed");
+                }
+                Err(e) => {
+                    tracing::error!("Failed to purge old background jobs: {}", e);
+                    cleanup_errors.push(format!("background_jobs: {e}"));
+                }
             }
+
+            let err_summary = if cleanup_errors.is_empty() {
+                None
+            } else {
+                Some(cleanup_errors.join("; "))
+            };
+            job_health_service::record_job_run(
+                &cleanup_pool,
+                JOB_RETENTION_CLEANUP,
+                err_summary.is_none(),
+                cleanup_processed,
+                err_summary.as_deref(),
+            )
+            .await;
 
             release_advisory_lock(lock_conn, CLEANUP_LOCK_KEY).await;
         }
@@ -411,9 +505,28 @@ async fn main() -> anyhow::Result<()> {
         if let Some(lock_conn) = try_advisory_lock_guard(&absent_pool, AUTO_ABSENT_LOCK_KEY).await {
             match attendance_service::run_auto_absent_catchup(&absent_pool).await {
                 Ok(count) => {
-                    tracing::info!(marked = count, "auto-absent: startup catch-up completed")
+                    tracing::info!(marked = count, "auto-absent: startup catch-up completed");
+                    job_health_service::record_job_run(
+                        &absent_pool,
+                        JOB_AUTO_ABSENT,
+                        true,
+                        count as u64,
+                        None,
+                    )
+                    .await;
                 }
-                Err(e) => tracing::error!("Auto-absent startup catch-up failed: {}", e),
+                Err(e) => {
+                    tracing::error!("Auto-absent startup catch-up failed: {}", e);
+                    let msg = e.to_string();
+                    job_health_service::record_job_run(
+                        &absent_pool,
+                        JOB_AUTO_ABSENT,
+                        false,
+                        0,
+                        Some(&msg),
+                    )
+                    .await;
+                }
             }
             release_advisory_lock(lock_conn, AUTO_ABSENT_LOCK_KEY).await;
         } else {
@@ -445,12 +558,87 @@ async fn main() -> anyhow::Result<()> {
             {
                 tracing::info!("auto-absent: tick fired; marking absentees");
                 match attendance_service::run_auto_absent_catchup(&absent_pool).await {
-                    Ok(count) => tracing::info!(marked = count, "auto-absent: completed"),
-                    Err(e) => tracing::error!("Auto-absent marking failed: {}", e),
+                    Ok(count) => {
+                        tracing::info!(marked = count, "auto-absent: completed");
+                        job_health_service::record_job_run(
+                            &absent_pool,
+                            JOB_AUTO_ABSENT,
+                            true,
+                            count as u64,
+                            None,
+                        )
+                        .await;
+                    }
+                    Err(e) => {
+                        tracing::error!("Auto-absent marking failed: {}", e);
+                        let msg = e.to_string();
+                        job_health_service::record_job_run(
+                            &absent_pool,
+                            JOB_AUTO_ABSENT,
+                            false,
+                            0,
+                            Some(&msg),
+                        )
+                        .await;
+                    }
                 }
                 release_advisory_lock(lock_conn, AUTO_ABSENT_LOCK_KEY).await;
             } else {
                 tracing::info!("auto-absent: another instance holds lock; skipping tick");
+            }
+        }
+    });
+
+    // Background task: transactional email outbox worker (plan item 41).
+    let outbox_pool = pool.clone();
+    let outbox_mailer = mailer.clone();
+    let mut outbox_shutdown = shutdown_rx.clone();
+    let outbox_handle = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(15));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut last_heartbeat = std::time::Instant::now() - std::time::Duration::from_secs(120);
+
+        loop {
+            tokio::select! {
+                _ = outbox_shutdown.changed() => break,
+                _ = interval.tick() => {}
+            }
+
+            match services::email_service::process_outbox_batch(&outbox_pool, &outbox_mailer, 25)
+                .await
+            {
+                Ok((sent, failed)) => {
+                    if sent > 0 || failed > 0 || last_heartbeat.elapsed().as_secs() >= 60 {
+                        let ok = failed == 0;
+                        let err = if failed > 0 {
+                            Some(format!("{failed} outbox email(s) failed delivery"))
+                        } else {
+                            None
+                        };
+                        job_health_service::record_job_run(
+                            &outbox_pool,
+                            JOB_EMAIL_OUTBOX,
+                            ok,
+                            sent as u64,
+                            err.as_deref(),
+                        )
+                        .await;
+                        last_heartbeat = std::time::Instant::now();
+                    }
+                }
+                Err(e) => {
+                    let msg = e.to_string();
+                    tracing::error!(error = %msg, "Email outbox batch failed");
+                    job_health_service::record_job_run(
+                        &outbox_pool,
+                        JOB_EMAIL_OUTBOX,
+                        false,
+                        0,
+                        Some(&msg),
+                    )
+                    .await;
+                    last_heartbeat = std::time::Instant::now();
+                }
             }
         }
     });
@@ -468,7 +656,7 @@ async fn main() -> anyhow::Result<()> {
     // Release the background loops so they stop between ticks instead of
     // dying mid-query when the runtime drops.
     let _ = shutdown_tx.send(true);
-    let _ = tokio::join!(cleanup_handle, absent_handle);
+    let _ = tokio::join!(cleanup_handle, absent_handle, outbox_handle);
 
     tracing::info!("Shutting down — closing database pool...");
     pool.close().await;

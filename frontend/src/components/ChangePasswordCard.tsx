@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
-import { KeyRound } from 'lucide-react';
+import { Eye, EyeOff, KeyRound } from 'lucide-react';
 import api from '@/api/client';
 import { useAuth } from '@/context/AuthContext';
 import { passwordPolicyHint, validatePassword } from '@/lib/password';
@@ -14,6 +14,9 @@ export function ChangePasswordCard() {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [showCurrent, setShowCurrent] = useState(false);
+  const [showNew, setShowNew] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -51,56 +54,91 @@ export function ChangePasswordCard() {
     <section className="card">
       <div className="section-header">
         <div className="flex items-center gap-2">
-          <KeyRound className="w-4 h-4 text-gray-400" />
+          <KeyRound className="w-4 h-4 text-gray-400 dark:text-slate-400" />
           <span className="section-title">{t('auth.passwordCard.title')}</span>
         </div>
       </div>
 
-      <p className="text-sm text-gray-500 mb-4">
+      <p className="text-sm text-gray-500 dark:text-slate-400 mb-4">
         {t('auth.passwordCard.description')}
       </p>
 
       {error && (
-        <div className="bg-red-50 text-red-600 text-sm px-4 py-3 rounded-xl mb-4">{error}</div>
+        <div role="alert" className="bg-red-50 dark:bg-red-500/10 border border-red-100 dark:border-red-500/30 text-red-600 dark:text-red-300 text-sm px-4 py-3 rounded-xl mb-4">
+          {error}
+        </div>
       )}
 
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
           <label className="form-label" htmlFor="cp-current">{t('auth.passwordCard.current')}</label>
-          <input
-            id="cp-current"
-            type="password"
-            autoComplete="current-password"
-            className="form-input"
-            value={currentPassword}
-            onChange={(e) => setCurrentPassword(e.target.value)}
-            required
-          />
+          <div className="relative">
+            <input
+              id="cp-current"
+              type={showCurrent ? 'text' : 'password'}
+              autoComplete="current-password"
+              className="form-input pr-11"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+              required
+            />
+            <button
+              type="button"
+              onClick={() => setShowCurrent((v) => !v)}
+              aria-label={showCurrent ? t('a11y.hidePassword') : t('a11y.showPassword')}
+              aria-pressed={showCurrent}
+              className="absolute inset-y-0 right-0 flex items-center px-3 min-w-11 justify-center text-gray-400 dark:text-slate-400 hover:text-gray-600 dark:hover:text-slate-200 transition-colors"
+            >
+              {showCurrent ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            </button>
+          </div>
         </div>
         <div>
           <label className="form-label" htmlFor="cp-new">{t('auth.passwordCard.new')}</label>
-          <input
-            id="cp-new"
-            type="password"
-            autoComplete="new-password"
-            className="form-input"
-            value={newPassword}
-            onChange={(e) => setNewPassword(e.target.value)}
-            required
-          />
-          <p className="text-xs text-gray-400 mt-1">{passwordPolicyHint()}</p>
+          <div className="relative">
+            <input
+              id="cp-new"
+              type={showNew ? 'text' : 'password'}
+              autoComplete="new-password"
+              className="form-input pr-11"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              required
+            />
+            <button
+              type="button"
+              onClick={() => setShowNew((v) => !v)}
+              aria-label={showNew ? t('a11y.hidePassword') : t('a11y.showPassword')}
+              aria-pressed={showNew}
+              className="absolute inset-y-0 right-0 flex items-center px-3 min-w-11 justify-center text-gray-400 dark:text-slate-400 hover:text-gray-600 dark:hover:text-slate-200 transition-colors"
+            >
+              {showNew ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            </button>
+          </div>
+          <p className="text-xs text-gray-500 dark:text-slate-400 mt-1">{passwordPolicyHint()}</p>
         </div>
         <div>
           <label className="form-label" htmlFor="cp-confirm">{t('auth.passwordCard.confirm')}</label>
-          <input
-            id="cp-confirm"
-            type="password"
-            autoComplete="new-password"
-            className="form-input"
-            value={confirmPassword}
-            onChange={(e) => setConfirmPassword(e.target.value)}
-            required
-          />
+          <div className="relative">
+            <input
+              id="cp-confirm"
+              type={showConfirm ? 'text' : 'password'}
+              autoComplete="new-password"
+              className="form-input pr-11"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              required
+            />
+            <button
+              type="button"
+              onClick={() => setShowConfirm((v) => !v)}
+              aria-label={showConfirm ? t('a11y.hidePassword') : t('a11y.showPassword')}
+              aria-pressed={showConfirm}
+              className="absolute inset-y-0 right-0 flex items-center px-3 min-w-11 justify-center text-gray-400 dark:text-slate-400 hover:text-gray-600 dark:hover:text-slate-200 transition-colors"
+            >
+              {showConfirm ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            </button>
+          </div>
         </div>
         <div className="flex justify-end">
           <button type="submit" disabled={loading} className="btn-primary">

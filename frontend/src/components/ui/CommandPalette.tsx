@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { AnimatePresence, motion } from 'framer-motion';
 import {
   BarChart3,
   Bell,
@@ -34,6 +33,7 @@ import {
   UserCog,
   Users,
   Users2,
+  X,
 } from 'lucide-react';
 import { getEmployees } from '@/api/employees';
 import { useAuth } from '@/context/AuthContext';
@@ -64,6 +64,10 @@ export function CommandPalette() {
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+  const wasOpenRef = useRef(false);
+  const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
 
   const close = useCallback(() => {
     setOpen(false);
@@ -74,6 +78,7 @@ export function CommandPalette() {
 
   useEffect(() => {
     return subscribeCommandPalette(() => {
+      previousFocusRef.current = document.activeElement as HTMLElement | null;
       setOpen(true);
       setQuery('');
       setDebouncedQuery('');
@@ -96,11 +101,30 @@ export function CommandPalette() {
     const onKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
-        setOpen((prev) => !prev);
+        setOpen((prev) => {
+          if (!prev) {
+            previousFocusRef.current = document.activeElement as HTMLElement | null;
+          }
+          return !prev;
+        });
       } else if (e.key === 'Escape' && open) {
         e.preventDefault();
         e.stopImmediatePropagation();
         close();
+      } else if (e.key === 'Tab' && open && dialogRef.current) {
+        const focusable = dialogRef.current.querySelectorAll<HTMLElement>(
+          'input:not([disabled]), button:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        );
+        if (focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
       }
     };
     window.addEventListener('keydown', onKeyDown, true);
@@ -109,7 +133,11 @@ export function CommandPalette() {
 
   useEffect(() => {
     if (open) {
+      wasOpenRef.current = true;
       requestAnimationFrame(() => inputRef.current?.focus());
+    } else if (wasOpenRef.current) {
+      wasOpenRef.current = false;
+      requestAnimationFrame(() => previousFocusRef.current?.focus?.());
     }
   }, [open]);
 
@@ -170,20 +198,58 @@ export function CommandPalette() {
       addRoute('my-attendance', t('nav.myAttendance'), '/my/attendance', UserCheck, { requiresEmployee: true });
       addRoute('companies', t('nav.companies'), '/companies', Building2, { requires: 'manage_companies' });
       addRoute('users', t('nav.users'), '/users', UserCog, { requires: 'manage_users' });
-      addRoute('roles', t('nav.roles'), '/roles', Shield, { requires: 'manage_users' });
+      addRoute('roles', t('nav.roles'), '/roles', Shield, { requires: 'view_user_directory' });
       addRoute('user-groups', t('nav.userGroups'), '/user-groups', Users2, { requires: 'manage_users' });
       addRoute('attendance-settings', t('nav.attendanceSettings'), '/admin/attendance-settings', ScanLine, { requires: 'manage_platform_settings' });
       addRoute('audit-trail', t('nav.auditTrail'), '/audit-trail', ScrollText, { requires: 'view_audit_log' });
       addRoute('backup', t('nav.backup'), '/backup', DatabaseBackup, { requires: 'manage_backups' });
+      addRoute('account-security', t('nav.accountSecurity'), '/account', Shield);
     }
 
     if (user.employee_id || isPortalOnly) {
       addRoute('portal-profile', t('nav.portal.profile'), '/portal/profile', User);
+      addRoute('portal-attendance', t('nav.portal.attendance'), '/portal/attendance', ScanLine);
       addRoute('portal-payslips', t('nav.portal.payslips'), '/portal/payslips', FileText);
       addRoute('portal-leave', t('nav.portal.leave'), '/portal/leave', Calendar);
       addRoute('portal-claims', t('nav.portal.claims'), '/portal/claims', Receipt);
       addRoute('portal-overtime', t('nav.portal.overtime'), '/portal/overtime', Clock);
+      addRoute('portal-team-calendar', t('nav.portal.teamCalendar'), '/portal/team-calendar', Users);
       addRoute('portal-notifications', t('nav.portal.notifications'), '/portal/notifications', Bell);
+    }
+
+    if (user.employee_id || isPortalOnly) {
+      list.push(
+        {
+          id: 'act-portal-checkin',
+          group: 'actions',
+          label: t('ux.commandPalette.portalCheckIn'),
+          icon: ScanLine,
+          onSelect: () => {
+            navigate(isPortalOnly ? '/portal/attendance' : '/my/attendance');
+            close();
+          },
+        },
+        {
+          id: 'act-portal-leave',
+          group: 'actions',
+          label: t('ux.commandPalette.portalLeave'),
+          icon: Calendar,
+          onSelect: () => {
+            navigate('/portal/leave');
+            close();
+          },
+        },
+        {
+          id: 'act-portal-claims',
+          group: 'actions',
+          label: t('ux.commandPalette.portalClaims'),
+          icon: Receipt,
+          onSelect: () => {
+            navigate('/portal/claims');
+            close();
+          },
+        },
+      );
     }
 
     if (canUseAdminConsole(user) && isPortalOnly === false) {
@@ -284,6 +350,11 @@ export function CommandPalette() {
 
   const clampedIndex = Math.min(activeIndex, Math.max(0, filtered.length - 1));
 
+  useEffect(() => {
+    if (!open) return;
+    itemRefs.current[clampedIndex]?.scrollIntoView?.({ block: 'nearest' });
+  }, [clampedIndex, open]);
+
   const handleListKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'ArrowDown') {
       e.preventDefault();
@@ -304,29 +375,22 @@ export function CommandPalette() {
     { key: 'preferences', title: t('ux.commandPalette.groupPreferences') },
   ];
 
+  if (!open) return null;
+
   return (
-    <AnimatePresence>
-      {open && (
-        <>
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.15 }}
-            onClick={close}
-            className="fixed inset-0 z-[75] bg-slate-950/55 backdrop-blur-sm"
-            aria-hidden="true"
-          />
-          <motion.div
-            role="dialog"
-            aria-modal="true"
-            aria-label={t('nav.quickSearch')}
-            initial={{ opacity: 0, scale: 0.96, y: -12 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.96, y: -12 }}
-            transition={{ type: 'spring', stiffness: 420, damping: 32 }}
-            className="fixed inset-x-4 top-[12vh] z-[76] mx-auto max-w-xl overflow-hidden rounded-2xl bg-white/95 dark:bg-slate-900/95 shadow-2xl ring-1 ring-black/10 dark:ring-white/10 backdrop-blur-2xl"
-          >
+    <>
+      <div
+        onClick={close}
+        className="animate-fade-in fixed inset-0 z-[75] bg-slate-950/55 backdrop-blur-sm"
+        aria-hidden="true"
+      />
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={t('nav.quickSearch')}
+        className="animate-scale-in fixed inset-x-4 top-[12vh] z-[76] mx-auto max-w-xl overflow-hidden rounded-2xl bg-white dark:bg-slate-900 shadow-2xl ring-1 ring-black/10 dark:ring-white/10"
+      >
             <div className="flex items-center gap-3 border-b border-gray-200/80 dark:border-slate-800 px-4 py-3.5">
               {searchingEmployees ? (
                 <Loader2 className="h-4 w-4 shrink-0 animate-spin text-[var(--accent-1)]" aria-hidden="true" />
@@ -344,8 +408,16 @@ export function CommandPalette() {
                 onKeyDown={handleListKeyDown}
                 placeholder={t('ux.commandPalette.placeholder')}
                 aria-label={t('ux.commandPalette.placeholder')}
-                className="flex-1 bg-transparent text-sm text-gray-900 dark:text-slate-100 placeholder:text-gray-400 focus:outline-none"
+                className="flex-1 bg-transparent text-base sm:text-sm text-gray-900 dark:text-slate-100 placeholder:text-gray-400 focus:outline-none"
               />
+              <button
+                type="button"
+                onClick={close}
+                aria-label={t('a11y.closeDialog')}
+                className="sm:hidden min-h-10 min-w-10 -mr-2 inline-flex items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+              >
+                <X className="h-4 w-4" />
+              </button>
               <kbd className="hidden sm:inline-flex items-center rounded-md border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500 dark:text-slate-400">
                 ESC
               </kbd>
@@ -373,6 +445,9 @@ export function CommandPalette() {
                           return (
                             <button
                               key={item.id}
+                              ref={(el) => {
+                                itemRefs.current[flatIndex] = el;
+                              }}
                               type="button"
                               onMouseEnter={() => setActiveIndex(flatIndex)}
                               onClick={item.onSelect}
@@ -406,9 +481,7 @@ export function CommandPalette() {
               <span>↵ {t('ux.commandPalette.hintOpen')}</span>
               <span>ESC {t('ux.commandPalette.hintClose')}</span>
             </div>
-          </motion.div>
-        </>
-      )}
-    </AnimatePresence>
+      </div>
+    </>
   );
 }

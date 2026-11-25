@@ -31,6 +31,7 @@ export function KioskCredentialsModal({ onClose }: { onClose: () => void }) {
     mutationFn: (l: string) => createKioskCredential(l),
     onSuccess: (data) => {
       setCreated(data);
+      setCopied(false);
       setLabel('');
       setError('');
       queryClient.invalidateQueries({ queryKey: ['kiosk-credentials'] });
@@ -50,10 +51,23 @@ export function KioskCredentialsModal({ onClose }: { onClose: () => void }) {
     try {
       await navigator.clipboard.writeText(url);
       setCopied(true);
+      setError('');
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // Clipboard write may fail in non-HTTPS contexts; user can copy manually.
+      setError(t('attendance.kioskModal.copyFailed'));
     }
+  };
+
+  const handleHideCreated = async () => {
+    if (!copied) {
+      const ok = await confirmDialog({
+        description: t('attendance.kioskModal.hideUncopiedConfirm'),
+        confirmLabel: t('attendance.kioskModal.doneHide'),
+        variant: 'warning',
+      });
+      if (!ok) return;
+    }
+    setCreated(null);
   };
 
   return (
@@ -75,24 +89,26 @@ export function KioskCredentialsModal({ onClose }: { onClose: () => void }) {
                 <p className="text-xs text-emerald-700 dark:text-emerald-300 mt-0.5">
                   {t('attendance.kioskModal.treatLikePassword')}
                 </p>
-                <div className="mt-3 flex items-center gap-2">
+                <div className="mt-3 flex flex-col sm:flex-row sm:items-center gap-2">
                   <input
                     readOnly
                     value={created.public_url}
                     aria-label={t('attendance.kioskModal.copyNow')}
                     onFocus={(e) => e.currentTarget.select()}
-                    className="flex-1 px-3 py-2 bg-white dark:bg-slate-900 border border-emerald-300 dark:border-emerald-500/40 rounded-lg text-xs font-mono text-gray-800 dark:text-slate-100 outline-none truncate"
+                    className="flex-1 min-w-0 px-3 py-2 bg-white dark:bg-slate-900 border border-emerald-300 dark:border-emerald-500/40 rounded-lg text-xs font-mono text-gray-800 dark:text-slate-100 outline-none truncate"
                   />
                   <button
-                    onClick={() => copyUrl(created.public_url)}
-                    className="flex items-center gap-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium rounded-lg transition-colors"
+                    type="button"
+                    onClick={() => void copyUrl(created.public_url)}
+                    className="flex items-center justify-center gap-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium rounded-lg transition-colors shrink-0"
                   >
                     <Copy className="w-3.5 h-3.5" />
                     {copied ? t('common.copied') : t('common.copy')}
                   </button>
                 </div>
                 <button
-                  onClick={() => setCreated(null)}
+                  type="button"
+                  onClick={() => void handleHideCreated()}
                   className="mt-3 text-xs text-emerald-800 dark:text-emerald-300 hover:underline"
                 >
                   {t('attendance.kioskModal.doneHide')}
@@ -113,7 +129,7 @@ export function KioskCredentialsModal({ onClose }: { onClose: () => void }) {
               }
               createMut.mutate(label.trim());
             }}
-            className="mt-5 flex gap-2"
+            className="mt-5 flex flex-col sm:flex-row gap-2"
           >
             <input
               type="text"
@@ -122,12 +138,12 @@ export function KioskCredentialsModal({ onClose }: { onClose: () => void }) {
               placeholder={t('attendance.kioskModal.namePlaceholder')}
               aria-label={t('attendance.kioskModal.namePlaceholder')}
               maxLength={100}
-              className="form-input flex-1"
+              className="form-input flex-1 min-w-0"
             />
             <button
               type="submit"
               disabled={createMut.isPending}
-              className="btn-primary !py-2 !min-h-9"
+              className="btn-primary !py-2 !min-h-10 shrink-0"
             >
               <Plus className="w-4 h-4" />
               {createMut.isPending ? t('common.creating') : t('attendance.kioskModal.createLink')}
@@ -135,8 +151,8 @@ export function KioskCredentialsModal({ onClose }: { onClose: () => void }) {
           </form>
         )}
         {error && (
-          <p className="mt-2 text-sm text-red-600 dark:text-red-400 flex items-center gap-1">
-            <AlertCircle className="w-3.5 h-3.5" /> {error}
+          <p role="alert" className="mt-2 text-sm text-red-600 dark:text-red-400 flex items-center gap-1">
+            <AlertCircle className="w-3.5 h-3.5 shrink-0" /> {error}
           </p>
         )}
 
@@ -152,91 +168,159 @@ export function KioskCredentialsModal({ onClose }: { onClose: () => void }) {
           ) : listError ? (
             // Must not read as "no links yet" — a 403 or network failure is a
             // different situation entirely.
-            <p className="text-sm text-red-600 flex items-center gap-1.5">
-              <AlertCircle className="w-3.5 h-3.5" />
+            <p className="text-sm text-red-600 dark:text-red-400 flex items-center gap-1.5">
+              <AlertCircle className="w-3.5 h-3.5 shrink-0" />
               {t('attendance.kioskModal.loadFailed')}
             </p>
           ) : credentials.length === 0 ? (
-            <p className="text-sm text-gray-400 italic">{t('attendance.kioskModal.empty')}</p>
+            <p className="text-sm text-gray-400 dark:text-slate-500 italic">{t('attendance.kioskModal.empty')}</p>
           ) : (
-            <div className="border border-gray-200 rounded-xl overflow-hidden">
-              <table className="w-full text-sm">
-                <thead className="bg-gray-50">
-                  <tr>
-                    {[
-                      t('attendance.kioskModal.cols.label'),
-                      t('attendance.kioskModal.cols.prefix'),
-                      t('attendance.kioskModal.cols.created'),
-                      t('attendance.kioskModal.cols.lastUsed'),
-                      t('common.status'),
-                      '',
-                    ].map((h) => (
-                      <th
-                        key={h}
-                        className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider"
-                      >
-                        {h}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {credentials.map((c) => {
-                    const revoked = c.revoked_at != null;
-                    return (
-                      <tr key={c.id} className={revoked ? 'opacity-60' : ''}>
-                        <td className="px-3 py-2.5 text-gray-900 font-medium">{c.label}</td>
-                        <td className="px-3 py-2.5 text-xs font-mono text-gray-500">
-                          {c.token_prefix}…
-                        </td>
-                        <td className="px-3 py-2.5 text-xs text-gray-500">
-                          {formatDateTime(c.created_at)}
-                        </td>
-                        <td className="px-3 py-2.5 text-xs text-gray-500">
-                          <div>{formatDateTime(c.last_used_at)}</div>
-                          {c.last_used_ip && (
-                            <div className="text-gray-400 font-mono">{c.last_used_ip}</div>
-                          )}
-                        </td>
-                        <td className="px-3 py-2.5">
+            <>
+              {/* Mobile cards */}
+              <div className="sm:hidden border border-gray-200 dark:border-slate-800 rounded-xl divide-y divide-gray-100 dark:divide-slate-800 overflow-hidden">
+                {credentials.map((c) => {
+                  const revoked = c.revoked_at != null;
+                  return (
+                    <div key={c.id} className={`p-3.5 space-y-2 ${revoked ? 'opacity-60' : ''}`}>
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-gray-900 dark:text-slate-100 truncate">{c.label}</p>
+                          <p className="text-xs font-mono text-gray-500 dark:text-slate-400">{c.token_prefix}…</p>
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
                           {revoked ? (
-                            <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500">
+                            <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-slate-400">
                               {t('attendance.kioskModal.revoked')}
                             </span>
                           ) : (
-                            <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700">
-                              {t('common.active')}
-                            </span>
+                            <>
+                              <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300">
+                                {t('common.active')}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  const ok = await confirmDialog({
+                                    description: t('attendance.kioskModal.revokeConfirm', { label: c.label }),
+                                    variant: 'danger',
+                                  });
+                                  if (ok) revokeMut.mutate(c.id);
+                                }}
+                                disabled={revokeMut.isPending}
+                                className="min-h-10 min-w-10 flex items-center justify-center rounded-lg text-gray-400 dark:text-slate-500 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors disabled:opacity-50"
+                                title={t('attendance.kioskModal.revoke')}
+                                aria-label={t('attendance.kioskModal.revoke')}
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </>
                           )}
-                        </td>
-                        <td className="px-3 py-2.5 text-right">
-                          {!revoked && (
-                            <button
-                              onClick={async () => {
-                                const ok = await confirmDialog({
-                                  description: t('attendance.kioskModal.revokeConfirm', {
-                                    label: c.label,
-                                  }),
-                                  variant: 'danger',
-                                });
-                                if (ok) {
-                                  revokeMut.mutate(c.id);
-                                }
-                              }}
-                              disabled={revokeMut.isPending}
-                              className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50"
-                              title={t('attendance.kioskModal.revoke')}
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 text-xs text-gray-500 dark:text-slate-400">
+                        <div>
+                          <span className="block text-[10px] uppercase tracking-wider text-gray-400 dark:text-slate-500">
+                            {t('attendance.kioskModal.cols.created')}
+                          </span>
+                          <span>{formatDateTime(c.created_at)}</span>
+                        </div>
+                        <div>
+                          <span className="block text-[10px] uppercase tracking-wider text-gray-400 dark:text-slate-500">
+                            {t('attendance.kioskModal.cols.lastUsed')}
+                          </span>
+                          <span>{formatDateTime(c.last_used_at)}</span>
+                          {c.last_used_ip && (
+                            <span className="block font-mono text-gray-400 dark:text-slate-500">{c.last_used_ip}</span>
                           )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Desktop table */}
+              <div className="hidden sm:block border border-gray-200 dark:border-slate-800 rounded-xl overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 dark:bg-slate-800/60">
+                    <tr>
+                      {[
+                        t('attendance.kioskModal.cols.label'),
+                        t('attendance.kioskModal.cols.prefix'),
+                        t('attendance.kioskModal.cols.created'),
+                        t('attendance.kioskModal.cols.lastUsed'),
+                        t('common.status'),
+                        '',
+                      ].map((h) => (
+                        <th
+                          key={h}
+                          className="px-3 py-2 text-left text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider whitespace-nowrap"
+                        >
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 dark:divide-slate-800">
+                    {credentials.map((c) => {
+                      const revoked = c.revoked_at != null;
+                      return (
+                        <tr key={c.id} className={revoked ? 'opacity-60' : ''}>
+                          <td className="px-3 py-2.5 text-gray-900 dark:text-slate-100 font-medium">{c.label}</td>
+                          <td className="px-3 py-2.5 text-xs font-mono text-gray-500 dark:text-slate-400 whitespace-nowrap">
+                            {c.token_prefix}…
+                          </td>
+                          <td className="px-3 py-2.5 text-xs text-gray-500 dark:text-slate-400 whitespace-nowrap">
+                            {formatDateTime(c.created_at)}
+                          </td>
+                          <td className="px-3 py-2.5 text-xs text-gray-500 dark:text-slate-400">
+                            <div>{formatDateTime(c.last_used_at)}</div>
+                            {c.last_used_ip && (
+                              <div className="text-gray-400 dark:text-slate-500 font-mono">{c.last_used_ip}</div>
+                            )}
+                          </td>
+                          <td className="px-3 py-2.5">
+                            {revoked ? (
+                              <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 dark:bg-slate-800 text-gray-500 dark:text-slate-400">
+                                {t('attendance.kioskModal.revoked')}
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300">
+                                {t('common.active')}
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2.5 text-right">
+                            {!revoked && (
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  const ok = await confirmDialog({
+                                    description: t('attendance.kioskModal.revokeConfirm', {
+                                      label: c.label,
+                                    }),
+                                    variant: 'danger',
+                                  });
+                                  if (ok) {
+                                    revokeMut.mutate(c.id);
+                                  }
+                                }}
+                                disabled={revokeMut.isPending}
+                                className="min-h-9 min-w-9 inline-flex items-center justify-center rounded-lg text-gray-400 dark:text-slate-500 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors disabled:opacity-50"
+                                title={t('attendance.kioskModal.revoke')}
+                                aria-label={t('attendance.kioskModal.revoke')}
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
         </div>
       </div>

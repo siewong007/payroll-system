@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { AlertCircle, AlertTriangle, CheckCircle2, Info, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import {
@@ -43,7 +42,6 @@ function ToastCard({
   onDismiss: (id: string) => void;
 }) {
   const { t } = useTranslation();
-  const prefersReduced = useReducedMotion();
   const [paused, setPaused] = useState(false);
   const meta = TONE_META[item.tone];
   const Icon = meta.icon;
@@ -56,17 +54,12 @@ function ToastCard({
   }, [item.durationMs, item.id, onDismiss, paused]);
 
   return (
-    <motion.div
-      layout={!prefersReduced}
+    <div
       role={item.tone === 'error' ? 'alert' : 'status'}
       aria-live={item.tone === 'error' ? 'assertive' : 'polite'}
-      initial={prefersReduced ? { opacity: 0 } : { opacity: 0, y: -10, scale: 0.96 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      exit={prefersReduced ? { opacity: 0 } : { opacity: 0, scale: 0.96, transition: { duration: 0.15 } }}
-      transition={{ type: 'spring', stiffness: 420, damping: 32 }}
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
-      className={`glass-menu pointer-events-auto flex w-full max-w-sm items-start gap-3 rounded-2xl border px-4 py-3 shadow-xl ${meta.ringClass}`}
+      className={`animate-drop-in glass-menu pointer-events-auto flex w-full max-w-sm items-start gap-3 rounded-2xl border px-4 py-3 shadow-xl ${meta.ringClass}`}
     >
       <Icon className={`mt-0.5 h-5 w-5 shrink-0 ${meta.iconClass}`} aria-hidden="true" />
       <div className="min-w-0 flex-1 text-sm">
@@ -83,7 +76,7 @@ function ToastCard({
       >
         <X className="h-4 w-4" aria-hidden="true" />
       </button>
-    </motion.div>
+    </div>
   );
 }
 
@@ -133,11 +126,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         aria-label={t('ux.toast.regionLabel')}
         className="pointer-events-none fixed inset-x-4 bottom-[calc(4.75rem+env(safe-area-inset-bottom))] z-[80] flex flex-col items-center gap-2 sm:inset-x-auto sm:right-4 sm:top-4 sm:bottom-auto sm:w-full sm:max-w-sm sm:items-end"
       >
-        <AnimatePresence initial={false}>
-          {items.map((item) => (
-            <ToastCard key={item.id} item={item} onDismiss={dismiss} />
-          ))}
-        </AnimatePresence>
+        {items.map((item) => (
+          <ToastCard key={item.id} item={item} onDismiss={dismiss} />
+        ))}
       </section>
     </ToastContext.Provider>
   );

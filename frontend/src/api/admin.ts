@@ -45,6 +45,9 @@ export const updateUser = (userId: string, req: UpdateUserRequest) =>
 export const deleteUser = (userId: string) =>
   api.delete(`/admin/users/${userId}`).then((r) => r.data);
 
+export const resetUser2fa = (userId: string, password: string) =>
+  api.post<{ ok: boolean }>(`/admin/users/${userId}/2fa/reset`, { password }).then((r) => r.data);
+
 // Company switching
 export const getMyCompanies = () =>
   api.get<CompanySummary[]>('/auth/my-companies').then((r) => r.data);

@@ -240,6 +240,10 @@ pub struct AttendanceMethodResponse {
     pub network_mode: String,
     /// IANA timezone the company's attendance days are bucketed in
     pub timezone: String,
+    /// Advisory default shift start time (`HH:MM:SS`) for employee check-in UI
+    pub shift_start_time: Option<String>,
+    /// Advisory default shift grace period in minutes
+    pub grace_minutes: Option<i32>,
 }
 
 /// Request for the admin backfill of auto-absent marking

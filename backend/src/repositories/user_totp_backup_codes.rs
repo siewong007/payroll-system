@@ -10,25 +10,49 @@ pub async fn insert_many(
     executor: impl Executor<'_, Database = Postgres>,
     user_id: Uuid,
     code_hashes: &[String],
+    lookup_hashes: &[String],
 ) -> AppResult<()> {
     sqlx::query!(
-        r#"INSERT INTO user_totp_backup_codes (user_id, code_hash)
-        SELECT $1, hash FROM UNNEST($2::text[]) AS hash"#,
+        r#"INSERT INTO user_totp_backup_codes (user_id, code_hash, code_lookup_hash)
+        SELECT $1, hash, lookup_hash
+        FROM UNNEST($2::text[], $3::text[]) AS t(hash, lookup_hash)"#,
         user_id,
         code_hashes,
+        lookup_hashes,
     )
     .execute(executor)
     .await?;
     Ok(())
 }
 
-pub async fn find_unused(
+pub async fn find_unused_by_lookup(
+    executor: impl Executor<'_, Database = Postgres>,
+    user_id: Uuid,
+    lookup_hash: &str,
+) -> AppResult<Option<TotpBackupCode>> {
+    let row = sqlx::query_as!(
+        TotpBackupCode,
+        "SELECT id, user_id, code_hash, code_lookup_hash, used_at, created_at
+         FROM user_totp_backup_codes
+         WHERE user_id = $1 AND code_lookup_hash = $2 AND used_at IS NULL
+         LIMIT 1",
+        user_id,
+        lookup_hash,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(row)
+}
+
+pub async fn find_unused_legacy(
     executor: impl Executor<'_, Database = Postgres>,
     user_id: Uuid,
 ) -> AppResult<Vec<TotpBackupCode>> {
     let rows = sqlx::query_as!(
         TotpBackupCode,
-        "SELECT * FROM user_totp_backup_codes WHERE user_id = $1 AND used_at IS NULL",
+        "SELECT id, user_id, code_hash, code_lookup_hash, used_at, created_at
+         FROM user_totp_backup_codes
+         WHERE user_id = $1 AND used_at IS NULL AND code_lookup_hash IS NULL",
         user_id,
     )
     .fetch_all(executor)

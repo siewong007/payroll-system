@@ -71,6 +71,21 @@ pub async fn get_value(
     Ok(value)
 }
 
+/// Batch read platform settings matching `keys`.
+pub async fn get_values_for_keys(
+    executor: impl Executor<'_, Database = Postgres>,
+    keys: &[&str],
+) -> AppResult<Vec<(String, String)>> {
+    let owned: Vec<String> = keys.iter().map(|k| (*k).to_string()).collect();
+    let rows = sqlx::query!(
+        "SELECT key, value FROM platform_settings WHERE key = ANY($1)",
+        &owned,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(rows.into_iter().map(|r| (r.key, r.value)).collect())
+}
+
 /// Upsert an arbitrary platform setting. `updated_by` is NULL for values
 /// written by background tasks rather than a user action.
 pub async fn set_value(

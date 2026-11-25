@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { Search, X } from 'lucide-react';
 import { getEmployees } from '@/api/employees';
 import { formatEmployeeLabel } from '@/lib/employeeFields';
 import { useAuth } from '@/context/AuthContext';
+import { getErrorMessage } from '@/lib/utils';
 
 /** The API clamps `per_page` to 100 (`handlers/employee.rs`). Ask for a page,
  *  not the roster: the server-side `search` is what finds EMP250, and a caller
@@ -16,6 +17,7 @@ const PAGE_SIZE = 20;
 const SEARCH_DEBOUNCE_MS = 250;
 
 interface EmployeePickerProps {
+  id?: string;
   value: string;
   onChange: (id: string, label: string) => void;
   placeholder?: string;
@@ -31,6 +33,9 @@ interface EmployeePickerProps {
    * do not.
    */
   isActive?: boolean | null;
+  disabled?: boolean;
+  'aria-describedby'?: string;
+  'aria-invalid'?: boolean;
 }
 
 /**
@@ -39,20 +44,27 @@ interface EmployeePickerProps {
  * 100 employees the tail was simply unreachable — and silently so.
  */
 export function EmployeePicker({
+  id,
   value,
   onChange,
   placeholder,
   initialLabel,
   isActive = true,
+  disabled = false,
+  'aria-describedby': ariaDescribedBy,
+  'aria-invalid': ariaInvalid,
 }: EmployeePickerProps) {
   const { t } = useTranslation();
   const { user } = useAuth();
   const companyId = user?.company_id ?? null;
+  const listboxId = useId();
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
   const [selectedLabel, setSelectedLabel] = useState(initialLabel ?? '');
   const containerRef = useRef<HTMLDivElement>(null);
+  const optionRefs = useRef<(HTMLButtonElement | null)[]>([]);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search), SEARCH_DEBOUNCE_MS);
@@ -61,17 +73,29 @@ export function EmployeePicker({
 
   // `companyId` is in the key on purpose: after `PUT /auth/switch-company` a
   // bare key served the previous tenant's roster to the new one.
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['employees-picker', companyId, isActive, debouncedSearch],
     queryFn: () => getEmployees({
       search: debouncedSearch || undefined,
       is_active: isActive ?? undefined,
       per_page: PAGE_SIZE,
     }),
-    enabled: open,
+    enabled: open && !disabled,
     placeholderData: keepPreviousData,
   });
   const employees = data?.data ?? [];
+  const safeActiveIndex = open && employees.length > 0
+    ? Math.min(activeIndex, employees.length - 1)
+    : -1;
+  const activeOptionId = safeActiveIndex >= 0 && employees[safeActiveIndex]
+    ? `${listboxId}-opt-${safeActiveIndex}`
+    : undefined;
+
+  useEffect(() => {
+    if (safeActiveIndex >= 0) {
+      optionRefs.current[safeActiveIndex]?.scrollIntoView?.({ block: 'nearest' });
+    }
+  }, [safeActiveIndex]);
 
   // Close on outside click so the list doesn't linger over the form.
   useEffect(() => {
@@ -96,60 +120,154 @@ export function EmployeePicker({
     setSelectedLabel((previous) => previous || initialLabel || '');
   }, [value, initialLabel]);
 
+  const handleSelect = (emp: { id: string; full_name: string; employee_number: string }) => {
+    const label = formatEmployeeLabel(emp.full_name, emp.employee_number) ?? emp.full_name;
+    onChange(emp.id, label);
+    setSelectedLabel(label);
+    setOpen(false);
+    setActiveIndex(-1);
+  };
+
+  const showClear = !disabled && Boolean(value || selectedLabel) && !open;
+
   return (
     <div className="relative" ref={containerRef}>
       <div className="relative">
-        <Search className="w-3.5 h-3.5 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+        <Search className="w-3.5 h-3.5 text-gray-400 dark:text-slate-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
         <input
+          id={id}
           type="text"
+          role="combobox"
+          aria-expanded={open}
+          aria-haspopup="listbox"
+          aria-autocomplete="list"
+          aria-controls={open ? listboxId : undefined}
+          aria-activedescendant={activeOptionId}
+          aria-describedby={ariaDescribedBy}
+          aria-invalid={ariaInvalid}
+          disabled={disabled}
           value={open ? search : selectedLabel}
-          onChange={e => { setSearch(e.target.value); setOpen(true); }}
-          onFocus={() => { setSearch(''); setOpen(true); }}
+          onChange={(e) => {
+            setSearch(e.target.value);
+            setOpen(true);
+            setActiveIndex(-1);
+          }}
+          onFocus={() => {
+            if (disabled) return;
+            setSearch('');
+            setOpen(true);
+            setActiveIndex(-1);
+          }}
+          onClick={() => {
+            if (disabled || open) return;
+            setSearch('');
+            setOpen(true);
+            setActiveIndex(-1);
+          }}
+          onKeyDown={(e) => {
+            if (disabled) return;
+            if (e.key === 'ArrowDown') {
+              e.preventDefault();
+              if (!open) {
+                setOpen(true);
+                setActiveIndex(0);
+              } else if (employees.length > 0) {
+                setActiveIndex((prev) => (prev + 1 < employees.length ? prev + 1 : 0));
+              }
+            } else if (e.key === 'ArrowUp') {
+              e.preventDefault();
+              if (open && employees.length > 0) {
+                setActiveIndex((prev) => (prev > 0 ? prev - 1 : employees.length - 1));
+              }
+            } else if (e.key === 'Enter' && open && safeActiveIndex >= 0 && employees[safeActiveIndex]) {
+              e.preventDefault();
+              handleSelect(employees[safeActiveIndex]);
+            } else if (e.key === 'Escape' && open) {
+              e.preventDefault();
+              setOpen(false);
+              setActiveIndex(-1);
+            } else if (e.key === 'Tab' && open) {
+              setOpen(false);
+              setActiveIndex(-1);
+            }
+          }}
           placeholder={placeholder ?? t('employees.pickerPlaceholder')}
-          className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-1 focus:ring-black outline-none"
+          className={`w-full pl-9 ${showClear ? 'pr-10' : 'pr-3'} py-2 border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-gray-900 dark:text-slate-100 placeholder:text-gray-400 dark:placeholder:text-slate-500 rounded-lg text-sm focus:ring-1 focus:ring-black dark:focus:ring-slate-400 outline-none disabled:opacity-60 disabled:cursor-not-allowed`}
         />
-        {(value || selectedLabel) && !open && (
+        {showClear && (
           <button
             type="button"
-            onClick={() => { onChange('', ''); setSelectedLabel(''); }}
-            className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-gray-700"
+            onClick={() => {
+              onChange('', '');
+              setSelectedLabel('');
+              setActiveIndex(-1);
+            }}
+            className="absolute right-0.5 top-1/2 -translate-y-1/2 min-h-10 min-w-10 flex items-center justify-center rounded-md text-gray-400 dark:text-slate-500 hover:text-gray-700 dark:hover:text-slate-200 transition-colors"
+            aria-label={t('common.clear')}
             title={t('common.clear')}
           >
-            <X className="w-3.5 h-3.5" />
+            <X className="w-4 h-4" />
           </button>
         )}
       </div>
 
       {open && (
-        <div className="absolute z-10 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-56 overflow-y-auto">
+        <div
+          id={listboxId}
+          role="listbox"
+          className="absolute z-20 mt-1 w-full bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-lg shadow-lg max-h-56 overflow-y-auto"
+        >
           {isLoading ? (
-            <div className="px-3 py-3 text-sm text-gray-400">{t('employees.searching')}</div>
-          ) : employees.length === 0 ? (
-            <div className="px-3 py-3 text-sm text-gray-400">{t('employees.noMatch')}</div>
-          ) : (
-            employees.map(emp => (
+            <div className="px-3 py-3 text-sm text-gray-400 dark:text-slate-500">{t('employees.searching')}</div>
+          ) : isError ? (
+            <div className="px-3 py-3 text-sm text-red-600 dark:text-red-400 flex items-center justify-between gap-2">
+              <span className="truncate">{getErrorMessage(error, t('employees.searchFailed'))}</span>
               <button
                 type="button"
-                key={emp.id}
-                onClick={() => {
-                  const label = formatEmployeeLabel(emp.full_name, emp.employee_number) ?? emp.full_name;
-                  onChange(emp.id, label);
-                  setSelectedLabel(label);
-                  setOpen(false);
-                }}
-                className="w-full text-left px-3 py-2 hover:bg-gray-50 transition-colors"
+                onClick={() => refetch()}
+                className="text-xs font-medium underline shrink-0 hover:text-red-800 dark:hover:text-red-300"
               >
-                <div className="text-sm font-medium text-gray-900">{emp.full_name}</div>
-                <div className="text-xs text-gray-400">
-                  {emp.employee_number}{emp.department ? ` · ${emp.department}` : ''}
-                </div>
+                {t('common.retry')}
               </button>
-            ))
+            </div>
+          ) : employees.length === 0 ? (
+            <div className="px-3 py-3 text-sm text-gray-400 dark:text-slate-500">{t('employees.noMatch')}</div>
+          ) : (
+            employees.map((emp, idx) => {
+              const isSelected = value === emp.id;
+              const isActiveOption = idx === safeActiveIndex;
+              return (
+                <button
+                  ref={(el) => {
+                    optionRefs.current[idx] = el;
+                  }}
+                  id={`${listboxId}-opt-${idx}`}
+                  type="button"
+                  role="option"
+                  aria-selected={isSelected}
+                  key={emp.id}
+                  onMouseEnter={() => setActiveIndex(idx)}
+                  onClick={() => handleSelect(emp)}
+                  className={`w-full text-left px-3 py-2.5 transition-colors ${
+                    isActiveOption
+                      ? 'bg-gray-100 dark:bg-slate-800'
+                      : isSelected
+                      ? 'bg-gray-50 dark:bg-slate-800/60'
+                      : 'hover:bg-gray-50 dark:hover:bg-slate-800/70'
+                  }`}
+                >
+                  <div className="text-sm font-medium text-gray-900 dark:text-slate-100 truncate">{emp.full_name}</div>
+                  <div className="text-xs text-gray-500 dark:text-slate-400 truncate">
+                    {emp.employee_number}{emp.department ? ` · ${emp.department}` : ''}
+                  </div>
+                </button>
+              );
+            })
           )}
           {/* The `total` nobody was reading is what turns an invisible
               truncation into a visible one. */}
           {data && data.total > employees.length && (
-            <div className="px-3 py-2 text-xs text-gray-400 border-t border-gray-100">
+            <div className="px-3 py-2 text-xs text-gray-400 dark:text-slate-500 border-t border-gray-100 dark:border-slate-800">
               {t('employees.showingPartial', { shown: employees.length, total: data.total })}
             </div>
           )}

@@ -2,32 +2,52 @@ use axum::{Json, extract::State, http::StatusCode};
 use serde_json::{Value, json};
 
 use crate::core::app_state::AppState;
+use crate::core::config::{BUILD_REVISION, BUILD_VERSION};
+use crate::services::job_health_service;
 
-/// Deep health check for orchestration probes (Kubernetes readiness, ALB
-/// target-group health). Verifies the database is reachable and that at least
-/// one migration has been applied successfully — that second check catches
-/// pointing the app at a fresh/empty database by mistake.
+/// Deep health check for orchestration probes, host watchdog timers, and deploy
+/// verification. Verifies Postgres connectivity + applied migrations, surfaces
+/// the running `BUILD_REVISION`, and reports sanitized background job staleness.
 ///
-/// Returns 200 + `{status: "ready", ...}` when healthy, 503 otherwise. The
-/// lightweight `/health` endpoint is intentionally left alone so quick liveness
-/// probes stay cheap.
+/// Returns 200 (`status: "ready"` or `"degraded"` when a background job is stale/errored)
+/// if Postgres & migrations are up, or 503 (`status: "unready"`) if Postgres is down
+/// or unmigrated.
 pub async fn ready(State(state): State<AppState>) -> (StatusCode, Json<Value>) {
     let row = crate::repositories::reads::system::get_migration_status(&state.pool).await;
 
     match row {
-        Ok((Some(_latest), _count)) => (
-            StatusCode::OK,
-            Json(json!({
-                "status": "ready",
-                "database": "ok",
-            })),
-        ),
+        Ok((Some(_latest), _count)) => {
+            let jobs = job_health_service::read_public_job_health(&state.pool)
+                .await
+                .ok();
+            let status = if jobs.as_ref().is_some_and(|j| j.any_unhealthy()) {
+                "degraded"
+            } else {
+                "ready"
+            };
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "status": status,
+                    "version": BUILD_VERSION,
+                    "revision": BUILD_REVISION,
+                    "database": "ok",
+                    "checks": {
+                        "database": "ok",
+                        "config": "ok"
+                    },
+                    "jobs": jobs,
+                })),
+            )
+        }
         Ok((None, _)) => {
             tracing::error!("Readiness check failed: no migrations applied");
             (
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(json!({
                     "status": "unready",
+                    "version": BUILD_VERSION,
+                    "revision": BUILD_REVISION,
                     "database": "unavailable",
                 })),
             )
@@ -38,6 +58,8 @@ pub async fn ready(State(state): State<AppState>) -> (StatusCode, Json<Value>) {
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(json!({
                     "status": "unready",
+                    "version": BUILD_VERSION,
+                    "revision": BUILD_REVISION,
                     "database": "unavailable",
                 })),
             )

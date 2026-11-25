@@ -41,12 +41,12 @@ export function FormField({ label, required, hint, error, children }: FormFieldP
         'aria-invalid': error ? true : undefined,
       })}
       {hint && (
-        <p id={hintId} className="mt-1 text-xs text-gray-500">
+        <p id={hintId} className="mt-1 text-xs text-gray-500 dark:text-slate-400">
           {hint}
         </p>
       )}
       {error && (
-        <p id={errorId} className="mt-1 text-xs text-red-600">
+        <p id={errorId} role="alert" className="mt-1 text-xs text-red-600 dark:text-red-400">
           {error}
         </p>
       )}

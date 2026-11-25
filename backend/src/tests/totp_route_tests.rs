@@ -18,7 +18,7 @@ use crate::core::crypto;
 use crate::repositories::user_totp;
 use crate::services::{session_service, totp_service};
 use crate::tests::route_auth_tests::{JWT_SECRET, TOTP_ENCRYPTION_KEY, app_for};
-use crate::tests::support::{seed_company, skip_if_no_db};
+use crate::tests::support::{seed_company, seed_user, skip_if_no_db};
 
 async fn seed_user_with_password(
     pool: &sqlx::PgPool,
@@ -934,4 +934,78 @@ async fn enforcement_refuses_hard_cut_and_gates_only_privileged_logins() {
 
     // Restore the shared default so other tests see an opt-in platform.
     set_policy_raw(&pool, "false", None).await;
+}
+
+#[tokio::test]
+async fn backup_codes_use_keyed_o1_lookup_and_support_legacy_fallback() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+
+    let company_id = seed_company(&pool).await;
+    let user_id = seed_user(&pool, company_id, "admin").await;
+    let user = crate::services::auth_service::get_active_user(&pool, user_id)
+        .await
+        .expect("load user");
+
+    let setup = totp_service::begin_setup(&pool, &user, TOTP_ENCRYPTION_KEY)
+        .await
+        .expect("begin setup");
+    let backup_codes = totp_service::confirm_setup(
+        &pool,
+        user_id,
+        &code_for_secret(&setup.secret),
+        TOTP_ENCRYPTION_KEY,
+        None,
+    )
+    .await
+    .expect("confirm setup");
+
+    // Every generated row must carry a non-null 64-char SHA-256 lookup hash.
+    let lookup_hashes: Vec<Option<String>> = sqlx::query_scalar(
+        "SELECT code_lookup_hash FROM user_totp_backup_codes WHERE user_id = $1",
+    )
+    .bind(user_id)
+    .fetch_all(&pool)
+    .await
+    .expect("query backup lookup hashes");
+    assert_eq!(lookup_hashes.len(), backup_codes.len());
+    assert!(
+        lookup_hashes
+            .iter()
+            .all(|h| h.as_ref().is_some_and(|s| s.len() == 64)),
+        "expected every newly generated backup code to carry a 64-char SHA-256 lookup hash"
+    );
+
+    // Indexed lookup verifies a valid code once and rejects reuse.
+    let first = &backup_codes[0];
+    totp_service::verify_login_code(
+        &pool,
+        user_id,
+        &first.to_ascii_lowercase(),
+        TOTP_ENCRYPTION_KEY,
+    )
+    .await
+    .expect("indexed backup code should verify case-insensitively");
+
+    let reuse_err = totp_service::verify_login_code(&pool, user_id, first, TOTP_ENCRYPTION_KEY)
+        .await
+        .expect_err("used backup code must not verify twice");
+    assert!(format!("{reuse_err:?}").contains("Invalid authentication code"));
+
+    // Legacy row (code_lookup_hash IS NULL) remains valid via fallback scan.
+    let legacy_code = "AB12-CD34-EF56-7890";
+    let legacy_hash = bcrypt::hash(legacy_code, 4).expect("hash legacy backup code");
+    sqlx::query(
+        "INSERT INTO user_totp_backup_codes (user_id, code_hash, code_lookup_hash) VALUES ($1, $2, NULL)",
+    )
+    .bind(user_id)
+    .bind(&legacy_hash)
+    .execute(&pool)
+    .await
+    .expect("insert legacy backup code");
+
+    totp_service::verify_login_code(&pool, user_id, legacy_code, TOTP_ENCRYPTION_KEY)
+        .await
+        .expect("legacy backup code with NULL lookup hash should verify via fallback");
 }

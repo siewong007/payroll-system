@@ -1,7 +1,7 @@
 # ─── Stage 0: cargo-chef base ───
 # cargo-chef caches the dependency build as its own layer keyed on the
 # dependency graph, so application code changes don't trigger a full rebuild.
-FROM rust:1-bookworm AS chef
+FROM rust:1-bookworm@sha256:75d26c23c24cc6ea1cdabf0714a6bff8fd7bf3248716043fd7ae86dac7f41b94 AS chef
 RUN cargo install cargo-chef --locked
 WORKDIR /app
 
@@ -24,10 +24,12 @@ COPY backend/Cargo.toml backend/Cargo.lock ./
 COPY backend/src ./src
 COPY backend/migrations ./migrations
 COPY backend/.sqlx ./.sqlx
+ARG GIT_SHA=dev
+ENV APP_BUILD_SHA=${GIT_SHA}
 RUN cargo build --release
 
 # ─── Stage 3: Runtime ───
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim@sha256:e67eeead736ff7bbe258ef088bff683635c561b1fcfefad0806c1df4ab49ce0e
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \

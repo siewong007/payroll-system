@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE email_logs SET status = 'sent', sent_at = NOW()\n                WHERE id = $1 RETURNING *",
+  "query": "WITH claimed AS (\n               SELECT id\n               FROM email_logs\n               WHERE status = 'pending'\n                 AND next_retry_at IS NOT NULL\n                 AND next_retry_at <= NOW()\n                 AND attempts < max_attempts\n                 AND max_attempts > 1\n               ORDER BY next_retry_at ASC, created_at ASC\n               LIMIT $1\n               FOR UPDATE SKIP LOCKED\n           )\n           UPDATE email_logs e\n           SET attempts = e.attempts + 1,\n               next_retry_at = NOW() + INTERVAL '5 minutes'\n           FROM claimed\n           WHERE e.id = claimed.id\n           RETURNING e.*",
   "describe": {
     "columns": [
       {
@@ -72,11 +72,26 @@
         "ordinal": 13,
         "name": "created_by",
         "type_info": "Uuid"
+      },
+      {
+        "ordinal": 14,
+        "name": "attempts",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 15,
+        "name": "max_attempts",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 16,
+        "name": "next_retry_at",
+        "type_info": "Timestamptz"
       }
     ],
     "parameters": {
       "Left": [
-        "Uuid"
+        "Int8"
       ]
     },
     "nullable": [
@@ -93,8 +108,11 @@
       true,
       true,
       false,
+      true,
+      false,
+      false,
       true
     ]
   },
-  "hash": "20ff914721243bf80ef13a743cf11f28f2d9b94b05ed184e1af44f68819aab85"
+  "hash": "e169b4a9869a6d0452233cba10890a45b282023db3bd6cf1bb699c8ce85f88bd"
 }

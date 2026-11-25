@@ -248,7 +248,7 @@ pub async fn attendance_ot_hours(
 ) -> AppResult<Vec<EmployeeHours>> {
     let rows = sqlx::query_as!(
         EmployeeHours,
-        r#"SELECT employee_id, day_type AS "day_type!", COALESCE(SUM(overtime_hours), 0)::FLOAT AS "hours!"
+        r#"SELECT employee_id, day_type AS "day_type!", COALESCE(SUM(overtime_hours), 0::NUMERIC) AS "hours!"
            FROM (
                SELECT ar.employee_id,
                       ar.overtime_hours,
@@ -355,7 +355,7 @@ pub async fn approved_ot_totals(
 ) -> AppResult<Vec<EmployeeOtTypeHours>> {
     let rows = sqlx::query_as!(
         EmployeeOtTypeHours,
-        r#"SELECT employee_id, ot_type, SUM(hours)::FLOAT AS "hours!"
+        r#"SELECT employee_id, ot_type, COALESCE(SUM(hours), 0::NUMERIC) AS "hours!"
            FROM overtime_applications
            WHERE employee_id = ANY($1)
              AND ot_date >= $2 AND ot_date <= $3

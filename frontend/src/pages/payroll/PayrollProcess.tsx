@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Calculator, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { Calculator, Lock, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-react';
 import {
   createPayrollEntry,
   deletePayrollEntry,
@@ -19,8 +19,11 @@ import { formatMYR, getErrorMessage, translateServerMessage } from '@/lib/utils'
 import { formatPeriod, monthName } from '@/lib/format';
 import { PayrollPreviewPanel } from './PayrollPreviewPanel';
 import { PayrollLifecycleStepper } from './PayrollLifecycleStepper';
+import { FormField } from '@/components/ui/FormField';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { useConfirm } from '@/lib/confirm';
+import { useToast } from '@/lib/toast';
+import { useUnsavedChanges } from '@/lib/useUnsavedChanges';
 import type { PayrollEntryWithEmployee } from '@/types';
 import type { TFunction } from 'i18next';
 
@@ -39,12 +42,19 @@ function getEntryKindLabel(entry: Pick<PayrollEntryWithEmployee, 'category' | 'i
   return t(`payroll.process.entryKinds.${getEntryKind(entry)}`);
 }
 
+function formatEntryItemType(itemType: string, t: TFunction): string {
+  return t(`payroll.process.itemTypes.${itemType}`, { defaultValue: itemType });
+}
+
 export function PayrollProcess() {
   const { t } = useTranslation();
   const confirmDialog = useConfirm();
+  const toast = useToast();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const now = new Date();
+  const taxableCheckboxId = useId();
+  const defaultDesc = t('payroll.process.defaultDescription');
 
   const [groupId, setGroupId] = useState('');
   const [year, setYear] = useState(now.getFullYear());
@@ -60,7 +70,7 @@ export function PayrollProcess() {
     employee_label: '',
     category: 'earning' as 'earning' | 'deduction',
     item_type: 'monthly_allowance',
-    description: t('payroll.process.defaultDescription'),
+    description: defaultDesc,
     amount: '',
     quantity: '',
     rate: '',
@@ -101,7 +111,12 @@ export function PayrollProcess() {
     },
   });
 
-  const { data: processJob } = useQuery({
+  const {
+    data: processJob,
+    isError: jobPollError,
+    error: jobPollErrorObj,
+    refetch: refetchJob,
+  } = useQuery({
     queryKey: ['payrollProcessJob', jobId],
     queryFn: () => getJob(jobId as string),
     enabled: jobId !== null,
@@ -113,14 +128,31 @@ export function PayrollProcess() {
 
   const jobRunning =
     jobId !== null &&
+    !jobPollError &&
     processJob?.status !== 'succeeded' &&
     processJob?.status !== 'failed';
+
+  const preview = previewMutation.data;
+  const adjustmentsLocked = Boolean(preview) || jobRunning;
+
+  const entryDirty = Boolean(
+    editingEntry ||
+      entryForm.employee_id ||
+      entryForm.amount.trim() ||
+      entryForm.quantity.trim() ||
+      entryForm.rate.trim() ||
+      entryForm.description.trim() !== defaultDesc ||
+      notes.trim(),
+  );
+  useUnsavedChanges(jobRunning || entryDirty);
 
   useEffect(() => {
     if (!processJob) return;
     if (processJob.status === 'succeeded') {
       const runId = (processJob.result as { run_id?: string } | null)?.run_id;
       queryClient.invalidateQueries({ queryKey: ['payrollRuns'] });
+      queryClient.invalidateQueries({ queryKey: ['payrollOverview'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard-summary'] });
       setJobId(null);
       if (runId) navigate(`/payroll/${runId}`);
     } else if (processJob.status === 'failed') {
@@ -132,8 +164,6 @@ export function PayrollProcess() {
       setJobId(null);
     }
   }, [processJob, navigate, queryClient, t]);
-
-  const preview = previewMutation.data;
 
   const saveEntryMutation = useMutation({
     mutationFn: () => {
@@ -170,6 +200,9 @@ export function PayrollProcess() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['payrollEntries'] });
       invalidatePreview();
+    },
+    onError: (err: unknown) => {
+      toast.error(getErrorMessage(err, t('payroll.process.deleteEntryFailed')));
     },
   });
 
@@ -215,6 +248,7 @@ export function PayrollProcess() {
   };
 
   const startEditEntry = (entry: PayrollEntryWithEmployee) => {
+    if (adjustmentsLocked) return;
     setEditingEntry(entry);
     setEntryError('');
     setEntryForm({
@@ -231,14 +265,30 @@ export function PayrollProcess() {
   };
 
   const handleSaveEntry = () => {
+    if (adjustmentsLocked) return;
     setEntryError('');
-    if (!entryForm.employee_id || !entryForm.description || !entryForm.amount) {
+    if (!entryForm.employee_id || !entryForm.description.trim() || !entryForm.amount.trim()) {
       setEntryError(t('payroll.process.entryRequired'));
       return;
     }
-    if (Number(entryForm.amount) <= 0) {
+    const parsedAmount = Number(entryForm.amount);
+    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
       setEntryError(t('payroll.process.amountPositive'));
       return;
+    }
+    if (entryForm.quantity.trim()) {
+      const parsedQuantity = Number(entryForm.quantity);
+      if (!Number.isFinite(parsedQuantity) || parsedQuantity < 0) {
+        setEntryError(t('payroll.process.quantityInvalid'));
+        return;
+      }
+    }
+    if (entryForm.rate.trim()) {
+      const parsedRate = Number(entryForm.rate);
+      if (!Number.isFinite(parsedRate) || parsedRate < 0) {
+        setEntryError(t('payroll.process.rateInvalid'));
+        return;
+      }
     }
     saveEntryMutation.mutate();
   };
@@ -255,7 +305,33 @@ export function PayrollProcess() {
         ]}
       />
 
-      <PayrollLifecycleStepper status="draft" />
+      <PayrollLifecycleStepper status={preview ? 'processed' : 'draft'} />
+
+      {jobId !== null && jobPollError && (
+        <div
+          className="rounded-xl border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-950/30 px-4 py-3 text-sm text-red-700 dark:text-red-300 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
+          role="alert"
+        >
+          <span>{getErrorMessage(jobPollErrorObj, t('payroll.process.jobPollFailed'))}</span>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => void refetchJob()}
+              className="btn-secondary min-h-10"
+            >
+              <RefreshCw className="w-4 h-4" aria-hidden="true" />
+              {t('common.retry')}
+            </button>
+            <button
+              type="button"
+              onClick={() => setJobId(null)}
+              className="btn-secondary min-h-10"
+            >
+              {t('common.cancel')}
+            </button>
+          </div>
+        </div>
+      )}
 
       {preview && (
         <PayrollPreviewPanel
@@ -264,118 +340,151 @@ export function PayrollProcess() {
           onBack={() => previewMutation.reset()}
           isProcessing={mutation.isPending || jobRunning}
           processingNote={
-            jobRunning && processJob?.progress_total
-              ? t('payroll.process.progressLine', {
-                  done: processJob.progress_done,
-                  total: processJob.progress_total,
-                })
+            jobRunning
+              ? processJob?.progress_total
+                ? t('payroll.process.progressLine', {
+                    done: processJob.progress_done,
+                    total: processJob.progress_total,
+                  })
+                : t('payroll.process.queuedNote')
               : undefined
           }
         />
       )}
 
       {processError && (
-        <div className="whitespace-pre-line rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">
+        <div
+          className="whitespace-pre-line rounded-xl border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-950/30 px-4 py-3 text-sm text-red-700 dark:text-red-300"
+          role="alert"
+        >
           {processError}
         </div>
       )}
 
-      <div className={`bg-white rounded-2xl shadow border border-gray-200 p-6 space-y-6 max-w-2xl ${preview ? 'hidden' : ''}`}>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">{t('employees.form.payrollGroup')} *</label>
-          <select
-            value={groupId}
-            onChange={(e) => {
-              setGroupId(e.target.value);
-              invalidatePreview();
-            }}
-            className="w-full border border-gray-200 p-2 rounded-lg focus:ring-1 focus:ring-black outline-none"
-          >
-            <option value="">{t('payroll.process.selectGroup')}</option>
-            {groups?.map((g) => (
-              <option key={g.id} value={g.id}>
-                {t('payroll.process.groupOption', { name: g.name, cutoff: g.cutoff_day, pay: g.payment_day })}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">{t('payroll.process.year')} *</label>
+      <div className={`card space-y-6 max-w-2xl ${preview ? 'hidden' : ''}`}>
+        <FormField label={t('employees.form.payrollGroup')} required>
+          {(aria) => (
             <select
-              value={year}
+              {...aria}
+              value={groupId}
               onChange={(e) => {
-                setYear(parseInt(e.target.value));
+                setGroupId(e.target.value);
                 invalidatePreview();
               }}
-              className="w-full border border-gray-200 p-2 rounded-lg focus:ring-1 focus:ring-black outline-none"
+              className="form-input"
             >
-              {[year - 1, year, year + 1].map((y) => (
-                <option key={y} value={y}>{y}</option>
+              <option value="">{t('payroll.process.selectGroup')}</option>
+              {groups?.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {t('payroll.process.groupOption', { name: g.name, cutoff: g.cutoff_day, pay: g.payment_day })}
+                </option>
               ))}
             </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">{t('payroll.process.month')} *</label>
-            <select
-              value={month}
-              onChange={(e) => {
-                setMonth(parseInt(e.target.value));
-                invalidatePreview();
-              }}
-              className="w-full border border-gray-200 p-2 rounded-lg focus:ring-1 focus:ring-black outline-none"
-            >
-              {MONTH_VALUES.map((m) => (
-                <option key={m} value={m}>{monthName(m)}</option>
-              ))}
-            </select>
-          </div>
+          )}
+        </FormField>
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <FormField label={t('payroll.process.year')} required>
+            {(aria) => (
+              <select
+                {...aria}
+                value={year}
+                onChange={(e) => {
+                  setYear(parseInt(e.target.value, 10));
+                  invalidatePreview();
+                }}
+                className="form-input"
+              >
+                {[year - 1, year, year + 1].map((y) => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </select>
+            )}
+          </FormField>
+          <FormField label={t('payroll.process.month')} required>
+            {(aria) => (
+              <select
+                {...aria}
+                value={month}
+                onChange={(e) => {
+                  setMonth(parseInt(e.target.value, 10));
+                  invalidatePreview();
+                }}
+                className="form-input"
+              >
+                {MONTH_VALUES.map((m) => (
+                  <option key={m} value={m}>{monthName(m)}</option>
+                ))}
+              </select>
+            )}
+          </FormField>
         </div>
 
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">{t('payroll.process.notesLabel')}</label>
-          <textarea
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            rows={3}
-            className="w-full border border-gray-200 p-2 rounded-lg focus:ring-1 focus:ring-black outline-none"
-            placeholder={t('payroll.process.notesPlaceholder')}
-          />
-        </div>
+        <FormField label={t('payroll.process.notesLabel')}>
+          {(aria) => (
+            <textarea
+              {...aria}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={3}
+              className="form-input"
+              placeholder={t('payroll.process.notesPlaceholder')}
+            />
+          )}
+        </FormField>
 
-        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-800">
+        <div className="rounded-xl border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-950/30 p-4 text-sm text-amber-800 dark:text-amber-200">
           {t('payroll.process.previewNotice')}
         </div>
 
         <button
+          type="button"
           onClick={handleReview}
           disabled={!groupId || previewMutation.isPending}
-          className="flex items-center gap-2 bg-black text-white px-6 py-2.5 rounded-lg font-medium hover:bg-gray-800 disabled:opacity-50 transition-colors"
+          className="btn-primary min-h-11 w-full sm:w-auto justify-center px-6"
         >
-          <Calculator className="w-4 h-4" />
+          <Calculator className="w-4 h-4" aria-hidden="true" />
           {previewMutation.isPending ? t('payroll.process.calculating') : t('payroll.process.reviewButton')}
         </button>
       </div>
 
-      <div className="bg-white rounded-2xl shadow border border-gray-200 overflow-hidden">
-        <div className="flex flex-col gap-2 border-b border-gray-100 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="card overflow-hidden !p-0">
+        <div className="flex flex-col gap-2 border-b border-gray-100 dark:border-slate-800 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h2 className="font-semibold text-gray-900">{t('payroll.process.adjustmentsTitle')}</h2>
-            <p className="text-sm text-gray-500">
+            <h2 className="font-semibold text-gray-900 dark:text-slate-100">{t('payroll.process.adjustmentsTitle')}</h2>
+            <p className="text-sm text-gray-500 dark:text-slate-400">
               {t('payroll.process.adjustmentsBody')}
             </p>
           </div>
           {editingEntry && (
-            <button type="button" onClick={resetEntryForm} className="btn-secondary !py-2 text-sm">
-              <X className="w-4 h-4" /> {t('payroll.process.cancelEdit')}
+            <button
+              type="button"
+              onClick={resetEntryForm}
+              disabled={adjustmentsLocked}
+              className="btn-secondary min-h-10 text-sm"
+            >
+              <X className="w-4 h-4" aria-hidden="true" /> {t('payroll.process.cancelEdit')}
             </button>
           )}
         </div>
 
-        <div className="grid grid-cols-1 gap-4 border-b border-gray-100 p-6 lg:grid-cols-6">
+        {adjustmentsLocked && (
+          <div className="flex items-center gap-2 border-b border-amber-100 dark:border-amber-900/50 bg-amber-50/80 dark:bg-amber-950/30 px-6 py-3 text-xs text-amber-800 dark:text-amber-200">
+            <Lock className="w-4 h-4 shrink-0" aria-hidden="true" />
+            <span>
+              {jobRunning
+                ? t('payroll.process.adjustmentsLockedRunning')
+                : t('payroll.process.adjustmentsLockedPreview')}
+            </span>
+          </div>
+        )}
+
+        <fieldset
+          disabled={adjustmentsLocked}
+          className="grid grid-cols-1 gap-4 border-b border-gray-100 dark:border-slate-800 p-6 lg:grid-cols-6 disabled:opacity-60"
+        >
           <div className="lg:col-span-2">
-            <label className="form-label">{t('employees.columns.employee')} *</label>
+            <span className="form-label">{t('employees.columns.employee')} *</span>
             {/* Keyed on the entry so switching between two edits cannot leave the
                 previous employee's name in the box. */}
             <EmployeePicker
@@ -386,169 +495,210 @@ export function PayrollProcess() {
             />
           </div>
           <div>
-            <label className="form-label">{t('payroll.process.entryKind')} *</label>
-            <select
-              value={selectedEntryKind}
-              onChange={(e) => {
-                const kind = e.target.value as EntryKind;
-                setEntryForm((prev) => ({
-                  ...prev,
-                  category: kind === 'deduction' ? 'deduction' : 'earning',
-                  item_type: kind === 'monthly_allowance'
-                    ? 'monthly_allowance'
-                    : kind === 'deduction'
-                      ? 'manual_deduction'
-                      : 'other_earning',
-                  description: kind === 'monthly_allowance' && !prev.description
-                    ? t('payroll.process.entryKinds.monthly_allowance')
-                    : prev.description,
-                }));
-              }}
-              className="form-input"
-            >
-              <option value="monthly_allowance">{t('payroll.process.entryKinds.monthly_allowance')}</option>
-              <option value="other_earning">{t('payroll.process.entryKinds.other_earning')}</option>
-              <option value="deduction">{t('payroll.process.entryKinds.deduction')}</option>
-            </select>
+            <FormField label={t('payroll.process.entryKind')} required>
+              {(aria) => (
+                <select
+                  {...aria}
+                  value={selectedEntryKind}
+                  onChange={(e) => {
+                    const kind = e.target.value as EntryKind;
+                    setEntryForm((prev) => ({
+                      ...prev,
+                      category: kind === 'deduction' ? 'deduction' : 'earning',
+                      item_type: kind === 'monthly_allowance'
+                        ? 'monthly_allowance'
+                        : kind === 'deduction'
+                          ? 'manual_deduction'
+                          : 'other_earning',
+                      description: kind === 'monthly_allowance' && !prev.description
+                        ? t('payroll.process.entryKinds.monthly_allowance')
+                        : prev.description,
+                    }));
+                  }}
+                  className="form-input"
+                >
+                  <option value="monthly_allowance">{t('payroll.process.entryKinds.monthly_allowance')}</option>
+                  <option value="other_earning">{t('payroll.process.entryKinds.other_earning')}</option>
+                  <option value="deduction">{t('payroll.process.entryKinds.deduction')}</option>
+                </select>
+              )}
+            </FormField>
           </div>
           <div>
-            <label className="form-label">{t('payroll.process.itemType')} *</label>
-            <input
-              value={entryForm.item_type}
-              onChange={(e) => setEntryForm((prev) => ({ ...prev, item_type: e.target.value }))}
-              disabled={selectedEntryKind === 'monthly_allowance'}
-              className="form-input disabled:bg-gray-50 disabled:text-gray-500"
-              placeholder="monthly_allowance"
-            />
+            <FormField label={t('payroll.process.itemType')} required>
+              {(aria) => (
+                <input
+                  {...aria}
+                  value={entryForm.item_type}
+                  onChange={(e) => setEntryForm((prev) => ({ ...prev, item_type: e.target.value }))}
+                  disabled={selectedEntryKind === 'monthly_allowance' || adjustmentsLocked}
+                  className="form-input disabled:bg-gray-50 disabled:text-gray-500 dark:disabled:bg-slate-800/60 dark:disabled:text-slate-400"
+                  placeholder="monthly_allowance"
+                />
+              )}
+            </FormField>
           </div>
           <div>
-            <label className="form-label">{t('payroll.process.amountRm')} *</label>
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              value={entryForm.amount}
-              onChange={(e) => setEntryForm((prev) => ({ ...prev, amount: e.target.value }))}
-              className="form-input"
-              placeholder="0.00"
-            />
+            <FormField label={t('payroll.process.amountRm')} required>
+              {(aria) => (
+                <input
+                  {...aria}
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={entryForm.amount}
+                  onChange={(e) => setEntryForm((prev) => ({ ...prev, amount: e.target.value }))}
+                  className="form-input"
+                  placeholder="0.00"
+                />
+              )}
+            </FormField>
           </div>
           <div className="flex items-end">
             <button
               type="button"
               onClick={handleSaveEntry}
-              disabled={saveEntryMutation.isPending}
-              className="btn-primary w-full"
+              disabled={adjustmentsLocked || saveEntryMutation.isPending}
+              className="btn-primary min-h-11 w-full justify-center"
             >
-              <Plus className="w-4 h-4" />
+              <Plus className="w-4 h-4" aria-hidden="true" />
               {saveEntryMutation.isPending ? t('common.saving') : editingEntry ? t('common.update') : t('common.add')}
             </button>
           </div>
           <div className="lg:col-span-3">
-            <label className="form-label">{t('payroll.process.description')} *</label>
-            <input
-              value={entryForm.description}
-              onChange={(e) => setEntryForm((prev) => ({ ...prev, description: e.target.value }))}
-              className="form-input"
-              placeholder={t('payroll.process.descriptionPlaceholder')}
-            />
+            <FormField label={t('payroll.process.description')} required>
+              {(aria) => (
+                <input
+                  {...aria}
+                  value={entryForm.description}
+                  onChange={(e) => setEntryForm((prev) => ({ ...prev, description: e.target.value }))}
+                  className="form-input"
+                  placeholder={t('payroll.process.descriptionPlaceholder')}
+                />
+              )}
+            </FormField>
           </div>
           <div>
-            <label className="form-label">{t('payroll.process.quantity')}</label>
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              value={entryForm.quantity}
-              onChange={(e) => setEntryForm((prev) => ({ ...prev, quantity: e.target.value }))}
-              className="form-input"
-            />
+            <FormField label={t('payroll.process.quantity')}>
+              {(aria) => (
+                <input
+                  {...aria}
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={entryForm.quantity}
+                  onChange={(e) => setEntryForm((prev) => ({ ...prev, quantity: e.target.value }))}
+                  className="form-input"
+                />
+              )}
+            </FormField>
           </div>
           <div>
-            <label className="form-label">{t('payroll.process.rateRm')}</label>
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              value={entryForm.rate}
-              onChange={(e) => setEntryForm((prev) => ({ ...prev, rate: e.target.value }))}
-              className="form-input"
-            />
+            <FormField label={t('payroll.process.rateRm')}>
+              {(aria) => (
+                <input
+                  {...aria}
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={entryForm.rate}
+                  onChange={(e) => setEntryForm((prev) => ({ ...prev, rate: e.target.value }))}
+                  className="form-input"
+                />
+              )}
+            </FormField>
           </div>
-          <label className="flex items-center gap-2 pt-7 text-sm font-medium text-gray-600">
+          <label
+            htmlFor={taxableCheckboxId}
+            className="flex items-center gap-2 pt-1 lg:pt-7 text-sm font-medium text-gray-700 dark:text-slate-300"
+          >
             <input
+              id={taxableCheckboxId}
               type="checkbox"
               checked={entryForm.is_taxable}
               onChange={(e) => setEntryForm((prev) => ({ ...prev, is_taxable: e.target.checked }))}
-              className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-900"
+              className="h-4 w-4 rounded border-gray-300 dark:border-slate-600 text-[var(--accent-1)] focus:ring-[var(--accent-1)]"
             />
             {t('payroll.process.taxable')}
           </label>
           {entryError && (
-            <div className="lg:col-span-6 rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">
+            <div
+              className="lg:col-span-6 rounded-xl border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-950/30 px-4 py-3 text-sm text-red-700 dark:text-red-300"
+              role="alert"
+            >
               {entryError}
             </div>
           )}
-        </div>
+        </fieldset>
 
         <div className="overflow-x-auto">
           <table className="w-full">
-            <thead className="bg-gray-50 text-left">
+            <thead className="bg-gray-50 dark:bg-slate-950/70 text-left">
               <tr>
-                <th className="px-6 py-3 text-xs font-medium uppercase tracking-wide text-gray-500">{t('employees.columns.employee')}</th>
-                <th className="px-6 py-3 text-xs font-medium uppercase tracking-wide text-gray-500">{t('payroll.process.colType')}</th>
-                <th className="px-6 py-3 text-xs font-medium uppercase tracking-wide text-gray-500">{t('payroll.process.description')}</th>
-                <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">{t('common.amount')}</th>
-                <th className="px-6 py-3 text-center text-xs font-medium uppercase tracking-wide text-gray-500">{t('payroll.process.taxable')}</th>
-                <th className="px-6 py-3 text-center text-xs font-medium uppercase tracking-wide text-gray-500">{t('common.actions')}</th>
+                <th className="px-6 py-3 text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-slate-400">{t('employees.columns.employee')}</th>
+                <th className="px-6 py-3 text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-slate-400">{t('payroll.process.colType')}</th>
+                <th className="px-6 py-3 text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-slate-400">{t('payroll.process.description')}</th>
+                <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-slate-400">{t('common.amount')}</th>
+                <th className="px-6 py-3 text-center text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-slate-400">{t('payroll.process.taxable')}</th>
+                <th className="px-6 py-3 text-center text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-slate-400">{t('common.actions')}</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100">
+            <tbody className="divide-y divide-gray-100 dark:divide-slate-800">
               {entries.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-10 text-center text-sm text-gray-400">
+                  <td colSpan={6} className="px-6 py-10 text-center text-sm text-gray-500 dark:text-slate-400">
                     {t('payroll.process.noAdjustments', { period: formatPeriod(year, month) })}
                   </td>
                 </tr>
               ) : entries.map((entry) => (
-                <tr key={entry.id} className="hover:bg-gray-50">
+                <tr key={entry.id} className="hover:bg-gray-50 dark:hover:bg-slate-800/50">
                   <td className="px-6 py-4 text-sm">
-                    <div className="font-medium text-gray-900">{entry.employee_name}</div>
-                    <div className="text-xs text-gray-400">{entry.employee_number}</div>
+                    <div className="font-medium text-gray-900 dark:text-slate-100">{entry.employee_name}</div>
+                    <div className="text-xs text-gray-500 dark:text-slate-400">{entry.employee_number}</div>
                   </td>
                   <td className="px-6 py-4 text-sm">
                     <span className={`badge ${entry.category === 'earning' ? 'badge-approved' : 'badge-rejected'}`}>
                       {getEntryKindLabel(entry, t)}
                     </span>
-                    <div className="mt-1 text-xs text-gray-400">{entry.item_type}</div>
+                    <div className="mt-1 text-xs text-gray-500 dark:text-slate-400">
+                      {formatEntryItemType(entry.item_type, t)}
+                    </div>
                   </td>
-                  <td className="px-6 py-4 text-sm text-gray-600">{entry.description}</td>
-                  <td className="px-6 py-4 text-right text-sm font-semibold">{formatMYR(entry.amount)}</td>
-                  <td className="px-6 py-4 text-center text-sm text-gray-500">{entry.is_taxable ? t('common.yes') : t('common.no')}</td>
+                  <td className="px-6 py-4 text-sm text-gray-700 dark:text-slate-300">{entry.description}</td>
+                  <td className="px-6 py-4 text-right text-sm font-semibold tabular-nums whitespace-nowrap text-gray-900 dark:text-slate-100">
+                    {formatMYR(entry.amount)}
+                  </td>
+                  <td className="px-6 py-4 text-center text-sm text-gray-600 dark:text-slate-300">
+                    {entry.is_taxable ? t('common.yes') : t('common.no')}
+                  </td>
                   <td className="px-6 py-4 text-center">
-                    <div className="flex items-center justify-center gap-2">
+                    <div className="flex items-center justify-center gap-1">
                       <button
                         type="button"
                         onClick={() => startEditEntry(entry)}
-                        className="rounded-lg p-1.5 text-gray-500 hover:bg-gray-100 hover:text-black"
+                        disabled={adjustmentsLocked}
+                        className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-40 transition-colors"
+                        aria-label={t('common.edit')}
                         title={t('common.edit')}
                       >
-                        <Pencil className="w-4 h-4" />
+                        <Pencil className="w-4 h-4" aria-hidden="true" />
                       </button>
                       <button
                         type="button"
                         onClick={async () => {
+                          if (adjustmentsLocked) return;
                           const ok = await confirmDialog({
                             description: t('payroll.process.deleteEntryConfirm'),
                             variant: 'danger',
                           });
                           if (ok) deleteEntryMutation.mutate(entry.id);
                         }}
-                        disabled={deleteEntryMutation.isPending}
-                        className="rounded-lg p-1.5 text-red-500 hover:bg-red-50 hover:text-red-700 disabled:opacity-50"
+                        disabled={adjustmentsLocked || deleteEntryMutation.isPending}
+                        className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 disabled:opacity-40 transition-colors"
+                        aria-label={t('common.delete')}
                         title={t('common.delete')}
                       >
-                        <Trash2 className="w-4 h-4" />
+                        <Trash2 className="w-4 h-4" aria-hidden="true" />
                       </button>
                     </div>
                   </td>

@@ -21,7 +21,7 @@ export function PwaInstallBanner() {
     <div
       role="region"
       aria-label={t('pwa.banner.regionLabel')}
-      className="mb-4 card !p-3.5 sm:!p-4 flex flex-col sm:flex-row sm:items-center gap-3 border-[var(--accent-1)]/20"
+      className="no-print mb-4 card !p-3.5 sm:!p-4 flex flex-col sm:flex-row sm:items-center gap-3 border-[var(--accent-1)]/20"
     >
       <div className="flex items-center gap-3 min-w-0 flex-1">
         <img

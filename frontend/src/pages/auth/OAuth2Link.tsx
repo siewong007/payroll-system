@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router';
+import { Link, useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '@/context/AuthContext';
 import { linkGoogleAccount } from '@/api/oauth2';
@@ -79,27 +79,27 @@ export function OAuth2Link() {
 
   if (error) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-100">
-        <div className="bg-white rounded-2xl shadow p-8 max-w-md w-full text-center space-y-4">
-          <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto">
-            <svg className="w-8 h-8 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-slate-950 px-4">
+        <div role="alert" className="bg-white dark:bg-slate-900 dark:border dark:border-slate-800 rounded-2xl shadow p-8 max-w-md w-full text-center space-y-4">
+          <div className="w-16 h-16 bg-red-50 dark:bg-red-500/15 rounded-full flex items-center justify-center mx-auto">
+            <svg className="w-8 h-8 text-red-500 dark:text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
           </div>
-          <p className="text-sm text-gray-600">{error}</p>
-          <a href={returnTo ?? '/'} className="inline-block text-sm text-black font-medium hover:underline">
+          <p className="text-sm text-gray-600 dark:text-slate-300">{error}</p>
+          <Link to={returnTo ?? '/'} className="inline-block text-sm text-black dark:text-indigo-400 font-medium hover:underline">
             {t('common.goBack')}
-          </a>
+          </Link>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100">
+    <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-slate-950 px-4">
       <div className="text-center space-y-4">
-        <BrandLogo variant="lockup-dark" className="h-12 w-auto mx-auto" />
-        <div className="text-gray-500">{t('auth.oauthLink.linking')}</div>
+        <BrandLogo variant="lockup-dark" className="h-12 w-auto mx-auto rounded-xl" />
+        <div className="text-gray-500 dark:text-slate-400">{t('auth.oauthLink.linking')}</div>
       </div>
     </div>
   );

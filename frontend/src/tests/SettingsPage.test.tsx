@@ -109,7 +109,7 @@ describe('SettingsPage', () => {
     renderPage();
 
     // Wait for the General section, then flip the boolean setting.
-    const toggle = await screen.findByRole('button', { name: '' });
+    const toggle = await screen.findByRole('switch', { name: 'Dark mode' });
     expect(screen.queryByText(/unsaved change/)).not.toBeInTheDocument();
     await typer.click(toggle);
 
