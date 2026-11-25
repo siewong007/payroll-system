@@ -1938,12 +1938,13 @@ checksum = "5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c"
 
 [[package]]
 name = "lopdf"
-version = "0.44.0"
+version = "0.47.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e2ec995d822e05cabc3f06d196ee43650af3fe4fe38012cacb35e0c3d113b68"
+checksum = "c6ad532ff9262dd4bfd6e085400cbb39959d48cb8d08518b01b68f77bdf6feca"
 dependencies = [
  "aes",
  "bitflags",
+ "brotli-decompressor",
  "cbc",
  "ecb",
  "encoding_rs",
@@ -2524,12 +2525,12 @@ dependencies = [
 
 [[package]]
 name = "printpdf"
-version = "0.12.9"
+version = "0.12.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "91e8829ac96180b3c07de6a880766f9e0bbcbccd1869744a9d347ba0d830ae94"
+checksum = "658f7c0506ba72778073f482ae3d98b14678d34c083757dd72c72e6b01f2050f"
 dependencies = [
  "allsorts-azul",
- "base64 0.22.1",
+ "base64 0.23.1",
  "flate2",
  "getrandom 0.4.3",
  "lopdf",
