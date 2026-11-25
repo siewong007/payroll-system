@@ -2656,6 +2656,7 @@ version = "0.2.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
+ "aws-lc-rs",
  "axum",
  "base64 0.23.1",
  "bcrypt",

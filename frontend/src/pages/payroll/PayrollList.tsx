@@ -16,7 +16,7 @@ import type { PayrollRun } from '@/types';
 import { PAYROLL_STATUSES, PAYROLL_STATUS_STYLES, payrollStatusLabel } from './statusMeta';
 
 const canDeletePayrollRun = (run: PayrollRun) =>
-  ['draft', 'processed', 'cancelled'].includes(run.status) && !run.locked_at;
+  ['draft', 'processed'].includes(run.status) && !run.locked_at;
 
 const buildColumns = (groupName: (id: string) => string, t: TFunction): Column<PayrollRun>[] => [
   {

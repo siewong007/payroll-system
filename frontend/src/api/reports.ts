@@ -97,7 +97,8 @@ export const downloadStatutoryExport = async (type: 'epf' | 'socso' | 'eis' | 'p
   });
   const contentDisposition = res.headers['content-disposition'] || '';
   const match = contentDisposition.match(/filename="?([^"]+)"?/);
-  const filename = match?.[1] || `${type}_export_${year}_${month}.csv`;
+  const fallbackExt = type === 'pcb' ? 'txt' : 'csv';
+  const filename = match?.[1] || `${type}_export_${year}_${month}.${fallbackExt}`;
   triggerBlobDownload(res.data, filename);
 };
 

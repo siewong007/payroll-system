@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO notifications (user_id, company_id, notification_type, title, message, entity_type, entity_id)\n        SELECT DISTINCT u.id, $1::uuid, $3::varchar, $4::varchar, $5::text, $6::varchar, $7::uuid\n        FROM users u\n        JOIN user_companies uc ON uc.user_id = u.id AND uc.company_id = $1\n        WHERE u.employee_id = ANY($2)\n          AND u.is_active = TRUE\n          AND u.deleted_at IS NULL\n        RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "notifications",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "UuidArray",
+        "Varchar",
+        "Varchar",
+        "Text",
+        "Varchar",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "3bf4c60e06c91fa0d0f0f7fc25f16b07010053f1647a1ff6ba5b1ac1d0d578ee"
+}

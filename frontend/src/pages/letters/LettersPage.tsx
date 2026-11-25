@@ -128,11 +128,19 @@ export function LettersPage() {
 
   const canSendLetters = can('send_letters');
   const canManageTemplates = can('manage_email_templates');
+  const canViewEmailLogs = can('view_email_logs');
+  const canViewEmployees = can('view_employees');
   const canUseCustomEmail = can('manage_employees') || hasAnyRole(user, SUPER_ADMIN_ROLES);
   const canPreview = canSendLetters || canManageTemplates;
 
-  const [tab, setTab] = useState<LetterTab>(() => (canPreview ? 'compose' : 'history'));
-  const activeTab: LetterTab = !canPreview && tab === 'compose' ? 'history' : tab;
+  const availableTabs: LetterTab[] = [
+    ...(canPreview ? (['compose'] as const) : []),
+    ...(canViewEmailLogs ? (['history'] as const) : []),
+    'templates',
+  ];
+
+  const [tab, setTab] = useState<LetterTab>(() => availableTabs[0]);
+  const activeTab: LetterTab = availableTabs.includes(tab) ? tab : availableTabs[0];
 
   const [selectedType, setSelectedType] = useState<LetterType>('general');
   const [recipientMode, setRecipientMode] = useState<RecipientMode>('employee');
@@ -176,7 +184,7 @@ export function LettersPage() {
   } = useQuery({
     queryKey: ['employee', selectedEmployee],
     queryFn: () => getEmployee(selectedEmployee),
-    enabled: Boolean(selectedEmployee) && canPreview,
+    enabled: Boolean(selectedEmployee) && canPreview && canViewEmployees,
   });
 
   const {
@@ -200,6 +208,7 @@ export function LettersPage() {
     queryKey: ['emailLogs', historyPage],
     queryFn: () => getEmailLogs({ page: historyPage, per_page: HISTORY_PER_PAGE }),
     placeholderData: keepPreviousData,
+    enabled: canViewEmailLogs,
   });
 
   const sendMutation = useMutation({
@@ -347,13 +356,13 @@ export function LettersPage() {
   const trimmedCustomEmail = customEmail.trim();
   const hasValidRecipient =
     effectiveRecipientMode === 'employee'
-      ? Boolean(selectedEmployee && selectedEmp?.email)
+      ? Boolean(canViewEmployees && selectedEmployee && selectedEmp?.email)
       : canUseCustomEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedCustomEmail);
 
-  const canSend = hasValidRecipient && subject.trim().length > 0 && bodyHtml.trim().length > 0;
+  const canSend = canSendLetters && hasValidRecipient && subject.trim().length > 0 && bodyHtml.trim().length > 0;
 
   const handlePreview = () => {
-    if (!canSend || !canPreview) return;
+    if (!hasValidRecipient || !subject.trim() || !bodyHtml.trim() || !canPreview) return;
     if (effectiveRecipientMode === 'employee') {
       previewMutation.mutate({
         employee_id: selectedEmployee,
@@ -371,7 +380,7 @@ export function LettersPage() {
   };
 
   const handleSend = () => {
-    if (!canSend || !canSendLetters) return;
+    if (!canSend) return;
     if (effectiveRecipientMode === 'employee') {
       sendMutation.mutate({
         employee_id: selectedEmployee,
@@ -391,10 +400,6 @@ export function LettersPage() {
       });
     }
   };
-
-  const availableTabs: LetterTab[] = canPreview
-    ? ['compose', 'history', 'templates']
-    : ['history', 'templates'];
 
   const historyColumns: Column<EmailLog>[] = [
     {
@@ -534,30 +539,36 @@ export function LettersPage() {
               </div>
 
               {effectiveRecipientMode === 'employee' ? (
-                <>
-                  {/* `isActive={null}` — a termination or an EA-form letter is
-                      routinely addressed to someone who has already left. */}
-                  <EmployeePicker
-                    value={selectedEmployee}
-                    onChange={(id) => setSelectedEmployee(id)}
-                    isActive={null}
-                    placeholder={t('letters.searchEmployee')}
-                  />
-                  {selectedEmployee && selectedEmpError && (
-                    <div role="alert" className="mt-2 flex items-center justify-between gap-2 rounded-lg border border-red-200 dark:border-red-500/30 bg-red-50 dark:bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-300">
-                      <span>{getErrorMessage(selectedEmpErrorObj, t('letters.employeeLoadFailed'))}</span>
-                      <button type="button" onClick={() => void refetchSelectedEmp()} className="font-medium underline shrink-0">
-                        {t('common.retry')}
-                      </button>
-                    </div>
-                  )}
-                  {selectedEmp && !selectedEmp.email && (
-                    <p className="text-xs text-red-500 dark:text-red-400 mt-2">{t('letters.noEmailOnFile')}</p>
-                  )}
-                  {selectedEmp?.email && (
-                    <p className="text-xs text-gray-500 dark:text-slate-400 mt-2">{t('common.email')}: {selectedEmp.email}</p>
-                  )}
-                </>
+                !canViewEmployees ? (
+                  <p className="text-sm text-gray-500 dark:text-slate-400">
+                    {t('teams.employeeDirectoryRequired')}
+                  </p>
+                ) : (
+                  <>
+                    {/* `isActive={null}` — a termination or an EA-form letter is
+                        routinely addressed to someone who has already left. */}
+                    <EmployeePicker
+                      value={selectedEmployee}
+                      onChange={(id) => setSelectedEmployee(id)}
+                      isActive={null}
+                      placeholder={t('letters.searchEmployee')}
+                    />
+                    {selectedEmployee && selectedEmpError && (
+                      <div role="alert" className="mt-2 flex items-center justify-between gap-2 rounded-lg border border-red-200 dark:border-red-500/30 bg-red-50 dark:bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-300">
+                        <span>{getErrorMessage(selectedEmpErrorObj, t('letters.employeeLoadFailed'))}</span>
+                        <button type="button" onClick={() => void refetchSelectedEmp()} className="font-medium underline shrink-0">
+                          {t('common.retry')}
+                        </button>
+                      </div>
+                    )}
+                    {selectedEmp && !selectedEmp.email && (
+                      <p className="text-xs text-red-500 dark:text-red-400 mt-2">{t('letters.noEmailOnFile')}</p>
+                    )}
+                    {selectedEmp?.email && (
+                      <p className="text-xs text-gray-500 dark:text-slate-400 mt-2">{t('common.email')}: {selectedEmp.email}</p>
+                    )}
+                  </>
+                )
               ) : (
                 <div className="space-y-3">
                   <FormField label={t('common.email')} required>

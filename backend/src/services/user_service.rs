@@ -154,6 +154,7 @@ pub(crate) fn same_set(a: &[Uuid], b: &[Uuid]) -> bool {
 async fn revoke_access(conn: &mut sqlx::PgConnection, user_id: Uuid) -> AppResult<()> {
     user_sessions::revoke_all_for_user(&mut *conn, user_id).await?;
     refresh_tokens::revoke_all_for_user(&mut *conn, user_id).await?;
+    crate::repositories::push_subscriptions::revoke_all_for_user(&mut *conn, user_id).await?;
     Ok(())
 }
 
@@ -423,6 +424,13 @@ pub async fn update_user(
         None => existing.roles.clone(),
     };
 
+    if existing.employee_id.is_none() && roles.iter().any(|role| role == "employee") {
+        return Err(AppError::BadRequest(
+            "The employee role can only be assigned to accounts linked to an employee record"
+                .into(),
+        ));
+    }
+
     // Validate against the *effective* company set. When the request omits
     // `company_ids`, that is the user's current membership — which is what makes
     // `{"roles": ["exec"]}` on a four-company admin fail here rather than
@@ -431,6 +439,18 @@ pub async fn update_user(
         &roles,
         req.company_ids.as_deref().unwrap_or(&existing_company_ids),
     )?;
+
+    if existing.employee_id.is_some()
+        && (effective_company_ids.len() != 1
+            || existing
+                .company_id
+                .is_some_and(|cid| effective_company_ids[0] != cid))
+    {
+        return Err(AppError::BadRequest(
+            "Users linked to an employee record can only be assigned to their employee's company"
+                .into(),
+        ));
+    }
 
     let roles_changed = roles != existing.roles;
     let deactivating = req.is_active == Some(false) && existing.is_active != Some(false);
@@ -480,7 +500,7 @@ pub async fn update_user(
         ));
     }
 
-    let updated = users::update_profile_and_roles(
+    let mut updated = users::update_profile_and_roles(
         &mut *tx,
         user_id,
         full_name,
@@ -507,6 +527,7 @@ pub async fn update_user(
             .is_none_or(|current| !effective_company_ids.contains(&current))
         {
             users::update_active_company(&mut *tx, user_id, effective_company_ids[0]).await?;
+            updated.company_id = Some(effective_company_ids[0]);
         }
     }
 
@@ -620,7 +641,20 @@ pub async fn switch_company(
 ) -> AppResult<()> {
     // Single statement: the membership check and the write cannot interleave
     // with a concurrent revocation of that membership.
-    if !users::set_active_company_if_member(pool, user_id, target_company_id).await? {
+    let switched = match users::set_active_company_if_member(pool, user_id, target_company_id).await
+    {
+        Ok(switched) => switched,
+        Err(AppError::Database(sqlx::Error::Database(ref e)))
+            if e.code().as_deref() == Some("23503")
+                && e.constraint() == Some("users_employee_tenant_fkey") =>
+        {
+            return Err(AppError::BadRequest(
+                "Users linked to an employee record cannot switch to another company".into(),
+            ));
+        }
+        Err(err) => return Err(err),
+    };
+    if !switched {
         return Err(AppError::Forbidden(
             "You do not have access to this company".into(),
         ));

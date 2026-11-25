@@ -3,6 +3,7 @@ import type {
   Company,
   CreateCompanyRequest,
   UpdateCompanyRequest,
+  User,
   UserWithCompanies,
   CreateUserRequest,
   UpdateUserRequest,
@@ -23,7 +24,7 @@ export const updateCompanyAdmin = (id: string, req: UpdateCompanyRequest) =>
   api.put<Company>(`/admin/companies/${id}`, req).then((r) => r.data);
 
 export const deleteCompany = (id: string) =>
-  api.delete(`/admin/companies/${id}`).then((r) => r.data);
+  api.delete<{ ok: boolean; token?: string; user?: User }>(`/admin/companies/${id}`).then((r) => r.data);
 
 // User management
 export const listUsers = (params: ListUsersParams = {}) =>

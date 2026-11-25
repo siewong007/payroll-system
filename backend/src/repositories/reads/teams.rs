@@ -51,7 +51,7 @@ pub async fn list_members(
         JOIN teams t ON t.id = tm.team_id
         JOIN employees e ON tm.employee_id = e.id
         WHERE tm.team_id = $1 AND t.company_id = $2 AND e.deleted_at IS NULL
-        ORDER BY tm.role DESC, e.full_name"#,
+        ORDER BY CASE WHEN tm.role = 'lead' THEN 0 ELSE 1 END, e.full_name"#,
         team_id,
         company_id,
     )

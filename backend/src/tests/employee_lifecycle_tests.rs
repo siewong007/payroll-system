@@ -553,3 +553,55 @@ async fn deleting_an_employee_keeps_a_staff_logins_other_companies() {
         "a staff login is not deleted with the employee record"
     );
 }
+
+#[tokio::test]
+async fn update_employee_clears_nullable_fields_when_clear_flags_are_set() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let group_id = seed_payroll_group(&pool, company_id).await;
+    let employee_id = seed_employee(&pool, company_id, Some(group_id), 500_000).await;
+    let actor_id = seed_user(&pool, company_id, "hr_manager").await;
+
+    let with_fields = employee_service::update_employee(
+        &pool,
+        employee_id,
+        company_id,
+        update_request(json!({
+            "department": "Engineering",
+            "designation": "Senior Dev",
+            "email": "emp-clear@example.invalid",
+            "payroll_group_id": group_id,
+        })),
+        actor_id,
+        None,
+    )
+    .await
+    .expect("populate nullable fields");
+    assert_eq!(with_fields.department.as_deref(), Some("Engineering"));
+    assert_eq!(
+        with_fields.email.as_deref(),
+        Some("emp-clear@example.invalid")
+    );
+    assert_eq!(with_fields.payroll_group_id, Some(group_id));
+
+    let cleared = employee_service::update_employee(
+        &pool,
+        employee_id,
+        company_id,
+        update_request(json!({
+            "clear_department": true,
+            "clear_email": true,
+            "clear_payroll_group_id": true,
+        })),
+        actor_id,
+        None,
+    )
+    .await
+    .expect("clear nullable fields");
+    assert_eq!(cleared.department, None);
+    assert_eq!(cleared.email, None);
+    assert_eq!(cleared.payroll_group_id, None);
+    assert_eq!(cleared.designation.as_deref(), Some("Senior Dev"));
+}

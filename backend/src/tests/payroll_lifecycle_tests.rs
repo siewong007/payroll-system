@@ -506,3 +506,70 @@ async fn only_reversal_can_void_a_paid_run() {
     .expect("audit lookup");
     assert_eq!(has_reverse, 1);
 }
+
+#[tokio::test]
+async fn pcb_editor_cannot_self_approve_even_when_another_user_submits() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let group_id = seed_payroll_group(&pool, company_id).await;
+    let employee_id = seed_employee(&pool, company_id, Some(group_id), 500_000).await;
+    let preparer_id = seed_user(&pool, company_id, "payroll_admin").await;
+    let pcb_editor_id = seed_user(&pool, company_id, "finance").await;
+    let independent_approver_id = seed_user(&pool, company_id, "finance").await;
+
+    let run = payroll_engine::process_payroll(
+        &pool,
+        company_id,
+        group_id,
+        2024,
+        12,
+        NaiveDate::from_ymd_opt(2024, 12, 28).unwrap(),
+        preparer_id,
+        None,
+        None,
+    )
+    .await
+    .expect("process payroll");
+
+    crate::services::payroll_service::update_item_pcb(
+        &pool,
+        company_id,
+        run.id,
+        employee_id,
+        12_500,
+        pcb_editor_id,
+        None,
+    )
+    .await
+    .expect("pcb edit");
+
+    payroll_lifecycle_service::submit_for_approval(&pool, company_id, run.id, preparer_id, None)
+        .await
+        .expect("submit");
+
+    let blocked = payroll_lifecycle_service::approve(
+        &pool,
+        company_id,
+        run.id,
+        &auth_for(pcb_editor_id, company_id, &["finance"]),
+        None,
+    )
+    .await;
+    assert!(
+        matches!(blocked, Err(crate::core::error::AppError::Forbidden(_))),
+        "actor who edited PCB must not approve the run: {blocked:?}"
+    );
+
+    let ok = payroll_lifecycle_service::approve(
+        &pool,
+        company_id,
+        run.id,
+        &auth_for(independent_approver_id, company_id, &["finance"]),
+        None,
+    )
+    .await
+    .expect("independent finance user can approve");
+    assert_eq!(ok.status, "approved");
+}

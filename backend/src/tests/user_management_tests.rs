@@ -965,3 +965,79 @@ async fn manager_list_hides_admin_and_super_admin_users() {
     .expect("list users for admin");
     assert!(admin_page.iter().any(|user| user.id == super_admin_id));
 }
+
+#[tokio::test]
+async fn update_user_enforces_employee_role_and_single_company_link_invariants() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_a = seed_company(&pool).await;
+    let company_b = seed_company(&pool).await;
+    let actor_id = seed_user(&pool, company_a, "super_admin").await;
+
+    // 1. Account without employee_id cannot be granted the `employee` role.
+    let unlinked_id = seed_user(&pool, company_a, "hr_manager").await;
+    user_companies::insert(&pool, unlinked_id, company_a)
+        .await
+        .expect("link company_a");
+    let err = user_service::update_user(
+        &pool,
+        unlinked_id,
+        UpdateUserRequest {
+            roles: Some(roles(&["employee"])),
+            ..blank_update()
+        },
+        actor_id,
+        None,
+    )
+    .await
+    .expect_err("employee role requires linked employee record");
+    assert!(matches!(err, AppError::BadRequest(_)), "unexpected {err:?}");
+
+    // 2. Account with employee_id in company_a cannot be assigned to multiple or different companies.
+    let emp_id = seed_employee(&pool, company_a, None, 400_000).await;
+    let linked_user_id = seed_user(&pool, company_a, "employee").await;
+    user_companies::insert(&pool, linked_user_id, company_a)
+        .await
+        .expect("link linked user to company_a");
+    sqlx::query("UPDATE users SET employee_id = $1 WHERE id = $2")
+        .bind(emp_id)
+        .bind(linked_user_id)
+        .execute(&pool)
+        .await
+        .expect("bind employee_id");
+
+    let multi_err = user_service::update_user(
+        &pool,
+        linked_user_id,
+        UpdateUserRequest {
+            company_ids: Some(vec![company_a, company_b]),
+            ..blank_update()
+        },
+        actor_id,
+        None,
+    )
+    .await
+    .expect_err("linked user cannot span companies");
+    assert!(
+        matches!(multi_err, AppError::BadRequest(_)),
+        "unexpected {multi_err:?}"
+    );
+
+    let wrong_co_err = user_service::update_user(
+        &pool,
+        linked_user_id,
+        UpdateUserRequest {
+            company_ids: Some(vec![company_b]),
+            ..blank_update()
+        },
+        actor_id,
+        None,
+    )
+    .await
+    .expect_err("linked user cannot move to company without matching employee");
+    assert!(
+        matches!(wrong_co_err, AppError::BadRequest(_)),
+        "unexpected {wrong_co_err:?}"
+    );
+}

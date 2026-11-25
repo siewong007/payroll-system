@@ -117,10 +117,23 @@ fn build_header_map() -> HashMap<String, &'static str> {
             "basic_salary",
         ),
         (
-            &["hourly_rate", "hourly rate", "rate per hour"],
+            &[
+                "hourly_rate",
+                "hourly rate",
+                "hourly rate (rm)",
+                "rate per hour",
+            ],
             "hourly_rate",
         ),
-        (&["daily_rate", "daily rate", "rate per day"], "daily_rate"),
+        (
+            &[
+                "daily_rate",
+                "daily rate",
+                "daily rate (rm)",
+                "rate per day",
+            ],
+            "daily_rate",
+        ),
         (&["bank_name", "bank name", "bank"], "bank_name"),
         (
             &[
@@ -385,15 +398,35 @@ pub fn parse_xlsx(data: &[u8]) -> AppResult<(Vec<String>, Vec<Vec<String>>)> {
     }
 
     let mut rows = Vec::new();
+    let mut checked_hint_row = false;
     for row in row_iter {
         let cells: Vec<String> = row.iter().map(format_xlsx_cell).collect();
         if cells.iter().all(|s| s.is_empty()) {
             continue;
         }
+        if !checked_hint_row {
+            checked_hint_row = true;
+            if is_template_hint_row(&cells) {
+                continue;
+            }
+        }
         rows.push(cells);
     }
 
     Ok((headers, rows))
+}
+
+fn is_template_hint_row(cells: &[String]) -> bool {
+    let lower: Vec<String> = cells
+        .iter()
+        .map(|c| c.trim().to_ascii_lowercase())
+        .collect();
+    let has_req_cols = lower.first().is_some_and(|c| c == "required")
+        && lower.get(1).is_some_and(|c| c == "required");
+    let has_hint_markers = lower.iter().any(|c| c == "12-digit mykad number")
+        || lower.iter().any(|c| c == "male / female")
+        || lower.iter().any(|c| c.starts_with("permanent / contract"));
+    has_req_cols && has_hint_markers
 }
 
 pub(crate) fn rows_to_import_rows(
@@ -692,6 +725,24 @@ mod shape_tests {
         assert!(matches!(
             parse_xlsx(b"this is not a workbook"),
             Err(AppError::BadRequest(_))
+        ));
+    }
+
+    #[test]
+    fn maps_rate_header_aliases_and_detects_template_hint_row() {
+        let csv = "Employee Number,Full Name,Daily Rate (RM),Hourly Rate (RM)\nEMP-01,Aisyah Rahman,120.00,15.50\n";
+        let (headers, rows) = parse_csv(csv.as_bytes()).expect("CSV should parse");
+        let mapped = rows_to_import_rows(&headers, rows).expect("rows should map");
+        assert_eq!(mapped.len(), 1);
+        assert_eq!(mapped[0].employee_number.as_deref(), Some("EMP-01"));
+        assert_eq!(mapped[0].daily_rate.as_deref(), Some("120.00"));
+        assert_eq!(mapped[0].hourly_rate.as_deref(), Some("15.50"));
+
+        assert!(super::is_template_hint_row(
+            &to_rows(vec![vec!["Required", "Required", "12-digit MyKad number",]])[0]
+        ));
+        assert!(!super::is_template_hint_row(
+            &to_rows(vec![vec!["EMP-01", "Aisyah Rahman", "900101-14-5566",]])[0]
         ));
     }
 }

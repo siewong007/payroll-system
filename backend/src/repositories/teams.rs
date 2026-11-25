@@ -70,7 +70,7 @@ pub async fn update(
         r#"UPDATE teams SET
             name = COALESCE($3, name),
             description = CASE WHEN $4::text IS NULL THEN description ELSE NULLIF(BTRIM($4), '') END,
-            tag = CASE WHEN $5::text IS NULL THEN tag ELSE NULLIF(BTRIM($5), '') END,
+            tag = COALESCE(NULLIF(BTRIM($5), ''), tag),
             is_active = COALESCE($6, is_active),
             updated_by = $7,
             updated_at = NOW()

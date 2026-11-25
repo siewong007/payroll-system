@@ -141,28 +141,35 @@ pub async fn soft_delete_document(
 
     // Only unlink the file from disk when no other claim, leave, document, or
     // company logo still references it.
-    let remaining_refs =
-        crate::repositories::reads::uploads::find_references(pool, company_id, &file_url)
-            .await
-            .unwrap_or_default();
-    if remaining_refs.is_empty() {
-        match upload_path::local_upload_path(&file_url) {
-            Ok(Some(file_path)) => {
-                let _ = tokio::fs::remove_file(&file_path).await;
-                if let Some(stored_name) = file_url.strip_prefix(upload_path::UPLOAD_URL_PREFIX) {
-                    let _ = crate::repositories::uploaded_files::delete_by_stored_name(
-                        pool,
-                        stored_name,
-                    )
-                    .await;
+    match crate::repositories::reads::uploads::find_references(pool, company_id, &file_url).await {
+        Ok(remaining_refs) if remaining_refs.is_empty() => {
+            match upload_path::local_upload_path(&file_url) {
+                Ok(Some(file_path)) => {
+                    let _ = tokio::fs::remove_file(&file_path).await;
+                    if let Some(stored_name) = file_url.strip_prefix(upload_path::UPLOAD_URL_PREFIX)
+                    {
+                        let _ = crate::repositories::uploaded_files::delete_by_stored_name(
+                            pool,
+                            stored_name,
+                        )
+                        .await;
+                    }
                 }
+                // An external http(s) link — nothing of ours to unlink.
+                Ok(None) => {}
+                Err(_) => tracing::warn!(
+                    %file_url,
+                    "refusing to unlink a document whose file_url is not a safe upload path"
+                ),
             }
-            // An external http(s) link — nothing of ours to unlink.
-            Ok(None) => {}
-            Err(_) => tracing::warn!(
+        }
+        Ok(_) => {}
+        Err(err) => {
+            tracing::warn!(
                 %file_url,
-                "refusing to unlink a document whose file_url is not a safe upload path"
-            ),
+                error = %err,
+                "skipping upload cleanup because reference lookup failed"
+            );
         }
     }
 

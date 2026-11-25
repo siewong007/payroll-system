@@ -104,11 +104,20 @@ fn validate_row(row: &ImportRowRaw) -> Vec<FieldError> {
 
     if let Some(v) = &row.employment_type {
         let lower = v.to_lowercase();
-        if !["permanent", "contract", "part_time", "intern"].contains(&lower.as_str()) {
+        if ![
+            "permanent",
+            "contract",
+            "part_time",
+            "intern",
+            "daily_rated",
+            "hourly_rated",
+        ]
+        .contains(&lower.as_str())
+        {
             errors.push(FieldError {
                 field: "employment_type".into(),
                 message: format!(
-                    "Invalid employment type '{}'. Use permanent, contract, part_time, or intern",
+                    "Invalid employment type '{}'. Use permanent, contract, part_time, intern, daily_rated, or hourly_rated",
                     v
                 ),
             });
@@ -774,5 +783,21 @@ mod tests {
         );
 
         assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn daily_rated_and_hourly_rated_employment_types_are_valid() {
+        for kind in ["daily_rated", "hourly_rated"] {
+            let errors = validate_row(&row(json!({
+                "employee_number": "E009",
+                "full_name": "Rate Worker",
+                "date_of_birth": "1995-03-15",
+                "date_joined": "2024-01-01",
+                "employment_type": kind,
+                "basic_salary": "0.00",
+                "residency_status": "citizen",
+            })));
+            assert!(errors.is_empty(), "{kind} should be accepted: {errors:?}");
+        }
     }
 }

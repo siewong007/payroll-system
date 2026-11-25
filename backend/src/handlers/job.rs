@@ -10,18 +10,19 @@ use crate::core::error::{AppError, AppResult};
 use crate::models::background_job::{BackgroundJob, job_type};
 use crate::services::job_service;
 
-/// The read gate for a job's status, keyed by what its `result` carries —
-/// the same permission the synchronous endpoint required, not a weaker one.
-/// Unlisted job types get no read path at all (fail closed).
-fn read_permission(kind: &str) -> Option<Permission> {
+/// Whether the caller may poll a job of `kind`, keyed by what its `result`
+/// carries. Unlisted job types fail closed.
+fn can_read_job(auth: &AuthUser, kind: &str) -> Result<bool, AppError> {
     if kind == job_type::PAYROLL_RUN {
-        // result is just `{run_id}` — the run's own read gate.
-        Some(Permission::ViewPayroll)
+        // result is `{run_id}` — accessible to anyone who can view or prepare payroll drafts.
+        Ok(auth.can(Permission::ViewPayroll) || auth.can(Permission::ManagePayrollDraft))
     } else if kind == job_type::EMPLOYEE_IMPORT {
         // result embeds per-row import detail — the importer's permission.
-        Some(Permission::ImportEmployees)
+        Ok(auth.can(Permission::ImportEmployees))
     } else {
-        None
+        Err(AppError::Forbidden(
+            "This job type has no status endpoint".into(),
+        ))
     }
 }
 
@@ -36,16 +37,17 @@ pub async fn status(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    if !auth.can(Permission::ViewPayroll) && !auth.can(Permission::ImportEmployees) {
+    if !auth.can(Permission::ViewPayroll)
+        && !auth.can(Permission::ManagePayrollDraft)
+        && !auth.can(Permission::ImportEmployees)
+    {
         return Err(AppError::Forbidden(
             "Not authorized to view background jobs".into(),
         ));
     }
 
     let job = job_service::get(&state.pool, company_id, id).await?;
-    let permission = read_permission(&job.job_type)
-        .ok_or_else(|| AppError::Forbidden("This job type has no status endpoint".into()))?;
-    if !auth.can(permission) {
+    if !can_read_job(&auth, &job.job_type)? {
         return Err(AppError::NotFound("Job not found".into()));
     }
 

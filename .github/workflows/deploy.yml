@@ -159,7 +159,17 @@ jobs:
             --retry 20 --retry-delay 5 --retry-all-errors \
             --max-time 20 \
             https://payrollmy.com/ >/dev/null
-          echo "Public HTTPS health check passed through Cloudflare."
+          manifest_json=$(curl --fail --silent --show-error \
+            --retry 10 --retry-delay 3 --retry-all-errors \
+            --max-time 20 \
+            https://payrollmy.com/manifest.webmanifest)
+          python3 -c 'import json,sys; d=json.loads(sys.argv[1]); assert d.get("display")=="standalone"' "$manifest_json"
+          sw_headers=$(curl --fail --silent --show-error --head \
+            --retry 10 --retry-delay 3 --retry-all-errors \
+            --max-time 20 \
+            https://payrollmy.com/sw.js)
+          printf '%s' "$sw_headers" | grep -qiE '^content-type:.*javascript'
+          echo "Public HTTPS + PWA manifest/SW checks passed through Cloudflare."
 
       - name: Remove ephemeral SSH key
         if: always()

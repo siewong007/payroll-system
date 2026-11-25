@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, Printer, Download, FileText } from 'lucide-react';
 import { getMyPayslips, getMyProfile, downloadPayslipPdf } from '@/api/portal';
+import { useAuth } from '@/context/AuthContext';
 import { formatMYR, getErrorMessage } from '@/lib/utils';
 import { formatDateLong, formatPeriod, monthName } from '@/lib/format';
 import { KpiSkeletonGrid, Skeleton } from '@/components/ui/Skeleton';
@@ -20,18 +21,22 @@ function maskAccountNumber(account: string | null | undefined): string {
 
 export function MyPayslips() {
   const { t } = useTranslation();
+  const { user } = useAuth();
+  const hasEmployee = Boolean(user?.employee_id);
   const [selectedPeriod, setSelectedPeriod] = useState<{ year: number; month: number } | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState('');
 
-  const { data: payslips, isLoading } = useQuery({
+  const { data: payslips, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['my-payslips'],
     queryFn: getMyPayslips,
+    enabled: hasEmployee,
   });
 
   const { data: profile } = useQuery({
     queryKey: ['my-profile'],
     queryFn: getMyProfile,
+    enabled: hasEmployee,
   });
 
   const sortedPayslips = useMemo(() => {
@@ -73,11 +78,36 @@ export function MyPayslips() {
     setSelectedPeriod(month === 12 ? { year: year + 1, month: 1 } : { year, month: month + 1 });
   };
 
+  if (!hasEmployee) {
+    return (
+      <div className="card">
+        <EmptyState icon={FileText} title={t('attendance.scan.noEmployeeProfile')} />
+      </div>
+    );
+  }
+
   if (isLoading) {
     return (
       <div className="space-y-6">
         <Skeleton className="h-8 w-48" />
         <KpiSkeletonGrid count={3} />
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="card">
+        <EmptyState
+          icon={FileText}
+          title={t('portal.payslips.loadFailed')}
+          description={getErrorMessage(error, t('portal.payslips.loadFailed'))}
+          action={
+            <button type="button" onClick={() => void refetch()} className="btn-primary">
+              {t('common.retry')}
+            </button>
+          }
+        />
       </div>
     );
   }

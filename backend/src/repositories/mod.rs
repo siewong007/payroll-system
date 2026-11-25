@@ -50,6 +50,8 @@ pub mod payroll_runs;
 pub mod pcb_brackets;
 pub mod pcb_reliefs;
 pub mod platform_settings;
+pub mod push_outbox;
+pub mod push_subscriptions;
 pub mod refresh_tokens;
 pub mod salary_history;
 pub mod socso_rates;

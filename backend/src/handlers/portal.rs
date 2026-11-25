@@ -7,12 +7,15 @@ use uuid::Uuid;
 use chrono::Datelike;
 
 use crate::core::app_state::AppState;
-use crate::core::auth::AuthUser;
-use crate::core::error::{AppError, AppResult};
+use crate::core::auth::{AuthUser, Permission};
+use crate::core::error::{AppError, AppResult, multipart_error};
 use crate::core::upload_path;
 use crate::models::employee::Employee;
 use crate::models::portal::*;
 use crate::services::{portal_service, upload_service};
+
+/// Request ceiling for `/api/uploads`: 10 MiB file + 1 MiB multipart slack.
+pub const UPLOAD_REQUEST_MAX_BYTES: usize = upload_service::MAX_UPLOAD_SIZE + 1024 * 1024;
 
 fn get_employee_id(auth: &AuthUser) -> AppResult<Uuid> {
     auth.0
@@ -219,11 +222,20 @@ pub async fn upload_file(
     auth: AuthUser,
     mut multipart: Multipart,
 ) -> AppResult<Json<serde_json::Value>> {
+    if auth.0.employee_id.is_none()
+        && !auth.can(Permission::ManageDocuments)
+        && !auth.can(Permission::ManageApprovals)
+        && !auth.can(Permission::ManageCompanySettings)
+    {
+        return Err(AppError::Forbidden(
+            "You do not have permission to upload files".into(),
+        ));
+    }
     let company_id = get_company_id(&auth)?;
     let field = multipart
         .next_field()
         .await
-        .map_err(|e| AppError::BadRequest(format!("Invalid multipart data: {}", e)))?
+        .map_err(|e| multipart_error(&e, "the upload", UPLOAD_REQUEST_MAX_BYTES))?
         .ok_or_else(|| AppError::BadRequest("No file provided".into()))?;
 
     let original_name = field
@@ -246,7 +258,7 @@ pub async fn upload_file(
     let data = field
         .bytes()
         .await
-        .map_err(|e| AppError::BadRequest(format!("Failed to read file: {}", e)))?;
+        .map_err(|e| multipart_error(&e, "the file data", UPLOAD_REQUEST_MAX_BYTES))?;
 
     // Shared with backup restore, so a file cannot enter the store through an
     // archive that would have been refused at this door.
@@ -332,14 +344,46 @@ pub async fn portal_holidays(
     Ok(Json(holidays))
 }
 
+#[derive(serde::Deserialize)]
+pub struct PortalWorkingDaysQuery {
+    pub start_date: Option<chrono::NaiveDate>,
+    pub end_date: Option<chrono::NaiveDate>,
+}
+
 pub async fn portal_working_days(
     State(state): State<AppState>,
     auth: AuthUser,
-) -> AppResult<Json<Vec<crate::models::calendar::WorkingDayConfig>>> {
+    Query(q): Query<PortalWorkingDaysQuery>,
+) -> AppResult<Json<serde_json::Value>> {
     let company_id = get_company_id(&auth)?;
-    let config =
-        crate::services::calendar_service::get_working_days(&state.pool, company_id).await?;
-    Ok(Json(config))
+    match (q.start_date, q.end_date) {
+        (Some(start), Some(end)) => {
+            if end < start {
+                return Err(AppError::BadRequest(
+                    "end_date must not be before start_date".into(),
+                ));
+            }
+            let working_days = crate::services::calendar_service::count_working_days_between(
+                &state.pool,
+                company_id,
+                start,
+                end,
+            )
+            .await?;
+            Ok(Json(serde_json::json!({ "working_days": working_days })))
+        }
+        (None, None) => {
+            let config =
+                crate::services::calendar_service::get_working_days(&state.pool, company_id)
+                    .await?;
+            Ok(Json(serde_json::to_value(config).map_err(|e| {
+                AppError::Internal(format!("Serialize working days: {e}"))
+            })?))
+        }
+        _ => Err(AppError::BadRequest(
+            "Both start_date and end_date are required".into(),
+        )),
+    }
 }
 
 // ─── Leave Calendar Export (.ics) ───

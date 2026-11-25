@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS(\n            SELECT 1 FROM audit_logs\n            WHERE company_id = $1\n              AND entity_type = 'payroll_item'\n              AND action = 'update'\n              AND user_id = $2\n              AND (old_values->>'payroll_run_id' = $3 OR new_values->>'payroll_run_id' = $3)\n        ) AS \"edited!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "edited!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "95af69186e4f4c9c96d402078a2c6c352bb8ecc5e2841b347e0f24d8204c0611"
+}

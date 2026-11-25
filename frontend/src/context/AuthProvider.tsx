@@ -2,7 +2,9 @@ import { useState, useEffect, useCallback, useMemo, type ReactNode } from 'react
 import { useQueryClient } from '@tanstack/react-query';
 import type { User, LoginResponse, MfaRequiredResponse } from '@/types';
 import api, { onAuthRefreshed, setAccessToken } from '@/api/client';
+import { deletePushSubscription } from '@/api/notifications';
 import { verifyTwoFactorLogin } from '@/api/totp';
+import { getCurrentPushEndpoint, unsubscribeFromPush, updateAppBadge } from '@/lib/pwa';
 import { AuthContext, type LoginResult } from './AuthContext';
 
 function shouldSkipSessionRestore(pathname: string): boolean {
@@ -91,7 +93,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [setSession],
   );
 
-  const logout = useCallback(async () => {
+  const logout = useCallback(async (options?: { skipRemotePushDelete?: boolean }) => {
+    try {
+      const endpoint = await getCurrentPushEndpoint();
+      if (endpoint) {
+        if (!options?.skipRemotePushDelete) {
+          await deletePushSubscription(endpoint).catch(() => undefined);
+        }
+        await unsubscribeFromPush();
+      }
+      updateAppBadge(0);
+    } catch {
+      // Never block sign-out on push cleanup failures.
+    }
     try {
       // Server reads refresh token from cookie and revokes it
       await api.post('/auth/logout');
@@ -109,12 +123,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const switchCompany = useCallback(
     async (companyId: string) => {
       const { data } = await api.put<LoginResponse>('/auth/switch-company', { company_id: companyId });
+      await queryClient.cancelQueries();
+      queryClient.removeQueries();
+      await queryClient.invalidateQueries({ refetchType: 'none' });
       setAccessToken(data.token);
       setToken(data.token);
       setUser(data.user);
       localStorage.setItem('user', JSON.stringify(data.user));
-      queryClient.removeQueries();
-      await queryClient.invalidateQueries();
     },
     [queryClient],
   );

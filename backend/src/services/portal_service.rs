@@ -208,9 +208,9 @@ pub async fn cancel_leave_request(
         }
     }
 
-    // Guards the refund below: the status was read above, so a concurrent cancel
-    // that already refunded must not refund a second time.
-    if !leave_requests::mark_cancelled(&mut *tx, request_id).await? {
+    // Guards the refund below: the locked row's status was read above, so a
+    // concurrent status change cannot refund twice or take the wrong branch.
+    if !leave_requests::mark_cancelled(&mut *tx, request_id, &lr.status).await? {
         return Err(AppError::BadRequest(
             "Leave request has already been cancelled".into(),
         ));
@@ -498,7 +498,9 @@ pub async fn cancel_overtime_application(
         }
     }
 
-    if !overtime_applications::mark_cancelled_for_employee(&mut *tx, id, employee_id).await? {
+    if !overtime_applications::mark_cancelled_for_employee(&mut *tx, id, employee_id, &app.status)
+        .await?
+    {
         return Err(AppError::Conflict(
             "This overtime application has already been cancelled or modified.".into(),
         ));

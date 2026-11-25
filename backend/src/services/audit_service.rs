@@ -125,9 +125,14 @@ pub async fn log_action_with_metadata(
 /// concurrently, but they are sub-millisecond against the 1008 indexes and
 /// sharing one `&PgPool` connection sequentially keeps the pool pressure of an
 /// admin screen at one connection.
-pub async fn list_filter_options(pool: &PgPool, company_id: Uuid) -> AppResult<AuditFilterOptions> {
-    let entity_types = audit_reads::distinct_entity_types(pool, company_id).await?;
-    let actions = audit_reads::distinct_actions(pool, company_id).await?;
+pub async fn list_filter_options(
+    pool: &PgPool,
+    company_id: Uuid,
+    hide_privileged: bool,
+) -> AppResult<AuditFilterOptions> {
+    let entity_types =
+        audit_reads::distinct_entity_types(pool, company_id, hide_privileged).await?;
+    let actions = audit_reads::distinct_actions(pool, company_id, hide_privileged).await?;
 
     Ok(AuditFilterOptions {
         entity_types: entity_types.into_iter().map(FilterOption::new).collect(),
@@ -142,6 +147,19 @@ fn is_payroll_audit_key(key: &str, entity_type: &str) -> bool {
         "payroll_entry" | "payroll_run" | "payroll_item" | "salary_history"
     );
     if is_payroll_entity && matches!(k.as_str(), "amount" | "rate" | "quantity") {
+        return true;
+    }
+    if entity_type == "tp3_record"
+        && !matches!(
+            k.as_str(),
+            "id" | "employee_id"
+                | "company_id"
+                | "tax_year"
+                | "created_at"
+                | "updated_at"
+                | "previous_employer_name"
+        )
+    {
         return true;
     }
     matches!(
@@ -170,6 +188,7 @@ fn is_payroll_audit_key(key: &str, entity_type: &str) -> bool {
             | "commission"
             | "salary_group"
             | "payroll_group_id"
+            | "unpaid_leave_divisor"
     ) || k.starts_with("epf_")
         || k.starts_with("socso_")
         || k.starts_with("eis_")
@@ -179,6 +198,8 @@ fn is_payroll_audit_key(key: &str, entity_type: &str) -> bool {
         || k.starts_with("tabung_haji")
         || k.starts_with("total_")
         || k.starts_with("ytd_")
+        || k.starts_with("previous_")
+        || k.ends_with("_ytd")
 }
 
 fn is_personal_audit_key(key: &str) -> bool {
@@ -208,8 +229,15 @@ fn redact_audit_json(
 ) {
     match value {
         serde_json::Value::Object(map) => {
+            let is_sensitive_setting = hide_payroll
+                && entity_type == "company_setting"
+                && map
+                    .get("category")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|c| c == "payroll" || c == "statutory");
             for (k, v) in map.iter_mut() {
-                let should_redact = (hide_payroll && is_payroll_audit_key(k, entity_type))
+                let should_redact = (is_sensitive_setting && k == "value")
+                    || (hide_payroll && is_payroll_audit_key(k, entity_type))
                     || (hide_personal && is_personal_audit_key(k));
                 if should_redact {
                     *v = serde_json::Value::String("[REDACTED]".to_string());

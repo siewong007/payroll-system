@@ -29,6 +29,80 @@ pub struct NotificationQuery {
     pub limit: Option<i64>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct PushSubscription {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub company_id: Option<Uuid>,
+    pub session_id: Option<Uuid>,
+    pub endpoint: String,
+    pub p256dh: String,
+    pub auth: String,
+    pub user_agent: Option<String>,
+    pub failure_count: i32,
+    pub last_error: Option<String>,
+    pub last_seen_at: DateTime<Utc>,
+    pub revoked_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PushOutboxBatchRow {
+    pub id: Uuid,
+    pub subscription_id: Uuid,
+    pub user_id: Uuid,
+    pub company_id: Option<Uuid>,
+    pub title: String,
+    pub body: String,
+    pub url: String,
+    pub tag: Option<String>,
+    pub attempts: i32,
+    pub max_attempts: i32,
+    pub endpoint: String,
+    pub p256dh: String,
+    pub auth: String,
+    pub is_revoked: bool,
+    pub unread_count: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PushConfigResponse {
+    pub enabled: bool,
+    pub vapid_public_key: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PushSubscriptionKeys {
+    pub p256dh: String,
+    pub auth: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpsertPushSubscriptionRequest {
+    pub endpoint: String,
+    pub keys: PushSubscriptionKeys,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DeletePushSubscriptionRequest {
+    pub endpoint: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PushSubscriptionStatusResponse {
+    pub subscribed: bool,
+    pub active_subscriptions: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TestPushResponse {
+    pub queued: usize,
+    pub sent: usize,
+    pub failed: usize,
+    pub gone: usize,
+}
+
 /// Rows returned when the caller names no limit — what the frontend asks for.
 pub const DEFAULT_NOTIFICATION_LIMIT: i64 = 50;
 

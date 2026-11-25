@@ -134,6 +134,13 @@ pub async fn switch_company(
 ) -> AppResult<Json<LoginResponse>> {
     // Validate access and update active company
     user_service::switch_company(&state.pool, auth.0.sub, req.company_id).await?;
+    let _ = crate::repositories::push_subscriptions::update_company_for_session(
+        &state.pool,
+        auth.0.sub,
+        auth.0.sid,
+        req.company_id,
+    )
+    .await;
 
     // Fetch updated user
     let user = auth_service::get_user_by_id(&state.pool, auth.0.sub).await?;

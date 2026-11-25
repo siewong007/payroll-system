@@ -306,10 +306,32 @@ describe('UserManagement — edit form', () => {
     expect(screen.getByText(/signs this user out of all devices/i)).toBeInTheDocument();
   });
 
-  it('offers the employee role when editing an existing account', async () => {
-    await openEdit();
-    const roles = screen.getByRole('group', { name: /roles/i });
-    expect(within(roles).getByRole('checkbox', { name: 'Employee' })).toBeInTheDocument();
+  it('offers the employee role only when editing an employee-linked account and locks companies', async () => {
+    renderPage([
+      target,
+      {
+        ...target,
+        id: 'user-linked',
+        full_name: 'Linked Staff',
+        employee_id: 'emp-1',
+        roles: ['employee'],
+      },
+    ]);
+    await findRow('Ahmad Target');
+    await userEvent.click(within(table()).getByRole('button', { name: 'Edit Ahmad Target' }));
+    await screen.findByRole('dialog');
+
+    const unlinkedRoles = screen.getByRole('group', { name: /roles/i });
+    expect(within(unlinkedRoles).queryByRole('checkbox', { name: 'Employee' })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await userEvent.click(within(table()).getByRole('button', { name: 'Edit Linked Staff' }));
+    await screen.findByRole('dialog');
+
+    const linkedRoles = screen.getByRole('group', { name: /roles/i });
+    expect(within(linkedRoles).getByRole('checkbox', { name: 'Employee' })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: 'Alpha Sdn Bhd' })).toBeDisabled();
+    expect(screen.getByRole('radio', { name: 'Beta Sdn Bhd' })).toBeDisabled();
   });
 });
 

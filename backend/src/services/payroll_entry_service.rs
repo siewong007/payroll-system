@@ -54,6 +54,19 @@ fn validate_payroll_entry(
     Ok(())
 }
 
+fn ensure_entry_is_manual(entry: &PayrollEntry) -> AppResult<()> {
+    if entry.overtime_application_id.is_some()
+        || entry.leave_request_id.is_some()
+        || matches!(entry.item_type.as_str(), "overtime" | "claim_reimbursement")
+    {
+        return Err(AppError::BadRequest(
+            "Approval-linked payroll entries are managed by their source request and cannot be edited or deleted directly"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
 async fn ensure_employee_in_company(
     pool: &PgPool,
     company_id: Uuid,
@@ -153,6 +166,7 @@ pub async fn update_entry(
         .ok_or_else(|| {
             AppError::BadRequest("Payroll entry not found or already processed".into())
         })?;
+    ensure_entry_is_manual(&current)?;
 
     let employee_id = req.employee_id.unwrap_or(current.employee_id);
     let period_year = req.period_year.unwrap_or(current.period_year);
@@ -163,6 +177,16 @@ pub async fn update_entry(
         .description
         .unwrap_or_else(|| current.description.clone());
     let amount = req.amount.unwrap_or(current.amount);
+    let quantity = if req.clear_quantity == Some(true) {
+        None
+    } else {
+        req.quantity.or(current.quantity)
+    };
+    let rate = if req.clear_rate == Some(true) {
+        None
+    } else {
+        req.rate.or(current.rate)
+    };
 
     validate_payroll_entry(
         period_year,
@@ -185,8 +209,8 @@ pub async fn update_entry(
         item_type.trim(),
         description.trim(),
         amount,
-        req.quantity.or(current.quantity),
-        req.rate.or(current.rate),
+        quantity,
+        rate,
         req.is_taxable,
         actor_id,
     )
@@ -221,6 +245,7 @@ pub async fn delete_entry(
         .ok_or_else(|| {
             AppError::BadRequest("Payroll entry not found or already processed".into())
         })?;
+    ensure_entry_is_manual(&current)?;
 
     payroll_entries::delete_unprocessed(pool, id, company_id).await?;
 

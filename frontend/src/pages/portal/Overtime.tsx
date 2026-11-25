@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Clock, X, Trash2 } from 'lucide-react';
+import { Plus, Clock, X, Trash2, AlertTriangle } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { TimeSelector } from '@/components/ui/TimeSelector';
+import { useAuth } from '@/context/AuthContext';
 import { useConfirm } from '@/lib/confirm';
 import { getOvertimeApplications, createOvertimeApplication, cancelOvertimeApplication, deleteOvertimeApplication } from '@/api/portal';
 import { runBulk, summarizeBulkFailure } from '@/lib/bulk';
@@ -35,6 +37,8 @@ const otTypeMultiplier = (t: string) => {
 
 export function Overtime() {
   const { t } = useTranslation();
+  const { user } = useAuth();
+  const hasEmployee = Boolean(user?.employee_id);
   const confirmDialog = useConfirm();
   const queryClient = useQueryClient();
   const selectAllRef = useRef<HTMLInputElement>(null);
@@ -54,9 +58,10 @@ export function Overtime() {
     reason: '',
   });
 
-  const { data: applications = [], isLoading } = useQuery({
+  const { data: applications = [], isLoading, isError, error, refetch } = useQuery({
     queryKey: ['my-overtime'],
     queryFn: getOvertimeApplications,
+    enabled: hasEmployee,
   });
 
   const createMutation = useMutation({
@@ -195,6 +200,14 @@ export function Overtime() {
     ));
   };
 
+  if (!hasEmployee) {
+    return (
+      <div className="card">
+        <EmptyState icon={Clock} title={t('attendance.scan.noEmployeeProfile')} />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -279,6 +292,19 @@ export function Overtime() {
         )}
         {isLoading ? (
           <div className="p-8 text-center text-sm text-gray-400 dark:text-slate-400">{t('common.loading')}</div>
+        ) : isError ? (
+          <div className="p-8">
+            <EmptyState
+              icon={AlertTriangle}
+              title={t('portal.overtime.loadFailed')}
+              description={getErrorMessage(error, t('portal.overtime.loadFailed'))}
+              action={
+                <button type="button" onClick={() => void refetch()} className="btn-primary">
+                  {t('common.retry')}
+                </button>
+              }
+            />
+          </div>
         ) : applications.length === 0 ? (
           <div className="p-12 text-center">
             <Clock className="w-10 h-10 text-gray-200 dark:text-slate-700 mx-auto mb-3" />

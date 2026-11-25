@@ -1,0 +1,33 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO notifications (user_id, company_id, notification_type, title, message, entity_type, entity_id)\n        SELECT DISTINCT u.id, $1::uuid, $2::varchar, $3::varchar, $4::text, $5::varchar, $6::uuid\n        FROM users u\n        JOIN user_companies uc ON uc.user_id = u.id AND uc.company_id = $1\n        WHERE u.is_active = TRUE\n            AND u.deleted_at IS NULL\n            AND (\n                u.roles && ARRAY['super_admin', 'admin', 'payroll_admin', 'hr_manager', 'manager']::VARCHAR(50)[]\n                OR EXISTS (\n                    SELECT 1\n                    FROM user_group_members ugm\n                    JOIN user_groups ug ON ug.id = ugm.group_id\n                    JOIN user_group_permissions ugp ON ugp.group_id = ug.id\n                    WHERE ugm.user_id = u.id\n                      AND ug.company_id = $1\n                      AND ug.is_active = TRUE\n                      AND ugp.permission = 'manage_approvals'\n                )\n            )\n        RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "notifications",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Varchar",
+        "Varchar",
+        "Text",
+        "Varchar",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "700c62e52e1a820d793a842dc689dbc7fcd5262ccb713f3bfba860239d8e7285"
+}

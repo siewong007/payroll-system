@@ -252,7 +252,22 @@ export function EmployeeDetail() {
                           </span>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-gray-500 dark:text-slate-400">{h.reason || '-'}</td>
+                      <td className="px-4 py-3 text-gray-500 dark:text-slate-400">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {h.change_type && (
+                            <span className="inline-flex rounded-md bg-gray-100 dark:bg-slate-800 px-1.5 py-0.5 text-xs font-medium text-gray-700 dark:text-slate-200">
+                              {t(`employees.salaryChangeTypes.${h.change_type}`, {
+                                defaultValue: h.change_type.replace(/_/g, ' '),
+                              })}
+                            </span>
+                          )}
+                          {(h.notes || h.reason) ? (
+                            <span>{h.notes || h.reason}</span>
+                          ) : !h.change_type ? (
+                            <span>-</span>
+                          ) : null}
+                        </div>
+                      </td>
                     </tr>
                   );
                 })}

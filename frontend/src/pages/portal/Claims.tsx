@@ -1,10 +1,12 @@
 import { useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, ArrowLeft, Send, Trash2, Receipt, Upload, X, FileText, Image, Paperclip, ExternalLink } from 'lucide-react';
+import { Plus, ArrowLeft, Send, Trash2, Receipt, Upload, X, FileText, Image, Paperclip, ExternalLink, AlertTriangle } from 'lucide-react';
 import { listMyClaims, createClaim, cancelClaim, deleteClaim, submitClaim, uploadFile } from '@/api/claims';
+import { useAuth } from '@/context/AuthContext';
 import { AttachmentLink, AttachmentPreview } from '@/components/ui/AttachmentPreview';
 import { DataTable, type Column } from '@/components/ui/DataTable';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { useConfirm } from '@/lib/confirm';
 import { runBulk, summarizeBulkFailure } from '@/lib/bulk';
 import { formatMYR, formatDate, getErrorMessage, todayLocalDate } from '@/lib/utils';
@@ -36,6 +38,8 @@ const canDeleteClaim = (c: Claim) => ['draft', 'cancelled'].includes(c.status);
 
 export function Claims() {
   const { t } = useTranslation();
+  const { user } = useAuth();
+  const hasEmployee = Boolean(user?.employee_id);
   const confirmDialog = useConfirm();
   const queryClient = useQueryClient();
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
@@ -44,9 +48,10 @@ export function Claims() {
   const [bulkError, setBulkError] = useState('');
 
   // Fetch all claims once so every status tab counter stays accurate across filters.
-  const { data: claims = [], isLoading } = useQuery({
+  const { data: claims = [], isLoading, isError, error, refetch } = useQuery({
     queryKey: ['my-claims'],
     queryFn: () => listMyClaims(),
+    enabled: hasEmployee,
   });
 
   const filteredClaims = useMemo(
@@ -183,10 +188,35 @@ export function Claims() {
     },
   ];
 
+  if (!hasEmployee) {
+    return (
+      <div className="card">
+        <EmptyState icon={Receipt} title={t('attendance.scan.noEmployeeProfile')} />
+      </div>
+    );
+  }
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 dark:border-slate-200" />
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="card">
+        <EmptyState
+          icon={AlertTriangle}
+          title={t('portal.claims.loadFailed')}
+          description={getErrorMessage(error, t('portal.claims.loadFailed'))}
+          action={
+            <button type="button" onClick={() => void refetch()} className="btn-primary">
+              {t('common.retry')}
+            </button>
+          }
+        />
       </div>
     );
   }

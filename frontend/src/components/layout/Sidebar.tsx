@@ -40,8 +40,9 @@ import { openCommandPalette } from '@/lib/commandPalette';
 import { BrandLogo } from '@/components/ui/BrandLogo';
 import { getAccessToken } from '@/api/client';
 import { getPendingApprovalCounts } from '@/api/approvals';
+import { getNotificationCount } from '@/api/notifications';
 import { hasAnyRole, roleList, type AppRole } from '@/lib/roles';
-import { userCan } from '@/lib/usePermissions';
+import { userCan, userCanAny } from '@/lib/usePermissions';
 import { useMediaQuery } from '@/lib/useMediaQuery';
 import type { PermissionKey } from '@/api/permissions';
 
@@ -56,17 +57,17 @@ function readCollapsed(): boolean {
 }
 
 const navigation = [
-  { nameKey: 'nav.dashboard', href: '/dashboard', icon: LayoutDashboard, hideFor: ['super_admin'], requiresCompany: true, section: 'workspace' },
+  { nameKey: 'nav.dashboard', href: '/dashboard', icon: LayoutDashboard, requires: 'view_employees', hideFor: ['super_admin'], requiresCompany: true, section: 'workspace' },
   { nameKey: 'nav.company', href: '/company', icon: Building2, hideFor: ['super_admin'], requiresCompany: true, section: 'workspace' },
   { nameKey: 'nav.employees', href: '/employees', icon: Users, requires: 'view_employees', hideFor: ['super_admin'], requiresCompany: true, section: 'workspace' },
   { nameKey: 'nav.payroll', href: '/payroll', icon: Calculator, requires: 'view_payroll', requiresCompany: true, section: 'workspace' },
-  { nameKey: 'nav.teams', href: '/teams', icon: Users2, requires: 'view_teams', hideFor: ['super_admin'], requiresCompany: true, section: 'workspace' },
+  { nameKey: 'nav.teams', href: '/teams', icon: Users2, requiresAny: ['view_teams', 'manage_teams'], hideFor: ['super_admin'], requiresCompany: true, section: 'workspace' },
   { nameKey: 'nav.calendar', href: '/calendar', icon: CalendarDays, requires: 'view_calendar', hideFor: ['super_admin'], requiresCompany: true, section: 'workspace' },
   { nameKey: 'nav.attendance', href: '/attendance', icon: ScanLine, requires: 'view_attendance', hideFor: ['super_admin'], requiresCompany: true, section: 'workspace' },
   { nameKey: 'nav.approvals', href: '/approvals', icon: ClipboardCheck, requires: 'view_approvals', hideFor: ['super_admin'], requiresCompany: true, section: 'workspace' },
   { nameKey: 'nav.reports', href: '/reports', icon: BarChart3, requires: 'view_reports', requiresCompany: true, section: 'workspace' },
   { nameKey: 'nav.documents', href: '/documents', icon: FileText, requires: 'view_documents', hideFor: ['super_admin'], requiresCompany: true, section: 'workspace' },
-  { nameKey: 'nav.letters', href: '/letters', icon: Mail, requires: 'view_email_logs', hideFor: ['super_admin'], requiresCompany: true, section: 'workspace' },
+  { nameKey: 'nav.letters', href: '/letters', icon: Mail, requiresAny: ['view_email_logs', 'manage_email_templates', 'send_letters'], hideFor: ['super_admin'], requiresCompany: true, section: 'workspace' },
   { nameKey: 'nav.settings', href: '/settings', icon: Settings, requires: 'manage_company_settings', hideFor: ['super_admin'], requiresCompany: true, section: 'workspace' },
   { nameKey: 'nav.myAttendance', href: '/my/attendance', icon: UserCheck, requiresEmployeeProfile: true, section: 'personal' },
   { nameKey: 'nav.myPortal', href: '/portal/profile', icon: Sparkles, requiresEmployeeProfile: true, section: 'personal' },
@@ -83,6 +84,7 @@ const navigation = [
   href: string;
   icon: typeof Building2;
   requires?: PermissionKey;
+  requiresAny?: PermissionKey[];
   hideFor?: AppRole[];
   requiresEmployeeProfile?: boolean;
   requiresCompany?: boolean;
@@ -122,10 +124,18 @@ function SidebarContent({
     enableNotifications,
   } = usePwa();
   const { t } = useTranslation();
+  const { data: notifCount } = useQuery({
+    queryKey: ['notification-count'],
+    queryFn: getNotificationCount,
+    refetchInterval: 30_000,
+    enabled: Boolean(user?.company_id) && !user?.must_change_password,
+  });
+  const unreadNotifications = notifCount?.unread ?? 0;
 
   const visibleNav = navigation.filter((item) => {
     if (item.hideFor && hasAnyRole(user, item.hideFor)) return false;
     if (item.requires && !userCan(user, item.requires)) return false;
+    if (item.requiresAny && !userCanAny(user, item.requiresAny)) return false;
     if (item.requiresEmployeeProfile && !user?.employee_id) return false;
     if (item.requiresCompany && !user?.company_id) return false;
     return true;
@@ -151,27 +161,45 @@ function SidebarContent({
             </span>
           </div>
         )}
-        {onToggleCollapse && !onClose && (
-          <button
-            type="button"
-            onClick={onToggleCollapse}
-            title={collapsed ? t('nav.expandSidebar') : t('nav.collapseSidebar')}
-            aria-label={collapsed ? t('nav.expandSidebar') : t('nav.collapseSidebar')}
-            className="hidden md:inline-flex p-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-all-fast shrink-0"
-          >
-            {collapsed ? <PanelLeftOpen className="w-4 h-4" /> : <PanelLeftClose className="w-4 h-4" />}
-          </button>
-        )}
-        {onClose && (
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label={t('a11y.closeMenu')}
-            className="md:hidden min-h-11 min-w-11 inline-flex items-center justify-center -mr-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-all-fast"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        )}
+        <div className="flex items-center gap-1 shrink-0">
+          {!collapsed && user?.company_id && (
+            <Link
+              to="/portal/notifications"
+              onClick={onClose}
+              title={t('nav.portal.notifications')}
+              aria-label={t('nav.portal.notifications')}
+              className="relative hidden md:inline-flex p-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-all-fast"
+            >
+              <Bell className="w-4 h-4" />
+              {unreadNotifications > 0 && (
+                <span className="absolute top-1 right-1 min-w-[15px] h-[15px] px-0.5 text-[9px] font-bold bg-red-500 text-white rounded-full flex items-center justify-center leading-none">
+                  {unreadNotifications > 99 ? '99+' : unreadNotifications}
+                </span>
+              )}
+            </Link>
+          )}
+          {onToggleCollapse && !onClose && (
+            <button
+              type="button"
+              onClick={onToggleCollapse}
+              title={collapsed ? t('nav.expandSidebar') : t('nav.collapseSidebar')}
+              aria-label={collapsed ? t('nav.expandSidebar') : t('nav.collapseSidebar')}
+              className="hidden md:inline-flex p-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-all-fast shrink-0"
+            >
+              {collapsed ? <PanelLeftOpen className="w-4 h-4" /> : <PanelLeftClose className="w-4 h-4" />}
+            </button>
+          )}
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label={t('a11y.closeMenu')}
+              className="md:hidden min-h-11 min-w-11 inline-flex items-center justify-center -mr-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-all-fast"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Company Switcher + Quick Search */}
@@ -228,7 +256,7 @@ function SidebarContent({
                     location.pathname === item.href ||
                     (item.href !== '/' &&
                       !item.href.startsWith('/portal') &&
-                      location.pathname.startsWith(item.href));
+                      location.pathname.startsWith(`${item.href}/`));
                   const label = t(item.nameKey);
                   return (
                     <Link
@@ -379,7 +407,7 @@ function SidebarContent({
           )}
           <button
             type="button"
-            onClick={logout}
+            onClick={() => void logout()}
             title={t('nav.signOut')}
             aria-label={t('nav.signOut')}
             className="p-2 text-slate-400 hover:text-rose-300 hover:bg-rose-500/10 rounded-lg transition-all-fast shrink-0"

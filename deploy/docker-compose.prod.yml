@@ -109,6 +109,10 @@ services:
       SMTP_PASSWORD: '${SMTP_PASSWORD:-}'
       SMTP_FROM_EMAIL: '${SMTP_FROM_EMAIL:-}'
       SMTP_FROM_NAME: '${SMTP_FROM_NAME:-}'
+      # Optional Web Push (VAPID) keys for background PWA notifications.
+      VAPID_PUBLIC_KEY: '${VAPID_PUBLIC_KEY:-}'
+      VAPID_PRIVATE_KEY: '${VAPID_PRIVATE_KEY:-}'
+      VAPID_SUBJECT: '${VAPID_SUBJECT:-}'
       RUST_LOG: '${RUST_LOG:-info}'
     volumes:
       # Bind mount survives image/container replacement.

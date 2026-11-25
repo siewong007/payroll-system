@@ -55,6 +55,20 @@ beforeEach(() => {
 });
 
 describe('TeamCalendar loading, error, and success states', () => {
+  beforeEach(() => {
+    authMocks.useAuth.mockReturnValue({
+      user: userWithRoles(['admin'], {
+        full_name: 'Admin User',
+        employee_id: 'emp-1',
+        must_change_password: false,
+      }),
+      isAuthenticated: true,
+      isLoading: false,
+      logout: vi.fn(),
+      switchCompany: vi.fn(),
+    });
+  });
+
   it('renders a loading placeholder while queries are pending', () => {
     portalMocks.getTeamCalendar.mockImplementation(() => new Promise(() => {}));
     portalMocks.getPortalHolidays.mockImplementation(() => new Promise(() => {}));
@@ -100,6 +114,28 @@ describe('TeamCalendar loading, error, and success states', () => {
     renderTeamCalendar();
 
     expect(await screen.findByText('Siti Aminah')).toBeInTheDocument();
+  });
+
+  it('shows noEmployeeProfile without querying team calendar when employee_id is null', async () => {
+    authMocks.useAuth.mockReturnValue({
+      user: userWithRoles(['admin'], {
+        full_name: 'Admin User',
+        employee_id: null,
+        must_change_password: false,
+      }),
+      isAuthenticated: true,
+      isLoading: false,
+      logout: vi.fn(),
+      switchCompany: vi.fn(),
+    });
+    portalMocks.getPortalHolidays.mockResolvedValue([]);
+
+    renderTeamCalendar();
+
+    expect(
+      await screen.findByText(i18n.t('attendance.scan.noEmployeeProfile')),
+    ).toBeInTheDocument();
+    expect(portalMocks.getTeamCalendar).not.toHaveBeenCalled();
   });
 });
 

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE users u\n           SET company_id = (\n               SELECT uc.company_id\n               FROM user_companies uc\n               WHERE uc.user_id = u.id\n               ORDER BY uc.company_id\n               LIMIT 1\n           ),\n           updated_at = NOW()\n           WHERE u.company_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3df0cdd5fe93016d8346af47303d004abd0bc7091416d499bd35a621ccb6cb9a"
+}

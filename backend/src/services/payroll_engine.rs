@@ -142,7 +142,7 @@ fn compute_all(
             Ok(payslip) => computed.push(payslip),
             Err(err) => failures.push(PayrollDiagnostic::for_employee(
                 "employee_calculation_failed",
-                err.to_string(),
+                err.client_response().1,
                 emp.id,
                 emp.employee_number.clone(),
                 emp.full_name.clone(),
@@ -503,32 +503,37 @@ pub async fn preview_payroll(
     // Report the statutory gate as a diagnostic rather than an error: the
     // operator should still see who would be paid and what else is wrong.
     if let Err(err) = statutory_rules::require_all_verified(pool, period.effective_date).await {
-        blocking.push(PayrollDiagnostic::run("statutory_rules", err.to_string()));
-        return Ok(PayrollPreview {
-            payroll_group_id,
-            period_year: year,
-            period_month: month,
-            period_start: period.period_start,
-            period_end: period.period_end,
-            pay_date,
-            employee_count: 0,
-            payable_count: 0,
-            total_gross: 0,
-            total_net: 0,
-            total_employer_cost: 0,
-            total_epf_employee: 0,
-            total_epf_employer: 0,
-            total_socso_employee: 0,
-            total_socso_employer: 0,
-            total_eis_employee: 0,
-            total_eis_employer: 0,
-            total_pcb: 0,
-            total_zakat: 0,
-            can_process: false,
-            blocking,
-            warnings: Vec::new(),
-            employees: Vec::new(),
-        });
+        match err {
+            AppError::Validation(msg) => {
+                blocking.push(PayrollDiagnostic::run("statutory_rules", msg));
+                return Ok(PayrollPreview {
+                    payroll_group_id,
+                    period_year: year,
+                    period_month: month,
+                    period_start: period.period_start,
+                    period_end: period.period_end,
+                    pay_date,
+                    employee_count: 0,
+                    payable_count: 0,
+                    total_gross: 0,
+                    total_net: 0,
+                    total_employer_cost: 0,
+                    total_epf_employee: 0,
+                    total_epf_employer: 0,
+                    total_socso_employee: 0,
+                    total_socso_employer: 0,
+                    total_eis_employee: 0,
+                    total_eis_employer: 0,
+                    total_pcb: 0,
+                    total_zakat: 0,
+                    can_process: false,
+                    blocking,
+                    warnings: Vec::new(),
+                    employees: Vec::new(),
+                });
+            }
+            other => return Err(other),
+        }
     }
 
     let mut conn = pool.acquire().await?;

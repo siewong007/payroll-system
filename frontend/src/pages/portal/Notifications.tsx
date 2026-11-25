@@ -2,12 +2,27 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { Bell, Check, CheckCheck, ChevronRight } from 'lucide-react';
-import { getNotifications, markAsRead, markAllRead, type Notification } from '@/api/notifications';
+import { AlertTriangle, Bell, Check, CheckCheck, ChevronRight } from 'lucide-react';
+import { getNotificationCount, getNotifications, markAsRead, markAllRead, type Notification } from '@/api/notifications';
 import { NotificationActivationCard } from '@/components/pwa/NotificationActivationCard';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { useAuth } from '@/context/AuthContext';
 import { formatDateTime } from '@/lib/format';
+import { userCan } from '@/lib/usePermissions';
+import { getErrorMessage } from '@/lib/utils';
 
-function notificationTarget(n: Notification): string | null {
+function notificationTarget(
+  n: Notification,
+  canOpenApprovals: boolean,
+  hasEmployee: boolean,
+): string | null {
+  const nType = (n.notification_type || '').toLowerCase();
+  if (canOpenApprovals) {
+    if (nType === 'leave_submitted') return '/approvals?tab=leave';
+    if (nType === 'claim_submitted') return '/approvals?tab=claims';
+    if (nType === 'overtime_submitted') return '/approvals?tab=overtime';
+  }
+  if (!hasEmployee) return null;
   const kind = (n.entity_type || n.notification_type || '').toLowerCase();
   if (kind.includes('leave')) return '/portal/leave';
   if (kind.includes('claim') || kind.includes('expense')) return '/portal/claims';
@@ -19,13 +34,30 @@ function notificationTarget(n: Notification): string | null {
 
 export function Notifications() {
   const { t } = useTranslation();
+  const { user } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [filter, setFilter] = useState<'all' | 'unread'>('all');
+  const hasCompany = Boolean(user?.company_id);
+  const hasEmployee = Boolean(user?.employee_id);
+  const canOpenApprovals = hasCompany && userCan(user, 'view_approvals');
 
-  const { data: notifications = [], isLoading } = useQuery({
-    queryKey: ['notifications'],
-    queryFn: () => getNotifications(false, 100),
+  const {
+    data: notifications = [],
+    isLoading,
+    isError,
+    error,
+    refetch,
+  } = useQuery({
+    queryKey: ['notifications', filter],
+    queryFn: () => getNotifications(filter === 'unread', 100),
+    enabled: hasCompany,
+  });
+
+  const { data: countData } = useQuery({
+    queryKey: ['notification-count'],
+    queryFn: getNotificationCount,
+    enabled: hasCompany,
   });
 
   const markReadM = useMutation({
@@ -55,10 +87,11 @@ export function Notifications() {
     overtime_rejected: 'text-red-600 dark:text-red-300 bg-red-50 dark:bg-red-500/15',
     overtime_submitted: 'text-gray-900 dark:text-slate-200 bg-gray-100 dark:bg-slate-800',
     payroll_processed: 'text-violet-600 dark:text-violet-300 bg-violet-50 dark:bg-violet-500/15',
+    attendance_absent: 'text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-500/15',
     general: 'text-gray-600 dark:text-slate-300 bg-gray-100 dark:bg-slate-800',
   };
 
-  const unreadCount = notifications.filter((n: Notification) => !n.is_read).length;
+  const unreadCount = countData?.unread ?? notifications.filter((n: Notification) => !n.is_read).length;
   const visibleNotifications =
     filter === 'unread' ? notifications.filter((n: Notification) => !n.is_read) : notifications;
 
@@ -66,7 +99,7 @@ export function Notifications() {
     if (!n.is_read) {
       markReadM.mutate(n.id);
     }
-    const target = notificationTarget(n);
+    const target = notificationTarget(n, canOpenApprovals, hasEmployee);
     if (target) {
       navigate(target);
     }
@@ -76,6 +109,23 @@ export function Notifications() {
     return (
       <div className="flex items-center justify-center py-12">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 dark:border-slate-200" />
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="card">
+        <EmptyState
+          icon={AlertTriangle}
+          title={t('portal.notifications.loadFailed')}
+          description={getErrorMessage(error, t('portal.notifications.loadFailed'))}
+          action={
+            <button type="button" onClick={() => void refetch()} className="btn-primary">
+              {t('common.retry')}
+            </button>
+          }
+        />
       </div>
     );
   }
@@ -134,7 +184,7 @@ export function Notifications() {
       ) : (
         <div className="card !p-0 divide-y divide-gray-100 dark:divide-slate-800 overflow-hidden">
           {visibleNotifications.map((n: Notification) => {
-            const target = notificationTarget(n);
+            const target = notificationTarget(n, canOpenApprovals, hasEmployee);
             return (
               <div
                 key={n.id}

@@ -31,6 +31,7 @@ pub mod payslip_pdf_service;
 pub mod pcb_calculator;
 pub mod pdf_helpers;
 pub mod portal_service;
+pub mod push_service;
 pub mod report_service;
 pub mod session_service;
 pub mod settings_service;

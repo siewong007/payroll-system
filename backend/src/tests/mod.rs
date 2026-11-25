@@ -14,6 +14,7 @@ mod oauth2_state_binding_tests;
 mod payroll_lifecycle_tests;
 mod payroll_tests;
 mod pure_unit_tests;
+mod push_notifications_tests;
 mod route_auth_tests;
 mod route_inventory_tests;
 mod schema_invariant_tests;

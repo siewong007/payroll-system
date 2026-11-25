@@ -115,16 +115,41 @@ pub async fn list_filtered_scoped(
 pub async fn distinct_entity_types(
     executor: impl Executor<'_, Database = Postgres>,
     company_id: Uuid,
+    hide_privileged: bool,
 ) -> AppResult<Vec<String>> {
     let values = sqlx::query_scalar!(
         r#"WITH RECURSIVE walk AS (
-            (SELECT entity_type FROM audit_logs
-             WHERE company_id = $1
-             ORDER BY entity_type
+            (SELECT al.entity_type FROM audit_logs al
+             LEFT JOIN users u ON al.user_id = u.id
+             WHERE al.company_id = $1
+               AND NOT (
+                   $2::bool AND (
+                       (u.id IS NOT NULL AND u.roles && ARRAY['admin', 'super_admin']::varchar[])
+                       OR (
+                           al.entity_type = 'user' AND (
+                               (al.old_values->'roles') ?| ARRAY['admin', 'super_admin']
+                               OR (al.new_values->'roles') ?| ARRAY['admin', 'super_admin']
+                           )
+                       )
+                   )
+               )
+             ORDER BY al.entity_type
              LIMIT 1)
             UNION ALL
             SELECT (SELECT al.entity_type FROM audit_logs al
+                    LEFT JOIN users u ON al.user_id = u.id
                     WHERE al.company_id = $1 AND al.entity_type > walk.entity_type
+                      AND NOT (
+                          $2::bool AND (
+                              (u.id IS NOT NULL AND u.roles && ARRAY['admin', 'super_admin']::varchar[])
+                              OR (
+                                  al.entity_type = 'user' AND (
+                                      (al.old_values->'roles') ?| ARRAY['admin', 'super_admin']
+                                      OR (al.new_values->'roles') ?| ARRAY['admin', 'super_admin']
+                                  )
+                              )
+                          )
+                      )
                     ORDER BY al.entity_type
                     LIMIT 1)
             FROM walk
@@ -134,6 +159,7 @@ pub async fn distinct_entity_types(
         WHERE entity_type IS NOT NULL
         ORDER BY entity_type"#,
         company_id,
+        hide_privileged,
     )
     .fetch_all(executor)
     .await?;
@@ -146,16 +172,41 @@ pub async fn distinct_entity_types(
 pub async fn distinct_actions(
     executor: impl Executor<'_, Database = Postgres>,
     company_id: Uuid,
+    hide_privileged: bool,
 ) -> AppResult<Vec<String>> {
     let values = sqlx::query_scalar!(
         r#"WITH RECURSIVE walk AS (
-            (SELECT action FROM audit_logs
-             WHERE company_id = $1
-             ORDER BY action
+            (SELECT al.action FROM audit_logs al
+             LEFT JOIN users u ON al.user_id = u.id
+             WHERE al.company_id = $1
+               AND NOT (
+                   $2::bool AND (
+                       (u.id IS NOT NULL AND u.roles && ARRAY['admin', 'super_admin']::varchar[])
+                       OR (
+                           al.entity_type = 'user' AND (
+                               (al.old_values->'roles') ?| ARRAY['admin', 'super_admin']
+                               OR (al.new_values->'roles') ?| ARRAY['admin', 'super_admin']
+                           )
+                       )
+                   )
+               )
+             ORDER BY al.action
              LIMIT 1)
             UNION ALL
             SELECT (SELECT al.action FROM audit_logs al
+                    LEFT JOIN users u ON al.user_id = u.id
                     WHERE al.company_id = $1 AND al.action > walk.action
+                      AND NOT (
+                          $2::bool AND (
+                              (u.id IS NOT NULL AND u.roles && ARRAY['admin', 'super_admin']::varchar[])
+                              OR (
+                                  al.entity_type = 'user' AND (
+                                      (al.old_values->'roles') ?| ARRAY['admin', 'super_admin']
+                                      OR (al.new_values->'roles') ?| ARRAY['admin', 'super_admin']
+                                  )
+                              )
+                          )
+                      )
                     ORDER BY al.action
                     LIMIT 1)
             FROM walk
@@ -165,6 +216,7 @@ pub async fn distinct_actions(
         WHERE action IS NOT NULL
         ORDER BY action"#,
         company_id,
+        hide_privileged,
     )
     .fetch_all(executor)
     .await?;
@@ -205,4 +257,32 @@ pub async fn list_for_run(
     .fetch_all(executor)
     .await?;
     Ok(logs)
+}
+
+/// Whether `actor_user_id` edited any item in `run_id` (e.g. a PCB override),
+/// preserved independently of `payroll_runs.updated_by` which is overwritten on
+/// submission.
+pub async fn actor_edited_payroll_run_items(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    run_id: Uuid,
+    actor_user_id: Uuid,
+) -> AppResult<bool> {
+    let run_id_str = run_id.to_string();
+    let edited = sqlx::query_scalar!(
+        r#"SELECT EXISTS(
+            SELECT 1 FROM audit_logs
+            WHERE company_id = $1
+              AND entity_type = 'payroll_item'
+              AND action = 'update'
+              AND user_id = $2
+              AND (old_values->>'payroll_run_id' = $3 OR new_values->>'payroll_run_id' = $3)
+        ) AS "edited!""#,
+        company_id,
+        actor_user_id,
+        run_id_str,
+    )
+    .fetch_one(executor)
+    .await?;
+    Ok(edited)
 }

@@ -11,7 +11,7 @@ use crate::core::error::{AppError, AppResult};
 use crate::models::audit::AuditLogWithUser;
 use crate::models::payroll::{
     JournalLine, JournalPreview, PayrollActionItem, PayrollGroup, PayrollItem, PayrollOverview,
-    PayrollPeriodTotals, PayrollPeriodVariance, PayrollRun, PayrollSummary, PayslipBreakdown,
+    PayrollPeriodVariance, PayrollRun, PayrollSummary, PayslipBreakdown,
 };
 use crate::repositories::reads::audit as audit_reads;
 use crate::repositories::reads::payroll as payroll_reads;
@@ -437,8 +437,9 @@ pub async fn overview(pool: &PgPool, company_id: Uuid) -> AppResult<PayrollOverv
         }),
         _ => None,
     };
+    periods.truncate(12);
     periods.reverse();
-    let trend: Vec<PayrollPeriodTotals> = periods.into_iter().take(12).collect();
+    let trend = periods;
 
     let pipeline = overview_reads::status_counts(pool, company_id).await?;
     let departments = match &current_period {

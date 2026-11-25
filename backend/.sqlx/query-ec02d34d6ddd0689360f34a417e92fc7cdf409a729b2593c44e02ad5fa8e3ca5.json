@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO push_outbox (\n            subscription_id, user_id, company_id, notification_id, title, body, url, tag\n        )\n        SELECT ps.id, n.user_id, $1, n.id, $3, $4, $5, $6\n        FROM notifications n\n        JOIN users u ON u.id = n.user_id\n        JOIN push_subscriptions ps ON ps.user_id = n.user_id\n        LEFT JOIN user_sessions us ON us.id = ps.session_id\n        WHERE n.id = ANY($2)\n          AND n.company_id = $1\n          AND ps.revoked_at IS NULL\n          AND u.is_active = TRUE\n          AND u.deleted_at IS NULL\n          AND (ps.session_id IS NULL OR (us.revoked_at IS NULL AND us.expires_at > NOW()))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "UuidArray",
+        "Varchar",
+        "Text",
+        "Varchar",
+        "Varchar"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ec02d34d6ddd0689360f34a417e92fc7cdf409a729b2593c44e02ad5fa8e3ca5"
+}

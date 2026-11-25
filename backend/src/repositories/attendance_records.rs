@@ -450,7 +450,17 @@ pub async fn mark_absent(
     target_date: chrono::NaiveDate,
     company_id: Option<Uuid>,
 ) -> AppResult<u64> {
-    let result = sqlx::query!(
+    let rows = mark_absent_returning(executor, tz, target_date, company_id).await?;
+    Ok(rows.len() as u64)
+}
+
+pub async fn mark_absent_returning(
+    executor: impl Executor<'_, Database = Postgres>,
+    tz: &str,
+    target_date: chrono::NaiveDate,
+    company_id: Option<Uuid>,
+) -> AppResult<Vec<(Uuid, Uuid)>> {
+    let rows = sqlx::query!(
         r#"INSERT INTO attendance_records
            (company_id, employee_id, check_in_at, check_out_at, method, status, notes)
            SELECT
@@ -509,12 +519,13 @@ pub async fn mark_absent(
                    AND lr.status = 'approved'
                    AND $2::date BETWEEN lr.start_date AND lr.end_date
              )
-             -- No open overnight session currently in progress within 24h
+             -- No open overnight session overlapping the target local date within 24h
              AND NOT EXISTS (
                  SELECT 1 FROM attendance_records open_ar
                  WHERE open_ar.employee_id = e.id
                    AND open_ar.check_out_at IS NULL
-                   AND open_ar.check_in_at > NOW() - INTERVAL '24 hours'
+                   AND open_ar.check_in_at > (($2::date)::timestamp AT TIME ZONE $1) - INTERVAL '24 hours'
+                   AND open_ar.check_in_at < ($2::date + 1)::timestamp AT TIME ZONE $1
              )
              -- No attendance record on that local date. Sargable range on the raw
              -- timestamptz so the (employee_id, check_in_at) index serves it.
@@ -535,14 +546,18 @@ pub async fn mark_absent(
                  AND status = 'absent'
                  AND method = 'manual'
                  AND notes = 'Auto-marked absent (no check-in recorded)'
-           DO NOTHING"#,
+           DO NOTHING
+           RETURNING company_id, employee_id"#,
         tz,
         target_date,
         company_id,
         AUTO_ABSENT_NOTE,
     )
-    .execute(executor)
+    .fetch_all(executor)
     .await?;
 
-    Ok(result.rows_affected())
+    Ok(rows
+        .into_iter()
+        .map(|row| (row.company_id, row.employee_id))
+        .collect())
 }

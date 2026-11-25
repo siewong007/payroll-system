@@ -156,6 +156,9 @@ export function AttendanceScanPage() {
     void executeCheckIn();
     return () => {
       cancelled = true;
+      if (inflightKeyRef.current === checkInKey) {
+        inflightKeyRef.current = null;
+      }
     };
   }, [token, authLoading, isAuthenticated, navigate, userId, userEmployeeId, mustChangePassword, queryClient, attempt]);
 

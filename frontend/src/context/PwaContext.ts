@@ -14,17 +14,21 @@ export interface PwaContextValue {
   notificationStatus: NotificationStatus;
   notificationBusy: boolean;
   swReady: boolean;
+  pushSupported: boolean;
+  pushServerEnabled: boolean;
+  pushSubscribed: boolean;
   openInstallModal: () => void;
   closeInstallModal: () => void;
   dismissBanner: () => void;
   triggerInstall: () => Promise<InstallOutcome>;
   enableNotifications: () => Promise<NotificationStatus>;
   sendTestNotification: () => Promise<boolean>;
+  syncPushSubscription: () => Promise<boolean>;
 }
 
 const noopAsyncInstall = async (): Promise<InstallOutcome> => 'guide';
 const noopAsyncNotify = async (): Promise<NotificationStatus> => 'unsupported';
-const noopAsyncTest = async (): Promise<boolean> => false;
+const noopAsyncBool = async (): Promise<boolean> => false;
 
 const fallbackContext: PwaContextValue = {
   platform: 'desktop',
@@ -37,12 +41,16 @@ const fallbackContext: PwaContextValue = {
   notificationStatus: 'unsupported',
   notificationBusy: false,
   swReady: false,
+  pushSupported: false,
+  pushServerEnabled: false,
+  pushSubscribed: false,
   openInstallModal: () => undefined,
   closeInstallModal: () => undefined,
   dismissBanner: () => undefined,
   triggerInstall: noopAsyncInstall,
   enableNotifications: noopAsyncNotify,
-  sendTestNotification: noopAsyncTest,
+  sendTestNotification: noopAsyncBool,
+  syncPushSubscription: noopAsyncBool,
 };
 
 export const PwaContext = createContext<PwaContextValue>(fallbackContext);

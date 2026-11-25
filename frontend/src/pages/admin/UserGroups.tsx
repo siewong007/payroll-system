@@ -468,8 +468,8 @@ function GroupMembersModal({
   });
 
   const usersQuery = useQuery({
-    queryKey: ['admin-users', 'group-picker', debouncedSearch],
-    queryFn: () => listUsers({ search: debouncedSearch || undefined, perPage: 50 }),
+    queryKey: ['admin-users', 'group-picker', group.company_id, debouncedSearch],
+    queryFn: () => listUsers({ companyId: group.company_id, search: debouncedSearch || undefined, perPage: 50 }),
     enabled: canManageUsers,
   });
 
@@ -507,7 +507,7 @@ function GroupMembersModal({
   const candidates = useMemo(() => {
     const q = search.trim().toLowerCase();
     return (usersQuery.data?.data ?? []).filter((u) => {
-      if (memberIds.has(u.id)) return false;
+      if (u.is_active === false || memberIds.has(u.id)) return false;
       if (!q) return true;
       return u.full_name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q);
     });

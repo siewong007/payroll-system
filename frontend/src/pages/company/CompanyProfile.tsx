@@ -133,6 +133,7 @@ function CompanyDetails() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['company'] });
       queryClient.invalidateQueries({ queryKey: ['admin-companies'] });
+      queryClient.invalidateQueries({ queryKey: ['my-companies'] });
       toast.success(t('companyProfile.updated'));
       resetModal();
     },
@@ -343,7 +344,7 @@ function CompanyDetails() {
           </div>
           {renderRow(t('companies.name'), company.name)}
           {renderRow(t('companies.regNo'), company.registration_number)}
-          {renderRow(t('companies.taxNo'), company.tax_number)}
+          {canViewPayroll && renderRow(t('companies.taxNo'), company.tax_number)}
           {renderRow(t('companies.phone'), company.phone)}
           {renderRow(t('common.email'), company.email)}
         </div>

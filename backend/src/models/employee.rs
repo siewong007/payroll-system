@@ -223,6 +223,18 @@ pub struct UpdateEmployeeRequest {
     pub clear_date_resigned: Option<bool>,
     /// Explicitly clear `epf_category` so EPF reverts to age/residency/date derivation.
     pub clear_epf_category: Option<bool>,
+    pub clear_payroll_group_id: Option<bool>,
+    pub clear_department: Option<bool>,
+    pub clear_designation: Option<bool>,
+    pub clear_cost_centre: Option<bool>,
+    pub clear_branch: Option<bool>,
+    pub clear_phone: Option<bool>,
+    pub clear_email: Option<bool>,
+    pub clear_bank_name: Option<bool>,
+    pub clear_bank_account_number: Option<bool>,
+    pub clear_probation_end: Option<bool>,
+    pub clear_confirmation_date: Option<bool>,
+    pub clear_salary_group: Option<bool>,
 }
 
 #[derive(Debug, Serialize, sqlx::FromRow)]

@@ -1302,11 +1302,15 @@ pub async fn run_auto_absent_catchup_with_health(pool: &PgPool) -> AppResult<(i6
         let mut date = start;
         while date <= last_due {
             // Pass the canonical zone name, not the raw column value.
-            let outcome =
-                attendance_records::mark_absent(pool, tz.name(), date, Some(target.company_id))
-                    .await;
-            let marked = match outcome {
-                Ok(marked) => marked as i64,
+            let outcome = attendance_records::mark_absent_returning(
+                pool,
+                tz.name(),
+                date,
+                Some(target.company_id),
+            )
+            .await;
+            let inserted = match outcome {
+                Ok(rows) => rows,
                 Err(e) => {
                     tracing::error!(
                         company_id = %target.company_id,
@@ -1319,6 +1323,7 @@ pub async fn run_auto_absent_catchup_with_health(pool: &PgPool) -> AppResult<(i6
                     break;
                 }
             };
+            let marked = inserted.len() as i64;
 
             // Advance the bookmark per date, so a failure part-way through does
             // not re-run the dates already completed on the next attempt.
@@ -1336,6 +1341,14 @@ pub async fn run_auto_absent_catchup_with_health(pool: &PgPool) -> AppResult<(i6
             }
 
             if marked > 0 {
+                let emp_ids: Vec<Uuid> = inserted.into_iter().map(|(_, emp_id)| emp_id).collect();
+                let _ = crate::services::notification_service::notify_auto_absent(
+                    pool,
+                    target.company_id,
+                    &emp_ids,
+                    date,
+                )
+                .await;
                 tracing::info!(
                     company_id = %target.company_id,
                     date = %date,

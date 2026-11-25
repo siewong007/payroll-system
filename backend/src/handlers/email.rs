@@ -83,16 +83,24 @@ pub(crate) fn send_outcome(
 
 // ── Templates ──────────────────────────────────────────────────────────
 
+fn authorize_template_read(auth: &AuthUser) -> AppResult<Uuid> {
+    if !auth.can(Permission::ViewEmailLogs)
+        && !auth.can(Permission::ManageEmailTemplates)
+        && !auth.can(Permission::SendLetters)
+    {
+        return Err(AppError::Forbidden(
+            "You do not have permission to view email templates".into(),
+        ));
+    }
+    auth.company_id()
+}
+
 pub async fn list_templates(
     State(state): State<AppState>,
     auth: AuthUser,
     Query(query): Query<TemplateQuery>,
 ) -> AppResult<Json<Vec<EmailTemplate>>> {
-    auth.require_permission(Permission::ViewEmailLogs)?;
-    let company_id = auth
-        .0
-        .company_id
-        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
+    let company_id = authorize_template_read(&auth)?;
 
     let templates =
         email_service::list_templates(&state.pool, company_id, query.letter_type.as_deref())
@@ -105,11 +113,7 @@ pub async fn get_template(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<EmailTemplate>> {
-    auth.require_permission(Permission::ViewEmailLogs)?;
-    let company_id = auth
-        .0
-        .company_id
-        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
+    let company_id = authorize_template_read(&auth)?;
 
     let template = email_service::get_template(&state.pool, id, company_id).await?;
     Ok(Json(template))

@@ -75,7 +75,7 @@ pub async fn list_by_employee(
         SalaryHistory,
         r#"SELECT id, employee_id, old_salary, new_salary, effective_date, reason,
                change_type, notes, approved_by, approved_at, created_at, created_by
-           FROM salary_history WHERE employee_id = $1 ORDER BY effective_date DESC"#,
+           FROM salary_history WHERE employee_id = $1 ORDER BY effective_date DESC, created_at DESC"#,
         employee_id,
     )
     .fetch_all(executor)

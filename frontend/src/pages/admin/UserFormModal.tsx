@@ -95,8 +95,9 @@ export function UserFormModal({
   }, [open, mode, user]);
 
   const isCreate = mode === 'create';
-  const isSingleCompany = isSingleCompanyRoleSet(form.roles);
-  const selectableRoles = isCreate ? CREATABLE_ROLES : ALL_ROLES;
+  const hasEmployeeLink = !isCreate && Boolean(user?.employee_id);
+  const isSingleCompany = isSingleCompanyRoleSet(form.roles) || hasEmployeeLink;
+  const selectableRoles = isCreate || !hasEmployeeLink ? CREATABLE_ROLES : ALL_ROLES;
 
   const originalCompanyIds = user?.companies.map((company) => company.id) ?? [];
   const companiesChanged = !isCreate && !sameIdSet(form.company_ids, originalCompanyIds);
@@ -302,7 +303,7 @@ export function UserFormModal({
         <FieldGroup
           legend={t('users.assignCompanies')}
           required
-          note={isSingleCompany ? t('users.maxOne') : undefined}
+          note={hasEmployeeLink ? t('users.employeeCompanyLocked') : isSingleCompany ? t('users.maxOne') : undefined}
         >
           <div className="space-y-2 mt-2 max-h-48 overflow-y-auto">
             {companiesLoading ? (
@@ -324,7 +325,9 @@ export function UserFormModal({
               companies.map((company) => (
                 <label
                   key={company.id}
-                  className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                  className={`flex items-center gap-3 p-3 rounded-lg border transition-colors ${
+                    hasEmployeeLink ? 'opacity-65 cursor-not-allowed' : 'cursor-pointer'
+                  } ${
                     form.company_ids.includes(company.id)
                       ? 'border-black dark:border-[var(--accent-1)] bg-gray-50 dark:bg-slate-800'
                       : 'border-gray-200 dark:border-slate-700 hover:border-gray-300 dark:hover:border-slate-600'
@@ -333,8 +336,11 @@ export function UserFormModal({
                   <input
                     type={isSingleCompany ? 'radio' : 'checkbox'}
                     name="company"
+                    disabled={hasEmployeeLink}
                     checked={form.company_ids.includes(company.id)}
-                    onChange={() => toggleCompany(company.id)}
+                    onChange={() => {
+                      if (!hasEmployeeLink) toggleCompany(company.id);
+                    }}
                     className="accent-black dark:accent-[var(--accent-1)]"
                   />
                   <Building2 className="w-4 h-4 text-gray-400 dark:text-slate-500" aria-hidden="true" />

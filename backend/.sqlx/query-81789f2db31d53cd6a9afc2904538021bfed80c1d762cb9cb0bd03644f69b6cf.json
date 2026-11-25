@@ -1,0 +1,49 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n               (SELECT COUNT(*) FROM email_logs\n                WHERE status = 'pending' AND next_retry_at IS NOT NULL) AS \"email_outbox_pending!\",\n               (SELECT COUNT(*) FROM email_logs\n                WHERE status = 'failed' AND created_at >= NOW() - INTERVAL '24 hours') AS \"email_outbox_failed_24h!\",\n               (SELECT COUNT(*) FROM push_outbox\n                WHERE status = 'pending') AS \"push_outbox_pending!\",\n               (SELECT COUNT(*) FROM push_outbox\n                WHERE status = 'failed' AND created_at >= NOW() - INTERVAL '24 hours') AS \"push_outbox_failed_24h!\",\n               (SELECT COUNT(*) FROM background_jobs\n                WHERE status = 'failed' AND created_at >= NOW() - INTERVAL '24 hours') AS \"background_jobs_failed_24h!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "email_outbox_pending!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "email_outbox_failed_24h!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "push_outbox_pending!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "push_outbox_failed_24h!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "background_jobs_failed_24h!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "81789f2db31d53cd6a9afc2904538021bfed80c1d762cb9cb0bd03644f69b6cf"
+}

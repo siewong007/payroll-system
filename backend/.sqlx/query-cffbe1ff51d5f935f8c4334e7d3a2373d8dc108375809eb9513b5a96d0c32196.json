@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT COUNT(*) AS \"count!\"\n           FROM push_subscriptions ps\n           LEFT JOIN user_sessions us ON us.id = ps.session_id\n           WHERE ps.user_id = $1\n             AND ps.revoked_at IS NULL\n             AND (ps.session_id IS NULL OR (us.revoked_at IS NULL AND us.expires_at > NOW()))",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "cffbe1ff51d5f935f8c4334e7d3a2373d8dc108375809eb9513b5a96d0c32196"
+}

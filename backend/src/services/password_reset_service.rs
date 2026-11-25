@@ -103,6 +103,7 @@ pub async fn reset_password(
     users::set_password(&mut *tx, request.user_id, &password_hash).await?;
     user_sessions::revoke_all_for_user(&mut *tx, request.user_id).await?;
     refresh_tokens::revoke_all_for_user(&mut *tx, request.user_id).await?;
+    crate::repositories::push_subscriptions::revoke_all_for_user(&mut *tx, request.user_id).await?;
 
     // Same-transaction audit, same rule as change_password and the break-glass
     // reset: a completed credential rotation carries its own evidence.

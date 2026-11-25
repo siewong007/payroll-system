@@ -3,10 +3,12 @@ import { useTranslation, Trans } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, ArrowLeft, Paperclip, ExternalLink, X, Calendar, AlertTriangle, Download, Trash2 } from 'lucide-react';
 import { getLeaveBalances, getLeaveRequests, getLeaveTypes, createLeaveRequest, cancelLeaveRequest, deleteLeaveRequest, uploadFile, getMyProfile, exportLeaveIcs, getPortalHolidays, getPortalWorkingDays } from '@/api/portal';
+import { useAuth } from '@/context/AuthContext';
 import { runBulk, summarizeBulkFailure } from '@/lib/bulk';
 import { formatDate, getErrorMessage } from '@/lib/utils';
 import { AttachmentLink, AttachmentPreview } from '@/components/ui/AttachmentPreview';
 import { DataTable, type Column } from '@/components/ui/DataTable';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { useConfirm } from '@/lib/confirm';
 import type { Employee, LeaveBalance, LeaveRequest, LeaveType } from '@/types';
 import i18n from '@/i18n';
@@ -170,6 +172,8 @@ const canDeleteLeave = (request: LeaveRequest) => request.status === 'cancelled'
 
 export function Leave() {
   const { t } = useTranslation();
+  const { user } = useAuth();
+  const hasEmployee = Boolean(user?.employee_id);
   const confirmDialog = useConfirm();
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<'balances' | 'requests'>('balances');
@@ -182,17 +186,31 @@ export function Leave() {
   const { data: profile } = useQuery({
     queryKey: ['my-profile'],
     queryFn: getMyProfile,
+    enabled: hasEmployee,
   });
 
   const currentYear = new Date().getFullYear();
-  const { data: balances, isLoading: loadingBalances } = useQuery({
+  const {
+    data: balances,
+    isLoading: loadingBalances,
+    isError: balancesError,
+    error: balancesErr,
+    refetch: refetchBalances,
+  } = useQuery({
     queryKey: ['leave-balances', currentYear],
     queryFn: () => getLeaveBalances(currentYear),
+    enabled: hasEmployee,
   });
 
-  const { data: requests } = useQuery({
+  const {
+    data: requests,
+    isError: requestsError,
+    error: requestsErr,
+    refetch: refetchRequests,
+  } = useQuery({
     queryKey: ['leave-requests'],
     queryFn: getLeaveRequests,
+    enabled: hasEmployee,
   });
 
   const {
@@ -203,6 +221,7 @@ export function Leave() {
   } = useQuery({
     queryKey: ['leave-types'],
     queryFn: getLeaveTypes,
+    enabled: hasEmployee,
   });
 
   const cancelMutation = useMutation({
@@ -258,10 +277,42 @@ export function Leave() {
   const balanceColumns = useMemo(() => getBalanceColumns(profile, t), [profile, t]);
   const requestColumns = useMemo(() => getRequestColumns(t), [t]);
 
+  if (!hasEmployee) {
+    return (
+      <div className="card">
+        <EmptyState icon={Calendar} title={t('attendance.scan.noEmployeeProfile')} />
+      </div>
+    );
+  }
+
   if (loadingBalances) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 dark:border-slate-200" />
+      </div>
+    );
+  }
+
+  if (balancesError || requestsError) {
+    return (
+      <div className="card">
+        <EmptyState
+          icon={AlertTriangle}
+          title={t('portal.leave.loadFailed')}
+          description={getErrorMessage(balancesErr || requestsErr, t('portal.leave.loadFailed'))}
+          action={
+            <button
+              type="button"
+              onClick={() => {
+                void refetchBalances();
+                void refetchRequests();
+              }}
+              className="btn-primary"
+            >
+              {t('common.retry')}
+            </button>
+          }
+        />
       </div>
     );
   }
@@ -695,9 +746,17 @@ function ApplyLeaveForm({
     };
   }, [attachmentPreview]);
 
+  const currentYear = new Date().getFullYear();
+  const { data: yearBalances } = useQuery({
+    queryKey: ['leave-balances', startYear],
+    queryFn: () => getLeaveBalances(startYear),
+    enabled: startYear !== currentYear,
+  });
+  const effectiveBalances = startYear !== currentYear && yearBalances ? yearBalances : balances;
+
   const selectedBalance = useMemo(
-    () => balances.find((b) => b.leave_type_id === form.leave_type_id),
-    [balances, form.leave_type_id],
+    () => effectiveBalances.find((b) => b.leave_type_id === form.leave_type_id),
+    [effectiveBalances, form.leave_type_id],
   );
   const selectedType = useMemo(
     () => leaveTypes.find((lt) => lt.id === form.leave_type_id),

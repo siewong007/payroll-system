@@ -58,15 +58,15 @@ function daysBetweenYmd(fromYmd: string, toYmd: string): number | null {
 }
 
 function getStatusColor(status: string, expiryDate: string | null) {
+  if (status === 'archived') {
+    return 'bg-gray-100 text-gray-600 dark:bg-slate-800 dark:text-slate-300';
+  }
   const today = todayLocalDate();
   if (expiryDate && expiryDate < today) {
     return 'bg-red-50 text-red-700 dark:bg-red-500/15 dark:text-red-300';
   }
   if (status === 'expired') {
     return 'bg-red-50 text-red-700 dark:bg-red-500/15 dark:text-red-300';
-  }
-  if (status === 'archived') {
-    return 'bg-gray-100 text-gray-600 dark:bg-slate-800 dark:text-slate-300';
   }
   if (expiryDate) {
     const daysUntil = daysBetweenYmd(today, expiryDate);
@@ -82,10 +82,10 @@ function getStatusLabel(
   status: string,
   expiryDate: string | null,
 ) {
+  if (status === 'archived') return t('enums.docStatus.archived');
   const today = todayLocalDate();
   if (expiryDate && expiryDate < today) return t('enums.docStatus.expired');
   if (status === 'expired') return t('enums.docStatus.expired');
-  if (status === 'archived') return t('enums.docStatus.archived');
   if (expiryDate) {
     const daysUntil = daysBetweenYmd(today, expiryDate);
     if (daysUntil !== null && daysUntil <= 30) {
@@ -101,6 +101,7 @@ export function DocumentList() {
   const { user } = useAuth();
   const { can, canAny } = usePermissions();
   const canManageDocs = can('manage_documents');
+  const canViewEmployees = can('view_employees');
   const canMarkConfidential = canAny(['manage_employees', 'view_payroll']);
   const companyId = user?.company_id ?? null;
   const [search, setSearch] = useState('');
@@ -130,6 +131,7 @@ export function DocumentList() {
     queryKey: ['employees-select', companyId, debouncedSearch, page],
     queryFn: () => getEmployees({ search: debouncedSearch || undefined, page, per_page: PER_PAGE }),
     placeholderData: keepPreviousData,
+    enabled: canViewEmployees,
   });
 
   const companyDocsSummary = useQuery({
@@ -190,113 +192,117 @@ export function DocumentList() {
         </div>
       </button>
 
-      {/* Search */}
-      <div className="relative mb-6 max-w-md">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 dark:text-slate-500 pointer-events-none" />
-        <input
-          type="text"
-          placeholder={t('documents.searchPlaceholder')}
-          aria-label={t('documents.searchPlaceholder')}
-          value={search}
-          onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-          className="form-input !pl-10 !pr-11 !py-2.5"
-        />
-        {search && (
-          <button
-            type="button"
-            onClick={() => { setSearch(''); setPage(1); }}
-            aria-label={t('common.clear')}
-            title={t('common.clear')}
-            className="absolute right-1 top-1/2 -translate-y-1/2 min-h-10 min-w-10 flex items-center justify-center rounded-md text-gray-400 dark:text-slate-500 hover:text-gray-700 dark:hover:text-slate-200"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        )}
-      </div>
-
-      {/* Employee List */}
-      {loadingEmployees ? (
-        <div className="flex items-center justify-center py-12">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-black dark:border-slate-200" />
-        </div>
-      ) : employeesError ? (
-        <EmptyState
-          icon={AlertTriangle}
-          title={t('documents.loadFailed')}
-          description={getErrorMessage(employeesErrorObj, t('documents.loadFailed'))}
-          action={
-            <button type="button" onClick={() => refetchEmployees()} className="btn-primary">
-              {t('common.retry')}
-            </button>
-          }
-        />
-      ) : employeeList.length === 0 ? (
-        <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 py-12 text-center text-gray-400 dark:text-slate-500">
-          <User className="w-8 h-8 mx-auto mb-2 text-gray-300 dark:text-slate-600" />
-          <p className="text-sm">{search ? t('employees.noMatch') : t('employees.empty')}</p>
-          {search && (
-            <button
-              type="button"
-              onClick={() => { setSearch(''); setPage(1); }}
-              className="btn-secondary mt-3"
-            >
-              {t('reports.clearSearch')}
-            </button>
-          )}
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {employeeList.map((emp) => (
-            <button
-              type="button"
-              key={emp.id}
-              onClick={() => setSelectedTarget({ type: 'employee', id: emp.id, name: emp.full_name, number: emp.employee_number })}
-              className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-5 text-left hover:border-gray-300 dark:hover:border-slate-700 hover:shadow-md transition-all group"
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-gray-100 dark:bg-slate-800 flex items-center justify-center text-gray-900 dark:text-slate-100 font-semibold text-sm group-hover:bg-gray-200 dark:group-hover:bg-slate-700 transition-colors shrink-0">
-                  {emp.full_name.split(' ').map(n => n[0]).slice(0, 2).join('')}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="font-medium text-sm text-gray-900 dark:text-slate-100 truncate">{emp.full_name}</div>
-                  <div className="text-xs text-gray-500 dark:text-slate-400">{emp.employee_number}</div>
-                </div>
-                <FileText className="w-4 h-4 text-gray-300 dark:text-slate-600 group-hover:text-gray-500 dark:group-hover:text-slate-300 transition-colors shrink-0" />
-              </div>
-              {emp.department && (
-                <div className="text-xs text-gray-500 dark:text-slate-400 mt-2 truncate">{emp.department}</div>
-              )}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* Paging — the roster is served a page at a time, so the count and the
-          controls are what tell an admin the tail exists at all. */}
-      {employeeTotal > PER_PAGE && (
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mt-6 text-sm text-gray-500 dark:text-slate-400">
-          <span>
-            {t('common.showing', { from: (page - 1) * PER_PAGE + 1, to: Math.min(page * PER_PAGE, employeeTotal), total: employeeTotal })}
-          </span>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              disabled={page <= 1}
-              className="min-h-10 flex items-center gap-1 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-slate-700 disabled:opacity-40 hover:bg-gray-50 dark:hover:bg-slate-800"
-            >
-              <ChevronLeft className="w-4 h-4" /> {t('common.previous')}
-            </button>
-            <button
-              type="button"
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              disabled={page >= totalPages}
-              className="min-h-10 flex items-center gap-1 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-slate-700 disabled:opacity-40 hover:bg-gray-50 dark:hover:bg-slate-800"
-            >
-              {t('common.next')} <ChevronRight className="w-4 h-4" />
-            </button>
+      {canViewEmployees && (
+        <>
+          {/* Search */}
+          <div className="relative mb-6 max-w-md">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 dark:text-slate-500 pointer-events-none" />
+            <input
+              type="text"
+              placeholder={t('documents.searchPlaceholder')}
+              aria-label={t('documents.searchPlaceholder')}
+              value={search}
+              onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+              className="form-input !pl-10 !pr-11 !py-2.5"
+            />
+            {search && (
+              <button
+                type="button"
+                onClick={() => { setSearch(''); setPage(1); }}
+                aria-label={t('common.clear')}
+                title={t('common.clear')}
+                className="absolute right-1 top-1/2 -translate-y-1/2 min-h-10 min-w-10 flex items-center justify-center rounded-md text-gray-400 dark:text-slate-500 hover:text-gray-700 dark:hover:text-slate-200"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
           </div>
-        </div>
+
+          {/* Employee List */}
+          {loadingEmployees ? (
+            <div className="flex items-center justify-center py-12">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-black dark:border-slate-200" />
+            </div>
+          ) : employeesError ? (
+            <EmptyState
+              icon={AlertTriangle}
+              title={t('documents.loadFailed')}
+              description={getErrorMessage(employeesErrorObj, t('documents.loadFailed'))}
+              action={
+                <button type="button" onClick={() => refetchEmployees()} className="btn-primary">
+                  {t('common.retry')}
+                </button>
+              }
+            />
+          ) : employeeList.length === 0 ? (
+            <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 py-12 text-center text-gray-400 dark:text-slate-500">
+              <User className="w-8 h-8 mx-auto mb-2 text-gray-300 dark:text-slate-600" />
+              <p className="text-sm">{search ? t('employees.noMatch') : t('employees.empty')}</p>
+              {search && (
+                <button
+                  type="button"
+                  onClick={() => { setSearch(''); setPage(1); }}
+                  className="btn-secondary mt-3"
+                >
+                  {t('reports.clearSearch')}
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {employeeList.map((emp) => (
+                <button
+                  type="button"
+                  key={emp.id}
+                  onClick={() => setSelectedTarget({ type: 'employee', id: emp.id, name: emp.full_name, number: emp.employee_number })}
+                  className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-5 text-left hover:border-gray-300 dark:hover:border-slate-700 hover:shadow-md transition-all group"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full bg-gray-100 dark:bg-slate-800 flex items-center justify-center text-gray-900 dark:text-slate-100 font-semibold text-sm group-hover:bg-gray-200 dark:group-hover:bg-slate-700 transition-colors shrink-0">
+                      {emp.full_name.split(' ').map(n => n[0]).slice(0, 2).join('')}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="font-medium text-sm text-gray-900 dark:text-slate-100 truncate">{emp.full_name}</div>
+                      <div className="text-xs text-gray-500 dark:text-slate-400">{emp.employee_number}</div>
+                    </div>
+                    <FileText className="w-4 h-4 text-gray-300 dark:text-slate-600 group-hover:text-gray-500 dark:group-hover:text-slate-300 transition-colors shrink-0" />
+                  </div>
+                  {emp.department && (
+                    <div className="text-xs text-gray-500 dark:text-slate-400 mt-2 truncate">{emp.department}</div>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Paging — the roster is served a page at a time, so the count and the
+              controls are what tell an admin the tail exists at all. */}
+          {employeeTotal > PER_PAGE && (
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mt-6 text-sm text-gray-500 dark:text-slate-400">
+              <span>
+                {t('common.showing', { from: (page - 1) * PER_PAGE + 1, to: Math.min(page * PER_PAGE, employeeTotal), total: employeeTotal })}
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  disabled={page <= 1}
+                  className="min-h-10 flex items-center gap-1 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-slate-700 disabled:opacity-40 hover:bg-gray-50 dark:hover:bg-slate-800"
+                >
+                  <ChevronLeft className="w-4 h-4" /> {t('common.previous')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={page >= totalPages}
+                  className="min-h-10 flex items-center gap-1 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-slate-700 disabled:opacity-40 hover:bg-gray-50 dark:hover:bg-slate-800"
+                >
+                  {t('common.next')} <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
+        </>
       )}
 
       {/* Documents Modal (Company-Wide or Employee) */}
@@ -572,6 +578,8 @@ function CreateDocumentModal({
   onCreated: () => void;
 }) {
   const { t } = useTranslation();
+  const { can } = usePermissions();
+  const canViewEmployees = can('view_employees');
   const toast = useToast();
   const formId = useId();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -586,6 +594,8 @@ function CreateDocumentModal({
     description: '',
     file_name: '',
     file_url: '',
+    file_size: undefined as number | undefined,
+    mime_type: undefined as string | undefined,
     category_id: '',
     issue_date: '',
     expiry_date: '',
@@ -618,6 +628,8 @@ function CreateDocumentModal({
         ...f,
         file_name: uploaded.file_name || f.file_name,
         file_url: uploaded.url,
+        file_size: uploaded.size,
+        mime_type: file.type || undefined,
         title: f.title || uploaded.file_name.replace(/\.[^.]+$/, ''),
       }));
     } catch (err) {
@@ -700,18 +712,20 @@ function CreateDocumentModal({
           </FormField>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <FormField label={t('common.employee')}>
-              {(aria) => (
-                <EmployeePicker
-                  id={aria.id}
-                  value={employeeId}
-                  onChange={(id) => setEmployeeId(id)}
-                  isActive={null}
-                  initialLabel={defaultEmployeeLabel}
-                  placeholder={t('documents.companyWide')}
-                />
-              )}
-            </FormField>
+            {canViewEmployees && (
+              <FormField label={t('common.employee')}>
+                {(aria) => (
+                  <EmployeePicker
+                    id={aria.id}
+                    value={employeeId}
+                    onChange={(id) => setEmployeeId(id)}
+                    isActive={null}
+                    initialLabel={defaultEmployeeLabel}
+                    placeholder={t('documents.companyWide')}
+                  />
+                )}
+              </FormField>
+            )}
             <FormField label={t('documents.cols.category')}>
               {(aria) => (
                 <select

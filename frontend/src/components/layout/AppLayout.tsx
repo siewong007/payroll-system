@@ -1,19 +1,28 @@
 import { useEffect, useState } from 'react';
-import { Outlet, Navigate } from 'react-router';
-import { Menu, Search } from 'lucide-react';
+import { Link, Outlet, Navigate } from 'react-router';
+import { useQuery } from '@tanstack/react-query';
+import { Bell, Menu, Search } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useTranslation } from 'react-i18next';
+import { getNotificationCount } from '@/api/notifications';
 import { Sidebar } from './Sidebar';
 import { BrandLogo } from '@/components/ui/BrandLogo';
 import { PageTransition } from '@/components/ui/PageTransition';
 import { PwaInstallBanner } from '@/components/pwa/PwaInstallBanner';
 import { openCommandPalette } from '@/lib/commandPalette';
-import { hasOnlyEmployeeRole } from '@/lib/roles';
+import { canUseAdminConsole } from '@/lib/roles';
 
 export function AppLayout() {
   const { user, isAuthenticated, isLoading } = useAuth();
   const { t } = useTranslation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const { data: notifCount } = useQuery({
+    queryKey: ['notification-count'],
+    queryFn: getNotificationCount,
+    refetchInterval: 30_000,
+    enabled: isAuthenticated && Boolean(user?.company_id) && !user?.must_change_password,
+  });
+  const hasUnread = Boolean(notifCount && notifCount.unread > 0);
 
   // Sync shell accent class to <html> so portaled modals, ConfirmDialog, and
   // CommandPalette inherit --accent-1/--accent-2/--ring in both light and dark modes.
@@ -42,7 +51,7 @@ export function AppLayout() {
     return <Navigate to="/change-password" replace />;
   }
 
-  if (hasOnlyEmployeeRole(user)) {
+  if (user && !canUseAdminConsole(user)) {
     return <Navigate to="/portal" replace />;
   }
 
@@ -79,6 +88,20 @@ export function AppLayout() {
             >
               <Search className="w-4 h-4" />
             </button>
+            {Boolean(user?.company_id) && (
+              <Link
+                to="/portal/notifications"
+                aria-label={t('nav.portal.notifications')}
+                className="relative min-h-11 min-w-11 inline-flex items-center justify-center text-gray-500 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white hover:bg-white/60 dark:hover:bg-slate-800 rounded-lg transition-all-fast"
+              >
+                <Bell className="w-4 h-4" />
+                {hasUnread && (
+                  <span className="absolute top-1.5 right-1.5 min-w-[16px] h-[16px] px-0.5 text-[9px] font-bold bg-red-500 text-white rounded-full flex items-center justify-center leading-none">
+                    {notifCount!.unread}
+                  </span>
+                )}
+              </Link>
+            )}
             <span className="inline-flex items-center gap-1.5 rounded-full border border-indigo-200/60 dark:border-indigo-400/30 bg-indigo-50/80 dark:bg-indigo-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-indigo-600 dark:text-indigo-300">
               <span className="glow-dot" />
               {t('nav.adminBadge')}

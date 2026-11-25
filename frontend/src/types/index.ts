@@ -213,6 +213,18 @@ export interface UpdateEmployeeRequest extends Partial<CreateEmployeeRequest> {
   clear_date_resigned?: boolean;
   /** Explicit clear `epf_category` so EPF reverts to age/residency derivation. */
   clear_epf_category?: boolean;
+  clear_payroll_group_id?: boolean;
+  clear_department?: boolean;
+  clear_designation?: boolean;
+  clear_cost_centre?: boolean;
+  clear_branch?: boolean;
+  clear_phone?: boolean;
+  clear_email?: boolean;
+  clear_bank_name?: boolean;
+  clear_bank_account_number?: boolean;
+  clear_probation_end?: boolean;
+  clear_confirmation_date?: boolean;
+  clear_salary_group?: boolean;
 }
 
 export interface PaginatedResponse<T> {
@@ -266,6 +278,7 @@ export interface PayrollRun {
   cancelled_at: string | null;
   cancel_reason: string | null;
   notes: string | null;
+  updated_by?: string | null;
 }
 
 export interface PayrollItemSummary {
@@ -328,7 +341,12 @@ export interface PayslipBreakdown {
   employee_id: string;
   employee_name: string;
   employee_number: string;
-  item: Record<string, unknown> & { gross_salary: number; total_deductions: number; net_salary: number };
+  item: Record<string, unknown> & {
+    gross_salary: number;
+    total_deductions: number;
+    total_claims?: number;
+    net_salary: number;
+  };
   lines: PayrollItemDetail[];
 }
 
@@ -412,6 +430,8 @@ export interface PayrollEntry {
   is_taxable: boolean | null;
   is_processed: boolean | null;
   payroll_run_id: string | null;
+  overtime_application_id?: string | null;
+  leave_request_id?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -434,7 +454,10 @@ export interface CreatePayrollEntryRequest {
   is_taxable?: boolean;
 }
 
-export type UpdatePayrollEntryRequest = Partial<CreatePayrollEntryRequest>;
+export type UpdatePayrollEntryRequest = Partial<CreatePayrollEntryRequest> & {
+  clear_quantity?: boolean;
+  clear_rate?: boolean;
+};
 
 export interface UpdatePayrollPcbRequest {
   pcb_amount: number;

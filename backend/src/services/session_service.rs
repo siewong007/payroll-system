@@ -158,6 +158,7 @@ async fn revoke_session_family(pool: &PgPool, user_id: Uuid, session_id: Uuid) -
     let mut tx = pool.begin().await?;
     user_sessions::revoke(&mut *tx, user_id, session_id).await?;
     refresh_tokens::revoke_for_session(&mut *tx, session_id).await?;
+    crate::repositories::push_subscriptions::revoke_for_session(&mut *tx, session_id).await?;
     tx.commit().await?;
     Ok(())
 }
@@ -174,6 +175,7 @@ pub async fn revoke_session(pool: &PgPool, user_id: Uuid, session_id: Uuid) -> A
         return Ok(false);
     }
     refresh_tokens::revoke_for_session(pool, session_id).await?;
+    crate::repositories::push_subscriptions::revoke_for_session(pool, session_id).await?;
     Ok(true)
 }
 
@@ -186,6 +188,12 @@ pub async fn revoke_other_sessions(
     // The session state is the immediate JWT revocation source; stale refresh
     // rows are also revoked so they cannot be exchanged later.
     refresh_tokens::revoke_for_revoked_sessions(pool, user_id, current_session_id).await?;
+    crate::repositories::push_subscriptions::revoke_for_revoked_sessions(
+        pool,
+        user_id,
+        current_session_id,
+    )
+    .await?;
     Ok(count)
 }
 

@@ -344,7 +344,7 @@ pub async fn send_email(
         None,
         1,
         3,
-        None,
+        Some(Utc::now() + chrono::Duration::minutes(5)),
         created_by,
     )
     .await?;
@@ -399,7 +399,7 @@ pub async fn enqueue_email(
         AppError::Validation(format!("{recipient_email} is not a valid email address"))
     })?;
 
-    if !config.smtp_enabled() {
+    if !config.smtp_enabled() || !SharedMailer::from_config(config).is_enabled() {
         return email_logs::insert_with_delivery_state(
             pool,
             company_id,
@@ -728,7 +728,9 @@ pub async fn send_welcome_email(
         login_email,
     );
 
-    if !config.smtp_enabled() {
+    // Notice `next_retry_at = NULL` and `max_attempts = 1`: DB outbox never
+    // picks up redacted welcome logs; retries run in-memory below.
+    if !config.smtp_enabled() || !mailer.is_enabled() {
         return email_logs::insert_with_delivery_state(
             pool,
             company_id,
@@ -749,8 +751,6 @@ pub async fn send_welcome_email(
         .await;
     }
 
-    // Notice `next_retry_at = NULL` and `max_attempts = 1`: DB outbox never
-    // picks up redacted welcome logs; retries run in-memory below.
     let log = email_logs::insert_with_delivery_state(
         pool,
         company_id,

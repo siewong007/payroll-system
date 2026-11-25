@@ -1,131 +1,113 @@
 # Implemented feature catalogue
 
-This catalogue distinguishes code that is usable end to end from code that is
-present but not fully wired. It is the feature source of truth for the current
-repository.
+This catalogue distinguishes capabilities usable end to end from those gated by external configuration or left on the project roadmap. It is the feature source of truth for the repository.
 
 ## Status definitions
 
 | Status           | Meaning                                                                        |
 | ---------------- | ------------------------------------------------------------------------------ |
 | End to end       | Backend route, persistence/business logic, and a reachable frontend flow exist |
-| API only         | Backend capability exists, but no reachable product page currently exposes it  |
 | Conditional      | Implemented but requires external configuration or infrastructure              |
-| Informational    | UI explains or displays policy but does not persist that policy                |
-| Unwired          | Code exists on one side of the stack but is not a reachable, complete workflow |
+| Informational    | UI explains or displays policy without persisting mutations                    |
 | Known limitation | A user-visible flow exists with a material security or completeness caveat     |
 
 ## Authentication and administration
 
-| Capability                                             | Status        | Notes                                                                                                |
-| ------------------------------------------------------ | ------------- | ---------------------------------------------------------------------------------------------------- |
-| Password login, JWT access, refresh rotation, logout   | End to end    | Access tokens stay in memory; refresh uses an httpOnly cookie                                        |
-| Forgot/reset/change password                           | End to end    | Forgot/reset requires SMTP; password change revokes all active sessions and refresh tokens           |
-| TOTP 2FA, backup recovery codes, and code-login        | End to end    | Dedicated `TOTP_ENCRYPTION_KEY`, replay & lockout guards, `super_admin` recovery reset               |
-| Active session management                              | End to end    | Device/IP tracking and per-session revocation in Settings / Portal                                   |
-| WebAuthn passkey registration, sign-in, rename, delete | End to end    | Relying-party origin and ID must match the deployed host                                             |
-| Google OAuth2 authorize, callback, link, unlink        | Conditional   | Routed at `/oauth2/callback` and `/oauth2/link`; requires Google OAuth2 client credentials           |
-| Cloudflare Turnstile bot protection                    | Conditional   | Enforced fail-closed on unauthenticated credential-free endpoints when `TURNSTILE_SECRET_KEY` is set |
-| Multi-company membership and active-company switching  | End to end    | Switching reissues the JWT with a new company context                                                |
-| Company create/update/delete                           | End to end    | Super-admin operation                                                                                |
-| One-time initial administrator bootstrap               | End to end    | Explicit `bootstrap_admin` CLI; no database-seeded credential                                        |
-| User create/update/deactivate and company assignment   | End to end    | Super-admin page and APIs with search and pagination                                                 |
-| Additive company-scoped user groups & permissions      | End to end    | `UserGroups` UI and `PermissionGuard` routing backed by per-request permission union                 |
-| Role matrix page                                       | Informational | Displays built-in role baseline alongside customizable user groups                                   |
-| Password-reset administration page                     | Unwired       | Legacy unrouted client calls; admin 2FA reset and email reset links cover recovery                   |
+| Capability                                                     | Status        | Notes                                                                                                    |
+| -------------------------------------------------------------- | ------------- | -------------------------------------------------------------------------------------------------------- |
+| Password login, JWT access, refresh rotation, logout           | End to end    | Access tokens stay in memory; refresh uses an `httpOnly` cookie with atomic reuse detection              |
+| Forgot/reset/change password                                   | End to end    | Forgot/reset requires SMTP; password change revokes all active sessions and refresh tokens               |
+| TOTP 2FA, backup recovery codes, and code-login                | End to end    | Dedicated `TOTP_ENCRYPTION_KEY`, O(1) keyed SHA-256 backup codes (`1032`), replay/lockout guards         |
+| Active session management & `/account` page                    | End to end    | Device/IP tracking and per-session revocation at `/account` (all `AppLayout` users) and `/portal`        |
+| WebAuthn passkey registration, sign-in, rename, delete         | End to end    | Relying-party origin and ID must match the deployed host                                                 |
+| Google OAuth2 authorize, callback, link, unlink                | Conditional   | Browser-bound state cookie; routed at `/oauth2/callback` and `/oauth2/link`; requires Google credentials |
+| Cloudflare Turnstile bot protection                            | Conditional   | Fail-closed on unauthenticated credential-free endpoints when `TURNSTILE_SECRET_KEY` is set              |
+| Multi-company membership and active-company switching          | End to end    | Switching reissues the JWT with a new `company_id` scope                                                 |
+| Company create/update/delete                                   | End to end    | `super_admin` operation with cascade wipe                                                                |
+| One-time initial administrator bootstrap                       | End to end    | Explicit `bootstrap_admin` CLI; no database-seeded credentials                                           |
+| User create/update/deactivate and company assignment           | End to end    | `super_admin` page (`/users`), search/pagination, privileged-user hiding for `manager`                   |
+| 8 canonical roles (`super_admin`..`employee`, incl. `manager`) | End to end    | Enforced via `core::permission::Permission` and `users_roles_valid` (`1031`)                             |
+| Additive company-scoped user groups & `PermissionGuard`        | End to end    | Blocks platform-only grants and `exec`/`manager`/`employee` payroll escalation                           |
+| Platform Settings & Health console (`/admin/platform`)         | End to end    | `super_admin` UI for 2FA enforcement policy and live background-job health/error inspection              |
+| Role matrix page (`/roles`)                                    | Informational | Displays built-in role baseline read from `GET /api/auth/permissions/matrix`                             |
 
 ## Company and employee management
 
-| Capability                                                                 | Status     | Notes                                                                                                             |
-| -------------------------------------------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------- |
-| Company profile, payroll defaults, attendance settings, summary statistics | End to end | Company-scoped                                                                                                    |
-| Employee list/search/filter, create, edit, soft delete                     | End to end | Search is backed by a trigram expression index                                                                    |
-| Employment, bank, statutory, compensation, and contact fields              | End to end | Sensitive fields require appropriate HR/payroll access                                                            |
-| Salary history                                                             | End to end | Maintained with employee compensation changes                                                                     |
-| TP3 records                                                                | End to end | Backend and employee detail flow                                                                                  |
-| Employee portal-account linking/provisioning                               | End to end | Consolidated data migration also repairs eligible legacy links                                                    |
-| CSV/XLSX import template, validation preview, confirmation                 | End to end | Validation sessions expire; confirmation runs asynchronously via `background_jobs` (`202` + `GET /api/jobs/{id}`) |
-| Default payroll group selection                                            | End to end | Every company is provisioned with a usable group; management CRUD is not implemented                              |
-| Work schedules and employee schedule overrides                             | End to end | Company defaults plus per-employee assignment                                                                     |
+| Capability                                                                 | Status     | Notes                                                                                                  |
+| -------------------------------------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------ |
+| Company profile, payroll defaults, attendance settings, summary statistics | End to end | Company-scoped                                                                                         |
+| Employee list/search/filter, create, edit, soft delete                     | End to end | Trigram-indexed search, `date_resigned` editing, non-negative/chronological DB checks (`1032`)         |
+| Employment, bank, statutory, compensation, and contact fields              | End to end | Payroll fields gated behind payroll permissions                                                        |
+| Salary history with change classification                                  | End to end | `change_type` vocabulary + notes (`1025`, `1033`), round-trips through backup/restore                  |
+| TP3 records                                                                | End to end | Backend, employee detail flow, and non-negative/year checks (`1033`)                                   |
+| Employee portal-account linking/provisioning                               | End to end | Random initial passwords (redacted from `email_logs`) with forced first-login password change          |
+| CSV/XLSX import template, validation preview, confirmation                 | End to end | Zip-bomb guarded XLSX parsing; async confirmation via `background_jobs` (`202` + `GET /api/jobs/{id}`) |
+| Default payroll group selection                                            | End to end | Provisioned per company; multi-group management CRUD is on the roadmap                                 |
+| Work schedules                                                             | End to end | Company default schedule and timezone; per-employee override write UI is on the roadmap                |
 
 ## Payroll and statutory processing
 
-| Capability                                              | Status      | Notes                                                                                                                                                                                                                                                                     |
-| ------------------------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Manual payroll entries                                  | End to end  | Earnings/deductions can be added, edited, and removed before processing                                                                                                                                                                                                   |
-| Monthly payroll calculation & preview                   | Conditional | Preview surfaces diagnostics (incl. Minimum Wages Order 2024 RM1,700 check & KWSP Parts A–F derivation); runs execute asynchronously via `background_jobs`, and production runs fail closed until official EPF/SOCSO/EIS data is verified and PCB passes LHDN conformance |
-| One active run per group and period                     | End to end  | Enforced by service logic and partial unique indexes on `payroll_runs` and `background_jobs`                                                                                                                                                                              |
-| Run detail and employee item review                     | End to end  | Tenant-scoped read models plus line-by-line explainable payslip drawer                                                                                                                                                                                                    |
-| Manual PCB adjustment before approval                   | Conditional | Recomputes totals under row locks for an existing non-production/test run; it does not enable production PCB                                                                                                                                                              |
-| Submit, approve, return, mark paid, delete eligible run | End to end  | Explicit permission, four-eyes maker-checker, and state-transition checks                                                                                                                                                                                                 |
-| Cancel a run before payment                             | End to end  | Mandatory reason; preparer cancels draft/processed, approver cancels pending/approved; staged entries/claims revert in-transaction                                                                                                                                        |
-| Reverse a paid run                                      | End to end  | `PUT /api/payroll/runs/{id}/reverse` (`ApprovePayroll` / finance); mandatory reason, blocked if a later run exists, reverts staged entries/claims and records audit provenance                                                                                            |
-| Payroll overview dashboard                              | End to end  | `/payroll`: committed period KPIs, status pipeline, variance vs prior period, 12-period trend, department labour cost, live action queue                                                                                                                                  |
-| Bank payment file export                                | End to end  | CSV for approved/paid runs, `mark_payroll_paid`-gated, formula-neutralised, audited without account numbers                                                                                                                                                               |
-| Journal preview                                         | End to end  | Balanced DR/CR from committed figures with department allocation; fixed default account codes, nothing posted to a ledger                                                                                                                                                 |
-| Salary change classification                            | End to end  | `change_type` vocabulary + notes on `salary_history`; round-trips through backup/restore                                                                                                                                                                                  |
-| Individual and batch payslip PDFs                       | End to end  | Generated by the backend                                                                                                                                                                                                                                                  |
-| EPF, SOCSO, EIS, and PCB reports/exports                | Conditional | Report/export paths exist; source data and PCB output require independent verification first                                                                                                                                                                              |
-| EA form data and export                                 | End to end  | Available through report endpoints/UI                                                                                                                                                                                                                                     |
+| Capability                                              | Status      | Notes                                                                                                                                                     |
+| ------------------------------------------------------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Manual payroll entries                                  | End to end  | Earnings/deductions added/edited/removed before processing; OT & leave links (`1033`) prevent collateral cancel deletions                                 |
+| Monthly payroll calculation & preview                   | Conditional | Preview checks Minimum Wages Order 2024 RM1,700, KWSP Parts A–F (`epf_category` auto-derived unless overridden), `taxable_gross`; production fails closed |
+| One active run per group and period                     | End to end  | Enforced by service logic and partial unique indexes on `payroll_runs` and `background_jobs`                                                              |
+| Run detail, breakdown drawer, submit/approve/pay/delete | End to end  | Four-eyes maker-checker (`payroll_admin` vs `finance`), explainable `payroll_item_details`, `calculation_snapshot` provenance                             |
+| Manual PCB adjustment before approval                   | Conditional | Recomputes totals and `payroll_item_details` under row locks on non-production runs; does not enable automatic PCB                                        |
+| Cancel before payment & reverse paid runs               | End to end  | Mandatory reason; `cancel` for pre-paid states, `reverse` for paid runs; reverts staged entries/claims atomically                                         |
+| Payroll overview dashboard (`/payroll`)                 | End to end  | Committed KPIs, status pipeline, prior-period variance, 12-period trend, department labour cost, action queue                                             |
+| Bank payment file CSV & GL journal preview              | End to end  | Formula-neutralised CSV (`mark_payroll_paid`), balanced DR/CR preview (no ledger posting)                                                                 |
+| Individual and batch payslip PDFs                       | End to end  | Generated backend PDFs rendered from `payroll_item_details`                                                                                               |
+| EPF, SOCSO, EIS, PCB exports & Form EA                  | Conditional | Paths implemented and formula-neutralised; live statutory runs require verified official schedules and LHDN conformance                                   |
 
 ## Attendance, kiosk, and geofence
 
-| Capability                                               | Status     | Notes                                                                                                                                                                                                             |
-| -------------------------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Admin-generated QR and employee QR check-in              | End to end | One QR can serve many employees during its server-provided TTL; the admin console only mints while the QR is actually displayed                                                                                   |
-| Public kiosk credentials and rotating QR display         | End to end | Kiosk secrets are shown once and stored hashed; expired unreferenced tokens are purged daily                                                                                                                      |
-| Check-out including overnight shifts                     | End to end | Matches the newest open record within 24 hours; an older open session is reported as such instead of "please check in first". Never blocked by geofence — an off-site check-out is recorded and flagged           |
-| Employee current-day/history view                        | End to end | Portal flow; fetch failures surface as retryable errors rather than an empty "not checked in" state                                                                                                               |
-| HR list, manual entry, correction, filters               | End to end | Company-scoped and audit logged. Manual entry picks employees by name/number and rejects cross-company ids; corrections require a reason and support explicit clearing of check-out/notes                         |
-| Open-session triage                                      | End to end | `open_only` filter plus a "Still Checked In" tile for finding sessions nobody closed                                                                                                                              |
-| Per-employee attendance summary and CSV export           | End to end | Includes employees with zero matching rows. Counts are per distinct local day (a split shift is one day; a superseded absence is not double-counted). Export defaults to the current month when no range is given |
-| Locations and `none`/`warn`/`enforce` geofence modes     | End to end | Coordinate/radius validity is enforced by the schema; clients skip the GPS wait when the mode is `none`                                                                                                           |
-| Office-network binding (`none`/`learn`/`warn`/`enforce`) | End to end | Evaluates server-observed egress IP prefixes against admin-approved `company_networks`; learning aggregates anchored candidates without exposing `employee_id → IP` mappings                                      |
-| Automatic absence marking                                | End to end | In-process scheduler; safe for the current single API instance. Runs as a catch-up from the last bookmarked success, so a missed window is recovered rather than skipped, and HR can re-run a past date on demand |
-| Face ID check-in                                         | End to end | A dedicated challenge is issued per check-in and the WebAuthn assertion is verified server-side against the employee's registered passkeys before the record is written                                           |
+| Capability                                               | Status     | Notes                                                                                                                  |
+| -------------------------------------------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Admin-generated QR and employee QR check-in              | End to end | Multi-use QR tokens within server-supplied TTL; scoped per display surface                                             |
+| Public kiosk credentials and rotating QR display         | End to end | Secrets shown once, stored hashed, and passed via fragment `/kiosk#<secret>` (scrubbed via `history.replaceState`)     |
+| Check-out including overnight shifts                     | End to end | Matches newest open record within 24 hours; older open sessions prompt admin correction; never blocked by geofence     |
+| Employee current-day/history view                        | End to end | Portal flow with retryable error states                                                                                |
+| HR list, manual entry, correction, open-session triage   | End to end | Company-scoped, audit logged, reason required, explicit field clear flags, `open_only` filter                          |
+| Per-employee attendance summary and CSV export           | End to end | Distinct local-day counts (`late > half_day > present > absent`); export defaults to current local month               |
+| Geofence locations (`none`/`warn`/`enforce`)             | End to end | Schema-validated coordinates/radii; skips GPS wait when mode is `none`                                                 |
+| Office-network binding (`none`/`learn`/`warn`/`enforce`) | End to end | Evaluates server-observed client IP prefixes; aggregates anchored candidates without exposing `employee_id → IP`       |
+| Self-healing auto-absent catch-up                        | End to end | Daily 04:30 UTC + startup catch-up per company timezone (`1020`, `1023`), plus admin `POST /api/attendance/absent-run` |
+| Face ID check-in                                         | End to end | Per-check-in WebAuthn challenge verified server-side against registered passkeys                                       |
 
-## Employee self-service and approvals
+## Employee self-service, approvals, and collaboration
 
-| Capability                                                | Status     | Notes                                                                   |
-| --------------------------------------------------------- | ---------- | ----------------------------------------------------------------------- |
-| Profile and payslip history/download                      | End to end | Employee-linked account required                                        |
-| Leave types, balances, requests, cancellation, ICS export | End to end | Standard types are provisioned; type-management CRUD is not implemented |
-| Claims create/edit/submit/cancel/delete                   | End to end | Receipt upload supported                                                |
-| Overtime create/edit/submit/cancel/delete                 | End to end | Type and hours feed payroll when approved                               |
-| Leave, claim, and overtime approval workbench             | End to end | Admin/HR create, review, approve, reject, and edit flows                |
-| Team calendar and public holidays                         | End to end | Company-aware calendar projections                                      |
-| Notifications, unread count, mark read                    | End to end | Portal UI and API                                                       |
+| Capability                                                | Status      | Notes                                                                                                     |
+| --------------------------------------------------------- | ----------- | --------------------------------------------------------------------------------------------------------- |
+| Profile and payslip history/PDF download                  | End to end  | Employee-linked account required                                                                          |
+| Leave types, balances, requests, cancellation, ICS export | End to end  | Standard EA 1955 leave types provisioned per company; type CRUD & year-end UI on roadmap                  |
+| Claims & overtime create/edit/submit/cancel/delete        | End to end  | Receipt uploads, duration bounds, positive amount checks (`1033`), payroll consumption                    |
+| Leave, claim, and overtime approval workbench             | End to end  | Maker-checker self-approval prevention and transactional balance/entry updates                            |
+| Team calendar, public holidays, & working days            | End to end  | Includes `.ics` file upload and SSRF-hardened URL import (`core::http_client`)                            |
+| Document metadata, categories, expiry tracking & uploads  | End to end  | Local API `uploads/` tracked in `uploaded_files`, magic-byte + 10 MB + single-segment containment (`404`) |
+| Letter/email templates, preview, async outbox & logs      | Conditional | Requires SMTP for delivery; retryable outbox (`1032`), initial passwords redacted from `email_logs`       |
+| Teams and team membership                                 | End to end  | Company-scoped teams and calendar integration                                                             |
 
-## Documents, communication, and collaboration
+## PWA, notifications, localization, legal, and operations
 
-| Capability                                           | Status      | Notes                                                                                                                                                                                         |
-| ---------------------------------------------------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Document metadata, categories, expiry tracking       | End to end  | Company and optional employee association                                                                                                                                                     |
-| File upload/download                                 | End to end  | Stored on local API disk (`uploaded_files`), gated by extension, 10 MB cap, magic-byte validation, canonical path containment, and per-user reverse-reference authorization (`404` on denial) |
-| Letter/email templates, preview, send, delivery logs | Conditional | SMTP is required for delivery; initial passwords redacted from stored `email_logs`                                                                                                            |
-| Holiday CRUD and working-day configuration           | End to end  | Includes `.ics` file and SSRF-hardened URL import (`core::http_client`)                                                                                                                       |
-| Teams and team membership                            | End to end  | Used by calendars and organizational views                                                                                                                                                    |
+| Capability                                                      | Status      | Notes                                                                                                                   |
+| --------------------------------------------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------- |
+| In-app notifications (list, unread count, mark read)            | End to end  | Portal UI and API                                                                                                       |
+| Installable PWA & offline fallback                              | End to end  | `manifest.webmanifest`, `sw.js`, `offline.html`, `OfflineBanner`, iOS/Android/desktop `AppInstallCard`                  |
+| Web Push notifications (VAPID + durable push outbox)            | Conditional | Migration `1034`, `push_service`, `NotificationActivationCard`, `/api/notifications/test-push`; requires `VAPID_*` keys |
+| Reporting & workspace dashboard (`/dashboard`, `/reports`)      | End to end  | Headcount, approvals, attendance exceptions, YTD statutory breakdown, RFC-4180 formula-neutralised CSV exports          |
+| Four-locale internationalization (`en`, `ms`, `zh-CN`, `zh-TW`) | End to end  | Compile-time `Messages` parity, `i18n.test.ts` script purity, `scripts/i18n-scan.mjs --ci`                              |
+| Dark/light/system appearance & command palette (`⌘K`)           | End to end  | Available across `AppLayout` and `PortalLayout`                                                                         |
+| Legal, PDPA & 2026 Malaysian Statutory Guide                    | End to end  | Public & in-app routes (`/terms`, `/privacy`, `/compliance`) + [legal.md](legal.md)                                     |
+| Audit trail & automated daily PDPA retention purges             | End to end  | 7-year (`2,555`-day) audit retention alongside daily operational purges                                                 |
+| Company JSON backup/export and restore/import                   | End to end  | `REPEATABLE READ READ ONLY` snapshot export; filename-contained & magic-byte validated restore                          |
+| Readiness & health telemetry (`/api/health/ready`)              | End to end  | Reports DB, build `revision`, and all 4 background-loop heartbeats; `deploy/payroll-watchdog.sh` host monitoring        |
+| PostgreSQL 19 Beta 2 migrations & CI gates                      | End to end  | Baseline `1000`–`1001` + immutable `1002`–`1034`; CI tests migrations, SQLx cache, clippy, Vitest, Docker, and audits   |
 
-## Reporting, localization, legal, and operations
+## Explicit non-features and roadmap boundaries
 
-| Capability                                                      | Status     | Notes                                                                                                                                                                    |
-| --------------------------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Payroll, department, leave, claims, statutory reports           | End to end | Reachable reports page and formula-neutralised export actions                                                                                                            |
-| Workspace dashboard (`/dashboard`)                              | End to end | Headcount, pending approvals, attendance exceptions, YTD statutory breakdown, and shortcuts                                                                              |
-| Four-locale internationalization (`en`, `ms`, `zh-CN`, `zh-TW`) | End to end | Full UI + server-error translation parity, script-purity tests, and CI hardcoded-string scanner                                                                          |
-| Dark/light/system theme & global command palette (`⌘K`)         | End to end | Accessible across Admin and Portal shells                                                                                                                                |
-| Terms, Privacy/PDPA Notice, and 2026 Statutory Guide            | End to end | Public & in-app routes (`/terms`, `/privacy`, `/compliance`) plus `docs/legal/*`                                                                                         |
-| Audit trail & PDPA retention purges                             | End to end | Filtered administrative view plus automated daily retention purges (7-year `2,555`-day audit horizon)                                                                    |
-| Company JSON backup/export and restore/import                   | End to end | Tenant-bound restore with `upload_path` filename sanitization and magic-byte verification                                                                                |
-| Settings and platform attendance defaults                       | End to end | Company and super-admin flows                                                                                                                                            |
-| Liveness, readiness, and platform health telemetry              | End to end | Readiness checks DB/migrations, running build `revision`, and background-job heartbeats; `super_admin` `/admin/platform/health` surfaces queue depth and last job errors |
-| PostgreSQL schema/reference & forward migrations                | End to end | Consolidated `1000`/`1001` baseline plus immutable forward chain `1002`–`1033`; no demo credentials                                                                      |
-| Docker Compose and GitHub Actions                               | End to end | Both pin PostgreSQL 19 Beta 2 and enforce forward-only migration immutability                                                                                            |
-
-## Explicit non-features
-
-- The product has no published OpenAPI contract yet.
-- The "Face ID" label triggers device-local W3C WebAuthn passkey verification; it is not a server-side biometric recognition service.
-- Uploads live on the API container's local disk rather than external object storage (S3).
-- Redis is not part of the application runtime; background tasks run in-process for a single API instance.
-- Statutory reference data is not automatically synchronized with Malaysian authorities and must be verified against official KWSP, PERKESO, and LHDN publications before live production use.
+- **No published OpenAPI spec yet** — backend/frontend DTO parity is maintained manually in `frontend/src/types/`.
+- **WebAuthn "Face ID"** verifies device-local cryptographic assertions; the server never receives or stores facial images or biometric templates.
+- **Local storage and single-worker execution** — uploads live on local API disk rather than S3, and background jobs run in-process without a Redis tier.
+- **Manual statutory verification gate** — bundled `1001_data.sql` rows are unverified academic fixtures; production runs require verified KWSP/PERKESO schedules and LHDN computerised-MTD conformance.
+- **Deferred product items** — Form E/CP8D & CP22/CP22A exports, year-end leave carry-forward UI, per-employee work-schedule write UI, leave-type/payroll-group CRUD, automated HRD Corp levy booking, document-expiry/probation alerts, batch/portal EA forms, offboarding settlement, and Playwright browser E2E journeys remain future enhancements.

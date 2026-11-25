@@ -22,7 +22,7 @@ use payroll_system::core::db;
 use payroll_system::routes;
 use payroll_system::services;
 use payroll_system::services::job_health_service::{
-    self, JOB_AUTO_ABSENT, JOB_EMAIL_OUTBOX, JOB_RETENTION_CLEANUP,
+    self, JOB_AUTO_ABSENT, JOB_EMAIL_OUTBOX, JOB_PUSH_OUTBOX, JOB_RETENTION_CLEANUP,
 };
 
 /// Response for a caught handler panic.
@@ -87,6 +87,9 @@ async fn main() -> anyhow::Result<()> {
     const SESSION_INACTIVE_RETENTION_DAYS: i32 = 90;
     const PASSWORD_RESET_RETENTION_DAYS: i32 = 30;
     const BACKGROUND_JOB_RETENTION_DAYS: i32 = 30;
+    const PUSH_SUBSCRIPTION_REVOKED_RETENTION_DAYS: i32 = 30;
+    const PUSH_SUBSCRIPTION_INACTIVE_RETENTION_DAYS: i32 = 180;
+    const PUSH_OUTBOX_RETENTION_DAYS: i32 = 30;
 
     // Claim the configured address before running migrations or spawning background work.
     // This makes startup fail fast with an actionable error when another process owns the port.
@@ -134,6 +137,7 @@ async fn main() -> anyhow::Result<()> {
             axum::http::header::AUTHORIZATION,
             axum::http::header::CONTENT_TYPE,
         ])
+        .expose_headers([axum::http::header::CONTENT_DISPOSITION])
         .allow_credentials(true)
         .max_age(std::time::Duration::from_secs(7_200));
 
@@ -145,13 +149,15 @@ async fn main() -> anyhow::Result<()> {
         .build()
         .expect("Failed to build WebAuthn");
 
-    // Shared SMTP transport + App state
+    // Shared SMTP transport + Web Push client + App state
     let mailer = services::email_service::SharedMailer::from_config(&config);
+    let push = services::push_service::SharedPushClient::from_config(&config);
     let state = AppState {
         pool: pool.clone(),
         config: config.clone(),
         webauthn: Arc::new(webauthn),
         mailer: mailer.clone(),
+        push: push.clone(),
     };
 
     // Build router
@@ -473,6 +479,39 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
 
+            match payroll_system::repositories::push_subscriptions::purge_stale(
+                &cleanup_pool,
+                PUSH_SUBSCRIPTION_REVOKED_RETENTION_DAYS,
+                PUSH_SUBSCRIPTION_INACTIVE_RETENTION_DAYS,
+            )
+            .await
+            {
+                Ok(rows) => {
+                    cleanup_processed += rows;
+                    tracing::info!(rows, "push-subscription retention: completed");
+                }
+                Err(e) => {
+                    tracing::error!("Failed to purge stale push subscriptions: {}", e);
+                    cleanup_errors.push(format!("push_subscriptions: {e}"));
+                }
+            }
+
+            match payroll_system::repositories::push_outbox::purge_old(
+                &cleanup_pool,
+                PUSH_OUTBOX_RETENTION_DAYS,
+            )
+            .await
+            {
+                Ok(rows) => {
+                    cleanup_processed += rows;
+                    tracing::info!(rows, "push-outbox retention: completed");
+                }
+                Err(e) => {
+                    tracing::error!("Failed to purge old push outbox rows: {}", e);
+                    cleanup_errors.push(format!("push_outbox: {e}"));
+                }
+            }
+
             let err_summary = if cleanup_errors.is_empty() {
                 None
             } else {
@@ -694,6 +733,61 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
+    // Background task: Web Push outbox worker (5s tick).
+    let push_pool = pool.clone();
+    let push_client = push.clone();
+    let mut push_shutdown = shutdown_rx.clone();
+    let push_handle = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut last_heartbeat: Option<std::time::Instant> = None;
+
+        loop {
+            tokio::select! {
+                _ = push_shutdown.changed() => break,
+                _ = interval.tick() => {}
+            }
+
+            match services::push_service::process_outbox_batch(&push_pool, &push_client, 50).await {
+                Ok((sent, failed)) => {
+                    if sent > 0
+                        || failed > 0
+                        || last_heartbeat.is_none_or(|t| t.elapsed().as_secs() >= 60)
+                    {
+                        let ok = failed == 0;
+                        let err = if failed > 0 {
+                            Some(format!("{failed} outbox push notification(s) failed"))
+                        } else {
+                            None
+                        };
+                        job_health_service::record_job_run(
+                            &push_pool,
+                            JOB_PUSH_OUTBOX,
+                            ok,
+                            sent as u64,
+                            err.as_deref(),
+                        )
+                        .await;
+                        last_heartbeat = Some(std::time::Instant::now());
+                    }
+                }
+                Err(e) => {
+                    let msg = e.to_string();
+                    tracing::error!(error = %msg, "Push outbox batch failed");
+                    job_health_service::record_job_run(
+                        &push_pool,
+                        JOB_PUSH_OUTBOX,
+                        false,
+                        0,
+                        Some(&msg),
+                    )
+                    .await;
+                    last_heartbeat = Some(std::time::Instant::now());
+                }
+            }
+        }
+    });
+
     tracing::info!("Starting server on {}", addr);
 
     axum::serve(
@@ -707,7 +801,7 @@ async fn main() -> anyhow::Result<()> {
     // Release the background loops so they stop between ticks instead of
     // dying mid-query when the runtime drops.
     let _ = shutdown_tx.send(true);
-    let _ = tokio::join!(cleanup_handle, absent_handle, outbox_handle);
+    let _ = tokio::join!(cleanup_handle, absent_handle, outbox_handle, push_handle);
 
     tracing::info!("Shutting down — closing database pool...");
     pool.close().await;

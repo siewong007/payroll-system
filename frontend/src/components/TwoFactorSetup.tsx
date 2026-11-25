@@ -48,6 +48,7 @@ export function TwoFactorSetup() {
       setView('backup_codes');
       setConfirmCode('');
       queryClient.invalidateQueries({ queryKey: ['totp-status'] });
+      queryClient.invalidateQueries({ queryKey: ['sessions'] });
     },
     onError: (err: unknown) => setError(getErrorMessage(err, t('auth.twoFactor.invalidCode'))),
   });
@@ -61,6 +62,7 @@ export function TwoFactorSetup() {
       setSuccess(t('auth.twoFactor.disabled'));
       setTimeout(() => setSuccess(''), 3000);
       queryClient.invalidateQueries({ queryKey: ['totp-status'] });
+      queryClient.invalidateQueries({ queryKey: ['sessions'] });
     },
     onError: (err: unknown) => setError(getErrorMessage(err, t('auth.twoFactor.disableFailed'))),
   });

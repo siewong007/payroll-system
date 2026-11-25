@@ -1,8 +1,17 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
+import { PayslipBreakdownDrawer } from '@/pages/payroll/PayslipBreakdownDrawer';
 import { PayrollPreviewPanel } from '@/pages/payroll/PayrollPreviewPanel';
+import { payrollDiagnosticText } from '@/pages/payroll/statusMeta';
 import type { PayrollPreview, PayrollPreviewEmployee } from '@/types';
+
+vi.mock('@/api/payroll', () => ({
+  getPayslipBreakdown: vi.fn(),
+}));
+
+import { getPayslipBreakdown } from '@/api/payroll';
 
 function employee(overrides: Partial<PayrollPreviewEmployee> = {}): PayrollPreviewEmployee {
   return {
@@ -165,5 +174,104 @@ describe('PayrollPreviewPanel', () => {
     );
 
     expect(screen.getByText('Prorated 12/31 days')).toBeInTheDocument();
+  });
+});
+
+describe('payrollDiagnosticText and PayslipBreakdownDrawer', () => {
+  it('formats plural diagnostics with MYR totals and translates parameterless keys', () => {
+    const singular = payrollDiagnosticText({
+      code: 'staged_entries_not_in_run',
+      message: 'Fallback',
+      params: { count: '1', total: '25000' },
+      employee_id: null,
+      employee_number: null,
+      employee_name: null,
+    });
+    expect(singular).toContain('1 staged entry');
+    expect(singular).toContain('RM');
+    expect(singular).toContain('250.00');
+
+    const plural = payrollDiagnosticText({
+      code: 'staged_entries_not_in_run',
+      message: 'Fallback',
+      params: { count: '3', total: '50000' },
+      employee_id: null,
+      employee_number: null,
+      employee_name: null,
+    });
+    expect(plural).toContain('3 staged entries');
+
+    const noParams = payrollDiagnosticText({
+      code: 'missing_bank_account',
+      message: 'Raw server message',
+      employee_id: null,
+      employee_number: null,
+      employee_name: null,
+    });
+    expect(noParams).toContain('No bank account on record');
+  });
+
+  it('separates claim reimbursements into their own section in PayslipBreakdownDrawer', async () => {
+    vi.mocked(getPayslipBreakdown).mockResolvedValue({
+      employee_id: 'emp-1',
+      employee_name: 'Aisyah Rahman',
+      employee_number: 'E001',
+      item: {
+        id: 'item-1',
+        payroll_run_id: 'run-1',
+        employee_id: 'emp-1',
+        basic_salary: 500_000,
+        total_allowances: 0,
+        total_overtime: 0,
+        total_claims: 12_500,
+        gross_salary: 500_000,
+        epf_employee: 55_000,
+        epf_employer: 65_000,
+        socso_employee: 1_975,
+        socso_employer: 3_465,
+        eis_employee: 990,
+        eis_employer: 990,
+        pcb_amount: 0,
+        zakat_amount: 0,
+        total_deductions: 57_965,
+        net_salary: 454_535,
+        working_days: 22,
+        days_worked: 22,
+        is_prorated: false,
+      },
+      lines: [
+        {
+          id: 'line-1',
+          payroll_item_id: 'item-1',
+          category: 'earning',
+          item_type: 'basic_salary',
+          description: 'Basic Salary',
+          amount: 500_000,
+          is_statutory: false,
+          is_taxable: true,
+        },
+        {
+          id: 'line-2',
+          payroll_item_id: 'item-1',
+          category: 'earning',
+          item_type: 'claim_reimbursement',
+          description: 'Medical Claim',
+          amount: 12_500,
+          is_statutory: false,
+          is_taxable: false,
+        },
+      ],
+    });
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <PayslipBreakdownDrawer runId="run-1" employeeId="emp-1" onClose={vi.fn()} />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText('Medical Claim')).toBeInTheDocument();
+    expect(screen.getAllByText('Reimbursements').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText(/Basic Salary/)).toBeInTheDocument();
   });
 });

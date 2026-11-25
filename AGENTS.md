@@ -1,6 +1,6 @@
 # AGENTS.md
 
-This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
+This file provides unified guidance to AI coding agents and contributors working in this repository.
 
 ## Commands
 
@@ -13,11 +13,11 @@ cp .env.example .env        # first time only, from the repo root
 docker compose up -d        # Postgres 19 Beta 2 on 127.0.0.1:5434
 ```
 
-Requires `POSTGRES_PASSWORD`, `JWT_SECRET`, and `TOTP_ENCRYPTION_KEY` (dedicated AES key for stored TOTP secrets; never reuse `JWT_SECRET`) in the root `.env`.
+Requires `POSTGRES_PASSWORD`, `JWT_SECRET`, and `TOTP_ENCRYPTION_KEY` (dedicated AES key for stored TOTP secrets; generate with `openssl rand -hex 32`, never reuse `JWT_SECRET`) in the root `.env`.
 
 ### Root workspace (monorepo scripts & hooks)
 
-Runtime versions are pinned via `rust-toolchain.toml` (`stable` with `rustfmt` and `clippy`) and `.bun-version` (`1.3.14`), alongside `.editorconfig` and `.prettierrc.json`. Run `bun install` at the repo root to enable Husky + `lint-staged` pre-commit hooks, then run full-repo gates from the root:
+Runtime versions are pinned via `rust-toolchain.toml` (`stable` with `rustfmt` and `clippy`) and `.bun-version` (`1.3.14`), alongside `.editorconfig` and `.prettierrc.json`. Run `bun install` at the repo root to wire Husky + `lint-staged` pre-commit hooks, then run full-repo gates from the root:
 
 ```bash
 bun run lint                # cargo clippy -- -D warnings, eslint, and i18n-scan --ci
@@ -39,17 +39,17 @@ cargo test                  # integration tests require DATABASE_URL + JWT_SECRE
 cargo test <name>           # run a single test by substring
 ```
 
-Migrations live in `backend/migrations/` and are embedded via `sqlx::migrate!` — they run on every `cargo run`. Versions `1000_schema.sql` and `1001_data.sql` form the consolidated baseline, followed by immutable numbered forward migrations (`1002_*.sql` through `1033_*.sql`). Every deployed migration is strictly immutable (enforced by CI); future production changes must add the next numbered migration file, and returning to two files requires an explicit, tested rebaseline.
+Migrations live in `backend/migrations/` and are embedded via `sqlx::migrate!` — they run on every `cargo run`. Versions `1000_schema.sql` and `1001_data.sql` form the consolidated baseline, followed by immutable numbered forward migrations (`1002_*.sql` through `1034_*.sql`, with intentional gaps at `1013` and `1028`). Every deployed migration is strictly immutable (enforced by CI); future production changes must add the next numbered migration file, and returning to two files requires an explicit, tested rebaseline.
 
-Data access lives in `backend/src/repositories/` (including `reads/` projections); handlers and services must not embed request-time SQL. Some queries use the compile-time-checked `sqlx::query!`/`query_as!` macros (the payroll engine and repository helpers are migrated; other legacy queries still use runtime `query`/`query_as` and are being migrated incrementally). These macros are verified against the committed `backend/.sqlx/` offline cache, so CI lint and the Docker build need no database (`SQLX_OFFLINE=true`). **After adding or changing a macro query, regenerate the cache** against a migrated DB and commit it:
+Data access lives in `backend/src/repositories/` (including `reads/` projections); handlers and services must not embed request-time SQL. Compile-time-checked `sqlx::query!`/`query_as!`/`query_scalar!` macros are verified against the committed `backend/.sqlx/` offline cache, so CI lint and the Docker build need no database (`SQLX_OFFLINE=true`). **After adding or changing a macro query, regenerate the cache** against a migrated DB and commit it:
 
 ```bash
 DATABASE_URL=postgres://… cargo sqlx prepare   # writes backend/.sqlx/
 ```
 
-Forgetting this makes the build fail with "no cached data for this query" — that's the guardrail, not a flake.
+Forgetting this makes the build fail with "no cached data for this query" — that is the guardrail, not a flake.
 
-The canonical target is **PostgreSQL 19 Beta 2**. `1000_schema.sql` uses native `uuidv7()` and permits PostgreSQL 18 only for the documented AWS RDS 18.4 compatibility exception. Use the pinned `postgres:19beta2-alpine` image locally. A data volume created by an earlier major version cannot be opened directly by 19; use `pg_upgrade` or dump/restore for valuable data, or recreate a disposable local volume. See `docs/database.md`.
+The canonical target is **PostgreSQL 19 Beta 2**. `1000_schema.sql` uses native `uuidv7()` and permits PostgreSQL 18 only for the documented AWS RDS 18.4 compatibility exception. Use the pinned `postgres:19beta2-alpine` image locally. A data volume created by an earlier major version cannot be opened directly by 19; use `pg_upgrade` or dump/restore for valuable data, or recreate a disposable local volume. See [docs/database.md](docs/database.md).
 
 ### Frontend (React 19 + Vite 8 + TS 7)
 
@@ -69,75 +69,94 @@ Tailwind CSS v4 is wired via `@tailwindcss/vite`. Path alias `@/*` → `src/*`.
 
 ### Request flow
 
-Browser → Vite dev proxy (or Cloudflare → host Caddy in prod) → Axum at `/api/*` → handler → service → sqlx → Postgres. All routes are defined in one place: `backend/src/routes/mod.rs`. Everything is nested under `/api`.
+Browser / PWA → Vite dev proxy (or Cloudflare → host Caddy in prod) → Axum at `/api/*` → handler → service → repository → Postgres. All routes are defined in one place: `backend/src/routes/mod.rs`. Everything is nested under `/api`.
 
 ### Backend layering (strict, enforced by convention)
 
 - `handlers/` — thin HTTP glue. Extract `AuthUser`, parse JSON, call a service, map to JSON response. Do not put business logic here.
-- `services/` — business logic and orchestration (e.g. `payroll_engine`, `pcb_calculator`, `epf_service`, `eis_service`, `socso_service`, `attendance_service`). Services compose repository calls, own transactions, and return `AppResult<T>`.
-- `models/` — data structs and SQLx result/DTO projections. Naming is by domain (`employee.rs`, `payroll.rs`, `attendance.rs`, `user_company.rs`, etc.).
-- `repositories/` — per-table SQL operations plus `reads/` for cross-table projections. Request-time SQL belongs here; see `docs/architecture.md`.
-- `core/` — cross-cutting: `app_state` (shared `AppState { pool, config, webauthn, mailer }`), `auth` (JWT + `AuthUser` extractor), `config` (env loading + `BUILD_REVISION`), `db` (pool + migrate), `cookie`, `error` (`AppError` → HTTP via `IntoResponse`).
+- `services/` — business logic and orchestration (e.g. `payroll_engine`, `pcb_calculator`, `epf_service`, `eis_service`, `socso_service`, `attendance_service`, `push_service`). Services compose repository calls, own transaction boundaries, map absence to `NotFound`/`Conflict`, take `&PgPool`, and return `AppResult<T>`. No raw SQL in services.
+- `models/` — data structs and SQLx read/DTO projections (no SQL). Naming is by domain (`employee.rs`, `payroll.rs`, `attendance.rs`, `notification.rs`, `user_company.rs`, etc.).
+- `repositories/` — per-table SQL operations (`employees.rs`, `payroll_runs.rs`, `push_subscriptions.rs`, `push_outbox.rs`, …) plus `reads/` for cross-table joins/aggregations grouped by use-case. Functions are generic over `impl sqlx::Executor<'_, Database = Postgres>` so services can pass `&pool` or compose calls in `&mut tx`. Request-time SQL lives here; see [docs/architecture.md](docs/architecture.md).
+- `core/` — cross-cutting: `app_state` (`AppState { pool, config, webauthn, mailer, push }`), `auth` (JWT + `AuthUser` extractor), `permission` (`Permission` enum & role/group matrix), `config` (env loading + `BUILD_REVISION`), `db` (pool + migrate), `cookie`, `turnstile`, `http_client`, `upload_path`, `redact`, `error` (`AppError` → HTTP via `IntoResponse`).
 
 Errors: every fallible path returns `AppResult<T>` (`Result<T, AppError>`). `AppError::Database` wraps `sqlx::Error` via `#[from]`, so use `?` freely. `AppError::Internal` is logged and returned as a generic 500; all other variants surface their message to the client.
 
-Auth: JWT in `Authorization: Bearer`, refresh token in httpOnly cookie. `AuthUser` is an Axum extractor; always enforce allow-list capability checks via `auth.require_permission(Permission::...)` (or `auth.can(...)`) rather than role deny-lists — `exec` is read-only and holds no payroll/report permissions. Role strings in claims: `super_admin`, `admin`, `payroll_admin`, `hr_manager`, `finance`, `manager`, `exec`, `employee`. Multi-company users switch active company via `PUT /api/auth/switch-company`, which re-issues the JWT with a new `company_id`.
+Auth & authorization: JWT in `Authorization: Bearer`, refresh token in `httpOnly` cookie (rotated atomically with reuse detection). `AuthUser` is an Axum extractor. Always enforce allow-list capability checks via `auth.require_permission(Permission::...)` (or `auth.can(...)`) rather than role deny-lists (`require_non_employee`). Canonical role strings (`core::permission::ALL_ROLES`, enforced by `users_roles_valid`): `super_admin`, `admin`, `manager`, `payroll_admin`, `hr_manager`, `finance`, `exec`, `employee`.
 
-Rate limiting is applied per-route group in `routes/mod.rs` via `tower_governor` — tighter limits on `/auth/login`, `/auth/forgot-password`, and OAuth2 endpoints.
+- `exec` is read-only and holds no payroll/report write permissions; `admin` and `manager` hold no payroll permissions; `manager` also excludes `import_employees` and platform-only permissions, and `user_service::hides_privileged_users` hides `admin`/`super_admin` accounts from callers holding neither role.
+- Company-scoped `user_groups` combine additively via `filter_group_permissions_for_roles`, blocking platform-only permissions (`manage_users`, `manage_companies`, `manage_backups`, `manage_platform_settings`) for all groups, blocking payroll permissions for `exec`/`employee`/`manager`, and keeping `exec`-only users read-only.
+- Multi-company users switch active company via `PUT /api/auth/switch-company`, which re-issues the JWT with a new `company_id`.
 
-Bot protection is Cloudflare Turnstile (managed widget), enforced by `core::turnstile::verify` at the top of each unauthenticated, credential-free handler: `/auth/login`, `/auth/forgot-password`, `/auth/reset-password`, `/auth/passkey/check`, `/auth/passkey/{authenticate,discoverable}/begin`, and `/auth/oauth2/google/authorize`. Requests carry `turnstile_token` (body field; query param on the authorize GET). When `TURNSTILE_SECRET_KEY` is unset verification is skipped entirely — that is the intended dev/CI state; production sets it via `deploy/docker-compose.prod.yml` and the frontend gets `VITE_TURNSTILE_SITE_KEY` at build time. Failure modes are fail-closed: missing token 400, rejected token 403, Cloudflare unreachable 502. Deliberately NOT on `2fa/verify`, `validate-reset-token`, `refresh`, `kiosk/qr`, the passkey `complete` calls, or the OAuth callback — each is already credential-gated, downstream of a protected call, or cannot carry a token.
+Audit trail: covers credential lifecycle (login success at `issue_session`, login failures, logout, password change/reset inside rotation transactions, TOTP enable/disable/reset) and business mutations. Locked-out 2FA users are recovered via `POST /api/admin/users/{id}/2fa/reset` (`super_admin`, password re-confirmed, self-reset refused, session-revoking, audited in-transaction).
 
-Three background loops spawn from `main.rs` alongside the `background_jobs` async executor (`payroll_run` and `employee_import` enqueue a row and return `202` for `GET /api/jobs/{id}` to poll):
+Rate limiting & body bounds: applied per route group in `routes/mod.rs` via `tower_governor` with a 60-second state-pruning task — `ClientIpKeyExtractor` (gated by `TRUST_PROXY_HEADERS`) on unauthenticated endpoints and `SessionOrIpKeyExtractor` on expensive authenticated routes. Explicit `DefaultBodyLimit::max(...)` layers protect `/uploads`, `/admin/backup/import`, `/employees/import/validate`, and `/calendar/import-ics-file`.
 
-1. Daily PDPA-aligned retention cleanup of stale `refresh_tokens` (>30 days), unreferenced expired `attendance_qr_tokens` (>7 days), aged `attendance_network_observations`, `audit_logs` (>2,555 days / 7 years per ITA 1967 s.82), `notifications`, `email_logs`, `user_sessions`, and expired `bulk_import_sessions`.
-2. Daily catch-up auto-absent task at 12:30 PM Asia/Kuala_Lumpur (04:30 UTC via `core::schedule::next_daily_run_utc`, plus once at startup), evaluated per company timezone from the last bookmarked run while skipping approved `leave_requests`, non-working days, and public holidays.
-3. Transactional email outbox poller (15s tick using `FOR UPDATE SKIP LOCKED` and exponential retry backoff) reusing `AppState.mailer`. Each background task records health heartbeats surfaced on `/api/health/ready` and `/api/admin/platform/health`.
+Bot protection: Cloudflare Turnstile (`core::turnstile::verify`) is enforced at the top of `/auth/login`, `/auth/forgot-password`, `/auth/reset-password`, `/auth/passkey/check`, `/auth/passkey/{authenticate,discoverable}/begin`, and `/auth/oauth2/google/authorize`. Unset `TURNSTILE_SECRET_KEY` skips verification (intended dev/CI state); when set, failures are fail-closed (`400` missing, `403` rejected, `502` upstream unreachable).
+
+Four background loops spawn from `main.rs` alongside the `background_jobs` async executor (`payroll_run` and `employee_import` enqueue a row and return `202` for `GET /api/jobs/{id}` to poll, with stale jobs marked failed at startup):
+
+1. **Daily PDPA-aligned retention cleanup** (24h, advisory lock `7_492_026_101`) of stale `refresh_tokens` (>30d), unreferenced expired `attendance_qr_tokens` (>7d), aged `attendance_network_observations`, expired network dismissals, `audit_logs` (>2,555d / 7yr per ITA 1967 s.82), `notifications` (90d read / 365d unread), `email_logs` (>180d), `user_sessions` (30d revoked / 90d inactive), expired `bulk_import_sessions`, `password_reset_requests` (>30d), expired `passkey_challenges`, expired `oauth2_states`, finished `background_jobs` (>30d), unreferenced `uploaded_files` (>24h), stale `push_subscriptions` (30d revoked / 180d inactive), and old `push_outbox` rows (>30d).
+2. **Daily catch-up auto-absent task** at 12:30 PM MYT (04:30 UTC via `core::schedule::next_daily_run_utc`, plus startup pass, advisory lock `7_492_026_102`), evaluated per company timezone from the last bookmarked run while skipping approved `leave_requests`, non-working days, and public holidays.
+3. **Transactional email outbox poller** (15s tick, batch 25, `FOR UPDATE SKIP LOCKED`, exponential retry backoff) reusing `AppState.mailer`.
+4. **Web Push outbox poller** (5s tick, batch 50, `FOR UPDATE SKIP LOCKED`, retry backoff `[30s, 120s, 600s]`, max 4 attempts, auto-revoking `404`/`410` subscriptions) using `AppState.push` (`SharedPushClient`, RFC 8291 AES-128-GCM + RFC 8292 VAPID ES256).
+
+Each loop records health heartbeats surfaced on `/api/health/ready` and `/api/admin/platform/health`.
 
 ### Attendance subsystem (`services/attendance_service.rs`)
 
-Key design decisions to be aware of:
+- **QR tokens are multi-use within their TTL (300 s).** `used` on `attendance_qr_tokens` means _admin-revoked_ (set when a new token is generated), not _employee-scanned_. Minting is scoped per display surface (`kiosk_credential_id`, `NULL` = admin console). Do not reintroduce single-use logic.
+- **Check-out matches the most recent open record within 24 hours**, not by calendar date, supporting overnight shifts. When only an older open session exists, check-out instructs the employee to contact an administrator rather than prompting check-in.
+- **Check-out never fails on geofence** — an off-site or GPS-less check-out is recorded and OR-ed into `is_outside_geofence` for review.
+- **`QrTokenResponse` carries `ttl_seconds`** — never hardcode `300` in the frontend.
+- **Face ID check-in is a real WebAuthn ceremony** (`POST /api/attendance/check-in/face-id/begin` → verified assertion before insert).
+- **Auto-absent marking is date-parameterized and self-healing**, bounded by `date_joined`/`date_resigned` and bookmarked per company timezone (capped at 14 days; `POST /api/attendance/absent-run` bounded to 90 days). Check-in supersedes that day's cron-written placeholder in the same transaction (`created_by IS NULL`, method `manual`), preserving HR-edited rows.
+- **Summary endpoint** (`GET /api/attendance/summary?date_from=&date_to=`) aggregates distinct local days (`late > half_day > present > absent`) with a `LEFT JOIN` so employees with zero records still appear. `GET /api/attendance/export` defaults to the current local month when no range is provided.
+- **Corrections require a `reason`** (audited in-transaction) and use explicit clear flags (`clear_check_out` / `clear_notes`).
+- **Attendance date filters must remain sargable** — compare raw `check_in_at timestamptz` against local-midnight bounds parameterized by company timezone rather than wrapping the column in `AT TIME ZONE`.
 
-- **QR tokens are multi-use within their TTL (300 s).** The `used` flag on `attendance_qr_tokens` means _admin-revoked_ (set when a new token is generated), not _employee-scanned_. Multiple employees can check in from the same displayed QR within the 5-minute window. Do not reintroduce single-use logic.
-- **Check-out matches the most recent open record within 24 hours**, not by calendar date. This handles overnight / night-shift employees. The old same-day constraint has been removed.
-- **`QrTokenResponse` carries `ttl_seconds`** — the frontend uses this for progress bar calculation. Do not hardcode 300 in the frontend.
-- **Summary endpoint** `GET /api/attendance/summary?date_from=&date_to=` returns per-employee aggregates (`present_days`, `late_days`, `absent_days`, `half_days`, `total_hours`, `overtime_hours`). Uses a LEFT JOIN so employees with zero records still appear.
-- **CSV export** `GET /api/attendance/export` streams a downloadable CSV with the active filter set.
+### Attendance network binding (`services/attendance_network_service.rs`)
 
-### Payroll engine & Malaysian statutory compliance
+- **Only server-observed client IP is trusted** (`core::client_ip`). Never add a client-supplied SSID/BSSID input.
+- **Proof boundary**: egress prefix proves network path, not physical location (stated in migration `1016` and admin UI).
+- **Learning never self-promotes**: `attendance_network_observations` requires corroboration via a kiosk-minted QR token or `geofence_service::geofence_anchor` (never `!validate_geofence`), and only `ManageAttendanceNetworks` approves `company_networks`.
+- **Anti-lockout & PDPA**: enforcement stays inert with zero approved networks; `set_mode("enforce")` and deleting the last active network while enforcing are refused; check-out never blocks; non-public/unroutable IPs flag rather than block; `denied_count` tracks blocked attempts; no endpoint exposes `employee_id → IP` mappings.
 
-`services/payroll_engine.rs` is the entry point. It enforces one active run per `(company, payroll_group, year, month)`, preflights source-linked verified statutory rule sets, then composes `epf_service` (KWSP Third Schedule Parts A–F incl. Oct 2025 2% foreign-worker Part F & s.43(1) age-75 cessation) + `socso_service` + `eis_service` (RM6,000 ceiling) + `pcb_calculator` inside a transaction, surfacing `below_minimum_wage` warnings against the RM1,700/month floor (_Minimum Wages Order 2024_). The rows shipped in `1001_data.sql` are unverified academic fixtures; production payroll fails closed, and automatic PCB remains disabled until the calculator passes LHDN computerised-MTD conformance. PDFs are produced by `payslip_pdf_service` / `pdf_helpers` (printpdf), and statutory exports (EPF/SOCSO/EIS/PCB files + EA form) by `statutory_export_service` / `ea_form_service`. Legal, bilingual PDPA, and statutory references live in `docs/legal/`.
+### Payroll engine (`services/payroll_engine.rs`)
+
+Enforces one active run per `(company, payroll_group, year, month)`, preflights source-linked verified statutory rule sets, and composes `epf_service` (KWSP Parts A–F & s.43(1) age-75 cessation) + `socso_service` + `eis_service` (RM6,000 ceiling) + `pcb_calculator` inside a transaction, surfacing `below_minimum_wage` warnings against the RM1,700/month floor (_Minimum Wages Order 2024_). Bundled `1001_data.sql` rows are unverified academic fixtures; production payroll fails closed, and automatic PCB stays disabled until LHDN computerised-MTD conformance passes. See [docs/payroll.md](docs/payroll.md) and [docs/legal.md](docs/legal.md).
+
+Preserve these engine invariants:
+
+- **Calculation is separate from persistence**: `compute_payslip` is pure over `BulkPayrollData` + `StatutoryTables`; `process_payroll` computes every employee before `persist_payslip` writes anything.
+- **Statutory rules are read once per run** into `StatutoryTables` (`services/statutory_tables.rs`); calculators are pure (`calculate_*_with`) with zero per-employee queries.
+- **`POST /api/payroll/preview`** shares the exact calculation path without writing, returning `blocking`/`warnings` diagnostics.
+- **Explainability & provenance**: `payroll_item_details` stores itemized lines, `payroll_items.taxable_gross` (`1033`) tracks taxable pay for YTD/EA accuracy, and `payroll_runs.calculation_snapshot` captures the rule sets and overtime settings used.
 
 ### Frontend layout
 
-- `App.tsx` is the router. Two shells: `AppLayout` for admin/HR, `PortalLayout` for employee self-service. Route path constants live in `lib/routes.ts` (`ROUTES`), and global offline status renders via `components/ui/OfflineBanner.tsx`. Capability-based `PermissionGuard` wraps routes that a user lacks permission to see (e.g. `exec` holds no payroll or report permissions, and additive `user_groups` combine with role grants). `/kiosk/:kioskKey` (kiosk-secret authenticated QR display) and `/terms`, `/privacy`, `/compliance` (`LegalPage`) are public routes outside the user shells.
-- `api/client.ts` — single axios instance. Access token is kept in-memory only (never in `localStorage`); refresh uses the httpOnly cookie. A 401 on any non-auth endpoint triggers a single refresh attempt with a queue for concurrent requests, then redirects to `/login` if refresh fails. When adding API modules, always import from `@/api/client` — do not create a second axios instance.
-- `context/AuthContext.tsx` — on mount, calls `/auth/refresh` to restore the session from the cookie; `user` is mirrored to `localStorage` for fast paint only, never for auth.
-- `pages/` mirrors feature areas; `api/*.ts` has one file per backend module.
-- React Query defaults: `retry: 1`, `staleTime: 30s`, no refetch-on-focus.
-- **i18n**: four first-class locales (`en`, `ms`, `zh-CN`, `zh-TW`) via i18next. All user-facing strings go through `t()` with keys in `src/i18n/locales/en.ts`; the other three locales must mirror its exact shape (`Messages = typeof en` enforces this at compile time). Server `AppError` literals translate via `src/i18n/serverErrorMap.ts` → `serverErrors.*` keys. Dates/numbers use `lib/format.ts` helpers backed by `intlLocale()` — never pin a locale into `toLocale*`. `src/tests/i18n.test.ts` enforces key parity, interpolation parity, no en-residue, and zh script purity; `node scripts/i18n-scan.mjs --ci` (wired into CI) gates hardcoded strings — `// i18n-ok` marks intentional literals (template bodies, statutory CSV headers). See `docs/i18n/README.md` for the workflow and terminology dictionary.
+- `App.tsx` is the router with route constants in `lib/routes.ts` (`ROUTES`). Two authenticated shells: `AppLayout` (admin/HR/ops, plus `/account` and `super_admin` `/admin/platform`) and `PortalLayout` (employee self-service). Public routes: `/login`, `/oauth2/*`, `/forgot-password`, `/reset-password`, `/change-password`, `/attendance/scan`, `/kiosk#<secret>` (fragment-scrubbed via `history.replaceState`; legacy `/kiosk/:kioskKey`), `/terms`, `/privacy`, `/compliance`.
+- Capability-based `PermissionGuard` wraps routes using `user.permissions` (`role_permissions ∪ active user_groups`, with `exec` denied payroll/report/write permissions and `manager` denied payroll).
+- `api/client.ts` — single Axios instance. Access token lives in memory only; refresh uses the `httpOnly` cookie with a single queued 401 refresh. Never create a second HTTP client.
+- `context/AuthProvider.tsx` restores sessions via `/auth/refresh` on mount (`localStorage` mirrors display data only). `PwaProvider`, `manifest.webmanifest`, `sw.js`, `offline.html`, `OfflineBanner`, `AppInstallCard`, and `NotificationActivationCard` handle PWA installability and Web Push subscriptions.
+- **i18n**: four first-class locales (`en`, `ms`, `zh-CN`, `zh-TW`) typed via `Messages = typeof en`, `serverErrorMap.ts`, `lib/format.ts` (`intlLocale()`), `src/tests/i18n.test.ts`, and `node scripts/i18n-scan.mjs --ci` (`// i18n-ok` for intentional literals). See [docs/i18n.md](docs/i18n.md).
 
 ### Infra
 
-`infra/` holds only `infra/Dockerfile`, which builds the production backend image from the repository root. There is no Terraform: the AWS resources it described (S3/CloudFront/ACM/Route53/OIDC deploy role) were deleted on 2026-09-25. Production — API, database and the built frontend — runs on the AIC VPS behind Cloudflare; host Caddy serves the SPA from `/opt/payrollmy-site`. Uploads go to the API container's local `uploads/`.
+`infra/` holds only `infra/Dockerfile` (multi-stage build for the backend image). There is no Terraform (AWS resources were decommissioned on 2026-09-25). Production runs on the AIC VPS behind Cloudflare: host Caddy serves the SPA from `/opt/payrollmy-site` (reference config in `deploy/payrollmy-site.Caddyfile.example`) and proxies `/api` to the backend container; uploads live on `/opt/payroll/data/uploads`; `deploy/payroll-backup.sh` keeps 14 verified local nightly `pg_dump` archives; `deploy/payroll-watchdog.sh` monitors `/api/health/ready` and disk usage.
 
 ## Conventions specific to this repo
 
-- Money uses `rust_decimal::Decimal` end-to-end; never `f64`. Serde serializes decimals as strings (`serde-with-str`) — mirror that in TS types.
-- Dates for attendance/scheduling are interpreted in `Asia/Kuala_Lumpur`; UTC is only used for storage and for the background-task scheduler.
-- Treat deployed migrations as immutable. Add a new numbered file for later schema/data changes; only an explicit rebaseline may squash history. Update `frontend/src/types/` to match any API contract change (per CONTRIBUTING.md).
-- Keep handlers thin; if you find yourself writing SQL or composing services in a handler, move it into a `service` module.
-- Do not introduce a second HTTP client on the frontend — extend `api/client.ts` or add a new `api/<module>.ts` that uses it.
+- Money uses integer `sen` (`i64`) and `rust_decimal::Decimal` end to end; never `f64`. Serde serializes decimals as strings (`serde-with-str`) — mirror that in TS types.
+- Dates for attendance/scheduling are interpreted in the company's validated IANA timezone (`Asia/Kuala_Lumpur` default); UTC is used for storage and the background scheduler.
+- Treat deployed migrations as immutable. Add a new numbered file for later schema/data changes; only an explicit rebaseline may squash history. Update `frontend/src/types/` to match any API contract change.
+- Keep handlers thin; keep SQL strictly in `repositories/` or `repositories/reads/`.
+- Do not introduce a second HTTP client on the frontend — extend `api/client.ts` or add `api/<module>.ts` using it.
 
-## codegraph
+## CodeGraph
 
-This project has a codegraph knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships. The output directory retains this name for runtime compatibility with the backing tool.
+This project maintains a CodeGraph knowledge graph at `graphify-out/graph.json` (`graphify-out/` and `graphify` / `graphify-mcp` are the backing runtime names; the tool is exposed as the `codegraph` MCP server in `.mcp.json` and `./scripts/codegraph`).
 
-When the user types `/codegraph`, use the local codegraph skill or instructions before doing anything else.
-
-Rules:
-
-- For codebase questions, first run `./scripts/codegraph query "<question>"` when graphify-out/graph.json exists. Use `./scripts/codegraph path "<A>" "<B>"` for relationships and `./scripts/codegraph explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
-- Dirty graphify-out/ files are expected after hooks or incremental updates; dirty graph files are not a reason to skip codegraph. Only skip codegraph if the task is about stale or incorrect graph output, or the user explicitly says not to use it.
-- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
-- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
-- After modifying code, run `./scripts/codegraph update .` to keep the graph current (AST-only, no API cost).
+- **Start codebase exploration with `codegraph`**: use `codegraph_explore` (MCP) or `./scripts/codegraph query "<question>"` / `path` / `explain` / `node` / `callers` / `callees` / `impact` before broad grep/glob sweeps, then read exact target line ranges before editing.
+- **Keep the graph current after code changes**: run `./scripts/codegraph update .` (AST-only, no API key; pass `--force` if a refactor legitimately shrinks the graph).
+- **Dirty `graphify-out/` files** are expected and gitignored; never skip CodeGraph because of them unless debugging stale graph output.
+- **HTML visualization note**: `graphify-out/graph.html` exceeds the 5,000-node default cap (`GRAPHIFY_VIZ_NODE_LIMIT` must be raised, e.g. `8000`). Use `./scripts/codegraph update .` to regenerate the full node-level HTML; `export html` produces an aggregated community meta-graph instead.

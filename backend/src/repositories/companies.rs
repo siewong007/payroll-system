@@ -426,13 +426,23 @@ pub async fn delete_company_data(conn: &mut sqlx::PgConnection, company_id: Uuid
 /// repository layer, and precisely what let two tables go missing from the list
 /// without the compiler noticing.
 pub async fn delete_cascade(conn: &mut sqlx::PgConnection, company_id: Uuid) -> AppResult<u64> {
+    delete_cascade_for_actor(conn, company_id, None).await
+}
+
+pub async fn delete_cascade_for_actor(
+    conn: &mut sqlx::PgConnection,
+    company_id: Uuid,
+    exclude_actor_id: Option<Uuid>,
+) -> AppResult<u64> {
     delete_company_data(&mut *conn, company_id).await?;
 
     // Revoke active sessions and refresh tokens for users currently scoped to
-    // this company or losing their sole remaining company membership.
+    // this company or losing their sole remaining company membership (except
+    // the acting super_admin, whose session is updated immediately below).
     sqlx::query!(
         r#"UPDATE user_sessions SET revoked_at = NOW()
            WHERE revoked_at IS NULL
+             AND ($2::uuid IS NULL OR user_id <> $2)
              AND user_id IN (
                  SELECT id FROM users WHERE company_id = $1
                  UNION
@@ -444,6 +454,7 @@ pub async fn delete_cascade(conn: &mut sqlx::PgConnection, company_id: Uuid) -> 
                    )
              )"#,
         company_id,
+        exclude_actor_id,
     )
     .execute(&mut *conn)
     .await?;
@@ -451,6 +462,7 @@ pub async fn delete_cascade(conn: &mut sqlx::PgConnection, company_id: Uuid) -> 
     sqlx::query!(
         r#"UPDATE refresh_tokens SET revoked = TRUE
            WHERE revoked = FALSE
+             AND ($2::uuid IS NULL OR user_id <> $2)
              AND user_id IN (
                  SELECT id FROM users WHERE company_id = $1
                  UNION
@@ -462,6 +474,7 @@ pub async fn delete_cascade(conn: &mut sqlx::PgConnection, company_id: Uuid) -> 
                    )
              )"#,
         company_id,
+        exclude_actor_id,
     )
     .execute(&mut *conn)
     .await?;
@@ -469,18 +482,18 @@ pub async fn delete_cascade(conn: &mut sqlx::PgConnection, company_id: Uuid) -> 
     // Deactivate non-super_admin users who belong solely to this company before
     // dropping memberships so orphaned tenant accounts cannot sign back in.
     sqlx::query!(
-        r#"UPDATE users u SET is_active = FALSE, company_id = NULL, updated_at = NOW()
+        r#"UPDATE users SET company_id = NULL, is_active = FALSE, updated_at = NOW()
            WHERE (
-                 u.company_id = $1
+                 users.company_id = $1
                  OR EXISTS (
                      SELECT 1 FROM user_companies uc
-                     WHERE uc.user_id = u.id AND uc.company_id = $1
+                     WHERE uc.user_id = users.id AND uc.company_id = $1
                  )
              )
-             AND NOT ('super_admin' = ANY(u.roles))
+             AND NOT ('super_admin' = ANY(users.roles))
              AND NOT EXISTS (
                  SELECT 1 FROM user_companies uc2
-                 WHERE uc2.user_id = u.id AND uc2.company_id <> $1
+                 WHERE uc2.user_id = users.id AND uc2.company_id <> $1
              )"#,
         company_id,
     )
@@ -496,9 +509,19 @@ pub async fn delete_cascade(conn: &mut sqlx::PgConnection, company_id: Uuid) -> 
     .execute(&mut *conn)
     .await?;
 
-    // Clear company_id on remaining users (e.g. multi-company or super_admin).
+    // Point remaining users whose active company was deleted at one of their
+    // surviving memberships (or NULL when no company remains).
     sqlx::query!(
-        "UPDATE users SET company_id = NULL WHERE company_id = $1",
+        r#"UPDATE users u
+           SET company_id = (
+               SELECT uc.company_id
+               FROM user_companies uc
+               WHERE uc.user_id = u.id
+               ORDER BY uc.company_id
+               LIMIT 1
+           ),
+           updated_at = NOW()
+           WHERE u.company_id = $1"#,
         company_id,
     )
     .execute(&mut *conn)

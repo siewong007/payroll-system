@@ -87,13 +87,14 @@ pub async fn report_periods_scoped(
         }
     }
 
+    let include_periods = include_payroll || include_ea;
     let ea_form_years = if include_ea {
         payroll_months_map.keys().copied().collect::<Vec<_>>()
     } else {
         Vec::new()
     };
 
-    let (payroll_years, payroll_months) = if include_payroll {
+    let (payroll_years, payroll_months) = if include_periods {
         let years = payroll_months_map.keys().copied().collect::<Vec<_>>();
         let months = payroll_months_map
             .into_iter()
@@ -108,7 +109,7 @@ pub async fn report_periods_scoped(
 
     let claims_years = report_reads::distinct_claims_years(pool, company_id).await?;
 
-    let (default_year, default_month) = if include_payroll {
+    let (default_year, default_month) = if include_periods {
         payroll_months
             .last()
             .and_then(|period| period.months.last().map(|month| (period.year, *month)))

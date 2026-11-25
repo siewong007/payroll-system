@@ -52,6 +52,7 @@ export function CompanySwitcher() {
       return;
     }
     setSwitching(true);
+    setOpen(false);
     try {
       await switchCompany(companyId);
       navigate('/', { replace: true });
@@ -59,7 +60,6 @@ export function CompanySwitcher() {
       toast.error(getErrorMessage(err));
     } finally {
       setSwitching(false);
-      setOpen(false);
     }
   };
 

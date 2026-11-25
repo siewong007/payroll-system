@@ -23,11 +23,14 @@ export interface AdminJobsStatus {
   retention_cleanup: AdminJobHealth;
   auto_absent: AdminJobHealth;
   email_outbox: AdminJobHealth;
+  push_outbox: AdminJobHealth;
 }
 
 export interface OperationalQueueCounts {
   email_outbox_pending: number;
   email_outbox_failed_24h: number;
+  push_outbox_pending: number;
+  push_outbox_failed_24h: number;
   background_jobs_failed_24h: number;
 }
 

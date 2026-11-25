@@ -131,7 +131,30 @@ pub async fn insert_for_admins(
     entity_type: Option<&str>,
     entity_id: Option<Uuid>,
 ) -> AppResult<()> {
-    sqlx::query!(
+    let _ = insert_for_admins_returning_ids(
+        executor,
+        company_id,
+        notification_type,
+        title,
+        message,
+        entity_type,
+        entity_id,
+    )
+    .await?;
+    Ok(())
+}
+
+/// Fan out one notification to every active approver/HR user in the company and return inserted IDs.
+pub async fn insert_for_admins_returning_ids(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    notification_type: &str,
+    title: &str,
+    message: &str,
+    entity_type: Option<&str>,
+    entity_id: Option<Uuid>,
+) -> AppResult<Vec<Uuid>> {
+    let ids = sqlx::query_scalar!(
         r#"INSERT INTO notifications (user_id, company_id, notification_type, title, message, entity_type, entity_id)
         SELECT DISTINCT u.id, $1::uuid, $2::varchar, $3::varchar, $4::text, $5::varchar, $6::uuid
         FROM users u
@@ -150,7 +173,8 @@ pub async fn insert_for_admins(
                       AND ug.is_active = TRUE
                       AND ugp.permission = 'manage_approvals'
                 )
-            )"#,
+            )
+        RETURNING id"#,
         company_id,
         notification_type,
         title,
@@ -158,9 +182,74 @@ pub async fn insert_for_admins(
         entity_type,
         entity_id,
     )
-    .execute(executor)
+    .fetch_all(executor)
     .await?;
-    Ok(())
+    Ok(ids)
+}
+
+/// Fan out one payslip-availability notification to every active user linked to an employee in a payroll run.
+pub async fn insert_for_payroll_run(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    payroll_run_id: Uuid,
+    title: &str,
+    message: &str,
+) -> AppResult<Vec<Uuid>> {
+    let ids = sqlx::query_scalar!(
+        r#"INSERT INTO notifications (user_id, company_id, notification_type, title, message, entity_type, entity_id)
+        SELECT DISTINCT u.id, $1::uuid, 'payroll_processed'::varchar, $3::varchar, $4::text, 'payroll_run'::varchar, $2::uuid
+        FROM payroll_items pi
+        JOIN users u ON u.employee_id = pi.employee_id
+        JOIN user_companies uc ON uc.user_id = u.id AND uc.company_id = $1
+        WHERE pi.payroll_run_id = $2
+          AND u.is_active = TRUE
+          AND u.deleted_at IS NULL
+        RETURNING id"#,
+        company_id,
+        payroll_run_id,
+        title,
+        message,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(ids)
+}
+
+/// Fan out one notification to active users linked to the given employees in a company.
+#[allow(clippy::too_many_arguments)]
+pub async fn insert_for_employees(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    employee_ids: &[Uuid],
+    notification_type: &str,
+    title: &str,
+    message: &str,
+    entity_type: Option<&str>,
+    entity_id: Option<Uuid>,
+) -> AppResult<Vec<Uuid>> {
+    if employee_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let ids = sqlx::query_scalar!(
+        r#"INSERT INTO notifications (user_id, company_id, notification_type, title, message, entity_type, entity_id)
+        SELECT DISTINCT u.id, $1::uuid, $3::varchar, $4::varchar, $5::text, $6::varchar, $7::uuid
+        FROM users u
+        JOIN user_companies uc ON uc.user_id = u.id AND uc.company_id = $1
+        WHERE u.employee_id = ANY($2)
+          AND u.is_active = TRUE
+          AND u.deleted_at IS NULL
+        RETURNING id"#,
+        company_id,
+        employee_ids,
+        notification_type,
+        title,
+        message,
+        entity_type,
+        entity_id,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(ids)
 }
 
 /// Delete handled notifications past the retention window and stale unread

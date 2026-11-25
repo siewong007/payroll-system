@@ -394,10 +394,13 @@ pub async fn cancel_leave_request_admin(
         .await?;
     }
 
-    // Guards the refunds above against a concurrent cancel that already refunded.
-    let cancelled = leave_requests::set_cancelled(&mut *tx, request_id, company_id)
-        .await?
-        .ok_or_else(|| AppError::BadRequest("Leave request has already been cancelled".into()))?;
+    // Guards the refunds above against a concurrent status change.
+    let cancelled =
+        leave_requests::set_cancelled(&mut *tx, request_id, company_id, &current.status)
+            .await?
+            .ok_or_else(|| {
+                AppError::BadRequest("Leave request has already been cancelled".into())
+            })?;
 
     tx.commit().await?;
 

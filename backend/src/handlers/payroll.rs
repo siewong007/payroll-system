@@ -310,11 +310,12 @@ pub async fn list_groups(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> AppResult<Json<Vec<PayrollGroup>>> {
-    auth.require_permission(Permission::ViewPayroll)?;
-    let company_id = auth
-        .0
-        .company_id
-        .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
+    if !auth.can(Permission::ViewPayroll) && !auth.can(Permission::ManagePayrollDraft) {
+        return Err(AppError::Forbidden(
+            "You do not have permission to view payroll groups".into(),
+        ));
+    }
+    let company_id = auth.company_id()?;
 
     let groups = payroll_service::list_groups(&state.pool, company_id).await?;
 

@@ -49,6 +49,10 @@ pub struct AppConfig {
     /// Operator-trusted verify endpoint; overridden only by tests pointing
     /// at an in-process stub. Never tenant-supplied, so no SSRF policy applies.
     pub turnstile_verify_url: String,
+    // Web Push (VAPID)
+    pub vapid_public_key: Option<String>,
+    pub vapid_private_key: Option<String>,
+    pub vapid_subject: Option<String>,
 }
 
 impl AppConfig {
@@ -94,6 +98,18 @@ impl AppConfig {
             turnstile_verify_url: env::var("TURNSTILE_VERIFY_URL").unwrap_or_else(|_| {
                 "https://challenges.cloudflare.com/turnstile/v0/siteverify".to_string()
             }),
+            vapid_public_key: env::var("VAPID_PUBLIC_KEY")
+                .ok()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty()),
+            vapid_private_key: env::var("VAPID_PRIVATE_KEY")
+                .ok()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty()),
+            vapid_subject: env::var("VAPID_SUBJECT")
+                .ok()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty()),
         }
     }
 
@@ -175,6 +191,33 @@ impl AppConfig {
                 .as_deref()
                 .is_some_and(|v| !v.is_empty())
     }
+
+    pub fn resolved_vapid_subject(&self) -> Option<String> {
+        if let Some(sub) = self
+            .vapid_subject
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| v.starts_with("mailto:") || v.starts_with("https://"))
+        {
+            return Some(sub.to_string());
+        }
+        let frontend = self.frontend_url.trim().trim_end_matches('/');
+        if frontend.starts_with("https://") {
+            return Some(frontend.to_string());
+        }
+        None
+    }
+
+    pub fn web_push_enabled(&self) -> bool {
+        self.vapid_public_key
+            .as_deref()
+            .is_some_and(|v| !v.is_empty())
+            && self
+                .vapid_private_key
+                .as_deref()
+                .is_some_and(|v| !v.is_empty())
+            && self.resolved_vapid_subject().is_some()
+    }
 }
 
 #[cfg(test)]
@@ -205,6 +248,9 @@ mod tests {
             turnstile_secret_key: None,
             turnstile_verify_url: "https://challenges.cloudflare.com/turnstile/v0/siteverify"
                 .into(),
+            vapid_public_key: None,
+            vapid_private_key: None,
+            vapid_subject: None,
         }
     }
 

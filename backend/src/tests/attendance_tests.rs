@@ -1915,3 +1915,50 @@ async fn identical_exports_are_byte_identical() {
         .expect("export");
     assert_eq!(first_run, second_run, "the row order must be deterministic");
 }
+
+#[tokio::test]
+async fn mark_absent_for_past_date_anchors_overnight_open_session_check_to_target_date() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let (company_id, employee_id) = seed_company_and_employee(&pool).await;
+    seed_all_working_days(&pool, company_id).await;
+
+    // Make the employee eligible 10 days ago and today.
+    sqlx::query("UPDATE employees SET date_joined = (NOW() AT TIME ZONE 'Asia/Kuala_Lumpur')::date - 30 WHERE id = $1")
+        .bind(employee_id)
+        .execute(&pool)
+        .await
+        .expect("set date_joined");
+
+    // Employee has an open check-in RIGHT NOW (today), but NO attendance 5 days ago.
+    sqlx::query(
+        "INSERT INTO attendance_records (company_id, employee_id, check_in_at, method, status)
+         VALUES ($1, $2, NOW(), 'face_id', 'present')",
+    )
+    .bind(company_id)
+    .bind(employee_id)
+    .execute(&pool)
+    .await
+    .expect("seed today open checkin");
+
+    let past_target: NaiveDate =
+        sqlx::query_scalar("SELECT ((NOW() AT TIME ZONE 'Asia/Kuala_Lumpur')::date - 5)")
+            .fetch_one(&pool)
+            .await
+            .expect("past target date");
+
+    let marked = crate::repositories::attendance_records::mark_absent_returning(
+        &pool,
+        KL,
+        past_target,
+        Some(company_id),
+    )
+    .await
+    .expect("mark absent returning");
+
+    assert!(
+        marked.iter().any(|(_, emp)| *emp == employee_id),
+        "today's open session must not excuse an absent day 5 days ago"
+    );
+}

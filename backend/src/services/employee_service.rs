@@ -102,10 +102,15 @@ fn validate_employee_fields(
 pub async fn create_employee(
     pool: &PgPool,
     company_id: Uuid,
-    req: CreateEmployeeRequest,
+    mut req: CreateEmployeeRequest,
     created_by: Uuid,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<(Employee, Option<EmployeeAccountInfo>)> {
+    req.email = req
+        .email
+        .take()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
     validate_employee_fields(
         req.basic_salary,
         req.hourly_rate,
@@ -185,7 +190,12 @@ pub async fn create_user_for_employee(
     pool: &PgPool,
     emp: &Employee,
 ) -> AppResult<Option<EmployeeAccountInfo>> {
-    let Some(ref email) = emp.email else {
+    let Some(email) = emp
+        .email
+        .as_deref()
+        .map(str::trim)
+        .filter(|e| !e.is_empty())
+    else {
         return Ok(None);
     };
     create_user_for_employee_fields(
@@ -329,10 +339,18 @@ pub async fn update_employee(
     pool: &PgPool,
     id: Uuid,
     company_id: Uuid,
-    req: UpdateEmployeeRequest,
+    mut req: UpdateEmployeeRequest,
     updated_by: Uuid,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<Employee> {
+    if let Some(raw_email) = req.email.take() {
+        let trimmed = raw_email.trim().to_string();
+        if trimmed.is_empty() {
+            req.clear_email = Some(true);
+        } else {
+            req.email = Some(trimmed);
+        }
+    }
     let clearing = req.clear_date_resigned.unwrap_or(false);
     if clearing && req.date_resigned.is_some() {
         return Err(AppError::BadRequest(
@@ -343,6 +361,11 @@ pub async fn update_employee(
     if clearing_epf && req.epf_category.is_some() {
         return Err(AppError::BadRequest(
             "Cannot set and clear epf_category in the same request".into(),
+        ));
+    }
+    if req.clear_payroll_group_id == Some(true) && req.payroll_group_id.is_some() {
+        return Err(AppError::BadRequest(
+            "Cannot set and clear payroll_group_id in the same request".into(),
         ));
     }
 

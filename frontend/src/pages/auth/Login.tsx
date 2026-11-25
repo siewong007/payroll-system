@@ -4,6 +4,7 @@ import type { User } from '@/types';
 import { useQuery } from '@tanstack/react-query';
 import { ChevronDown, Eye, EyeOff, Fingerprint, LifeBuoy, ScanLine, Smartphone } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
+import { usePwa } from '@/context/PwaContext';
 import { useTranslation } from 'react-i18next';
 import { LanguageSwitcher } from '@/components/ui/LanguageSwitcher';
 import { getErrorMessage, safeRedirectPath } from '@/lib/utils';
@@ -34,6 +35,7 @@ export function Login() {
   const [codeValue, setCodeValue] = useState('');
   const [googleLoading, setGoogleLoading] = useState(false);
   const { login, setSession, user, isAuthenticated } = useAuth();
+  const { isIos, isStandalone } = usePwa();
   const { t } = useTranslation();
   const navigate = useNavigate();
   // The kiosk scan page sends unauthenticated scanners here with the scan URL
@@ -323,15 +325,22 @@ export function Login() {
                       aria-hidden="true"
                     />
                   ) : googleProvider ? (
-                    <button
-                      type="button"
-                      onClick={handleGoogleLogin}
-                      disabled={anySubmitting}
-                      className="w-full min-h-11 flex items-center justify-center gap-3 py-2.5 px-4 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl text-sm font-medium text-gray-700 dark:text-slate-100 hover:border-gray-300 dark:hover:border-slate-600 hover:shadow-md hover:-translate-y-px disabled:opacity-50 transition-all"
-                    >
-                      <GoogleIcon />
-                      {googleLoading ? t('auth.verifying') : t('auth.continueGoogle')}
-                    </button>
+                    <div className="space-y-2">
+                      <button
+                        type="button"
+                        onClick={handleGoogleLogin}
+                        disabled={anySubmitting}
+                        className="w-full min-h-11 flex items-center justify-center gap-3 py-2.5 px-4 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl text-sm font-medium text-gray-700 dark:text-slate-100 hover:border-gray-300 dark:hover:border-slate-600 hover:shadow-md hover:-translate-y-px disabled:opacity-50 transition-all"
+                      >
+                        <GoogleIcon />
+                        {googleLoading ? t('auth.verifying') : t('auth.continueGoogle')}
+                      </button>
+                      {isIos && isStandalone && (
+                        <p className="text-xs text-center text-gray-500 dark:text-slate-400">
+                          {t('auth.iosStandaloneGoogleNote')}
+                        </p>
+                      )}
+                    </div>
                   ) : null}
 
                   <div className={`flex items-center gap-3 ${providersPending || googleProvider ? 'my-6' : 'mb-4 justify-center'}`}>

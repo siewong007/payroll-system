@@ -40,8 +40,8 @@ import { getEmployees } from '@/api/employees';
 import { useAuth } from '@/context/AuthContext';
 import { useAppearance } from '@/context/ThemeContext';
 import { subscribeCommandPalette } from '@/lib/commandPalette';
-import { canUseAdminConsole, hasAnyRole, hasOnlyEmployeeRole, type AppRole } from '@/lib/roles';
-import { userCan } from '@/lib/usePermissions';
+import { canUseAdminConsole, hasAnyRole, type AppRole } from '@/lib/roles';
+import { userCan, userCanAny } from '@/lib/usePermissions';
 import type { PermissionKey } from '@/api/permissions';
 
 interface PaletteItem {
@@ -143,8 +143,8 @@ export function CommandPalette() {
   }, [open]);
 
   const canSearchEmployees =
-    Boolean(user) &&
-    !hasOnlyEmployeeRole(user) &&
+    canUseAdminConsole(user) &&
+    Boolean(user?.company_id) &&
     userCan(user, 'view_employees') &&
     !hasAnyRole(user, ['super_admin']);
 
@@ -158,17 +158,24 @@ export function CommandPalette() {
   const staticItems = useMemo<PaletteItem[]>(() => {
     if (!user) return [];
     const list: PaletteItem[] = [];
-    const isPortalOnly = hasOnlyEmployeeRole(user);
+    const hasAdminConsole = canUseAdminConsole(user);
 
     const addRoute = (
       id: string,
       label: string,
       href: string,
       icon: typeof Search,
-      opts?: { requires?: PermissionKey; hideFor?: AppRole[]; requiresEmployee?: boolean; requiresCompany?: boolean },
+      opts?: {
+        requires?: PermissionKey;
+        requiresAny?: PermissionKey[];
+        hideFor?: AppRole[];
+        requiresEmployee?: boolean;
+        requiresCompany?: boolean;
+      },
     ) => {
       if (opts?.hideFor && hasAnyRole(user, opts.hideFor)) return;
       if (opts?.requires && !userCan(user, opts.requires)) return;
+      if (opts?.requiresAny && !userCanAny(user, opts.requiresAny)) return;
       if (opts?.requiresEmployee && !user.employee_id) return;
       if (opts?.requiresCompany && !user.company_id) return;
       list.push({
@@ -184,18 +191,18 @@ export function CommandPalette() {
       });
     };
 
-    if (!isPortalOnly) {
-      addRoute('dashboard', t('nav.dashboard'), '/dashboard', LayoutDashboard, { hideFor: ['super_admin'], requiresCompany: true });
+    if (hasAdminConsole) {
+      addRoute('dashboard', t('nav.dashboard'), '/dashboard', LayoutDashboard, { requires: 'view_employees', hideFor: ['super_admin'], requiresCompany: true });
       addRoute('company', t('nav.company'), '/company', Building2, { hideFor: ['super_admin'], requiresCompany: true });
       addRoute('employees', t('nav.employees'), '/employees', Users, { requires: 'view_employees', hideFor: ['super_admin'], requiresCompany: true });
       addRoute('payroll', t('nav.payroll'), '/payroll', Calculator, { requires: 'view_payroll', requiresCompany: true });
-      addRoute('teams', t('nav.teams'), '/teams', Users2, { requires: 'view_teams', hideFor: ['super_admin'], requiresCompany: true });
+      addRoute('teams', t('nav.teams'), '/teams', Users2, { requiresAny: ['view_teams', 'manage_teams'], hideFor: ['super_admin'], requiresCompany: true });
       addRoute('calendar', t('nav.calendar'), '/calendar', CalendarDays, { requires: 'view_calendar', hideFor: ['super_admin'], requiresCompany: true });
       addRoute('attendance', t('nav.attendance'), '/attendance', ScanLine, { requires: 'view_attendance', hideFor: ['super_admin'], requiresCompany: true });
       addRoute('approvals', t('nav.approvals'), '/approvals', ClipboardCheck, { requires: 'view_approvals', hideFor: ['super_admin'], requiresCompany: true });
       addRoute('reports', t('nav.reports'), '/reports', BarChart3, { requires: 'view_reports', requiresCompany: true });
       addRoute('documents', t('nav.documents'), '/documents', FileText, { requires: 'view_documents', hideFor: ['super_admin'], requiresCompany: true });
-      addRoute('letters', t('nav.letters'), '/letters', Mail, { requires: 'view_email_logs', hideFor: ['super_admin'], requiresCompany: true });
+      addRoute('letters', t('nav.letters'), '/letters', Mail, { requiresAny: ['view_email_logs', 'manage_email_templates', 'send_letters'], hideFor: ['super_admin'], requiresCompany: true });
       addRoute('settings', t('nav.settings'), '/settings', Settings, { requires: 'manage_company_settings', hideFor: ['super_admin'], requiresCompany: true });
       addRoute('my-attendance', t('nav.myAttendance'), '/my/attendance', UserCheck, { requiresEmployee: true });
       addRoute('companies', t('nav.companies'), '/companies', Building2, { requires: 'manage_companies' });
@@ -209,7 +216,7 @@ export function CommandPalette() {
       addRoute('account-security', t('nav.accountSecurity'), '/account', Shield);
     }
 
-    if (user.employee_id || isPortalOnly) {
+    if (user.employee_id || !hasAdminConsole) {
       addRoute('portal-profile', t('nav.portal.profile'), '/portal/profile', User);
       addRoute('portal-attendance', t('nav.portal.attendance'), '/portal/attendance', ScanLine);
       addRoute('portal-payslips', t('nav.portal.payslips'), '/portal/payslips', FileText);
@@ -217,10 +224,12 @@ export function CommandPalette() {
       addRoute('portal-claims', t('nav.portal.claims'), '/portal/claims', Receipt);
       addRoute('portal-overtime', t('nav.portal.overtime'), '/portal/overtime', Clock);
       addRoute('portal-team-calendar', t('nav.portal.teamCalendar'), '/portal/team-calendar', Users);
+    }
+    if (user.company_id) {
       addRoute('portal-notifications', t('nav.portal.notifications'), '/portal/notifications', Bell);
     }
 
-    if (user.employee_id || isPortalOnly) {
+    if (user.employee_id || !hasAdminConsole) {
       list.push(
         {
           id: 'act-portal-checkin',
@@ -228,7 +237,7 @@ export function CommandPalette() {
           label: t('ux.commandPalette.portalCheckIn'),
           icon: ScanLine,
           onSelect: () => {
-            navigate(isPortalOnly ? '/portal/attendance' : '/my/attendance');
+            navigate(hasAdminConsole ? '/my/attendance' : '/portal/attendance');
             close();
           },
         },
@@ -255,7 +264,7 @@ export function CommandPalette() {
       );
     }
 
-    if (canUseAdminConsole(user) && isPortalOnly === false) {
+    if (hasAdminConsole && user.company_id) {
       if (userCan(user, 'manage_employees') && !hasAnyRole(user, ['super_admin'])) {
         list.push({
           id: 'act-new-emp',
@@ -280,7 +289,7 @@ export function CommandPalette() {
           },
         });
       }
-      if (userCan(user, 'manage_payroll_draft') && user.company_id) {
+      if (userCan(user, 'manage_payroll_draft')) {
         list.push({
           id: 'act-process-payroll',
           group: 'actions',

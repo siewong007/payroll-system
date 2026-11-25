@@ -77,12 +77,22 @@ export function PayrollProcess() {
     is_taxable: true,
   });
 
-  const { data: groups } = useQuery({
+  const {
+    data: groups,
+    isError: groupsError,
+    error: groupsErrorObj,
+    refetch: refetchGroups,
+  } = useQuery({
     queryKey: ['payrollGroups'],
     queryFn: getPayrollGroups,
   });
 
-  const { data: entries = [] } = useQuery({
+  const {
+    data: entries = [],
+    isError: entriesError,
+    error: entriesErrorObj,
+    refetch: refetchEntries,
+  } = useQuery({
     queryKey: ['payrollEntries', year, month],
     queryFn: () => getPayrollEntries({ period_year: year, period_month: month }),
   });
@@ -178,6 +188,8 @@ export function PayrollProcess() {
         amount,
         quantity: entryForm.quantity ? Number(entryForm.quantity) : undefined,
         rate: entryForm.rate ? Math.round(Number(entryForm.rate) * 100) : undefined,
+        clear_quantity: editingEntry ? Boolean(editingEntry.quantity && !entryForm.quantity.trim()) : undefined,
+        clear_rate: editingEntry ? Boolean(editingEntry.rate && !entryForm.rate.trim()) : undefined,
         is_taxable: entryForm.is_taxable,
       };
 
@@ -385,6 +397,17 @@ export function PayrollProcess() {
             </select>
           )}
         </FormField>
+        {groupsError && (
+          <div
+            role="alert"
+            className="rounded-xl border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-950/30 px-4 py-3 text-sm text-red-700 dark:text-red-300 flex items-center justify-between gap-2"
+          >
+            <span>{getErrorMessage(groupsErrorObj, t('common.error'))}</span>
+            <button type="button" onClick={() => void refetchGroups()} className="underline font-medium shrink-0">
+              {t('common.retry')}
+            </button>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <FormField label={t('payroll.process.year')} required>
@@ -636,6 +659,18 @@ export function PayrollProcess() {
           )}
         </fieldset>
 
+        {entriesError && (
+          <div
+            role="alert"
+            className="mx-6 mb-4 rounded-xl border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-950/30 px-4 py-3 text-sm text-red-700 dark:text-red-300 flex items-center justify-between gap-2"
+          >
+            <span>{getErrorMessage(entriesErrorObj, t('common.error'))}</span>
+            <button type="button" onClick={() => void refetchEntries()} className="underline font-medium shrink-0">
+              {t('common.retry')}
+            </button>
+          </div>
+        )}
+
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead className="bg-gray-50 dark:bg-slate-950/70 text-left">
@@ -655,7 +690,14 @@ export function PayrollProcess() {
                     {t('payroll.process.noAdjustments', { period: formatPeriod(year, month) })}
                   </td>
                 </tr>
-              ) : entries.map((entry) => (
+              ) : entries.map((entry) => {
+                const isAutoManaged = Boolean(
+                  entry.overtime_application_id ||
+                    entry.leave_request_id ||
+                    entry.item_type === 'overtime' ||
+                    entry.item_type === 'claim_reimbursement',
+                );
+                return (
                 <tr key={entry.id} className="hover:bg-gray-50 dark:hover:bg-slate-800/50">
                   <td className="px-6 py-4 text-sm">
                     <div className="font-medium text-gray-900 dark:text-slate-100">{entry.employee_name}</div>
@@ -677,38 +719,45 @@ export function PayrollProcess() {
                     {entry.is_taxable ? t('common.yes') : t('common.no')}
                   </td>
                   <td className="px-6 py-4 text-center">
-                    <div className="flex items-center justify-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => startEditEntry(entry)}
-                        disabled={adjustmentsLocked}
-                        className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-40 transition-colors"
-                        aria-label={t('common.edit')}
-                        title={t('common.edit')}
-                      >
-                        <Pencil className="w-4 h-4" aria-hidden="true" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          if (adjustmentsLocked) return;
-                          const ok = await confirmDialog({
-                            description: t('payroll.process.deleteEntryConfirm'),
-                            variant: 'danger',
-                          });
-                          if (ok) deleteEntryMutation.mutate(entry.id);
-                        }}
-                        disabled={adjustmentsLocked || deleteEntryMutation.isPending}
-                        className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 disabled:opacity-40 transition-colors"
-                        aria-label={t('common.delete')}
-                        title={t('common.delete')}
-                      >
-                        <Trash2 className="w-4 h-4" aria-hidden="true" />
-                      </button>
-                    </div>
+                    {isAutoManaged ? (
+                      <span className="text-xs text-gray-400 dark:text-slate-500">
+                        {t('payroll.process.approvalManaged')}
+                      </span>
+                    ) : (
+                      <div className="flex items-center justify-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => startEditEntry(entry)}
+                          disabled={adjustmentsLocked}
+                          className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-40 transition-colors"
+                          aria-label={t('common.edit')}
+                          title={t('common.edit')}
+                        >
+                          <Pencil className="w-4 h-4" aria-hidden="true" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (adjustmentsLocked) return;
+                            const ok = await confirmDialog({
+                              description: t('payroll.process.deleteEntryConfirm'),
+                              variant: 'danger',
+                            });
+                            if (ok) deleteEntryMutation.mutate(entry.id);
+                          }}
+                          disabled={adjustmentsLocked || deleteEntryMutation.isPending}
+                          className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 disabled:opacity-40 transition-colors"
+                          aria-label={t('common.delete')}
+                          title={t('common.delete')}
+                        >
+                          <Trash2 className="w-4 h-4" aria-hidden="true" />
+                        </button>
+                      </div>
+                    )}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

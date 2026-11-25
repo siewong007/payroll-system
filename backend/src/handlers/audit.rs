@@ -45,6 +45,8 @@ pub async fn list_filter_options(
     auth: AuthUser,
 ) -> AppResult<Json<AuditFilterOptions>> {
     let company_id = auth.authorize(Permission::ViewAuditLog)?;
-    let options = audit_service::list_filter_options(&state.pool, company_id).await?;
+    let hide_privileged = crate::services::user_service::hides_privileged_users(&auth);
+    let options =
+        audit_service::list_filter_options(&state.pool, company_id, hide_privileged).await?;
     Ok(Json(options))
 }

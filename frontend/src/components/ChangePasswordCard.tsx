@@ -41,8 +41,8 @@ export function ChangePasswordCard() {
         new_password: newPassword,
       });
       // The backend revokes every session on password change — including this
-      // one — so there is nothing to stay signed in with.
-      await logout();
+      // one — so skip the authenticated DELETE call and just clear local/cookie state.
+      await logout({ skipRemotePushDelete: true });
       navigate('/login');
     } catch (err) {
       setError(getErrorMessage(err, t('auth.passwordCard.failed')));

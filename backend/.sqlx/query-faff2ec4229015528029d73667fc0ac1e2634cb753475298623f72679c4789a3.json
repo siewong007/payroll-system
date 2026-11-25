@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE push_subscriptions\n         SET failure_count = failure_count + 1,\n             last_error = $2,\n             revoked_at = CASE WHEN failure_count + 1 >= 10 THEN COALESCE(revoked_at, NOW()) ELSE revoked_at END,\n             updated_at = NOW()\n         WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "faff2ec4229015528029d73667fc0ac1e2634cb753475298623f72679c4789a3"
+}

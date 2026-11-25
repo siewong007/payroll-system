@@ -13,7 +13,7 @@ export interface AuthContextType {
   token: string | null;
   login: (email: string, password: string, turnstileToken?: string) => Promise<LoginResult>;
   completeTwoFactorLogin: (mfaToken: string, code: string) => Promise<User>;
-  logout: () => Promise<void>;
+  logout: (options?: { skipRemotePushDelete?: boolean }) => Promise<void>;
   switchCompany: (companyId: string) => Promise<void>;
   setSession: (token: string, user: User) => void;
   isAuthenticated: boolean;

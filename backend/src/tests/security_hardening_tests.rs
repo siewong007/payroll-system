@@ -62,6 +62,9 @@ fn sec_test_config(database_url: String) -> AppConfig {
         trust_proxy_headers: true,
         turnstile_secret_key: None,
         turnstile_verify_url: "https://challenges.cloudflare.com/turnstile/v0/siteverify".into(),
+        vapid_public_key: None,
+        vapid_private_key: None,
+        vapid_subject: None,
     }
 }
 

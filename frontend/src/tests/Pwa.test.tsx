@@ -14,6 +14,9 @@ import {
   detectPwaPlatform,
   getNotificationStatus,
   resetPwaStoreForTests,
+  subscribeToPush,
+  updateAppBadge,
+  urlBase64ToUint8Array,
   type BeforeInstallPromptEvent,
 } from '@/lib/pwa';
 import type { CompanySetting } from '@/types';
@@ -23,7 +26,22 @@ const settingsMocks = vi.hoisted(() => ({
   bulkUpdateSettings: vi.fn(),
 }));
 
+const authMocks = vi.hoisted(() => ({
+  useAuth: vi.fn(),
+}));
+
+const notificationApiMocks = vi.hoisted(() => ({
+  getNotificationCount: vi.fn(),
+  getNotifications: vi.fn(),
+  getPushConfig: vi.fn(),
+  savePushSubscription: vi.fn(),
+  deletePushSubscription: vi.fn(),
+  sendTestPush: vi.fn(),
+}));
+
 vi.mock('@/api/settings', () => settingsMocks);
+vi.mock('@/context/AuthContext', () => ({ useAuth: authMocks.useAuth }));
+vi.mock('@/api/notifications', () => notificationApiMocks);
 
 import { SettingsPage } from '@/pages/settings/SettingsPage';
 
@@ -191,6 +209,27 @@ beforeEach(() => {
   localStorage.clear();
   settingsMocks.getSettings.mockReset();
   settingsMocks.bulkUpdateSettings.mockReset();
+  authMocks.useAuth.mockReset().mockReturnValue({
+    user: null,
+    isAuthenticated: false,
+    isLoading: false,
+  });
+  notificationApiMocks.getNotificationCount
+    .mockReset()
+    .mockResolvedValue({ unread: 0, total: 0 });
+  notificationApiMocks.getNotifications.mockReset().mockResolvedValue([]);
+  notificationApiMocks.getPushConfig
+    .mockReset()
+    .mockResolvedValue({ enabled: false, vapid_public_key: null });
+  notificationApiMocks.savePushSubscription
+    .mockReset()
+    .mockResolvedValue({ subscribed: true, active_subscriptions: 1 });
+  notificationApiMocks.deletePushSubscription
+    .mockReset()
+    .mockResolvedValue({ subscribed: false, active_subscriptions: 0 });
+  notificationApiMocks.sendTestPush
+    .mockReset()
+    .mockResolvedValue({ queued: 1, sent: 1, failed: 0, gone: 0 });
 });
 
 afterEach(() => {
@@ -540,5 +579,228 @@ describe('PWA public assets & manifest integrity', () => {
     );
     expect(fs.existsSync(path.join(publicDir, 'sw.js'))).toBe(true);
     expect(fs.existsSync(path.join(publicDir, 'offline.html'))).toBe(true);
+  });
+});
+
+describe('Web Push subscription & Service Worker runtime', () => {
+  const VAPID_KEY_A =
+    'BJvxi1WNriIrivViVml_qavLQzTjsf15Owr4ABMG6BkHOYT8-ACmAaf1dr2LhwGfasF3EfqzDL-tmRNRLvXg-vQ';
+  const VAPID_KEY_B =
+    'BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4';
+
+  it('subscribes and rotates PushSubscription when VAPID public key changes', async () => {
+    const oldUnsubscribe = vi.fn().mockResolvedValue(true);
+    const oldSub = {
+      endpoint: 'https://fcm.googleapis.com/fcm/send/old',
+      options: {
+        applicationServerKey: urlBase64ToUint8Array(VAPID_KEY_A).buffer,
+      },
+      unsubscribe: oldUnsubscribe,
+      toJSON: () => ({
+        endpoint: 'https://fcm.googleapis.com/fcm/send/old',
+        keys: { p256dh: 'p256-old', auth: 'auth-old' },
+      }),
+    } as unknown as PushSubscription;
+
+    const newSub = {
+      endpoint: 'https://fcm.googleapis.com/fcm/send/new',
+      options: {
+        applicationServerKey: urlBase64ToUint8Array(VAPID_KEY_B).buffer,
+      },
+      unsubscribe: vi.fn().mockResolvedValue(true),
+      toJSON: () => ({
+        endpoint: 'https://fcm.googleapis.com/fcm/send/new',
+        keys: { p256dh: 'p256-new', auth: 'auth-new' },
+      }),
+    } as unknown as PushSubscription;
+
+    const pushManager = {
+      getSubscription: vi
+        .fn()
+        .mockResolvedValueOnce(oldSub)
+        .mockResolvedValueOnce(oldSub),
+      subscribe: vi.fn().mockResolvedValue(newSub),
+    };
+    const reg = { pushManager } as unknown as ServiceWorkerRegistration;
+
+    const sameKeyResult = await subscribeToPush(reg, VAPID_KEY_A);
+    expect(sameKeyResult?.endpoint).toBe('https://fcm.googleapis.com/fcm/send/old');
+    expect(oldUnsubscribe).not.toHaveBeenCalled();
+
+    const rotatedResult = await subscribeToPush(reg, VAPID_KEY_B);
+    expect(oldUnsubscribe).toHaveBeenCalledOnce();
+    expect(pushManager.subscribe).toHaveBeenCalledOnce();
+    expect(rotatedResult).toEqual({
+      endpoint: 'https://fcm.googleapis.com/fcm/send/new',
+      keys: { p256dh: 'p256-new', auth: 'auth-new' },
+    });
+  });
+
+  it('syncs PushSubscription when authenticated and sends real server test push', async () => {
+    const user = userEvent.setup();
+    const fakeSub = {
+      endpoint: 'https://fcm.googleapis.com/fcm/send/device-1',
+      options: {
+        applicationServerKey: urlBase64ToUint8Array(VAPID_KEY_A).buffer,
+      },
+      unsubscribe: vi.fn().mockResolvedValue(true),
+      toJSON: () => ({
+        endpoint: 'https://fcm.googleapis.com/fcm/send/device-1',
+        keys: { p256dh: 'p256-device-1', auth: 'auth-device-1' },
+      }),
+    } as unknown as PushSubscription;
+
+    setBrowserEnvironment({ notificationPermission: 'granted' });
+    const reg = await navigator.serviceWorker.getRegistration('/');
+    if (reg) {
+      vi.mocked(reg.pushManager.getSubscription).mockResolvedValue(null);
+      vi.mocked(reg.pushManager.subscribe).mockResolvedValue(fakeSub);
+    }
+
+    authMocks.useAuth.mockReturnValue({
+      user: { id: 'u-1', company_id: 'c-1', must_change_password: false },
+      isAuthenticated: true,
+      isLoading: false,
+    });
+    notificationApiMocks.getPushConfig.mockResolvedValue({
+      enabled: true,
+      vapid_public_key: VAPID_KEY_A,
+    });
+
+    renderWithPwa(<NotificationActivationCard />);
+
+    await waitFor(() =>
+      expect(notificationApiMocks.savePushSubscription).toHaveBeenCalledWith({
+        endpoint: 'https://fcm.googleapis.com/fcm/send/device-1',
+        keys: { p256dh: 'p256-device-1', auth: 'auth-device-1' },
+      }),
+    );
+    expect(await screen.findByText('Push Active')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Send Test Notification' }));
+    await waitFor(() => expect(notificationApiMocks.sendTestPush).toHaveBeenCalledOnce());
+  });
+
+  it('updates and clears app icon badges via Badging API', () => {
+    const setAppBadge = vi.fn().mockResolvedValue(undefined);
+    const clearAppBadge = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(window.navigator, 'setAppBadge', {
+      value: setAppBadge,
+      configurable: true,
+    });
+    Object.defineProperty(window.navigator, 'clearAppBadge', {
+      value: clearAppBadge,
+      configurable: true,
+    });
+
+    updateAppBadge(4);
+    expect(setAppBadge).toHaveBeenCalledWith(4);
+    updateAppBadge(0);
+    expect(clearAppBadge).toHaveBeenCalledOnce();
+  });
+
+  it('handles push, notificationclick sanitization, and pushsubscriptionchange in sw.js', async () => {
+    const swPath = path.resolve(import.meta.dirname, '../../public/sw.js');
+    const swSource = fs.readFileSync(swPath, 'utf8');
+
+    const listeners = new Map<string, (event: unknown) => void>();
+    const showNotification = vi.fn().mockResolvedValue(undefined);
+    const setAppBadge = vi.fn().mockResolvedValue(undefined);
+    const openWindow = vi.fn().mockResolvedValue(undefined);
+    const postMessage = vi.fn();
+    const swSubscribe = vi.fn().mockResolvedValue({});
+
+    const fakeSelf = {
+      location: new URL('https://payrollmy.com/sw.js'),
+      skipWaiting: vi.fn().mockResolvedValue(undefined),
+      navigator: {
+        setAppBadge,
+        clearAppBadge: vi.fn().mockResolvedValue(undefined),
+      },
+      registration: {
+        showNotification,
+        pushManager: { subscribe: swSubscribe },
+      },
+      clients: {
+        claim: vi.fn().mockResolvedValue(undefined),
+        matchAll: vi.fn().mockResolvedValue([{ url: 'https://payrollmy.com/dashboard', postMessage }]),
+        openWindow,
+      },
+      addEventListener: (name: string, fn: (event: unknown) => void) => {
+        listeners.set(name, fn);
+      },
+    };
+
+    const runSw = new Function('self', 'caches', 'fetch', swSource);
+    runSw(
+      fakeSelf,
+      { open: vi.fn(), keys: vi.fn(), match: vi.fn() },
+      vi.fn(),
+    );
+
+    // 1. push event renders notification and sets app badge
+    const pushWaits: Promise<unknown>[] = [];
+    listeners.get('push')?.({
+      data: {
+        json: () => ({
+          title: 'Payslip Ready',
+          body: 'Your 11/2026 payslip is ready.',
+          url: 'https://evil.example/phish',
+          tag: 'payroll-1',
+          unread_count: 3,
+        }),
+      },
+      waitUntil: (p: Promise<unknown>) => pushWaits.push(p),
+    });
+    await Promise.all(pushWaits);
+
+    expect(showNotification).toHaveBeenCalledWith(
+      'Payslip Ready',
+      expect.objectContaining({
+        body: 'Your 11/2026 payslip is ready.',
+        icon: '/icons/icon-192.png',
+        badge: '/icons/badge-72.png',
+        tag: 'payroll-1',
+        renotify: true,
+        // Cross-origin URL must be rejected and replaced with safe default
+        data: { url: '/portal/notifications' },
+      }),
+    );
+    expect(setAppBadge).toHaveBeenCalledWith(3);
+
+    // 2. notificationclick navigates existing same-origin client
+    const navigateSpy = vi.fn().mockResolvedValue(undefined);
+    const focusSpy = vi.fn().mockResolvedValue(undefined);
+    fakeSelf.clients.matchAll.mockResolvedValueOnce([
+      {
+        url: 'https://payrollmy.com/portal/profile',
+        navigate: navigateSpy,
+        focus: focusSpy,
+      },
+    ]);
+    const clickWaits: Promise<unknown>[] = [];
+    const closeSpy = vi.fn();
+    listeners.get('notificationclick')?.({
+      notification: { close: closeSpy, data: { url: '/portal/payslips' } },
+      waitUntil: (p: Promise<unknown>) => clickWaits.push(p),
+    });
+    await Promise.all(clickWaits);
+
+    expect(closeSpy).toHaveBeenCalledOnce();
+    expect(navigateSpy).toHaveBeenCalledWith('https://payrollmy.com/portal/payslips');
+    expect(focusSpy).toHaveBeenCalledOnce();
+
+    // 3. pushsubscriptionchange re-subscribes and notifies foreground clients
+    const subChangeWaits: Promise<unknown>[] = [];
+    listeners.get('pushsubscriptionchange')?.({
+      oldSubscription: {
+        options: { applicationServerKey: new Uint8Array([4, 1, 2, 3]) },
+      },
+      waitUntil: (p: Promise<unknown>) => subChangeWaits.push(p),
+    });
+    await Promise.all(subChangeWaits);
+
+    expect(swSubscribe).toHaveBeenCalledOnce();
+    expect(postMessage).toHaveBeenCalledWith({ type: 'PUSH_SUBSCRIPTION_CHANGED' });
   });
 });

@@ -103,6 +103,7 @@ pub async fn team_calendar(
         JOIN employees e ON lr.employee_id = e.id
         JOIN leave_types lt ON lr.leave_type_id = lt.id
         WHERE e.company_id = $1
+          AND e.deleted_at IS NULL
           AND lr.status = 'approved'
           AND lr.start_date <= $4
           AND lr.end_date >= $3
@@ -111,7 +112,8 @@ pub async fn team_calendar(
                   SELECT tm2.employee_id FROM team_members tm2
                   WHERE tm2.team_id IN (
                       SELECT tm1.team_id FROM team_members tm1
-                      WHERE tm1.employee_id = $2
+                      JOIN teams t ON t.id = tm1.team_id
+                      WHERE tm1.employee_id = $2 AND t.is_active = TRUE
                   )
               ))
         ORDER BY lr.start_date, e.full_name"#,

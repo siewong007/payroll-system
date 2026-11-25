@@ -5,6 +5,7 @@ import { AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-react';
 import { getTeamCalendar, getPortalHolidays } from '@/api/portal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { useAuth } from '@/context/AuthContext';
 import type { Holiday, TeamLeaveEntry } from '@/types';
 import { formatDateDayMonth, monthName, weekdayName } from '@/lib/format';
 import { getErrorMessage } from '@/lib/utils';
@@ -35,6 +36,9 @@ function nameColor(name: string): string {
 
 export function TeamCalendar() {
   const { t, i18n } = useTranslation();
+  const { user } = useAuth();
+  const hasCompany = Boolean(user?.company_id);
+  const hasEmployee = Boolean(user?.employee_id);
   const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
@@ -57,6 +61,7 @@ export function TeamCalendar() {
   } = useQuery({
     queryKey: ['team-calendar', selectedYear, selectedMonth],
     queryFn: () => getTeamCalendar(selectedYear, selectedMonth),
+    enabled: hasCompany && hasEmployee,
   });
 
   const {
@@ -68,6 +73,7 @@ export function TeamCalendar() {
   } = useQuery({
     queryKey: ['portal-holidays', selectedYear],
     queryFn: () => getPortalHolidays(selectedYear),
+    enabled: hasCompany,
   });
 
   const prevMonth = () => {
@@ -313,7 +319,11 @@ export function TeamCalendar() {
           <Skeleton className="h-72 w-full" />
         </div>
       ) : activeTab === 'calendar' ? (
-        leavesError ? (
+        !hasEmployee ? (
+          <div className="card">
+            <EmptyState icon={AlertTriangle} title={t('attendance.scan.noEmployeeProfile')} />
+          </div>
+        ) : leavesError ? (
           <div className="card">
             <EmptyState
               icon={AlertTriangle}

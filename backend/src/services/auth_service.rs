@@ -537,6 +537,7 @@ pub async fn change_password(
     // extending the 30-day window, so the thief never loses access.
     user_sessions::revoke_all_for_user(&mut *tx, user_id).await?;
     refresh_tokens::revoke_all_for_user(&mut *tx, user_id).await?;
+    crate::repositories::push_subscriptions::revoke_all_for_user(&mut *tx, user_id).await?;
     // In the same transaction as the change: a credential rotation and its
     // trail must stand or fall together (same rule as the break-glass reset).
     audit_service::log_action_with_metadata(
@@ -722,7 +723,8 @@ pub async fn set_two_factor_policy(
     actor: Uuid,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<crate::models::totp::TwoFactorPolicyResponse> {
-    if let Some(until) = req.grace_until
+    if req.enforce
+        && let Some(until) = req.grace_until
         && until < chrono::Utc::now().date_naive()
     {
         return Err(AppError::Validation(
@@ -730,8 +732,9 @@ pub async fn set_two_factor_policy(
         ));
     }
 
+    let effective_grace = if req.enforce { req.grace_until } else { None };
     let status = get_two_factor_policy(pool).await?;
-    if req.enforce && req.grace_until.is_none() && !status.non_compliant.is_empty() {
+    if req.enforce && effective_grace.is_none() && !status.non_compliant.is_empty() {
         return Err(AppError::Validation(format!(
             "Cannot enable enforcement without a grace window: {} privileged account(s) still lack an enrolment ({})",
             status.non_compliant.len(),
@@ -746,7 +749,7 @@ pub async fn set_two_factor_policy(
         Some(actor),
     )
     .await?;
-    match req.grace_until {
+    match effective_grace {
         Some(until) => {
             crate::repositories::platform_settings::set_value(
                 pool,
@@ -775,7 +778,7 @@ pub async fn set_two_factor_policy(
         })),
         Some(serde_json::json!({
             "enforce": req.enforce,
-            "grace_until": req.grace_until.map(|d| d.to_string()),
+            "grace_until": effective_grace.map(|d| d.to_string()),
         })),
         Some("Platform 2FA enforcement policy changed"),
         audit_meta,

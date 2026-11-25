@@ -7,6 +7,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Modal } from '@/components/ui/Modal';
 import { FormField } from '@/components/ui/FormField';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/lib/toast';
 import { getErrorMessage } from '@/lib/utils';
 import type { Company, CreateCompanyRequest, UpdateCompanyRequest } from '@/types';
@@ -14,6 +15,7 @@ import type { Company, CreateCompanyRequest, UpdateCompanyRequest } from '@/type
 export function CompanyManagement() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const { setSession } = useAuth();
   const toast = useToast();
   const [showCreate, setShowCreate] = useState(false);
   const [editCompany, setEditCompany] = useState<Company | null>(null);
@@ -37,6 +39,7 @@ export function CompanyManagement() {
     mutationFn: createCompany,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-companies'] });
+      queryClient.invalidateQueries({ queryKey: ['my-companies'] });
       toast.success(t('companies.createSuccess'));
       setShowCreate(false);
       setForm({ name: '' });
@@ -49,8 +52,12 @@ export function CompanyManagement() {
 
   const deleteMutation = useMutation({
     mutationFn: deleteCompany,
-    onSuccess: () => {
+    onSuccess: (data) => {
+      if (data?.token && data?.user) {
+        setSession(data.token, data.user);
+      }
       queryClient.invalidateQueries({ queryKey: ['admin-companies'] });
+      queryClient.invalidateQueries({ queryKey: ['my-companies'] });
       toast.success(t('companies.deleteSuccess'));
       setDeleteTarget(null);
       setDeleteConfirmName('');
@@ -323,6 +330,7 @@ export function CompanyManagement() {
           onClose={() => setEditCompany(null)}
           onUpdated={() => {
             queryClient.invalidateQueries({ queryKey: ['admin-companies'] });
+            queryClient.invalidateQueries({ queryKey: ['my-companies'] });
             toast.success(t('companies.updateSuccess'));
             setEditCompany(null);
           }}

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE refresh_tokens SET revoked = TRUE\n           WHERE revoked = FALSE\n             AND ($2::uuid IS NULL OR user_id <> $2)\n             AND user_id IN (\n                 SELECT id FROM users WHERE company_id = $1\n                 UNION\n                 SELECT uc.user_id FROM user_companies uc\n                 WHERE uc.company_id = $1\n                   AND NOT EXISTS (\n                       SELECT 1 FROM user_companies uc2\n                       WHERE uc2.user_id = uc.user_id AND uc2.company_id <> $1\n                   )\n             )",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "933c8e31dd0ab7fecab8aed576109dfcd715ad9377ce1fa74ede2161c70f411a"
+}

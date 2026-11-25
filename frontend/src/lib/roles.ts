@@ -1,3 +1,4 @@
+import type { PermissionKey } from '@/api/permissions';
 import type { AppRole, User } from '@/types';
 import i18n from '@/i18n';
 
@@ -136,7 +137,45 @@ export function hasOnlyEmployeeRole(value: MaybeAppRole): boolean {
  */
 export function canUseAdminConsole(value: MaybeAppRole): boolean {
   const roles = roleList(value);
-  return roles.length > 0 && !hasOnlyEmployeeRole(roles);
+  if (roles.length > 0 && !hasOnlyEmployeeRole(roles)) {
+    return true;
+  }
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return (value.permissions?.length ?? 0) > 0;
+  }
+  return false;
+}
+
+const ADMIN_HOME_FALLBACKS: ReadonlyArray<{ requires: PermissionKey[]; path: string }> = [
+  { requires: ['view_employees'], path: '/dashboard' },
+  { requires: ['view_payroll'], path: '/payroll' },
+  { requires: ['manage_payroll_draft'], path: '/payroll/process' },
+  { requires: ['view_attendance'], path: '/attendance' },
+  { requires: ['view_approvals'], path: '/approvals' },
+  { requires: ['view_teams', 'manage_teams'], path: '/teams' },
+  { requires: ['view_calendar'], path: '/calendar' },
+  { requires: ['view_reports'], path: '/reports' },
+  { requires: ['view_documents'], path: '/documents' },
+  { requires: ['view_email_logs', 'manage_email_templates', 'send_letters'], path: '/letters' },
+  { requires: ['manage_company_settings'], path: '/settings' },
+  { requires: ['view_user_directory', 'manage_users'], path: '/user-groups' },
+  { requires: ['view_audit_log'], path: '/audit-trail' },
+];
+
+export function defaultAdminHome(user: User | null | undefined): string {
+  if (!user) return '/login';
+  if (!canUseAdminConsole(user)) return '/portal/profile';
+  if (hasAnyRole(user, SUPER_ADMIN_ROLES)) return '/companies';
+  const perms = user.permissions ?? [];
+  if (user.company_id) {
+    for (const entry of ADMIN_HOME_FALLBACKS) {
+      if (entry.requires.some((perm) => perms.includes(perm))) {
+        return entry.path;
+      }
+    }
+    return '/company';
+  }
+  return '/account';
 }
 
 export function canAccessPayrollData(role: MaybeAppRole): boolean {

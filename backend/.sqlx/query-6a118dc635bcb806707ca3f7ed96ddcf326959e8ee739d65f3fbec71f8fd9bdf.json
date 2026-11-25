@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE push_outbox\n         SET status = 'gone', attempts = attempts + 1, last_error = $2\n         WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6a118dc635bcb806707ca3f7ed96ddcf326959e8ee739d65f3fbec71f8fd9bdf"
+}

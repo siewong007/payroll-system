@@ -3,9 +3,11 @@ import {
   BellOff,
   BellRing,
   CheckCircle2,
+  RefreshCw,
   Send,
   Smartphone,
 } from 'lucide-react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { usePwa } from '@/context/PwaContext';
 import type { NotificationStatus } from '@/lib/pwa';
@@ -60,10 +62,14 @@ export function NotificationActivationCard() {
   const {
     notificationStatus,
     notificationBusy,
+    pushServerEnabled,
+    pushSubscribed,
     enableNotifications,
     sendTestNotification,
+    syncPushSubscription,
     openInstallModal,
   } = usePwa();
+  const [syncingPush, setSyncingPush] = useState(false);
 
   const Icon =
     notificationStatus === 'granted'
@@ -73,6 +79,29 @@ export function NotificationActivationCard() {
         : Bell;
 
   const statusMeta = STATUS_KEY[notificationStatus];
+
+  const badgeText =
+    notificationStatus === 'granted' && pushServerEnabled && pushSubscribed
+      ? t('pwa.notifications.statusPushActive')
+      : t(statusMeta.badge);
+
+  const descriptionText =
+    notificationStatus === 'granted'
+      ? pushServerEnabled
+        ? pushSubscribed
+          ? t('pwa.notifications.pushActiveDesc')
+          : t('pwa.notifications.pushSyncPendingDesc')
+        : t('pwa.notifications.localOnlyDesc')
+      : t(statusMeta.desc);
+
+  const handleSyncPush = async () => {
+    setSyncingPush(true);
+    try {
+      await syncPushSubscription();
+    } finally {
+      setSyncingPush(false);
+    }
+  };
 
   return (
     <section className="card">
@@ -93,19 +122,19 @@ export function NotificationActivationCard() {
                 {notificationStatus === 'granted' && (
                   <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
                 )}
-                {t(statusMeta.badge)}
+                {badgeText}
               </span>
             </div>
             <p className="text-sm text-gray-500 dark:text-slate-400">
               {t('pwa.notifications.cardDesc')}
             </p>
             <p className="text-xs text-gray-500 dark:text-slate-400">
-              {t(statusMeta.desc)}
+              {descriptionText}
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
           {notificationStatus === 'default' && (
             <button
               type="button"
@@ -117,6 +146,21 @@ export function NotificationActivationCard() {
               {notificationBusy
                 ? t('pwa.notifications.enabling')
                 : t('pwa.actions.allowNotifications')}
+            </button>
+          )}
+
+          {notificationStatus === 'granted' && pushServerEnabled && !pushSubscribed && (
+            <button
+              type="button"
+              disabled={syncingPush}
+              onClick={() => void handleSyncPush()}
+              className="btn-primary whitespace-nowrap"
+            >
+              <RefreshCw
+                className={`h-4 w-4 ${syncingPush ? 'animate-spin' : ''}`}
+                aria-hidden="true"
+              />
+              {t('pwa.actions.connectPush')}
             </button>
           )}
 

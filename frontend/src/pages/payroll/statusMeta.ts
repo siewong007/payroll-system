@@ -43,28 +43,34 @@ const MM_YYYY = /^(\d{2})\/(\d{4})$/;
  */
 export function payrollDiagnosticText(d: PayrollDiagnostic): string {
   const key = `payroll.diagnostics.${d.code}`;
-  if (!d.params || !i18n.exists(key)) return translateServerMessage(d.message);
   const vars: Record<string, string | number> = {};
-  for (const [k, v] of Object.entries(d.params)) {
-    const period = v.match(MM_YYYY);
-    if ((k === 'total' || k === 'salary' || k === 'minimum') && /^\d+$/.test(v)) {
-      vars[k] = formatMYR(Number(v));
-    } else if (k === 'oldest' && /^\d{4}-\d{2}-\d{2}$/.test(v)) {
-      vars[k] = formatDate(new Date(`${v}T00:00:00`));
-    } else if (period) {
-      vars[k] = formatPeriod(Number(period[2]), Number(period[1]));
-    } else if (k === 'periods') {
-      vars[k] = v
-        .split(', ')
-        .map((p) => {
-          const m = p.match(MM_YYYY);
-          return m ? formatPeriod(Number(m[2]), Number(m[1])) : p;
-        })
-        .join(', ');
-    } else {
-      vars[k] = v;
+  if (d.params) {
+    for (const [k, v] of Object.entries(d.params)) {
+      const period = v.match(MM_YYYY);
+      if ((k === 'total' || k === 'salary' || k === 'minimum') && /^\d+$/.test(v)) {
+        vars[k] = formatMYR(Number(v));
+      } else if (k === 'oldest' && /^\d{4}-\d{2}-\d{2}$/.test(v)) {
+        vars[k] = formatDate(new Date(`${v}T00:00:00`));
+      } else if (period) {
+        vars[k] = formatPeriod(Number(period[2]), Number(period[1]));
+      } else if (k === 'periods') {
+        vars[k] = v
+          .split(', ')
+          .map((p) => {
+            const m = p.match(MM_YYYY);
+            return m ? formatPeriod(Number(m[2]), Number(m[1])) : p;
+          })
+          .join(', ');
+      } else {
+        vars[k] = v;
+      }
     }
+    if (vars.count !== undefined) vars.count = Number(vars.count);
   }
-  if (vars.count !== undefined) vars.count = Number(vars.count);
+  const exists =
+    vars.count !== undefined
+      ? i18n.exists(key, { count: Number(vars.count) })
+      : i18n.exists(key);
+  if (!exists) return translateServerMessage(d.message);
   return i18n.t(key, vars);
 }

@@ -80,7 +80,37 @@ pub async fn delete_company(
 ) -> AppResult<Json<serde_json::Value>> {
     auth.require_permission(Permission::ManageCompanies)?;
     require_super_admin(&auth)?;
-    company_service::delete_company(&state.pool, company_id).await?;
+    company_service::delete_company(&state.pool, company_id, auth.0.sub).await?;
+
+    if auth.0.company_id == Some(company_id) {
+        let user = auth_service::get_user_by_id(&state.pool, auth.0.sub).await?;
+        if let Some(next_company_id) = user.company_id {
+            let _ = crate::repositories::push_subscriptions::update_company_for_session(
+                &state.pool,
+                auth.0.sub,
+                auth.0.sid,
+                next_company_id,
+            )
+            .await;
+        }
+        let token = crate::core::auth::create_token(
+            user.id,
+            &user.email,
+            &user.roles,
+            user.company_id,
+            user.employee_id,
+            auth.0.sid,
+            &state.config.jwt_secret,
+            state.config.jwt_expiry_hours,
+        )?;
+        let user_response = auth_service::build_user_response(&state.pool, user).await?;
+        return Ok(Json(serde_json::json!({
+            "ok": true,
+            "token": token,
+            "user": user_response,
+        })));
+    }
+
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 

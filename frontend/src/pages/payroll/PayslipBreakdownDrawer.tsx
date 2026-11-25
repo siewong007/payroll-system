@@ -81,8 +81,12 @@ export function PayslipBreakdownDrawer({
     };
   }, []);
 
-  const earnings = data?.lines.filter((line) => line.category === 'earning') ?? [];
+  const earnings =
+    data?.lines.filter((line) => line.category === 'earning' && line.item_type !== 'claim_reimbursement') ?? [];
+  const reimbursements =
+    data?.lines.filter((line) => line.category === 'earning' && line.item_type === 'claim_reimbursement') ?? [];
   const deductions = data?.lines.filter((line) => line.category === 'deduction') ?? [];
+  const totalClaims = Number(data?.item.total_claims ?? 0);
 
   const drawer = (
     <div className="animate-fade-in fixed inset-0 z-[55] flex justify-end bg-slate-950/50 backdrop-blur-sm" onClick={onClose}>
@@ -145,6 +149,13 @@ export function PayslipBreakdownDrawer({
             ) : (
               <>
                 <LineSection title={t('payroll.breakdown.earnings')} lines={earnings} tone="text-gray-900 dark:text-slate-100" />
+                {reimbursements.length > 0 && (
+                  <LineSection
+                    title={t('payroll.breakdown.reimbursements')}
+                    lines={reimbursements}
+                    tone="text-teal-700 dark:text-teal-300"
+                  />
+                )}
                 <LineSection title={t('payroll.breakdown.deductions')} lines={deductions} tone="text-red-600 dark:text-red-400" />
               </>
             )}
@@ -152,6 +163,9 @@ export function PayslipBreakdownDrawer({
             <div className="space-y-2 rounded-2xl border border-gray-200 dark:border-slate-800 bg-gray-50/80 dark:bg-slate-950/60 p-4">
               <TotalRow label={t('payroll.breakdown.grossSalary')} value={data.item.gross_salary} />
               <TotalRow label={t('payroll.breakdown.totalDeductions')} value={data.item.total_deductions} negative />
+              {totalClaims > 0 && (
+                <TotalRow label={t('payroll.breakdown.reimbursements')} value={totalClaims} />
+              )}
               <div className="border-t border-gray-200 dark:border-slate-800 pt-2">
                 <TotalRow label={t('payroll.breakdown.netSalary')} value={data.item.net_salary} emphasis />
               </div>

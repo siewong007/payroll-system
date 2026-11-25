@@ -221,17 +221,19 @@ pub async fn mark_failed(
 /// double-send.
 pub async fn claim_due_outbox(pool: &PgPool, limit: i64) -> AppResult<Vec<EmailLog>> {
     let mut tx = pool.begin().await?;
-    // Any row whose final-attempt worker crashed before recording completion
+    // Any row whose worker crashed — either on its final retry attempt or
+    // during an un-leased initial/welcome attempt older than 5 minutes —
     // must not stay stuck in 'pending' forever.
     sqlx::query!(
         r#"UPDATE email_logs
            SET status = 'failed',
                next_retry_at = NULL,
-               error_message = COALESCE(error_message, 'Delivery worker lease expired on final attempt')
+               error_message = COALESCE(error_message, 'Delivery worker lease expired')
            WHERE status = 'pending'
-             AND next_retry_at IS NOT NULL
-             AND next_retry_at <= NOW()
-             AND attempts >= max_attempts"#
+             AND (
+                 (next_retry_at IS NOT NULL AND next_retry_at <= NOW() AND attempts >= max_attempts)
+                 OR (next_retry_at IS NULL AND created_at < NOW() - INTERVAL '5 minutes')
+             )"#
     )
     .execute(&mut *tx)
     .await?;

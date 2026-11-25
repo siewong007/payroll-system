@@ -67,7 +67,7 @@ export function PortalLayout() {
     queryKey: ['notification-count'],
     queryFn: getNotificationCount,
     refetchInterval: 30_000,
-    enabled: isAuthenticated && !user?.must_change_password,
+    enabled: isAuthenticated && Boolean(user?.company_id) && !user?.must_change_password,
   });
 
   useEffect(() => {
@@ -380,7 +380,7 @@ export function PortalLayout() {
                     )}
                     <button
                       type="button"
-                      onClick={logout}
+                      onClick={() => void logout()}
                       className="flex items-center gap-2.5 w-full px-4 py-3 text-sm text-gray-600 dark:text-slate-300 hover:bg-white/70 dark:hover:bg-slate-800 hover:text-red-600 dark:hover:text-red-400 transition-all-fast"
                     >
                       <LogOut className="w-4 h-4" /> {t('nav.signOut')}

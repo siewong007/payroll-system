@@ -347,6 +347,54 @@ function EmployeeFormContent({
       delete payload.epf_category;
       payload.clear_epf_category = true;
     }
+    if (canViewPayroll && initialData?.payroll_group_id && !form.payroll_group_id) {
+      delete payload.payroll_group_id;
+      payload.clear_payroll_group_id = true;
+    }
+    if (canViewPayroll && initialData?.bank_name && !form.bank_name) {
+      delete payload.bank_name;
+      payload.clear_bank_name = true;
+    }
+    if (canViewPayroll && initialData?.bank_account_number && !form.bank_account_number) {
+      delete payload.bank_account_number;
+      payload.clear_bank_account_number = true;
+    }
+    if (initialData?.department && !form.department) {
+      delete payload.department;
+      payload.clear_department = true;
+    }
+    if (initialData?.designation && !form.designation) {
+      delete payload.designation;
+      payload.clear_designation = true;
+    }
+    if (initialData?.cost_centre && !form.cost_centre) {
+      delete payload.cost_centre;
+      payload.clear_cost_centre = true;
+    }
+    if (initialData?.branch && !form.branch) {
+      delete payload.branch;
+      payload.clear_branch = true;
+    }
+    if (initialData?.phone && !form.phone) {
+      delete payload.phone;
+      payload.clear_phone = true;
+    }
+    if (initialData?.email && !form.email) {
+      delete payload.email;
+      payload.clear_email = true;
+    }
+    if (initialData?.confirmation_date && !form.confirmation_date) {
+      delete payload.confirmation_date;
+      payload.clear_confirmation_date = true;
+    }
+    if (initialData?.probation_end && !form.probation_end) {
+      delete payload.probation_end;
+      payload.clear_probation_end = true;
+    }
+    if (canViewPayroll && initialData?.salary_group && !form.salary_group) {
+      delete payload.salary_group;
+      payload.clear_salary_group = true;
+    }
     updateMutation.mutate(payload);
   };
 

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE push_subscriptions\n         SET revoked_at = NOW(), updated_at = NOW()\n         WHERE user_id = $1 AND endpoint = $2 AND revoked_at IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f7f841d91d153e6b4e51fae1a3e43b1fdca67e44b7997159eb2750eb60270f38"
+}

@@ -745,7 +745,7 @@ function HolidayModal({
   open: boolean;
   holiday: Holiday | null;
   onClose: () => void;
-  onSave: (data: CreateHolidayRequest) => void;
+  onSave: (data: CreateHolidayRequest | Partial<CreateHolidayRequest>) => void;
   isLoading: boolean;
   serverError: string;
 }) {
@@ -768,6 +768,22 @@ function HolidayModal({
       return;
     }
     setValidationError('');
+    if (holiday) {
+      const updatePayload: Partial<CreateHolidayRequest> = {
+        name: trimmedName,
+        holiday_type: form.holiday_type,
+        description: form.description?.trim() || '',
+        is_recurring: form.is_recurring,
+        state: form.state?.trim() || '',
+      };
+      // Virtual occurrences of a recurring holiday carry the queried year's date;
+      // omitting `date` when unchanged preserves the original DB anchor date.
+      if (form.date !== holiday.date) {
+        updatePayload.date = form.date;
+      }
+      onSave(updatePayload);
+      return;
+    }
     onSave({
       ...form,
       name: trimmedName,

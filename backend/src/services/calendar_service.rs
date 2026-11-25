@@ -96,15 +96,19 @@ pub async fn update_working_days(
     company_id: Uuid,
     days: &[(i16, bool)],
 ) -> AppResult<Vec<WorkingDayConfig>> {
-    for &(day, is_working) in days {
+    for &(day, _) in days {
         if !(0..=6).contains(&day) {
             return Err(AppError::BadRequest(format!(
                 "Invalid day_of_week: {}. Must be 0-6.",
                 day
             )));
         }
-        working_day_repo::upsert(pool, company_id, day, is_working).await?;
     }
+    let mut tx = pool.begin().await?;
+    for &(day, is_working) in days {
+        working_day_repo::upsert(&mut *tx, company_id, day, is_working).await?;
+    }
+    tx.commit().await?;
     get_working_days(pool, company_id).await
 }
 
@@ -337,18 +341,27 @@ pub async fn import_from_ics_text(
             }
             in_event = false;
         } else if in_event {
-            if let Some(val) = line.strip_prefix("SUMMARY:") {
+            if let Some(val) = line.strip_prefix("SUMMARY:").or_else(|| {
+                line.starts_with("SUMMARY;")
+                    .then(|| line.split_once(':').map(|(_, v)| v))
+                    .flatten()
+            }) {
                 name = val.chars().take(200).collect();
             } else if let Some(val) = line
                 .strip_prefix("DTSTART;VALUE=DATE:")
                 .or_else(|| line.strip_prefix("DTSTART:"))
+                .or_else(|| {
+                    line.starts_with("DTSTART;")
+                        .then(|| line.split_once(':').map(|(_, v)| v))
+                        .flatten()
+                })
             {
                 date = parse_ics_date(val);
-            } else if line.starts_with("DTSTART;")
-                && let Some((_, val)) = line.split_once(':')
-            {
-                date = parse_ics_date(val);
-            } else if let Some(val) = line.strip_prefix("DESCRIPTION:") {
+            } else if let Some(val) = line.strip_prefix("DESCRIPTION:").or_else(|| {
+                line.starts_with("DESCRIPTION;")
+                    .then(|| line.split_once(':').map(|(_, v)| v))
+                    .flatten()
+            }) {
                 description = Some(
                     val.replace("\\n", "\n")
                         .replace("\\,", ",")

@@ -1,3 +1,5 @@
+import type { PushSubscriptionPayload } from '@/api/notifications';
+
 export interface BeforeInstallPromptEvent extends Event {
   readonly platforms: string[];
   readonly userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
@@ -152,6 +154,17 @@ export function getNotificationStatus(
   return window.Notification.permission;
 }
 
+export function isPushSupported(): boolean {
+  if (typeof window === 'undefined' || window.isSecureContext === false) {
+    return false;
+  }
+  return (
+    'serviceWorker' in navigator &&
+    'PushManager' in window &&
+    typeof window.Notification !== 'undefined'
+  );
+}
+
 export function registerServiceWorker(): Promise<ServiceWorkerRegistration | null> {
   if (
     typeof window === 'undefined' ||
@@ -192,6 +205,59 @@ export function registerServiceWorkerOnLoad(
 }
 
 /**
+ * Awaits an active ServiceWorkerRegistration (bounded by `timeoutMs`) so
+ * `registration.showNotification()` and `pushManager.subscribe()` do not fail
+ * during the first-install `installing` -> `activated` transition.
+ */
+export async function waitForActiveServiceWorker(
+  timeoutMs = 3000,
+): Promise<ServiceWorkerRegistration | null> {
+  if (
+    typeof window === 'undefined' ||
+    !('serviceWorker' in navigator) ||
+    window.isSecureContext === false
+  ) {
+    return null;
+  }
+
+  const registered = await registerServiceWorker();
+  if (registered && (!('active' in registered) || registered.active)) {
+    return registered;
+  }
+
+  if ('ready' in navigator.serviceWorker && navigator.serviceWorker.ready) {
+    let timerId: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const readyReg = await Promise.race<ServiceWorkerRegistration | null>([
+        navigator.serviceWorker.ready,
+        new Promise<null>((resolve) => {
+          timerId = setTimeout(() => resolve(null), timeoutMs);
+        }),
+      ]);
+      if (readyReg) {
+        return readyReg;
+      }
+    } catch {
+      // Fall back to getRegistration below.
+    } finally {
+      if (timerId !== undefined) {
+        clearTimeout(timerId);
+      }
+    }
+  }
+
+  if (typeof navigator.serviceWorker.getRegistration === 'function') {
+    try {
+      return (await navigator.serviceWorker.getRegistration('/')) ?? registered;
+    } catch {
+      return registered;
+    }
+  }
+
+  return registered;
+}
+
+/**
  * Calls `Notification.requestPermission()` immediately without preceding async
  * work so iOS Safari preserves the required user-gesture activation context.
  */
@@ -225,23 +291,14 @@ export async function showLocalNotification(
   };
 
   try {
+    const registration = await waitForActiveServiceWorker();
     if (
-      'serviceWorker' in navigator &&
-      typeof navigator.serviceWorker.getRegistration === 'function'
+      registration &&
+      typeof registration.showNotification === 'function' &&
+      (!('active' in registration) || registration.active)
     ) {
-      try {
-        const registration = await navigator.serviceWorker.getRegistration('/');
-        if (
-          registration &&
-          typeof registration.showNotification === 'function' &&
-          (!('active' in registration) || registration.active)
-        ) {
-          await registration.showNotification(title, notificationOptions);
-          return true;
-        }
-      } catch {
-        // Fall through to window.Notification if SW is still activating or fails.
-      }
+      await registration.showNotification(title, notificationOptions);
+      return true;
     }
 
     new window.Notification(title, notificationOptions);
@@ -265,29 +322,130 @@ export function urlBase64ToUint8Array(
   return outputArray;
 }
 
-export async function subscribeToPushIfConfigured(
+function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.byteLength !== b.byteLength) {
+    return false;
+  }
+  for (let i = 0; i < a.byteLength; i += 1) {
+    if (a[i] !== b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+export function serializePushSubscription(
+  sub: PushSubscription,
+): PushSubscriptionPayload | null {
+  const json = typeof sub.toJSON === 'function' ? sub.toJSON() : null;
+  const endpoint = json?.endpoint ?? sub.endpoint;
+  const p256dh = json?.keys?.p256dh;
+  const auth = json?.keys?.auth;
+  if (!endpoint || !p256dh || !auth) {
+    return null;
+  }
+  return {
+    endpoint,
+    keys: { p256dh, auth },
+  };
+}
+
+export async function subscribeToPush(
   registration: ServiceWorkerRegistration,
-): Promise<PushSubscription | null> {
-  const vapidPublicKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
-  if (
-    typeof vapidPublicKey !== 'string' ||
-    !vapidPublicKey.trim() ||
-    !('pushManager' in registration)
-  ) {
+  vapidPublicKey: string,
+): Promise<PushSubscriptionPayload | null> {
+  const trimmedKey = vapidPublicKey.trim();
+  if (!trimmedKey || !('pushManager' in registration)) {
     return null;
   }
 
   try {
+    const targetKeyBytes = urlBase64ToUint8Array(trimmedKey);
     const existing = await registration.pushManager.getSubscription();
     if (existing) {
-      return existing;
+      const existingKey = existing.options?.applicationServerKey;
+      if (existingKey) {
+        const existingBytes = new Uint8Array(existingKey);
+        if (bytesEqual(existingBytes, targetKeyBytes)) {
+          return serializePushSubscription(existing);
+        }
+        await existing.unsubscribe();
+      } else {
+        return serializePushSubscription(existing);
+      }
     }
-    return await registration.pushManager.subscribe({
+
+    const created = await registration.pushManager.subscribe({
       userVisibleOnly: true,
-      applicationServerKey: urlBase64ToUint8Array(vapidPublicKey.trim()),
+      applicationServerKey: targetKeyBytes,
     });
+    return serializePushSubscription(created);
   } catch {
     return null;
+  }
+}
+
+export async function getCurrentPushEndpoint(): Promise<string | null> {
+  if (
+    typeof window === 'undefined' ||
+    !('serviceWorker' in navigator) ||
+    typeof navigator.serviceWorker.getRegistration !== 'function'
+  ) {
+    return null;
+  }
+  try {
+    const registration = await navigator.serviceWorker.getRegistration('/');
+    if (!registration || !('pushManager' in registration)) {
+      return null;
+    }
+    const existing = await registration.pushManager.getSubscription();
+    return existing?.endpoint ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function unsubscribeFromPush(): Promise<string | null> {
+  if (
+    typeof window === 'undefined' ||
+    !('serviceWorker' in navigator) ||
+    typeof navigator.serviceWorker.getRegistration !== 'function'
+  ) {
+    return null;
+  }
+  try {
+    const registration = await navigator.serviceWorker.getRegistration('/');
+    if (!registration || !('pushManager' in registration)) {
+      return null;
+    }
+    const existing = await registration.pushManager.getSubscription();
+    if (!existing) {
+      return null;
+    }
+    const endpoint = existing.endpoint;
+    await existing.unsubscribe();
+    return endpoint;
+  } catch {
+    return null;
+  }
+}
+
+export function updateAppBadge(unreadCount: number): void {
+  if (typeof navigator === 'undefined') {
+    return;
+  }
+  const badgeNav = navigator as Navigator & {
+    setAppBadge?: (contents?: number) => Promise<void>;
+    clearAppBadge?: () => Promise<void>;
+  };
+  try {
+    if (unreadCount > 0 && typeof badgeNav.setAppBadge === 'function') {
+      void badgeNav.setAppBadge(unreadCount).catch(() => undefined);
+    } else if (unreadCount <= 0 && typeof badgeNav.clearAppBadge === 'function') {
+      void badgeNav.clearAppBadge().catch(() => undefined);
+    }
+  } catch {
+    // Ignore unsupported badging environments.
   }
 }
 

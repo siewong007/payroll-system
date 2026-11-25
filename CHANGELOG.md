@@ -9,36 +9,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **PWA installability & Web Push notifications (`1034_push_notifications.sql`)** —
+  added web manifest (`frontend/public/manifest.webmanifest`), service worker
+  (`frontend/public/sw.js`) with offline fallback (`/offline.html`) and
+  `OfflineBanner`, iOS/Android/desktop install & notification activation cards
+  (`AppInstallCard`, `NotificationActivationCard`), `push_subscriptions` and
+  durable `push_outbox` tables, RFC 8291 AES-128-GCM + RFC 8292 VAPID ES256
+  delivery worker (`push_service.rs`, `scripts/generate-vapid-keys.mjs`),
+  `/api/notifications/{push-config,subscriptions,test-push}`, and reference host
+  Caddy config (`deploy/payrollmy-site.Caddyfile.example`).
+- **`manager` role (`1031_manager_role.sql`) & platform/account consoles** —
+  added the `manager` company-management role (excluding payroll, bulk import,
+  and privileged `admin`/`super_admin` directory visibility), added
+  `PlatformSettingsPage` (`/admin/platform`) for super-admin 2FA policy and
+  background-job health inspection, and added `AccountSecurityPage`
+  (`/account`) for self-service security, sessions, and PWA settings.
 - **Legal, PDPA & 2026 Malaysian statutory compliance suite** — added
-  [docs/legal/terms-and-conditions.md](docs/legal/terms-and-conditions.md),
-  bilingual English/Bahasa Malaysia
-  [docs/legal/privacy-and-pdpa-notice.md](docs/legal/privacy-and-pdpa-notice.md)
-  (aligned with the _Personal Data Protection (Amendment) Act 2024 [Act A1727]_
-  DPO, 72-hour data breach notification, data portability, and biometric
-  WebAuthn boundaries),
-  [docs/legal/malaysian-statutory-compliance.md](docs/legal/malaysian-statutory-compliance.md),
-  and localized in-app `/terms`, `/privacy`, and `/compliance` pages across
-  `en`, `ms`, `zh-CN`, and `zh-TW`.
+  consolidated [docs/legal.md](docs/legal.md) (Terms of Use, bilingual
+  English/Bahasa Malaysia PDPA Notice aligned with the _Personal Data Protection
+  (Amendment) Act 2024 [Act A1727]_, and 2026 Malaysian Statutory Compliance
+  Guide) alongside localized in-app `/terms`, `/privacy`, and `/compliance`
+  pages across `en`, `ms`, `zh-CN`, and `zh-TW`.
 - **KWSP Third Schedule Parts A–F & Minimum Wages Order 2024 alignment** —
   expanded `epf_service` and `employees_epf_category_check` (`1029`) to support
   Malaysian citizen Part E (aged 60–74: 0% employee / 4% employer), PR Part C
   (aged 60–74), mandatory foreign-worker Part F (2% + 2% effective 1 October
   2025 under _EPF Amendment Act 2025_), and statutory cessation at age 75
   (_EPF Act 1991 s.43(1)_); added `below_minimum_wage` preview warnings for
-  full-time salaries below the RM1,700/month floor (_Minimum Wages Order 2024
-  [P.U. (A) 376/2024]_); and normalized `permanent_resident` / `epf_category`
-  validation in bulk employee imports.
-- **Workspace UX & security hardening** — enhanced workspace dashboard, dark
-  mode, global command palette, dialog UX, upload ownership registry
-  (`uploaded_files`), TOTP replay/lockout guards, and local nightly encrypted
-  backups on the AIC VPS following AWS infrastructure decommission.
+  salaries below the RM1,700/month floor (_Minimum Wages Order 2024_); and
+  normalized `permanent_resident` / `epf_category` handling.
+- **Monorepo standards & modularity** — added root workspace scripts
+  (`package.json`), Husky + `lint-staged`, Prettier, pinned runtimes
+  (`.bun-version`, `rust-toolchain.toml`), centralized frontend route constants
+  (`frontend/src/lib/routes.ts`), modularized oversized page modules, and added
+  accessibility enhancements (skip-to-content links, 44px mobile touch targets).
 
 ### Changed
 
-- Upgraded Rust backend (`calamine`, `rust_xlsxwriter`, `tower-http`) and
-  frontend (`axios`, `zod`, `tailwindcss`, `vite`, `eslint`, `vitest`)
-  dependencies and synchronized architecture, database, feature, security, and
-  payroll documentation with migrations `1000`–`1030`.
+- **Phase 3 hardening & full-application audit fixes (`1032`, `1033`)** —
+  added O(1) keyed SHA-256 TOTP backup-code lookup, retryable email outbox
+  columns and worker, 10 employee domain CHECK constraints, `payroll_items.taxable_gross`
+  for YTD PCB/EA accuracy, explicit `overtime_application_id`/`leave_request_id`
+  FKs on `payroll_entries`, dropped `DEFAULT 'A'` on `employees.epf_category`
+  for automatic category derivation, added `claims`/`tp3_records` CHECKs and
+  unique `(user_id, provider)` index on `oauth2_accounts`, moved all remaining
+  inline SQL into `repositories/`, rejected `.env.example` placeholder secrets in
+  production, and redacted PII emails in `email_service` logs.
+- **CI, deployment & documentation consolidation** — enabled CI/deploy
+  workflows on both `main` and `master`, upgraded Rust & frontend dependencies,
+  synchronized documentation with migrations `1000`–`1034`, consolidated docs to
+  one canonical file per document type (`AGENTS.md`, `docs/*.md`), and erased
+  implemented and stale plans/audits.
 
 ## [0.2.0] - 2026-09-20
 
@@ -55,18 +76,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Deploy pipeline** — restored `1025_payroll_ops.sql` to the bytes production
   installed and moved the post-merge edit's intent into
-  `1027_cancelled_run_timestamp_backfill.sql` (legacy cancelled runs get
-  `cancelled_at` backfilled from `updated_at`; the consistency check now
-  requires the timestamp only). The in-place edit had changed the installed
-  checksum, so every post-merge deploy panicked on `VersionMismatch(1025)` —
-  and, having applied the out-of-order `1024` first, crash-looped the rollback
-  image too, taking the production API down.
-- **CI migration gate** — the immutability check diffed `origin/main...HEAD`,
-  which on `push` events compares the pushed commit to itself; it now diffs the
-  pre-push tip on pushes and supports an explicit `[migration-override]`
-  commit-message marker for deliberate restores.
-- **Deploy smoke** — the post-deploy login probe now also accepts 400/403,
-  the fail-closed statuses of the Turnstile gate for a token-less request.
+  `1027_cancelled_run_timestamp_backfill.sql`.
+- **CI migration gate** — fixed push-event diffing against the pre-push tip and
+  added `[migration-override]` marker support for deliberate restores.
+- **Deploy smoke** — accepted 400/403 fail-closed Turnstile responses on
+  token-less login probes.
 
 ## [0.1.0] - 2026-09-20
 
@@ -87,18 +101,10 @@ First release.
   tracking, TOTP 2FA enforced for privileged roles, passkeys, Google OAuth2
   account linking, Cloudflare Turnstile bot protection, per-route and
   per-session rate limiting, and a user-groups permission layer.
-- **Audit trail** — covers the authentication and credential lifecycle,
-  payroll, attendance, admin actions, and company/settings changes.
-- **Employee management** — bulk import with portal-account provisioning and
-  leave balances, leave requests with approval inboxes, HR letters, reports,
-  and user management with search and pagination.
-- **Employee portal** — self-service check-in, leave, payslips, and profile.
-- **Multi-company** — users can belong to several companies and switch the
-  active company, re-issuing the JWT scope.
-- **i18n** — full `en`, `ms`, `zh-CN`, and `zh-TW` locale support.
-- **Ops** — encrypted nightly off-host backups with secrets escrow, retention
-  purges for append-only tables, correlation IDs, per-request JSON telemetry,
-  graceful shutdown, and AWS infrastructure as Terraform.
+- **Audit trail, employee management, portal, multi-company & i18n** —
+  credential/workflow audit trail, bulk employee import, self-service portal,
+  multi-company switching, four-locale i18n (`en`, `ms`, `zh-CN`, `zh-TW`), and
+  production automation.
 
 ### Notes
 

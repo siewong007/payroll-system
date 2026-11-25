@@ -49,7 +49,7 @@ fn validate_schedule_fields(
             "Start time and end time cannot be the same".into(),
         ));
     }
-    if !half_day.is_finite() || half_day <= 0.0 || half_day > 24.0 {
+    if !half_day.is_finite() || half_day < 0.5 || half_day > 24.0 {
         return Err(AppError::BadRequest(
             "Half-day hours must be between 0.5 and 24".into(),
         ));

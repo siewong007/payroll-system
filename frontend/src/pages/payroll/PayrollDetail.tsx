@@ -28,6 +28,7 @@ import {
   downloadRunPayslips,
   deletePayrollRun,
   returnPayrollForChanges,
+  reversePayrollRun,
   submitPayrollForApproval,
   updatePayrollItemPcb,
 } from '@/api/payroll';
@@ -51,7 +52,7 @@ import { PayslipBreakdownDrawer } from './PayslipBreakdownDrawer';
 import type { PayrollRun, PayrollSummary } from '@/types';
 
 const canDeletePayrollRun = (run: PayrollRun) =>
-  ['draft', 'processed', 'cancelled'].includes(run.status) && !run.locked_at;
+  ['draft', 'processed'].includes(run.status) && !run.locked_at;
 const canDownloadPayslips = (status: string) => ['approved', 'paid'].includes(status);
 // Cancellation follows the four-eyes split the backend enforces: the preparer
 // withdraws their own draft/processed run; once submitted, only an approver
@@ -158,6 +159,18 @@ export function PayrollDetail() {
     },
   });
 
+  const reverseMutation = useMutation({
+    mutationFn: (reason: string) => reversePayrollRun(id!, reason),
+    onSuccess: () => {
+      setLifecycleError('');
+      invalidateRunQueries();
+      toast.success(t('payroll.detail.reverseSuccess'));
+    },
+    onError: (err: unknown) => {
+      setLifecycleError(getErrorMessage(err, t('payroll.detail.reverseFailed')));
+    },
+  });
+
   const journalMutation = useMutation({
     mutationFn: () => getJournalPreview(id!),
     onSuccess: (preview) => {
@@ -240,7 +253,8 @@ export function PayrollDetail() {
   const canPay = can('mark_payroll_paid');
   const isSuperAdmin = hasAnyRole(user, SUPER_ADMIN_ROLES);
   const isOwnRun =
-    Boolean(user?.id) && (run.processed_by === user?.id || run.submitted_by === user?.id);
+    Boolean(user?.id) &&
+    (run.processed_by === user?.id || run.submitted_by === user?.id || run.updated_by === user?.id);
   const selfApprovalBlocked = isOwnRun && !isSuperAdmin;
   const selfApprovalOverride = isOwnRun && isSuperAdmin;
   const showCancel =
@@ -458,6 +472,26 @@ export function PayrollDetail() {
               >
                 <Ban className="w-4 h-4" aria-hidden="true" />
                 {cancelMutation.isPending ? t('payroll.detail.cancelling') : t('payroll.detail.cancelRun')}
+              </button>
+            )}
+            {canPay && run.status === 'paid' && (
+              <button
+                type="button"
+                onClick={async () => {
+                  const reason = await promptDialog({
+                    title: t('payroll.detail.reverseRun'),
+                    description: t('payroll.detail.reversePrompt'),
+                    confirmLabel: t('payroll.detail.reverseRun'),
+                    required: true,
+                    variant: 'danger',
+                  });
+                  if (reason) reverseMutation.mutate(reason);
+                }}
+                disabled={reverseMutation.isPending}
+                className="no-print flex items-center gap-2 bg-white dark:bg-slate-900 border border-red-200 dark:border-red-500/30 text-red-600 dark:text-red-400 px-4 py-2 min-h-[44px] rounded-xl hover:bg-red-50 dark:hover:bg-red-500/10 disabled:opacity-50 text-sm font-medium transition-colors"
+              >
+                <RotateCcw className="w-4 h-4" aria-hidden="true" />
+                {reverseMutation.isPending ? t('payroll.detail.reversing') : t('payroll.detail.reverseRun')}
               </button>
             )}
             <span className={`px-3 py-1 rounded-full text-sm font-medium ${PAYROLL_STATUS_STYLES[run.status] ?? 'bg-gray-100 text-gray-900 dark:bg-slate-800 dark:text-slate-200'}`}>

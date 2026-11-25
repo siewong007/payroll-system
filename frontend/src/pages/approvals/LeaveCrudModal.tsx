@@ -1,13 +1,13 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { Upload, X } from 'lucide-react';
 import {
   createLeaveRequest,
   updateLeaveRequest,
   type LeaveRequestWithEmployee,
 } from '@/api/approvals';
-import { uploadFile } from '@/api/portal';
+import { getPortalWorkingDays, uploadFile } from '@/api/portal';
 import { EmployeePicker } from '@/components/employees/EmployeePicker';
 import { FormField } from '@/components/ui/FormField';
 import { Modal } from '@/components/ui/Modal';
@@ -58,6 +58,8 @@ export function LeaveCrudModal({
     attachment_name: '',
   });
   const [daysInput, setDaysInput] = useState('1');
+  const [datesDirty, setDatesDirty] = useState(false);
+  const [daysManuallyEdited, setDaysManuallyEdited] = useState(false);
   const [error, setError] = useState('');
   const [uploading, setUploading] = useState(false);
   const modalTitle = item
@@ -69,6 +71,8 @@ export function LeaveCrudModal({
       return;
     }
 
+    setDatesDirty(false);
+    setDaysManuallyEdited(false);
     if (item) {
       setForm({
         employee_id: item.employee_id,
@@ -107,6 +111,23 @@ export function LeaveCrudModal({
     }
   }, [form.leave_type_id, item, leaveTypes, open]);
 
+  const validDateRange = Boolean(
+    form.start_date && form.end_date && form.end_date >= form.start_date,
+  );
+  const { data: serverWorkingDays } = useQuery({
+    queryKey: ['portal-working-days', form.start_date, form.end_date],
+    queryFn: () => getPortalWorkingDays(form.start_date, form.end_date),
+    enabled: open && validDateRange,
+  });
+
+  useEffect(() => {
+    if (!open || !validDateRange || !serverWorkingDays || daysManuallyEdited) return;
+    if (item && !datesDirty) return;
+    const workingDays = serverWorkingDays.working_days;
+    setForm((prev) => ({ ...prev, days: workingDays }));
+    setDaysInput(String(workingDays));
+  }, [open, validDateRange, serverWorkingDays, item, datesDirty, daysManuallyEdited]);
+
   const createMutation = useMutation({
     mutationFn: createLeaveRequest,
     onSuccess: onSaved,
@@ -121,6 +142,8 @@ export function LeaveCrudModal({
   });
 
   const handleDateChange = (field: 'start_date' | 'end_date', value: string) => {
+    setDatesDirty(true);
+    setDaysManuallyEdited(false);
     setForm((prev) => {
       const next = { ...prev, [field]: value };
       const computed = inclusiveDaysBetween(next.start_date, next.end_date);
@@ -316,6 +339,7 @@ export function LeaveCrudModal({
               value={daysInput}
               onChange={(event) => {
                 const raw = event.target.value;
+                setDaysManuallyEdited(true);
                 setDaysInput(raw);
                 setForm((prev) => ({ ...prev, days: raw.trim() ? Number(raw) : 0 }));
               }}

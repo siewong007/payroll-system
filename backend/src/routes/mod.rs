@@ -227,6 +227,7 @@ pub fn create_router(state: AppState) -> Router {
             post(totp::regenerate_backup_codes),
         )
         .route("/admin/users/{id}/2fa/reset", post(admin::reset_user_2fa))
+        .route("/notifications/test-push", post(notification::test_push))
         .layer(GovernorLayer::new(session_auth_rate_limit));
 
     let rate_limited_email = Router::new()
@@ -254,7 +255,8 @@ pub fn create_router(state: AppState) -> Router {
     let rate_limited_uploads = Router::new()
         .route(
             "/uploads",
-            post(portal::upload_file).layer(DefaultBodyLimit::max(11 * 1024 * 1024)),
+            post(portal::upload_file)
+                .layer(DefaultBodyLimit::max(portal::UPLOAD_REQUEST_MAX_BYTES)),
         )
         .layer(GovernorLayer::new(upload_rate_limit));
 
@@ -499,6 +501,11 @@ pub fn create_router(state: AppState) -> Router {
         .route("/notifications/count", get(notification::count))
         .route("/notifications/read-all", put(notification::mark_all_read))
         .route("/notifications/{id}/read", put(notification::mark_read))
+        .route("/notifications/push-config", get(notification::push_config))
+        .route(
+            "/notifications/subscriptions",
+            post(notification::upsert_subscription).delete(notification::delete_subscription),
+        )
         // Approval Workflows (admin)
         .route("/approvals/pending-count", get(approval::pending_counts))
         .route(

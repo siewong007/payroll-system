@@ -137,6 +137,12 @@ export async function cancelPayrollRun(id: string, reason: string): Promise<Payr
   return data;
 }
 
+/// Void a paid run: records the reversal in audit logs and releases consumed claims/entries.
+export async function reversePayrollRun(id: string, reason: string): Promise<PayrollRun> {
+  const { data } = await api.put(`/payroll/runs/${id}/reverse`, { reason });
+  return data;
+}
+
 /// Bank payment file (CSV) for an approved/paid run — finance-facing.
 export async function downloadPaymentFile(runId: string): Promise<void> {
   const res = await api.get(`/payroll/runs/${runId}/payment-file`, { responseType: 'blob' });

@@ -113,6 +113,9 @@ mod tests {
             trust_proxy_headers: false,
             turnstile_secret_key: secret.map(str::to_string),
             turnstile_verify_url: url.to_string(),
+            vapid_public_key: None,
+            vapid_private_key: None,
+            vapid_subject: None,
         }
     }
 

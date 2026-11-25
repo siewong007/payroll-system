@@ -268,13 +268,14 @@ pub async fn cancel_overtime_admin(
         }
     }
 
-    let cancelled = overtime_applications::set_cancelled(&mut *tx, ot_id, company_id)
-        .await?
-        .ok_or_else(|| {
-            AppError::Conflict(
-                "This overtime application was already cancelled or modified.".into(),
-            )
-        })?;
+    let cancelled =
+        overtime_applications::set_cancelled(&mut *tx, ot_id, company_id, &current.status)
+            .await?
+            .ok_or_else(|| {
+                AppError::Conflict(
+                    "This overtime application was already cancelled or modified.".into(),
+                )
+            })?;
 
     tx.commit().await?;
 

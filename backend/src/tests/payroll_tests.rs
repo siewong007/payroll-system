@@ -2344,3 +2344,171 @@ async fn attendance_overtime_is_bucketed_by_day_type() {
     assert_eq!(bucket("rest_day"), dec!(3));
     assert_eq!(bucket("public_holiday"), dec!(1.5));
 }
+
+#[tokio::test]
+async fn payroll_entry_clear_flags_and_approval_linked_guards() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let emp_id = seed_employee(&pool, company_id, None, 400_000).await;
+    let actor_id = seed_user(&pool, company_id, "payroll_admin").await;
+
+    let created = crate::services::payroll_entry_service::create_entry(
+        &pool,
+        company_id,
+        crate::models::payroll::CreatePayrollEntryRequest {
+            employee_id: emp_id,
+            period_year: 2026,
+            period_month: 5,
+            category: "earning".into(),
+            item_type: "monthly_allowance".into(),
+            description: "Shift allowance".into(),
+            amount: 20_000,
+            quantity: Some(dec!(2)),
+            rate: Some(10_000),
+            is_taxable: Some(true),
+        },
+        actor_id,
+        None,
+    )
+    .await
+    .expect("create manual entry");
+    assert_eq!(created.quantity, Some(dec!(2)));
+    assert_eq!(created.rate, Some(10_000));
+
+    let cleared = crate::services::payroll_entry_service::update_entry(
+        &pool,
+        company_id,
+        created.id,
+        crate::models::payroll::UpdatePayrollEntryRequest {
+            employee_id: None,
+            period_year: None,
+            period_month: None,
+            category: None,
+            item_type: None,
+            description: None,
+            amount: None,
+            quantity: None,
+            rate: None,
+            clear_quantity: Some(true),
+            clear_rate: Some(true),
+            is_taxable: None,
+        },
+        actor_id,
+        None,
+    )
+    .await
+    .expect("clear quantity and rate");
+    assert_eq!(cleared.quantity, None);
+    assert_eq!(cleared.rate, None);
+
+    // Approval-linked entries (overtime / claim_reimbursement) cannot be updated or deleted directly.
+    let ot_entry_id = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO payroll_entries
+         (id, employee_id, company_id, period_year, period_month, category, item_type, description, amount, created_by)
+         VALUES ($1, $2, $3, 2026, 5, 'earning', 'overtime', 'Approved OT', 15000, $4)",
+    )
+    .bind(ot_entry_id)
+    .bind(emp_id)
+    .bind(company_id)
+    .bind(actor_id)
+    .execute(&pool)
+    .await
+    .expect("seed ot entry");
+
+    let edit_err = crate::services::payroll_entry_service::update_entry(
+        &pool,
+        company_id,
+        ot_entry_id,
+        crate::models::payroll::UpdatePayrollEntryRequest {
+            employee_id: None,
+            period_year: None,
+            period_month: None,
+            category: None,
+            item_type: None,
+            description: None,
+            amount: Some(25_000),
+            quantity: None,
+            rate: None,
+            clear_quantity: None,
+            clear_rate: None,
+            is_taxable: None,
+        },
+        actor_id,
+        None,
+    )
+    .await
+    .expect_err("cannot edit approval-linked entry");
+    assert!(matches!(
+        edit_err,
+        crate::core::error::AppError::BadRequest(_)
+    ));
+
+    let del_err = crate::services::payroll_entry_service::delete_entry(
+        &pool,
+        company_id,
+        ot_entry_id,
+        actor_id,
+        None,
+    )
+    .await
+    .expect_err("cannot delete approval-linked entry");
+    assert!(matches!(
+        del_err,
+        crate::core::error::AppError::BadRequest(_)
+    ));
+}
+
+#[tokio::test]
+async fn payroll_overview_trend_keeps_latest_twelve_months_ascending() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let group_id = seed_payroll_group(&pool, company_id).await;
+    let actor_id = seed_user(&pool, company_id, "payroll_admin").await;
+
+    // Seed 14 monthly paid runs: 2024-01 .. 2024-12 and 2025-01 .. 2025-02.
+    for idx in 0..14i32 {
+        let year = 2024 + (idx / 12);
+        let month = (idx % 12) + 1;
+        let run_id = uuid::Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO payroll_runs
+             (id, company_id, payroll_group_id, period_year, period_month,
+              period_start, period_end, pay_date, status,
+              employee_count, total_gross, total_net, total_epf_employee, total_epf_employer,
+              total_socso_employee, total_socso_employer, total_eis_employee, total_eis_employer,
+              total_pcb, total_zakat, processed_by)
+             VALUES ($1, $2, $3, $4, $5,
+                     MAKE_DATE($4, $5, 1),
+                     (MAKE_DATE($4, $5, 1) + INTERVAL '1 month - 1 day')::date,
+                     MAKE_DATE($4, $5, 28), 'paid',
+                     1, $6, $6, 0, 0, 0, 0, 0, 0, 0, 0, $7)",
+        )
+        .bind(run_id)
+        .bind(company_id)
+        .bind(group_id)
+        .bind(year)
+        .bind(month)
+        .bind(100_000i64 + i64::from(idx))
+        .bind(actor_id)
+        .execute(&pool)
+        .await
+        .expect("seed paid run");
+    }
+
+    let overview = crate::services::payroll_service::overview(&pool, company_id)
+        .await
+        .expect("overview");
+    let ym: Vec<(i32, i32)> = overview
+        .trend
+        .iter()
+        .map(|p| (p.period_year, p.period_month))
+        .collect();
+    assert_eq!(ym.len(), 12);
+    assert_eq!(ym.first().copied(), Some((2024, 3)));
+    assert_eq!(ym.last().copied(), Some((2025, 2)));
+}

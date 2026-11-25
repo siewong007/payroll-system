@@ -154,7 +154,8 @@ pub async fn get_cancellable_with_type(
         JOIN leave_types lt ON lr.leave_type_id = lt.id
         WHERE lr.id = $1
           AND lr.company_id = $2
-          AND lr.status IN ('pending', 'approved', 'rejected')"#,
+          AND lr.status IN ('pending', 'approved', 'rejected')
+        FOR UPDATE OF lr"#,
         request_id,
         company_id,
     )
@@ -223,23 +224,26 @@ pub async fn delete(
     Ok(res.rows_affected())
 }
 
-/// Cancels a request, returning `None` if it was already cancelled.
+/// Cancels a request, returning `None` if its status changed concurrently.
 ///
-/// Same serialization point as `mark_cancelled`: the caller refunds days based on
-/// a status it read earlier, so a concurrent cancel must not be able to refund twice.
+/// Same serialization point as `mark_cancelled`: the caller inspects status under
+/// `FOR UPDATE OF lr` and refunds pending/taken days for that observed status, so
+/// the update also requires `status = expected_status`.
 pub async fn set_cancelled(
     executor: impl Executor<'_, Database = Postgres>,
     request_id: Uuid,
     company_id: Uuid,
+    expected_status: &str,
 ) -> AppResult<Option<LeaveRequest>> {
     let cancelled = sqlx::query_as!(
         LeaveRequest,
         r#"UPDATE leave_requests
         SET status = 'cancelled', updated_at = NOW()
-        WHERE id = $1 AND company_id = $2 AND status <> 'cancelled'
+        WHERE id = $1 AND company_id = $2 AND status = $3
         RETURNING *, (SELECT name FROM leave_types WHERE id = leave_type_id) AS "leave_type_name?""#,
         request_id,
         company_id,
+        expected_status,
     )
     .fetch_optional(executor)
     .await?;
@@ -386,7 +390,8 @@ pub async fn get_cancellable_for_employee(
         JOIN leave_types lt ON lr.leave_type_id = lt.id
         WHERE lr.id = $1
           AND lr.employee_id = $2
-          AND lr.status IN ('pending', 'approved', 'rejected')"#,
+          AND lr.status IN ('pending', 'approved', 'rejected')
+        FOR UPDATE OF lr"#,
         request_id,
         employee_id,
     )
@@ -395,20 +400,20 @@ pub async fn get_cancellable_for_employee(
     Ok(leave)
 }
 
-/// Set a request to `cancelled` by id (the caller already authorized ownership).
-/// Cancels a request, returning false if it was already cancelled.
+/// Cancels a request, returning false if its status changed concurrently.
 ///
-/// The `status <> 'cancelled'` predicate makes this the serialization point for
-/// cancellation: callers refund the days based on the status they read earlier,
-/// so without it two concurrent cancels of one approved request would both take
-/// the refund branch and credit the days twice.
+/// Paired with `get_cancellable_for_employee` (`FOR UPDATE OF lr`): callers refund
+/// days based on the locked row's `status`, so requiring `status = expected_status`
+/// prevents double-refunds or stale pending/approved branch selection.
 pub async fn mark_cancelled(
     executor: impl Executor<'_, Database = Postgres>,
     request_id: Uuid,
+    expected_status: &str,
 ) -> AppResult<bool> {
     let result = sqlx::query!(
-        "UPDATE leave_requests SET status = 'cancelled', updated_at = NOW() WHERE id = $1 AND status <> 'cancelled'",
+        "UPDATE leave_requests SET status = 'cancelled', updated_at = NOW() WHERE id = $1 AND status = $2",
         request_id,
+        expected_status,
     )
     .execute(executor)
     .await?;

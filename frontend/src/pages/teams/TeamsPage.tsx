@@ -62,6 +62,7 @@ export function TeamsPage() {
   const confirmDialog = useConfirm();
   const { can } = usePermissions();
   const canManageTeams = can('manage_teams');
+  const canViewEmployees = can('view_employees');
   const queryClient = useQueryClient();
   const createFormId = useId();
   const editFormId = useId();
@@ -127,7 +128,7 @@ export function TeamsPage() {
       is_active: true,
       per_page: 50,
     }),
-    enabled: showAddMemberModal && canManageTeams,
+    enabled: showAddMemberModal && canManageTeams && canViewEmployees,
   });
 
   const resetForm = () => {
@@ -693,7 +694,11 @@ export function TeamsPage() {
             </p>
           )}
           <div className="max-h-80 overflow-y-auto divide-y divide-gray-100 dark:divide-slate-800 border border-gray-200 dark:border-slate-800 rounded-lg">
-            {loadingAvailableEmployees ? (
+            {!canViewEmployees ? (
+              <div className="p-6 text-center text-sm text-gray-500 dark:text-slate-400">
+                {t('teams.employeeDirectoryRequired')}
+              </div>
+            ) : loadingAvailableEmployees ? (
               <div className="p-6 text-center text-sm text-gray-400 dark:text-slate-500">
                 {t('common.loading')}
               </div>

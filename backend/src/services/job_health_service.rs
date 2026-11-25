@@ -8,6 +8,7 @@ use crate::repositories::platform_settings;
 pub const JOB_RETENTION_CLEANUP: &str = "job_health_retention_cleanup";
 pub const JOB_AUTO_ABSENT: &str = "job_health_auto_absent";
 pub const JOB_EMAIL_OUTBOX: &str = "job_health_email_outbox";
+pub const JOB_PUSH_OUTBOX: &str = "job_health_push_outbox";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct JobHeartbeatRecord {
@@ -38,6 +39,7 @@ pub struct PublicJobsStatus {
     pub retention_cleanup: PublicJobHealth,
     pub auto_absent: PublicJobHealth,
     pub email_outbox: PublicJobHealth,
+    pub push_outbox: PublicJobHealth,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -45,6 +47,7 @@ pub struct AdminJobsStatus {
     pub retention_cleanup: AdminJobHealth,
     pub auto_absent: AdminJobHealth,
     pub email_outbox: AdminJobHealth,
+    pub push_outbox: AdminJobHealth,
 }
 
 impl PublicJobsStatus {
@@ -53,6 +56,7 @@ impl PublicJobsStatus {
             &self.retention_cleanup,
             &self.auto_absent,
             &self.email_outbox,
+            &self.push_outbox,
         ]
         .into_iter()
         .any(|j| j.stale || j.ok == Some(false))
@@ -131,7 +135,12 @@ fn to_public(admin: AdminJobHealth) -> PublicJobHealth {
 pub async fn read_admin_job_health(pool: &PgPool) -> AppResult<AdminJobsStatus> {
     let pairs = platform_settings::get_values_for_keys(
         pool,
-        &[JOB_RETENTION_CLEANUP, JOB_AUTO_ABSENT, JOB_EMAIL_OUTBOX],
+        &[
+            JOB_RETENTION_CLEANUP,
+            JOB_AUTO_ABSENT,
+            JOB_EMAIL_OUTBOX,
+            JOB_PUSH_OUTBOX,
+        ],
     )
     .await?;
     let find = |key: &str| {
@@ -146,6 +155,7 @@ pub async fn read_admin_job_health(pool: &PgPool) -> AppResult<AdminJobsStatus> 
         retention_cleanup: eval_admin_health(find(JOB_RETENTION_CLEANUP), Duration::hours(36), now),
         auto_absent: eval_admin_health(find(JOB_AUTO_ABSENT), Duration::hours(36), now),
         email_outbox: eval_admin_health(find(JOB_EMAIL_OUTBOX), Duration::minutes(5), now),
+        push_outbox: eval_admin_health(find(JOB_PUSH_OUTBOX), Duration::minutes(5), now),
     })
 }
 
@@ -155,5 +165,6 @@ pub async fn read_public_job_health(pool: &PgPool) -> AppResult<PublicJobsStatus
         retention_cleanup: to_public(admin.retention_cleanup),
         auto_absent: to_public(admin.auto_absent),
         email_outbox: to_public(admin.email_outbox),
+        push_outbox: to_public(admin.push_outbox),
     })
 }

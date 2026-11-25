@@ -67,8 +67,8 @@ export function ChangePassword() {
         localStorage.setItem('user', JSON.stringify(updatedUser));
       }
 
-      // Logout so user logs in with new password
-      await logout();
+      // Logout so user logs in with new password (token is already revoked server-side)
+      await logout({ skipRemotePushDelete: true });
       navigate('/login');
     } catch (err: unknown) {
       setError(getErrorMessage(err, t('auth.change.failed')));

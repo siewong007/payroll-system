@@ -47,6 +47,9 @@ fn test_config(database_url: String) -> AppConfig {
         trust_proxy_headers: true,
         turnstile_secret_key: None,
         turnstile_verify_url: "https://challenges.cloudflare.com/turnstile/v0/siteverify".into(),
+        vapid_public_key: None,
+        vapid_private_key: None,
+        vapid_subject: None,
     }
 }
 
@@ -85,6 +88,7 @@ pub(crate) async fn app_for(pool: sqlx::PgPool) -> axum::Router {
         config: config.clone(),
         webauthn: test_webauthn(),
         mailer: crate::services::email_service::SharedMailer::disabled(),
+        push: crate::services::push_service::SharedPushClient::disabled(),
     };
 
     routes::create_router(state).layer(Extension(JwtSecret(config.jwt_secret)))
@@ -1138,6 +1142,7 @@ async fn ready_and_admin_platform_health_surface_revision_and_job_state() {
     assert!(ready_json["jobs"]["retention_cleanup"].is_object());
     assert!(ready_json["jobs"]["auto_absent"].is_object());
     assert!(ready_json["jobs"]["email_outbox"].is_object());
+    assert!(ready_json["jobs"]["push_outbox"].is_object());
 
     for (role, token) in [("admin", &admin_token), ("employee", &emp_token)] {
         let resp = app
@@ -1169,5 +1174,239 @@ async fn ready_and_admin_platform_health_surface_revision_and_job_state() {
     assert!(ok_json["revision"].is_string());
     assert!(ok_json["latest_migration_version"].is_i64());
     assert!(ok_json["jobs"]["email_outbox"].is_object());
+    assert!(ok_json["jobs"]["push_outbox"].is_object());
     assert!(ok_json["queues"]["email_outbox_pending"].is_i64());
+    assert!(ok_json["queues"]["push_outbox_pending"].is_i64());
+}
+
+#[tokio::test]
+async fn group_and_draft_permissions_unlock_teams_templates_payroll_groups_and_upload_blocks_exec()
+{
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let app = app_for(pool.clone()).await;
+
+    // 1. User-group grants: manage_teams -> GET /api/teams; manage_email_templates -> GET /api/email/templates;
+    //    manage_payroll_draft -> GET /api/payroll/groups.
+    let (emp_token, emp_user_id) = token_and_user_for(&pool, company_id, "employee").await;
+    crate::repositories::user_companies::insert(&pool, emp_user_id, company_id)
+        .await
+        .expect("link employee user to company");
+    let group = crate::repositories::user_groups::insert(
+        &pool,
+        company_id,
+        &format!("scoped-{}", &uuid::Uuid::new_v4().to_string()[..8]),
+        None,
+        emp_user_id,
+    )
+    .await
+    .expect("seed user group");
+    crate::repositories::user_groups::insert_permissions(
+        &pool,
+        group.id,
+        &[
+            "manage_teams".to_string(),
+            "manage_email_templates".to_string(),
+        ],
+        emp_user_id,
+    )
+    .await
+    .expect("seed group permissions");
+    sqlx::query("INSERT INTO user_group_members (group_id, user_id, added_by) VALUES ($1, $2, $2)")
+        .bind(group.id)
+        .bind(emp_user_id)
+        .execute(&pool)
+        .await
+        .expect("add group member");
+
+    for path in ["/api/teams", "/api/email/templates"] {
+        let resp = app
+            .clone()
+            .oneshot(request("GET", path, &emp_token, ""))
+            .await
+            .expect("group read request");
+        assert_eq!(resp.status(), StatusCode::OK, "expected 200 on {path}");
+    }
+
+    // Payroll capabilities require a non-restricted role (`hr_manager` holds no ViewPayroll by default).
+    let (hr_token, hr_user_id) = token_and_user_for(&pool, company_id, "hr_manager").await;
+    crate::repositories::user_companies::insert(&pool, hr_user_id, company_id)
+        .await
+        .expect("link hr_manager to company");
+    let payroll_draft_group = crate::repositories::user_groups::insert(
+        &pool,
+        company_id,
+        &format!("draft-{}", &uuid::Uuid::new_v4().to_string()[..8]),
+        None,
+        hr_user_id,
+    )
+    .await
+    .expect("seed payroll draft group");
+    crate::repositories::user_groups::insert_permissions(
+        &pool,
+        payroll_draft_group.id,
+        &["manage_payroll_draft".to_string()],
+        hr_user_id,
+    )
+    .await
+    .expect("seed payroll draft permission");
+    sqlx::query("INSERT INTO user_group_members (group_id, user_id, added_by) VALUES ($1, $2, $2)")
+        .bind(payroll_draft_group.id)
+        .bind(hr_user_id)
+        .execute(&pool)
+        .await
+        .expect("add hr_manager member");
+
+    let pg_resp = app
+        .clone()
+        .oneshot(request("GET", "/api/payroll-groups", &hr_token, ""))
+        .await
+        .expect("payroll-groups request");
+    assert_eq!(pg_resp.status(), StatusCode::OK);
+
+    // Also verify send_letters alone grants GET /api/email/templates.
+    let (letter_token, letter_user_id) = token_and_user_for(&pool, company_id, "employee").await;
+    crate::repositories::user_companies::insert(&pool, letter_user_id, company_id)
+        .await
+        .expect("link letter user to company");
+    let letter_group = crate::repositories::user_groups::insert(
+        &pool,
+        company_id,
+        &format!("letters-{}", &uuid::Uuid::new_v4().to_string()[..8]),
+        None,
+        letter_user_id,
+    )
+    .await
+    .expect("seed letter group");
+    crate::repositories::user_groups::insert_permissions(
+        &pool,
+        letter_group.id,
+        &["send_letters".to_string()],
+        letter_user_id,
+    )
+    .await
+    .expect("seed letter permissions");
+    sqlx::query("INSERT INTO user_group_members (group_id, user_id, added_by) VALUES ($1, $2, $2)")
+        .bind(letter_group.id)
+        .bind(letter_user_id)
+        .execute(&pool)
+        .await
+        .expect("add letter member");
+
+    let letter_resp = app
+        .clone()
+        .oneshot(request("GET", "/api/email/templates", &letter_token, ""))
+        .await
+        .expect("send_letters templates request");
+    assert_eq!(letter_resp.status(), StatusCode::OK);
+
+    // 2. Read-only exec without employee_id must be rejected on POST /api/uploads.
+    let exec_token = token_for(&pool, company_id, "exec").await;
+    let upload_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/uploads")
+                .header(header::AUTHORIZATION, format!("Bearer {exec_token}"))
+                .header(header::CONTENT_TYPE, "multipart/form-data; boundary=---BOUNDARY")
+                .body(Body::from(
+                    "-----BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.txt\"\r\n\r\nhi\r\n-----BOUNDARY--\r\n",
+                ))
+                .expect("build upload request"),
+        )
+        .await
+        .expect("upload response");
+    assert_eq!(upload_resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn portal_working_days_returns_count_when_range_given_and_validates_params() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let emp_token = token_for(&pool, company_id, "employee").await;
+    // Wed 2026-06-10 holiday inside Mon 2026-06-08..Fri 2026-06-12 -> 4 working days.
+    sqlx::query(
+        "INSERT INTO holidays (company_id, name, date, holiday_type, is_recurring)
+         VALUES ($1, 'Midweek Holiday', '2026-06-10', 'public_holiday', FALSE)",
+    )
+    .bind(company_id)
+    .execute(&pool)
+    .await
+    .expect("seed holiday");
+
+    let app = app_for(pool.clone()).await;
+    let ok_resp = app
+        .clone()
+        .oneshot(request(
+            "GET",
+            "/api/portal/working-days?start_date=2026-06-08&end_date=2026-06-12",
+            &emp_token,
+            "",
+        ))
+        .await
+        .expect("working days response");
+    assert_eq!(ok_resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(ok_resp.into_body(), 1024 * 64)
+        .await
+        .expect("body");
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(json["working_days"], 4);
+
+    for bad_uri in [
+        "/api/portal/working-days?start_date=2026-06-12&end_date=2026-06-08",
+        "/api/portal/working-days?start_date=2026-06-08",
+    ] {
+        let bad_resp = app
+            .clone()
+            .oneshot(request("GET", bad_uri, &emp_token, ""))
+            .await
+            .expect("bad working days response");
+        assert_eq!(bad_resp.status(), StatusCode::BAD_REQUEST, "{bad_uri}");
+    }
+}
+
+#[tokio::test]
+async fn deleting_active_company_preserves_super_admin_session_and_rotates_token() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_a = seed_company(&pool).await;
+    let company_b = seed_company(&pool).await;
+    let (super_token, super_id) = token_and_user_for(&pool, company_a, "super_admin").await;
+    crate::repositories::user_companies::insert(&pool, super_id, company_b)
+        .await
+        .expect("link second company");
+
+    let app = app_for(pool).await;
+    let del_resp = app
+        .clone()
+        .oneshot(request(
+            "DELETE",
+            &format!("/api/admin/companies/{company_a}"),
+            &super_token,
+            "",
+        ))
+        .await
+        .expect("delete company response");
+    assert_eq!(del_resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(del_resp.into_body(), 1024 * 64)
+        .await
+        .expect("delete body");
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("delete json");
+    let new_token = json["token"].as_str().expect("fresh token");
+    assert_eq!(
+        json["user"]["company_id"].as_str(),
+        Some(company_b.to_string().as_str())
+    );
+
+    let me_resp = app
+        .oneshot(request("GET", "/api/auth/me", new_token, ""))
+        .await
+        .expect("me with fresh token");
+    assert_eq!(me_resp.status(), StatusCode::OK);
 }

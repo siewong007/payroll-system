@@ -1,6 +1,6 @@
-const CACHE_NAME = 'payrollmy-shell-v2';
-const ASSETS_CACHE = 'payrollmy-assets-v1';
-const MAX_CACHED_ASSETS = 120;
+const CACHE_NAME = 'payrollmy-shell-v3';
+const ASSETS_CACHE = 'payrollmy-assets-v2';
+const MAX_CACHED_ASSETS = 250;
 const CACHE_PREFIXES = ['payrollmy-shell-', 'payrollmy-assets-'];
 const PRECACHE_URLS = ['/offline.html', '/icons/icon-192.png', '/icons/badge-72.png'];
 const DEFAULT_NOTIFICATION_URL = '/portal/notifications';
@@ -42,6 +42,12 @@ self.addEventListener('activate', (event) => {
         ),
     ]).then(() => self.clients.claim()),
   );
+});
+
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
 });
 
 self.addEventListener('fetch', (event) => {
@@ -153,15 +159,29 @@ self.addEventListener('push', (event) => {
   const tag = typeof payload.tag === 'string' && payload.tag ? payload.tag : undefined;
   const targetUrl = sanitizeNotificationUrl(payload.url);
 
-  event.waitUntil(
+  const tasks = [
     self.registration.showNotification(title, {
       body,
       icon,
       badge,
       tag,
+      renotify: Boolean(tag),
       data: { url: targetUrl },
     }),
-  );
+  ];
+
+  if (typeof payload.unread_count === 'number' && self.navigator) {
+    if (payload.unread_count > 0 && typeof self.navigator.setAppBadge === 'function') {
+      tasks.push(self.navigator.setAppBadge(payload.unread_count).catch(() => undefined));
+    } else if (
+      payload.unread_count <= 0 &&
+      typeof self.navigator.clearAppBadge === 'function'
+    ) {
+      tasks.push(self.navigator.clearAppBadge().catch(() => undefined));
+    }
+  }
+
+  event.waitUntil(Promise.all(tasks));
 });
 
 self.addEventListener('notificationclick', (event) => {
@@ -194,5 +214,30 @@ self.addEventListener('notificationclick', (event) => {
       }
       return undefined;
     }),
+  );
+});
+
+self.addEventListener('pushsubscriptionchange', (event) => {
+  event.waitUntil(
+    (async () => {
+      try {
+        const key = event.oldSubscription?.options?.applicationServerKey;
+        if (key && self.registration?.pushManager?.subscribe) {
+          await self.registration.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: key,
+          });
+        }
+      } catch {
+        // Ignore if re-subscribe requires foreground context.
+      }
+      const clients = await self.clients.matchAll({
+        type: 'window',
+        includeUncontrolled: true,
+      });
+      for (const client of clients) {
+        client.postMessage({ type: 'PUSH_SUBSCRIPTION_CHANGED' });
+      }
+    })(),
   );
 });

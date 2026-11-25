@@ -93,9 +93,17 @@ pub async fn approve(
         ));
     }
 
+    let edited_run_items = crate::repositories::reads::audit::actor_edited_payroll_run_items(
+        pool,
+        company_id,
+        run_id,
+        actor_user_id,
+    )
+    .await?;
     let is_self_approval = old_run.processed_by == Some(actor_user_id)
         || old_run.submitted_by == Some(actor_user_id)
-        || old_run.updated_by == Some(actor_user_id);
+        || old_run.updated_by == Some(actor_user_id)
+        || edited_run_items;
     if is_self_approval && !auth.is_super_admin() {
         return Err(AppError::Forbidden(
             "You cannot approve a payroll run that you processed, edited, or submitted. Ask another approver, or a super admin, to review it.".into(),
@@ -338,6 +346,15 @@ pub async fn lock_as_paid(
             run.period_month, run.period_year
         ),
         audit_meta,
+    )
+    .await;
+
+    let _ = crate::services::notification_service::notify_payroll_paid(
+        pool,
+        company_id,
+        run.id,
+        run.period_month,
+        run.period_year,
     )
     .await;
 

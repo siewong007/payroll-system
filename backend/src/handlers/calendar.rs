@@ -172,8 +172,9 @@ pub async fn import_ics_file(
         .ok_or_else(|| AppError::BadRequest("No file provided".into()))?;
 
     let file_name = field.file_name().map(|s| s.to_string()).unwrap_or_default();
+    let lower_name = file_name.to_ascii_lowercase();
 
-    if !file_name.ends_with(".ics") && !file_name.ends_with(".ical") {
+    if !lower_name.ends_with(".ics") && !lower_name.ends_with(".ical") {
         return Err(AppError::BadRequest(
             "Only .ics or .ical files are accepted".into(),
         ));

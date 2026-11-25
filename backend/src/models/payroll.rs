@@ -205,6 +205,8 @@ pub struct UpdatePayrollEntryRequest {
     pub amount: Option<i64>,
     pub quantity: Option<rust_decimal::Decimal>,
     pub rate: Option<i64>,
+    pub clear_quantity: Option<bool>,
+    pub clear_rate: Option<bool>,
     pub is_taxable: Option<bool>,
 }
 

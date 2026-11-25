@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { BrandLogo } from '@/components/ui/BrandLogo';
 import { useAuth } from '@/context/AuthContext';
-import { hasOnlyEmployeeRole, hasAnyRole, SUPER_ADMIN_ROLES } from '@/lib/roles';
+import { canUseAdminConsole, defaultAdminHome } from '@/lib/roles';
 
 type ErrorStatus = 403 | 404;
 
@@ -78,9 +78,9 @@ function useHomePath() {
   const { user } = useAuth();
 
   if (!user) return '/login';
-  if (hasOnlyEmployeeRole(user)) return '/portal/profile';
-  if (hasAnyRole(user, SUPER_ADMIN_ROLES)) return '/companies';
-  return '/';
+  if (!canUseAdminConsole(user)) return '/portal/profile';
+  const home = defaultAdminHome(user);
+  return home === '/dashboard' ? '/' : home;
 }
 
 export function ForbiddenPage() {

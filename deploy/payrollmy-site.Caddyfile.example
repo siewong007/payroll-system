@@ -1,0 +1,58 @@
+# Reference host Caddy site block for the static PWA frontend on payrollmy.com.
+#
+# Ensure the host Caddyfile serving /opt/payrollmy-site enforces fresh SW/HTML
+# validation and proper MIME types behind Cloudflare, and never falls back to
+# index.html for missing /sw.js or /assets/* paths.
+
+payrollmy.com {
+    root * /opt/payrollmy-site
+    encode zstd gzip
+
+    header ?Strict-Transport-Security "max-age=31536000; includeSubDomains"
+
+    # Anti-framing. The SPA's CSP is a <meta> tag, and browsers ignore
+    # `frame-ancestors` there, so it must come from a response header. The
+    # API's own `X-Frame-Options: DENY` only covers /api responses, not pages.
+    header X-Frame-Options "DENY"
+    header Content-Security-Policy "frame-ancestors 'none'"
+    header X-Content-Type-Options "nosniff"
+
+    @sw path /sw.js
+    header @sw Content-Type "application/javascript; charset=utf-8"
+    header @sw Cache-Control "no-cache, no-store, must-revalidate"
+
+    @manifest path /manifest.webmanifest
+    header @manifest Content-Type "application/manifest+json; charset=utf-8"
+    header @manifest Cache-Control "no-cache, must-revalidate"
+
+    @html path / /index.html /offline.html
+    header @html Cache-Control "no-cache, must-revalidate"
+
+    @immutable path /assets/*
+    header @immutable Cache-Control "public, max-age=31536000, immutable"
+
+    handle /assets/* {
+        file_server
+    }
+
+    handle /sw.js {
+        file_server
+    }
+
+    handle /manifest.webmanifest {
+        file_server
+    }
+
+    handle /icons/* {
+        file_server
+    }
+
+    handle /branding/* {
+        file_server
+    }
+
+    handle {
+        try_files {path} /index.html
+        file_server
+    }
+}

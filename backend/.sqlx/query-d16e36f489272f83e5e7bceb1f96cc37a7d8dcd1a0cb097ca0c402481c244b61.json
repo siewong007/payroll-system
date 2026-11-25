@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH RECURSIVE walk AS (\n            (SELECT al.action FROM audit_logs al\n             LEFT JOIN users u ON al.user_id = u.id\n             WHERE al.company_id = $1\n               AND NOT (\n                   $2::bool AND (\n                       (u.id IS NOT NULL AND u.roles && ARRAY['admin', 'super_admin']::varchar[])\n                       OR (\n                           al.entity_type = 'user' AND (\n                               (al.old_values->'roles') ?| ARRAY['admin', 'super_admin']\n                               OR (al.new_values->'roles') ?| ARRAY['admin', 'super_admin']\n                           )\n                       )\n                   )\n               )\n             ORDER BY al.action\n             LIMIT 1)\n            UNION ALL\n            SELECT (SELECT al.action FROM audit_logs al\n                    LEFT JOIN users u ON al.user_id = u.id\n                    WHERE al.company_id = $1 AND al.action > walk.action\n                      AND NOT (\n                          $2::bool AND (\n                              (u.id IS NOT NULL AND u.roles && ARRAY['admin', 'super_admin']::varchar[])\n                              OR (\n                                  al.entity_type = 'user' AND (\n                                      (al.old_values->'roles') ?| ARRAY['admin', 'super_admin']\n                                      OR (al.new_values->'roles') ?| ARRAY['admin', 'super_admin']\n                                  )\n                              )\n                          )\n                      )\n                    ORDER BY al.action\n                    LIMIT 1)\n            FROM walk\n            WHERE walk.action IS NOT NULL\n        )\n        SELECT action AS \"action!\" FROM walk\n        WHERE action IS NOT NULL\n        ORDER BY action",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "action!",
+        "type_info": "Varchar",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Bool"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "d16e36f489272f83e5e7bceb1f96cc37a7d8dcd1a0cb097ca0c402481c244b61"
+}

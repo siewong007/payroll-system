@@ -4,7 +4,8 @@ import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { User, MapPin, Briefcase, Shield, CreditCard, Eye, EyeOff } from 'lucide-react';
 import { getMyProfile } from '@/api/portal';
-import { formatMYR, formatDate } from '@/lib/utils';
+import { formatMYR, formatDate, getErrorMessage } from '@/lib/utils';
+import { useAuth } from '@/context/AuthContext';
 import { ChangePasswordCard } from '@/components/ChangePasswordCard';
 import { TwoFactorSetup } from '@/components/TwoFactorSetup';
 import { PasskeyManagement } from '@/components/PasskeyManagement';
@@ -206,21 +207,30 @@ function ProfileDetails({ profile, initialTab }: { profile: Profile; initialTab:
 
 export function MyProfile() {
   const { t } = useTranslation();
+  const { user } = useAuth();
+  const hasEmployee = Boolean(user?.employee_id);
   const [searchParams] = useSearchParams();
   const section = searchParams.get('section');
   const initialTab: MobileTab =
     section === 'security' || section === 'statutory' ? section : 'personal';
 
-  const { data: profile, isLoading } = useQuery({
+  const {
+    data: profile,
+    isLoading,
+    isError,
+    error,
+    refetch,
+  } = useQuery({
     queryKey: ['my-profile'],
     queryFn: getMyProfile,
+    enabled: hasEmployee,
   });
 
   return (
     <div className="space-y-6">
       <CheckInCard />
 
-      {isLoading ? (
+      {hasEmployee && isLoading ? (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="card space-y-3">
             <Skeleton className="h-5 w-40" />
@@ -237,6 +247,20 @@ export function MyProfile() {
             <Skeleton className="h-5 w-44" />
             <Skeleton className="h-4 w-full" />
             <Skeleton className="h-4 w-2/3" />
+          </div>
+        </div>
+      ) : hasEmployee && isError ? (
+        <div className="space-y-6">
+          <div role="alert" className="card text-center py-8 space-y-3 border-red-200 dark:border-red-500/30">
+            <p className="text-sm text-red-700 dark:text-red-300">
+              {getErrorMessage(error, t('portal.profile.loadFailed'))}
+            </p>
+            <button type="button" onClick={() => void refetch()} className="btn-primary text-xs">
+              {t('common.retry')}
+            </button>
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <SecurityAndAppCards />
           </div>
         </div>
       ) : !profile ? (

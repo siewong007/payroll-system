@@ -490,7 +490,7 @@ export function Approvals() {
   }, [tab, t]);
 
   const statusOptions = tab === 'claims'
-    ? ['pending', 'draft', 'approved', 'rejected', 'cancelled', '']
+    ? ['pending', 'draft', 'approved', 'rejected', 'processed', 'cancelled', '']
     : ['pending', 'approved', 'rejected', 'cancelled', ''];
 
   const activeQuery = tab === 'leave' ? leaveQuery : tab === 'claims' ? claimsQuery : overtimeQuery;

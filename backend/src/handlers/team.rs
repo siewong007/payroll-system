@@ -6,11 +6,20 @@ use uuid::Uuid;
 
 use crate::core::app_state::AppState;
 use crate::core::auth::{AuthUser, Permission};
-use crate::core::error::AppResult;
+use crate::core::error::{AppError, AppResult};
 use crate::models::team::{
     AddTeamMemberRequest, CreateTeamRequest, Team, TeamMember, TeamWithCount, UpdateTeamRequest,
 };
 use crate::services::{audit_service::AuditRequestMeta, team_service};
+
+fn authorize_teams_read(auth: &AuthUser) -> AppResult<Uuid> {
+    if !auth.can(Permission::ViewTeams) && !auth.can(Permission::ManageTeams) {
+        return Err(AppError::Forbidden(
+            "You do not have permission to view teams".into(),
+        ));
+    }
+    auth.company_id()
+}
 
 // ─── Teams CRUD ───
 
@@ -18,7 +27,7 @@ pub async fn list_teams(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> AppResult<Json<Vec<TeamWithCount>>> {
-    let company_id = auth.authorize(Permission::ViewTeams)?;
+    let company_id = authorize_teams_read(&auth)?;
     let teams = team_service::list_teams(&state.pool, company_id).await?;
     Ok(Json(teams))
 }
@@ -28,7 +37,7 @@ pub async fn get_team(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<Team>> {
-    let company_id = auth.authorize(Permission::ViewTeams)?;
+    let company_id = authorize_teams_read(&auth)?;
     let team = team_service::get_team(&state.pool, company_id, id).await?;
     Ok(Json(team))
 }
@@ -94,7 +103,7 @@ pub async fn list_members(
     auth: AuthUser,
     Path(team_id): Path<Uuid>,
 ) -> AppResult<Json<Vec<TeamMember>>> {
-    let company_id = auth.authorize(Permission::ViewTeams)?;
+    let company_id = authorize_teams_read(&auth)?;
     let members = team_service::list_members(&state.pool, company_id, team_id).await?;
     Ok(Json(members))
 }

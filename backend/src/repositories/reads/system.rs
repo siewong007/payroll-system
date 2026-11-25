@@ -7,6 +7,8 @@ use crate::core::error::AppResult;
 pub struct OperationalQueueCounts {
     pub email_outbox_pending: i64,
     pub email_outbox_failed_24h: i64,
+    pub push_outbox_pending: i64,
+    pub push_outbox_failed_24h: i64,
     pub background_jobs_failed_24h: i64,
 }
 
@@ -31,6 +33,10 @@ pub async fn operational_queue_counts(
                 WHERE status = 'pending' AND next_retry_at IS NOT NULL) AS "email_outbox_pending!",
                (SELECT COUNT(*) FROM email_logs
                 WHERE status = 'failed' AND created_at >= NOW() - INTERVAL '24 hours') AS "email_outbox_failed_24h!",
+               (SELECT COUNT(*) FROM push_outbox
+                WHERE status = 'pending') AS "push_outbox_pending!",
+               (SELECT COUNT(*) FROM push_outbox
+                WHERE status = 'failed' AND created_at >= NOW() - INTERVAL '24 hours') AS "push_outbox_failed_24h!",
                (SELECT COUNT(*) FROM background_jobs
                 WHERE status = 'failed' AND created_at >= NOW() - INTERVAL '24 hours') AS "background_jobs_failed_24h!""#
     )
@@ -39,6 +45,8 @@ pub async fn operational_queue_counts(
     Ok(OperationalQueueCounts {
         email_outbox_pending: row.email_outbox_pending,
         email_outbox_failed_24h: row.email_outbox_failed_24h,
+        push_outbox_pending: row.push_outbox_pending,
+        push_outbox_failed_24h: row.push_outbox_failed_24h,
         background_jobs_failed_24h: row.background_jobs_failed_24h,
     })
 }

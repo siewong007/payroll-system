@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { User } from '@/types';
+import { userWithRoles } from './support/permissions';
 import {
   ADMIN_DATA_ROLES,
   ALL_ROLES,
@@ -9,6 +10,7 @@ import {
   canApprovePayroll,
   canPreparePayroll,
   canUseAdminConsole,
+  defaultAdminHome,
   hasAnyRole,
   hasOnlyEmployeeRole,
   roleList,
@@ -63,6 +65,18 @@ describe('role helpers', () => {
     // no console to return to, though AppLayout would not have redirected it.
     expect(canUseAdminConsole([])).toBe(false);
     expect(canUseAdminConsole(null)).toBe(false);
+  });
+
+  it('unlocks admin console for sole-role employees with additive group permissions', () => {
+    const groupEmployee = userWithRoles(['employee'], {
+      company_id: 'c1',
+      permissions: ['view_teams'],
+    });
+    expect(canUseAdminConsole(groupEmployee)).toBe(true);
+    expect(defaultAdminHome(groupEmployee)).toBe('/teams');
+
+    const superUser = userWithRoles(['super_admin'], { company_id: null });
+    expect(defaultAdminHome(superUser)).toBe('/companies');
   });
 
   it('keeps payroll preparation and approval duties separated', () => {
