@@ -1410,3 +1410,340 @@ async fn deleting_active_company_preserves_super_admin_session_and_rotates_token
         .expect("me with fresh token");
     assert_eq!(me_resp.status(), StatusCode::OK);
 }
+
+// ─── Bank detail redaction ───
+//
+// Banking decides where salary lands. A role that manages employees but holds
+// no `ViewPayroll` (`hr_manager`, `manager`) must never receive an employee's
+// bank fields, and its edits must not be able to wipe them. Payroll roles and
+// the employee themself (portal) keep seeing them.
+
+const SEEDED_BANK_NAME: &str = "Maybank";
+const SEEDED_BANK_ACCOUNT: &str = "514011223344";
+const SEEDED_BANK_TYPE: &str = "savings";
+const SEEDED_IC: &str = "900101-14-5566";
+
+async fn seed_employee_with_bank(pool: &sqlx::PgPool, company_id: uuid::Uuid) -> uuid::Uuid {
+    let employee_id = seed_employee(pool, company_id, None, 500_000).await;
+    sqlx::query(
+        "UPDATE employees
+            SET bank_name = $2, bank_account_number = $3, bank_account_type = $4,
+                ic_number = $5
+          WHERE id = $1",
+    )
+    .bind(employee_id)
+    .bind(SEEDED_BANK_NAME)
+    .bind(SEEDED_BANK_ACCOUNT)
+    .bind(SEEDED_BANK_TYPE)
+    .bind(SEEDED_IC)
+    .execute(pool)
+    .await
+    .expect("seed bank details");
+    employee_id
+}
+
+async fn stored_bank(
+    pool: &sqlx::PgPool,
+    employee_id: uuid::Uuid,
+) -> (Option<String>, Option<String>, Option<String>) {
+    sqlx::query_as(
+        "SELECT bank_name, bank_account_number, bank_account_type FROM employees WHERE id = $1",
+    )
+    .bind(employee_id)
+    .fetch_one(pool)
+    .await
+    .expect("read stored bank details")
+}
+
+async fn json_body(response: axum::response::Response) -> serde_json::Value {
+    let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("body");
+    serde_json::from_slice(&bytes).expect("json body")
+}
+
+fn assert_no_bank_fields(value: &serde_json::Value, context: &str) {
+    let object = value.as_object().expect("employee object");
+    for (key, field) in object {
+        if key.starts_with("bank_") {
+            assert!(field.is_null(), "{context}: `{key}` leaked as {field}");
+        }
+    }
+    let raw = value.to_string();
+    assert!(
+        !raw.contains(SEEDED_BANK_ACCOUNT),
+        "{context}: bank account number leaked"
+    );
+}
+
+#[tokio::test]
+async fn non_payroll_roles_do_not_receive_bank_details() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let employee_id = seed_employee_with_bank(&pool, company_id).await;
+    let app = app_for(pool.clone()).await;
+
+    for role in ["hr_manager", "manager"] {
+        let token = token_for(&pool, company_id, role).await;
+
+        let detail = app
+            .clone()
+            .oneshot(request(
+                "GET",
+                &format!("/api/employees/{employee_id}"),
+                &token,
+                "",
+            ))
+            .await
+            .expect("detail response");
+        assert_eq!(detail.status(), StatusCode::OK, "{role} detail");
+        let detail = json_body(detail).await;
+        assert_no_bank_fields(&detail, &format!("{role} detail"));
+        // Identity details stay visible to employee managers: only banking
+        // moved behind the payroll gate.
+        assert_eq!(detail["ic_number"], SEEDED_IC, "{role} keeps IC");
+
+        let list = app
+            .clone()
+            .oneshot(request("GET", "/api/employees?per_page=100", &token, ""))
+            .await
+            .expect("list response");
+        assert_eq!(list.status(), StatusCode::OK, "{role} list");
+        let list = json_body(list).await;
+        let row = list["data"]
+            .as_array()
+            .expect("list data")
+            .iter()
+            .find(|e| e["id"] == employee_id.to_string())
+            .expect("seeded employee in list")
+            .clone();
+        assert_no_bank_fields(&row, &format!("{role} list"));
+
+        let search = app
+            .clone()
+            .oneshot(request(
+                "GET",
+                "/api/employees?search=Test%20Employee",
+                &token,
+                "",
+            ))
+            .await
+            .expect("search response");
+        assert_eq!(search.status(), StatusCode::OK, "{role} search");
+        let search = json_body(search).await;
+        for row in search["data"].as_array().expect("search data") {
+            assert_no_bank_fields(row, &format!("{role} search"));
+        }
+    }
+}
+
+#[tokio::test]
+async fn non_payroll_role_updates_preserve_bank_details() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let employee_id = seed_employee_with_bank(&pool, company_id).await;
+    let app = app_for(pool.clone()).await;
+
+    for role in ["hr_manager", "manager"] {
+        let token = token_for(&pool, company_id, role).await;
+
+        let update = app
+            .clone()
+            .oneshot(request(
+                "PUT",
+                &format!("/api/employees/{employee_id}"),
+                &token,
+                &format!(r#"{{"full_name":"Renamed by {role}","department":"Ops"}}"#),
+            ))
+            .await
+            .expect("update response");
+        assert_eq!(update.status(), StatusCode::OK, "{role} plain update");
+        let updated = json_body(update).await;
+        assert_eq!(updated["full_name"], format!("Renamed by {role}"));
+        assert_no_bank_fields(&updated, &format!("{role} update response"));
+        assert_eq!(
+            stored_bank(&pool, employee_id).await,
+            (
+                Some(SEEDED_BANK_NAME.to_string()),
+                Some(SEEDED_BANK_ACCOUNT.to_string()),
+                Some(SEEDED_BANK_TYPE.to_string()),
+            ),
+            "{role} plain update must keep stored banking"
+        );
+
+        // Wiping banking is as sensitive as rewriting it.
+        for body in [
+            r#"{"clear_bank_name":true}"#,
+            r#"{"clear_bank_account_number":true}"#,
+            r#"{"bank_account_number":""}"#,
+            r#"{"bank_name":null,"bank_account_number":"999999999999"}"#,
+        ] {
+            let response = app
+                .clone()
+                .oneshot(request(
+                    "PUT",
+                    &format!("/api/employees/{employee_id}"),
+                    &token,
+                    body,
+                ))
+                .await
+                .expect("bank write response");
+            assert_eq!(
+                response.status(),
+                StatusCode::FORBIDDEN,
+                "{role} must not send {body}"
+            );
+        }
+        assert_eq!(
+            stored_bank(&pool, employee_id).await,
+            (
+                Some(SEEDED_BANK_NAME.to_string()),
+                Some(SEEDED_BANK_ACCOUNT.to_string()),
+                Some(SEEDED_BANK_TYPE.to_string()),
+            ),
+            "{role} bank writes must leave stored banking intact"
+        );
+    }
+}
+
+#[tokio::test]
+async fn payroll_roles_and_the_employee_still_see_bank_details() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let employee_id = seed_employee_with_bank(&pool, company_id).await;
+    let app = app_for(pool.clone()).await;
+
+    for role in ["payroll_admin", "super_admin"] {
+        let token = token_for(&pool, company_id, role).await;
+        let detail = app
+            .clone()
+            .oneshot(request(
+                "GET",
+                &format!("/api/employees/{employee_id}"),
+                &token,
+                "",
+            ))
+            .await
+            .expect("detail response");
+        assert_eq!(detail.status(), StatusCode::OK, "{role} detail");
+        let detail = json_body(detail).await;
+        assert_eq!(detail["bank_name"], SEEDED_BANK_NAME, "{role}");
+        assert_eq!(detail["bank_account_number"], SEEDED_BANK_ACCOUNT, "{role}");
+        assert_eq!(detail["bank_account_type"], SEEDED_BANK_TYPE, "{role}");
+
+        let list = app
+            .clone()
+            .oneshot(request("GET", "/api/employees?per_page=100", &token, ""))
+            .await
+            .expect("list response");
+        let list = json_body(list).await;
+        let row = list["data"]
+            .as_array()
+            .expect("list data")
+            .iter()
+            .find(|e| e["id"] == employee_id.to_string())
+            .expect("seeded employee in list")
+            .clone();
+        assert_eq!(
+            row["bank_account_number"], SEEDED_BANK_ACCOUNT,
+            "{role} list"
+        );
+    }
+
+    // The employee reading their own record in the portal keeps their banking.
+    let own_token = token_for_employee(&pool, company_id, employee_id, "employee").await;
+    let profile = app
+        .clone()
+        .oneshot(request("GET", "/api/portal/profile", &own_token, ""))
+        .await
+        .expect("portal profile response");
+    assert_eq!(profile.status(), StatusCode::OK);
+    let profile = json_body(profile).await;
+    assert_eq!(profile["bank_name"], SEEDED_BANK_NAME);
+    assert_eq!(profile["bank_account_number"], SEEDED_BANK_ACCOUNT);
+}
+
+/// `manager` holds `ViewAuditLog`; the employee diffs it can read must not
+/// carry banking, including bank keys not known today.
+#[tokio::test]
+async fn manager_audit_log_redacts_bank_details() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let employee_id = seed_employee_with_bank(&pool, company_id).await;
+
+    crate::services::audit_service::log_action_with_metadata(
+        &pool,
+        Some(company_id),
+        None,
+        "update",
+        "employee",
+        Some(employee_id),
+        Some(serde_json::json!({
+            "full_name": "Test Employee",
+            "bank_name": "CIMB Bank",
+            "bank_account_number": "700000000001",
+        })),
+        Some(serde_json::json!({
+            "full_name": "Test Employee",
+            "bank_name": SEEDED_BANK_NAME,
+            "bank_account_number": SEEDED_BANK_ACCOUNT,
+            "bank_account_type": SEEDED_BANK_TYPE,
+            "bank_account_holder": "TEST EMPLOYEE",
+        })),
+        None,
+        None,
+    )
+    .await
+    .expect("log employee bank change");
+
+    let app = app_for(pool.clone()).await;
+    let uri = format!("/api/audit-logs?entity_type=employee&entity_id={employee_id}");
+
+    let manager_token = token_for(&pool, company_id, "manager").await;
+    let response = app
+        .clone()
+        .oneshot(request("GET", &uri, &manager_token, ""))
+        .await
+        .expect("audit response");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_body(response).await;
+    let row = body["data"]
+        .as_array()
+        .expect("audit data")
+        .first()
+        .expect("employee audit row")
+        .clone();
+    for side in ["old_values", "new_values"] {
+        let values = row[side].as_object().expect("audit values");
+        for (key, value) in values {
+            if key.starts_with("bank_") {
+                assert_eq!(value, "[REDACTED]", "manager audit {side}.{key}");
+            }
+        }
+        assert_eq!(values["full_name"], "Test Employee");
+    }
+    assert!(!row.to_string().contains(SEEDED_BANK_ACCOUNT));
+    assert!(!row.to_string().contains("700000000001"));
+
+    // A payroll role reading the same trail still sees the change.
+    let admin_token = token_for(&pool, company_id, "super_admin").await;
+    let response = app
+        .clone()
+        .oneshot(request("GET", &uri, &admin_token, ""))
+        .await
+        .expect("audit response");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_body(response).await;
+    assert_eq!(
+        body["data"][0]["new_values"]["bank_account_number"],
+        SEEDED_BANK_ACCOUNT
+    );
+}

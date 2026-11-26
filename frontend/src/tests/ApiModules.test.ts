@@ -368,6 +368,8 @@ describe('payroll-sensitive employee fields', () => {
       'bank_account_type',
       'bank_name',
       'basic_salary',
+      'clear_bank_account_number',
+      'clear_bank_name',
       'clear_epf_category',
       'daily_rate',
       'eis_number',
@@ -404,6 +406,21 @@ describe('payroll-sensitive employee fields', () => {
     expect(safe).not.toHaveProperty('basic_salary');
     expect(safe).not.toHaveProperty('epf_number');
     expect(safe.full_name).toBe('Siti Nurhaliza');
+  });
+
+  /** Clearing banking wipes where salary lands, so an HR-only save must never
+   *  carry the clear flags either — the server rejects them without
+   *  `view_payroll`, and omitting them keeps the stored account intact. */
+  it('strips the banking clear flags', () => {
+    const safe = stripPayrollFields<UpdateEmployeeRequest>({
+      full_name: 'Tan Mei Ling',
+      clear_bank_name: true,
+      clear_bank_account_number: true,
+    });
+
+    expect(safe).not.toHaveProperty('clear_bank_name');
+    expect(safe).not.toHaveProperty('clear_bank_account_number');
+    expect(safe.full_name).toBe('Tan Mei Ling');
   });
 
   it('keeps the non-payroll fields an HR edit depends on', () => {

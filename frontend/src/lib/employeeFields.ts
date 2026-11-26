@@ -8,9 +8,10 @@ import type { UpdateEmployeeRequest } from '@/types';
  * `manage_employees` must never put them on the wire.
  *
  * Banking is on the list on purpose: it decides where salary lands. The read
- * side is deliberately more permissive — `redact_personal_fields` skips anyone
- * holding `manage_employees` — so an admin/hr_manager can see banking but not
- * edit it. That asymmetry is the permission model, not a bug to route around.
+ * side matches: `redact_payroll_fields` also strips banking, so a role without
+ * `view_payroll` (e.g. hr_manager, manager) neither sees nor edits it. The
+ * `clear_bank_*` flags are listed too — wiping banking is as sensitive as
+ * overwriting it, and the server rejects them for the same roles.
  *
  * The `satisfies` clause is the only compile-time link back to the backend's
  * list: renaming or removing a field becomes a type error rather than a silent
@@ -23,6 +24,8 @@ export const PAYROLL_SENSITIVE_EMPLOYEE_FIELDS = [
   'bank_name',
   'bank_account_number',
   'bank_account_type',
+  'clear_bank_name',
+  'clear_bank_account_number',
   'tax_identification_number',
   'epf_number',
   'socso_number',
