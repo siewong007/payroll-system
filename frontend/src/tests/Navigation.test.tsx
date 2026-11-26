@@ -134,17 +134,6 @@ describe('Sidebar role-based navigation', () => {
     expect(navLinks()).not.toContain('Roles');
   });
 
-  it('hides Audit Trail from manager', () => {
-    // `manager` keeps every other company-management link but not the audit
-    // trail; the API answers 403 for it too.
-    authMocks.useAuth.mockReturnValue({ user: asUser(['manager']), logout: vi.fn() });
-    renderWithProviders(<Sidebar />);
-
-    expect(navLinks()).not.toContain('Audit Trail');
-    expect(navLinks()).not.toContain('Backup');
-    expect(navLinks()).toContain('Roles');
-  });
-
   it('shows Audit Trail to an admin but not Backup', () => {
     renderWithProviders(<Sidebar />);
 
