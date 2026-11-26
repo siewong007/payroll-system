@@ -373,7 +373,9 @@ const ADMIN: &[Permission] = &[
 /// Company manager: every company-management capability except payroll, and
 /// excluding the platform-only set that only `super_admin` holds. Also
 /// excludes `ImportEmployees`, because a bulk import writes `basic_salary` and
-/// bank details with no payroll-privilege check.
+/// bank details with no payroll-privilege check, and `ViewAuditLog`: the audit
+/// trail records payroll, settings and user-administration activity that a
+/// company manager is not meant to review.
 ///
 /// The second half of the role is a visibility rule, not a permission: a
 /// caller who holds neither `admin` nor `super_admin` is never shown users who
@@ -404,7 +406,6 @@ const MANAGER: &[Permission] = &[
     P::ManageWorkSchedules,
     P::ManageGeofence,
     P::ViewUserDirectory,
-    P::ViewAuditLog,
 ];
 
 /// Prepares payroll but cannot approve it — the separation of duties the
@@ -679,13 +680,21 @@ mod tests {
             !role_permissions("manager").contains(&P::ImportEmployees),
             "bulk import writes salaries without a payroll check"
         );
+        assert!(
+            !role_permissions("manager").contains(&P::ViewAuditLog),
+            "the audit trail is not part of the manager role"
+        );
     }
 
-    /// Every non-payroll, non-platform capability `admin` has, `manager` has.
+    /// Every non-payroll, non-platform capability `admin` has, `manager` has,
+    /// except the audit trail.
     #[test]
     fn manager_covers_every_admin_management_permission() {
         let manager = perms("manager");
-        for permission in role_permissions("admin") {
+        for permission in role_permissions("admin")
+            .iter()
+            .filter(|p| **p != P::ViewAuditLog)
+        {
             assert!(
                 manager.contains(permission),
                 "manager is missing {permission:?}"

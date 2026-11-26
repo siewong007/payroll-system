@@ -83,7 +83,7 @@ Errors: every fallible path returns `AppResult<T>` (`Result<T, AppError>`). `App
 
 Auth & authorization: JWT in `Authorization: Bearer`, refresh token in `httpOnly` cookie (rotated atomically with reuse detection). `AuthUser` is an Axum extractor. Always enforce allow-list capability checks via `auth.require_permission(Permission::...)` (or `auth.can(...)`) rather than role deny-lists (`require_non_employee`). Canonical role strings (`core::permission::ALL_ROLES`, enforced by `users_roles_valid`): `super_admin`, `admin`, `manager`, `payroll_admin`, `hr_manager`, `finance`, `exec`, `employee`.
 
-- `exec` is read-only and holds no payroll/report write permissions; `admin` and `manager` hold no payroll permissions; `manager` also excludes `import_employees` and platform-only permissions, and `user_service::hides_privileged_users` hides `admin`/`super_admin` accounts from callers holding neither role.
+- `exec` is read-only and holds no payroll/report write permissions; `admin` and `manager` hold no payroll permissions; `manager` also excludes `import_employees`, `view_audit_log`, and platform-only permissions, and `user_service::hides_privileged_users` hides `admin`/`super_admin` accounts from callers holding neither role.
 - Company-scoped `user_groups` combine additively via `filter_group_permissions_for_roles`, blocking platform-only permissions (`manage_users`, `manage_companies`, `manage_backups`, `manage_platform_settings`) for all groups, blocking payroll permissions for `exec`/`employee`/`manager`, and keeping `exec`-only users read-only.
 - Multi-company users switch active company via `PUT /api/auth/switch-company`, which re-issues the JWT with a new `company_id`.
 

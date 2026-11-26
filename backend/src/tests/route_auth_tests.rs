@@ -1669,10 +1669,10 @@ async fn payroll_roles_and_the_employee_still_see_bank_details() {
     assert_eq!(profile["bank_account_number"], SEEDED_BANK_ACCOUNT);
 }
 
-/// `manager` holds `ViewAuditLog`; the employee diffs it can read must not
-/// carry banking, including bank keys not known today.
+/// `admin` holds `ViewAuditLog` but no payroll permission; the employee diffs
+/// it can read must not carry banking, including bank keys not known today.
 #[tokio::test]
-async fn manager_audit_log_redacts_bank_details() {
+async fn non_payroll_audit_log_redacts_bank_details() {
     let Some(pool) = skip_if_no_db().await else {
         return;
     };
@@ -1707,10 +1707,10 @@ async fn manager_audit_log_redacts_bank_details() {
     let app = app_for(pool.clone()).await;
     let uri = format!("/api/audit-logs?entity_type=employee&entity_id={employee_id}");
 
-    let manager_token = token_for(&pool, company_id, "manager").await;
+    let viewer_token = token_for(&pool, company_id, "admin").await;
     let response = app
         .clone()
-        .oneshot(request("GET", &uri, &manager_token, ""))
+        .oneshot(request("GET", &uri, &viewer_token, ""))
         .await
         .expect("audit response");
     assert_eq!(response.status(), StatusCode::OK);
@@ -1725,7 +1725,7 @@ async fn manager_audit_log_redacts_bank_details() {
         let values = row[side].as_object().expect("audit values");
         for (key, value) in values {
             if key.starts_with("bank_") {
-                assert_eq!(value, "[REDACTED]", "manager audit {side}.{key}");
+                assert_eq!(value, "[REDACTED]", "admin audit {side}.{key}");
             }
         }
         assert_eq!(values["full_name"], "Test Employee");
@@ -1746,4 +1746,44 @@ async fn manager_audit_log_redacts_bank_details() {
         body["data"][0]["new_values"]["bank_account_number"],
         SEEDED_BANK_ACCOUNT
     );
+}
+
+/// The built-in `manager` role does not include the audit trail: every audit
+/// endpoint answers 403, while `admin` keeps access.
+#[tokio::test]
+async fn manager_cannot_read_audit_logs() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let app = app_for(pool.clone()).await;
+    let manager_token = token_for(&pool, company_id, "manager").await;
+    let admin_token = token_for(&pool, company_id, "admin").await;
+    let run_id = uuid::Uuid::new_v4();
+
+    for uri in [
+        "/api/audit-logs".to_string(),
+        "/api/audit-logs/filters".to_string(),
+        format!("/api/payroll/runs/{run_id}/audit-logs"),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(request("GET", &uri, &manager_token, ""))
+            .await
+            .expect("audit response");
+        assert_eq!(
+            response.status(),
+            StatusCode::FORBIDDEN,
+            "manager must be denied {uri}"
+        );
+    }
+
+    for uri in ["/api/audit-logs", "/api/audit-logs/filters"] {
+        let response = app
+            .clone()
+            .oneshot(request("GET", uri, &admin_token, ""))
+            .await
+            .expect("audit response");
+        assert_eq!(response.status(), StatusCode::OK, "admin keeps {uri}");
+    }
 }
