@@ -71,6 +71,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an HR save cannot wipe stored banking; the employee detail and profile
   drawer show banking as restricted. Payroll roles and the employee's own
   portal profile are unchanged.
+- **`manager` keeps the audit trail** — `view_audit_log` stays on the built-in
+  `manager` role (a brief removal was reverted); payroll and `bank_*` keys in
+  audit diffs remain redacted for callers without `view_payroll`.
 
 ## [0.2.0] - 2026-09-20
 

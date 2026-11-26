@@ -679,6 +679,10 @@ mod tests {
             !role_permissions("manager").contains(&P::ImportEmployees),
             "bulk import writes salaries without a payroll check"
         );
+        assert!(
+            role_permissions("manager").contains(&P::ViewAuditLog),
+            "manager reviews the company audit trail (bank and payroll keys redacted)"
+        );
     }
 
     /// Every non-payroll, non-platform capability `admin` has, `manager` has.

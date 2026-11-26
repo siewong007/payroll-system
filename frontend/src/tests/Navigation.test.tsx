@@ -134,6 +134,14 @@ describe('Sidebar role-based navigation', () => {
     expect(navLinks()).not.toContain('Roles');
   });
 
+  it('shows Audit Trail to a manager', () => {
+    authMocks.useAuth.mockReturnValue({ user: asUser(['manager']), logout: vi.fn() });
+    renderWithProviders(<Sidebar />);
+
+    expect(navLinks()).toContain('Audit Trail');
+    expect(navLinks()).not.toContain('Backup');
+  });
+
   it('shows Audit Trail to an admin but not Backup', () => {
     renderWithProviders(<Sidebar />);
 
