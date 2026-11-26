@@ -202,6 +202,7 @@ const zhTW: Messages = {
     adminBadge: '管理員',
     adminConsoleBadge: '管理主控台',
     accountSecurity: '帳戶與安全',
+    preferences: '偏好設定',
     signOut: '登出',
     portal: {
       profile: '我的資料',
@@ -386,6 +387,9 @@ const zhTW: Messages = {
       sessionLost: '無法還原您的工作階段。請登入並重試連結。',
       missingData: 'Google 帳戶連結失敗。缺少驗證資料。',
       linkFailed: '無法連結 Google 帳戶。',
+      confirmTitle: '確認連結 Google 帳號',
+      confirmPrompt: '請輸入目前密碼以完成 Google 帳號連結。',
+      confirmAction: '連結 Google 帳號',
     },
     twoFactor: {
       title: '雙重驗證',
@@ -832,7 +836,7 @@ const zhTW: Messages = {
       steps: {
         1: '1. 在手機上開啟 PayrollMY',
         2: '2. 在入口中點擊「出勤」',
-        3: '3. 掃描上方 QR 碼',
+        3: '3. 掃描螢幕上的 QR 碼',
         4: '4. 確認您的位置',
       },
       autoRegen: 'QR 碼會自動更新',

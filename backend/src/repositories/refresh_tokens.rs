@@ -200,7 +200,7 @@ pub async fn delete_by_employee(
     employee_id: Uuid,
 ) -> AppResult<()> {
     sqlx::query!(
-        "DELETE FROM refresh_tokens WHERE user_id IN (SELECT id FROM users WHERE employee_id = $1 AND roles <@ ARRAY['employee']::VARCHAR(50)[])",
+        "DELETE FROM refresh_tokens WHERE user_id IN (SELECT id FROM users WHERE employee_id = $1)",
         employee_id,
     )
     .execute(executor)

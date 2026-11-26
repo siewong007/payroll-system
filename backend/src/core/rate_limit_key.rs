@@ -12,20 +12,31 @@ use axum::http::Request;
 use tower_governor::{errors::GovernorError, key_extractor::KeyExtractor};
 
 use super::auth::verify_token;
-use super::client_ip::client_ip;
+use super::client_ip::client_ip_with_header;
 
 /// Extracts the client IP, optionally trusting proxy headers.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct ClientIpKeyExtractor {
-    /// Whether `X-Forwarded-For` / `X-Real-IP` may be believed. Only set this
+    /// Whether proxy-forwarded headers may be believed. Only set this
     /// when a trusted proxy is the sole path to the API and it overwrites (or
     /// appends to) those headers itself.
     trust_forwarded: bool,
+    preferred_header: Option<Arc<str>>,
 }
 
 impl ClientIpKeyExtractor {
     pub fn new(trust_forwarded: bool) -> Self {
-        Self { trust_forwarded }
+        Self::with_header(trust_forwarded, None)
+    }
+
+    pub fn with_header(trust_forwarded: bool, preferred_header: Option<&str>) -> Self {
+        Self {
+            trust_forwarded,
+            preferred_header: preferred_header
+                .map(str::trim)
+                .filter(|h| !h.is_empty())
+                .map(Arc::from),
+        }
     }
 }
 
@@ -42,34 +53,45 @@ impl KeyExtractor for ClientIpKeyExtractor {
         // No usable address means no key. Returning a placeholder would put
         // every such request in one shared bucket, which is the failure mode
         // this whole module exists to avoid.
-        client_ip(req.headers(), peer_ip(req), self.trust_forwarded)
-            .ok_or(GovernorError::UnableToExtractKey)
+        client_ip_with_header(
+            req.headers(),
+            peer_ip(req),
+            self.trust_forwarded,
+            self.preferred_header.as_deref(),
+        )
+        .ok_or(GovernorError::UnableToExtractKey)
     }
 }
 
-/// Keys on the verified session ID (`claims.sid`) when a valid Bearer JWT is
+/// Keys on the verified user ID (`claims.sub`) when a valid Bearer JWT is
 /// presented, falling back to the client IP otherwise.
 ///
-/// IP keying alone is the wrong shape for authenticated endpoints. A whole
-/// office behind one NAT shares a bucket, so a colleague's bulk import can
-/// throttle everyone else; meanwhile a single authenticated user can spread
-/// abuse across as many addresses as they can reach. Expensive authenticated
-/// work — payroll runs, bulk imports, uploads, outbound mail — belongs to the
-/// session that requested it.
-///
-/// Verifying the JWT signature against `jwt_secret` guarantees an unauthenticated
-/// attacker cannot escape their IP bucket by sending arbitrary/forged `Bearer`
-/// strings.
+/// Keying by `claims.sub` rather than `claims.sid` ensures a single user
+/// cannot multiply rate-limit allowances by minting multiple sessions across
+/// browsers or devices.
 #[derive(Debug, Clone)]
 pub struct SessionOrIpKeyExtractor {
     trust_forwarded: bool,
+    preferred_header: Option<Arc<str>>,
     jwt_secret: Arc<String>,
 }
 
 impl SessionOrIpKeyExtractor {
     pub fn new(trust_forwarded: bool, jwt_secret: impl Into<Arc<String>>) -> Self {
+        Self::with_header(trust_forwarded, None, jwt_secret)
+    }
+
+    pub fn with_header(
+        trust_forwarded: bool,
+        preferred_header: Option<&str>,
+        jwt_secret: impl Into<Arc<String>>,
+    ) -> Self {
         Self {
             trust_forwarded,
+            preferred_header: preferred_header
+                .map(str::trim)
+                .filter(|h| !h.is_empty())
+                .map(Arc::from),
             jwt_secret: jwt_secret.into(),
         }
     }
@@ -91,11 +113,16 @@ impl KeyExtractor for SessionOrIpKeyExtractor {
         if let Some(token) = bearer_token(req)
             && let Ok(claims) = verify_token(token, &self.jwt_secret)
         {
-            return Ok(format!("s:{}", claims.sid));
+            return Ok(format!("u:{}", claims.sub));
         }
-        client_ip(req.headers(), peer_ip(req), self.trust_forwarded)
-            .map(|ip| format!("i:{ip}"))
-            .ok_or(GovernorError::UnableToExtractKey)
+        client_ip_with_header(
+            req.headers(),
+            peer_ip(req),
+            self.trust_forwarded,
+            self.preferred_header.as_deref(),
+        )
+        .map(|ip| format!("i:{ip}"))
+        .ok_or(GovernorError::UnableToExtractKey)
     }
 }
 
@@ -256,7 +283,7 @@ mod tests {
     #[test]
     fn session_and_address_keys_cannot_collide() {
         // Distinct prefixes, so a crafted address can never land in the bucket
-        // of a session (or the reverse).
+        // of a user (or the reverse).
         let secret = Arc::new("test-jwt-secret-at-least-32-bytes-long".to_string());
         let extractor = SessionOrIpKeyExtractor::new(false, secret.clone());
         let tok = mint_jwt(&secret, uuid::Uuid::new_v4());
@@ -266,8 +293,44 @@ mod tests {
         let anonymous = extractor
             .extract(&request_with_token(None, Some("10.0.0.7:1")))
             .unwrap();
-        assert!(session.starts_with("s:"));
+        assert!(session.starts_with("u:"));
         assert!(anonymous.starts_with("i:"));
+    }
+
+    #[test]
+    fn two_sessions_for_same_user_share_a_bucket() {
+        let secret = Arc::new("test-jwt-secret-at-least-32-bytes-long".to_string());
+        let extractor = SessionOrIpKeyExtractor::new(false, secret.clone());
+        let user_id = uuid::Uuid::new_v4();
+        let tok_a = crate::core::auth::create_token(
+            user_id,
+            "same@example.invalid",
+            &["admin".to_string()],
+            None,
+            None,
+            uuid::Uuid::new_v4(),
+            &secret,
+            1,
+        )
+        .expect("mint jwt a");
+        let tok_b = crate::core::auth::create_token(
+            user_id,
+            "same@example.invalid",
+            &["admin".to_string()],
+            None,
+            None,
+            uuid::Uuid::new_v4(),
+            &secret,
+            1,
+        )
+        .expect("mint jwt b");
+        let a = extractor
+            .extract(&request_with_token(Some(&tok_a), Some("10.0.0.7:1")))
+            .unwrap();
+        let b = extractor
+            .extract(&request_with_token(Some(&tok_b), Some("10.0.0.7:1")))
+            .unwrap();
+        assert_eq!(a, b);
     }
 
     #[test]

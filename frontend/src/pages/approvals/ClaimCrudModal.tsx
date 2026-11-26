@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Upload, X } from 'lucide-react';
+import { Loader2, Upload, X } from 'lucide-react';
 import { createClaim, updateClaim, type ClaimWithEmployee } from '@/api/approvals';
 import { uploadFile } from '@/api/portal';
 import { EmployeePicker } from '@/components/employees/EmployeePicker';
@@ -28,6 +28,7 @@ export function ClaimCrudModal({
   const { t } = useTranslation();
   const formId = useId();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
   const [form, setForm] = useState<AdminCreateClaimRequest>({
     employee_id: '',
@@ -62,7 +63,7 @@ export function ClaimCrudModal({
         receipt_file_name: item.receipt_file_name || '',
         expense_date: item.expense_date,
       });
-      setAmountInput(String(item.amount / 100));
+      setAmountInput((item.amount / 100).toFixed(2));
       setError('');
       return;
     }
@@ -172,27 +173,49 @@ export function ClaimCrudModal({
     });
   };
 
+  const isSubmitting = createMutation.isPending || updateMutation.isPending;
+
+  useEffect(() => {
+    if (error) {
+      errorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }, [error]);
+
   return (
     <Modal
       open={open}
-      onClose={onClose}
+      onClose={() => {
+        if (!isSubmitting && !uploading) {
+          onClose();
+        }
+      }}
       title={modalTitle}
       footer={
         <div className="flex flex-col-reverse sm:flex-row justify-end gap-3">
-          <button type="button" onClick={onClose} className="btn-secondary">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={isSubmitting || uploading}
+            className="btn-secondary"
+          >
             {t('common.cancel')}
           </button>
           <button
             type="submit"
             form={formId}
-            disabled={createMutation.isPending || updateMutation.isPending || uploading}
+            disabled={isSubmitting || uploading}
             className="btn-primary"
           >
-            {createMutation.isPending || updateMutation.isPending
-              ? t('common.saving')
-              : item
-                ? t('common.saveChanges')
-                : t('approvals.createClaim')}
+            {isSubmitting ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                {t('common.saving')}
+              </>
+            ) : item ? (
+              t('common.saveChanges')
+            ) : (
+              t('approvals.createClaim')
+            )}
           </button>
         </div>
       }
@@ -206,7 +229,11 @@ export function ClaimCrudModal({
         className="space-y-4"
       >
         {error && (
-          <div role="alert" className="rounded-lg border border-red-200 dark:border-red-500/30 bg-red-50 dark:bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-300">
+          <div
+            ref={errorRef}
+            role="alert"
+            className="rounded-lg border border-red-200 dark:border-red-500/30 bg-red-50 dark:bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-300"
+          >
             {error}
           </div>
         )}
@@ -245,6 +272,7 @@ export function ClaimCrudModal({
               <input
                 {...aria}
                 type="number"
+                inputMode="decimal"
                 min="0.01"
                 step="0.01"
                 value={amountInput}
@@ -253,7 +281,7 @@ export function ClaimCrudModal({
                   setAmountInput(raw);
                   setForm((prev) => ({ ...prev, amount: raw.trim() ? Number(raw) : 0 }));
                 }}
-                className="form-input"
+                className="form-input tabular-nums"
                 required
               />
             )}
@@ -299,12 +327,12 @@ export function ClaimCrudModal({
         </FormField>
 
         <div>
-          <label className="form-label">{t('approvals.receipt')}</label>
+          <span className="form-label">{t('approvals.receipt')}</span>
           <input
             ref={fileInputRef}
             type="file"
             accept={ALLOWED_UPLOAD_ACCEPT}
-            className="sr-only"
+            className="hidden"
             onChange={(event) => {
               const file = event.target.files?.[0];
               event.currentTarget.value = '';
@@ -319,8 +347,13 @@ export function ClaimCrudModal({
               onClick={() => fileInputRef.current?.click()}
               className="btn-secondary"
               disabled={uploading}
+              aria-busy={uploading}
             >
-              <Upload className="w-4 h-4" />{' '}
+              {uploading ? (
+                <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <Upload className="w-4 h-4" aria-hidden="true" />
+              )}{' '}
               {uploading ? t('common.uploading') : t('approvals.uploadReceipt')}
             </button>
             {form.receipt_file_name && (
@@ -331,16 +364,16 @@ export function ClaimCrudModal({
                 }
                 aria-label={t('common.remove')}
                 title={t('common.remove')}
-                className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 flex items-center justify-center rounded-lg text-gray-400 dark:text-slate-500 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/15 transition-colors"
+                className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 flex items-center justify-center rounded-lg text-gray-500 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/15 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
               >
-                <X className="w-4 h-4" />
+                <X className="w-4 h-4" aria-hidden="true" />
               </button>
             )}
           </div>
           {form.receipt_file_name ? (
             <p className="text-sm text-gray-600 dark:text-slate-300 mt-2 break-all">{form.receipt_file_name}</p>
           ) : (
-            <p className="text-xs text-gray-400 dark:text-slate-500 mt-1.5">{t('approvals.uploadHint')}</p>
+            <p className="text-xs text-gray-500 dark:text-slate-400 mt-1.5">{t('approvals.uploadHint')}</p>
           )}
         </div>
       </form>

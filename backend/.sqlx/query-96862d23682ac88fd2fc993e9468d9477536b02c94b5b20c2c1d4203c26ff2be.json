@@ -181,6 +181,28 @@
       },
       {
         "ordinal": 16,
+        "name": "created_by",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "leave_requests",
+            "name": "created_by"
+          }
+        }
+      },
+      {
+        "ordinal": 17,
+        "name": "updated_by",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "leave_requests",
+            "name": "updated_by"
+          }
+        }
+      },
+      {
+        "ordinal": 18,
         "name": "leave_type_name?",
         "type_info": "Varchar",
         "origin": "Expression"
@@ -210,6 +232,8 @@
       true,
       false,
       false,
+      true,
+      true,
       null
     ]
   },

@@ -109,7 +109,7 @@ export function PayslipBreakdownDrawer({
             ref={closeButtonRef}
             type="button"
             onClick={onClose}
-            className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 dark:text-slate-400 dark:hover:bg-slate-800 transition-colors"
+            className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 dark:text-slate-400 dark:hover:bg-slate-800 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
             aria-label={t('payroll.breakdown.close')}
           >
             <X className="h-4 w-4" aria-hidden="true" />
@@ -141,7 +141,7 @@ export function PayslipBreakdownDrawer({
         )}
 
         {data && (
-          <div className="space-y-6 px-6 py-5">
+          <div className="space-y-6 px-6 py-5 pb-[max(1.25rem,env(safe-area-inset-bottom))]">
             {data.lines.length === 0 ? (
               <p className="rounded-xl border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-200">
                 {t('payroll.breakdown.noStored')}
@@ -201,12 +201,12 @@ function LineSection({
               <p className="text-sm text-gray-800 dark:text-slate-200">{line.description}</p>
               <div className="mt-0.5 flex gap-1.5">
                 {line.is_statutory && (
-                  <span className="rounded bg-blue-50 dark:bg-blue-500/15 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-700 dark:text-blue-300">
+                  <span className="rounded bg-blue-50 dark:bg-blue-500/15 px-1.5 py-0.5 text-[11px] font-medium uppercase text-blue-700 dark:text-blue-300">
                     {t('payroll.breakdown.statutory')}
                   </span>
                 )}
                 {line.category === 'earning' && line.is_taxable === false && (
-                  <span className="rounded bg-gray-100 dark:bg-slate-800 px-1.5 py-0.5 text-[10px] font-medium uppercase text-gray-600 dark:text-slate-400">
+                  <span className="rounded bg-gray-100 dark:bg-slate-800 px-1.5 py-0.5 text-[11px] font-medium uppercase text-gray-600 dark:text-slate-400">
                     {t('payroll.breakdown.nonTaxable')}
                   </span>
                 )}
@@ -232,12 +232,12 @@ function TotalRow({
   emphasis?: boolean;
 }) {
   return (
-    <div className="flex items-center justify-between">
-      <span className={`text-sm ${emphasis ? 'font-semibold text-gray-900 dark:text-slate-100' : 'text-gray-600 dark:text-slate-400'}`}>
+    <div className="flex items-center justify-between gap-4">
+      <span className={`min-w-0 text-sm ${emphasis ? 'font-semibold text-gray-900 dark:text-slate-100' : 'text-gray-600 dark:text-slate-400'}`}>
         {label}
       </span>
       <span
-        className={`text-sm font-semibold tabular-nums ${
+        className={`shrink-0 whitespace-nowrap text-sm font-semibold tabular-nums ${
           emphasis
             ? 'text-emerald-600 dark:text-emerald-400'
             : negative

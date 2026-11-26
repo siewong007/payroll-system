@@ -9,6 +9,7 @@ use crate::core::app_state::AppState;
 use crate::core::auth::AuthUser;
 use crate::core::cookie;
 use crate::core::error::{AppError, AppResult};
+use crate::core::extract::ValidatedJson;
 use crate::models::audit::AuditRequestMeta;
 use crate::models::oauth2::{
     LinkGoogleRequest, LinkedAccount, OAuth2AuthorizeQuery, OAuth2CallbackQuery, OAuth2ProviderInfo,
@@ -157,86 +158,60 @@ async fn google_callback_inner(
     }
 
     // Try to find user by linked OAuth2 account first
-    let user =
-        match oauth2_service::find_user_by_oauth2(&state.pool, "google", &google_user.sub).await? {
-            Some(user) => user,
-            None => {
-                // If this Google identity is already bound to a disabled or deleted
-                // account, never silently re-associate or sign in another user by email.
-                if oauth2_service::find_oauth2_account(&state.pool, "google", &google_user.sub)
-                    .await?
-                    .is_some()
-                {
-                    return Err(AppError::Unauthorized(
-                        "Account is disabled or unavailable.".into(),
-                    ));
-                }
-
-                // No linked account — verify user and employee are active, then
-                // ensure no other Google account is already linked.
-                let user = oauth2_service::find_user_by_email(&state.pool, google_email)
-                    .await?
-                    .ok_or_else(|| {
-                        AppError::Unauthorized(
-                            "No account found for this email. Please contact your administrator."
-                                .into(),
-                        )
-                    })?;
-                let user = auth_service::get_active_user(&state.pool, user.id).await?;
-                let existing_accounts =
-                    oauth2_service::list_linked_accounts(&state.pool, user.id).await?;
-                if existing_accounts.iter().any(|a| a.provider == "google") {
-                    return Err(AppError::Unauthorized(
-                        "A different Google account is already linked to this user.".into(),
-                    ));
-                }
-
-                // Auto-link the Google account to this user
-                oauth2_service::link_oauth2_account(
-                    &state.pool,
-                    user.id,
-                    "google",
-                    &google_user.sub,
-                    google_user.email.as_deref(),
-                    google_user.name.as_deref(),
-                    google_user.picture.as_deref(),
-                    Some(&token_resp.access_token),
-                    token_resp.refresh_token.as_deref(),
-                    token_resp.expires_in,
-                )
-                .await?;
-
-                let _ = audit_service::log_action_with_metadata(
-                    &state.pool,
-                    user.company_id,
-                    Some(user.id),
-                    "oauth2_linked",
-                    "auth",
-                    Some(user.id),
-                    None::<serde_json::Value>,
-                    Some(serde_json::json!({ "provider": "google", "auto_linked": true })),
-                    Some("Google account auto-linked on sign-in"),
-                    Some(&audit_meta),
-                )
-                .await;
-
-                user
-            }
-        };
-
-    // Update stored Google tokens
-    oauth2_service::update_oauth2_tokens(
+    let (user, should_auto_link) = match oauth2_service::find_user_by_oauth2(
         &state.pool,
         "google",
         &google_user.sub,
-        &token_resp.access_token,
-        token_resp.refresh_token.as_deref(),
-        token_resp.expires_in,
     )
-    .await?;
+    .await?
+    {
+        Some(user) => (user, false),
+        None => {
+            // If this Google identity is already bound to a disabled or deleted
+            // account, never silently re-associate or sign in another user by email.
+            if oauth2_service::find_oauth2_account(&state.pool, "google", &google_user.sub)
+                .await?
+                .is_some()
+            {
+                return Err(AppError::Unauthorized(
+                    "Account is disabled or unavailable.".into(),
+                ));
+            }
+
+            // No linked account — verify user and employee are active, then
+            // ensure no other Google account is already linked.
+            let user = oauth2_service::find_user_by_email(&state.pool, google_email)
+                .await?
+                .ok_or_else(|| {
+                    AppError::Unauthorized(
+                        "No account found for this email. Please contact your administrator."
+                            .into(),
+                    )
+                })?;
+            let user = auth_service::get_active_user(&state.pool, user.id).await?;
+            if user.must_change_password
+                || crate::services::totp_service::is_enabled(&state.pool, user.id).await?
+            {
+                return Err(AppError::Unauthorized(
+                        "Please sign in with your password to link Google in Account Security settings."
+                            .into(),
+                    ));
+            }
+            let existing_accounts =
+                oauth2_service::list_linked_accounts(&state.pool, user.id).await?;
+            if existing_accounts.iter().any(|a| a.provider == "google") {
+                return Err(AppError::Unauthorized(
+                    "A different Google account is already linked to this user.".into(),
+                ));
+            }
+
+            (user, true)
+        }
+    };
 
     // Issue tokens (gated on 2FA if enabled) — this also records last_login,
-    // deferred until 2FA is actually completed if it's required.
+    // deferred until 2FA is actually completed if it's required. Auto-linking
+    // only commits after primary login/policy verification completes cleanly.
     let outcome = auth_service::complete_login(
         &state.pool,
         user.id,
@@ -249,6 +224,48 @@ async fn google_callback_inner(
         Some(&audit_meta),
     )
     .await?;
+
+    if matches!(outcome, LoginOutcome::Session(_)) {
+        if should_auto_link {
+            oauth2_service::link_oauth2_account(
+                &state.pool,
+                user.id,
+                "google",
+                &google_user.sub,
+                google_user.email.as_deref(),
+                google_user.name.as_deref(),
+                google_user.picture.as_deref(),
+                Some(&token_resp.access_token),
+                token_resp.refresh_token.as_deref(),
+                token_resp.expires_in,
+            )
+            .await?;
+
+            let _ = audit_service::log_action_with_metadata(
+                &state.pool,
+                user.company_id,
+                Some(user.id),
+                "oauth2_linked",
+                "auth",
+                Some(user.id),
+                None::<serde_json::Value>,
+                Some(serde_json::json!({ "provider": "google", "auto_linked": true })),
+                Some("Google account auto-linked on sign-in"),
+                Some(&audit_meta),
+            )
+            .await;
+        } else {
+            oauth2_service::update_oauth2_tokens(
+                &state.pool,
+                "google",
+                &google_user.sub,
+                &token_resp.access_token,
+                token_resp.refresh_token.as_deref(),
+                token_resp.expires_in,
+            )
+            .await?;
+        }
+    }
 
     let mut headers = HeaderMap::new();
     // The flow is over either way, so the binder is spent.
@@ -379,8 +396,10 @@ pub async fn link_google(
     auth: AuthUser,
     headers: HeaderMap,
     audit_meta: AuditRequestMeta,
-    Json(body): Json<LinkGoogleRequest>,
+    ValidatedJson(body): ValidatedJson<LinkGoogleRequest>,
 ) -> AppResult<Response> {
+    auth_service::verify_user_password(&state.pool, auth.0.sub, &body.password).await?;
+
     let client_id = state
         .config
         .google_client_id

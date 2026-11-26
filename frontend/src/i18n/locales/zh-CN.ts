@@ -202,6 +202,7 @@ const zhCN: Messages = {
     adminBadge: '管理员',
     adminConsoleBadge: '管理控制台',
     accountSecurity: '账号与安全',
+    preferences: '偏好设置',
     signOut: '退出登录',
     portal: {
       profile: '我的资料',
@@ -386,6 +387,9 @@ const zhCN: Messages = {
       sessionLost: '无法恢复您的会话。请登录并重试关联。',
       missingData: 'Google 账户关联失败。缺少身份验证数据。',
       linkFailed: '无法关联 Google 账户。',
+      confirmTitle: '确认关联 Google 账号',
+      confirmPrompt: '请输入当前密码以完成 Google 账号关联。',
+      confirmAction: '关联 Google 账号',
     },
     twoFactor: {
       title: '双因素认证',
@@ -832,7 +836,7 @@ const zhCN: Messages = {
       steps: {
         1: '1. 在手机上打开 PayrollMY',
         2: '2. 在门户中点击"考勤"',
-        3: '3. 扫描上方二维码',
+        3: '3. 扫描屏幕上的二维码',
         4: '4. 确认您的位置',
       },
       autoRegen: '二维码会自动更新',

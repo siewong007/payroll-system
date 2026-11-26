@@ -14,6 +14,7 @@ pub struct AuthRequestContext {
     pub must_change_password: bool,
     pub employee_active: Option<bool>,
     pub session_active: bool,
+    pub company_member: bool,
     pub group_permissions: Vec<String>,
 }
 
@@ -24,20 +25,12 @@ pub async fn resolve_request_context(
     session_id: Uuid,
     company_id: Option<Uuid>,
 ) -> AppResult<AuthRequestContext> {
-    let ctx = sqlx::query_as::<_, AuthRequestContext>(
+    let ctx = sqlx::query_as!(
+        AuthRequestContext,
         r#"SELECT
-            EXISTS(
-                SELECT 1 FROM users
-                WHERE id = $1 AND is_active = TRUE AND deleted_at IS NULL
-            ) AS user_active,
-            COALESCE((
-                SELECT must_change_password FROM users
-                WHERE id = $1 AND is_active = TRUE AND deleted_at IS NULL
-            ), FALSE) AS must_change_password,
-            CASE
-                WHEN $2::uuid IS NULL THEN NULL
-                ELSE (SELECT is_active FROM employees WHERE id = $2)
-            END AS employee_active,
+            (u.id IS NOT NULL) AS "user_active!",
+            COALESCE(u.must_change_password, FALSE) AS "must_change_password!",
+            e.is_active AS "employee_active?",
             EXISTS(
                 SELECT 1 FROM user_sessions
                 WHERE id = $3
@@ -45,7 +38,14 @@ pub async fn resolve_request_context(
                   AND revoked_at IS NULL
                   AND expires_at > NOW()
                   AND created_at > NOW() - INTERVAL '30 days'
-            ) AS session_active,
+            ) AS "session_active!",
+            CASE
+                WHEN $4::uuid IS NULL THEN TRUE
+                ELSE EXISTS(
+                    SELECT 1 FROM user_companies
+                    WHERE user_id = $1 AND company_id = $4
+                )
+            END AS "company_member!",
             CASE
                 WHEN $4::uuid IS NULL THEN ARRAY[]::text[]
                 ELSE COALESCE(
@@ -58,12 +58,20 @@ pub async fn resolve_request_context(
                     ),
                     ARRAY[]::text[]
                 )
-            END AS group_permissions"#,
+            END AS "group_permissions!"
+        FROM (VALUES (1)) AS _single(k)
+        LEFT JOIN users u
+          ON u.id = $1
+         AND u.is_active = TRUE
+         AND u.deleted_at IS NULL
+        LEFT JOIN employees e
+          ON e.id = $2
+         AND e.deleted_at IS NULL"#,
+        user_id,
+        employee_id,
+        session_id,
+        company_id,
     )
-    .bind(user_id)
-    .bind(employee_id)
-    .bind(session_id)
-    .bind(company_id)
     .fetch_one(executor)
     .await?;
 

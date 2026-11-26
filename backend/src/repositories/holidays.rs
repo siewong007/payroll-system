@@ -64,9 +64,11 @@ async fn list_in_span(
         Holiday,
         r#"SELECT * FROM holidays
         WHERE company_id = $1
-        AND date <= $2
+          AND date <= $3
+          AND (is_recurring = TRUE OR date >= $2)
         ORDER BY date"#,
         company_id,
+        start,
         end,
     )
     .fetch_all(executor)
@@ -225,4 +227,30 @@ pub async fn count_matching(
     .fetch_one(executor)
     .await?;
     Ok(count)
+}
+
+/// Find which `(date, name)` pairs from an import batch already exist for `company_id`.
+pub async fn find_existing_pairs(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    pairs: &[(NaiveDate, String)],
+) -> AppResult<std::collections::HashSet<(NaiveDate, String)>> {
+    if pairs.is_empty() {
+        return Ok(std::collections::HashSet::new());
+    }
+    let dates: Vec<NaiveDate> = pairs.iter().map(|(d, _)| *d).collect();
+    let names: Vec<String> = pairs.iter().map(|(_, n)| n.clone()).collect();
+    let rows = sqlx::query!(
+        r#"SELECT h.date AS "date!", h.name AS "name!"
+        FROM holidays h
+        JOIN UNNEST($2::date[], $3::varchar[]) AS v(d, n)
+          ON h.date = v.d AND h.name = v.n
+        WHERE h.company_id = $1"#,
+        company_id,
+        &dates,
+        &names,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(rows.into_iter().map(|r| (r.date, r.name)).collect())
 }

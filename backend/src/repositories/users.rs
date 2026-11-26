@@ -237,7 +237,7 @@ pub async fn list_page_by_role(
               AND ($2::text IS NULL
                     OR u.full_name ILIKE '%' || $2 || '%' ESCAPE '\'
                     OR u.email ILIKE '%' || $2 || '%' ESCAPE '\')
-              AND $3 = ANY(u.roles)
+              AND u.roles @> ARRAY[$3]::varchar(50)[]
             ORDER BY u.created_at DESC
             LIMIT $4 OFFSET $5"#,
     )
@@ -269,7 +269,7 @@ pub async fn count_all_by_role(
               AND ($2::text IS NULL
                     OR u.full_name ILIKE '%' || $2 || '%' ESCAPE '\'
                     OR u.email ILIKE '%' || $2 || '%' ESCAPE '\')
-              AND $3 = ANY(u.roles)"#,
+              AND u.roles @> ARRAY[$3]::varchar(50)[]"#,
     )
     .bind(company_id)
     .bind(escaped.as_deref())
@@ -287,7 +287,7 @@ pub async fn count_active_super_admins(
 ) -> AppResult<i64> {
     let ids = sqlx::query_scalar!(
         r#"SELECT id FROM users
-        WHERE 'super_admin' = ANY(roles) AND is_active = TRUE AND deleted_at IS NULL
+        WHERE roles @> ARRAY['super_admin']::varchar(50)[] AND is_active = TRUE AND deleted_at IS NULL
         ORDER BY id
         FOR UPDATE"#,
     )
@@ -645,7 +645,6 @@ pub async fn employee_id_for_user_in_company(
           AND u.is_active = TRUE
           AND u.deleted_at IS NULL
           AND e.deleted_at IS NULL
-          AND e.is_active = TRUE
         ORDER BY (u.employee_id IS NOT NULL AND e.id = u.employee_id) DESC
         LIMIT 1"#,
         user_id,

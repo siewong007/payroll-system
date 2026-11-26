@@ -10,15 +10,17 @@ import {
   Users,
   FolderOpen,
   Calculator,
+  Pencil,
+  Loader2,
 } from 'lucide-react';
 import { getCompany, updateCompany, getCompanyStats } from '@/api/company';
 import { getErrorMessage } from '@/lib/utils';
-import { formatDateLong } from '@/lib/format';
+import { formatDateLong, formatNumber } from '@/lib/format';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Modal } from '@/components/ui/Modal';
 import { FormField } from '@/components/ui/FormField';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { KpiSkeletonGrid } from '@/components/ui/Skeleton';
+import { KpiSkeletonGrid, Skeleton } from '@/components/ui/Skeleton';
 import { useConfirm } from '@/lib/confirm';
 import { usePermissions } from '@/lib/usePermissions';
 import { useToast } from '@/lib/toast';
@@ -31,18 +33,31 @@ const renderRow = (label: string, value: string | null | undefined) => (
   <div className="flex justify-between gap-4 py-2.5 border-b border-gray-100 dark:border-slate-800 last:border-none text-sm">
     <span className="text-gray-500 dark:text-slate-400 shrink-0">{label}</span>
     <span className="font-medium text-gray-800 dark:text-slate-200 text-right break-words min-w-0">
-      {value || <span className="italic text-gray-400 dark:text-slate-500">{i18n.t('common.notProvided')}</span>}
+      {value || <span className="italic text-gray-500 dark:text-slate-400">{i18n.t('common.notProvided')}</span>}
     </span>
   </div>
 );
 
-function FieldInput({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+function FieldInput({
+  label,
+  value,
+  onChange,
+  type = 'text',
+  required = false,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  type?: string;
+  required?: boolean;
+}) {
   return (
-    <FormField label={label}>
+    <FormField label={label} required={required}>
       {(aria) => (
         <input
           {...aria}
-          type="text"
+          type={type}
+          required={required}
           value={value ?? ''}
           onChange={(e) => onChange(e.target.value)}
           placeholder={label}
@@ -116,7 +131,8 @@ function CompanyDetails() {
   };
 
   const requestCloseModal = async () => {
-    if (dirty && !mutation.isPending) {
+    if (mutation.isPending) return;
+    if (dirty) {
       const ok = await confirm({
         title: t('common.discard'),
         description: t('common.discardConfirm'),
@@ -185,14 +201,6 @@ function CompanyDetails() {
     }
   };
 
-  const handleCardKeyDown = (e: React.KeyboardEvent<HTMLDivElement>, section: Section) => {
-    if (!isSectionEditable(section)) return;
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      openModal(section);
-    }
-  };
-
   const handleSave = (e?: React.FormEvent) => {
     e?.preventDefault();
     setError('');
@@ -229,9 +237,19 @@ function CompanyDetails() {
 
   if (isLoading) {
     return (
-      <div className="space-y-6">
-        <PageHeader title={t('companyProfile.title')} />
+      <div className="space-y-6" role="status" aria-busy="true" aria-label={t('common.loading')}>
+        <PageHeader className="mb-0" title={t('companyProfile.title')} />
         <KpiSkeletonGrid count={2} />
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="card space-y-3">
+              <Skeleton className="h-5 w-40" />
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-5/6" />
+              <Skeleton className="h-4 w-3/4" />
+            </div>
+          ))}
+        </div>
       </div>
     );
   }
@@ -239,14 +257,14 @@ function CompanyDetails() {
   if (isError) {
     return (
       <div className="space-y-6">
-        <PageHeader title={t('companyProfile.title')} />
+        <PageHeader className="mb-0" title={t('companyProfile.title')} />
         <div className="card">
           <EmptyState
             icon={AlertTriangle}
             title={t('companyProfile.loadFailed')}
             description={getErrorMessage(queryError, t('common.error'))}
             action={
-              <button type="button" onClick={() => refetch()} className="btn-secondary">
+              <button type="button" onClick={() => refetch()} className="btn-primary">
                 {t('common.retry')}
               </button>
             }
@@ -259,7 +277,7 @@ function CompanyDetails() {
   if (!company) {
     return (
       <div className="space-y-6">
-        <PageHeader title={t('companyProfile.title')} />
+        <PageHeader className="mb-0" title={t('companyProfile.title')} />
         <div className="card">
           <EmptyState icon={Building2} title={t('companyProfile.notFound')} />
         </div>
@@ -294,24 +312,24 @@ function CompanyDetails() {
       {stats && (
         <div className="grid grid-cols-2 gap-4 mb-6">
           <div className="card !p-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-[var(--accent-soft)] flex items-center justify-center">
-                <Users className="w-5 h-5 text-[var(--accent-1)]" />
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-10 h-10 rounded-xl bg-[var(--accent-soft)] flex items-center justify-center shrink-0">
+                <Users className="w-5 h-5 text-[var(--accent-1)]" aria-hidden="true" />
               </div>
-              <div>
-                <p className="text-2xl font-bold tabular-nums text-gray-900 dark:text-slate-100">{stats.total_employees}</p>
-                <p className="text-xs text-gray-500 dark:text-slate-400">{t('companyProfile.activeEmployees')}</p>
+              <div className="min-w-0">
+                <p className="text-2xl font-bold tabular-nums text-gray-900 dark:text-slate-100">{formatNumber(stats.total_employees)}</p>
+                <p className="text-xs text-gray-500 dark:text-slate-400 truncate">{t('companyProfile.activeEmployees')}</p>
               </div>
             </div>
           </div>
           <div className="card !p-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-violet-500/10 flex items-center justify-center">
-                <FolderOpen className="w-5 h-5 text-violet-600 dark:text-violet-400" />
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-10 h-10 rounded-xl bg-violet-500/10 flex items-center justify-center shrink-0">
+                <FolderOpen className="w-5 h-5 text-violet-600 dark:text-violet-400" aria-hidden="true" />
               </div>
-              <div>
-                <p className="text-2xl font-bold tabular-nums text-gray-900 dark:text-slate-100">{stats.total_departments}</p>
-                <p className="text-xs text-gray-500 dark:text-slate-400">{t('companyProfile.departments')}</p>
+              <div className="min-w-0">
+                <p className="text-2xl font-bold tabular-nums text-gray-900 dark:text-slate-100">{formatNumber(stats.total_departments)}</p>
+                <p className="text-xs text-gray-500 dark:text-slate-400 truncate">{t('companyProfile.departments')}</p>
               </div>
             </div>
           </div>
@@ -319,27 +337,26 @@ function CompanyDetails() {
       )}
 
       {/* Company Details Cards Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Company Information */}
-        <div
-          role={canEditInfo ? 'button' : undefined}
-          tabIndex={canEditInfo ? 0 : undefined}
-          onClick={canEditInfo ? () => openModal('info') : undefined}
-          onKeyDown={canEditInfo ? (e) => handleCardKeyDown(e, 'info') : undefined}
-          className={`card ${
-            canEditInfo
-              ? 'hover-lift cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]'
-              : ''
-          }`}
-        >
+        <section className="card">
           <div className="flex justify-between items-center gap-2 mb-3">
-            <h2 className="font-semibold text-gray-800 dark:text-slate-100 flex items-center gap-2">
-              <Building2 className="w-5 h-5 text-[var(--accent-1)] shrink-0" /> {t('companyProfile.infoSection')}
+            <h2 className="font-semibold text-gray-800 dark:text-slate-100 flex items-center gap-2 min-w-0">
+              <Building2 className="w-5 h-5 text-[var(--accent-1)] shrink-0" aria-hidden="true" />
+              <span className="truncate">{t('companyProfile.infoSection')}</span>
             </h2>
             {canEditInfo ? (
-              <span className="text-xs font-medium text-[var(--accent-1)] shrink-0">{t('common.clickToEdit')}</span>
+              <button
+                type="button"
+                onClick={() => openModal('info')}
+                aria-label={t('companyProfile.editInfo')}
+                className="btn-secondary min-h-11 sm:min-h-9 !py-1.5 !px-3 sm:text-xs shrink-0"
+              >
+                <Pencil className="w-3.5 h-3.5" aria-hidden="true" />
+                {t('common.edit')}
+              </button>
             ) : (
-              <span className="text-xs text-gray-400 dark:text-slate-500 shrink-0">{t('companyProfile.readOnly')}</span>
+              <span className="text-xs text-gray-500 dark:text-slate-400 shrink-0">{t('companyProfile.readOnly')}</span>
             )}
           </div>
           {renderRow(t('companies.name'), company.name)}
@@ -347,26 +364,25 @@ function CompanyDetails() {
           {canViewPayroll && renderRow(t('companies.taxNo'), company.tax_number)}
           {renderRow(t('companies.phone'), company.phone)}
           {renderRow(t('common.email'), company.email)}
-        </div>
+        </section>
 
         {canViewPayroll && (
-          <div
-            role={canEditStatutory ? 'button' : undefined}
-            tabIndex={canEditStatutory ? 0 : undefined}
-            onClick={canEditStatutory ? () => openModal('statutory') : undefined}
-            onKeyDown={canEditStatutory ? (e) => handleCardKeyDown(e, 'statutory') : undefined}
-            className={`card ${
-              canEditStatutory
-                ? 'hover-lift cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]'
-                : ''
-            }`}
-          >
+          <section className="card">
             <div className="flex justify-between items-center gap-2 mb-3">
-              <h2 className="font-semibold text-gray-800 dark:text-slate-100 flex items-center gap-2">
-                <Shield className="w-5 h-5 text-[var(--accent-1)] shrink-0" /> {t('portal.profile.statutoryDetails')}
+              <h2 className="font-semibold text-gray-800 dark:text-slate-100 flex items-center gap-2 min-w-0">
+                <Shield className="w-5 h-5 text-[var(--accent-1)] shrink-0" aria-hidden="true" />
+                <span className="truncate">{t('portal.profile.statutoryDetails')}</span>
               </h2>
               {canEditStatutory && (
-                <span className="text-xs font-medium text-[var(--accent-1)] shrink-0">{t('common.clickToEdit')}</span>
+                <button
+                  type="button"
+                  onClick={() => openModal('statutory')}
+                  aria-label={t('companyProfile.editStatutory')}
+                  className="btn-secondary min-h-11 sm:min-h-9 !py-1.5 !px-3 sm:text-xs shrink-0"
+                >
+                  <Pencil className="w-3.5 h-3.5" aria-hidden="true" />
+                  {t('common.edit')}
+                </button>
               )}
             </div>
             {renderRow(t('companyProfile.epfNo'), company.epf_number)}
@@ -379,33 +395,32 @@ function CompanyDetails() {
                 className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
                   company.hrdf_enabled
                     ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300'
-                    : 'bg-gray-100 text-gray-500 dark:bg-slate-800 dark:text-slate-400'
+                    : 'bg-gray-100 text-gray-600 dark:bg-slate-800 dark:text-slate-400'
                 }`}
               >
                 {company.hrdf_enabled ? t('common.yes') : t('common.no')}
               </span>
             </div>
-          </div>
+          </section>
         )}
 
         {/* Address */}
-        <div
-          role={canEditAddress ? 'button' : undefined}
-          tabIndex={canEditAddress ? 0 : undefined}
-          onClick={canEditAddress ? () => openModal('address') : undefined}
-          onKeyDown={canEditAddress ? (e) => handleCardKeyDown(e, 'address') : undefined}
-          className={`card ${
-            canEditAddress
-              ? 'hover-lift cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]'
-              : ''
-          }`}
-        >
+        <section className="card">
           <div className="flex justify-between items-center gap-2 mb-3">
-            <h2 className="font-semibold text-gray-800 dark:text-slate-100 flex items-center gap-2">
-              <MapPin className="w-5 h-5 text-[var(--accent-1)] shrink-0" /> {t('portal.profile.address')}
+            <h2 className="font-semibold text-gray-800 dark:text-slate-100 flex items-center gap-2 min-w-0">
+              <MapPin className="w-5 h-5 text-[var(--accent-1)] shrink-0" aria-hidden="true" />
+              <span className="truncate">{t('portal.profile.address')}</span>
             </h2>
             {canEditAddress && (
-              <span className="text-xs font-medium text-[var(--accent-1)] shrink-0">{t('common.clickToEdit')}</span>
+              <button
+                type="button"
+                onClick={() => openModal('address')}
+                aria-label={t('companyProfile.editAddress')}
+                className="btn-secondary min-h-11 sm:min-h-9 !py-1.5 !px-3 sm:text-xs shrink-0"
+              >
+                <Pencil className="w-3.5 h-3.5" aria-hidden="true" />
+                {t('common.edit')}
+              </button>
             )}
           </div>
           {renderRow(t('employees.form.addressLine1'), company.address_line1)}
@@ -414,26 +429,25 @@ function CompanyDetails() {
           {renderRow(t('employees.form.state'), company.state)}
           {renderRow(t('employees.form.postcode'), company.postcode)}
           {renderRow(t('employees.form.country'), company.country)}
-        </div>
+        </section>
 
         {canViewPayroll && (
-          <div
-            role={canEditPayroll ? 'button' : undefined}
-            tabIndex={canEditPayroll ? 0 : undefined}
-            onClick={canEditPayroll ? () => openModal('payroll') : undefined}
-            onKeyDown={canEditPayroll ? (e) => handleCardKeyDown(e, 'payroll') : undefined}
-            className={`card ${
-              canEditPayroll
-                ? 'hover-lift cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]'
-                : ''
-            }`}
-          >
+          <section className="card">
             <div className="flex justify-between items-center gap-2 mb-3">
-              <h2 className="font-semibold text-gray-800 dark:text-slate-100 flex items-center gap-2">
-                <Calculator className="w-5 h-5 text-[var(--accent-1)] shrink-0" /> {t('companyProfile.payrollSection')}
+              <h2 className="font-semibold text-gray-800 dark:text-slate-100 flex items-center gap-2 min-w-0">
+                <Calculator className="w-5 h-5 text-[var(--accent-1)] shrink-0" aria-hidden="true" />
+                <span className="truncate">{t('companyProfile.payrollSection')}</span>
               </h2>
               {canEditPayroll && (
-                <span className="text-xs font-medium text-[var(--accent-1)] shrink-0">{t('common.clickToEdit')}</span>
+                <button
+                  type="button"
+                  onClick={() => openModal('payroll')}
+                  aria-label={t('companyProfile.editPayroll')}
+                  className="btn-secondary min-h-11 sm:min-h-9 !py-1.5 !px-3 sm:text-xs shrink-0"
+                >
+                  <Pencil className="w-3.5 h-3.5" aria-hidden="true" />
+                  {t('common.edit')}
+                </button>
               )}
             </div>
             {renderRow(
@@ -445,22 +459,28 @@ function CompanyDetails() {
             {renderRow(t('common.status'), company.is_active ? t('common.active') : t('common.inactive'))}
             {renderRow(t('companyProfile.created'), formatDateLong(company.created_at))}
             {renderRow(t('companyProfile.lastUpdated'), formatDateLong(company.updated_at))}
-          </div>
+          </section>
         )}
       </div>
 
       {/* Accessible Edit Modal */}
       <Modal
         open={activeSection !== null}
-        onClose={() => { void requestCloseModal(); }}
+        onClose={() => { if (!mutation.isPending) void requestCloseModal(); }}
         title={modalTitle}
         maxWidth="max-w-lg"
         footer={
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-            <button type="button" onClick={() => { void requestCloseModal(); }} className="btn-secondary">
+            <button
+              type="button"
+              onClick={() => { void requestCloseModal(); }}
+              disabled={mutation.isPending}
+              className="btn-secondary"
+            >
               {t('common.cancel')}
             </button>
             <button type="submit" form="company-section-form" disabled={mutation.isPending} className="btn-primary">
+              {mutation.isPending && <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />}
               {mutation.isPending ? t('common.saving') : t('common.save')}
             </button>
           </div>
@@ -478,13 +498,13 @@ function CompanyDetails() {
 
           {activeSection === 'info' && (
             <>
-              <FieldInput label={t('companies.name')} value={form.name ?? ''} onChange={(v) => updateField('name', v)} />
+              <FieldInput label={t('companies.name')} required value={form.name ?? ''} onChange={(v) => updateField('name', v)} />
               <FieldInput label={t('companies.regNoSsm')} value={form.registration_number ?? ''} onChange={(v) => updateField('registration_number', v)} />
               {canViewPayroll && (
                 <FieldInput label={t('companies.taxNoLhdn')} value={form.tax_number ?? ''} onChange={(v) => updateField('tax_number', v)} />
               )}
-              <FieldInput label={t('companies.phone')} value={form.phone ?? ''} onChange={(v) => updateField('phone', v)} />
-              <FieldInput label={t('common.email')} value={form.email ?? ''} onChange={(v) => updateField('email', v)} />
+              <FieldInput label={t('companies.phone')} type="tel" value={form.phone ?? ''} onChange={(v) => updateField('phone', v)} />
+              <FieldInput label={t('common.email')} type="email" value={form.email ?? ''} onChange={(v) => updateField('email', v)} />
             </>
           )}
 
@@ -494,19 +514,20 @@ function CompanyDetails() {
               <FieldInput label={t('companyProfile.socsoCodePerkeso')} value={form.socso_code ?? ''} onChange={(v) => updateField('socso_code', v)} />
               <FieldInput label={t('companies.eisCode')} value={form.eis_code ?? ''} onChange={(v) => updateField('eis_code', v)} />
               <FieldInput label={t('companyProfile.hrdfNo')} value={form.hrdf_number ?? ''} onChange={(v) => updateField('hrdf_number', v)} />
-              <div className="flex items-center justify-between pt-1">
+              <label className="flex items-center justify-between min-h-11 cursor-pointer pt-1">
                 <span className="form-label !mb-0">{t('companyProfile.hrdfEnabled')}</span>
-                <label className="relative inline-flex items-center cursor-pointer">
+                <span className="relative inline-flex items-center">
                   <input
                     type="checkbox"
+                    role="switch"
+                    aria-checked={form.hrdf_enabled ?? false}
                     checked={form.hrdf_enabled ?? false}
                     onChange={(e) => updateField('hrdf_enabled', e.target.checked)}
-                    aria-label={t('companyProfile.hrdfEnabled')}
                     className="sr-only peer"
                   />
-                  <div className="w-9 h-5 bg-gray-200 dark:bg-slate-700 peer-focus:ring-2 peer-focus:ring-[var(--ring)] rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[var(--accent-1)]" />
-                </label>
-              </div>
+                  <span className="w-9 h-5 bg-gray-200 dark:bg-slate-700 peer-focus:ring-2 peer-focus:ring-[var(--ring)] rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[var(--accent-1)]" />
+                </span>
+              </label>
             </>
           )}
 
@@ -551,7 +572,7 @@ function CompanyDetails() {
                     setDirty(true);
                     setDivisorInput(e.target.value);
                   }}
-                  className="form-input"
+                  className="form-input tabular-nums"
                 />
               )}
             </FormField>

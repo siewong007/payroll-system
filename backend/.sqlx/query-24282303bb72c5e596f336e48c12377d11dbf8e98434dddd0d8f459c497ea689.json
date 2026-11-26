@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM mfa_challenges\n           WHERE expires_at < NOW() - INTERVAL '1 day'\n              OR consumed_at < NOW() - INTERVAL '1 day'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "24282303bb72c5e596f336e48c12377d11dbf8e98434dddd0d8f459c497ea689"
+}

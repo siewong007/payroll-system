@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE mfa_challenges\n           SET consumed_at = NOW()\n           WHERE jti = $1\n             AND user_id = $2\n             AND consumed_at IS NULL\n             AND expires_at > NOW()\n             AND attempts < $3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "cef3d29ab2fa5190a09629c63556116a3c6c8052b5eb788802fab025df63ed86"
+}

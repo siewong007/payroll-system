@@ -78,6 +78,8 @@ pub struct LeaveRequestWithEmployee {
     pub attachment_name: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub created_by: Option<Uuid>,
+    pub updated_by: Option<Uuid>,
     pub leave_type_name: Option<String>,
     pub employee_name: Option<String>,
     pub employee_number: Option<String>,
@@ -107,6 +109,8 @@ pub struct OvertimeWithEmployee {
     pub review_notes: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub created_by: Option<Uuid>,
+    pub updated_by: Option<Uuid>,
     pub employee_name: Option<String>,
     pub employee_number: Option<String>,
 }
@@ -133,6 +137,8 @@ pub struct ClaimWithEmployee {
     /// Between `updated_at` and the joined employee columns: the reads select
     /// `c.*`, and the column was added by `ALTER TABLE`.
     pub payroll_run_id: Option<Uuid>,
+    pub created_by: Option<Uuid>,
+    pub updated_by: Option<Uuid>,
     pub employee_name: Option<String>,
     pub employee_number: Option<String>,
 }

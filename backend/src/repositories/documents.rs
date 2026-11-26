@@ -81,7 +81,8 @@ pub async fn list_filtered(
             d.id, d.company_id, d.employee_id, d.category_id, d.title, d.description,
             d.file_name, d.file_url, d.file_size, d.mime_type, d.status::text AS "status!", d.issue_date, d.expiry_date,
             d.is_confidential, d.tags, d.deleted_at, d.created_at, d.updated_at, d.created_by, d.updated_by,
-            e.full_name AS "employee_name?", e.employee_number AS "employee_number?"
+            CASE WHEN e.id IS NOT NULL THEN e.full_name END AS "employee_name?",
+            CASE WHEN e.id IS NOT NULL THEN e.employee_number END AS "employee_number?"
         FROM documents d
         LEFT JOIN employees e ON d.employee_id = e.id
         WHERE d.company_id = $1 AND d.deleted_at IS NULL
@@ -120,7 +121,8 @@ pub async fn get(
             d.id, d.company_id, d.employee_id, d.category_id, d.title, d.description,
             d.file_name, d.file_url, d.file_size, d.mime_type, d.status::text AS "status!", d.issue_date, d.expiry_date,
             d.is_confidential, d.tags, d.deleted_at, d.created_at, d.updated_at, d.created_by, d.updated_by,
-            e.full_name AS "employee_name?", e.employee_number AS "employee_number?"
+            CASE WHEN e.id IS NOT NULL THEN e.full_name END AS "employee_name?",
+            CASE WHEN e.id IS NOT NULL THEN e.employee_number END AS "employee_number?"
         FROM documents d
         LEFT JOIN employees e ON d.employee_id = e.id
         WHERE d.id = $1 AND d.company_id = $2 AND d.deleted_at IS NULL"#,
@@ -289,7 +291,8 @@ pub async fn expiring(
             d.id, d.company_id, d.employee_id, d.category_id, d.title, d.description,
             d.file_name, d.file_url, d.file_size, d.mime_type, d.status::text AS "status!", d.issue_date, d.expiry_date,
             d.is_confidential, d.tags, d.deleted_at, d.created_at, d.updated_at, d.created_by, d.updated_by,
-            e.full_name AS "employee_name?", e.employee_number AS "employee_number?"
+            CASE WHEN e.id IS NOT NULL THEN e.full_name END AS "employee_name?",
+            CASE WHEN e.id IS NOT NULL THEN e.employee_number END AS "employee_number?"
         FROM documents d
         LEFT JOIN employees e ON d.employee_id = e.id
         WHERE d.company_id = $1 AND d.deleted_at IS NULL

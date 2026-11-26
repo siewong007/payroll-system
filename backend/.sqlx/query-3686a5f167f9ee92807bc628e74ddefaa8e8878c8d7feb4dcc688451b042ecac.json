@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS(\n            SELECT 1 FROM attendance_records\n            WHERE employee_id = $1\n              AND check_in_at >= date_trunc('day', NOW() AT TIME ZONE $2) AT TIME ZONE $2\n              AND check_in_at < (date_trunc('day', NOW() AT TIME ZONE $2) + INTERVAL '1 day') AT TIME ZONE $2\n              AND check_out_at IS NULL\n        ) AS \"exists!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "exists!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "3686a5f167f9ee92807bc628e74ddefaa8e8878c8d7feb4dcc688451b042ecac"
+}

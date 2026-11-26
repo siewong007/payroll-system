@@ -1,7 +1,7 @@
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Plus, Search, Trash2, UserPlus, Users } from 'lucide-react';
+import { AlertTriangle, Loader2, Plus, Search, Trash2, UserPlus, Users } from 'lucide-react';
 import { listUsers } from '@/api/admin';
 import { permissionsApi, type PermissionDescriptor, type PermissionKey } from '@/api/permissions';
 import { userGroupsApi, type UserGroup, type UserGroupMember } from '@/api/userGroups';
@@ -9,6 +9,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { FormField } from '@/components/ui/FormField';
 import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { useConfirm } from '@/lib/confirm';
 import { usePermissions } from '@/lib/usePermissions';
 import { useToast } from '@/lib/toast';
@@ -45,6 +46,7 @@ export function UserGroups() {
   const [editing, setEditing] = useState<UserGroup | null>(null);
   const [creating, setCreating] = useState(false);
   const [membersGroup, setMembersGroup] = useState<UserGroup | null>(null);
+  const [deletingGroupId, setDeletingGroupId] = useState<string | null>(null);
 
   const groups = useQuery({ queryKey: ['user-groups'], queryFn: userGroupsApi.list });
   const matrix = useQuery({
@@ -55,6 +57,8 @@ export function UserGroups() {
 
   const remove = useMutation({
     mutationFn: userGroupsApi.remove,
+    onMutate: (groupId) => setDeletingGroupId(groupId),
+    onSettled: () => setDeletingGroupId(null),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['user-groups'] });
       toast.success(t('userGroups.deleteSuccess'));
@@ -85,8 +89,20 @@ export function UserGroups() {
 
   if (groups.isLoading || matrix.isLoading) {
     return (
-      <div className="flex min-h-40 items-center justify-center">
-        <div className="spinner" />
+      <div className="space-y-6">
+        <PageHeader title={t('userGroups.title')} subtitle={t('userGroups.subtitle')} />
+        <div role="status" aria-label={t('common.loading')} className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {[0, 1].map((i) => (
+            <div key={i} className="card p-5 space-y-3">
+              <Skeleton className="h-5 w-40" />
+              <Skeleton className="h-4 w-64" />
+              <div className="flex gap-2 pt-1">
+                <Skeleton className="h-6 w-24 rounded-full" />
+                <Skeleton className="h-6 w-28 rounded-full" />
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     );
   }
@@ -162,16 +178,16 @@ export function UserGroups() {
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 {!group.is_active && (
-                  <span className="text-[10px] uppercase tracking-wider font-semibold text-amber-600 dark:text-amber-400">
+                  <span className="text-[11px] uppercase tracking-wider font-semibold text-amber-700 dark:text-amber-400">
                     {t('userGroups.suspended')}
                   </span>
                 )}
                 {canManageUsers && (
                   <button
                     type="button"
-                    className="min-h-10 min-w-10 sm:min-h-8 sm:min-w-8 inline-flex items-center justify-center p-1.5 text-gray-400 dark:text-slate-500 hover:text-red-600 dark:hover:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors"
+                    className="min-h-11 min-w-11 sm:min-h-8 sm:min-w-8 inline-flex items-center justify-center p-1.5 text-gray-500 dark:text-slate-400 hover:text-red-700 dark:hover:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] disabled:opacity-50 transition-colors"
                     aria-label={t('userGroups.deleteGroup', { name: group.name })}
-                    disabled={remove.isPending}
+                    disabled={deletingGroupId === group.id}
                     onClick={() => {
                       void (async () => {
                         // Deleting cascades to membership, revoking access from
@@ -188,7 +204,11 @@ export function UserGroups() {
                       })();
                     }}
                   >
-                    <Trash2 className="w-4 h-4" aria-hidden="true" />
+                    {deletingGroupId === group.id ? (
+                      <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                    ) : (
+                      <Trash2 className="w-4 h-4" aria-hidden="true" />
+                    )}
                   </button>
                 )}
               </div>
@@ -196,7 +216,7 @@ export function UserGroups() {
 
             <div className="flex flex-wrap gap-1.5">
               {group.permissions.length === 0 ? (
-                <span className="text-xs text-gray-400 dark:text-slate-500">{t('userGroups.grantsNothing')}</span>
+                <span className="text-xs text-gray-600 dark:text-slate-400">{t('userGroups.grantsNothing')}</span>
               ) : (
                 group.permissions.map((key) => (
                   <span
@@ -210,13 +230,13 @@ export function UserGroups() {
             </div>
 
             <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-              <span className="text-xs text-gray-500 dark:text-slate-400">
+              <span className="text-xs text-gray-600 dark:text-slate-400">
                 {t('teams.memberCount', { count: group.member_count })}
               </span>
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  className="btn-secondary text-xs min-h-9"
+                  className="btn-secondary text-xs min-h-11 sm:min-h-9"
                   aria-label={t('userGroups.manageMembersFor', { name: group.name })}
                   onClick={() => setMembersGroup(group)}
                 >
@@ -226,7 +246,7 @@ export function UserGroups() {
                 {canManageUsers && (
                   <button
                     type="button"
-                    className="btn-secondary text-xs min-h-9"
+                    className="btn-secondary text-xs min-h-11 sm:min-h-9"
                     aria-label={t('common.editName', { name: group.name })}
                     onClick={() => setEditing(group)}
                   >
@@ -333,24 +353,51 @@ function GroupEditor({
     save.mutate();
   };
 
+  const selectGroup = (groupPermissions: PermissionDescriptor[]) => {
+    setSelected((current) => {
+      const next = [...current];
+      for (const p of groupPermissions) {
+        if (next.includes(p.key)) continue;
+        const hasPrep = next.some((k) => PAYROLL_PREPARE_PERMISSIONS.has(k));
+        const hasAppr = next.includes('approve_payroll');
+        if (p.key === 'approve_payroll' && hasPrep) continue;
+        if (PAYROLL_PREPARE_PERMISSIONS.has(p.key) && hasAppr) continue;
+        next.push(p.key);
+      }
+      return next;
+    });
+  };
+
+  const clearGroup = (groupPermissions: PermissionDescriptor[]) => {
+    const groupKeys = new Set(groupPermissions.map((p) => p.key));
+    setSelected((current) => current.filter((k) => !groupKeys.has(k)));
+  };
+
   return (
     <Modal
       open
-      onClose={onClose}
+      onClose={() => { if (!save.isPending) onClose(); }}
       title={group ? t('userGroups.editGroup') : t('userGroups.newGroup')}
       maxWidth="max-w-2xl"
       footer={
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-          <button type="button" className="btn-secondary" onClick={onClose}>
+          <button type="button" disabled={save.isPending} className="btn-secondary" onClick={onClose}>
             {t('common.cancel')}
           </button>
           <button
             type="submit"
             form="group-editor-form"
-            className="btn-primary"
+            className="btn-primary inline-flex items-center justify-center gap-2"
             disabled={!name.trim() || save.isPending}
           >
-            {save.isPending ? t('common.saving') : t('common.save')}
+            {save.isPending ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                {t('common.saving')}
+              </>
+            ) : (
+              t('common.save')
+            )}
           </button>
         </div>
       }
@@ -401,38 +448,64 @@ function GroupEditor({
 
         <div className="space-y-3">
           <div className="space-y-1">
-            <p className="text-xs font-medium text-gray-500 dark:text-slate-400">{t('userGroups.permissionsGranted')}</p>
+            <p className="text-xs font-medium text-gray-600 dark:text-slate-300">{t('userGroups.permissionsGranted')}</p>
             {(hasPreparePermission || hasApprovePermission) && (
-              <p className="text-xs text-amber-600 dark:text-amber-400">{t('userGroups.payrollSeparationHint')}</p>
+              <p className="text-xs text-amber-700 dark:text-amber-400">{t('userGroups.payrollSeparationHint')}</p>
             )}
           </div>
-          {[...permissionsByGroup.entries()].map(([groupName, permissions]) => (
-            <Fragment key={groupName}>
-              <p className="text-[10px] uppercase tracking-wider font-semibold text-gray-400 dark:text-slate-500">
-                {t(`permissions.groups.${groupName.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`, { defaultValue: groupName })}
-              </p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                {permissions.map((permission) => {
-                  const disabled = isPermissionDisabled(permission.key);
-                  return (
-                    <label
-                      key={permission.key}
-                      className={`flex items-center gap-2 text-sm text-gray-700 dark:text-slate-200 ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+          {[...permissionsByGroup.entries()].map(([groupName, permissions]) => {
+            const localizedGroup = t(`permissions.groups.${groupName.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`, { defaultValue: groupName });
+            const hasAnySelected = permissions.some((p) => selected.includes(p.key));
+            return (
+              <fieldset key={groupName} className="rounded-xl border border-gray-200 dark:border-slate-700/80 p-3.5 space-y-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <legend className="text-[11px] uppercase tracking-wider font-semibold text-gray-600 dark:text-slate-300">
+                    {localizedGroup}
+                  </legend>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => selectGroup(permissions)}
+                      aria-label={`${t('common.selectAll')} — ${localizedGroup}`}
+                      className="min-h-8 px-2 py-1 text-xs font-medium text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-500/15 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] transition-colors"
                     >
-                      <input
-                        type="checkbox"
-                        checked={selected.includes(permission.key)}
-                        disabled={disabled}
-                        onChange={() => toggle(permission.key)}
-                        className="rounded border-gray-300 dark:border-slate-600 text-[var(--accent-1)] focus:ring-[var(--ring)]"
-                      />
-                      {t(`permissions.labels.${permission.key}`, { defaultValue: permission.label })}
-                    </label>
-                  );
-                })}
-              </div>
-            </Fragment>
-          ))}
+                      {t('common.selectAll')}
+                    </button>
+                    {hasAnySelected && (
+                      <button
+                        type="button"
+                        onClick={() => clearGroup(permissions)}
+                        aria-label={`${t('common.clear')} — ${localizedGroup}`}
+                        className="min-h-8 px-2 py-1 text-xs font-medium text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] transition-colors"
+                      >
+                        {t('common.clear')}
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                  {permissions.map((permission) => {
+                    const disabled = isPermissionDisabled(permission.key);
+                    return (
+                      <label
+                        key={permission.key}
+                        className={`flex items-center gap-2 min-h-10 sm:min-h-9 rounded-lg px-2 py-1.5 text-sm text-gray-800 dark:text-slate-200 hover:bg-gray-50 dark:hover:bg-slate-800/60 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-[var(--ring)] transition-colors ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selected.includes(permission.key)}
+                          disabled={disabled}
+                          onChange={() => toggle(permission.key)}
+                          className="rounded border-gray-300 dark:border-slate-600 text-[var(--accent-1)] focus:ring-[var(--ring)]"
+                        />
+                        {t(`permissions.labels.${permission.key}`, { defaultValue: permission.label })}
+                      </label>
+                    );
+                  })}
+                </div>
+              </fieldset>
+            );
+          })}
         </div>
       </form>
     </Modal>
@@ -541,12 +614,13 @@ function GroupMembersModal({
     >
       <div className="space-y-5">
         <div>
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500 mb-2">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-600 dark:text-slate-400 mb-2">
             {t('userGroups.currentMembers', { count: members.length })}
           </h3>
           {membersQuery.isLoading ? (
-            <div className="flex justify-center py-6">
-              <div className="spinner" />
+            <div role="status" aria-label={t('common.loading')} className="space-y-2 py-2">
+              <Skeleton className="h-12 w-full rounded-xl" />
+              <Skeleton className="h-12 w-full rounded-xl" />
             </div>
           ) : membersQuery.isError ? (
             <EmptyState
@@ -561,14 +635,14 @@ function GroupMembersModal({
               }
             />
           ) : members.length === 0 ? (
-            <p className="text-sm text-gray-500 dark:text-slate-400 py-2">{t('userGroups.noMembers')}</p>
+            <p className="text-sm text-gray-600 dark:text-slate-400 py-2">{t('userGroups.noMembers')}</p>
           ) : (
             <ul className="divide-y divide-gray-100 dark:divide-slate-800 max-h-56 overflow-y-auto border border-gray-100 dark:border-slate-800 rounded-xl">
               {members.map((m) => (
                 <li key={m.user_id} className="flex items-center justify-between gap-3 px-3 py-2.5">
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-gray-900 dark:text-slate-100 truncate">{m.full_name}</p>
-                    <p className="text-xs text-gray-500 dark:text-slate-400 truncate">{m.email}</p>
+                    <p className="text-xs text-gray-600 dark:text-slate-400 truncate">{m.email}</p>
                   </div>
                   {canManageUsers && (
                     <button
@@ -576,9 +650,13 @@ function GroupMembersModal({
                       disabled={removingUserId === m.user_id}
                       onClick={() => { void handleRemove(m); }}
                       aria-label={t('userGroups.removeMemberName', { name: m.full_name })}
-                      className="min-h-10 min-w-10 sm:min-h-8 sm:min-w-8 inline-flex items-center justify-center p-1.5 text-gray-400 dark:text-slate-500 hover:text-red-600 dark:hover:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 disabled:opacity-50 transition-colors"
+                      className="min-h-11 min-w-11 sm:min-h-8 sm:min-w-8 inline-flex items-center justify-center p-1.5 text-gray-500 dark:text-slate-400 hover:text-red-700 dark:hover:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] disabled:opacity-50 transition-colors"
                     >
-                      <Trash2 className="w-4 h-4" aria-hidden="true" />
+                      {removingUserId === m.user_id ? (
+                        <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                      ) : (
+                        <Trash2 className="w-4 h-4" aria-hidden="true" />
+                      )}
                     </button>
                   )}
                 </li>
@@ -589,7 +667,7 @@ function GroupMembersModal({
 
         {canManageUsers && (
           <div className="space-y-2.5 pt-2 border-t border-gray-100 dark:border-slate-800">
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-600 dark:text-slate-400">
               {t('userGroups.addMember')}
             </h3>
             <div className="relative">
@@ -605,8 +683,9 @@ function GroupMembersModal({
             </div>
 
             {usersQuery.isLoading ? (
-              <div className="flex justify-center py-4">
-                <div className="spinner" />
+              <div role="status" aria-label={t('common.loading')} className="space-y-2 py-2">
+                <Skeleton className="h-11 w-full rounded-xl" />
+                <Skeleton className="h-11 w-full rounded-xl" />
               </div>
             ) : usersQuery.isError ? (
               <EmptyState
@@ -621,7 +700,7 @@ function GroupMembersModal({
                 }
               />
             ) : candidates.length === 0 ? (
-              <p className="text-sm text-gray-500 dark:text-slate-400 py-2">
+              <p className="text-sm text-gray-600 dark:text-slate-400 py-2">
                 {search.trim() ? t('common.noResults') : t('userGroups.allUsersAdded')}
               </p>
             ) : (
@@ -630,16 +709,20 @@ function GroupMembersModal({
                   <li key={u.id} className="flex items-center justify-between gap-3 px-3 py-2">
                     <div className="min-w-0">
                       <p className="text-sm font-medium text-gray-900 dark:text-slate-100 truncate">{u.full_name}</p>
-                      <p className="text-xs text-gray-500 dark:text-slate-400 truncate">{u.email}</p>
+                      <p className="text-xs text-gray-600 dark:text-slate-400 truncate">{u.email}</p>
                     </div>
                     <button
                       type="button"
                       disabled={addingUserId === u.id}
                       onClick={() => addMutation.mutate(u.id)}
                       aria-label={t('userGroups.addMemberName', { name: u.full_name })}
-                      className="btn-secondary text-xs min-h-9 shrink-0"
+                      className="btn-secondary text-xs min-h-11 sm:min-h-9 shrink-0 inline-flex items-center gap-1.5"
                     >
-                      <UserPlus className="w-3.5 h-3.5" aria-hidden="true" />
+                      {addingUserId === u.id ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" />
+                      ) : (
+                        <UserPlus className="w-3.5 h-3.5" aria-hidden="true" />
+                      )}
                       {addingUserId === u.id ? t('common.adding') : t('common.add')}
                     </button>
                   </li>

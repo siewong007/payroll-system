@@ -1,11 +1,12 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Plus, Users, Trash2, UserPlus, ChevronRight, Search, Tag, X } from 'lucide-react';
+import { AlertTriangle, ChevronRight, Loader2, Plus, Search, Tag, Trash2, UserPlus, Users, X } from 'lucide-react';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { FormField } from '@/components/ui/FormField';
 import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { useConfirm } from '@/lib/confirm';
 import { usePermissions } from '@/lib/usePermissions';
 import { useToast } from '@/lib/toast';
@@ -76,7 +77,7 @@ export function TeamsPage() {
   const [memberSearch, setMemberSearch] = useState('');
   const [debouncedMemberSearch, setDebouncedMemberSearch] = useState('');
   const [removingEmployeeId, setRemovingEmployeeId] = useState<string | null>(null);
-  const [addingEmployeeId, setAddingEmployeeId] = useState<string | null>(null);
+  const [addingEmployeeIds, setAddingEmployeeIds] = useState<Set<string>>(() => new Set());
 
   // Form state
   const [teamName, setTeamName] = useState('');
@@ -173,14 +174,24 @@ export function TeamsPage() {
   const addMemberMutation = useMutation({
     mutationFn: ({ teamId, employeeId, role }: { teamId: string; employeeId: string; role: string }) =>
       addTeamMember(teamId, { employee_id: employeeId, role }),
-    onMutate: ({ employeeId }) => setAddingEmployeeId(employeeId),
+    onMutate: ({ employeeId }) =>
+      setAddingEmployeeIds((prev) => {
+        const next = new Set(prev);
+        next.add(employeeId);
+        return next;
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['team-members', selectedTeamId] });
       queryClient.invalidateQueries({ queryKey: ['teams'] });
       toast.success(t('teams.memberAdded'));
     },
     onError: (err) => toast.error(getErrorMessage(err, t('teams.addMemberFailed'))),
-    onSettled: () => setAddingEmployeeId(null),
+    onSettled: (_data, _err, { employeeId }) =>
+      setAddingEmployeeIds((prev) => {
+        const next = new Set(prev);
+        next.delete(employeeId);
+        return next;
+      }),
   });
 
   const removeMemberMutation = useMutation({
@@ -272,7 +283,7 @@ export function TeamsPage() {
         actions={
           canManageTeams ? (
             <button type="button" onClick={openCreate} className="btn-primary w-full sm:w-auto">
-              <Plus className="w-4 h-4" />
+              <Plus className="w-4 h-4" aria-hidden="true" />
               {t('teams.newTeam')}
             </button>
           ) : undefined
@@ -280,29 +291,48 @@ export function TeamsPage() {
       />
 
       {teamsError ? (
-        <EmptyState
-          icon={AlertTriangle}
-          title={t('teams.loadFailed')}
-          description={getErrorMessage(teamsErrorObj, t('teams.loadFailed'))}
-          action={
-            <button type="button" onClick={() => refetchTeams()} className="btn-primary">
-              {t('common.retry')}
-            </button>
-          }
-        />
+        <div className="card">
+          <EmptyState
+            icon={AlertTriangle}
+            title={t('teams.loadFailed')}
+            description={getErrorMessage(teamsErrorObj, t('teams.loadFailed'))}
+            action={
+              <button type="button" onClick={() => refetchTeams()} className="btn-primary">
+                {t('common.retry')}
+              </button>
+            }
+          />
+        </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Teams List */}
           <div className="lg:col-span-1">
-            <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-800 overflow-hidden">
+            <div className="card !p-0 overflow-hidden">
               <div className="px-5 py-4 border-b border-gray-100 dark:border-slate-800">
-                <h2 className="text-sm font-semibold text-gray-900 dark:text-slate-100">{t('teams.allTeams', { count: teams.length })}</h2>
+                <h2 className="text-sm font-semibold text-gray-900 dark:text-slate-100 tabular-nums">
+                  {t('teams.allTeams', { count: teams.length })}
+                </h2>
               </div>
               {isLoading ? (
-                <div className="p-8 text-center text-sm text-gray-400 dark:text-slate-500">{t('common.loading')}</div>
+                <div
+                  role="status"
+                  aria-busy="true"
+                  aria-label={t('common.loading')}
+                  className="p-4 space-y-3"
+                >
+                  {[0, 1, 2, 3].map((i) => (
+                    <div key={i} className="flex items-center gap-3">
+                      <Skeleton className="h-9 w-9 rounded-xl shrink-0" />
+                      <div className="flex-1 space-y-1.5">
+                        <Skeleton className="h-4 w-2/3" />
+                        <Skeleton className="h-3 w-1/2" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
               ) : teams.length === 0 ? (
-                <div className="p-8 text-center text-sm text-gray-400 dark:text-slate-500">
-                  {t('teams.empty')}
+                <div className="p-4">
+                  <EmptyState compact icon={Users} title={t('teams.empty')} />
                 </div>
               ) : (
                 <div className="divide-y divide-gray-100 dark:divide-slate-800">
@@ -315,7 +345,7 @@ export function TeamsPage() {
                         key={team.id}
                         aria-current={isSelected ? 'true' : undefined}
                         onClick={() => handleSelectTeam(team.id)}
-                        className={`w-full text-left flex items-center justify-between gap-2 px-5 py-3.5 transition-all ${
+                        className={`min-h-11 w-full text-left flex items-center justify-between gap-2 px-5 py-3.5 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ring)] ${
                           isSelected
                             ? 'bg-gray-100 dark:bg-slate-800'
                             : 'hover:bg-gray-50 dark:hover:bg-slate-800/60'
@@ -325,11 +355,11 @@ export function TeamsPage() {
                           <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-white shrink-0 ${
                             team.is_active ? tagStyle.icon : 'bg-gray-300 dark:bg-slate-700'
                           }`}>
-                            <Users className="w-4 h-4" />
+                            <Users className="w-4 h-4" aria-hidden="true" />
                           </div>
                           <div className="min-w-0">
                             <p className="text-sm font-medium text-gray-900 dark:text-slate-100 truncate">{team.name}</p>
-                            <p className="text-xs text-gray-500 dark:text-slate-400 truncate">
+                            <p className="text-xs text-gray-500 dark:text-slate-400 truncate tabular-nums">
                               {t('teams.memberCount', { count: team.member_count || 0 })}
                               <span className={`ml-1.5 ${tagStyle.text}`}>
                                 {team.tag}
@@ -338,7 +368,7 @@ export function TeamsPage() {
                             </p>
                           </div>
                         </div>
-                        <ChevronRight className={`w-4 h-4 shrink-0 ${isSelected ? 'text-gray-900 dark:text-slate-100' : 'text-gray-300 dark:text-slate-600'}`} />
+                        <ChevronRight className={`w-4 h-4 shrink-0 ${isSelected ? 'text-gray-900 dark:text-slate-100' : 'text-gray-400 dark:text-slate-500'}`} aria-hidden="true" />
                       </button>
                     );
                   })}
@@ -352,7 +382,7 @@ export function TeamsPage() {
             {selectedTeam ? (
               <div className="space-y-4">
                 {/* Team Info */}
-                <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-800 p-5 sm:p-6">
+                <div className="card">
                   <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
                     <div className="min-w-0">
                       <h2 className="text-lg font-semibold text-gray-900 dark:text-slate-100 break-words">{selectedTeam.name}</h2>
@@ -364,7 +394,7 @@ export function TeamsPage() {
                           const tagStyle = getTagStyle(selectedTeam.tag);
                           return (
                             <span className={`text-xs px-2 py-0.5 rounded-full font-medium inline-flex items-center gap-1 ${tagStyle.bg} ${tagStyle.text}`}>
-                              <Tag className="w-3 h-3" />
+                              <Tag className="w-3 h-3" aria-hidden="true" />
                               {selectedTeam.tag}
                             </span>
                           );
@@ -376,7 +406,7 @@ export function TeamsPage() {
                         }`}>
                           {selectedTeam.is_active ? t('common.active') : t('common.inactive')}
                         </span>
-                        <span className="text-xs text-gray-500 dark:text-slate-400">
+                        <span className="text-xs text-gray-500 dark:text-slate-400 tabular-nums">
                           {t('teams.memberCount', { count: selectedTeam.member_count || 0 })}
                         </span>
                       </div>
@@ -386,7 +416,7 @@ export function TeamsPage() {
                         <button
                           type="button"
                           onClick={() => openEdit(selectedTeam)}
-                          className="btn-secondary !py-1.5 !px-3 text-sm"
+                          className="btn-secondary min-h-11 sm:!min-h-9 !py-2 !px-3.5 text-sm"
                         >
                           {t('common.edit')}
                         </button>
@@ -394,9 +424,12 @@ export function TeamsPage() {
                           type="button"
                           onClick={() => handleDelete(selectedTeam)}
                           disabled={deleteMutation.isPending}
-                          className="text-sm px-3 py-1.5 rounded-lg border border-red-200 dark:border-red-500/30 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/15 disabled:opacity-50 transition-colors"
+                          className="min-h-11 sm:min-h-9 inline-flex items-center justify-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-medium border border-red-200 dark:border-red-500/30 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/15 disabled:opacity-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                         >
-                          {t('common.delete')}
+                          {deleteMutation.isPending && (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" />
+                          )}
+                          {deleteMutation.isPending ? t('common.deleting') : t('common.delete')}
                         </button>
                       </div>
                     )}
@@ -404,22 +437,40 @@ export function TeamsPage() {
                 </div>
 
                 {/* Members */}
-                <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-800 overflow-hidden">
+                <div className="card !p-0 overflow-hidden">
                   <div className="px-5 sm:px-6 py-4 border-b border-gray-100 dark:border-slate-800 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <h3 className="text-sm font-semibold text-gray-900 dark:text-slate-100">{t('teams.members')}</h3>
                     {canManageTeams && (
                       <button
                         type="button"
                         onClick={() => { setMemberSearch(''); setShowAddMemberModal(true); }}
-                        className="btn-primary !py-2 !px-3 text-sm w-full sm:w-auto"
+                        className="btn-primary min-h-11 sm:!min-h-9 !py-2 !px-3.5 text-sm w-full sm:w-auto"
                       >
-                        <UserPlus className="w-3.5 h-3.5" />
+                        <UserPlus className="w-3.5 h-3.5" aria-hidden="true" />
                         {t('teams.addMember')}
                       </button>
                     )}
                   </div>
                   {loadingMembers ? (
-                    <div className="p-8 text-center text-sm text-gray-400 dark:text-slate-500">{t('common.loading')}</div>
+                    <div
+                      role="status"
+                      aria-busy="true"
+                      aria-label={t('common.loading')}
+                      className="p-5 sm:p-6 space-y-3"
+                    >
+                      {[0, 1, 2].map((i) => (
+                        <div key={i} className="flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-3 flex-1">
+                            <Skeleton className="h-8 w-8 rounded-full shrink-0" />
+                            <div className="flex-1 space-y-1.5">
+                              <Skeleton className="h-4 w-1/3" />
+                              <Skeleton className="h-3 w-1/2" />
+                            </div>
+                          </div>
+                          <Skeleton className="h-6 w-16 rounded-full" />
+                        </div>
+                      ))}
+                    </div>
                   ) : membersError ? (
                     <div className="p-6">
                       <EmptyState
@@ -434,8 +485,8 @@ export function TeamsPage() {
                       />
                     </div>
                   ) : members.length === 0 ? (
-                    <div className="p-8 text-center text-sm text-gray-400 dark:text-slate-500">
-                      {t('teams.noMembers')}
+                    <div className="p-6">
+                      <EmptyState compact icon={Users} title={t('teams.noMembers')} />
                     </div>
                   ) : (
                     <div className="divide-y divide-gray-100 dark:divide-slate-800">
@@ -467,9 +518,8 @@ export function TeamsPage() {
                 </div>
               </div>
             ) : (
-              <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-800 p-12 text-center">
-                <Users className="w-12 h-12 text-gray-300 dark:text-slate-600 mx-auto mb-3" />
-                <p className="text-sm text-gray-500 dark:text-slate-400">{t('teams.selectTeam')}</p>
+              <div className="card">
+                <EmptyState compact icon={Users} title={t('teams.selectTeam')} />
               </div>
             )}
           </div>
@@ -479,12 +529,24 @@ export function TeamsPage() {
       {/* Create Team Modal */}
       <Modal
         open={showCreateModal}
-        onClose={() => setShowCreateModal(false)}
+        onClose={() => {
+          if (!createMutation.isPending) {
+            setShowCreateModal(false);
+          }
+        }}
         title={t('teams.createTitle')}
         footer={
           <div className="flex flex-col-reverse sm:flex-row justify-end gap-3">
-            <button type="button" onClick={() => setShowCreateModal(false)} className="btn-secondary">{t('common.cancel')}</button>
+            <button
+              type="button"
+              onClick={() => setShowCreateModal(false)}
+              disabled={createMutation.isPending}
+              className="btn-secondary"
+            >
+              {t('common.cancel')}
+            </button>
             <button type="submit" form={createFormId} disabled={!teamName.trim() || createMutation.isPending} className="btn-primary">
+              {createMutation.isPending && <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />}
               {createMutation.isPending ? t('common.creating') : t('teams.createTitle')}
             </button>
           </div>
@@ -544,9 +606,10 @@ export function TeamsPage() {
                     <button
                       key={tag}
                       type="button"
+                      aria-pressed={teamTag === tag}
                       onClick={() => setTeamTag(tag)}
-                      className={`text-xs px-2.5 py-1 rounded-full font-medium transition-all ${
-                        teamTag === tag ? `${style.bg} ${style.text} ring-2 ring-offset-1 dark:ring-offset-slate-900 ring-gray-400 dark:ring-slate-500` : `${style.bg} ${style.text} opacity-65 hover:opacity-100`
+                      className={`min-h-11 sm:min-h-0 text-xs px-3 py-1.5 sm:py-1 rounded-full font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] ${
+                        teamTag === tag ? `${style.bg} ${style.text} ring-2 ring-offset-1 dark:ring-offset-slate-900 ring-gray-400 dark:ring-slate-500` : `${style.bg} ${style.text} opacity-75 hover:opacity-100`
                       }`}
                     >
                       {tag}
@@ -567,12 +630,24 @@ export function TeamsPage() {
       {/* Edit Team Modal */}
       <Modal
         open={showEditModal}
-        onClose={() => setShowEditModal(false)}
+        onClose={() => {
+          if (!updateMutation.isPending) {
+            setShowEditModal(false);
+          }
+        }}
         title={t('teams.editTitle')}
         footer={
           <div className="flex flex-col-reverse sm:flex-row justify-end gap-3">
-            <button type="button" onClick={() => setShowEditModal(false)} className="btn-secondary">{t('common.cancel')}</button>
+            <button
+              type="button"
+              onClick={() => setShowEditModal(false)}
+              disabled={updateMutation.isPending}
+              className="btn-secondary"
+            >
+              {t('common.cancel')}
+            </button>
             <button type="submit" form={editFormId} disabled={!teamName.trim() || updateMutation.isPending} className="btn-primary">
+              {updateMutation.isPending && <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />}
               {updateMutation.isPending ? t('common.saving') : t('common.saveChanges')}
             </button>
           </div>
@@ -630,9 +705,10 @@ export function TeamsPage() {
                     <button
                       key={tag}
                       type="button"
+                      aria-pressed={teamTag === tag}
                       onClick={() => setTeamTag(tag)}
-                      className={`text-xs px-2.5 py-1 rounded-full font-medium transition-all ${
-                        teamTag === tag ? `${style.bg} ${style.text} ring-2 ring-offset-1 dark:ring-offset-slate-900 ring-gray-400 dark:ring-slate-500` : `${style.bg} ${style.text} opacity-65 hover:opacity-100`
+                      className={`min-h-11 sm:min-h-0 text-xs px-3 py-1.5 sm:py-1 rounded-full font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] ${
+                        teamTag === tag ? `${style.bg} ${style.text} ring-2 ring-offset-1 dark:ring-offset-slate-900 ring-gray-400 dark:ring-slate-500` : `${style.bg} ${style.text} opacity-75 hover:opacity-100`
                       }`}
                     >
                       {tag}
@@ -642,12 +718,12 @@ export function TeamsPage() {
               </div>
             )}
           </div>
-          <label className="flex items-center gap-2 cursor-pointer">
+          <label className="min-h-11 sm:min-h-0 flex items-center gap-2.5 cursor-pointer">
             <input
               type="checkbox"
               checked={teamIsActive}
               onChange={(e) => setTeamIsActive(e.target.checked)}
-              className="rounded border-gray-300 dark:border-slate-700"
+              className="w-4 h-4 rounded border-gray-300 dark:border-slate-700 accent-[var(--accent-1)]"
             />
             <span className="text-sm text-gray-700 dark:text-slate-200">{t('common.active')}</span>
           </label>
@@ -662,19 +738,23 @@ export function TeamsPage() {
       {/* Add Member Modal */}
       <Modal
         open={showAddMemberModal}
-        onClose={() => setShowAddMemberModal(false)}
+        onClose={() => {
+          if (addingEmployeeIds.size === 0) {
+            setShowAddMemberModal(false);
+          }
+        }}
         title={t('teams.addMemberTo', { name: selectedTeam?.name || t('teams.title') })}
         maxWidth="max-w-lg"
       >
         <div className="space-y-3">
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 dark:text-slate-500 pointer-events-none" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 dark:text-slate-400 pointer-events-none" aria-hidden="true" />
             <input
               type="text"
               value={memberSearch}
               onChange={(e) => setMemberSearch(e.target.value)}
               aria-label={t('teams.searchEmployees')}
-              className="form-input !pl-9 !pr-10"
+              className="form-input pl-9 pr-11"
               placeholder={t('teams.searchEmployees')}
             />
             {memberSearch && (
@@ -682,14 +762,14 @@ export function TeamsPage() {
                 type="button"
                 onClick={() => setMemberSearch('')}
                 aria-label={t('common.clear')}
-                className="absolute right-1 top-1/2 -translate-y-1/2 min-h-9 min-w-9 flex items-center justify-center rounded-md text-gray-400 dark:text-slate-500 hover:text-gray-700 dark:hover:text-slate-200"
+                className="absolute right-0.5 top-1/2 -translate-y-1/2 min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 flex items-center justify-center rounded-md text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
               >
-                <X className="w-4 h-4" />
+                <X className="w-4 h-4" aria-hidden="true" />
               </button>
             )}
           </div>
           {searchTruncated && (
-            <p className="text-xs text-gray-400 dark:text-slate-500">
+            <p className="text-xs text-gray-500 dark:text-slate-400 tabular-nums">
               {t('employees.showingPartial', { shown: employeesData?.data.length, total: employeeTotal })}
             </p>
           )}
@@ -699,12 +779,25 @@ export function TeamsPage() {
                 {t('teams.employeeDirectoryRequired')}
               </div>
             ) : loadingAvailableEmployees ? (
-              <div className="p-6 text-center text-sm text-gray-400 dark:text-slate-500">
-                {t('common.loading')}
+              <div
+                role="status"
+                aria-busy="true"
+                aria-label={t('common.loading')}
+                className="p-4 space-y-3"
+              >
+                {[0, 1, 2].map((i) => (
+                  <div key={i} className="flex items-center justify-between gap-3">
+                    <div className="flex-1 space-y-1.5">
+                      <Skeleton className="h-4 w-2/5" />
+                      <Skeleton className="h-3 w-3/5" />
+                    </div>
+                    <Skeleton className="h-8 w-24 rounded-lg" />
+                  </div>
+                ))}
               </div>
             ) : availableEmployeesError ? (
               <div className="p-6 text-center space-y-2">
-                <p className="text-sm text-red-600 dark:text-red-400">
+                <p role="alert" className="text-sm text-red-600 dark:text-red-400">
                   {getErrorMessage(availableEmployeesErrorObj, t('employees.searchFailed'))}
                 </p>
                 <button type="button" onClick={() => refetchAvailableEmployees()} className="btn-secondary !py-1.5 !px-3 text-xs">
@@ -712,12 +805,12 @@ export function TeamsPage() {
                 </button>
               </div>
             ) : availableEmployees.length === 0 ? (
-              <div className="p-6 text-center text-sm text-gray-400 dark:text-slate-500">
-                {memberSearch ? t('employees.noMatch') : t('teams.allInTeam')}
+              <div className="p-4">
+                <EmptyState compact title={memberSearch ? t('employees.noMatch') : t('teams.allInTeam')} />
               </div>
             ) : (
               availableEmployees.map((emp) => {
-                const isBusy = addingEmployeeId === emp.id && addMemberMutation.isPending;
+                const isBusy = addingEmployeeIds.has(emp.id);
                 return (
                   <div key={emp.id} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-4 py-3 hover:bg-gray-50 dark:hover:bg-slate-800/60">
                     <div className="min-w-0">
@@ -739,7 +832,7 @@ export function TeamsPage() {
                           });
                         }}
                         disabled={isBusy}
-                        className="text-xs px-3 py-2 sm:py-1.5 rounded border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-50"
+                        className="min-h-11 sm:min-h-8 text-xs px-3 py-2 sm:py-1.5 rounded-lg border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                       >
                         {t('teams.addAsLead')}
                       </button>
@@ -753,8 +846,9 @@ export function TeamsPage() {
                           });
                         }}
                         disabled={isBusy}
-                        className="text-xs px-3 py-2 sm:py-1.5 rounded bg-gray-900 dark:bg-slate-100 text-white dark:text-slate-900 hover:bg-gray-800 dark:hover:bg-white disabled:opacity-50"
+                        className="min-h-11 sm:min-h-8 inline-flex items-center gap-1 text-xs px-3 py-2 sm:py-1.5 rounded-lg bg-gray-900 dark:bg-slate-100 text-white dark:text-slate-900 hover:bg-gray-800 dark:hover:bg-white disabled:opacity-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                       >
+                        {isBusy && <Loader2 className="w-3 h-3 animate-spin" aria-hidden="true" />}
                         {t('common.add')}
                       </button>
                     </div>
@@ -809,11 +903,15 @@ function MemberRow({
             type="button"
             onClick={onRemove}
             disabled={isRemoving}
-            className="min-h-11 min-w-11 sm:min-h-8 sm:min-w-8 flex items-center justify-center rounded-lg text-gray-400 dark:text-slate-500 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/15 disabled:opacity-50 transition-colors"
+            className="min-h-11 min-w-11 sm:min-h-8 sm:min-w-8 flex items-center justify-center rounded-lg text-gray-500 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/15 disabled:opacity-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
             aria-label={t('teams.removeMember')}
             title={t('teams.removeMember')}
           >
-            <Trash2 className="w-4 h-4" />
+            {isRemoving ? (
+              <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <Trash2 className="w-4 h-4" aria-hidden="true" />
+            )}
           </button>
         )}
       </div>

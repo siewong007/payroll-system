@@ -29,7 +29,7 @@ use serde::de::DeserializeOwned;
 use validator::Validate;
 
 use crate::core::app_state::AppState;
-use crate::core::client_ip::client_ip;
+use crate::core::client_ip::client_ip_with_header;
 use crate::core::error::AppError;
 use crate::models::audit::AuditRequestMeta;
 
@@ -57,10 +57,11 @@ impl FromRequestParts<AppState> for ClientIp {
             .get::<ConnectInfo<SocketAddr>>()
             .map(|ConnectInfo(addr)| addr.ip());
 
-        Ok(ClientIp(client_ip(
+        Ok(ClientIp(client_ip_with_header(
             &parts.headers,
             peer,
             state.config.trust_proxy_headers,
+            state.config.client_ip_header.as_deref(),
         )))
     }
 }
@@ -80,10 +81,11 @@ impl FromRequestParts<AppState> for AuditRequestMeta {
             .get::<ConnectInfo<SocketAddr>>()
             .map(|ConnectInfo(addr)| addr.ip());
 
-        Ok(AuditRequestMeta::from_request(
+        Ok(AuditRequestMeta::from_request_with_header(
             &parts.headers,
             peer,
             state.config.trust_proxy_headers,
+            state.config.client_ip_header.as_deref(),
         ))
     }
 }

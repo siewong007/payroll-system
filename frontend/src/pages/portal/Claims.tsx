@@ -1,13 +1,16 @@
 import { useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, ArrowLeft, Send, Trash2, Receipt, Upload, X, FileText, Image, Paperclip, ExternalLink, AlertTriangle } from 'lucide-react';
+import { Plus, ArrowLeft, Send, Trash2, Receipt, Upload, X, FileText, Image, Paperclip, ExternalLink, AlertTriangle, Loader2 } from 'lucide-react';
 import { listMyClaims, createClaim, cancelClaim, deleteClaim, submitClaim, uploadFile } from '@/api/claims';
 import { useAuth } from '@/context/AuthContext';
 import { AttachmentLink, AttachmentPreview } from '@/components/ui/AttachmentPreview';
 import { DataTable, type Column } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { useConfirm } from '@/lib/confirm';
+import { useToast } from '@/lib/toast';
 import { runBulk, summarizeBulkFailure } from '@/lib/bulk';
 import { formatMYR, formatDate, getErrorMessage, todayLocalDate } from '@/lib/utils';
 import type { Claim } from '@/types';
@@ -41,6 +44,7 @@ export function Claims() {
   const { user } = useAuth();
   const hasEmployee = Boolean(user?.employee_id);
   const confirmDialog = useConfirm();
+  const toast = useToast();
   const queryClient = useQueryClient();
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -48,7 +52,7 @@ export function Claims() {
   const [bulkError, setBulkError] = useState('');
 
   // Fetch all claims once so every status tab counter stays accurate across filters.
-  const { data: claims = [], isLoading, isError, error, refetch } = useQuery({
+  const { data: claims = [], isLoading, isFetching, isError, error, refetch } = useQuery({
     queryKey: ['my-claims'],
     queryFn: () => listMyClaims(),
     enabled: hasEmployee,
@@ -62,6 +66,7 @@ export function Claims() {
   const submitMutation = useMutation({
     mutationFn: submitClaim,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['my-claims'] }),
+    onError: (err) => toast.error(getErrorMessage(err, t('portal.claims.createFailed'))),
   });
 
   const deleteMutation = useMutation({
@@ -70,11 +75,13 @@ export function Claims() {
       setSelectedClaimIds((prev) => prev.filter((id) => id !== deletedId));
       queryClient.invalidateQueries({ queryKey: ['my-claims'] });
     },
+    onError: (err) => toast.error(getErrorMessage(err, t('portal.claims.bulkDeleteFailed'))),
   });
 
   const cancelMutation = useMutation({
     mutationFn: cancelClaim,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['my-claims'] }),
+    onError: (err) => toast.error(getErrorMessage(err, t('portal.claims.bulkCancelFailed'))),
   });
 
   // Partial failure is an outcome, not an exception: the refetch runs whatever
@@ -121,6 +128,7 @@ export function Claims() {
   const columns: Column<Claim>[] = [
     {
       key: 'title',
+      primary: true,
       header: t('portal.claims.cols.expense'),
       sortValue: (c) => c.title.toLowerCase(),
       render: (c) => (
@@ -137,6 +145,7 @@ export function Claims() {
     },
     {
       key: 'amount',
+      primary: true,
       header: t('common.amount'),
       align: 'right',
       sortValue: (c) => c.amount,
@@ -150,9 +159,10 @@ export function Claims() {
     },
     {
       key: 'expense_date',
+      primary: true,
       header: t('common.date'),
       sortValue: (c) => c.expense_date,
-      render: (c) => <span className="text-gray-600 dark:text-slate-300 tabular-nums">{formatDate(c.expense_date)}</span>,
+      render: (c) => <span className="text-gray-600 dark:text-slate-300 tabular-nums whitespace-nowrap">{formatDate(c.expense_date)}</span>,
     },
     {
       key: 'receipt',
@@ -161,7 +171,7 @@ export function Claims() {
         c.receipt_url ? (
           c.receipt_url.startsWith('blob:') ? (
             <span className="inline-flex items-center gap-1 text-red-500 dark:text-red-400 text-sm">
-              <Paperclip className="w-3 h-3" />
+              <Paperclip className="w-3 h-3" aria-hidden="true" />
               <span className="truncate max-w-[100px]">{t('common.unavailable')}</span>
             </span>
           ) : (
@@ -170,17 +180,18 @@ export function Claims() {
                 url={c.receipt_url}
                 className="inline-flex items-center gap-1 text-gray-900 dark:text-slate-100 hover:underline text-sm"
               >
-                <Paperclip className="w-3 h-3" />
+                <Paperclip className="w-3 h-3" aria-hidden="true" />
                 <span className="truncate max-w-[100px]">{c.receipt_file_name || t('common.view')}</span>
-                <ExternalLink className="w-3 h-3" />
+                <ExternalLink className="w-3 h-3" aria-hidden="true" />
               </AttachmentLink>
             </span>
           )
-        ) : <span className="text-gray-300 dark:text-slate-600">—</span>
+        ) : <span className="text-gray-400 dark:text-slate-500">—</span>
       ),
     },
     {
       key: 'status',
+      primary: true,
       header: t('common.status'),
       align: 'center',
       sortValue: (c) => c.status,
@@ -190,33 +201,45 @@ export function Claims() {
 
   if (!hasEmployee) {
     return (
-      <div className="card">
-        <EmptyState icon={Receipt} title={t('attendance.scan.noEmployeeProfile')} />
+      <div className="space-y-6">
+        <PageHeader className="mb-0" title={t('portal.claims.title')} subtitle={t('portal.claims.subtitle')} />
+        <div className="card">
+          <EmptyState icon={Receipt} title={t('attendance.scan.noEmployeeProfile')} />
+        </div>
       </div>
     );
   }
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 dark:border-slate-200" />
+      <div className="space-y-6" role="status" aria-busy="true" aria-label={t('common.loading')}>
+        <PageHeader className="mb-0" title={t('portal.claims.title')} subtitle={t('portal.claims.subtitle')} />
+        <div className="flex gap-2 overflow-hidden">
+          {[0, 1, 2, 3].map((i) => (
+            <Skeleton key={i} className="h-10 w-24 rounded-full shrink-0" />
+          ))}
+        </div>
+        <Skeleton className="h-64 w-full rounded-2xl" />
       </div>
     );
   }
 
   if (isError) {
     return (
-      <div className="card">
-        <EmptyState
-          icon={AlertTriangle}
-          title={t('portal.claims.loadFailed')}
-          description={getErrorMessage(error, t('portal.claims.loadFailed'))}
-          action={
-            <button type="button" onClick={() => void refetch()} className="btn-primary">
-              {t('common.retry')}
-            </button>
-          }
-        />
+      <div className="space-y-6">
+        <PageHeader className="mb-0" title={t('portal.claims.title')} subtitle={t('portal.claims.subtitle')} />
+        <div className="card">
+          <EmptyState
+            icon={AlertTriangle}
+            title={t('portal.claims.loadFailed')}
+            description={getErrorMessage(error, t('portal.claims.loadFailed'))}
+            action={
+              <button type="button" onClick={() => void refetch()} className="btn-primary">
+                {t('common.retry')}
+              </button>
+            }
+          />
+        </div>
       </div>
     );
   }
@@ -226,21 +249,23 @@ export function Claims() {
     return <CreateClaimForm onClose={() => setShowCreate(false)} />;
   }
 
+  const isRowMutating = submitMutation.isPending || deleteMutation.isPending || cancelMutation.isPending;
+
   return (
     <div className="space-y-6">
-      {/* Page Header */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="page-header">
-          <h1 className="page-title">{t('portal.claims.title')}</h1>
-          <p className="page-subtitle">{t('portal.claims.subtitle')}</p>
-        </div>
-        <button type="button" onClick={() => setShowCreate(true)} className="btn-primary w-full sm:w-auto">
-          <Plus className="w-4 h-4" /> {t('portal.claims.addExpense')}
-        </button>
-      </div>
+      <PageHeader
+        className="mb-0"
+        title={t('portal.claims.title')}
+        subtitle={t('portal.claims.subtitle')}
+        actions={
+          <button type="button" onClick={() => setShowCreate(true)} className="btn-primary w-full sm:w-auto">
+            <Plus className="w-4 h-4" aria-hidden="true" /> {t('portal.claims.addExpense')}
+          </button>
+        }
+      />
 
       {/* Status Filter Tabs */}
-      <div className="flex gap-2 flex-wrap">
+      <div className="flex gap-2 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible sm:pb-0 scrollbar-thin">
         {STATUS_TABS.map((tab) => {
           const isActive = statusFilter === tab.key;
           const count = tab.key ? statusCount(tab.key) : claims.length;
@@ -254,13 +279,13 @@ export function Claims() {
                 setStatusFilter(tab.key);
               }}
               aria-pressed={isActive}
-              className={`min-h-10 px-4 py-1.5 rounded-full text-sm font-medium transition-all-fast ${
+              className={`shrink-0 min-h-11 sm:min-h-9 px-4 py-1.5 rounded-full text-sm font-medium transition-all-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] ${
                 isActive
                   ? 'bg-gradient-to-r from-[var(--accent-1)] to-[var(--accent-2)] text-white shadow-sm'
                   : 'bg-white dark:bg-slate-900 text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-slate-800 hover:border-gray-300 dark:hover:border-slate-700 hover:text-gray-900 dark:hover:text-white'
               }`}
             >
-              {t(tab.labelKey)} {count > 0 && <span className="ml-1 opacity-75 tabular-nums">{count}</span>}
+              {t(tab.labelKey)} {count > 0 && <span className="ml-1 opacity-80 tabular-nums">{count}</span>}
             </button>
           );
         })}
@@ -269,7 +294,7 @@ export function Claims() {
       {selectedClaimIds.length > 0 && (
         <div className="rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900">
           <div className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-            <span className="text-sm font-medium text-gray-700 dark:text-slate-200">{t('common.selected', { count: selectedClaimIds.length })}</span>
+            <span className="text-sm font-medium text-gray-700 dark:text-slate-200 tabular-nums">{t('common.selected', { count: selectedClaimIds.length })}</span>
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
@@ -285,9 +310,9 @@ export function Claims() {
                   }
                 }}
                 disabled={selectedCancelableClaimIds.length === 0 || bulkCancelMutation.isPending}
-                className="btn-secondary !py-2 text-sm disabled:opacity-50"
+                className="btn-secondary min-h-11 sm:!py-2 text-sm disabled:opacity-50"
               >
-                <X className="w-4 h-4" />
+                <X className="w-4 h-4" aria-hidden="true" />
                 {bulkCancelMutation.isPending ? t('common.cancelling') : t('common.cancelSelected')}
               </button>
               <button
@@ -303,9 +328,9 @@ export function Claims() {
                   }
                 }}
                 disabled={selectedDeletableClaimIds.length === 0 || bulkDeleteMutation.isPending}
-                className="btn-secondary !py-2 text-sm text-red-600 dark:text-red-400 hover:!bg-red-50 dark:hover:!bg-red-500/10 disabled:opacity-50"
+                className="btn-secondary min-h-11 sm:!py-2 text-sm text-red-600 dark:text-red-400 hover:!bg-red-50 dark:hover:!bg-red-500/10 disabled:opacity-50"
               >
-                <Trash2 className="w-4 h-4" />
+                <Trash2 className="w-4 h-4" aria-hidden="true" />
                 {bulkDeleteMutation.isPending ? t('common.deleting') : t('common.deleteSelected')}
               </button>
             </div>
@@ -316,182 +341,203 @@ export function Claims() {
         </div>
       )}
 
-      <DataTable
-        columns={columns}
-        data={filteredClaims}
-        perPage={10}
-        emptyMessage={t('portal.claims.empty')}
-        emptyIcon={<Receipt className="w-10 h-10 opacity-40" />}
-        selectable
-        selectedRowKeys={selectedClaimIds}
-        onSelectedRowKeysChange={setSelectedClaimIds}
-        rowKey={(claim) => claim.id}
-        summaryTitle={(c) => t('portal.claims.summaryTitle', { title: c.title })}
-        renderSummary={(c) => (
-          <div className="space-y-5">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h3 className="font-semibold text-lg text-gray-900 dark:text-slate-100">{c.title}</h3>
-                {c.category && (
-                  <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">{claimCategoryLabel(c.category)}</p>
+      <div className={isFetching && !isLoading ? 'opacity-75 transition-opacity' : undefined}>
+        <DataTable
+          columns={columns}
+          data={filteredClaims}
+          perPage={10}
+          emptyMessage={t('portal.claims.empty')}
+          emptyIcon={<Receipt className="w-10 h-10 opacity-40" aria-hidden="true" />}
+          emptyAction={
+            statusFilter ? (
+              <button type="button" onClick={() => setStatusFilter(null)} className="btn-secondary">
+                {t('ux.table.clearFilters')}
+              </button>
+            ) : (
+              <button type="button" onClick={() => setShowCreate(true)} className="btn-primary">
+                <Plus className="w-4 h-4" aria-hidden="true" /> {t('portal.claims.addExpense')}
+              </button>
+            )
+          }
+          selectable
+          selectedRowKeys={selectedClaimIds}
+          onSelectedRowKeysChange={setSelectedClaimIds}
+          rowKey={(claim) => claim.id}
+          summaryTitle={(c) => t('portal.claims.summaryTitle', { title: c.title })}
+          renderSummary={(c) => (
+            <div className="space-y-5">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="font-semibold text-lg text-gray-900 dark:text-slate-100">{c.title}</h3>
+                  {c.category && (
+                    <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">{claimCategoryLabel(c.category)}</p>
+                  )}
+                </div>
+                {statusBadge(c.status)}
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 bg-gray-50 dark:bg-slate-800/70 rounded-lg p-4">
+                <div>
+                  <p className="text-xs text-gray-500 dark:text-slate-400 uppercase tracking-wide">{t('common.amount')}</p>
+                  <p className="text-sm font-bold tabular-nums text-gray-900 dark:text-slate-100 mt-0.5">{formatMYR(c.amount)}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-500 dark:text-slate-400 uppercase tracking-wide">{t('common.date')}</p>
+                  <p className="text-sm font-medium tabular-nums text-gray-900 dark:text-slate-100 mt-0.5">{formatDate(c.expense_date)}</p>
+                </div>
+              </div>
+
+              {c.description && (
+                <div>
+                  <p className="text-xs text-gray-500 dark:text-slate-400 uppercase tracking-wide">{t('common.description')}</p>
+                  <p className="text-sm text-gray-700 dark:text-slate-200 mt-0.5">{c.description}</p>
+                </div>
+              )}
+
+              {c.receipt_url && !c.receipt_url.startsWith('blob:') && (
+                <div>
+                  <p className="text-xs text-gray-500 dark:text-slate-400 uppercase tracking-wide mb-1">{t('portal.claims.cols.receipt')}</p>
+                  <AttachmentPreview url={c.receipt_url} name={c.receipt_file_name} />
+                </div>
+              )}
+
+              {c.review_notes && (
+                <div className="bg-amber-50 dark:bg-amber-500/10 border border-amber-100 dark:border-amber-500/30 rounded-lg p-4">
+                  <p className="text-xs text-amber-700 dark:text-amber-300 uppercase tracking-wide">{t('portal.claims.reviewNotes')}</p>
+                  <p className="text-sm font-medium text-amber-900 dark:text-amber-100 mt-0.5">{c.review_notes}</p>
+                </div>
+              )}
+            </div>
+          )}
+          renderSummaryFooter={(c, close) =>
+            c.status === 'draft' || canCancelClaim(c) || canDeleteClaim(c) ? (
+              <div className="flex flex-col-reverse sm:flex-row sm:flex-wrap items-stretch sm:items-center justify-end gap-2">
+                {c.status === 'draft' && (
+                  <button
+                    type="button"
+                    onClick={() => submitMutation.mutate(c.id, { onSuccess: close })}
+                    disabled={isRowMutating}
+                    className="btn-primary min-h-11 sm:!py-2 text-sm"
+                  >
+                    <Send className="w-4 h-4" aria-hidden="true" />
+                    {submitMutation.isPending ? t('common.submitting') : t('portal.claims.submitForApproval')}
+                  </button>
+                )}
+                {canCancelClaim(c) && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const ok = await confirmDialog({
+                        description: t('portal.claims.cancelConfirm'),
+                        confirmLabel: t('portal.claims.cancelClaim'),
+                        variant: 'warning',
+                      });
+                      if (ok) cancelMutation.mutate(c.id, { onSuccess: close });
+                    }}
+                    disabled={isRowMutating}
+                    className="btn-secondary min-h-11 sm:!py-2 text-sm text-red-600 dark:text-red-400 hover:!bg-red-50 dark:hover:!bg-red-500/10"
+                  >
+                    <X className="w-4 h-4" aria-hidden="true" />
+                    {cancelMutation.isPending ? t('common.cancelling') : t('portal.claims.cancelClaim')}
+                  </button>
+                )}
+                {canDeleteClaim(c) && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const ok = await confirmDialog({
+                        description: c.status === 'cancelled' ? t('portal.claims.deletePermanentlyConfirm') : t('portal.claims.deleteConfirm'),
+                        variant: 'danger',
+                      });
+                      if (ok) deleteMutation.mutate(c.id, { onSuccess: close });
+                    }}
+                    disabled={isRowMutating}
+                    className="btn-danger min-h-11 sm:!py-2 text-sm"
+                  >
+                    <Trash2 className="w-4 h-4" aria-hidden="true" />
+                    {deleteMutation.isPending
+                      ? t('common.deleting')
+                      : c.status === 'cancelled'
+                        ? t('common.deletePermanently')
+                        : t('common.delete')}
+                  </button>
                 )}
               </div>
-              {statusBadge(c.status)}
-            </div>
-
-            <div className="grid grid-cols-2 gap-4 bg-gray-50 dark:bg-slate-800/70 rounded-lg p-4">
-              <div>
-                <p className="text-xs text-gray-400 dark:text-slate-400 uppercase tracking-wide">{t('common.amount')}</p>
-                <p className="text-sm font-bold tabular-nums text-gray-900 dark:text-slate-100 mt-0.5">{formatMYR(c.amount)}</p>
-              </div>
-              <div>
-                <p className="text-xs text-gray-400 dark:text-slate-400 uppercase tracking-wide">{t('common.date')}</p>
-                <p className="text-sm font-medium text-gray-900 dark:text-slate-100 mt-0.5">{formatDate(c.expense_date)}</p>
-              </div>
-            </div>
-
-            {c.description && (
-              <div>
-                <p className="text-xs text-gray-400 dark:text-slate-400 uppercase tracking-wide">{t('common.description')}</p>
-                <p className="text-sm text-gray-700 dark:text-slate-200 mt-0.5">{c.description}</p>
-              </div>
-            )}
-
-            {c.receipt_url && !c.receipt_url.startsWith('blob:') && (
-              <div>
-                <p className="text-xs text-gray-400 dark:text-slate-400 uppercase tracking-wide mb-1">{t('portal.claims.cols.receipt')}</p>
-                <AttachmentPreview url={c.receipt_url} name={c.receipt_file_name} />
-              </div>
-            )}
-
-            {c.review_notes && (
-              <div className="bg-amber-50 dark:bg-amber-500/10 border border-amber-100 dark:border-amber-500/30 rounded-lg p-4">
-                <p className="text-xs text-amber-700 dark:text-amber-300 uppercase tracking-wide">{t('portal.claims.reviewNotes')}</p>
-                <p className="text-sm font-medium text-amber-900 dark:text-amber-100 mt-0.5">{c.review_notes}</p>
-              </div>
-            )}
-          </div>
-        )}
-        renderSummaryFooter={(c, close) =>
-          c.status === 'draft' || canCancelClaim(c) || canDeleteClaim(c) ? (
-            <div className="flex flex-wrap items-center justify-end gap-2">
+            ) : null
+          }
+          renderActions={(c) => (
+            <div className="flex items-center justify-center gap-1">
               {c.status === 'draft' && (
-                <button
-                  type="button"
-                  onClick={() => submitMutation.mutate(c.id, { onSuccess: close })}
-                  disabled={submitMutation.isPending}
-                  className="btn-primary !py-2 text-sm"
-                >
-                  <Send className="w-4 h-4" />
-                  {t('portal.claims.submitForApproval')}
-                </button>
+                <>
+                  <button
+                    type="button"
+                    disabled={isRowMutating}
+                    onClick={() => submitMutation.mutate(c.id)}
+                    aria-label={`${t('portal.claims.submitForApproval')} — ${c.title}`}
+                    title={t('portal.claims.submitForApproval')}
+                    className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 inline-flex items-center justify-center text-gray-900 dark:text-slate-100 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg disabled:opacity-50 transition-all-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+                  >
+                    <Send className="w-4 h-4" aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isRowMutating}
+                    onClick={async () => {
+                      const ok = await confirmDialog({
+                        description: t('portal.claims.deleteConfirm'),
+                        variant: 'danger',
+                      });
+                      if (ok) deleteMutation.mutate(c.id);
+                    }}
+                    aria-label={t('common.deleteName', { name: c.title })}
+                    title={t('common.delete')}
+                    className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 inline-flex items-center justify-center text-red-500 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg disabled:opacity-50 transition-all-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+                  >
+                    <Trash2 className="w-4 h-4" aria-hidden="true" />
+                  </button>
+                </>
               )}
               {canCancelClaim(c) && (
                 <button
                   type="button"
+                  disabled={isRowMutating}
                   onClick={async () => {
                     const ok = await confirmDialog({
                       description: t('portal.claims.cancelConfirm'),
                       confirmLabel: t('portal.claims.cancelClaim'),
                       variant: 'warning',
                     });
-                    if (ok) cancelMutation.mutate(c.id, { onSuccess: close });
+                    if (ok) cancelMutation.mutate(c.id);
                   }}
-                  disabled={cancelMutation.isPending}
-                  className="btn-secondary !py-2 text-sm text-red-600 dark:text-red-400"
+                  aria-label={`${t('portal.claims.cancelClaim')} — ${c.title}`}
+                  title={t('portal.claims.cancelClaim')}
+                  className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 inline-flex items-center justify-center text-gray-500 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg disabled:opacity-50 transition-all-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                 >
-                  <X className="w-4 h-4" />
-                  {t('portal.claims.cancelClaim')}
+                  <X className="w-4 h-4" aria-hidden="true" />
                 </button>
               )}
-              {canDeleteClaim(c) && (
+              {c.status === 'cancelled' && (
                 <button
                   type="button"
+                  disabled={isRowMutating}
                   onClick={async () => {
                     const ok = await confirmDialog({
-                      description: c.status === 'cancelled' ? t('portal.claims.deletePermanentlyConfirm') : t('portal.claims.deleteConfirm'),
-                      variant: 'danger',
-                    });
-                    if (ok) deleteMutation.mutate(c.id, { onSuccess: close });
-                  }}
-                  disabled={deleteMutation.isPending}
-                  className="btn-primary !py-2 text-sm !bg-none !bg-red-600 hover:!bg-red-700"
-                >
-                  <Trash2 className="w-4 h-4" />
-                  {c.status === 'cancelled' ? t('common.deletePermanently') : t('common.delete')}
-                </button>
-              )}
-            </div>
-          ) : null
-        }
-        renderActions={(c) => (
-          <div className="flex items-center justify-center gap-1">
-            {c.status === 'draft' && (
-              <>
-                <button
-                  type="button"
-                  onClick={() => submitMutation.mutate(c.id)}
-                  aria-label={t('portal.claims.submitForApproval')}
-                  title={t('portal.claims.submitForApproval')}
-                  className="min-h-10 min-w-10 inline-flex items-center justify-center text-gray-900 dark:text-slate-100 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-all-fast"
-                >
-                  <Send className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={async () => {
-                    const ok = await confirmDialog({
-                      description: t('portal.claims.deleteConfirm'),
+                      description: t('portal.claims.deletePermanentlyConfirm'),
                       variant: 'danger',
                     });
                     if (ok) deleteMutation.mutate(c.id);
                   }}
-                  aria-label={t('common.delete')}
-                  title={t('common.delete')}
-                  className="min-h-10 min-w-10 inline-flex items-center justify-center text-red-500 dark:text-red-400 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-all-fast"
+                  aria-label={`${t('common.deletePermanently')} — ${c.title}`}
+                  title={t('common.deletePermanently')}
+                  className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 inline-flex items-center justify-center text-red-500 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg disabled:opacity-50 transition-all-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                 >
-                  <Trash2 className="w-4 h-4" />
+                  <Trash2 className="w-4 h-4" aria-hidden="true" />
                 </button>
-              </>
-            )}
-            {canCancelClaim(c) && (
-              <button
-                type="button"
-                onClick={async () => {
-                  const ok = await confirmDialog({
-                    description: t('portal.claims.cancelConfirm'),
-                    confirmLabel: t('portal.claims.cancelClaim'),
-                    variant: 'warning',
-                  });
-                  if (ok) cancelMutation.mutate(c.id);
-                }}
-                aria-label={t('portal.claims.cancelClaim')}
-                title={t('portal.claims.cancelClaim')}
-                className="min-h-10 min-w-10 inline-flex items-center justify-center text-gray-400 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-all-fast"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            )}
-            {c.status === 'cancelled' && (
-              <button
-                type="button"
-                onClick={async () => {
-                  const ok = await confirmDialog({
-                    description: t('portal.claims.deletePermanentlyConfirm'),
-                    variant: 'danger',
-                  });
-                  if (ok) deleteMutation.mutate(c.id);
-                }}
-                aria-label={t('common.deletePermanently')}
-                title={t('common.deletePermanently')}
-                className="min-h-10 min-w-10 inline-flex items-center justify-center text-red-500 dark:text-red-400 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-all-fast"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
-            )}
-          </div>
-        )}
-      />
+              )}
+            </div>
+          )}
+        />
+      </div>
     </div>
   );
 }
@@ -508,6 +554,7 @@ function CreateClaimForm({ onClose }: { onClose: () => void }) {
   });
   const [error, setError] = useState('');
   const [uploading, setUploading] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
   const [uploadPreview, setUploadPreview] = useState<string | null>(null);
 
   const mutation = useMutation({
@@ -521,10 +568,7 @@ function CreateClaimForm({ onClose }: { onClose: () => void }) {
     },
   });
 
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
+  const acceptReceiptFile = async (file: File) => {
     if (!ALLOWED_CLAIM_EXT_RE.test(file.name)) {
       setError(t('portal.claims.invalidFileType'));
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -564,6 +608,12 @@ function CreateClaimForm({ onClose }: { onClose: () => void }) {
     }
   };
 
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    await acceptReceiptFile(file);
+  };
+
   const handleRemoveFile = () => {
     setForm((prev) => ({ ...prev, receipt_url: '', receipt_file_name: '' }));
     setUploadPreview(null);
@@ -597,16 +647,19 @@ function CreateClaimForm({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <div className="space-y-6">
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        handleSubmit();
+      }}
+      className="space-y-6"
+    >
       {/* Back button + title */}
       <div className="flex items-center gap-4">
-        <button type="button" onClick={onClose} aria-label={t('common.goBack')} className="btn-secondary !px-3 !py-2">
-          <ArrowLeft className="w-4 h-4" />
+        <button type="button" onClick={onClose} aria-label={t('common.goBack')} className="btn-secondary min-h-11 min-w-11 !px-3 !py-2 shrink-0">
+          <ArrowLeft className="w-4 h-4" aria-hidden="true" />
         </button>
-        <div className="page-header">
-          <h1 className="page-title">{t('portal.claims.createTitle')}</h1>
-          <p className="page-subtitle">{t('portal.claims.createSubtitle')}</p>
-        </div>
+        <PageHeader className="mb-0" title={t('portal.claims.createTitle')} subtitle={t('portal.claims.createSubtitle')} />
       </div>
 
       {error && (
@@ -617,7 +670,7 @@ function CreateClaimForm({ onClose }: { onClose: () => void }) {
 
       <div className="card !p-0 divide-y divide-gray-100 dark:divide-slate-800">
         {/* Section 1: Basic Info */}
-        <div className="p-6 lg:p-8">
+        <div className="p-5 sm:p-6 lg:p-8">
           <div className="section-header">
             <span className="section-number">1</span>
             <span className="section-title">{t('portal.claims.sections.details')}</span>
@@ -627,6 +680,7 @@ function CreateClaimForm({ onClose }: { onClose: () => void }) {
               <label className="form-label" htmlFor="claim-title">{t('common.title')} *</label>
               <input
                 id="claim-title"
+                required
                 value={form.title}
                 onChange={(e) => setForm((prev) => ({ ...prev, title: e.target.value }))}
                 className="form-input"
@@ -648,7 +702,7 @@ function CreateClaimForm({ onClose }: { onClose: () => void }) {
         </div>
 
         {/* Section 2: Amount & Category */}
-        <div className="p-6 lg:p-8">
+        <div className="p-5 sm:p-6 lg:p-8">
           <div className="section-header">
             <span className="section-number">2</span>
             <span className="section-title">{t('portal.claims.sections.amount')}</span>
@@ -658,10 +712,11 @@ function CreateClaimForm({ onClose }: { onClose: () => void }) {
               <label className="form-label" htmlFor="claim-amount">{t('portal.claims.amountMyr')} *</label>
               <input
                 id="claim-amount"
-                type="number" step="0.01" min="0.01"
+                type="number" inputMode="decimal" step="0.01" min="0.01"
+                required
                 value={form.amount}
                 onChange={(e) => setForm((prev) => ({ ...prev, amount: e.target.value }))}
-                className="form-input" placeholder="0.00"
+                className="form-input tabular-nums" placeholder="0.00"
               />
             </div>
             <div>
@@ -681,22 +736,23 @@ function CreateClaimForm({ onClose }: { onClose: () => void }) {
               <input
                 id="claim-date"
                 type="date"
+                required
                 value={form.expense_date}
                 onChange={(e) => setForm((prev) => ({ ...prev, expense_date: e.target.value }))}
-                className="form-input"
+                className="form-input tabular-nums"
               />
             </div>
           </div>
         </div>
 
         {/* Section 3: Receipt */}
-        <div className="p-6 lg:p-8">
+        <div className="p-5 sm:p-6 lg:p-8">
           <div className="section-header">
             <span className="section-number">3</span>
             <span className="section-title">{t('portal.claims.sections.receipt')} *</span>
           </div>
           <div className="max-w-2xl">
-            <label className="form-label" htmlFor="receipt-upload">{t('portal.claims.uploadReceipt')} *</label>
+            <span className="form-label">{t('portal.claims.uploadReceipt')} *</span>
             <input
               ref={fileInputRef}
               type="file"
@@ -711,22 +767,31 @@ function CreateClaimForm({ onClose }: { onClose: () => void }) {
               /* Drop zone / upload button */
               <label
                 htmlFor="receipt-upload"
-                className={`flex flex-col items-center justify-center border-2 border-dashed rounded-xl p-8 cursor-pointer transition-colors focus-within:ring-2 focus-within:ring-teal-500/40 ${
-                  uploading
-                    ? 'border-gray-400 dark:border-slate-600 bg-gray-50 dark:bg-slate-800/60'
+                onDragOver={(e) => { e.preventDefault(); if (!uploading) setDragOver(true); }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setDragOver(false);
+                  if (uploading) return;
+                  const dropped = e.dataTransfer.files?.[0];
+                  if (dropped) void acceptReceiptFile(dropped);
+                }}
+                className={`flex flex-col items-center justify-center border-2 border-dashed rounded-xl p-8 cursor-pointer transition-colors focus-within:ring-2 focus-within:ring-[var(--ring)]/40 ${
+                  uploading || dragOver
+                    ? 'border-[var(--accent-1)] bg-gray-50 dark:bg-slate-800/60'
                     : 'border-gray-300 dark:border-slate-700 hover:border-gray-400 dark:hover:border-slate-500 hover:bg-gray-50/50 dark:hover:bg-slate-800/40'
                 }`}
               >
                 {uploading ? (
-                  <>
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 dark:border-slate-200 mb-3" />
+                  <div role="status" aria-busy="true" aria-label={t('common.uploading')} className="flex flex-col items-center">
+                    <div className="spinner mb-3" />
                     <p className="text-sm font-medium text-gray-700 dark:text-slate-200">{t('common.uploading')}</p>
-                  </>
+                  </div>
                 ) : (
                   <>
-                    <Upload className="w-8 h-8 text-gray-400 dark:text-slate-400 mb-3" />
+                    <Upload className="w-8 h-8 text-gray-500 dark:text-slate-400 mb-3" aria-hidden="true" />
                     <p className="text-sm font-medium text-gray-700 dark:text-slate-200">{t('portal.claims.clickUpload')}</p>
-                    <p className="text-xs text-gray-400 dark:text-slate-400 mt-1">
+                    <p className="text-xs text-gray-500 dark:text-slate-400 mt-1">
                       {t('portal.claims.uploadHint')}
                     </p>
                   </>
@@ -746,11 +811,11 @@ function CreateClaimForm({ onClose }: { onClose: () => void }) {
                   ) : (
                     <div className="w-20 h-20 bg-gray-100 dark:bg-slate-800 rounded-lg flex items-center justify-center shrink-0">
                       {form.receipt_file_name?.toLowerCase().endsWith('.pdf') ? (
-                        <FileText className="w-8 h-8 text-red-400" />
+                        <FileText className="w-8 h-8 text-red-400" aria-hidden="true" />
                       ) : isImageFile(form.receipt_file_name) ? (
-                        <Image className="w-8 h-8 text-gray-500 dark:text-slate-300" />
+                        <Image className="w-8 h-8 text-gray-500 dark:text-slate-300" aria-hidden="true" />
                       ) : (
-                        <FileText className="w-8 h-8 text-gray-400 dark:text-slate-400" />
+                        <FileText className="w-8 h-8 text-gray-500 dark:text-slate-400" aria-hidden="true" />
                       )}
                     </div>
                   )}
@@ -766,10 +831,10 @@ function CreateClaimForm({ onClose }: { onClose: () => void }) {
                     type="button"
                     onClick={handleRemoveFile}
                     aria-label={t('common.removeFile')}
-                    className="min-h-10 min-w-10 inline-flex items-center justify-center text-gray-400 dark:text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-colors"
+                    className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 inline-flex items-center justify-center text-gray-500 dark:text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                     title={t('common.removeFile')}
                   >
-                    <X className="w-4 h-4" />
+                    <X className="w-4 h-4" aria-hidden="true" />
                   </button>
                 </div>
               </div>
@@ -779,13 +844,14 @@ function CreateClaimForm({ onClose }: { onClose: () => void }) {
       </div>
 
       {/* Actions */}
-      <div className="flex justify-end gap-3">
-        <button type="button" onClick={onClose} className="btn-secondary">{t('common.cancel')}</button>
-        <button type="button" onClick={handleSubmit} disabled={mutation.isPending || uploading} className="btn-primary">
+      <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-3">
+        <button type="button" onClick={onClose} disabled={mutation.isPending} className="btn-secondary">{t('common.cancel')}</button>
+        <button type="submit" disabled={mutation.isPending || uploading} className="btn-primary">
+          {mutation.isPending && <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />}
           {mutation.isPending ? t('common.creating') : t('portal.claims.createButton')}
         </button>
       </div>
-    </div>
+    </form>
   );
 }
 

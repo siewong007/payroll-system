@@ -207,6 +207,19 @@ pub async fn set_geofence_mode(
 
 /// The company's attendance network mode (`none`/`learn`/`warn`/`enforce`);
 /// `None` if the company is absent.
+pub async fn lock_for_update(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+) -> AppResult<Option<Uuid>> {
+    let row = sqlx::query_scalar!(
+        "SELECT id FROM companies WHERE id = $1 FOR UPDATE",
+        company_id
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(row)
+}
+
 pub async fn get_attendance_network_mode(
     executor: impl Executor<'_, Database = Postgres>,
     company_id: Uuid,
@@ -289,6 +302,15 @@ pub async fn delete_company_data(conn: &mut sqlx::PgConnection, company_id: Uuid
     .await?;
 
     // Must precede both `email_templates` and `employees`.
+    sqlx::query!("DELETE FROM push_outbox WHERE company_id = $1", company_id)
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query!(
+        "DELETE FROM uploaded_files WHERE company_id = $1",
+        company_id
+    )
+    .execute(&mut *conn)
+    .await?;
     sqlx::query!("DELETE FROM email_logs WHERE company_id = $1", company_id)
         .execute(&mut *conn)
         .await?;
@@ -490,7 +512,7 @@ pub async fn delete_cascade_for_actor(
                      WHERE uc.user_id = users.id AND uc.company_id = $1
                  )
              )
-             AND NOT ('super_admin' = ANY(users.roles))
+             AND NOT (users.roles @> ARRAY['super_admin']::varchar(50)[])
              AND NOT EXISTS (
                  SELECT 1 FROM user_companies uc2
                  WHERE uc2.user_id = users.id AND uc2.company_id <> $1

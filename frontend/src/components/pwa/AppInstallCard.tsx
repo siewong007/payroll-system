@@ -14,8 +14,8 @@ export function AppInstallCard() {
       : 'pwa.installCard.desktopDesc';
 
   return (
-    <section className="card">
-      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+    <section className="card @container">
+      <div className="flex flex-col @lg:flex-row @lg:items-center justify-between gap-4">
         <div className="flex items-start gap-3.5 min-w-0">
           <img
             src="/icons/icon-192.png"

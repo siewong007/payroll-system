@@ -1,7 +1,7 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::Cursor;
 
-use calamine::{Reader, Xlsx, open_workbook_from_rs};
+use calamine::{DataRef, Reader, Xlsx, open_workbook_from_rs};
 
 use crate::core::error::{AppError, AppResult};
 use crate::models::employee_import::ImportRowRaw;
@@ -265,14 +265,29 @@ pub fn parse_csv(data: &[u8]) -> AppResult<(Vec<String>, Vec<Vec<String>>)> {
     if headers.is_empty() {
         return Err(AppError::BadRequest("CSV file has no headers".into()));
     }
+    if headers.len() > MAX_XLSX_COLS {
+        return Err(AppError::BadRequest(format!(
+            "CSV exceeds maximum supported column count ({MAX_XLSX_COLS})"
+        )));
+    }
 
     let mut rows = Vec::new();
     for result in rdr.records() {
         let record =
             result.map_err(|e| AppError::BadRequest(format!("Failed to read CSV row: {}", e)))?;
+        if record.len() > MAX_XLSX_COLS {
+            return Err(AppError::BadRequest(format!(
+                "CSV row exceeds maximum supported column count ({MAX_XLSX_COLS})"
+            )));
+        }
         let row: Vec<String> = record.iter().map(|s| s.to_string()).collect();
         if row.iter().all(|s| s.trim().is_empty()) {
             continue;
+        }
+        if rows.len() >= MAX_IMPORT_ROWS {
+            return Err(AppError::BadRequest(
+                "Maximum 1000 rows per import. Please split into smaller files.".into(),
+            ));
         }
         rows.push(row);
     }
@@ -283,6 +298,7 @@ pub fn parse_csv(data: &[u8]) -> AppResult<(Vec<String>, Vec<Vec<String>>)> {
 const MAX_XLSX_ZIP_ENTRIES: usize = 200;
 const MAX_XLSX_ENTRY_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_XLSX_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_IMPORT_ROWS: usize = 1000;
 const MAX_XLSX_ROWS: usize = 10_000;
 const MAX_XLSX_COLS: usize = 200;
 
@@ -347,13 +363,20 @@ fn excel_serial_to_date(serial: f64) -> Option<chrono::NaiveDate> {
     epoch.checked_add_signed(chrono::Duration::days(whole))
 }
 
-fn format_xlsx_cell(cell: &calamine::Data) -> String {
+fn format_xlsx_cell_ref(cell: &DataRef<'_>) -> String {
     match cell {
-        calamine::Data::DateTime(dt) => excel_serial_to_date(dt.as_f64())
+        DataRef::DateTime(dt) => excel_serial_to_date(dt.as_f64())
             .map(|d| d.format("%Y-%m-%d").to_string())
-            .unwrap_or_else(|| cell.to_string()),
-        calamine::Data::DateTimeIso(s) => s.trim().get(..10).unwrap_or(s.trim()).to_string(),
-        _ => cell.to_string(),
+            .unwrap_or_else(|| dt.to_string()),
+        DataRef::DateTimeIso(s) => s.trim().get(..10).unwrap_or(s.trim()).to_string(),
+        DataRef::DurationIso(s) => s.trim().to_string(),
+        DataRef::SharedString(s) => (*s).to_string(),
+        DataRef::String(s) => s.clone(),
+        DataRef::Int(v) => v.to_string(),
+        DataRef::Float(v) => v.to_string(),
+        DataRef::Bool(v) => v.to_string(),
+        DataRef::Error(e) => e.to_string(),
+        DataRef::Empty => String::new(),
     }
     .trim()
     .to_string()
@@ -372,24 +395,46 @@ pub fn parse_xlsx(data: &[u8]) -> AppResult<(Vec<String>, Vec<Vec<String>>)> {
         .ok_or_else(|| AppError::BadRequest("Excel file has no sheets".into()))?
         .clone();
 
-    let range = workbook
-        .worksheet_range(&sheet_name)
+    let mut cells_reader = workbook
+        .worksheet_cells_reader(&sheet_name)
         .map_err(|e| AppError::BadRequest(format!("Failed to read sheet: {}", e)))?;
 
-    let (row_count, col_count) = range.get_size();
-    if row_count > MAX_XLSX_ROWS || col_count > MAX_XLSX_COLS {
-        return Err(AppError::BadRequest(
-            "Excel sheet dimensions exceed maximum allowed size".into(),
-        ));
+    let mut rows_by_idx: BTreeMap<u32, Vec<String>> = BTreeMap::new();
+    while let Some(cell) = cells_reader
+        .next_cell()
+        .map_err(|e| AppError::BadRequest(format!("Failed to read sheet: {}", e)))?
+    {
+        let (row_idx, col_idx) = cell.get_position();
+        if row_idx as usize >= MAX_XLSX_ROWS || col_idx as usize >= MAX_XLSX_COLS {
+            return Err(AppError::BadRequest(
+                "Excel sheet dimensions exceed maximum allowed size".into(),
+            ));
+        }
+
+        let formatted = format_xlsx_cell_ref(cell.get_value());
+        if formatted.is_empty() {
+            continue;
+        }
+
+        if !rows_by_idx.contains_key(&row_idx) && rows_by_idx.len() >= MAX_IMPORT_ROWS + 2 {
+            return Err(AppError::BadRequest(
+                "Maximum 1000 rows per import. Please split into smaller files.".into(),
+            ));
+        }
+
+        let col = col_idx as usize;
+        let row_vec = rows_by_idx.entry(row_idx).or_default();
+        if row_vec.len() <= col {
+            row_vec.resize(col + 1, String::new());
+        }
+        row_vec[col] = formatted;
     }
 
-    let mut row_iter = range.rows();
+    let mut row_iter = rows_by_idx.into_values();
 
-    let header_row = row_iter
+    let headers = row_iter
         .next()
         .ok_or_else(|| AppError::BadRequest("Excel file has no headers".into()))?;
-
-    let headers: Vec<String> = header_row.iter().map(format_xlsx_cell).collect();
 
     if headers.is_empty() || headers.iter().all(|h| h.is_empty()) {
         return Err(AppError::BadRequest(
@@ -399,8 +444,7 @@ pub fn parse_xlsx(data: &[u8]) -> AppResult<(Vec<String>, Vec<Vec<String>>)> {
 
     let mut rows = Vec::new();
     let mut checked_hint_row = false;
-    for row in row_iter {
-        let cells: Vec<String> = row.iter().map(format_xlsx_cell).collect();
+    for cells in row_iter {
         if cells.iter().all(|s| s.is_empty()) {
             continue;
         }
@@ -409,6 +453,11 @@ pub fn parse_xlsx(data: &[u8]) -> AppResult<(Vec<String>, Vec<Vec<String>>)> {
             if is_template_hint_row(&cells) {
                 continue;
             }
+        }
+        if rows.len() >= MAX_IMPORT_ROWS {
+            return Err(AppError::BadRequest(
+                "Maximum 1000 rows per import. Please split into smaller files.".into(),
+            ));
         }
         rows.push(cells);
     }

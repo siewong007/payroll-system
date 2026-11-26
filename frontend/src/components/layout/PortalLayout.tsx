@@ -22,12 +22,16 @@ const portalNav = [
   { nameKey: 'nav.portal.claims', href: '/portal/claims', icon: Receipt },
   { nameKey: 'nav.portal.overtime', href: '/portal/overtime', icon: Clock },
   { nameKey: 'nav.portal.teamCalendar', href: '/portal/team-calendar', icon: Users },
-  { nameKey: 'nav.portal.notifications', href: '/portal/notifications', icon: Bell },
 ];
 
-// Compact desktop nav for md..lg viewports before xl fits all 8 links
-const compactDesktopPrimaryNav = portalNav.slice(0, 5);
-const compactDesktopMoreNav = portalNav.slice(5);
+// Compact desktop nav for md..lg viewports before xl fits all 7 links
+const compactDesktopPrimaryNav = [
+  { nameKey: 'nav.portal.profileShort', href: '/portal/profile', icon: User },
+  { nameKey: 'nav.portal.payslipsShort', href: '/portal/payslips', icon: FileText },
+  { nameKey: 'nav.portal.leave', href: '/portal/leave', icon: Calendar },
+  { nameKey: 'nav.portal.attendance', href: '/portal/attendance', icon: ScanLine },
+];
+const compactDesktopMoreNav = portalNav.slice(4);
 
 // Primary tabs shown in mobile bottom bar
 const mobileTabNav = [
@@ -129,8 +133,9 @@ export function PortalLayout() {
   const isMoreActive = mobileMoreNav.some((item) => isRouteActive(item.href));
   const isCompactMoreActive = compactDesktopMoreNav.some((item) => isRouteActive(item.href));
   const noEmployeeProfile = !user?.employee_id;
+  const showNoProfileBanner = noEmployeeProfile && !isRouteActive('/portal/notifications');
 
-  const hasUnread = notifCount && notifCount.unread > 0;
+  const hasUnread = Boolean(notifCount && notifCount.unread > 0);
 
   return (
     <div className="theme-portal relative isolate min-h-screen bg-[var(--background)]">
@@ -145,19 +150,19 @@ export function PortalLayout() {
 
       {/* Top Navigation Bar */}
       <header className="glass-nav safe-area-top sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto flex items-center justify-between h-14 md:h-16 px-4 md:px-6">
+        <div className="max-w-7xl mx-auto flex items-center justify-between gap-2 h-14 md:h-16 px-4 md:px-6">
           {/* Left: Logo + nav */}
-          <div className="flex items-center gap-4 lg:gap-6 xl:gap-8">
-            <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3 lg:gap-5 xl:gap-6 min-w-0">
+            <div className="flex items-center gap-2 shrink-0">
               <BrandLogo variant="lockup-dark" priority className="h-7 sm:h-8 w-auto shrink-0" />
-              <span className="hidden sm:inline-flex items-center gap-1 bg-gradient-to-r from-teal-500 to-emerald-500 text-white text-[10px] font-semibold px-2 py-0.5 rounded-full shadow-[0_2px_10px_-2px_var(--glow)]">
+              <span className="hidden lg:inline-flex items-center gap-1 bg-gradient-to-r from-teal-500 to-emerald-500 text-white text-[10px] font-semibold px-2 py-0.5 rounded-full shadow-[0_2px_10px_-2px_var(--glow)]">
                 <Sparkles className="w-2.5 h-2.5" />
                 {t('nav.portalBadge')}
               </span>
             </div>
 
             {/* Full Desktop nav (xl+) */}
-            <nav aria-label={t('nav.portalBadge')} className="hidden xl:flex items-center gap-1">
+            <nav aria-label={t('nav.portalBadge')} className="hidden xl:flex items-center gap-0.5">
               {portalNav.map((item) => {
                 const isActive = isRouteActive(item.href);
                 return (
@@ -165,7 +170,7 @@ export function PortalLayout() {
                     key={item.nameKey}
                     to={item.href}
                     aria-current={isActive ? 'page' : undefined}
-                    className={`relative flex items-center gap-1.5 px-3 py-2 text-sm rounded-xl transition-all-fast ${
+                    className={`relative flex items-center gap-1.5 px-2.5 py-2 text-[13px] rounded-xl transition-all-fast ${
                       isActive
                         ? 'text-teal-900 dark:text-teal-200 font-semibold'
                         : 'text-gray-500 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white hover:bg-white/60 dark:hover:bg-slate-800/70'
@@ -174,20 +179,15 @@ export function PortalLayout() {
                     {isActive && (
                       <span className="absolute inset-0 rounded-xl bg-gradient-to-r from-teal-500/15 to-emerald-500/15 ring-1 ring-teal-500/25 shadow-[0_4px_14px_-6px_var(--glow)]" />
                     )}
-                    <item.icon className={`relative w-4 h-4 ${isActive ? 'text-teal-600 dark:text-teal-300' : ''}`} />
+                    <item.icon className={`relative w-4 h-4 shrink-0 ${isActive ? 'text-teal-600 dark:text-teal-300' : ''}`} />
                     <span className="relative whitespace-nowrap">{t(item.nameKey)}</span>
-                    {item.nameKey === 'nav.portal.notifications' && hasUnread && (
-                      <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 text-[10px] font-bold bg-red-500 text-white rounded-full flex items-center justify-center leading-none shadow-[0_0_10px_rgba(239,68,68,0.6)]">
-                        {notifCount.unread}
-                      </span>
-                    )}
                   </Link>
                 );
               })}
             </nav>
 
             {/* Compact Desktop nav (md..xl) */}
-            <nav aria-label={t('nav.portalBadge')} className="hidden md:flex xl:hidden items-center gap-1">
+            <nav aria-label={t('nav.portalBadge')} className="hidden md:flex xl:hidden items-center gap-0.5">
               {compactDesktopPrimaryNav.map((item) => {
                 const isActive = isRouteActive(item.href);
                 return (
@@ -195,7 +195,7 @@ export function PortalLayout() {
                     key={item.nameKey}
                     to={item.href}
                     aria-current={isActive ? 'page' : undefined}
-                    className={`relative flex items-center gap-1.5 px-2.5 py-2 text-sm rounded-xl transition-all-fast ${
+                    className={`relative flex items-center gap-1.5 px-2.5 py-2 text-[13px] rounded-xl transition-all-fast ${
                       isActive
                         ? 'text-teal-900 dark:text-teal-200 font-semibold'
                         : 'text-gray-500 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white hover:bg-white/60 dark:hover:bg-slate-800/70'
@@ -204,7 +204,7 @@ export function PortalLayout() {
                     {isActive && (
                       <span className="absolute inset-0 rounded-xl bg-gradient-to-r from-teal-500/15 to-emerald-500/15 ring-1 ring-teal-500/25 shadow-[0_4px_14px_-6px_var(--glow)]" />
                     )}
-                    <item.icon className={`relative w-4 h-4 ${isActive ? 'text-teal-600 dark:text-teal-300' : ''}`} />
+                    <item.icon className={`relative w-4 h-4 shrink-0 ${isActive ? 'text-teal-600 dark:text-teal-300' : ''}`} />
                     <span className="relative whitespace-nowrap">{t(item.nameKey)}</span>
                   </Link>
                 );
@@ -216,7 +216,7 @@ export function PortalLayout() {
                   onClick={() => setShowDesktopMoreMenu((prev) => !prev)}
                   aria-expanded={showDesktopMoreMenu}
                   aria-haspopup="menu"
-                  className={`relative flex items-center gap-1 px-2.5 py-2 text-sm rounded-xl transition-all-fast ${
+                  className={`relative flex items-center gap-1 px-2.5 py-2 text-[13px] rounded-xl transition-all-fast ${
                     isCompactMoreActive
                       ? 'text-teal-900 dark:text-teal-200 font-semibold'
                       : 'text-gray-500 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white hover:bg-white/60 dark:hover:bg-slate-800/70'
@@ -227,11 +227,6 @@ export function PortalLayout() {
                   )}
                   <MoreHorizontal className="relative w-4 h-4" />
                   <span className="relative whitespace-nowrap">{t('nav.portal.more')}</span>
-                  {hasUnread && (
-                    <span className="relative min-w-[16px] h-[16px] px-1 text-[9px] font-bold bg-red-500 text-white rounded-full flex items-center justify-center leading-none">
-                      {notifCount.unread}
-                    </span>
-                  )}
                 </button>
                 {showDesktopMoreMenu && (
                   <div
@@ -257,11 +252,6 @@ export function PortalLayout() {
                             <item.icon className="w-4 h-4" />
                             <span>{t(item.nameKey)}</span>
                           </span>
-                          {item.nameKey === 'nav.portal.notifications' && hasUnread && (
-                            <span className="min-w-[18px] h-[18px] px-1 text-[10px] font-bold bg-red-500 text-white rounded-full flex items-center justify-center leading-none">
-                              {notifCount.unread}
-                            </span>
-                          )}
                         </Link>
                       );
                     })}
@@ -271,26 +261,30 @@ export function PortalLayout() {
             </nav>
           </div>
 
-          {/* Right: Quick search + Mobile notification bell + User dropdown */}
-          <div className="flex items-center gap-2">
+          {/* Right: Quick search + Persistent notification bell + User dropdown */}
+          <div className="flex items-center gap-1.5 shrink-0">
             <button
               type="button"
               onClick={openCommandPalette}
               aria-label={t('nav.quickSearch')}
-              className="min-h-11 min-w-11 inline-flex items-center justify-center text-gray-500 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white hover:bg-white/60 dark:hover:bg-slate-800 rounded-lg transition-all-fast"
+              className="min-h-11 min-w-11 inline-flex items-center justify-center text-gray-500 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white hover:bg-white/60 dark:hover:bg-slate-800 rounded-xl transition-all-fast"
             >
               <Search className="w-4 h-4" />
             </button>
-            {/* Mobile notification bell */}
             <Link
               to="/portal/notifications"
               aria-label={t('nav.portal.notifications')}
-              className="relative md:hidden min-h-11 min-w-11 inline-flex items-center justify-center text-gray-500 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white hover:bg-white/60 dark:hover:bg-slate-800 rounded-lg transition-all-fast"
+              title={t('nav.portal.notifications')}
+              className={`relative min-h-11 min-w-11 inline-flex items-center justify-center rounded-xl transition-all-fast ${
+                isRouteActive('/portal/notifications')
+                  ? 'bg-teal-500/15 text-teal-700 dark:text-teal-200 ring-1 ring-teal-500/25'
+                  : 'text-gray-500 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white hover:bg-white/60 dark:hover:bg-slate-800'
+              }`}
             >
-              <Bell className="w-5 h-5" />
+              <Bell className="w-5 h-5 md:w-4 md:h-4" />
               {hasUnread && (
-                <span className="absolute top-1 right-1 min-w-[16px] h-[16px] px-0.5 text-[9px] font-bold bg-red-500 text-white rounded-full flex items-center justify-center leading-none shadow-[0_0_8px_rgba(239,68,68,0.6)]">
-                  {notifCount.unread}
+                <span className="absolute top-1.5 right-1.5 min-w-[16px] h-[16px] px-1 text-[9px] font-bold bg-red-500 text-white rounded-full flex items-center justify-center leading-none shadow-[0_0_8px_rgba(239,68,68,0.6)]">
+                  {notifCount!.unread > 99 ? '99+' : notifCount!.unread}
                 </span>
               )}
             </Link>
@@ -301,22 +295,22 @@ export function PortalLayout() {
                 onClick={() => setShowUserMenu(!showUserMenu)}
                 aria-expanded={showUserMenu}
                 aria-haspopup="menu"
-                className="min-h-11 flex items-center gap-2.5 text-sm text-gray-600 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white rounded-xl px-1.5 transition-all-fast"
+                className="min-h-11 flex items-center gap-2 text-sm text-gray-600 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white rounded-xl px-1.5 transition-all-fast"
               >
-                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-teal-500 to-emerald-500 ring-2 ring-white/80 dark:ring-slate-800 shadow-[0_4px_14px_-4px_var(--glow)] flex items-center justify-center text-xs font-bold text-white">
+                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-teal-500 to-emerald-500 ring-2 ring-white/80 dark:ring-slate-800 shadow-[0_4px_14px_-4px_var(--glow)] flex items-center justify-center text-xs font-bold text-white shrink-0">
                   {user?.full_name?.[0] || 'U'}
                 </div>
-                <span className="sr-only md:not-sr-only font-medium">{user?.full_name || t('common.user')}</span>
+                <span className="sr-only lg:not-sr-only font-medium max-w-[130px] truncate">{user?.full_name || t('common.user')}</span>
                 <ChevronDown
-                  className={`hidden md:block w-3.5 h-3.5 text-gray-400 dark:text-slate-400 transition-transform duration-200 ${showUserMenu ? 'rotate-180' : ''}`}
+                  className={`hidden lg:block w-3.5 h-3.5 text-gray-400 dark:text-slate-400 transition-transform duration-200 shrink-0 ${showUserMenu ? 'rotate-180' : ''}`}
                 />
               </button>
 
               {showUserMenu && (
-                <div className="animate-drop-in glass-menu absolute right-0 mt-2 w-52 rounded-2xl z-20 py-1 overflow-hidden">
+                <div className="animate-drop-in glass-menu absolute right-0 mt-2 w-64 rounded-2xl z-20 py-1 overflow-hidden">
                     <div className="px-4 py-3 border-b border-gray-200/60 dark:border-slate-800">
-                      <p className="text-sm font-semibold text-gray-900 dark:text-slate-100">{user?.full_name}</p>
-                      <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">{user?.email}</p>
+                      <p className="text-sm font-semibold text-gray-900 dark:text-slate-100 truncate">{user?.full_name}</p>
+                      <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5 truncate">{user?.email}</p>
                     </div>
                     {/* Anyone who is not a sole-role employee lives in the admin
                         shell — `AppLayout` only redirects the sole-role case — so
@@ -402,7 +396,7 @@ export function PortalLayout() {
         className="max-w-7xl mx-auto px-4 py-4 md:px-6 md:py-8 pb-[calc(5rem+env(safe-area-inset-bottom))] md:pb-8 focus:outline-none"
       >
         <PwaInstallBanner />
-        {noEmployeeProfile && (
+        {showNoProfileBanner && (
           <div className="mb-4 card !p-4 border-amber-200/80 dark:border-amber-500/30 bg-amber-50/80 dark:bg-amber-500/10 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div className="flex items-start gap-3">
               <Info className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" aria-hidden="true" />

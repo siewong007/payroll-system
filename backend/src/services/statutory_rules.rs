@@ -57,7 +57,7 @@ pub async fn require_verified(
     )
     .await?;
 
-    if pcb_status.as_deref() != Some("enabled") {
+    if rule_code == PCB && pcb_status.as_deref() != Some("enabled") {
         return Err(gate_closed_error());
     }
     if !verified {

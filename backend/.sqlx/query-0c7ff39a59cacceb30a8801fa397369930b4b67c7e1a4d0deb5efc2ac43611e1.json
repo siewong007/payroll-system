@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM attendance_records\n           WHERE employee_id = $1\n             AND status = 'absent'\n             AND method = 'manual'\n             AND created_by IS NULL\n             AND notes = $3\n             AND check_in_at >= date_trunc('day', NOW() AT TIME ZONE $2) AT TIME ZONE $2\n             AND check_in_at < (date_trunc('day', NOW() AT TIME ZONE $2) + INTERVAL '1 day') AT TIME ZONE $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0c7ff39a59cacceb30a8801fa397369930b4b67c7e1a4d0deb5efc2ac43611e1"
+}

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { User, MapPin, Briefcase, Shield, CreditCard, Eye, EyeOff } from 'lucide-react';
+import { User, MapPin, Briefcase, Shield, CreditCard, Eye, EyeOff, AlertTriangle } from 'lucide-react';
 import { getMyProfile } from '@/api/portal';
 import { formatMYR, formatDate, getErrorMessage } from '@/lib/utils';
 import { useAuth } from '@/context/AuthContext';
@@ -14,6 +14,8 @@ import { LinkedAccounts } from '@/components/LinkedAccounts';
 import { AppInstallCard } from '@/components/pwa/AppInstallCard';
 import { NotificationActivationCard } from '@/components/pwa/NotificationActivationCard';
 import { CheckInCard } from '@/components/attendance/CheckInCard';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton } from '@/components/ui/Skeleton';
 
 type Profile = NonNullable<Awaited<ReturnType<typeof getMyProfile>>>;
@@ -28,8 +30,8 @@ function maskSensitive(value: string | null | undefined, revealed: boolean): str
 
 const Field = ({ label, value }: { label: string; value: string | null | undefined }) => (
   <div className="py-3 flex items-start justify-between gap-4">
-    <span className="text-sm text-gray-400 dark:text-slate-400 min-w-[140px] shrink-0">{label}</span>
-    <span className="text-sm font-medium text-gray-900 dark:text-slate-100 text-right tabular-nums">{value || '—'}</span>
+    <span className="text-sm text-gray-500 dark:text-slate-400 min-w-0 sm:min-w-[140px] shrink-0">{label}</span>
+    <span className="text-sm font-medium text-gray-900 dark:text-slate-100 text-right min-w-0 break-words tabular-nums">{value || '—'}</span>
   </div>
 );
 
@@ -37,7 +39,7 @@ const SectionIcon = ({ icon: Icon, label, num }: { icon: React.ElementType; labe
   <div className="section-header">
     <span className="section-number">{num}</span>
     <div className="flex items-center gap-2">
-      <Icon className="w-4 h-4 text-gray-400 dark:text-slate-400" />
+      <Icon className="w-4 h-4 text-gray-500 dark:text-slate-400" aria-hidden="true" />
       <span className="section-title">{label}</span>
     </div>
   </div>
@@ -45,26 +47,36 @@ const SectionIcon = ({ icon: Icon, label, num }: { icon: React.ElementType; labe
 
 function SecurityAndAppCards() {
   return (
-    <>
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
       <AppInstallCard />
       <NotificationActivationCard />
-      <ChangePasswordCard />
-      <TwoFactorSetup />
-      <PasskeyManagement />
-      <LinkedAccounts />
-      <SessionManagement />
-    </>
+      <div className="space-y-6">
+        <ChangePasswordCard />
+        <LinkedAccounts />
+      </div>
+      <div className="space-y-6">
+        <TwoFactorSetup />
+        <PasskeyManagement />
+      </div>
+      <div className="lg:col-span-2">
+        <SessionManagement />
+      </div>
+    </div>
   );
 }
 
-function ProfileDetails({ profile, initialTab }: { profile: Profile; initialTab: MobileTab }) {
+function ProfileDetails({
+  profile,
+  mobileTab,
+  setMobileTab,
+  revealed,
+}: {
+  profile: Profile;
+  mobileTab: MobileTab;
+  setMobileTab: (tab: MobileTab) => void;
+  revealed: boolean;
+}) {
   const { t } = useTranslation();
-  const [mobileTab, setMobileTab] = useState<MobileTab>(initialTab);
-  const [revealed, setRevealed] = useState(false);
-
-  useEffect(() => {
-    setMobileTab(initialTab);
-  }, [initialTab]);
 
   const enumLabel = (group: string, value: string | null | undefined) =>
     value ? t(`enums.${group}.${value}`, { defaultValue: value }) : null;
@@ -77,28 +89,12 @@ function ProfileDetails({ profile, initialTab }: { profile: Profile; initialTab:
 
   return (
     <>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div className="page-header">
-          <p className="page-subtitle">{t('portal.profile.subtitle')}</p>
-          <h1 className="page-title">{profile.full_name}</h1>
-        </div>
-        <button
-          type="button"
-          onClick={() => setRevealed((prev) => !prev)}
-          aria-pressed={revealed}
-          className="btn-secondary !py-2 !min-h-10 self-start sm:self-auto text-xs"
-        >
-          {revealed ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-          {revealed ? t('ux.profile.hideSensitive') : t('ux.profile.showSensitive')}
-        </button>
-      </div>
-
       <div className="p-3 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-300 text-sm rounded-xl border border-amber-100 dark:border-amber-500/25">
         {t('portal.profile.managedByAdmin')}
       </div>
 
-      {/* Mobile section tabs to prevent long multi-card scroll; shrink-0 keeps long Malay labels legible */}
-      <div className="lg:hidden flex items-center gap-1 rounded-2xl bg-white/80 dark:bg-slate-900/80 p-1 ring-1 ring-gray-200/70 dark:ring-slate-800 overflow-x-auto">
+      {/* Mobile section tabs to prevent long multi-card scroll; px-2 + shrink-0 avoids 360px clipping */}
+      <div className="lg:hidden flex items-center gap-1 rounded-2xl bg-white/80 dark:bg-slate-900/80 p-1 ring-1 ring-gray-200/70 dark:ring-slate-800 overflow-x-auto scrollbar-thin">
         {tabs.map((item) => {
           const active = mobileTab === item.key;
           return (
@@ -107,10 +103,10 @@ function ProfileDetails({ profile, initialTab }: { profile: Profile; initialTab:
               type="button"
               onClick={() => setMobileTab(item.key)}
               aria-pressed={active}
-              className={`min-h-10 shrink-0 sm:flex-1 whitespace-nowrap rounded-xl px-3 py-2 text-xs font-semibold leading-tight transition-all ${
+              className={`min-h-11 sm:min-h-10 shrink-0 sm:flex-1 whitespace-nowrap rounded-xl px-2.5 sm:px-3 py-2 text-xs font-semibold leading-tight transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] ${
                 active
                   ? 'bg-gradient-to-r from-[var(--accent-1)] to-[var(--accent-2)] text-white shadow-xs'
-                  : 'text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100'
+                  : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100'
               }`}
             >
               {item.label}
@@ -119,7 +115,7 @@ function ProfileDetails({ profile, initialTab }: { profile: Profile; initialTab:
         })}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
         {/* Personal Information */}
         <div className={`card ${mobileTab !== 'personal' ? 'hidden lg:block' : ''}`}>
           <SectionIcon icon={User} label={t('employees.form.personalInfo')} num={1} />
@@ -166,41 +162,49 @@ function ProfileDetails({ profile, initialTab }: { profile: Profile; initialTab:
           </div>
         </div>
 
-        {/* Statutory + Banking + Security */}
-        <div className={`space-y-6 ${mobileTab === 'personal' ? 'hidden lg:block' : ''}`}>
-          <div className={`space-y-6 ${mobileTab === 'security' ? 'hidden lg:block' : ''}`}>
-            <div className="card">
-              <SectionIcon icon={Shield} label={t('portal.profile.statutoryDetails')} num={4} />
-              <div className="divide-y divide-gray-100 dark:divide-slate-800">
-                <Field label={t('portal.profile.immigrationStatus')} value={enumLabel('residency', profile.residency_status)} />
-                <Field label={t('employees.fields.epfNumber')} value={maskSensitive(profile.epf_number, revealed)} />
-                <Field label={t('employees.fields.epfCategory')} value={enumLabel('epfCategory', profile.epf_category)} />
-                <Field label={t('portal.profile.tin')} value={maskSensitive(profile.tax_identification_number, revealed)} />
-                <Field label={t('employees.fields.socsoNumber')} value={maskSensitive(profile.socso_number, revealed)} />
-                <Field label={t('employees.fields.eisNumber')} value={maskSensitive(profile.eis_number, revealed)} />
-                <Field label={t('employees.fields.workingSpouse')} value={profile.working_spouse ? t('common.yes') : t('common.no')} />
-                <Field label={t('employees.fields.children')} value={String(profile.num_children ?? 0)} />
-                <Field label={t('employees.fields.muslim')} value={profile.is_muslim ? t('common.yes') : t('common.no')} />
-                {profile.zakat_eligible && (
-                  <Field label={t('employees.fields.zakatMonthly')} value={formatMYR(profile.zakat_monthly_amount ?? 0)} />
-                )}
-              </div>
-            </div>
-
-            <div className="card">
-              <SectionIcon icon={CreditCard} label={t('employees.form.bankingDetails')} num={5} />
-              <div className="divide-y divide-gray-100 dark:divide-slate-800">
-                <Field label={t('employees.form.bankName')} value={profile.bank_name} />
-                <Field label={t('employees.form.accountNumber')} value={maskSensitive(profile.bank_account_number, revealed)} />
-              </div>
+        {/* Statutory + Banking */}
+        <div className={`space-y-6 ${mobileTab !== 'statutory' ? 'hidden lg:block' : ''}`}>
+          <div className="card">
+            <SectionIcon icon={Shield} label={t('portal.profile.statutoryDetails')} num={4} />
+            <div className="divide-y divide-gray-100 dark:divide-slate-800">
+              <Field label={t('portal.profile.immigrationStatus')} value={enumLabel('residency', profile.residency_status)} />
+              <Field label={t('employees.fields.epfNumber')} value={maskSensitive(profile.epf_number, revealed)} />
+              <Field label={t('employees.fields.epfCategory')} value={enumLabel('epfCategory', profile.epf_category)} />
+              <Field label={t('portal.profile.tin')} value={maskSensitive(profile.tax_identification_number, revealed)} />
+              <Field label={t('employees.fields.socsoNumber')} value={maskSensitive(profile.socso_number, revealed)} />
+              <Field label={t('employees.fields.eisNumber')} value={maskSensitive(profile.eis_number, revealed)} />
+              <Field label={t('employees.fields.workingSpouse')} value={profile.working_spouse ? t('common.yes') : t('common.no')} />
+              <Field label={t('employees.fields.children')} value={String(profile.num_children ?? 0)} />
+              <Field label={t('employees.fields.muslim')} value={profile.is_muslim ? t('common.yes') : t('common.no')} />
+              {profile.zakat_eligible && (
+                <Field label={t('employees.fields.zakatMonthly')} value={formatMYR(profile.zakat_monthly_amount ?? 0)} />
+              )}
             </div>
           </div>
 
-          <div className={`space-y-6 ${mobileTab === 'statutory' ? 'hidden lg:block' : ''}`}>
-            <SecurityAndAppCards />
+          <div className="card">
+            <SectionIcon icon={CreditCard} label={t('employees.form.bankingDetails')} num={5} />
+            <div className="divide-y divide-gray-100 dark:divide-slate-800">
+              <Field label={t('employees.form.bankName')} value={profile.bank_name} />
+              <Field label={t('employees.form.accountNumber')} value={maskSensitive(profile.bank_account_number, revealed)} />
+            </div>
           </div>
         </div>
       </div>
+
+      {/* Security & Devices */}
+      <section
+        id="security"
+        aria-labelledby="profile-security-heading"
+        className={`space-y-4 lg:pt-4 lg:border-t lg:border-gray-200/70 dark:lg:border-slate-800/80 ${
+          mobileTab !== 'security' ? 'hidden lg:block' : ''
+        }`}
+      >
+        <h2 id="profile-security-heading" className="sr-only lg:not-sr-only section-title">
+          {t('ux.profile.tabSecurity')}
+        </h2>
+        <SecurityAndAppCards />
+      </section>
     </>
   );
 }
@@ -213,6 +217,15 @@ export function MyProfile() {
   const section = searchParams.get('section');
   const initialTab: MobileTab =
     section === 'security' || section === 'statutory' ? section : 'personal';
+  const [mobileTab, setMobileTab] = useState<MobileTab>(initialTab);
+  const [revealed, setRevealed] = useState(false);
+
+  useEffect(() => {
+    setMobileTab(initialTab);
+    if (initialTab === 'security') {
+      document.getElementById('security')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+    }
+  }, [initialTab]);
 
   const {
     data: profile,
@@ -226,12 +239,41 @@ export function MyProfile() {
     enabled: hasEmployee,
   });
 
+  const pageTitle = profile?.full_name || user?.full_name || t('common.employee');
+
   return (
     <div className="space-y-6">
+      <PageHeader
+        className="mb-0"
+        title={pageTitle}
+        subtitle={t('portal.profile.subtitle')}
+        actions={
+          profile ? (
+            <button
+              type="button"
+              onClick={() => setRevealed((prev) => !prev)}
+              aria-pressed={revealed}
+              className={`btn-secondary min-h-11 sm:min-h-10 !py-2 text-xs ${
+                mobileTab === 'security' ? 'hidden lg:inline-flex' : 'inline-flex'
+              }`}
+            >
+              {revealed ? (
+                <EyeOff className="w-3.5 h-3.5" aria-hidden="true" />
+              ) : (
+                <Eye className="w-3.5 h-3.5" aria-hidden="true" />
+              )}
+              {revealed ? t('ux.profile.hideSensitive') : t('ux.profile.showSensitive')}
+            </button>
+          ) : undefined
+        }
+      />
+
       <CheckInCard />
 
-      {hasEmployee && isLoading ? (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      {!hasEmployee ? (
+        <SecurityAndAppCards />
+      ) : isLoading ? (
+        <div role="status" aria-busy="true" aria-label={t('common.loading')} className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="card space-y-3">
             <Skeleton className="h-5 w-40" />
             <Skeleton className="h-4 w-full" />
@@ -249,31 +291,36 @@ export function MyProfile() {
             <Skeleton className="h-4 w-2/3" />
           </div>
         </div>
-      ) : hasEmployee && isError ? (
+      ) : isError ? (
         <div className="space-y-6">
-          <div role="alert" className="card text-center py-8 space-y-3 border-red-200 dark:border-red-500/30">
-            <p className="text-sm text-red-700 dark:text-red-300">
-              {getErrorMessage(error, t('portal.profile.loadFailed'))}
-            </p>
-            <button type="button" onClick={() => void refetch()} className="btn-primary text-xs">
-              {t('common.retry')}
-            </button>
+          <div role="alert" className="card border-red-200 dark:border-red-500/30">
+            <EmptyState
+              icon={AlertTriangle}
+              title={t('portal.profile.loadFailed')}
+              description={getErrorMessage(error, t('portal.profile.loadFailed'))}
+              action={
+                <button type="button" onClick={() => void refetch()} className="btn-primary">
+                  {t('common.retry')}
+                </button>
+              }
+            />
           </div>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <SecurityAndAppCards />
-          </div>
+          <SecurityAndAppCards />
         </div>
       ) : !profile ? (
         <div className="space-y-6">
-          <div className="card text-center py-8 text-gray-500 dark:text-slate-400">
-            {t('portal.profile.notFound')}
+          <div className="card">
+            <EmptyState icon={User} title={t('portal.profile.notFound')} />
           </div>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <SecurityAndAppCards />
-          </div>
+          <SecurityAndAppCards />
         </div>
       ) : (
-        <ProfileDetails profile={profile} initialTab={initialTab} />
+        <ProfileDetails
+          profile={profile}
+          mobileTab={mobileTab}
+          setMobileTab={setMobileTab}
+          revealed={revealed}
+        />
       )}
     </div>
   );

@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT stored_name FROM uploaded_files WHERE company_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "stored_name",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "uploaded_files",
+            "name": "stored_name"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "65d700043669b1ee1dfa16de86f349d2ea2c47a48d6c31de2559fe5ea01d6617"
+}

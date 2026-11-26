@@ -35,6 +35,7 @@ pub async fn setup_confirm(
         &state.pool,
         auth.0.sub,
         Some(auth.0.sid),
+        Some(&req.password),
         &req.code,
         &state.config.totp_encryption_key,
         Some(&audit_meta),
@@ -57,7 +58,14 @@ pub async fn disable(
     audit_meta: AuditRequestMeta,
     ValidatedJson(req): ValidatedJson<TotpDisableRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
-    totp_service::disable(&state.pool, auth.0.sub, &req.password, Some(&audit_meta)).await?;
+    totp_service::disable_with_session(
+        &state.pool,
+        auth.0.sub,
+        Some(auth.0.sid),
+        &req.password,
+        Some(&audit_meta),
+    )
+    .await?;
     Ok(Json(serde_json::json!({ "message": "2FA disabled" })))
 }
 
@@ -87,10 +95,18 @@ pub async fn verify_login(
     audit_meta: AuditRequestMeta,
     ValidatedJson(req): ValidatedJson<TotpVerifyLoginRequest>,
 ) -> AppResult<Response> {
-    let user_id = verify_mfa_pending_token(&req.mfa_token, &state.config.jwt_secret)?;
-    if let Err(err) = totp_service::verify_login_code(
+    crate::core::turnstile::verify(
+        &state.config,
+        req.turnstile_token.as_deref(),
+        audit_meta.ip_address.as_deref(),
+    )
+    .await?;
+
+    let (user_id, jti) = verify_mfa_pending_token(&req.mfa_token, &state.config.jwt_secret)?;
+    if let Err(err) = totp_service::verify_login_code_for_challenge(
         &state.pool,
         user_id,
+        jti,
         &req.code,
         &state.config.totp_encryption_key,
     )

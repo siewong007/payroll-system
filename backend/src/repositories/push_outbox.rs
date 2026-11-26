@@ -90,14 +90,28 @@ pub async fn claim_pending_batch(pool: &PgPool, limit: i64) -> AppResult<Vec<Pus
     let mut tx = pool.begin().await?;
     let rows = sqlx::query_as!(
         PushOutboxBatchRow,
-        r#"WITH claimed AS (
-            SELECT po.id
+        r#"WITH ranked AS (
+            SELECT po.id, po.next_retry_at, po.created_at,
+                   ROW_NUMBER() OVER (PARTITION BY po.user_id ORDER BY po.next_retry_at ASC, po.created_at ASC) AS rn
             FROM push_outbox po
             WHERE po.status = 'pending'
               AND po.next_retry_at <= NOW()
-            ORDER BY po.next_retry_at ASC, po.created_at ASC
+        ),
+        candidates AS (
+            SELECT id
+            FROM ranked
+            WHERE rn <= 5
+            ORDER BY rn ASC, next_retry_at ASC, created_at ASC
             LIMIT $1
-            FOR UPDATE SKIP LOCKED
+        ),
+        claimed AS (
+            SELECT po.id
+            FROM push_outbox po
+            JOIN candidates c ON c.id = po.id
+            WHERE po.status = 'pending'
+              AND po.next_retry_at <= NOW()
+            ORDER BY po.next_retry_at ASC, po.created_at ASC
+            FOR UPDATE OF po SKIP LOCKED
         ),
         leased AS (
             UPDATE push_outbox po
@@ -111,7 +125,8 @@ pub async fn claim_pending_batch(pool: &PgPool, limit: i64) -> AppResult<Vec<Pus
                l.title, l.body, l.url, l.tag, l.attempts, l.max_attempts,
                ps.endpoint, ps.p256dh, ps.auth,
                ps.revoked_at IS NOT NULL
-                   OR NOT u.is_active
+                   OR ps.user_id <> l.user_id
+                   OR u.is_active IS NOT TRUE
                    OR u.deleted_at IS NOT NULL
                    OR (ps.session_id IS NOT NULL AND (us.revoked_at IS NOT NULL OR us.expires_at <= NOW()))
                    AS "is_revoked!",
@@ -210,8 +225,7 @@ pub async fn purge_old(
 ) -> AppResult<u64> {
     let res = sqlx::query(
         r#"DELETE FROM push_outbox
-           WHERE status <> 'pending'
-             AND created_at < NOW() - ($1 || ' days')::interval"#,
+           WHERE created_at < NOW() - ($1 || ' days')::interval"#,
     )
     .bind(retention_days.to_string())
     .execute(executor)

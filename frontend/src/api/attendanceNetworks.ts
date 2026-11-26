@@ -32,6 +32,7 @@ export interface NetworkCandidate {
    * everyone is being turned away and nothing else is being recorded.
    */
   denied_count: number;
+  distinct_denied_employees?: number;
   first_seen_at: string;
   last_seen_at: string;
   is_anchored: boolean;

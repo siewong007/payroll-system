@@ -1,0 +1,125 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, company_id, label, token_prefix, created_by,\n                  created_at, last_used_at, last_used_ip, revoked_at\n           FROM attendance_kiosk_credentials\n           WHERE id = $1 AND company_id = $2 AND revoked_at IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "attendance_kiosk_credentials",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "company_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "attendance_kiosk_credentials",
+            "name": "company_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "label",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "attendance_kiosk_credentials",
+            "name": "label"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "token_prefix",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "attendance_kiosk_credentials",
+            "name": "token_prefix"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "created_by",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "attendance_kiosk_credentials",
+            "name": "created_by"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "attendance_kiosk_credentials",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "last_used_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "attendance_kiosk_credentials",
+            "name": "last_used_at"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "last_used_ip",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "attendance_kiosk_credentials",
+            "name": "last_used_ip"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "revoked_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "attendance_kiosk_credentials",
+            "name": "revoked_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "e4f957a75cf1ce07d95f35a0ce3b1927476d6cf90f2de0cef4849bba9030fab7"
+}

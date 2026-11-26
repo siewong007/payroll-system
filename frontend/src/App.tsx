@@ -203,6 +203,7 @@ function prefetchInitialRoute() {
     if (path === '/portal/attendance') void import('@/pages/portal/MyAttendance');
     else if (path === '/portal/payslips') void import('@/pages/portal/MyPayslips');
     else if (path === '/portal/leave') void import('@/pages/portal/Leave');
+    else if (path === '/portal/notifications') void import('@/pages/portal/Notifications');
     else void import('@/pages/portal/MyProfile');
     return;
   }
@@ -218,10 +219,13 @@ function prefetchInitialRoute() {
     const roles = parsed.roles ?? [];
     if (roles.length === 1 && roles[0] === 'employee') {
       void import('@/components/layout/PortalLayout');
-      void import('@/pages/portal/MyProfile');
+      if (path === '/portal/notifications') void import('@/pages/portal/Notifications');
+      else void import('@/pages/portal/MyProfile');
     } else {
       void import('@/components/layout/AppLayout');
-      if (roles.includes('super_admin')) {
+      if (path === '/notifications') {
+        void import('@/pages/portal/Notifications');
+      } else if (roles.includes('super_admin')) {
         void import('@/pages/admin/CompanyManagement');
       } else if (path === '/' || path === '/dashboard') {
         void import('@/pages/dashboard/DashboardPage');
@@ -478,6 +482,14 @@ export default function App() {
                     )}
                   />
                   <Route path={ROUTES.MY_ATTENDANCE} element={<MyAttendance />} />
+                  <Route
+                    path={ROUTES.NOTIFICATIONS}
+                    element={(
+                      <PermissionGuard requiresCompany>
+                        <Notifications />
+                      </PermissionGuard>
+                    )}
+                  />
                 </Route>
 
                 <Route element={<PortalLayout />}>

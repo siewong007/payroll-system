@@ -30,6 +30,25 @@ pub async fn list(
     Ok(notifications)
 }
 
+pub async fn count_summary(
+    executor: impl Executor<'_, Database = Postgres>,
+    user_id: Uuid,
+    company_id: Uuid,
+) -> AppResult<(i64, i64)> {
+    let row = sqlx::query!(
+        r#"SELECT
+               COUNT(*) FILTER (WHERE is_read = FALSE) AS "unread!",
+               COUNT(*) AS "total!"
+           FROM notifications
+           WHERE user_id = $1 AND company_id = $2"#,
+        user_id,
+        company_id,
+    )
+    .fetch_one(executor)
+    .await?;
+    Ok((row.unread, row.total))
+}
+
 pub async fn count_unread(
     executor: impl Executor<'_, Database = Postgres>,
     user_id: Uuid,

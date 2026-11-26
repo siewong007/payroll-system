@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, KeyRound, Users, Search, Plus, Pencil, Trash2 } from 'lucide-react';
+import { AlertTriangle, KeyRound, Loader2, Users, Search, Plus, Pencil, Trash2 } from 'lucide-react';
 import { listUsers, listCompanies, deleteUser, resetUser2fa } from '@/api/admin';
 import { useAuth } from '@/context/AuthContext';
 import { DataTable, type Column } from '@/components/ui/DataTable';
@@ -127,7 +127,7 @@ export function UserManagement() {
       primary: true,
       render: (u) => <span className="font-semibold text-gray-900 dark:text-slate-100">{u.full_name}</span>,
     },
-    { key: 'email', header: t('common.email'), primary: true, render: (u) => <span className="text-gray-500 dark:text-slate-400 break-all">{u.email}</span> },
+    { key: 'email', header: t('common.email'), primary: true, render: (u) => <span className="text-gray-600 dark:text-slate-300 break-all">{u.email}</span> },
     {
       key: 'roles',
       header: t('users.role'),
@@ -138,11 +138,11 @@ export function UserManagement() {
       header: t('common.company'),
       render: (u) =>
         u.companies.length === 0 ? (
-          <span className="text-gray-300 dark:text-slate-600">&mdash;</span>
+          <span className="text-gray-400 dark:text-slate-500">&mdash;</span>
         ) : (
           <div className="flex flex-wrap gap-1">
             {u.companies.map((c) => (
-              <span key={c.id} className="text-xs px-2 py-0.5 bg-gray-100 dark:bg-slate-800 rounded-full text-gray-600 dark:text-slate-300">
+              <span key={c.id} className="text-xs px-2 py-0.5 bg-gray-100 dark:bg-slate-800 rounded-full text-gray-700 dark:text-slate-300">
                 {c.name}
               </span>
             ))}
@@ -193,7 +193,7 @@ export function UserManagement() {
           aria-label={t('users.filterByRole')}
           value={roleFilter}
           onChange={(e) => resetToFirstPage(setRoleFilter)(e.target.value)}
-          className="form-input w-full sm:w-auto"
+          className="form-input w-full sm:w-auto min-h-11 sm:min-h-10"
         >
           <option value="all">{t('users.allRoles')}</option>
           {ALL_ROLES.filter(
@@ -209,7 +209,7 @@ export function UserManagement() {
             aria-label={t('users.filterByCompany')}
             value={companyFilter}
             onChange={(e) => resetToFirstPage(setCompanyFilter)(e.target.value)}
-            className="form-input w-full sm:w-auto"
+            className="form-input w-full sm:w-auto min-h-11 sm:min-h-10"
           >
             <option value="all">{t('users.allCompanies')}</option>
             {companies.map((c) => (
@@ -252,7 +252,7 @@ export function UserManagement() {
                 type="button"
                 onClick={() => setEditUser(u)}
                 aria-label={t('common.editName', { name: u.full_name })}
-                className="text-sm text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100 min-h-10 sm:min-h-8 px-2 py-1 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors inline-flex items-center gap-1"
+                className="text-sm text-gray-600 dark:text-slate-300 hover:text-gray-900 dark:hover:text-slate-100 min-h-11 sm:min-h-8 px-2.5 py-1 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] transition-colors inline-flex items-center gap-1"
               >
                 <Pencil className="w-3.5 h-3.5" aria-hidden="true" /> {t('common.edit')}
               </button>
@@ -265,7 +265,7 @@ export function UserManagement() {
                     setReset2faError('');
                   }}
                   aria-label={t('users.reset2faFor', { name: u.full_name })}
-                  className="text-sm text-amber-600 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-300 min-h-10 sm:min-h-8 px-2 py-1 rounded-lg hover:bg-amber-50 dark:hover:bg-amber-500/10 transition-colors inline-flex items-center gap-1"
+                  className="text-sm text-amber-700 dark:text-amber-400 hover:text-amber-800 dark:hover:text-amber-300 min-h-11 sm:min-h-8 px-2.5 py-1 rounded-lg hover:bg-amber-50 dark:hover:bg-amber-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] transition-colors inline-flex items-center gap-1"
                 >
                   <KeyRound className="w-3.5 h-3.5" aria-hidden="true" /> {t('users.reset2fa')}
                 </button>
@@ -279,7 +279,7 @@ export function UserManagement() {
                     setDeleteTarget(u);
                   }}
                   aria-label={t('common.deleteName', { name: u.full_name })}
-                  className="text-sm text-gray-500 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 min-h-10 sm:min-h-8 px-2 py-1 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors inline-flex items-center gap-1"
+                  className="text-sm text-gray-600 dark:text-slate-300 hover:text-red-700 dark:hover:text-red-400 min-h-11 sm:min-h-8 px-2.5 py-1 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] transition-colors inline-flex items-center gap-1"
                 >
                   <Trash2 className="w-3.5 h-3.5" aria-hidden="true" /> {t('common.delete')}
                 </button>
@@ -324,21 +324,28 @@ export function UserManagement() {
 
       <Modal
         open={reset2faTarget !== null}
-        onClose={closeReset2fa}
+        onClose={() => { if (!reset2faMutation.isPending) closeReset2fa(); }}
         title={t('users.reset2faTitle')}
         maxWidth="max-w-md"
         footer={
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-            <button type="button" onClick={closeReset2fa} className="btn-secondary">
+            <button type="button" disabled={reset2faMutation.isPending} onClick={closeReset2fa} className="btn-secondary">
               {t('common.cancel')}
             </button>
             <button
               type="submit"
               form="reset-2fa-form"
               disabled={!reset2faPassword || reset2faMutation.isPending}
-              className="px-4 py-2 min-h-[44px] text-sm font-medium text-white bg-amber-600 hover:bg-amber-700 rounded-xl transition-colors disabled:opacity-50"
+              className="inline-flex items-center justify-center gap-2 px-4 py-2 min-h-[44px] text-sm font-medium text-white bg-amber-600 hover:bg-amber-700 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 transition-colors disabled:opacity-50"
             >
-              {reset2faMutation.isPending ? t('common.saving') : t('users.reset2fa')}
+              {reset2faMutation.isPending ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                  {t('common.saving')}
+                </>
+              ) : (
+                t('users.reset2fa')
+              )}
             </button>
           </div>
         }
@@ -387,21 +394,28 @@ export function UserManagement() {
 
       <Modal
         open={deleteTarget !== null}
-        onClose={closeDelete}
+        onClose={() => { if (!deleteMutation.isPending) closeDelete(); }}
         title={t('users.deleteTitle')}
         maxWidth="max-w-sm"
         footer={
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-            <button type="button" onClick={closeDelete} className="btn-secondary">
+            <button type="button" disabled={deleteMutation.isPending} onClick={closeDelete} className="btn-secondary">
               {t('common.cancel')}
             </button>
             <button
               type="button"
               onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
               disabled={deleteMutation.isPending}
-              className="px-4 py-2 min-h-[44px] text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-xl transition-colors disabled:opacity-50"
+              className="inline-flex items-center justify-center gap-2 px-4 py-2 min-h-[44px] text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 transition-colors disabled:opacity-50"
             >
-              {deleteMutation.isPending ? t('common.deleting') : t('common.delete')}
+              {deleteMutation.isPending ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                  {t('common.deleting')}
+                </>
+              ) : (
+                t('common.delete')
+              )}
             </button>
           </div>
         }
@@ -414,7 +428,7 @@ export function UserManagement() {
             {deleteError}
           </div>
         )}
-        <p className="text-sm text-gray-500 dark:text-slate-400">
+        <p className="text-sm text-gray-600 dark:text-slate-300">
           <Trans
             i18nKey="users.deleteBody"
             values={{ name: deleteTarget?.full_name }}

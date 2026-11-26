@@ -167,6 +167,28 @@
             "name": "updated_at"
           }
         }
+      },
+      {
+        "ordinal": 15,
+        "name": "created_by",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "overtime_applications",
+            "name": "created_by"
+          }
+        }
+      },
+      {
+        "ordinal": 16,
+        "name": "updated_by",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "overtime_applications",
+            "name": "updated_by"
+          }
+        }
       }
     ],
     "parameters": {
@@ -190,7 +212,9 @@
       true,
       true,
       false,
-      false
+      false,
+      true,
+      true
     ]
   },
   "hash": "fd8bf9839769ec7c50ee28f8207356c4c45c62d6c21274185017b03981dc8ca3"

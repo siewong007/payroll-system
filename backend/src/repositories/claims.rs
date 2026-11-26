@@ -7,19 +7,47 @@ use uuid::Uuid;
 use crate::core::error::AppResult;
 use crate::models::portal::Claim;
 
+/// Lock approved unlinked claims eligible for this run inside the caller's transaction.
+pub async fn lock_payable(
+    executor: impl Executor<'_, Database = Postgres>,
+    employee_ids: &[Uuid],
+    company_id: Uuid,
+    period_end: NaiveDate,
+) -> AppResult<()> {
+    if employee_ids.is_empty() {
+        return Ok(());
+    }
+    sqlx::query!(
+        r#"SELECT id FROM claims
+        WHERE employee_id = ANY($1)
+          AND company_id = $2
+          AND status = 'approved'
+          AND payroll_run_id IS NULL
+          AND expense_date <= $3
+        ORDER BY id
+        FOR UPDATE"#,
+        employee_ids,
+        company_id,
+        period_end,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(())
+}
+
 /// Mark exactly the claims a run reimbursed as paid, linking them to the run.
 ///
-/// By id, not by predicate. The engine used to sum a period-bounded predicate
-/// and then re-run it to mark rows processed, so a claim approved between the
-/// two was marked paid without ever being paid. `status = 'approved' AND
-/// payroll_run_id IS NULL` is kept as a compare-and-swap so a row a concurrent
-/// run already took is left alone rather than double-claimed.
+/// Returns the number of rows actually updated so callers can abort on
+/// concurrent modification instead of double-paying a claim.
 pub async fn mark_paid(
     executor: impl Executor<'_, Database = Postgres>,
     run_id: Uuid,
     claim_ids: &[Uuid],
-) -> AppResult<()> {
-    sqlx::query!(
+) -> AppResult<u64> {
+    if claim_ids.is_empty() {
+        return Ok(0);
+    }
+    let res = sqlx::query!(
         r#"UPDATE claims
         SET status = 'processed', payroll_run_id = $1, updated_at = NOW()
         WHERE id = ANY($2) AND status = 'approved' AND payroll_run_id IS NULL"#,
@@ -28,7 +56,7 @@ pub async fn mark_paid(
     )
     .execute(executor)
     .await?;
-    Ok(())
+    Ok(res.rows_affected())
 }
 
 /// Revert a run's paid claims back to approved (used when deleting a run).
@@ -70,12 +98,13 @@ pub async fn insert(
     receipt_url: Option<String>,
     receipt_file_name: Option<String>,
     expense_date: NaiveDate,
+    created_by: Uuid,
 ) -> AppResult<Claim> {
     let claim = sqlx::query_as!(
         Claim,
         r#"INSERT INTO claims
-            (employee_id, company_id, title, description, amount, category, receipt_url, receipt_file_name, expense_date, status, submitted_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', NOW())
+            (employee_id, company_id, title, description, amount, category, receipt_url, receipt_file_name, expense_date, status, submitted_at, created_by)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', NOW(), $10)
         RETURNING *"#,
         employee_id,
         company_id,
@@ -86,6 +115,7 @@ pub async fn insert(
         receipt_url,
         receipt_file_name,
         expense_date,
+        created_by,
     )
     .fetch_one(executor)
     .await?;
@@ -163,6 +193,7 @@ pub async fn update_full(
     receipt_url: Option<String>,
     receipt_file_name: Option<String>,
     expense_date: Option<NaiveDate>,
+    updated_by: Uuid,
 ) -> AppResult<Option<Claim>> {
     let updated = sqlx::query_as!(
         Claim,
@@ -175,6 +206,7 @@ pub async fn update_full(
             receipt_url = CASE WHEN $8::text IS NULL THEN receipt_url ELSE NULLIF($8, '') END,
             receipt_file_name = CASE WHEN $9::text IS NULL THEN receipt_file_name ELSE NULLIF($9, '') END,
             expense_date = COALESCE($10, expense_date),
+            updated_by = $11,
             updated_at = NOW()
         WHERE id = $1 AND company_id = $2
           AND status IN ('draft', 'pending', 'rejected')
@@ -189,6 +221,7 @@ pub async fn update_full(
         receipt_url,
         receipt_file_name,
         expense_date,
+        updated_by,
     )
     .fetch_optional(executor)
     .await?;
@@ -323,11 +356,12 @@ pub async fn insert_draft(
     receipt_url: Option<String>,
     receipt_file_name: Option<String>,
     expense_date: NaiveDate,
+    created_by: Uuid,
 ) -> AppResult<Claim> {
     let claim = sqlx::query_as!(
         Claim,
-        r#"INSERT INTO claims (employee_id, company_id, title, description, amount, category, receipt_url, receipt_file_name, expense_date)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        r#"INSERT INTO claims (employee_id, company_id, title, description, amount, category, receipt_url, receipt_file_name, expense_date, created_by)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         RETURNING *"#,
         employee_id,
         company_id,
@@ -338,6 +372,7 @@ pub async fn insert_draft(
         receipt_url,
         receipt_file_name,
         expense_date,
+        created_by,
     )
     .fetch_one(executor)
     .await?;

@@ -26,8 +26,7 @@ pub async fn list_employee_summaries(
         JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
         JOIN employees e ON pi.employee_id = e.id
         WHERE pr.company_id = $1 AND pr.period_year = $2
-        AND pr.status::text IN ('approved', 'paid')
-        AND e.deleted_at IS NULL
+        AND pr.status IN ('approved', 'paid')
         GROUP BY pi.employee_id, e.full_name, e.employee_number, e.ic_number
         ORDER BY e.employee_number"#,
         company_id,
@@ -97,7 +96,7 @@ pub async fn ytd_totals(
         FROM payroll_items pi
         JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
         WHERE pi.employee_id = $1 AND pr.company_id = $2 AND pr.period_year = $3
-        AND pr.status::text IN ('approved', 'paid')"#,
+        AND pr.status IN ('approved', 'paid')"#,
         employee_id,
         company_id,
         year,

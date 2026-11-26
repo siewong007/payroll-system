@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id FROM overtime_applications\n        WHERE employee_id = ANY($1)\n          AND ot_date >= $2\n          AND ot_date <= $3\n          AND status = 'approved'\n        ORDER BY id\n        FOR UPDATE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "overtime_applications",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "UuidArray",
+        "Date",
+        "Date"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "98af10b2fa9883838d0359465263a62a77f14919d6d7f8c2d7586b0fc5c97487"
+}

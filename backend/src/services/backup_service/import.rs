@@ -517,6 +517,12 @@ pub async fn import_company(
     } else {
         Vec::new()
     };
+    let replaced_uploads = if is_overwrite {
+        crate::repositories::uploaded_files::list_stored_names_for_company(&mut *tx, new_company_id)
+            .await?
+    } else {
+        Vec::new()
+    };
 
     if is_overwrite {
         warnings.push(format!(
@@ -681,6 +687,9 @@ pub async fn import_company(
             r(pi.id, "payroll_items.id")?,
             r(pi.payroll_run_id, "payroll_items.payroll_run_id")?,
             r(pi.employee_id, "payroll_items.employee_id")?,
+            pi.bank_name.as_deref(),
+            pi.bank_account_number.as_deref(),
+            pi.bank_account_type.as_deref(),
             pi,
         )
         .await?;
@@ -701,6 +710,11 @@ pub async fn import_company(
             r(pe.employee_id, "payroll_entries.employee_id")?,
             new_company_id,
             ro(pe.payroll_run_id, "payroll_entries.payroll_run_id")?,
+            ro(
+                pe.overtime_application_id,
+                "payroll_entries.overtime_application_id",
+            )?,
+            ro(pe.leave_request_id, "payroll_entries.leave_request_id")?,
             pe,
         )
         .await?;
@@ -865,12 +879,29 @@ pub async fn import_company(
 
     tx.commit().await?;
 
-    let (file_warnings, restored_names) =
+    let (mut file_warnings, restored_names) =
         files::restore_backup_files_with_names(&backup.files, &file_plan).await;
     for stored_name in &restored_names {
-        let _ =
+        if let Err(err) =
             crate::repositories::uploaded_files::insert(pool, stored_name, new_company_id, None)
-                .await;
+                .await
+        {
+            if let Ok(path) = upload_path::stored_path(stored_name) {
+                let _ = tokio::fs::remove_file(&path).await;
+            }
+            tracing::warn!(stored_name = %stored_name, error = %err, "Failed to register restored upload ownership; unlinked restored file");
+            file_warnings.push(format!(
+                "Restored file \"{}\" could not be registered and was removed.",
+                stored_name
+            ));
+        }
+    }
+    for old_name in replaced_uploads {
+        if !restored_names.contains(&old_name)
+            && let Ok(path) = upload_path::stored_path(&old_name)
+        {
+            let _ = tokio::fs::remove_file(&path).await;
+        }
     }
     warnings.extend(file_warnings);
     warnings.extend(files::cap_warnings(

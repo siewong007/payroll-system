@@ -208,8 +208,12 @@ pub async fn update_group(
     auth: &AuthUser,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<UserGroup> {
-    let existing = get_group(pool, company_id, group_id).await?;
-    let existing_permissions = user_groups::permissions_for(pool, group_id).await?;
+    let actor_id = auth.0.sub;
+    let mut tx = pool.begin().await?;
+    let existing = user_groups::lock_for_update(&mut *tx, company_id, group_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Group not found".into()))?;
+    let existing_permissions = user_groups::permissions_for(&mut *tx, group_id).await?;
     ensure_monotonic_delegation(auth, &existing_permissions)?;
 
     let validated = match permissions {
@@ -222,11 +226,15 @@ pub async fn update_group(
     };
 
     let candidate_keys = validated.as_deref().unwrap_or(&existing_permissions);
-    let actor_id = auth.0.sub;
-    let mut tx = pool.begin().await?;
-    if validated.is_some() || is_active == Some(true) {
-        let members = user_groups::member_user_ids(&mut *tx, group_id).await?;
+    let group_will_be_active = is_active.unwrap_or(existing.is_active);
+    if group_will_be_active && (validated.is_some() || is_active == Some(true)) {
+        let mut members = user_groups::member_user_ids(&mut *tx, group_id).await?;
+        members.sort_unstable();
         if !members.is_empty() {
+            let hard_2fa = crate::services::auth_service::is_hard_2fa_enforced(&mut tx).await?;
+            let needs_2fa = candidate_keys.iter().any(|k| {
+                crate::services::auth_service::TWO_FACTOR_REQUIRED_GROUP_PERMS.contains(&k.as_str())
+            });
             let locked_users = users::lock_for_update(&mut *tx, &members).await?;
             for user in locked_users {
                 let mut combined = user_groups::user_permissions_in_other_groups(
@@ -235,6 +243,15 @@ pub async fn update_group(
                 .await?;
                 combined.extend(candidate_keys.iter().cloned());
                 ensure_user_permission_invariants(&user.roles, &combined)?;
+                if hard_2fa
+                    && needs_2fa
+                    && !crate::services::totp_service::is_enabled(&mut *tx, user.id).await?
+                {
+                    return Err(AppError::Validation(
+                        "Cannot grant privileged group permissions under hard 2FA enforcement to a user without 2FA enabled"
+                            .into(),
+                    ));
+                }
             }
         }
     }
@@ -344,11 +361,13 @@ pub async fn add_member(
     auth: &AuthUser,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<()> {
-    get_group(pool, company_id, group_id).await?;
-    let group_perms = user_groups::permissions_for(pool, group_id).await?;
+    let mut tx = pool.begin().await?;
+    let group = user_groups::lock_for_update(&mut *tx, company_id, group_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Group not found".into()))?;
+    let group_perms = user_groups::permissions_for(&mut *tx, group_id).await?;
     ensure_monotonic_delegation(auth, &group_perms)?;
 
-    let mut tx = pool.begin().await?;
     let locked = users::lock_for_update(&mut *tx, &[user_id]).await?;
     let user = locked
         .into_iter()
@@ -363,8 +382,21 @@ pub async fn add_member(
     let mut combined =
         user_groups::user_permissions_in_other_groups(&mut *tx, user_id, company_id, group_id)
             .await?;
-    combined.extend(group_perms);
+    combined.extend(group_perms.iter().cloned());
     ensure_user_permission_invariants(&user.roles, &combined)?;
+
+    if group.is_active
+        && group_perms.iter().any(|k| {
+            crate::services::auth_service::TWO_FACTOR_REQUIRED_GROUP_PERMS.contains(&k.as_str())
+        })
+        && crate::services::auth_service::is_hard_2fa_enforced(&mut tx).await?
+        && !crate::services::totp_service::is_enabled(&mut *tx, user_id).await?
+    {
+        return Err(AppError::Validation(
+            "Cannot add a user without 2FA enabled to a privileged group under hard 2FA enforcement"
+                .into(),
+        ));
+    }
 
     let actor_id = auth.0.sub;
     let inserted =

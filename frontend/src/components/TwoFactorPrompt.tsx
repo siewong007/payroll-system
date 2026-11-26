@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ShieldCheck } from 'lucide-react';
+import { Loader2, ShieldCheck } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
+import { TurnstileWidget } from '@/components/TurnstileWidget';
+import { turnstileEnabled, useTurnstileWaiter } from '@/lib/useTurnstileWaiter';
 import { getErrorMessage } from '@/lib/utils';
 import type { User } from '@/types';
 
@@ -19,15 +21,31 @@ export function TwoFactorPrompt({ mfaToken, onSuccess, onBack }: TwoFactorPrompt
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const { completeTwoFactorLogin } = useAuth();
+  const {
+    widgetRef: turnstileRef,
+    waitForToken: waitForTurnstileToken,
+    handleVerify: handleTurnstileVerify,
+    handleExpire: handleTurnstileExpire,
+    handleError: handleTurnstileError,
+    resetWidget: resetTurnstileWidget,
+  } = useTurnstileWaiter();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setLoading(true);
     try {
-      const user = await completeTwoFactorLogin(mfaToken, code.trim());
+      const captcha = await waitForTurnstileToken();
+      if (turnstileEnabled() && !captcha) {
+        setError(t('auth.verificationSlow'));
+        return;
+      }
+      const user = captcha
+        ? await completeTwoFactorLogin(mfaToken, code.trim(), captcha)
+        : await completeTwoFactorLogin(mfaToken, code.trim());
       onSuccess(user);
     } catch (err: unknown) {
+      resetTurnstileWidget();
       setError(getErrorMessage(err, t('auth.twoFactor.invalidOrExpired')));
     } finally {
       setLoading(false);
@@ -66,19 +84,35 @@ export function TwoFactorPrompt({ mfaToken, onSuccess, onBack }: TwoFactorPrompt
           required
         />
 
+        <div className="flex justify-center">
+          <TurnstileWidget
+            ref={turnstileRef}
+            onVerify={handleTurnstileVerify}
+            onExpire={handleTurnstileExpire}
+            onError={handleTurnstileError}
+          />
+        </div>
+
         <button
           type="submit"
           disabled={loading || !code.trim()}
-          className="btn-primary w-full"
+          className="btn-primary w-full inline-flex items-center justify-center gap-2"
         >
-          {loading ? t('auth.twoFactor.verifying') : t('auth.twoFactor.verify')}
+          {loading ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+              {t('auth.twoFactor.verifying')}
+            </>
+          ) : (
+            t('auth.twoFactor.verify')
+          )}
         </button>
 
         {onBack && (
           <button
             type="button"
             onClick={onBack}
-            className="w-full text-center text-sm text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200"
+            className="w-full min-h-11 inline-flex items-center justify-center rounded-xl text-sm text-gray-600 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] transition-colors"
           >
             {t('auth.backToLogin')}
           </button>

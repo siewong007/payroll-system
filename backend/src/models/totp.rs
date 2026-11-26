@@ -14,6 +14,8 @@ pub struct UserTotp {
     pub last_used_step: Option<i64>,
     pub failed_attempts: i32,
     pub locked_until: Option<DateTime<Utc>>,
+    pub code_login_failed_attempts: i32,
+    pub code_login_locked_until: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -39,6 +41,8 @@ pub struct TotpSetupResponse {
 pub struct TotpConfirmRequest {
     #[validate(length(min = 6, max = 8, message = "code must be 6-8 characters"))]
     pub code: String,
+    #[validate(length(min = 1, message = "password is required"))]
+    pub password: String,
 }
 
 /// One-time reveal of the backup codes generated at successful setup.
@@ -58,6 +62,8 @@ pub struct TotpVerifyLoginRequest {
     pub mfa_token: String,
     #[validate(length(min = 6, max = 24, message = "code must be 6-24 characters"))]
     pub code: String,
+    #[serde(default)]
+    pub turnstile_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize, validator::Validate)]

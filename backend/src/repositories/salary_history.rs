@@ -67,6 +67,7 @@ pub async fn insert_bulk_import_initial(
 pub async fn list_by_employee(
     executor: impl Executor<'_, Database = Postgres>,
     employee_id: Uuid,
+    company_id: Uuid,
 ) -> AppResult<Vec<SalaryHistory>> {
     // Columns are listed explicitly rather than `SELECT *` so that the tenant
     // anchor added in 1009 stays out of `SalaryHistory` and off the
@@ -75,8 +76,11 @@ pub async fn list_by_employee(
         SalaryHistory,
         r#"SELECT id, employee_id, old_salary, new_salary, effective_date, reason,
                change_type, notes, approved_by, approved_at, created_at, created_by
-           FROM salary_history WHERE employee_id = $1 ORDER BY effective_date DESC, created_at DESC"#,
+           FROM salary_history
+           WHERE employee_id = $1 AND company_id = $2
+           ORDER BY effective_date DESC, created_at DESC"#,
         employee_id,
+        company_id,
     )
     .fetch_all(executor)
     .await?;

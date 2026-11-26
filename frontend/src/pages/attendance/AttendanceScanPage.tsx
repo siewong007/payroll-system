@@ -167,7 +167,7 @@ export function AttendanceScanPage() {
   const retry = () => setAttempt((n) => n + 1);
 
   return (
-    <div className="theme-portal min-h-screen bg-[var(--background)] text-[var(--foreground)] flex items-center justify-center p-6">
+    <main className="theme-portal min-h-[100dvh] bg-[var(--background)] text-[var(--foreground)] flex items-center justify-center p-6 pt-[max(1.5rem,env(safe-area-inset-top))] pb-[max(1.5rem,env(safe-area-inset-bottom))]">
       <div className="w-full max-w-sm">
 
         {/* Logo */}
@@ -175,69 +175,71 @@ export function AttendanceScanPage() {
         <BrandLogo variant="lockup-dark" className="hidden dark:block h-10 w-auto mx-auto mb-8 rounded-xl" />
 
         {/* Card */}
-        <div className="bg-white dark:bg-slate-900 border border-gray-200/80 dark:border-slate-800 rounded-3xl shadow-lg p-8 flex flex-col items-center text-center gap-5">
+        <div className="card !rounded-3xl !p-6 sm:!p-8 shadow-lg flex flex-col items-center text-center gap-5">
 
           {/* Authenticating */}
           {state === 'authenticating' && (
-            <>
+            <div role="status" className="flex flex-col items-center gap-4">
               <div className="w-20 h-20 bg-gray-100 dark:bg-slate-800 rounded-full flex items-center justify-center">
-                <Loader2 className="w-9 h-9 text-teal-600 dark:text-teal-400 animate-spin" />
+                <Loader2 className="w-9 h-9 text-teal-600 dark:text-teal-400 animate-spin" aria-hidden="true" />
               </div>
               <div>
-                <h2 className="text-xl font-bold text-gray-900 dark:text-slate-100 mb-1">{t('common.loading')}</h2>
+                <h1 className="text-xl font-bold text-gray-900 dark:text-slate-100 mb-1">{t('common.loading')}</h1>
               </div>
-            </>
+            </div>
           )}
 
           {/* Locating */}
           {state === 'locating' && (
-            <>
+            <div role="status" className="flex flex-col items-center gap-4">
               <div className="w-20 h-20 bg-sky-50 dark:bg-sky-500/15 rounded-full flex items-center justify-center">
-                <MapPin className="w-9 h-9 text-sky-500 dark:text-sky-400 animate-pulse" />
+                <MapPin className="w-9 h-9 text-sky-500 dark:text-sky-400 motion-safe:animate-pulse" aria-hidden="true" />
               </div>
               <div>
-                <h2 className="text-xl font-bold text-gray-900 dark:text-slate-100 mb-1">{t('attendance.scan.locating')}</h2>
+                <h1 className="text-xl font-bold text-gray-900 dark:text-slate-100 mb-1">{t('attendance.scan.locating')}</h1>
                 <p className="text-sm text-gray-500 dark:text-slate-400">{t('attendance.scan.locatingBody')}</p>
               </div>
-            </>
+            </div>
           )}
 
           {/* Checking in */}
           {state === 'checking-in' && (
-            <>
+            <div role="status" className="flex flex-col items-center gap-4">
               <div className="w-20 h-20 bg-violet-50 dark:bg-violet-500/15 rounded-full flex items-center justify-center">
-                <Loader2 className="w-9 h-9 text-violet-500 dark:text-violet-400 animate-spin" />
+                <Loader2 className="w-9 h-9 text-violet-500 dark:text-violet-400 animate-spin" aria-hidden="true" />
               </div>
               <div>
-                <h2 className="text-xl font-bold text-gray-900 dark:text-slate-100 mb-1">{t('attendance.scan.checkingIn')}</h2>
+                <h1 className="text-xl font-bold text-gray-900 dark:text-slate-100 mb-1">{t('attendance.scan.checkingIn')}</h1>
                 <p className="text-sm text-gray-500 dark:text-slate-400">{t('attendance.scan.checkingInBody')}</p>
               </div>
-            </>
+            </div>
           )}
 
           {/* Success */}
           {state === 'success' && (
             <>
-              <div className="w-20 h-20 bg-emerald-50 dark:bg-emerald-500/15 rounded-full flex items-center justify-center">
-                <CheckCircle2 className="w-10 h-10 text-emerald-500 dark:text-emerald-400" />
-              </div>
-              <div>
-                <h2 className="text-xl font-bold text-gray-900 dark:text-slate-100 mb-1">{t('attendance.scan.checkedIn')}</h2>
-                {record && (
-                  <p className="text-sm text-gray-500 dark:text-slate-400">
-                    {t('attendance.scan.welcome', { name: user?.full_name })}
-                    <br />
-                    {t('attendance.scan.atTime', { time: formatTime(record.check_in_at) })}
-                  </p>
-                )}
-              </div>
-              <div className="w-full bg-emerald-50 dark:bg-emerald-500/15 rounded-2xl p-4 text-emerald-700 dark:text-emerald-200 text-sm">
-                {t('attendance.scan.recorded')}
+              <div role="status" className="flex flex-col items-center gap-4 w-full">
+                <div className="w-20 h-20 bg-emerald-50 dark:bg-emerald-500/15 rounded-full flex items-center justify-center">
+                  <CheckCircle2 className="w-10 h-10 text-emerald-500 dark:text-emerald-400" aria-hidden="true" />
+                </div>
+                <div>
+                  <h1 className="text-xl font-bold text-gray-900 dark:text-slate-100 mb-1">{t('attendance.scan.checkedIn')}</h1>
+                  {record && (
+                    <p className="text-sm text-gray-500 dark:text-slate-400 tabular-nums">
+                      {t('attendance.scan.welcome', { name: user?.full_name })}
+                      <br />
+                      {t('attendance.scan.atTime', { time: formatTime(record.check_in_at) })}
+                    </p>
+                  )}
+                </div>
+                <div className="w-full bg-emerald-50 dark:bg-emerald-500/15 rounded-2xl p-4 text-emerald-700 dark:text-emerald-200 text-sm">
+                  {t('attendance.scan.recorded')}
+                </div>
               </div>
               <button
                 type="button"
                 onClick={() => navigate(attendanceHref)}
-                className="w-full py-3 bg-teal-700 text-white rounded-2xl text-sm font-semibold hover:bg-teal-800 transition-colors"
+                className="btn-primary w-full min-h-11 justify-center rounded-2xl"
               >
                 {t('attendance.scan.viewMyAttendance')}
               </button>
@@ -247,19 +249,21 @@ export function AttendanceScanPage() {
           {/* Already checked in — not a failure: attendance is recorded. */}
           {state === 'already-checked-in' && (
             <>
-              <div className="w-20 h-20 bg-sky-50 dark:bg-sky-500/15 rounded-full flex items-center justify-center">
-                <Info className="w-10 h-10 text-sky-500 dark:text-sky-400" />
-              </div>
-              <div>
-                <h2 className="text-xl font-bold text-gray-900 dark:text-slate-100 mb-1">{t('attendance.scan.alreadyTitle')}</h2>
-                <p className="text-sm text-gray-500 dark:text-slate-400">
-                  {t('attendance.scan.alreadyBody')}
-                </p>
+              <div role="status" className="flex flex-col items-center gap-4">
+                <div className="w-20 h-20 bg-sky-50 dark:bg-sky-500/15 rounded-full flex items-center justify-center">
+                  <Info className="w-10 h-10 text-sky-500 dark:text-sky-400" aria-hidden="true" />
+                </div>
+                <div>
+                  <h1 className="text-xl font-bold text-gray-900 dark:text-slate-100 mb-1">{t('attendance.scan.alreadyTitle')}</h1>
+                  <p className="text-sm text-gray-500 dark:text-slate-400">
+                    {t('attendance.scan.alreadyBody')}
+                  </p>
+                </div>
               </div>
               <button
                 type="button"
                 onClick={() => navigate(attendanceHref)}
-                className="w-full py-3 bg-teal-700 text-white rounded-2xl text-sm font-semibold hover:bg-teal-800 transition-colors"
+                className="btn-primary w-full min-h-11 justify-center rounded-2xl"
               >
                 {t('attendance.scan.viewMyAttendance')}
               </button>
@@ -269,24 +273,26 @@ export function AttendanceScanPage() {
           {/* Location required — actionable, with a retry on the same token. */}
           {state === 'location-required' && (
             <>
-              <div className="w-20 h-20 bg-amber-50 dark:bg-amber-500/15 rounded-full flex items-center justify-center">
-                <MapPin className="w-10 h-10 text-amber-500 dark:text-amber-400" />
-              </div>
-              <div>
-                <h2 className="text-xl font-bold text-gray-900 dark:text-slate-100 mb-1">{t('attendance.scan.locationNeeded')}</h2>
-                <p className="text-sm text-gray-500 dark:text-slate-400">{translateServerMessage(error)}</p>
+              <div role="alert" className="flex flex-col items-center gap-4">
+                <div className="w-20 h-20 bg-amber-50 dark:bg-amber-500/15 rounded-full flex items-center justify-center">
+                  <MapPin className="w-10 h-10 text-amber-500 dark:text-amber-400" aria-hidden="true" />
+                </div>
+                <div>
+                  <h1 className="text-xl font-bold text-gray-900 dark:text-slate-100 mb-1">{t('attendance.scan.locationNeeded')}</h1>
+                  <p className="text-sm text-gray-500 dark:text-slate-400">{translateServerMessage(error)}</p>
+                </div>
               </div>
               <button
                 type="button"
                 onClick={retry}
-                className="w-full py-3 bg-teal-700 text-white rounded-2xl text-sm font-semibold hover:bg-teal-800 transition-colors flex items-center justify-center gap-2"
+                className="btn-primary w-full min-h-11 justify-center rounded-2xl"
               >
-                <RefreshCw className="w-4 h-4" /> {t('attendance.scan.enableLocationRetry')}
+                <RefreshCw className="w-4 h-4" aria-hidden="true" /> {t('attendance.scan.enableLocationRetry')}
               </button>
               <button
                 type="button"
                 onClick={() => navigate(attendanceHref)}
-                className="w-full py-3 border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-200 rounded-2xl text-sm font-semibold hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors"
+                className="btn-secondary w-full min-h-11 justify-center rounded-2xl"
               >
                 {t('attendance.scan.goToPortal')}
               </button>
@@ -296,24 +302,26 @@ export function AttendanceScanPage() {
           {/* Off-site geofence */}
           {state === 'outside-geofence' && (
             <>
-              <div className="w-20 h-20 bg-amber-50 dark:bg-amber-500/15 rounded-full flex items-center justify-center">
-                <Navigation className="w-10 h-10 text-amber-500 dark:text-amber-400" />
-              </div>
-              <div>
-                <h2 className="text-xl font-bold text-gray-900 dark:text-slate-100 mb-1">{t('attendance.scan.notAtLocation')}</h2>
-                <p className="text-sm text-gray-500 dark:text-slate-400">{translateServerMessage(error)}</p>
+              <div role="alert" className="flex flex-col items-center gap-4">
+                <div className="w-20 h-20 bg-amber-50 dark:bg-amber-500/15 rounded-full flex items-center justify-center">
+                  <Navigation className="w-10 h-10 text-amber-500 dark:text-amber-400" aria-hidden="true" />
+                </div>
+                <div>
+                  <h1 className="text-xl font-bold text-gray-900 dark:text-slate-100 mb-1">{t('attendance.scan.notAtLocation')}</h1>
+                  <p className="text-sm text-gray-500 dark:text-slate-400">{translateServerMessage(error)}</p>
+                </div>
               </div>
               <button
                 type="button"
                 onClick={retry}
-                className="w-full py-3 bg-teal-700 text-white rounded-2xl text-sm font-semibold hover:bg-teal-800 transition-colors flex items-center justify-center gap-2"
+                className="btn-primary w-full min-h-11 justify-center rounded-2xl"
               >
-                <RefreshCw className="w-4 h-4" /> {t('attendance.scan.movedRetry')}
+                <RefreshCw className="w-4 h-4" aria-hidden="true" /> {t('attendance.scan.movedRetry')}
               </button>
               <button
                 type="button"
                 onClick={() => navigate(attendanceHref)}
-                className="w-full py-3 border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-200 rounded-2xl text-sm font-semibold hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors"
+                className="btn-secondary w-full min-h-11 justify-center rounded-2xl"
               >
                 {t('attendance.scan.goToPortal')}
               </button>
@@ -323,26 +331,28 @@ export function AttendanceScanPage() {
           {/* Off-network */}
           {state === 'offsite-network' && (
             <>
-              <div className="w-20 h-20 bg-amber-50 dark:bg-amber-500/15 rounded-full flex items-center justify-center">
-                <WifiOff className="w-10 h-10 text-amber-500 dark:text-amber-400" />
-              </div>
-              <div>
-                <h2 className="text-xl font-bold text-gray-900 dark:text-slate-100 mb-1">{t('attendance.scan.offsiteTitle')}</h2>
-                <p className="text-sm text-gray-500 dark:text-slate-400">
-                  {t('attendance.checkin.offsiteSuffix', { message: translateServerMessage(error) })}
-                </p>
+              <div role="alert" className="flex flex-col items-center gap-4">
+                <div className="w-20 h-20 bg-amber-50 dark:bg-amber-500/15 rounded-full flex items-center justify-center">
+                  <WifiOff className="w-10 h-10 text-amber-500 dark:text-amber-400" aria-hidden="true" />
+                </div>
+                <div>
+                  <h1 className="text-xl font-bold text-gray-900 dark:text-slate-100 mb-1">{t('attendance.scan.offsiteTitle')}</h1>
+                  <p className="text-sm text-gray-500 dark:text-slate-400">
+                    {t('attendance.checkin.offsiteSuffix', { message: translateServerMessage(error) })}
+                  </p>
+                </div>
               </div>
               <button
                 type="button"
                 onClick={retry}
-                className="w-full py-3 bg-teal-700 text-white rounded-2xl text-sm font-semibold hover:bg-teal-800 transition-colors flex items-center justify-center gap-2"
+                className="btn-primary w-full min-h-11 justify-center rounded-2xl"
               >
-                <RefreshCw className="w-4 h-4" /> {t('common.retry')}
+                <RefreshCw className="w-4 h-4" aria-hidden="true" /> {t('common.retry')}
               </button>
               <button
                 type="button"
                 onClick={() => navigate(attendanceHref)}
-                className="w-full py-3 border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-200 rounded-2xl text-sm font-semibold hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors"
+                className="btn-secondary w-full min-h-11 justify-center rounded-2xl"
               >
                 {t('attendance.scan.goToPortal')}
               </button>
@@ -352,17 +362,19 @@ export function AttendanceScanPage() {
           {/* Expired or revoked token — open scanner to read a fresh kiosk code */}
           {state === 'expired-code' && (
             <>
-              <div className="w-20 h-20 bg-amber-50 dark:bg-amber-500/15 rounded-full flex items-center justify-center">
-                <Clock className="w-10 h-10 text-amber-500 dark:text-amber-400" />
-              </div>
-              <div>
-                <h2 className="text-xl font-bold text-gray-900 dark:text-slate-100 mb-1">{t('attendance.scan.expiredTitle')}</h2>
-                <p className="text-sm text-gray-500 dark:text-slate-400">{translateServerMessage(error)}</p>
+              <div role="alert" className="flex flex-col items-center gap-4">
+                <div className="w-20 h-20 bg-amber-50 dark:bg-amber-500/15 rounded-full flex items-center justify-center">
+                  <Clock className="w-10 h-10 text-amber-500 dark:text-amber-400" aria-hidden="true" />
+                </div>
+                <div>
+                  <h1 className="text-xl font-bold text-gray-900 dark:text-slate-100 mb-1">{t('attendance.scan.expiredTitle')}</h1>
+                  <p className="text-sm text-gray-500 dark:text-slate-400">{translateServerMessage(error)}</p>
+                </div>
               </div>
               <button
                 type="button"
                 onClick={() => navigate(attendanceHref)}
-                className="w-full py-3 bg-teal-700 text-white rounded-2xl text-sm font-semibold hover:bg-teal-800 transition-colors"
+                className="btn-primary w-full min-h-11 justify-center rounded-2xl"
               >
                 {t('attendance.scan.openScanner')}
               </button>
@@ -372,17 +384,19 @@ export function AttendanceScanPage() {
           {/* Unclosed previous session */}
           {state === 'stale-session' && (
             <>
-              <div className="w-20 h-20 bg-amber-50 dark:bg-amber-500/15 rounded-full flex items-center justify-center">
-                <Clock className="w-10 h-10 text-amber-500 dark:text-amber-400" />
-              </div>
-              <div>
-                <h2 className="text-xl font-bold text-gray-900 dark:text-slate-100 mb-1">{t('attendance.scan.failedTitle')}</h2>
-                <p className="text-sm text-gray-500 dark:text-slate-400">{translateServerMessage(error)}</p>
+              <div role="alert" className="flex flex-col items-center gap-4">
+                <div className="w-20 h-20 bg-amber-50 dark:bg-amber-500/15 rounded-full flex items-center justify-center">
+                  <Clock className="w-10 h-10 text-amber-500 dark:text-amber-400" aria-hidden="true" />
+                </div>
+                <div>
+                  <h1 className="text-xl font-bold text-gray-900 dark:text-slate-100 mb-1">{t('attendance.scan.failedTitle')}</h1>
+                  <p className="text-sm text-gray-500 dark:text-slate-400">{translateServerMessage(error)}</p>
+                </div>
               </div>
               <button
                 type="button"
                 onClick={() => navigate(attendanceHref)}
-                className="w-full py-3 bg-teal-700 text-white rounded-2xl text-sm font-semibold hover:bg-teal-800 transition-colors"
+                className="btn-primary w-full min-h-11 justify-center rounded-2xl"
               >
                 {t('attendance.scan.viewMyAttendance')}
               </button>
@@ -392,17 +406,19 @@ export function AttendanceScanPage() {
           {/* Account without employee profile */}
           {state === 'no-employee' && (
             <>
-              <div className="w-20 h-20 bg-red-50 dark:bg-red-500/15 rounded-full flex items-center justify-center">
-                <XCircle className="w-10 h-10 text-red-500 dark:text-red-400" />
-              </div>
-              <div>
-                <h2 className="text-xl font-bold text-gray-900 dark:text-slate-100 mb-1">{t('attendance.scan.failedTitle')}</h2>
-                <p className="text-sm text-gray-500 dark:text-slate-400">{error}</p>
+              <div role="alert" className="flex flex-col items-center gap-4">
+                <div className="w-20 h-20 bg-red-50 dark:bg-red-500/15 rounded-full flex items-center justify-center">
+                  <XCircle className="w-10 h-10 text-red-500 dark:text-red-400" aria-hidden="true" />
+                </div>
+                <div>
+                  <h1 className="text-xl font-bold text-gray-900 dark:text-slate-100 mb-1">{t('attendance.scan.failedTitle')}</h1>
+                  <p className="text-sm text-gray-500 dark:text-slate-400">{error}</p>
+                </div>
               </div>
               <button
                 type="button"
                 onClick={() => navigate(fallbackHref)}
-                className="w-full py-3 border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-200 rounded-2xl text-sm font-semibold hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors"
+                className="btn-secondary w-full min-h-11 justify-center rounded-2xl"
               >
                 {portalOnly ? t('attendance.scan.goToPortal') : t('attendance.scan.backToHome')}
               </button>
@@ -412,24 +428,26 @@ export function AttendanceScanPage() {
           {/* Error */}
           {state === 'error' && (
             <>
-              <div className="w-20 h-20 bg-red-50 dark:bg-red-500/15 rounded-full flex items-center justify-center">
-                <XCircle className="w-10 h-10 text-red-500 dark:text-red-400" />
-              </div>
-              <div>
-                <h2 className="text-xl font-bold text-gray-900 dark:text-slate-100 mb-1">{t('attendance.scan.failedTitle')}</h2>
-                <p className="text-sm text-gray-500 dark:text-slate-400">{translateServerMessage(error)}</p>
+              <div role="alert" className="flex flex-col items-center gap-4">
+                <div className="w-20 h-20 bg-red-50 dark:bg-red-500/15 rounded-full flex items-center justify-center">
+                  <XCircle className="w-10 h-10 text-red-500 dark:text-red-400" aria-hidden="true" />
+                </div>
+                <div>
+                  <h1 className="text-xl font-bold text-gray-900 dark:text-slate-100 mb-1">{t('attendance.scan.failedTitle')}</h1>
+                  <p className="text-sm text-gray-500 dark:text-slate-400">{translateServerMessage(error)}</p>
+                </div>
               </div>
               <button
                 type="button"
                 onClick={retry}
-                className="w-full py-3 bg-teal-700 text-white rounded-2xl text-sm font-semibold hover:bg-teal-800 transition-colors flex items-center justify-center gap-2"
+                className="btn-primary w-full min-h-11 justify-center rounded-2xl"
               >
-                <RefreshCw className="w-4 h-4" /> {t('common.retry')}
+                <RefreshCw className="w-4 h-4" aria-hidden="true" /> {t('common.retry')}
               </button>
               <button
                 type="button"
                 onClick={() => navigate(attendanceHref)}
-                className="w-full py-3 border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-200 rounded-2xl text-sm font-semibold hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors"
+                className="btn-secondary w-full min-h-11 justify-center rounded-2xl"
               >
                 {t('attendance.scan.goToPortal')}
               </button>
@@ -439,17 +457,19 @@ export function AttendanceScanPage() {
           {/* No token */}
           {state === 'no-token' && (
             <>
-              <div className="w-20 h-20 bg-gray-100 dark:bg-slate-800 rounded-full flex items-center justify-center">
-                <QrCode className="w-9 h-9 text-gray-400 dark:text-slate-500" />
-              </div>
-              <div>
-                <h2 className="text-xl font-bold text-gray-900 dark:text-slate-100 mb-1">{t('attendance.scan.invalidQr')}</h2>
-                <p className="text-sm text-gray-500 dark:text-slate-400">{t('attendance.scan.invalidQrBody')}</p>
+              <div role="alert" className="flex flex-col items-center gap-4">
+                <div className="w-20 h-20 bg-gray-100 dark:bg-slate-800 rounded-full flex items-center justify-center">
+                  <QrCode className="w-9 h-9 text-gray-500 dark:text-slate-400" aria-hidden="true" />
+                </div>
+                <div>
+                  <h1 className="text-xl font-bold text-gray-900 dark:text-slate-100 mb-1">{t('attendance.scan.invalidQr')}</h1>
+                  <p className="text-sm text-gray-500 dark:text-slate-400">{t('attendance.scan.invalidQrBody')}</p>
+                </div>
               </div>
               <button
                 type="button"
                 onClick={() => navigate(fallbackHref)}
-                className="w-full py-3 bg-teal-700 text-white rounded-2xl text-sm font-semibold hover:bg-teal-800 transition-colors"
+                className="btn-primary w-full min-h-11 justify-center rounded-2xl"
               >
                 {portalOnly ? t('attendance.scan.goToPortal') : t('attendance.scan.backToHome')}
               </button>
@@ -457,6 +477,6 @@ export function AttendanceScanPage() {
           )}
         </div>
       </div>
-    </div>
+    </main>
   );
 }

@@ -5,7 +5,9 @@ use uuid::Uuid;
 
 use crate::core::error::{AppError, AppResult};
 use crate::models::audit::AuditRequestMeta;
-use crate::repositories::{password_reset_requests, refresh_tokens, user_sessions, users};
+use crate::repositories::{
+    mfa_challenges, password_reset_requests, refresh_tokens, user_sessions, users,
+};
 use crate::services::audit_service;
 
 fn hash_token(token: &str) -> String {
@@ -103,6 +105,7 @@ pub async fn reset_password(
     users::set_password(&mut *tx, request.user_id, &password_hash).await?;
     user_sessions::revoke_all_for_user(&mut *tx, request.user_id).await?;
     refresh_tokens::revoke_all_for_user(&mut *tx, request.user_id).await?;
+    mfa_challenges::revoke_for_user(&mut *tx, request.user_id).await?;
     crate::repositories::push_subscriptions::revoke_all_for_user(&mut *tx, request.user_id).await?;
 
     // Same-transaction audit, same rule as change_password and the break-glass

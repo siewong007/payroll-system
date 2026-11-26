@@ -32,7 +32,9 @@ pub async fn company(
                   hrdf_number, address_line1, address_line2, city, state, postcode, country,
                   phone, email, logo_url, hrdf_enabled, unpaid_leave_divisor, is_active,
                   created_at, updated_at,
-                  attendance_method, timezone AS "timezone?", geofence_mode AS "geofence_mode?"
+                  attendance_method, timezone AS "timezone?", geofence_mode AS "geofence_mode?",
+                  attendance_network_mode AS "attendance_network_mode?",
+                  auto_absent_last_run_date
            FROM companies WHERE id = $1"#,
         company_id,
     )
@@ -272,7 +274,7 @@ pub async fn payroll_runs(
                   total_socso_employee, total_socso_employer,
                   total_eis_employee, total_eis_employer,
                   total_pcb, total_zakat, employee_count, version, notes,
-                  cancelled_at, cancel_reason, created_at, updated_at
+                  cancelled_at, cancel_reason, calculation_snapshot, created_at, updated_at
            FROM payroll_runs WHERE company_id = $1 ORDER BY id"#,
         company_id,
     )
@@ -299,6 +301,7 @@ pub async fn payroll_items(
                   pi.ytd_gross, pi.ytd_epf_employee, pi.ytd_pcb,
                   pi.ytd_socso_employee, pi.ytd_eis_employee, pi.ytd_zakat, pi.ytd_net,
                   pi.working_days, pi.days_worked, pi.is_prorated,
+                  pi.bank_name, pi.bank_account_number, pi.bank_account_type,
                   pi.created_at, pi.updated_at
            FROM payroll_items pi
            JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
@@ -337,7 +340,9 @@ pub async fn payroll_entries(
         PayrollEntryExport,
         r#"SELECT id, employee_id, company_id, period_year, period_month,
                   category, item_type, description AS "description?", amount, quantity, rate,
-                  is_taxable, is_processed, payroll_run_id, created_at, updated_at
+                  is_taxable, is_processed, payroll_run_id,
+                  overtime_application_id, leave_request_id,
+                  created_at, updated_at
            FROM payroll_entries WHERE company_id = $1 ORDER BY id"#,
         company_id,
     )
@@ -533,7 +538,9 @@ pub async fn update_company(
                unpaid_leave_divisor=$18, is_active=$19, updated_at=$20,
                attendance_method=COALESCE($21, attendance_method),
                timezone=COALESCE($22, timezone),
-               geofence_mode=COALESCE($23, geofence_mode)
+               geofence_mode=COALESCE($23, geofence_mode),
+               attendance_network_mode=COALESCE($24, attendance_network_mode),
+               auto_absent_last_run_date=COALESCE($25, auto_absent_last_run_date)
                WHERE id = $1"#,
         id,
         c.registration_number,
@@ -558,6 +565,8 @@ pub async fn update_company(
         c.attendance_method,
         c.timezone,
         c.geofence_mode,
+        c.attendance_network_mode,
+        c.auto_absent_last_run_date,
     )
     .execute(executor)
     .await?;
@@ -576,9 +585,10 @@ pub async fn insert_company(
         r#"INSERT INTO companies (id, name, registration_number, tax_number, epf_number, socso_code,
                eis_code, hrdf_number, address_line1, address_line2, city, state, postcode, country,
                phone, email, logo_url, hrdf_enabled, unpaid_leave_divisor, is_active, created_at, updated_at,
-               attendance_method, timezone, geofence_mode)
+               attendance_method, timezone, geofence_mode, attendance_network_mode, auto_absent_last_run_date)
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,
-                       $23, COALESCE($24::varchar, 'Asia/Kuala_Lumpur'), COALESCE($25::varchar, 'none'))"#,
+                       $23, COALESCE($24::varchar, 'Asia/Kuala_Lumpur'), COALESCE($25::varchar, 'none'),
+                       COALESCE($26::varchar, 'none'), $27)"#,
         id,
         c.name,
         c.registration_number,
@@ -604,6 +614,8 @@ pub async fn insert_company(
         c.attendance_method,
         c.timezone,
         c.geofence_mode,
+        c.attendance_network_mode,
+        c.auto_absent_last_run_date,
     )
     .execute(executor)
     .await?;
@@ -1129,9 +1141,9 @@ pub async fn insert_payroll_run(
                total_socso_employee, total_socso_employer,
                total_eis_employee, total_eis_employer,
                total_pcb, total_zakat, employee_count, version, notes,
-               created_at, updated_at, cancelled_at, cancel_reason)
+               created_at, updated_at, cancelled_at, cancel_reason, calculation_snapshot)
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::text::payroll_status,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25::timestamptz,
-                       CASE WHEN $9 = 'cancelled' THEN COALESCE($26::timestamptz, $25::timestamptz) ELSE $26::timestamptz END, $27)"#,
+                       CASE WHEN $9 = 'cancelled' THEN COALESCE($26::timestamptz, $25::timestamptz) ELSE $26::timestamptz END, $27, $28)"#,
         id,
         company_id,
         payroll_group_id,
@@ -1159,17 +1171,22 @@ pub async fn insert_payroll_run(
         pr.updated_at,
         pr.cancelled_at,
         pr.cancel_reason,
+        pr.calculation_snapshot,
     )
     .execute(executor)
     .await?;
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn insert_payroll_item(
     executor: impl Executor<'_, Database = Postgres>,
     id: Uuid,
     payroll_run_id: Uuid,
     employee_id: Uuid,
+    bank_name: Option<&str>,
+    bank_account_number: Option<&str>,
+    bank_account_type: Option<&str>,
     pi: &PayrollItemExport,
 ) -> AppResult<()> {
     sqlx::query!(
@@ -1185,9 +1202,10 @@ pub async fn insert_payroll_item(
                ytd_gross, ytd_epf_employee, ytd_pcb,
                ytd_socso_employee, ytd_eis_employee, ytd_zakat, ytd_net,
                working_days, days_worked, is_prorated,
+               bank_name, bank_account_number, bank_account_type,
                created_at, updated_at)
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
-                       $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40)"#,
+                       $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43)"#,
         id,
         payroll_run_id,
         employee_id,
@@ -1226,6 +1244,9 @@ pub async fn insert_payroll_item(
         pi.working_days,
         pi.days_worked,
         pi.is_prorated,
+        bank_name,
+        bank_account_number,
+        bank_account_type,
         pi.created_at,
         pi.updated_at,
     )
@@ -1259,19 +1280,23 @@ pub async fn insert_payroll_item_detail(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn insert_payroll_entry(
     executor: impl Executor<'_, Database = Postgres>,
     id: Uuid,
     employee_id: Uuid,
     company_id: Uuid,
     payroll_run_id: Option<Uuid>,
+    overtime_application_id: Option<Uuid>,
+    leave_request_id: Option<Uuid>,
     pe: &PayrollEntryExport,
 ) -> AppResult<()> {
     sqlx::query!(
         r#"INSERT INTO payroll_entries (id, employee_id, company_id, period_year, period_month,
                category, item_type, description, amount, quantity, rate,
-               is_taxable, is_processed, payroll_run_id, created_at, updated_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)"#,
+               is_taxable, is_processed, payroll_run_id,
+               overtime_application_id, leave_request_id, created_at, updated_at)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)"#,
         id,
         employee_id,
         company_id,
@@ -1286,6 +1311,8 @@ pub async fn insert_payroll_entry(
         pe.is_taxable,
         pe.is_processed,
         payroll_run_id,
+        overtime_application_id,
+        leave_request_id,
         pe.created_at,
         pe.updated_at,
     )

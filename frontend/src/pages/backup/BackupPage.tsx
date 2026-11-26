@@ -168,7 +168,7 @@ export function BackupPage() {
     : 0;
 
   return (
-    <div className="max-w-4xl mx-auto space-y-8">
+    <div className="max-w-5xl mx-auto space-y-6">
       <PageHeader title={t('backup.title')} subtitle={t('backup.subtitle')} />
 
       {isSuperAdmin && companiesError && (
@@ -180,12 +180,13 @@ export function BackupPage() {
             <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" aria-hidden="true" />
             <span>{getErrorMessage(companiesQueryError, t('companies.loadFailed'))}</span>
           </div>
-          <button type="button" onClick={() => void refetchCompanies()} className="btn-secondary text-xs">
+          <button type="button" onClick={() => void refetchCompanies()} className="btn-secondary min-h-11 sm:min-h-9 text-xs">
             {t('common.retry')}
           </button>
         </div>
       )}
 
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
       {/* Export Section */}
       <div className="card p-6">
         <div className="flex flex-col sm:flex-row sm:items-start gap-4">
@@ -194,10 +195,10 @@ export function BackupPage() {
           </div>
           <div className="flex-1 min-w-0">
             <h2 className="text-lg font-semibold text-gray-900 dark:text-slate-100">{t('backup.exportTitle')}</h2>
-            <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">
+            <p className="text-sm text-gray-600 dark:text-slate-300 mt-1">
               {t('backup.exportDescription')}
             </p>
-            <p className="text-xs text-gray-400 dark:text-slate-500 mt-2">
+            <p className="text-xs text-gray-600 dark:text-slate-400 mt-2">
               {t('backup.exportExcludes')}
             </p>
 
@@ -208,7 +209,7 @@ export function BackupPage() {
                   id="export-company-select"
                   value={exportCompanyId}
                   onChange={(e) => { setExportCompanyId(e.target.value); setExportSuccess(false); setExportError(''); }}
-                  className="form-input"
+                  className="form-input min-h-11 sm:min-h-10"
                 >
                   <option value="">{t('backup.chooseCompany')}</option>
                   {companies?.map((c) => (
@@ -223,7 +224,7 @@ export function BackupPage() {
                 type="button"
                 onClick={() => { void handleExport(); }}
                 disabled={exporting || (isSuperAdmin && !exportCompanyId)}
-                className="inline-flex items-center gap-2 px-4 py-2.5 min-h-[44px] bg-gray-900 dark:bg-[var(--accent-1)] text-white text-sm font-medium rounded-xl hover:bg-gray-800 dark:hover:opacity-90 disabled:opacity-50 transition-all"
+                className="btn-primary w-full sm:w-auto min-h-11 inline-flex items-center justify-center gap-2"
               >
                 {exporting ? (
                   <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
@@ -233,7 +234,7 @@ export function BackupPage() {
                 {exporting ? t('common.exporting') : t('backup.exportBackup')}
               </button>
               {exportSuccess && (
-                <span className="inline-flex items-center gap-1.5 text-sm text-green-600 dark:text-emerald-400">
+                <span role="status" className="inline-flex items-center gap-1.5 text-sm text-green-700 dark:text-emerald-400">
                   <CheckCircle2 className="w-4 h-4" aria-hidden="true" />
                   {t('backup.downloaded')}
                 </span>
@@ -257,16 +258,17 @@ export function BackupPage() {
           </div>
           <div className="flex-1 min-w-0">
             <h2 className="text-lg font-semibold text-gray-900 dark:text-slate-100">{t('backup.importTitle')}</h2>
-            <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">
+            <p className="text-sm text-gray-600 dark:text-slate-300 mt-1">
               {t('backup.importDescription')}
             </p>
-            <p className="text-xs text-amber-600 dark:text-amber-400 mt-2">
+            <p className="text-xs text-amber-700 dark:text-amber-400 mt-2">
               {t('backup.importNote')}
             </p>
 
             {isSuperAdmin && (
-              <div className="mt-4 max-w-md space-y-3">
-                <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-slate-200 cursor-pointer">
+              <fieldset className="mt-4 max-w-md space-y-2.5">
+                <legend className="sr-only">{t('backup.importTitle')}</legend>
+                <label className="flex items-center gap-2.5 min-h-11 px-3 py-2 rounded-xl border border-gray-200 dark:border-slate-700 text-sm text-gray-800 dark:text-slate-200 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-[var(--ring)] cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800/60 transition-colors">
                   <input
                     type="radio"
                     name="import-mode"
@@ -282,7 +284,7 @@ export function BackupPage() {
                   {t('backup.overwriteExisting')}
                 </label>
                 {!createNewCompany && (
-                  <div className="space-y-2.5 pl-6">
+                  <div className="space-y-2.5 pl-4">
                     <div>
                       <label htmlFor="import-target-select" className="sr-only">{t('backup.chooseTarget')}</label>
                       <select
@@ -294,7 +296,7 @@ export function BackupPage() {
                           setImportResult(null);
                           setImportError('');
                         }}
-                        className="form-input"
+                        className="form-input min-h-11 sm:min-h-10"
                       >
                         <option value="">{t('backup.chooseTarget')}</option>
                         {companies?.map((c) => (
@@ -304,7 +306,7 @@ export function BackupPage() {
                     </div>
                   </div>
                 )}
-                <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-slate-200 cursor-pointer">
+                <label className="flex items-center gap-2.5 min-h-11 px-3 py-2 rounded-xl border border-gray-200 dark:border-slate-700 text-sm text-gray-800 dark:text-slate-200 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-[var(--ring)] cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800/60 transition-colors">
                   <input
                     type="radio"
                     name="import-mode"
@@ -320,17 +322,17 @@ export function BackupPage() {
                   {t('backup.createNew')}
                 </label>
                 {createNewCompany && (
-                  <p className="text-xs text-gray-500 dark:text-slate-400 pl-6">
+                  <p className="text-xs text-gray-600 dark:text-slate-400 pl-4">
                     {t('backup.createNewNote')}
                   </p>
                 )}
-              </div>
+              </fieldset>
             )}
 
             <div className="mt-4 space-y-3">
               <div className="flex flex-wrap items-center gap-3">
                 <label
-                  className="inline-flex items-center gap-2 px-4 py-2.5 min-h-[44px] bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-slate-200 text-sm font-medium rounded-xl hover:bg-gray-200 dark:hover:bg-slate-700 cursor-pointer transition-all focus-within:ring-2 focus-within:ring-[var(--ring)]"
+                  className="inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2.5 min-h-[44px] bg-gray-100 dark:bg-slate-800 text-gray-800 dark:text-slate-200 text-sm font-medium rounded-xl hover:bg-gray-200 dark:hover:bg-slate-700 cursor-pointer transition-all focus-within:ring-2 focus-within:ring-[var(--ring)]"
                 >
                   <FileJson className="w-4 h-4" aria-hidden="true" />
                   {t('common.chooseFile')}
@@ -351,7 +353,7 @@ export function BackupPage() {
                       type="button"
                       onClick={clearSelectedFile}
                       aria-label={t('common.removeFile')}
-                      className="min-h-10 min-w-10 sm:min-h-7 sm:min-w-7 inline-flex items-center justify-center rounded-lg text-gray-400 dark:text-slate-500 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-800"
+                      className="min-h-11 min-w-11 sm:min-h-8 sm:min-w-8 inline-flex items-center justify-center rounded-lg text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                     >
                       <X className="w-4 h-4" aria-hidden="true" />
                     </button>
@@ -368,24 +370,24 @@ export function BackupPage() {
 
               {preview && (
                 <div className="p-4 rounded-xl border border-gray-200 dark:border-slate-700 bg-gray-50/70 dark:bg-slate-800/50 space-y-2 text-sm">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-gray-600 dark:text-slate-300">
                     {t('backup.previewTitle')}
                   </p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
                     <div>
-                      <span className="text-gray-500 dark:text-slate-400">{t('backup.sourceCompany')}: </span>
+                      <span className="text-gray-600 dark:text-slate-400">{t('backup.sourceCompany')}: </span>
                       <span className="font-medium text-gray-900 dark:text-slate-100">{preview.source_company_name}</span>
                     </div>
                     <div>
-                      <span className="text-gray-500 dark:text-slate-400">{t('backup.exportedAt')}: </span>
+                      <span className="text-gray-600 dark:text-slate-400">{t('backup.exportedAt')}: </span>
                       <span className="font-medium text-gray-900 dark:text-slate-100">{formatDateTime(preview.exported_at)}</span>
                     </div>
                     <div>
-                      <span className="text-gray-500 dark:text-slate-400">{t('backup.formatVersion')}: </span>
+                      <span className="text-gray-600 dark:text-slate-400">{t('backup.formatVersion')}: </span>
                       <span className="font-mono font-medium text-gray-900 dark:text-slate-100">{preview.format_version}</span>
                     </div>
                     <div>
-                      <span className="text-gray-500 dark:text-slate-400">{t('backup.records')}: </span>
+                      <span className="text-gray-600 dark:text-slate-400">{t('backup.records')}: </span>
                       <span className="font-medium tabular-nums text-gray-900 dark:text-slate-100">{formatNumber(preview.total_records)}</span>
                     </div>
                   </div>
@@ -422,7 +424,7 @@ export function BackupPage() {
                 type="button"
                 onClick={() => { void handleImport(); }}
                 disabled={!selectedFile || !preview || importing || Boolean(previewError) || overwriteBlocked}
-                className="inline-flex items-center gap-2 px-4 py-2.5 min-h-[44px] bg-amber-600 text-white text-sm font-medium rounded-xl hover:bg-amber-700 disabled:opacity-50 transition-all"
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 min-h-[44px] bg-amber-600 text-white text-sm font-medium rounded-xl hover:bg-amber-700 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 transition-all"
               >
                 {importing ? (
                   <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
@@ -447,7 +449,7 @@ export function BackupPage() {
                     <CheckCircle2 className="w-5 h-5" aria-hidden="true" />
                     {importResult.is_overwrite ? t('backup.overwritten') : t('backup.importSuccess')}
                   </div>
-                  <p className="text-sm text-green-600 dark:text-emerald-400 mt-1">
+                  <p className="text-sm text-green-700 dark:text-emerald-400 mt-1">
                     {importResult.is_overwrite
                       ? <Trans i18nKey="backup.overwrittenDetail" values={{ name: importResult.new_company_name, count: totalRecords }} components={{ b: <strong /> }} />
                       : <Trans i18nKey="backup.createdDetail" values={{ name: importResult.new_company_name, count: totalRecords }} components={{ b: <strong /> }} />
@@ -457,8 +459,8 @@ export function BackupPage() {
 
                 {importResult.warnings.length > 0 && (
                   <div className="p-3 bg-amber-50 dark:bg-amber-500/10 rounded-xl border border-amber-100 dark:border-amber-500/25">
-                    <p className="text-sm font-medium text-amber-700 dark:text-amber-300">{t('backup.warnings')}</p>
-                    <ul className="mt-1 text-sm text-amber-600 dark:text-amber-400 list-disc list-inside">
+                    <p className="text-sm font-medium text-amber-800 dark:text-amber-300">{t('backup.warnings')}</p>
+                    <ul className="mt-1 text-sm text-amber-700 dark:text-amber-300 list-disc list-inside">
                       {importResult.warnings.map((w, i) => (
                         <li key={i}>{w}</li>
                       ))}
@@ -470,8 +472,8 @@ export function BackupPage() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="bg-gray-50 dark:bg-slate-800/60 border-b border-gray-200 dark:border-slate-800">
-                        <th className="text-left px-4 py-2.5 font-medium text-gray-600 dark:text-slate-300">{t('backup.table')}</th>
-                        <th className="text-right px-4 py-2.5 font-medium text-gray-600 dark:text-slate-300">{t('backup.records')}</th>
+                        <th className="text-left px-4 py-2.5 font-medium text-gray-700 dark:text-slate-300">{t('backup.table')}</th>
+                        <th className="text-right px-4 py-2.5 font-medium text-gray-700 dark:text-slate-300">{t('backup.records')}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -492,6 +494,7 @@ export function BackupPage() {
             )}
           </div>
         </div>
+      </div>
       </div>
     </div>
   );

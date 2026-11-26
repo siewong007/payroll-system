@@ -79,8 +79,8 @@ export async function passkeyDiscoverableComplete(
 }
 
 // Registration flow (authenticated)
-export async function passkeyRegisterBegin() {
-  const { data } = await api.post('/auth/passkey/register/begin');
+export async function passkeyRegisterBegin(password: string) {
+  const { data } = await api.post('/auth/passkey/register/begin', { password });
   return data as { challenge_id: string; options: PasskeyCreationOptionsEnvelope };
 }
 

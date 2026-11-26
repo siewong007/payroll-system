@@ -1,0 +1,49 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH base AS (\n            SELECT department, is_active\n            FROM employees\n            WHERE company_id = $1 AND deleted_at IS NULL\n        ),\n        totals AS (\n            SELECT COUNT(*) AS total_employees,\n                   COUNT(*) FILTER (WHERE is_active IS TRUE) AS active_employees\n            FROM base\n        ),\n        depts AS (\n            SELECT department, COUNT(*) AS dept_count\n            FROM base\n            WHERE is_active IS TRUE\n            GROUP BY department\n        )\n        SELECT t.total_employees AS \"total_employees!\",\n               t.active_employees AS \"active_employees!\",\n               d.department AS \"department?\",\n               d.dept_count AS \"dept_count?\"\n        FROM totals t\n        LEFT JOIN depts d ON TRUE\n        ORDER BY d.dept_count DESC NULLS LAST",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "total_employees!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "active_employees!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "department?",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "department"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "dept_count?",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      true,
+      null
+    ]
+  },
+  "hash": "b39a75c9cc8d5c8d3975a723a8ae74f17024a5f13b9560b1140f86029067399a"
+}

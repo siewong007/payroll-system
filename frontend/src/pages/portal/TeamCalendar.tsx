@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-react';
+import { AlertTriangle, Calendar, ChevronLeft, ChevronRight } from 'lucide-react';
 import { getTeamCalendar, getPortalHolidays } from '@/api/portal';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useAuth } from '@/context/AuthContext';
 import type { Holiday, TeamLeaveEntry } from '@/types';
@@ -51,6 +52,7 @@ export function TeamCalendar() {
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth() + 1);
   const [selectedDay, setSelectedDay] = useState<number>(now.getDate());
   const [activeTab, setActiveTab] = useState<'calendar' | 'holidays'>('calendar');
+  const isCurrentMonth = selectedYear === now.getFullYear() && selectedMonth === now.getMonth() + 1;
 
   const {
     data: teamLeaves = [],
@@ -94,6 +96,13 @@ export function TeamCalendar() {
     } else {
       setSelectedMonth(selectedMonth + 1);
     }
+  };
+
+  const goToday = () => {
+    const today = new Date();
+    setSelectedYear(today.getFullYear());
+    setSelectedMonth(today.getMonth() + 1);
+    setSelectedDay(today.getDate());
   };
 
   const firstDay = new Date(selectedYear, selectedMonth - 1, 1);
@@ -144,41 +153,77 @@ export function TeamCalendar() {
       const isWeekend = dow === 0 || dow === 6;
       const dayHolidays = holidayMap.get(day) || [];
       const dayLeaves = leaveMap.get(day) || [];
+      const selected = clampedSelectedDay === day;
       const isToday =
         day === now.getDate() &&
         selectedMonth === now.getMonth() + 1 &&
         selectedYear === now.getFullYear();
 
+      const visibleHolidays = dayHolidays.slice(0, 1);
+      const visibleLeaves = dayLeaves.slice(0, 2);
+      const overflowCount = Math.max(0, dayHolidays.length - visibleHolidays.length) +
+        Math.max(0, dayLeaves.length - visibleLeaves.length);
+
       cells.push(
-        <div
+        <button
+          type="button"
           key={day}
-          className={`min-h-[100px] border border-gray-100 dark:border-slate-800 p-1.5 ${
-            isWeekend ? 'bg-gray-50 dark:bg-slate-800/40' : 'bg-white dark:bg-slate-900'
-          } ${isToday ? 'ring-2 ring-teal-500 ring-inset' : ''}`}
+          onClick={() => setSelectedDay(day)}
+          aria-pressed={selected}
+          aria-label={t('portal.teamCalendar.selectDay', { day })}
+          className={`min-h-[100px] text-left align-top flex flex-col border border-gray-100 dark:border-slate-800 p-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-inset ${
+            selected
+              ? 'bg-teal-50/60 dark:bg-teal-500/15 ring-2 ring-[var(--accent-1)] ring-inset'
+              : isWeekend
+                ? 'bg-gray-50 dark:bg-slate-800/40 hover:bg-gray-100/70 dark:hover:bg-slate-800/60'
+                : 'bg-white dark:bg-slate-900 hover:bg-gray-50/70 dark:hover:bg-slate-800/40'
+          }`}
         >
-          <div className={`text-xs font-medium mb-0.5 ${isWeekend ? 'text-gray-400 dark:text-slate-500' : 'text-gray-700 dark:text-slate-200'} ${isToday ? 'font-bold text-teal-600 dark:text-teal-300' : ''}`}>
-            {day}
+          <div className="mb-1">
+            <span
+              className={`text-xs font-medium tabular-nums leading-none ${
+                isToday
+                  ? 'inline-flex h-5 w-5 items-center justify-center rounded-full bg-teal-600 text-white font-bold'
+                  : isWeekend
+                    ? 'text-gray-500 dark:text-slate-400'
+                    : 'text-gray-700 dark:text-slate-200'
+              }`}
+            >
+              {day}
+            </span>
           </div>
-          {dayHolidays.map((h) => (
-            <div
-              key={h.id}
-              className="text-[10px] px-1 py-0.5 rounded truncate bg-red-100 dark:bg-red-500/20 text-red-700 dark:text-red-300 mb-0.5"
-              title={h.name}
-            >
-              {h.name}
-            </div>
-          ))}
-          {dayLeaves.map((entry) => (
-            <div
-              key={entry.id}
-              className={`text-[10px] px-1 py-0.5 rounded truncate mb-0.5 ${nameColor(entry.employee_name)}`}
-              title={t('portal.teamCalendar.leaveTitle', { name: entry.employee_name, type: entry.leave_type_name })}
-            >
-              {entry.employee_name.split(' ')[0]} - {entry.leave_type_name}
-            </div>
-          ))}
-        </div>
+          <div className="space-y-0.5 w-full overflow-hidden">
+            {visibleHolidays.map((h) => (
+              <div
+                key={h.id}
+                className="text-[10px] px-1 py-0.5 rounded truncate bg-red-100 dark:bg-red-500/20 text-red-700 dark:text-red-300"
+                title={h.name}
+              >
+                {h.name}
+              </div>
+            ))}
+            {visibleLeaves.map((entry) => (
+              <div
+                key={entry.id}
+                className={`text-[10px] px-1 py-0.5 rounded truncate ${nameColor(entry.employee_name)}`}
+                title={t('portal.teamCalendar.leaveTitle', { name: entry.employee_name, type: entry.leave_type_name })}
+              >
+                {entry.employee_name.split(' ')[0]} - {entry.leave_type_name}
+              </div>
+            ))}
+            {overflowCount > 0 && (
+              <div className="text-[10px] px-1 text-gray-500 dark:text-slate-400 tabular-nums">
+                +{overflowCount}
+              </div>
+            )}
+          </div>
+        </button>
       );
+    }
+
+    const totalSlots = Math.ceil((startDow + daysInMonth) / 7) * 7;
+    for (let i = startDow + daysInMonth; i < totalSlots; i++) {
+      cells.push(<div key={`trailing-${i}`} className="min-h-[100px] bg-gray-50 dark:bg-slate-800/40 border border-gray-100 dark:border-slate-800" />);
     }
 
     return (
@@ -214,7 +259,7 @@ export function TeamCalendar() {
           onClick={() => setSelectedDay(day)}
           aria-pressed={selected}
           aria-label={t('portal.teamCalendar.selectDay', { day })}
-          className={`h-11 flex flex-col items-center justify-center rounded-xl text-xs font-medium transition-colors ${
+          className={`h-11 flex flex-col items-center justify-center rounded-xl text-xs font-medium tabular-nums transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] ${
             selected
               ? 'bg-teal-600 text-white font-semibold'
               : isToday
@@ -224,7 +269,7 @@ export function TeamCalendar() {
         >
           <span>{day}</span>
           {(dayHolidays.length > 0 || dayLeaves.length > 0) && (
-            <span className="flex items-center gap-0.5 mt-0.5">
+            <span className="flex items-center gap-0.5 mt-0.5" aria-hidden="true">
               {dayHolidays.length > 0 && (
                 <span className={`w-1.5 h-1.5 rounded-full ${selected ? 'bg-white' : 'bg-red-500'}`} />
               )}
@@ -237,45 +282,20 @@ export function TeamCalendar() {
       );
     }
 
-    const selectedHolidays = holidayMap.get(clampedSelectedDay) || [];
-    const selectedLeaves = leaveMap.get(clampedSelectedDay) || [];
-
     return (
-      <div className="md:hidden space-y-4">
-        <div className="grid grid-cols-7 gap-1 text-center">
-          {dayNamesShort.map((name) => (
-            <div key={name} className="text-[11px] font-medium text-gray-500 dark:text-slate-400 py-1">
-              {name}
-            </div>
-          ))}
-          {mobileCells}
-        </div>
-        <div className="rounded-xl border border-gray-100 dark:border-slate-800 bg-gray-50/70 dark:bg-slate-800/50 p-3 space-y-2">
-          <p className="text-xs font-semibold text-gray-700 dark:text-slate-200">
-            {clampedSelectedDay} {monthNamesShort[selectedMonth - 1]} {selectedYear}
-          </p>
-          {selectedHolidays.length === 0 && selectedLeaves.length === 0 ? (
-            <p className="text-xs text-gray-500 dark:text-slate-400">
-              {t('portal.teamCalendar.selectedDayEmpty')}
-            </p>
-          ) : (
-            <div className="space-y-1.5">
-              {selectedHolidays.map((h) => (
-                <div key={h.id} className="text-xs px-2.5 py-1.5 rounded-lg bg-red-100 dark:bg-red-500/20 text-red-700 dark:text-red-300 font-medium">
-                  {h.name}
-                </div>
-              ))}
-              {selectedLeaves.map((entry) => (
-                <div key={entry.id} className={`text-xs px-2.5 py-1.5 rounded-lg font-medium ${nameColor(entry.employee_name)}`}>
-                  {t('portal.teamCalendar.leaveTitle', { name: entry.employee_name, type: entry.leave_type_name })}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+      <div className="md:hidden grid grid-cols-7 gap-1 text-center">
+        {dayNamesShort.map((name) => (
+          <div key={name} className="text-[11px] font-medium text-gray-500 dark:text-slate-400 py-1">
+            {name}
+          </div>
+        ))}
+        {mobileCells}
       </div>
     );
   };
+
+  const selectedHolidays = holidayMap.get(clampedSelectedDay) || [];
+  const selectedLeaves = leaveMap.get(clampedSelectedDay) || [];
 
   // Unique team members on leave
   const uniqueMembers = Array.from(new Set(teamLeaves.map((e) => e.employee_name)));
@@ -283,24 +303,31 @@ export function TeamCalendar() {
 
   return (
     <div className="space-y-6">
-      <div className="page-header">
-        <h1 className="page-title">{t('portal.teamCalendar.title')}</h1>
-        <p className="page-subtitle">{t('portal.teamCalendar.subtitle')}</p>
-      </div>
+      <PageHeader
+        className="mb-0"
+        title={t('portal.teamCalendar.title')}
+        subtitle={t('portal.teamCalendar.subtitle')}
+      />
 
       {/* Tabs */}
-      <div className="flex gap-1 border-b border-gray-200 dark:border-slate-800 overflow-x-auto">
+      <div
+        role="tablist"
+        aria-label={t('portal.teamCalendar.title')}
+        className="flex gap-1 border-b border-gray-200 dark:border-slate-800 overflow-x-auto scrollbar-thin"
+      >
         {[
           { key: 'calendar' as const, label: t('portal.teamCalendar.tabs.calendar') },
           { key: 'holidays' as const, label: t('portal.teamCalendar.tabs.holidays') },
         ].map((tab) => (
           <button
             key={tab.key}
+            role="tab"
             type="button"
+            aria-selected={activeTab === tab.key}
             onClick={() => setActiveTab(tab.key)}
-            className={`min-h-10 px-4 py-2.5 text-sm font-medium border-b-2 whitespace-nowrap transition-all ${
+            className={`min-h-11 sm:min-h-10 px-4 py-2.5 text-sm font-medium border-b-2 whitespace-nowrap transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] ${
               activeTab === tab.key
-                ? 'border-gray-900 dark:border-teal-400 text-gray-900 dark:text-white'
+                ? 'border-[var(--accent-1)] text-gray-900 dark:text-white'
                 : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200'
             }`}
           >
@@ -312,6 +339,7 @@ export function TeamCalendar() {
       {isActiveTabLoading ? (
         <div
           className="card p-6 space-y-4"
+          role="status"
           aria-busy="true"
           aria-label={t('a11y.loading')}
         >
@@ -348,7 +376,7 @@ export function TeamCalendar() {
           {holidaysError && (
             <div role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 px-4 py-2.5 text-xs text-amber-800 dark:text-amber-300">
               <span>{getErrorMessage(holidaysErr, t('portal.teamCalendar.holidaysFailed'))}</span>
-              <button type="button" onClick={() => void refetchHolidays()} className="font-semibold underline">
+              <button type="button" onClick={() => void refetchHolidays()} className="btn-secondary min-h-11 sm:min-h-8 !py-1 !px-3 !text-xs shrink-0">
                 {t('common.retry')}
               </button>
             </div>
@@ -356,21 +384,32 @@ export function TeamCalendar() {
 
           <div className="card p-4 sm:p-6">
             {/* Month Navigation */}
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center justify-between gap-2 mb-4">
               <button
                 type="button"
                 onClick={prevMonth}
                 aria-label={t('common.previous')}
-                className="min-h-10 min-w-10 inline-flex items-center justify-center hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg text-gray-600 dark:text-slate-300"
+                className="min-h-11 min-w-11 sm:min-h-10 sm:min-w-10 inline-flex items-center justify-center hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg text-gray-600 dark:text-slate-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] shrink-0"
               >
-                <ChevronLeft className="w-5 h-5" />
+                <ChevronLeft className="w-5 h-5" aria-hidden="true" />
               </button>
-              <div className="text-center">
-                <h2 className="text-lg font-semibold text-gray-900 dark:text-slate-100">
-                  {monthNames[selectedMonth - 1]} {selectedYear}
-                </h2>
+              <div className="text-center min-w-0 flex-1">
+                <div className="flex items-center justify-center gap-2 flex-wrap">
+                  <h2 className="text-lg font-semibold text-gray-900 dark:text-slate-100 tabular-nums">
+                    {monthNames[selectedMonth - 1]} {selectedYear}
+                  </h2>
+                  {!isCurrentMonth && (
+                    <button
+                      type="button"
+                      onClick={goToday}
+                      className="min-h-11 sm:min-h-7 px-2.5 py-1 text-xs font-medium rounded-lg border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+                    >
+                      {t('common.today')}
+                    </button>
+                  )}
+                </div>
                 {teamLeaves.length > 0 && (
-                  <p className="text-sm text-gray-500 dark:text-slate-400">
+                  <p className="text-sm text-gray-500 dark:text-slate-400 tabular-nums">
                     {t('portal.teamCalendar.membersOnLeave', { count: uniqueMembers.length })}
                   </p>
                 )}
@@ -379,21 +418,57 @@ export function TeamCalendar() {
                 type="button"
                 onClick={nextMonth}
                 aria-label={t('common.next')}
-                className="min-h-10 min-w-10 inline-flex items-center justify-center hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg text-gray-600 dark:text-slate-300"
+                className="min-h-11 min-w-11 sm:min-h-10 sm:min-w-10 inline-flex items-center justify-center hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg text-gray-600 dark:text-slate-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] shrink-0"
               >
-                <ChevronRight className="w-5 h-5" />
+                <ChevronRight className="w-5 h-5" aria-hidden="true" />
               </button>
             </div>
             {renderDesktopCalendarGrid()}
             {renderMobileDotCalendar()}
-            {/* Legend */}
-            <div className="flex flex-wrap gap-3 mt-4 text-xs text-gray-500 dark:text-slate-400">
-              <span className="flex items-center gap-1">
-                <span className="w-3 h-3 rounded bg-red-100 dark:bg-red-500/20 border border-red-200 dark:border-red-500/30" /> {t('portal.teamCalendar.holiday')}
+
+            {/* Selected Day Details Panel (shared on mobile & tablet/desktop) */}
+            <div className="mt-4 rounded-xl border border-gray-100 dark:border-slate-800 bg-gray-50/70 dark:bg-slate-800/50 p-3 sm:p-4 space-y-2">
+              <p className="text-xs font-semibold text-gray-700 dark:text-slate-200 tabular-nums">
+                {clampedSelectedDay} {monthNamesShort[selectedMonth - 1]} {selectedYear}
+              </p>
+              {selectedHolidays.length === 0 && selectedLeaves.length === 0 ? (
+                <p className="text-xs text-gray-500 dark:text-slate-400">
+                  {t('portal.teamCalendar.selectedDayEmpty')}
+                </p>
+              ) : (
+                <div className="space-y-1.5">
+                  {selectedHolidays.map((h) => (
+                    <div key={h.id} className="text-xs px-2.5 py-1.5 rounded-lg bg-red-100 dark:bg-red-500/20 text-red-700 dark:text-red-300 font-medium">
+                      {h.name}
+                    </div>
+                  ))}
+                  {selectedLeaves.map((entry) => (
+                    <div key={entry.id} className={`text-xs px-2.5 py-1.5 rounded-lg font-medium ${nameColor(entry.employee_name)}`}>
+                      {t('portal.teamCalendar.leaveTitle', { name: entry.employee_name, type: entry.leave_type_name })}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Mobile dot legend */}
+            <div className="flex md:hidden flex-wrap gap-3 mt-4 text-xs text-gray-500 dark:text-slate-400">
+              <span className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-red-500" aria-hidden="true" /> {t('portal.teamCalendar.holiday')}
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-teal-500" aria-hidden="true" /> {t('portal.leave.title')}
+              </span>
+            </div>
+
+            {/* Desktop legend */}
+            <div className="hidden md:flex flex-wrap gap-3 mt-4 text-xs text-gray-500 dark:text-slate-400">
+              <span className="flex items-center gap-1.5">
+                <span className="w-3 h-3 rounded bg-red-100 dark:bg-red-500/20 border border-red-200 dark:border-red-500/30" aria-hidden="true" /> {t('portal.teamCalendar.holiday')}
               </span>
               {uniqueMembers.map((name) => (
-                <span key={name} className="flex items-center gap-1">
-                  <span className={`w-3 h-3 rounded ${nameColor(name).split(' ')[0]}`} /> {name.split(' ')[0]}
+                <span key={name} className="flex items-center gap-1.5">
+                  <span className={`w-3 h-3 rounded ${nameColor(name)}`} aria-hidden="true" /> {name.split(' ')[0]}
                 </span>
               ))}
             </div>
@@ -403,13 +478,13 @@ export function TeamCalendar() {
           {teamLeaves.length > 0 && (
             <div className="card !p-0 overflow-hidden">
               <div className="px-4 sm:px-6 py-4 border-b border-gray-100 dark:border-slate-800">
-                <h3 className="text-sm font-semibold text-gray-900 dark:text-slate-100">{t('portal.teamCalendar.leaveThisMonth')}</h3>
+                <h2 className="text-sm font-semibold text-gray-900 dark:text-slate-100">{t('portal.teamCalendar.leaveThisMonth')}</h2>
               </div>
               <div className="divide-y divide-gray-100 dark:divide-slate-800">
                 {teamLeaves.map((entry) => (
                   <div key={entry.id} className="flex items-center justify-between gap-3 px-4 sm:px-6 py-3">
                     <div className="flex items-center gap-3 min-w-0">
-                      <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${nameColor(entry.employee_name)}`}>
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${nameColor(entry.employee_name)}`} aria-hidden="true">
                         {entry.employee_name[0]}
                       </div>
                       <div className="min-w-0">
@@ -418,13 +493,13 @@ export function TeamCalendar() {
                       </div>
                     </div>
                     <div className="text-right shrink-0">
-                      <p className="text-sm text-gray-700 dark:text-slate-200">
+                      <p className="text-sm text-gray-700 dark:text-slate-200 tabular-nums">
                         {formatDateDayMonth(parseLocalDate(entry.start_date))}
                         {entry.start_date !== entry.end_date && (
                           <> &ndash; {formatDateDayMonth(parseLocalDate(entry.end_date))}</>
                         )}
                       </p>
-                      <p className="text-xs text-gray-400 dark:text-slate-400">{t('portal.teamCalendar.days', { count: Number(entry.days) })}</p>
+                      <p className="text-xs text-gray-500 dark:text-slate-400 tabular-nums">{t('portal.teamCalendar.days', { count: Number(entry.days) })}</p>
                     </div>
                   </div>
                 ))}
@@ -458,52 +533,53 @@ export function TeamCalendar() {
               id="portal-holiday-year"
               value={selectedYear}
               onChange={(e) => setSelectedYear(Number(e.target.value))}
-              className="form-input !w-auto"
+              className="form-input !w-auto min-h-11 sm:min-h-10 tabular-nums"
             >
               {[selectedYear - 1, selectedYear, selectedYear + 1].map((y) => (
                 <option key={y} value={y}>{y}</option>
               ))}
             </select>
           </div>
-          <div className="divide-y divide-gray-100 dark:divide-slate-800">
-            {holidays.length === 0 && (
-              <div className="p-8 text-center text-sm text-gray-400 dark:text-slate-400">
-                {t('portal.teamCalendar.noHolidays', { year: selectedYear })}
-              </div>
-            )}
-            {holidays.map((h) => {
-              const d = parseLocalDate(h.date);
-              const isPast = d < todayStart;
-              return (
-                <div key={h.id} className={`flex items-center gap-4 px-4 sm:px-6 py-4 ${isPast ? 'opacity-50' : ''}`}>
-                  <div className="text-center min-w-[50px]">
-                    <div className="text-xs text-gray-400 dark:text-slate-400 uppercase">
-                      {monthNamesShort[d.getMonth()]}
+          {holidays.length === 0 ? (
+            <div className="p-6">
+              <EmptyState icon={Calendar} title={t('portal.teamCalendar.noHolidays', { year: selectedYear })} />
+            </div>
+          ) : (
+            <div className="divide-y divide-gray-100 dark:divide-slate-800">
+              {holidays.map((h) => {
+                const d = parseLocalDate(h.date);
+                const isPast = d < todayStart;
+                return (
+                  <div key={h.id} className={`flex items-center gap-4 px-4 sm:px-6 py-4 ${isPast ? 'bg-gray-50/60 dark:bg-slate-800/30' : ''}`}>
+                    <div className="text-center min-w-[50px]">
+                      <div className="text-xs text-gray-500 dark:text-slate-400 uppercase">
+                        {monthNamesShort[d.getMonth()]}
+                      </div>
+                      <div className={`text-xl font-bold tabular-nums ${isPast ? 'text-gray-500 dark:text-slate-400' : 'text-gray-900 dark:text-slate-100'}`}>{d.getDate()}</div>
                     </div>
-                    <div className="text-xl font-bold text-gray-900 dark:text-slate-100">{d.getDate()}</div>
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-sm font-medium ${isPast ? 'text-gray-600 dark:text-slate-300' : 'text-gray-900 dark:text-slate-100'}`}>{h.name}</p>
+                      <p className="text-xs text-gray-500 dark:text-slate-400">
+                        {dayNames[d.getDay()]}
+                        {h.description ? ` \u2022 ${h.description}` : ''}
+                      </p>
+                    </div>
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium shrink-0 ${
+                      h.holiday_type === 'public_holiday'
+                        ? 'bg-red-100 dark:bg-red-500/20 text-red-700 dark:text-red-300'
+                        : h.holiday_type === 'company_holiday'
+                        ? 'bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-300'
+                        : h.holiday_type === 'state_holiday'
+                        ? 'bg-yellow-100 dark:bg-amber-500/20 text-yellow-700 dark:text-amber-300'
+                        : 'bg-green-100 dark:bg-emerald-500/20 text-green-700 dark:text-emerald-300'
+                    }`}>
+                      {t(`enums.holidayType.${h.holiday_type}`, { defaultValue: h.holiday_type })}
+                    </span>
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-900 dark:text-slate-100">{h.name}</p>
-                    <p className="text-xs text-gray-500 dark:text-slate-400">
-                      {dayNames[d.getDay()]}
-                      {h.description ? ` • ${h.description}` : ''}
-                    </p>
-                  </div>
-                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium shrink-0 ${
-                    h.holiday_type === 'public_holiday'
-                      ? 'bg-red-100 dark:bg-red-500/20 text-red-700 dark:text-red-300'
-                      : h.holiday_type === 'company_holiday'
-                      ? 'bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-300'
-                      : h.holiday_type === 'state_holiday'
-                      ? 'bg-yellow-100 dark:bg-amber-500/20 text-yellow-700 dark:text-amber-300'
-                      : 'bg-green-100 dark:bg-emerald-500/20 text-green-700 dark:text-emerald-300'
-                  }`}>
-                    {t(`enums.holidayType.${h.holiday_type}`, { defaultValue: h.holiday_type })}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
     </div>

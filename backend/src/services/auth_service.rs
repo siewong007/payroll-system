@@ -1,13 +1,13 @@
 use sqlx::{Executor, PgPool, Postgres};
 use uuid::Uuid;
 
-use crate::core::auth::{create_mfa_pending_token, create_token};
+use crate::core::auth::{MFA_PENDING_EXPIRY_MINUTES, create_mfa_pending_token, create_token};
 use crate::core::error::{AppError, AppResult};
 use crate::models::audit::AuditRequestMeta;
 use crate::models::session::{LoginOutcome, LoginResponseWithRefresh};
 use crate::models::user::{CodeLoginRequest, LoginRequest, User, UserResponse};
 use crate::repositories::{
-    employees, platform_settings, refresh_tokens, user_groups, user_sessions, users,
+    employees, mfa_challenges, platform_settings, refresh_tokens, user_groups, user_sessions, users,
 };
 use crate::services::{audit_service, session_service, totp_service};
 
@@ -48,6 +48,17 @@ pub async fn hash_password(password: &str) -> AppResult<String> {
 }
 
 static DUMMY_BCRYPT_HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+pub async fn verify_user_password(pool: &PgPool, user_id: Uuid, password: &str) -> AppResult<User> {
+    let user = get_user_by_id(pool, user_id).await?;
+    let valid = verify_password(password, &user.password_hash)
+        .await
+        .map_err(|_| AppError::BadRequest("Current password is incorrect".into()))?;
+    if !valid {
+        return Err(AppError::BadRequest("Current password is incorrect".into()));
+    }
+    Ok(user)
+}
 
 pub async fn verify_password(password: &str, hash: &str) -> Result<bool, bcrypt::BcryptError> {
     let password = password.to_string();
@@ -223,14 +234,13 @@ pub async fn code_login(
         Err(other) => return Err(other),
     };
 
-    // When platform 2FA enforcement is active for privileged accounts, refuse
-    // passwordless 1FA code sign-in so an attacker cannot downgrade 2FA to 1FA.
-    let enforce_2fa = platform_settings::get_value(pool, ENFORCE_2FA_KEY)
-        .await?
-        .as_deref()
-        == Some("true");
-    if enforce_2fa && user_requires_two_factor(pool, &user).await? {
-        let _ = reject(Some(&user), "code_login_blocked_by_2fa_policy").await;
+    // Privileged/staff accounts (including any non-employee role or delegated
+    // privileged group permission) may never use passwordless 1FA code sign-in,
+    // even when platform 2FA enforcement is off — otherwise TOTP replaces
+    // password+2FA.
+    let has_non_employee_role = user.roles.iter().any(|r| r != "employee");
+    if has_non_employee_role || user_requires_two_factor(pool, &user).await? {
+        let _ = reject(Some(&user), "code_login_blocked_for_privileged_account").await;
         return Err(AppError::Unauthorized(INVALID.into()));
     }
 
@@ -280,7 +290,27 @@ pub async fn issue_session(
     // The 2FA-completing path bypasses complete_login by design, so policy
     // runs here as well — after the code check, before anything is minted.
     enforce_two_factor_policy(pool, &user).await?;
+    issue_session_verified(
+        pool,
+        user,
+        jwt_secret,
+        jwt_expiry,
+        user_agent,
+        login_method,
+        audit_meta,
+    )
+    .await
+}
 
+async fn issue_session_verified(
+    pool: &PgPool,
+    user: User,
+    jwt_secret: &str,
+    jwt_expiry: i64,
+    user_agent: Option<&str>,
+    login_method: &str,
+    audit_meta: Option<&AuditRequestMeta>,
+) -> AppResult<LoginResponseWithRefresh> {
     users::update_last_login(pool, user.id).await?;
 
     let _ = audit_service::log_action_with_metadata(
@@ -357,11 +387,13 @@ pub async fn complete_login(
     enforce_two_factor_policy(pool, &user).await?;
 
     if totp_service::is_enabled(pool, user.id).await? {
-        let mfa_token = create_mfa_pending_token(user.id, jwt_secret)?;
+        let (mfa_token, jti) = create_mfa_pending_token(user.id, jwt_secret)?;
+        let expires_at = chrono::Utc::now() + chrono::Duration::minutes(MFA_PENDING_EXPIRY_MINUTES);
+        mfa_challenges::insert(pool, jti, user.id, expires_at).await?;
         return Ok(LoginOutcome::MfaRequired { mfa_token });
     }
 
-    let session = issue_session(
+    let session = issue_session_verified(
         pool,
         user,
         jwt_secret,
@@ -537,6 +569,7 @@ pub async fn change_password(
     // extending the 30-day window, so the thief never loses access.
     user_sessions::revoke_all_for_user(&mut *tx, user_id).await?;
     refresh_tokens::revoke_all_for_user(&mut *tx, user_id).await?;
+    mfa_challenges::revoke_for_user(&mut *tx, user_id).await?;
     crate::repositories::push_subscriptions::revoke_all_for_user(&mut *tx, user_id).await?;
     // In the same transaction as the change: a credential rotation and its
     // trail must stand or fall together (same rule as the break-glass reset).
@@ -568,7 +601,7 @@ pub const TWO_FACTOR_REQUIRED_ROLES: &[&str] = &[
     "finance",
 ];
 
-const TWO_FACTOR_REQUIRED_GROUP_PERMS: &[&str] = &[
+pub(crate) const TWO_FACTOR_REQUIRED_GROUP_PERMS: &[&str] = &[
     "view_payroll",
     "manage_payroll_draft",
     "submit_payroll",
@@ -582,6 +615,24 @@ const TWO_FACTOR_REQUIRED_GROUP_PERMS: &[&str] = &[
 
 pub const ENFORCE_2FA_KEY: &str = "enforce_2fa";
 pub const ENFORCE_2FA_GRACE_UNTIL_KEY: &str = "enforce_2fa_grace_until";
+
+/// Whether platform 2FA enforcement is active AND any grace period has expired.
+pub(crate) async fn is_hard_2fa_enforced(conn: &mut sqlx::PgConnection) -> AppResult<bool> {
+    let enabled = platform_settings::get_value(&mut *conn, ENFORCE_2FA_KEY)
+        .await?
+        .as_deref()
+        == Some("true");
+    if !enabled {
+        return Ok(false);
+    }
+    let grace = platform_settings::get_value(&mut *conn, ENFORCE_2FA_GRACE_UNTIL_KEY).await?;
+    if let Some(until) = parse_grace(grace)
+        && chrono::Utc::now().date_naive() <= until
+    {
+        return Ok(false);
+    }
+    Ok(true)
+}
 
 async fn user_requires_two_factor<'e>(
     executor: impl sqlx::Executor<'e, Database = sqlx::Postgres>,
@@ -630,12 +681,12 @@ pub async fn require_two_factor_not_enforced(pool: &PgPool, user: &User) -> AppR
 /// so the operator can see who will be locked out on cutover. Enrollment
 /// itself requires a session, so a hard cut without grace would lock out the
 /// very people needed to fix it.
-async fn enforce_two_factor_policy(pool: &PgPool, user: &User) -> AppResult<()> {
+pub(crate) async fn enforce_two_factor_policy(pool: &PgPool, user: &User) -> AppResult<()> {
     let mut conn = pool.acquire().await?;
     enforce_two_factor_policy_with(&mut conn, user).await
 }
 
-async fn enforce_two_factor_policy_with(
+pub(crate) async fn enforce_two_factor_policy_with(
     conn: &mut sqlx::PgConnection,
     user: &User,
 ) -> AppResult<()> {
@@ -643,11 +694,16 @@ async fn enforce_two_factor_policy_with(
         return Ok(());
     }
 
-    let enabled = platform_settings::get_value(&mut *conn, ENFORCE_2FA_KEY)
+    let settings: std::collections::HashMap<String, String> =
+        platform_settings::get_values_for_keys(
+            &mut *conn,
+            &[ENFORCE_2FA_KEY, ENFORCE_2FA_GRACE_UNTIL_KEY],
+        )
         .await?
-        .as_deref()
-        == Some("true");
-    if !enabled {
+        .into_iter()
+        .collect();
+
+    if settings.get(ENFORCE_2FA_KEY).map(String::as_str) != Some("true") {
         return Ok(());
     }
 
@@ -655,7 +711,7 @@ async fn enforce_two_factor_policy_with(
         return Ok(());
     }
 
-    let grace = platform_settings::get_value(&mut *conn, ENFORCE_2FA_GRACE_UNTIL_KEY).await?;
+    let grace = settings.get(ENFORCE_2FA_GRACE_UNTIL_KEY).cloned();
     if let Some(until) = parse_grace(grace) {
         let now_utc_date = chrono::Utc::now().date_naive();
         if now_utc_date <= until {

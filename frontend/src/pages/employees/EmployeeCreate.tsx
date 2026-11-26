@@ -1,7 +1,8 @@
-import { useState, useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Loader2 } from 'lucide-react';
 import { createEmployee } from '@/api/employees';
 import type { EmployeeAccountInfo } from '@/api/employees';
 import { getPayrollGroups } from '@/api/payroll';
@@ -50,6 +51,7 @@ export function EmployeeCreate() {
   const [zakatDisplay, setZakatDisplay] = useState('');
   const [ptptnDisplay, setPtptnDisplay] = useState('');
   const [accountDialog, setAccountDialog] = useState<EmployeeAccountInfo | null>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
 
   const mutation = useMutation({
     mutationFn: createEmployee,
@@ -63,7 +65,14 @@ export function EmployeeCreate() {
         navigate('/employees');
       }
     },
+    onError: (err: unknown) => toast.error(getErrorMessage(err, t('employees.createFailed'))),
   });
+
+  useEffect(() => {
+    if (mutation.isError) {
+      errorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }, [mutation.isError]);
 
   const isDirty =
     (JSON.stringify(form) !== JSON.stringify(initialForm) ||
@@ -127,12 +136,12 @@ export function EmployeeCreate() {
     );
   };
 
-  const cardClass =
-    'bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-gray-200 dark:border-slate-800 p-6';
+  const cardClass = 'card';
 
   return (
-    <div>
+    <div className="max-w-4xl space-y-6">
       <PageHeader
+        className="mb-0"
         title={t('employees.createTitle')}
         breadcrumbs={[
           { label: t('nav.employees'), href: '/employees' },
@@ -140,9 +149,13 @@ export function EmployeeCreate() {
         ]}
       />
 
-      <form onSubmit={handleSubmit} className="space-y-8 max-w-4xl">
+      <form onSubmit={handleSubmit} className="space-y-6">
         {mutation.isError && (
-          <div className="bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-300 border border-red-200 dark:border-red-500/30 text-sm px-4 py-3 rounded-lg">
+          <div
+            ref={errorRef}
+            role="alert"
+            className="bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-300 border border-red-200 dark:border-red-500/30 text-sm px-4 py-3 rounded-lg"
+          >
             {getErrorMessage(mutation.error, t('employees.createFailed'))}
           </div>
         )}
@@ -410,11 +423,12 @@ export function EmployeeCreate() {
                     <input
                       {...aria}
                       type="number"
+                      inputMode="decimal"
                       min="0"
                       step="0.01"
                       value={salaryDisplay}
                       onChange={(e) => handleSalaryChange(e.target.value)}
-                      className="form-input"
+                      className="form-input tabular-nums"
                       required
                       placeholder={t('employees.form.salaryPlaceholder')}
                     />
@@ -598,15 +612,16 @@ export function EmployeeCreate() {
                   <input
                     {...aria}
                     type="number"
+                    inputMode="numeric"
                     min="0"
                     value={form.num_children ?? 0}
                     onChange={(e) => updateField('num_children', Math.max(0, parseInt(e.target.value, 10) || 0))}
-                    className="form-input"
+                    className="form-input tabular-nums"
                   />
                 )}
               </FormField>
               <div className="md:col-span-2 flex flex-wrap items-center gap-6 pt-2">
-                <label className="flex items-center gap-2 cursor-pointer">
+                <label className="min-h-11 sm:min-h-0 flex items-center gap-2.5 cursor-pointer">
                   <input
                     type="checkbox"
                     checked={form.is_muslim || false}
@@ -618,12 +633,12 @@ export function EmployeeCreate() {
                         setZakatDisplay('');
                       }
                     }}
-                    className="rounded border-gray-300 dark:border-slate-700"
+                    className="w-4 h-4 rounded border-gray-300 dark:border-slate-700 accent-[var(--accent-1)]"
                   />
                   <span className="text-sm text-gray-700 dark:text-slate-200">{t('employees.fields.muslim')}</span>
                 </label>
                 {form.is_muslim && (
-                  <label className="flex items-center gap-2 cursor-pointer">
+                  <label className="min-h-11 sm:min-h-0 flex items-center gap-2.5 cursor-pointer">
                     <input
                       type="checkbox"
                       checked={form.zakat_eligible || false}
@@ -634,7 +649,7 @@ export function EmployeeCreate() {
                           setZakatDisplay('');
                         }
                       }}
-                      className="rounded border-gray-300 dark:border-slate-700"
+                      className="w-4 h-4 rounded border-gray-300 dark:border-slate-700 accent-[var(--accent-1)]"
                     />
                     <span className="text-sm text-gray-700 dark:text-slate-200">{t('employees.form.zakatEligible')}</span>
                   </label>
@@ -646,12 +661,13 @@ export function EmployeeCreate() {
                     <input
                       {...aria}
                       type="number"
+                      inputMode="decimal"
                       min="0"
                       step="0.01"
                       value={zakatDisplay}
                       onChange={(e) => handleZakatChange(e.target.value)}
                       placeholder="0.00"
-                      className="form-input"
+                      className="form-input tabular-nums"
                     />
                   )}
                 </FormField>
@@ -661,12 +677,13 @@ export function EmployeeCreate() {
                   <input
                     {...aria}
                     type="number"
+                    inputMode="decimal"
                     min="0"
                     step="0.01"
                     value={ptptnDisplay}
                     onChange={(e) => handlePtptnChange(e.target.value)}
                     placeholder="0.00"
-                    className="form-input"
+                    className="form-input tabular-nums"
                   />
                 )}
               </FormField>
@@ -674,23 +691,27 @@ export function EmployeeCreate() {
           </section>
         )}
 
-        {/* Submit */}
-        <div className="flex flex-col-reverse sm:flex-row gap-3">
-          <button
-            type="button"
-            onClick={() => navigate('/employees')}
-            className="btn-secondary"
-          >
-            {t('common.cancel')}
-          </button>
-          <button
-            type="submit"
-            disabled={mutation.isPending}
-            className="btn-primary"
-          >
-            {mutation.isPending ? t('common.creating') : t('employees.createSubmit')}
-          </button>
-        </div>
+        {/* Submit — hidden once UnsavedChangesBar is active to prevent duplicate Cancel/Save bars */}
+        {!isDirty && (
+          <div className="flex flex-col-reverse sm:flex-row gap-3">
+            <button
+              type="button"
+              onClick={() => navigate('/employees')}
+              disabled={mutation.isPending}
+              className="btn-secondary"
+            >
+              {t('common.cancel')}
+            </button>
+            <button
+              type="submit"
+              disabled={mutation.isPending}
+              className="btn-primary"
+            >
+              {mutation.isPending && <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />}
+              {mutation.isPending ? t('common.creating') : t('employees.createSubmit')}
+            </button>
+          </div>
+        )}
 
         <UnsavedChangesBar
           isDirty={isDirty}
@@ -709,7 +730,7 @@ export function EmployeeCreate() {
         maxWidth="max-w-md"
         footer={
           <div className="flex justify-end">
-            <button type="button" onClick={() => navigate('/employees')} className="btn-primary">
+            <button type="button" onClick={() => navigate('/employees')} className="btn-primary w-full sm:w-auto">
               {t('common.done')}
             </button>
           </div>
@@ -723,17 +744,23 @@ export function EmployeeCreate() {
                   {t('employees.account.createdBody')}
                 </p>
                 <div className="bg-gray-50 dark:bg-slate-950/60 rounded-xl p-4 space-y-3">
-                  <div className="flex justify-between text-sm">
-                    <span className="text-gray-500 dark:text-slate-400">{t('common.email')}</span>
-                    <span className="font-medium text-gray-900 dark:text-slate-100">{accountDialog.email}</span>
+                  <div className="flex items-start justify-between gap-4 text-sm">
+                    <span className="text-gray-500 dark:text-slate-400 shrink-0">{t('common.email')}</span>
+                    <span className="font-medium text-gray-900 dark:text-slate-100 min-w-0 break-all text-right">
+                      {accountDialog.email}
+                    </span>
                   </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-gray-500 dark:text-slate-400">{t('employees.account.role')}</span>
-                    <span className="font-medium text-gray-900 dark:text-slate-100">{t(`roles.${accountDialog.role}`, { defaultValue: accountDialog.role })}</span>
+                  <div className="flex items-start justify-between gap-4 text-sm">
+                    <span className="text-gray-500 dark:text-slate-400 shrink-0">{t('employees.account.role')}</span>
+                    <span className="font-medium text-gray-900 dark:text-slate-100 min-w-0 break-all text-right">
+                      {t(`roles.${accountDialog.role}`, { defaultValue: accountDialog.role })}
+                    </span>
                   </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-gray-500 dark:text-slate-400">{t('employees.account.defaultPassword')}</span>
-                    <span className="font-mono font-medium text-gray-900 dark:text-slate-100">{accountDialog.default_password}</span>
+                  <div className="flex items-start justify-between gap-4 text-sm">
+                    <span className="text-gray-500 dark:text-slate-400 shrink-0">{t('employees.account.defaultPassword')}</span>
+                    <span className="font-mono font-medium text-gray-900 dark:text-slate-100 min-w-0 break-all text-right">
+                      {accountDialog.default_password}
+                    </span>
                   </div>
                 </div>
                 <p className="text-xs text-amber-600 dark:text-amber-300 bg-amber-50 dark:bg-amber-500/10 rounded-lg px-3 py-2">

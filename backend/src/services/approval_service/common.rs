@@ -1,6 +1,6 @@
 //! Shared helpers used by leave / claim / overtime approval submodules.
 
-use chrono::NaiveTime;
+use chrono::{Datelike, NaiveDate, NaiveTime};
 use rust_decimal::Decimal;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -8,8 +8,8 @@ use uuid::Uuid;
 use crate::core::error::{AppError, AppResult};
 use crate::models::approval::PendingApprovalCountResponse;
 use crate::repositories::{
-    employees as employee_repo, leave_types as leave_type_repo,
-    reads::dashboard as dashboard_reads, users as user_repo,
+    employees as employee_repo, holidays as holiday_repo, leave_types as leave_type_repo,
+    reads::dashboard as dashboard_reads, users as user_repo, working_day_config,
 };
 
 pub async fn get_pending_counts(
@@ -26,9 +26,9 @@ pub async fn get_pending_counts(
 }
 
 pub fn ensure_positive_amount(amount: i64) -> AppResult<()> {
-    if amount <= 0 {
+    if amount <= 0 || amount > crate::models::payroll::MAX_MONEY_SEN {
         return Err(AppError::BadRequest(
-            "Amount must be greater than zero".into(),
+            "Amount must be greater than zero and within supported limits".into(),
         ));
     }
     Ok(())
@@ -63,6 +63,52 @@ pub(super) async fn ensure_leave_type_in_company(
 pub fn validate_overtime_type(ot_type: &str) -> AppResult<()> {
     if !["normal", "rest_day", "public_holiday"].contains(&ot_type) {
         return Err(AppError::BadRequest("Invalid ot_type".into()));
+    }
+    Ok(())
+}
+
+/// Validates that `ot_type` matches the company's actual holiday / working-day
+/// configuration for `ot_date`: `'public_holiday'` requires a configured
+/// holiday on `ot_date` and `'rest_day'` requires a non-working day.
+pub async fn validate_overtime_type_for_date(
+    pool: &PgPool,
+    company_id: Uuid,
+    ot_date: NaiveDate,
+    ot_type: &str,
+) -> AppResult<()> {
+    validate_overtime_type(ot_type)?;
+    match ot_type {
+        "public_holiday" => {
+            if holiday_repo::list_for_range(pool, company_id, ot_date, ot_date)
+                .await?
+                .is_empty()
+            {
+                return Err(AppError::BadRequest(
+                    "Overtime type 'public_holiday' requires a configured public holiday on ot_date"
+                        .into(),
+                ));
+            }
+        }
+        "rest_day" => {
+            let config = working_day_config::list_for_company(pool, company_id).await?;
+            let mut working_days_of_week = [false; 7];
+            if config.is_empty() {
+                working_days_of_week[1..=5].fill(true);
+            } else {
+                for c in &config {
+                    if (0..=6).contains(&c.day_of_week) {
+                        working_days_of_week[c.day_of_week as usize] = c.is_working_day;
+                    }
+                }
+            }
+            let dow = ot_date.weekday().num_days_from_sunday() as usize;
+            if working_days_of_week[dow] {
+                return Err(AppError::BadRequest(
+                    "Overtime type 'rest_day' requires ot_date to fall on a non-working day".into(),
+                ));
+            }
+        }
+        _ => {}
     }
     Ok(())
 }
@@ -215,6 +261,25 @@ pub(super) fn ensure_not_self_approval(
     if reviewer_employee_id == Some(target_employee_id) {
         return Err(AppError::Forbidden(format!(
             "You cannot approve your own {what}. Ask another approver, or a super admin, to review it."
+        )));
+    }
+    Ok(())
+}
+
+/// Four-eyes maker-checker guard: the user who created or last edited a request
+/// may not be the same user who approves it.
+pub(super) fn ensure_not_creator_or_editor(
+    reviewer: &Reviewer,
+    created_by: Option<Uuid>,
+    updated_by: Option<Uuid>,
+    what: &str,
+) -> AppResult<()> {
+    if reviewer.may_self_approve {
+        return Ok(());
+    }
+    if created_by == Some(reviewer.user_id) || updated_by == Some(reviewer.user_id) {
+        return Err(AppError::Forbidden(format!(
+            "You cannot approve a {what} you created or last edited. Ask another approver to review it."
         )));
     }
     Ok(())

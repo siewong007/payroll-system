@@ -6,6 +6,7 @@ import { getAuditFilterOptions, getAuditLogs } from '@/api/audit';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { formatDateTime } from '@/lib/format';
 import { getErrorMessage } from '@/lib/utils';
 import type { AuditLog } from '@/types';
@@ -60,6 +61,7 @@ export function AuditTrailPage() {
   const {
     data,
     isLoading,
+    isFetching,
     isError,
     error: queryError,
     refetch,
@@ -109,14 +111,14 @@ export function AuditTrailPage() {
       <div className="card p-4">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <div>
-            <label htmlFor="audit-entity-type" className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">
+            <label htmlFor="audit-entity-type" className="block text-xs font-medium text-gray-600 dark:text-slate-300 mb-1">
               {t('audit.entityType')}
             </label>
             <select
               id="audit-entity-type"
               value={entityType}
               onChange={(e) => { setEntityType(e.target.value); setPage(1); }}
-              className="form-input"
+              className="form-input min-h-11 sm:min-h-10"
             >
               <option value="">{t('audit.allTypes')}</option>
               {entityTypeOptions.map((option) => (
@@ -125,14 +127,14 @@ export function AuditTrailPage() {
             </select>
           </div>
           <div>
-            <label htmlFor="audit-action" className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">
+            <label htmlFor="audit-action" className="block text-xs font-medium text-gray-600 dark:text-slate-300 mb-1">
               {t('audit.action')}
             </label>
             <select
               id="audit-action"
               value={action}
               onChange={(e) => { setAction(e.target.value); setPage(1); }}
-              className="form-input"
+              className="form-input min-h-11 sm:min-h-10"
             >
               <option value="">{t('audit.allActions')}</option>
               {actionOptions.map((option) => (
@@ -141,7 +143,7 @@ export function AuditTrailPage() {
             </select>
           </div>
           <div>
-            <label htmlFor="audit-start-date" className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">
+            <label htmlFor="audit-start-date" className="block text-xs font-medium text-gray-600 dark:text-slate-300 mb-1">
               {t('common.from')}
             </label>
             <input
@@ -149,11 +151,11 @@ export function AuditTrailPage() {
               type="date"
               value={startDate}
               onChange={(e) => { setStartDate(e.target.value); setPage(1); }}
-              className="form-input"
+              className="form-input min-h-11 sm:min-h-10"
             />
           </div>
           <div>
-            <label htmlFor="audit-end-date" className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">
+            <label htmlFor="audit-end-date" className="block text-xs font-medium text-gray-600 dark:text-slate-300 mb-1">
               {t('common.to')}
             </label>
             <input
@@ -161,7 +163,7 @@ export function AuditTrailPage() {
               type="date"
               value={endDate}
               onChange={(e) => { setEndDate(e.target.value); setPage(1); }}
-              className="form-input"
+              className="form-input min-h-11 sm:min-h-10"
             />
           </div>
         </div>
@@ -178,9 +180,9 @@ export function AuditTrailPage() {
                     type="button"
                     onClick={() => { setEntityId(''); setPage(1); }}
                     aria-label={t('audit.clearRecordFilter')}
-                    className="min-h-8 min-w-8 sm:min-h-5 sm:min-w-5 inline-flex items-center justify-center rounded-full text-gray-400 dark:text-slate-500 hover:text-gray-900 dark:hover:text-slate-100 hover:bg-gray-200 dark:hover:bg-slate-700"
+                    className="min-h-11 min-w-11 sm:min-h-6 sm:min-w-6 inline-flex items-center justify-center rounded-full text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100 hover:bg-gray-200 dark:hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                   >
-                    <X className="w-3 h-3" aria-hidden="true" />
+                    <X className="w-3.5 h-3.5" aria-hidden="true" />
                   </button>
                 </span>
               )}
@@ -189,20 +191,22 @@ export function AuditTrailPage() {
               <button
                 type="button"
                 onClick={clearFilters}
-                className="min-h-10 sm:min-h-8 px-3 py-1.5 text-sm text-gray-600 dark:text-slate-300 hover:text-gray-900 dark:hover:text-slate-100 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg inline-flex items-center gap-1.5 transition-colors"
+                className="min-h-11 sm:min-h-9 px-3 py-1.5 text-sm text-gray-700 dark:text-slate-200 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg inline-flex items-center gap-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] transition-colors"
               >
-                <X className="w-3.5 h-3.5" aria-hidden="true" /> {t('common.clear')}
+                <X className="w-3.5 h-3.5" aria-hidden="true" /> {t('ux.table.clearFilters')}
               </button>
             )}
           </div>
         )}
       </div>
 
-      {/* Table */}
+      {/* Table / Responsive Card Rows */}
       <div className="card p-0 overflow-hidden">
         {isLoading ? (
-          <div className="flex items-center justify-center py-20">
-            <div className="spinner" />
+          <div role="status" aria-label={t('common.loading')} className="p-4 sm:p-6 space-y-3">
+            {[0, 1, 2, 3, 4].map((i) => (
+              <Skeleton key={i} className="h-14 w-full rounded-xl" />
+            ))}
           </div>
         ) : isError ? (
           <EmptyState
@@ -222,21 +226,21 @@ export function AuditTrailPage() {
             action={
               hasFilters ? (
                 <button type="button" onClick={clearFilters} className="btn-secondary">
-                  {t('common.clear')}
+                  {t('ux.table.clearFilters')}
                 </button>
               ) : undefined
             }
           />
         ) : (
-          <div className="overflow-x-auto">
+          <div className={`overflow-x-auto transition-opacity ${isFetching ? 'opacity-60' : ''}`}>
             <table className="w-full text-sm">
-              <thead>
+              <thead className="hidden md:table-header-group">
                 <tr className="border-b border-gray-100 dark:border-slate-800 bg-gray-50/50 dark:bg-slate-800/50">
-                  <th className="text-left px-4 py-3 font-medium text-gray-500 dark:text-slate-400">{t('audit.timestamp')}</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-500 dark:text-slate-400">{t('audit.user')}</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-500 dark:text-slate-400">{t('audit.entity')}</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-500 dark:text-slate-400">{t('audit.action')}</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-500 dark:text-slate-400">{t('audit.details')}</th>
+                  <th className="text-left px-4 py-3 font-medium text-gray-600 dark:text-slate-300">{t('audit.timestamp')}</th>
+                  <th className="text-left px-4 py-3 font-medium text-gray-600 dark:text-slate-300">{t('audit.user')}</th>
+                  <th className="text-left px-4 py-3 font-medium text-gray-600 dark:text-slate-300">{t('audit.entity')}</th>
+                  <th className="text-left px-4 py-3 font-medium text-gray-600 dark:text-slate-300">{t('audit.action')}</th>
+                  <th className="text-left px-4 py-3 font-medium text-gray-600 dark:text-slate-300">{t('audit.details')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -252,41 +256,25 @@ export function AuditTrailPage() {
                         setSelectedLog(log);
                       }
                     }}
-                    className="border-b border-gray-50 dark:border-slate-800/70 hover:bg-gray-50/50 dark:hover:bg-slate-800/40 cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ring)]"
+                    className="block md:table-row p-4 md:p-0 space-y-1.5 md:space-y-0 border-b border-gray-100 dark:border-slate-800/70 hover:bg-gray-50/80 dark:hover:bg-slate-800/40 cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ring)]"
                   >
-                    <td className="px-4 py-3 text-gray-600 dark:text-slate-300 whitespace-nowrap">
+                    <td className="block md:table-cell md:px-4 md:py-3 text-xs md:text-sm text-gray-600 dark:text-slate-300 md:whitespace-nowrap">
                       {formatDateTime(log.created_at)}
                     </td>
-                    <td className="px-4 py-3">
-                      <div className="text-gray-900 dark:text-slate-100">{log.user_full_name || '-'}</div>
-                      <div className="text-xs text-gray-400 dark:text-slate-500">{log.user_email}</div>
+                    <td className="block md:table-cell md:px-4 md:py-3">
+                      <div className="font-medium md:font-normal text-gray-900 dark:text-slate-100">{log.user_full_name || '—'}</div>
+                      <div className="text-xs text-gray-600 dark:text-slate-400 break-all">{log.user_email}</div>
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="inline-block mr-2 md:mr-0 md:table-cell md:px-4 md:py-3">
                       <span className="inline-flex px-2 py-0.5 text-xs font-medium bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-slate-300 rounded-full">
                         {entityLabels.get(log.entity_type) ?? formatEntityType(log.entity_type)}
                       </span>
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="inline-block md:table-cell md:px-4 md:py-3">
                       <ActionBadge action={log.action} label={actionLabels.get(log.action)} />
                     </td>
-                    <td className="px-4 py-3 text-gray-500 dark:text-slate-400 text-xs max-w-[260px]">
-                      <div className="truncate">{log.description || '-'}</div>
-                      {log.entity_id && (
-                        <button
-                          type="button"
-                          // stopPropagation: the row opens the detail drawer, and
-                          // filtering to the record is a different intent.
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setEntityId(log.entity_id!);
-                            setPage(1);
-                          }}
-                          title={t('audit.showRecordHistory')}
-                          className="mt-0.5 font-mono text-[11px] text-gray-400 dark:text-slate-500 hover:text-gray-900 dark:hover:text-slate-200 hover:underline"
-                        >
-                          {log.entity_id.slice(0, 8)}...
-                        </button>
-                      )}
+                    <td className="block md:table-cell md:px-4 md:py-3 text-gray-600 dark:text-slate-300 text-xs md:max-w-[280px]">
+                      <div className="md:truncate">{log.description || '—'}</div>
                     </td>
                   </tr>
                 ))}
@@ -331,6 +319,11 @@ export function AuditTrailPage() {
           log={selectedLog}
           entityLabel={entityLabels.get(selectedLog.entity_type)}
           actionLabel={actionLabels.get(selectedLog.action)}
+          onFilterEntity={(id) => {
+            setEntityId(id);
+            setPage(1);
+            setSelectedLog(null);
+          }}
           onClose={() => setSelectedLog(null)}
         />
       )}
@@ -395,11 +388,13 @@ function AuditDetailModal({
   log,
   entityLabel,
   actionLabel,
+  onFilterEntity,
   onClose,
 }: {
   log: AuditLog;
   entityLabel?: string;
   actionLabel?: string;
+  onFilterEntity: (entityId: string) => void;
   onClose: () => void;
 }) {
   const { t } = useTranslation();
@@ -422,14 +417,37 @@ function AuditDetailModal({
   }, [hasOld, hasNew, log.old_values, log.new_values]);
 
   return (
-    <Modal open onClose={onClose} title={t('audit.detailTitle')} maxWidth="max-w-2xl">
+    <Modal
+      open
+      onClose={onClose}
+      title={t('audit.detailTitle')}
+      maxWidth="max-w-2xl"
+      footer={
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            {log.entity_id && (
+              <button
+                type="button"
+                onClick={() => onFilterEntity(log.entity_id!)}
+                className="btn-secondary w-full sm:w-auto min-h-11 sm:min-h-10"
+              >
+                {t('audit.showRecordHistory')}
+              </button>
+            )}
+          </div>
+          <button type="button" onClick={onClose} className="btn-primary w-full sm:w-auto min-h-11 sm:min-h-10">
+            {t('common.close')}
+          </button>
+        </div>
+      }
+    >
       <div className="space-y-4">
-        <p className="text-xs text-gray-400 dark:text-slate-500 -mt-2">{formatDateTime(log.created_at)}</p>
+        <p className="text-xs text-gray-600 dark:text-slate-400 -mt-2">{formatDateTime(log.created_at)}</p>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
           <div>
-            <p className="text-gray-500 dark:text-slate-400">{t('audit.user')}</p>
-            <p className="font-medium text-gray-900 dark:text-slate-100">{log.user_full_name || '-'}</p>
-            <p className="text-xs text-gray-400 dark:text-slate-500 break-all">{log.user_email}</p>
+            <p className="text-gray-600 dark:text-slate-400">{t('audit.user')}</p>
+            <p className="font-medium text-gray-900 dark:text-slate-100">{log.user_full_name || '—'}</p>
+            <p className="text-xs text-gray-600 dark:text-slate-400 break-all">{log.user_email}</p>
           </div>
           <div>
             <p className="text-gray-500 dark:text-slate-400">{t('audit.ipAddress')}</p>

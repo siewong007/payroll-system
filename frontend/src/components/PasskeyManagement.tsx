@@ -13,6 +13,7 @@ export function PasskeyManagement() {
   const queryClient = useQueryClient();
   const [registering, setRegistering] = useState(false);
   const [newName, setNewName] = useState('');
+  const [password, setPassword] = useState('');
   const [showNameInput, setShowNameInput] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
@@ -56,7 +57,7 @@ export function PasskeyManagement() {
     setRegistering(true);
     try {
       // Step 1: Get challenge from server
-      const { challenge_id, options } = await passkeyRegisterBegin();
+      const { challenge_id, options } = await passkeyRegisterBegin(password);
 
       // Step 2: Browser WebAuthn ceremony
       const credential = await createPasskeyCredential(options.publicKey);
@@ -68,6 +69,7 @@ export function PasskeyManagement() {
       queryClient.invalidateQueries({ queryKey: ['passkeys'] });
       setShowNameInput(false);
       setNewName('');
+      setPassword('');
       setSuccess(t('auth.passkeys.registered'));
       setTimeout(() => setSuccess(''), 3000);
     } catch (err: unknown) {
@@ -206,17 +208,26 @@ export function PasskeyManagement() {
             className="form-input flex-1 min-w-[160px]"
             autoFocus
           />
+          <input
+            type="password"
+            autoComplete="current-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder={t('auth.twoFactor.currentPasswordPlaceholder')}
+            aria-label={t('auth.twoFactor.currentPasswordPlaceholder')}
+            className="form-input flex-1 min-w-[160px]"
+          />
           <button
             type="button"
             onClick={handleRegister}
-            disabled={registering}
+            disabled={registering || !password}
             className="btn-primary !py-2 !min-h-10"
           >
             {registering ? t('auth.passkeys.registering') : t('auth.passkeys.register')}
           </button>
           <button
             type="button"
-            onClick={() => { setShowNameInput(false); setNewName(''); }}
+            onClick={() => { setShowNameInput(false); setNewName(''); setPassword(''); }}
             aria-label={t('common.cancel')}
             className="min-h-10 min-w-10 inline-flex items-center justify-center text-gray-400 dark:text-slate-400 hover:text-gray-600 dark:hover:text-slate-200 rounded-lg"
           >

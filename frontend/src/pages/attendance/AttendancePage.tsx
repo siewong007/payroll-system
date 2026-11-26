@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { type KeyboardEvent, useId, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useToast } from '@/lib/toast';
@@ -7,6 +7,7 @@ import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tansta
 import {
   Clock,
   Filter,
+  Loader2,
   Plus,
   MapPin,
   AlertCircle,
@@ -37,6 +38,9 @@ import { usePermissions } from '@/lib/usePermissions';
 import { zonedDateKey } from '@/lib/attendance';
 import { getErrorMessage } from '@/lib/utils';
 import { EmployeePicker } from '@/components/employees/EmployeePicker';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { WorkScheduleCard } from '@/components/attendance/WorkScheduleCard';
 import { GeofenceCard } from '@/components/attendance/GeofenceCard';
 import { NetworkCard } from '@/components/attendance/NetworkCard';
@@ -96,6 +100,8 @@ export function AttendancePage() {
   const [tab, setTab] = useState<'records' | 'summary' | 'settings'>(initialTab);
   const [filterOverrides, setFilterOverrides] = useState<typeof NO_FILTERS | null>(null);
   const [page, setPage] = useState(1);
+  const tabsIdPrefix = useId();
+  const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
 
   const filters = useMemo<typeof NO_FILTERS>(
     () =>
@@ -129,7 +135,7 @@ export function AttendancePage() {
   const canSwitchMethod =
     Boolean(method?.allow_company_override) && can('set_company_attendance_method');
 
-  const { data: result, isLoading, isError, error, refetch } = useQuery({
+  const { data: result, isLoading, isFetching, isError, error, refetch } = useQuery({
     queryKey: ['attendance-records', filters, page],
     queryFn: () => getAttendanceRecords({
       date_from:   filters.date_from   || undefined,
@@ -230,101 +236,129 @@ export function AttendancePage() {
 
   const showQrPanel = method?.method === 'qr_code' && (canGenerateQr || canManageKiosks);
 
+  const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, currentIndex: number) => {
+    let targetIndex: number | null = null;
+    if (event.key === 'ArrowRight') {
+      targetIndex = (currentIndex + 1) % tabItems.length;
+    } else if (event.key === 'ArrowLeft') {
+      targetIndex = (currentIndex - 1 + tabItems.length) % tabItems.length;
+    } else if (event.key === 'Home') {
+      targetIndex = 0;
+    } else if (event.key === 'End') {
+      targetIndex = tabItems.length - 1;
+    }
+    if (targetIndex === null) return;
+    event.preventDefault();
+    const target = tabItems[targetIndex];
+    if (!target) return;
+    setTab(target.key);
+    tabRefs.current[targetIndex]?.focus();
+  };
+
+  const activeTabId = `${tabsIdPrefix}-tab-${tab}`;
+  const activePanelId = `${tabsIdPrefix}-panel-${tab}`;
+
   return (
-    <div>
+    <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col gap-3 mb-6 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0">
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-slate-100">{t('attendance.page.title')}</h1>
-          {method && (
-            <div className="text-sm text-gray-500 dark:text-slate-400 mt-0.5 flex flex-wrap items-center gap-1.5">
-              <span>{t('attendance.page.method')}</span>
-              {canSwitchMethod ? (
-                <select
-                  value={method.is_company_override ? method.method : ''}
-                  onChange={e => methodMut.mutate(e.target.value || null)}
-                  disabled={methodMut.isPending}
-                  aria-label={t('attendance.page.method')}
-                  className="form-input !w-auto !py-1 !px-2 text-sm font-medium disabled:opacity-50"
-                >
-                  <option value="">
-                    {method.is_company_override
-                      ? t('attendance.page.platformDefault')
-                      : `${attMethodLabel(method.method)} (${t('attendance.page.methodDefault')})`}
-                  </option>
-                  <option value="qr_code">{attMethodLabel('qr_code')}</option>
-                  <option value="face_id">{attMethodLabel('face_id')}</option>
-                </select>
-              ) : (
-                <span className="font-medium text-gray-700 dark:text-slate-200">
-                  {attMethodLabel(method.method)}
-                </span>
-              )}
-              {method.is_company_override && (
-                <span className="text-xs bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300 px-1.5 py-0.5 rounded">
-                  {t('attendance.page.companyOverride')}
-                </span>
-              )}
-            </div>
+      <PageHeader
+        className="mb-0"
+        title={t('attendance.page.title')}
+        actions={
+          <div className="flex flex-wrap gap-2 shrink-0">
+            {canManageKiosks && method?.method !== 'qr_code' && (
+              <button
+                type="button"
+                onClick={() => setShowHeaderKiosks(true)}
+                className="btn-secondary flex-1 sm:flex-none min-h-11 sm:min-h-10"
+              >
+                <Link2 className="w-4 h-4 shrink-0" aria-hidden="true" />
+                {t('attendance.kioskModal.title')}
+              </button>
+            )}
+            {canView && tab === 'records' && (
+              <button
+                type="button"
+                onClick={async () => {
+                  setExporting(true);
+                  setPageError('');
+                  try {
+                    await downloadAttendanceCsv({
+                      date_from:   filters.date_from   || undefined,
+                      date_to:     filters.date_to     || undefined,
+                      status:      filters.status      || undefined,
+                      method:      filters.method      || undefined,
+                      employee_id: filters.employee_id || undefined,
+                      open_only:             filters.open_only || undefined,
+                      outside_geofence_only: filters.outside_geofence_only || undefined,
+                      offsite_network_only:  filters.offsite_network_only || undefined,
+                    });
+                  } catch (e) {
+                    setPageError(getErrorMessage(e, t('attendance.page.exportFailed')));
+                  } finally {
+                    setExporting(false);
+                  }
+                }}
+                disabled={exporting}
+                className="btn-secondary flex-1 sm:flex-none min-h-11 sm:min-h-10"
+              >
+                {exporting ? (
+                  <Loader2 className="w-4 h-4 shrink-0 animate-spin" aria-hidden="true" />
+                ) : (
+                  <Download className="w-4 h-4 shrink-0" aria-hidden="true" />
+                )}
+                {exporting ? t('common.exporting') : t('attendance.page.exportCsv')}
+              </button>
+            )}
+            {canEdit && (
+              <button
+                type="button"
+                onClick={() => setShowManual(true)}
+                className="btn-primary flex-1 sm:flex-none min-h-11 sm:min-h-10"
+              >
+                <Plus className="w-4 h-4 shrink-0" aria-hidden="true" />
+                {t('attendance.page.manualEntry')}
+              </button>
+            )}
+          </div>
+        }
+      />
+
+      {method && (
+        <div className="-mt-3 text-sm text-gray-500 dark:text-slate-400 flex flex-wrap items-center gap-2">
+          <span>{t('attendance.page.method')}</span>
+          {canSwitchMethod ? (
+            <select
+              value={method.is_company_override ? method.method : ''}
+              onChange={e => methodMut.mutate(e.target.value || null)}
+              disabled={methodMut.isPending}
+              aria-label={t('attendance.page.method')}
+              className="form-input !w-auto min-h-11 sm:min-h-9 !py-1.5 !px-3 sm:text-sm font-medium disabled:opacity-50"
+            >
+              <option value="">
+                {method.is_company_override
+                  ? t('attendance.page.platformDefault')
+                  : `${attMethodLabel(method.method)} (${t('attendance.page.methodDefault')})`}
+              </option>
+              <option value="qr_code">{attMethodLabel('qr_code')}</option>
+              <option value="face_id">{attMethodLabel('face_id')}</option>
+            </select>
+          ) : (
+            <span className="font-medium text-gray-700 dark:text-slate-200">
+              {attMethodLabel(method.method)}
+            </span>
+          )}
+          {method.is_company_override && (
+            <span className="text-xs bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300 px-2 py-0.5 rounded-full font-medium">
+              {t('attendance.page.companyOverride')}
+            </span>
           )}
         </div>
-        <div className="flex flex-wrap gap-2 shrink-0">
-          {canManageKiosks && method?.method !== 'qr_code' && (
-            <button
-              type="button"
-              onClick={() => setShowHeaderKiosks(true)}
-              className="btn-secondary flex-1 sm:flex-none !py-2 !min-h-10"
-            >
-              <Link2 className="w-4 h-4 shrink-0" />
-              {t('attendance.kioskModal.title')}
-            </button>
-          )}
-          {canView && tab === 'records' && (
-            <button
-              type="button"
-              onClick={async () => {
-                setExporting(true);
-                setPageError('');
-                try {
-                  await downloadAttendanceCsv({
-                    date_from:   filters.date_from   || undefined,
-                    date_to:     filters.date_to     || undefined,
-                    status:      filters.status      || undefined,
-                    method:      filters.method      || undefined,
-                    employee_id: filters.employee_id || undefined,
-                    open_only:             filters.open_only || undefined,
-                    outside_geofence_only: filters.outside_geofence_only || undefined,
-                    offsite_network_only:  filters.offsite_network_only || undefined,
-                  });
-                } catch (e) {
-                  setPageError(getErrorMessage(e, t('attendance.page.exportFailed')));
-                } finally {
-                  setExporting(false);
-                }
-              }}
-              disabled={exporting}
-              className="btn-secondary flex-1 sm:flex-none !py-2 !min-h-10"
-            >
-              <Download className="w-4 h-4 shrink-0" />
-              {exporting ? t('common.exporting') : t('attendance.page.exportCsv')}
-            </button>
-          )}
-          {canEdit && (
-            <button
-              type="button"
-              onClick={() => setShowManual(true)}
-              className="btn-primary flex-1 sm:flex-none !py-2 !min-h-10"
-            >
-              <Plus className="w-4 h-4 shrink-0" />
-              {t('attendance.page.manualEntry')}
-            </button>
-          )}
-        </div>
-      </div>
+      )}
 
       {pageError && (
-        <div role="alert" className="mb-4 px-4 py-3 rounded-xl bg-red-50 dark:bg-red-500/15 border border-red-200 dark:border-red-500/30 text-sm text-red-700 dark:text-red-300 flex items-center gap-2">
-          <AlertCircle className="w-4 h-4 shrink-0" />
+        <div role="alert" className="px-4 py-3 rounded-xl bg-red-50 dark:bg-red-500/15 border border-red-200 dark:border-red-500/30 text-sm text-red-700 dark:text-red-300 flex items-center gap-2">
+          <AlertCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
           {pageError}
         </div>
       )}
@@ -332,39 +366,51 @@ export function AttendancePage() {
       {canView && <StatsBar today={today} onShowOpen={showOpenSessions} />}
 
       {/* Tabs */}
-      <div role="tablist" aria-label={t('attendance.page.title')} className="flex items-center gap-1 mb-4 border-b border-gray-200 dark:border-slate-800 overflow-x-auto">
-        {tabItems.map(item => {
+      <div role="tablist" aria-label={t('attendance.page.title')} className="flex items-center gap-1 border-b border-gray-200 dark:border-slate-800 overflow-x-auto">
+        {tabItems.map((item, idx) => {
           const selected = tab === item.key;
           return (
             <button
               key={item.key}
+              ref={(el) => {
+                tabRefs.current[idx] = el;
+              }}
+              id={`${tabsIdPrefix}-tab-${item.key}`}
               type="button"
               role="tab"
               aria-selected={selected}
+              tabIndex={selected ? 0 : -1}
+              aria-controls={selected ? activePanelId : undefined}
               onClick={() => setTab(item.key)}
-              className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap shrink-0 ${
+              onKeyDown={(e) => handleTabKeyDown(e, idx)}
+              className={`min-h-11 flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] ${
                 selected
-                  ? 'border-gray-900 dark:border-[var(--accent-1)] text-gray-900 dark:text-slate-100'
+                  ? 'border-[var(--accent-1)] text-gray-900 dark:text-slate-100'
                   : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200'
               }`}
             >
-              <item.icon className="w-4 h-4" />
+              <item.icon className="w-4 h-4" aria-hidden="true" />
               {item.label}
             </button>
           );
         })}
       </div>
 
+      <div id={activePanelId} role="tabpanel" aria-labelledby={activeTabId}>
       {tab === 'settings' && canConfigure ? (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {canManageSchedule && <WorkScheduleCard />}
           {canManageGeofence && <GeofenceCard />}
-          {canManageNetworks && <NetworkCard enabled={canManageNetworks} />}
+          {canManageNetworks && (
+            <div className="lg:col-span-2">
+              <NetworkCard enabled={canManageNetworks} />
+            </div>
+          )}
         </div>
       ) : tab === 'summary' && canView ? (
         <SummaryTab today={today} canExport={canView} canView={canView} />
       ) : (
-      <div className={`grid grid-cols-1 gap-6 ${showQrPanel ? 'xl:grid-cols-[300px_minmax(0,1fr)]' : ''}`}>
+      <div className={`grid grid-cols-1 gap-6 ${showQrPanel ? '2xl:grid-cols-[300px_minmax(0,1fr)]' : ''}`}>
         {/* QR Panel — only in QR mode */}
         {showQrPanel && (
           <div>
@@ -374,33 +420,39 @@ export function AttendancePage() {
 
         {/* Records Table */}
         <div className="min-w-0">
-          <div className="bg-white dark:bg-slate-900 border border-gray-200/80 dark:border-slate-800 rounded-2xl shadow-sm overflow-hidden">
+          <div className="card !p-0 overflow-hidden">
             {/* Filters */}
-            <div className="flex flex-wrap items-center gap-2.5 sm:gap-3 p-4 sm:p-5 border-b border-gray-100 dark:border-slate-800">
-              <div className="flex w-full sm:w-auto items-center gap-2 text-sm text-gray-600 dark:text-slate-300">
-                <Filter className="w-4 h-4" /> {t('attendance.page.filters')}
+            <div className="flex flex-wrap items-end gap-2.5 sm:gap-3 p-4 sm:p-5 border-b border-gray-100 dark:border-slate-800">
+              <div className="flex w-full sm:w-auto items-center gap-2 self-center text-sm text-gray-600 dark:text-slate-300">
+                <Filter className="w-4 h-4" aria-hidden="true" /> {t('attendance.page.filters')}
               </div>
-              <input
-                type="date"
-                value={filters.date_from}
-                onChange={e => updateFilter('date_from', e.target.value)}
-                aria-label={t('attendance.page.from')}
-                className="form-input !w-auto min-w-[8.5rem] flex-1 sm:flex-none !py-1.5"
-                placeholder={t('attendance.page.from')}
-              />
-              <input
-                type="date"
-                value={filters.date_to}
-                onChange={e => updateFilter('date_to', e.target.value)}
-                aria-label={t('attendance.page.to')}
-                className="form-input !w-auto min-w-[8.5rem] flex-1 sm:flex-none !py-1.5"
-                placeholder={t('attendance.page.to')}
-              />
+              <label className="flex flex-col gap-1 min-w-[8.5rem] flex-1 sm:flex-none">
+                <span className="text-xs font-medium text-gray-500 dark:text-slate-400">{t('attendance.page.from')}</span>
+                <input
+                  type="date"
+                  value={filters.date_from}
+                  max={filters.date_to || undefined}
+                  onChange={e => updateFilter('date_from', e.target.value)}
+                  aria-label={t('attendance.page.from')}
+                  className="form-input !w-full min-h-11 sm:min-h-9 !py-1.5 sm:text-xs"
+                />
+              </label>
+              <label className="flex flex-col gap-1 min-w-[8.5rem] flex-1 sm:flex-none">
+                <span className="text-xs font-medium text-gray-500 dark:text-slate-400">{t('attendance.page.to')}</span>
+                <input
+                  type="date"
+                  value={filters.date_to}
+                  min={filters.date_from || undefined}
+                  onChange={e => updateFilter('date_to', e.target.value)}
+                  aria-label={t('attendance.page.to')}
+                  className="form-input !w-full min-h-11 sm:min-h-9 !py-1.5 sm:text-xs"
+                />
+              </label>
               <select
                 value={filters.status}
                 onChange={e => updateFilter('status', e.target.value)}
                 aria-label={t('attendance.page.allStatus')}
-                className="form-input !w-auto min-w-[8.5rem] flex-1 sm:flex-none !py-1.5"
+                className="form-input !w-auto min-w-[8.5rem] min-h-11 sm:min-h-9 flex-1 sm:flex-none !py-1.5 sm:text-xs"
               >
                 <option value="">{t('attendance.page.allStatus')}</option>
                 <option value="present">{attStatusLabel('present')}</option>
@@ -412,37 +464,37 @@ export function AttendancePage() {
                 value={filters.method}
                 onChange={e => updateFilter('method', e.target.value)}
                 aria-label={t('attendance.page.allMethods')}
-                className="form-input !w-auto min-w-[8.5rem] flex-1 sm:flex-none !py-1.5"
+                className="form-input !w-auto min-w-[8.5rem] min-h-11 sm:min-h-9 flex-1 sm:flex-none !py-1.5 sm:text-xs"
               >
                 <option value="">{t('attendance.page.allMethods')}</option>
                 <option value="qr_code">{attMethodLabel('qr_code')}</option>
                 <option value="face_id">{attMethodLabel('face_id')}</option>
                 <option value="manual">{attMethodLabel('manual')}</option>
               </select>
-              <label className="flex w-full sm:w-auto items-center gap-1.5 text-sm text-gray-600 dark:text-slate-300 cursor-pointer select-none">
+              <label className="min-h-11 sm:min-h-9 flex w-full sm:w-auto items-center gap-2 text-sm text-gray-600 dark:text-slate-300 cursor-pointer select-none">
                 <input
                   type="checkbox"
                   checked={filters.open_only}
                   onChange={e => updateFilter('open_only', e.target.checked)}
-                  className="rounded border-gray-300 dark:border-slate-600"
+                  className="w-4 h-4 rounded border-gray-300 dark:border-slate-600 accent-[var(--accent-1)]"
                 />
                 {t('attendance.page.openOnly')}
               </label>
-              <label className="flex w-full sm:w-auto items-center gap-1.5 text-sm text-gray-600 dark:text-slate-300 cursor-pointer select-none">
+              <label className="min-h-11 sm:min-h-9 flex w-full sm:w-auto items-center gap-2 text-sm text-gray-600 dark:text-slate-300 cursor-pointer select-none">
                 <input
                   type="checkbox"
                   checked={filters.outside_geofence_only}
                   onChange={e => updateFilter('outside_geofence_only', e.target.checked)}
-                  className="rounded border-gray-300 dark:border-slate-600"
+                  className="w-4 h-4 rounded border-gray-300 dark:border-slate-600 accent-[var(--accent-1)]"
                 />
                 {t('attendance.page.offsiteOnly')}
               </label>
-              <label className="flex w-full sm:w-auto items-center gap-1.5 text-sm text-gray-600 dark:text-slate-300 cursor-pointer select-none">
+              <label className="min-h-11 sm:min-h-9 flex w-full sm:w-auto items-center gap-2 text-sm text-gray-600 dark:text-slate-300 cursor-pointer select-none">
                 <input
                   type="checkbox"
                   checked={filters.offsite_network_only}
                   onChange={e => updateFilter('offsite_network_only', e.target.checked)}
-                  className="rounded border-gray-300 dark:border-slate-600"
+                  className="w-4 h-4 rounded border-gray-300 dark:border-slate-600 accent-[var(--accent-1)]"
                 />
                 {t('attendance.page.offsiteNetworkOnly')}
               </label>
@@ -450,7 +502,7 @@ export function AttendancePage() {
                 <button
                   type="button"
                   onClick={clearFilters}
-                  className="text-xs text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100 underline"
+                  className="min-h-11 sm:min-h-9 px-2 text-xs text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100 underline rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                 >
                   {t('common.clear')}
                 </button>
@@ -476,17 +528,18 @@ export function AttendancePage() {
                   max={today}
                   onChange={e => setBackfillDate(e.target.value)}
                   aria-label={t('attendance.page.markAbsences')}
-                  className="form-input !w-auto !py-1 !px-2.5 text-xs"
+                  className="form-input !w-auto min-h-11 sm:min-h-9 !py-1.5 !px-2.5 sm:text-xs"
                 />
                 <button
                   type="button"
                   onClick={() => void handleBackfill()}
                   disabled={!backfillDate || backfillMut.isPending}
-                  className="btn-secondary !py-1 !px-3 !min-h-8 text-xs"
+                  className="btn-secondary min-h-11 sm:min-h-9 !py-1.5 !px-3 text-xs"
                 >
+                  {backfillMut.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" />}
                   {backfillMut.isPending ? t('common.running') : t('attendance.page.markAbsences')}
                 </button>
-                <span className="text-xs text-gray-400 dark:text-slate-500">
+                <span className="text-xs text-gray-500 dark:text-slate-400">
                   {t('attendance.page.backfillSafe')}
                 </span>
               </div>
@@ -494,38 +547,50 @@ export function AttendancePage() {
 
             {/* Table */}
             {isLoading ? (
-              <div className="flex items-center justify-center h-48">
-                <div className="spinner" />
+              <div
+                role="status"
+                aria-busy="true"
+                aria-label={t('common.loading')}
+                className="p-4 sm:p-5 space-y-3"
+              >
+                {[0, 1, 2, 3].map((i) => (
+                  <Skeleton key={i} className="h-14 w-full rounded-xl" />
+                ))}
               </div>
             ) : isError || !canView ? (
-              <div className="flex flex-col items-center justify-center h-48 gap-2 text-gray-600 dark:text-slate-300 px-6 text-center">
-                <AlertCircle className="w-8 h-8 text-red-500" />
-                <p className="text-sm">
-                  {forbidden
-                    ? t('attendance.page.forbidden')
-                    : t('attendance.page.loadFailed')}
-                </p>
-                {!forbidden && (
-                  <button type="button" onClick={() => refetch()} className="text-sm font-medium text-gray-900 dark:text-slate-100 hover:underline">
-                    {t('common.retry')}
-                  </button>
-                )}
-              </div>
+              <EmptyState
+                icon={AlertCircle}
+                title={forbidden ? t('attendance.page.forbidden') : t('attendance.page.loadFailed')}
+                action={
+                  !forbidden ? (
+                    <button type="button" onClick={() => refetch()} className="btn-primary">
+                      {t('common.retry')}
+                    </button>
+                  ) : undefined
+                }
+              />
             ) : records.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-48 text-gray-400 dark:text-slate-500 px-4 text-center">
-                <Calendar className="w-10 h-10 mb-2 opacity-40" />
-                <p className="text-sm">
-                  {filters.open_only
+              <EmptyState
+                icon={Calendar}
+                title={
+                  filters.open_only
                     ? t('attendance.page.emptyOpen')
                     : filters.outside_geofence_only
                       ? t('attendance.page.emptyOffsite')
                       : filters.offsite_network_only
                         ? t('attendance.page.emptyOffnetwork')
-                        : t('attendance.page.empty')}
-                </p>
-              </div>
+                        : t('attendance.page.empty')
+                }
+                action={
+                  hasFilters ? (
+                    <button type="button" onClick={clearFilters} className="btn-secondary">
+                      {t('ux.table.clearFilters')}
+                    </button>
+                  ) : undefined
+                }
+              />
             ) : (
-              <>
+              <div className={isFetching && !isLoading ? 'opacity-75 transition-opacity' : undefined}>
                 <div className="divide-y divide-gray-100 dark:divide-slate-800 lg:hidden">
                   {records.map(r => (
                     <RecordCard
@@ -572,12 +637,12 @@ export function AttendancePage() {
 
                         return (
                           <tr key={r.id} className="hover:bg-gray-50/70 dark:hover:bg-slate-800/40 transition-colors">
-                            <td className="px-5 py-3.5 whitespace-nowrap text-gray-600 dark:text-slate-300">
+                            <td className="px-5 py-3.5 whitespace-nowrap text-gray-600 dark:text-slate-300 tabular-nums">
                               {formatDate(r.check_in_at, timeZone)}
                             </td>
                             <td className="px-5 py-3.5">
                               <div className="font-medium text-gray-900 dark:text-slate-100">{r.full_name}</div>
-                              <div className="text-xs text-gray-400 dark:text-slate-500">{r.employee_number}</div>
+                              <div className="text-xs text-gray-500 dark:text-slate-400">{r.employee_number}</div>
                               {r.notes && (
                                 <div className="text-xs text-gray-500 dark:text-slate-400 truncate max-w-[220px]" title={r.notes}>
                                   {r.notes}
@@ -586,13 +651,13 @@ export function AttendancePage() {
                             </td>
                             <td className="px-5 py-3.5 tabular-nums text-gray-700 dark:text-slate-200 whitespace-nowrap">
                               <div className="flex items-center gap-1.5">
-                                <LogIn className="w-3.5 h-3.5 text-emerald-500 dark:text-emerald-400" />
+                                <LogIn className="w-3.5 h-3.5 text-emerald-500 dark:text-emerald-400" aria-hidden="true" />
                                 {isAbsentPlaceholder ? '—' : formatTime(r.check_in_at, timeZone)}
                               </div>
                             </td>
                             <td className="px-5 py-3.5 tabular-nums text-gray-700 dark:text-slate-200 whitespace-nowrap">
                               <div className="flex items-center gap-1.5">
-                                <LogOut className="w-3.5 h-3.5 text-gray-400 dark:text-slate-500" />
+                                <LogOut className="w-3.5 h-3.5 text-gray-500 dark:text-slate-400" aria-hidden="true" />
                                 {isAbsentPlaceholder ? '—' : formatTime(r.check_out_at, timeZone)}
                                 {overnightOut && (
                                   <span className="rounded bg-gray-100 dark:bg-slate-800 px-1 py-px text-[10px] font-medium text-gray-600 dark:text-slate-300">
@@ -607,17 +672,17 @@ export function AttendancePage() {
                                   <span>{t('attendance.hoursShort', { value: Number(r.hours_worked).toFixed(1) })}</span>
                                   {r.overtime_hours != null && Number(r.overtime_hours) > 0 && (
                                     <span className="ml-1 text-amber-600 dark:text-amber-400 font-medium">
-                                      <Timer className="w-3 h-3 inline" /> {t('attendance.hoursOtShort', { value: Number(r.overtime_hours).toFixed(1) })}
+                                      <Timer className="w-3 h-3 inline" aria-hidden="true" /> {t('attendance.hoursOtShort', { value: Number(r.overtime_hours).toFixed(1) })}
                                     </span>
                                   )}
                                 </div>
                               ) : (
-                                <span className="text-gray-300 dark:text-slate-600 text-xs">—</span>
+                                <span className="text-gray-400 dark:text-slate-500 text-xs">—</span>
                               )}
                             </td>
                             <td className="px-5 py-3.5 whitespace-nowrap">
                               <div className={`flex items-center gap-1.5 ${methodCfg?.color ?? 'text-gray-600 dark:text-slate-300'}`}>
-                                <MethodIcon className="w-3.5 h-3.5" />
+                                <MethodIcon className="w-3.5 h-3.5" aria-hidden="true" />
                                 <span className="text-xs font-medium">{methodCfg ? attMethodLabel(r.method) : r.method}</span>
                               </div>
                             </td>
@@ -648,9 +713,9 @@ export function AttendancePage() {
                                       href={`https://maps.google.com/?q=${r.latitude},${r.longitude}`}
                                       target="_blank"
                                       rel="noopener noreferrer"
-                                      className="flex items-center gap-1 text-sky-600 dark:text-sky-400 hover:text-sky-700 dark:hover:text-sky-300"
+                                      className="flex items-center gap-1 text-sky-600 dark:text-sky-400 hover:text-sky-700 dark:hover:text-sky-300 hover:underline"
                                     >
-                                      <MapPin className="w-3.5 h-3.5 shrink-0" />
+                                      <MapPin className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                                       {t('attendance.records.checkInLocation')}
                                     </a>
                                   )}
@@ -659,15 +724,15 @@ export function AttendancePage() {
                                       href={`https://maps.google.com/?q=${r.checkout_latitude},${r.checkout_longitude}`}
                                       target="_blank"
                                       rel="noopener noreferrer"
-                                      className="flex items-center gap-1 text-teal-600 dark:text-teal-400 hover:text-teal-700 dark:hover:text-teal-300"
+                                      className="flex items-center gap-1 text-teal-600 dark:text-teal-400 hover:text-teal-700 dark:hover:text-teal-300 hover:underline"
                                     >
-                                      <MapPin className="w-3.5 h-3.5 shrink-0" />
+                                      <MapPin className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                                       {t('attendance.records.checkOutLocation')}
                                     </a>
                                   )}
                                 </div>
                               ) : (
-                                <span className="text-gray-300 dark:text-slate-600 text-xs">—</span>
+                                <span className="text-gray-400 dark:text-slate-500 text-xs">—</span>
                               )}
                             </td>
                             {canEdit && (
@@ -675,11 +740,11 @@ export function AttendancePage() {
                                 <button
                                   type="button"
                                   onClick={() => setEditRecord(r)}
-                                  className="min-h-10 min-w-10 inline-flex items-center justify-center rounded-lg text-gray-400 dark:text-slate-500 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors"
+                                  className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 inline-flex items-center justify-center rounded-lg text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                                   title={t('attendance.records.editRecord')}
-                                  aria-label={t('attendance.records.editRecord')}
+                                  aria-label={`${t('attendance.records.editRecord')} \u2014 ${r.full_name}`}
                                 >
-                                  <Pencil className="w-3.5 h-3.5" />
+                                  <Pencil className="w-3.5 h-3.5" aria-hidden="true" />
                                 </button>
                               </td>
                             )}
@@ -693,7 +758,7 @@ export function AttendancePage() {
                 {/* Pagination */}
                 {totalPages > 1 && (
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-4 sm:px-5 py-3 border-t border-gray-100 dark:border-slate-800">
-                    <p className="text-xs text-gray-500 dark:text-slate-400">
+                    <p className="text-xs text-gray-500 dark:text-slate-400 tabular-nums">
                       {t('common.showing', { from: (page - 1) * perPage + 1, to: Math.min(page * perPage, total), total })}
                     </p>
                     <div className="flex items-center justify-center gap-1">
@@ -702,9 +767,9 @@ export function AttendancePage() {
                         onClick={() => setPage(p => Math.max(1, p - 1))}
                         disabled={page <= 1}
                         aria-label={t('common.previousPage')}
-                        className="min-h-10 min-w-10 flex items-center justify-center rounded-lg text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed"
+                        className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 flex items-center justify-center rounded-lg text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                       >
-                        <ChevronLeft className="w-4 h-4" />
+                        <ChevronLeft className="w-4 h-4" aria-hidden="true" />
                       </button>
                       {Array.from({ length: Math.min(totalPages, 5) }, (_, i) => {
                         let p: number;
@@ -717,9 +782,10 @@ export function AttendancePage() {
                             key={p}
                             type="button"
                             onClick={() => setPage(p)}
-                            className={`w-10 h-10 rounded-lg text-xs font-medium transition-colors ${
+                            aria-current={p === page ? 'page' : undefined}
+                            className={`min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 rounded-lg text-xs font-medium tabular-nums transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] ${
                               p === page
-                                ? 'bg-gray-900 text-white dark:bg-[var(--accent-1)] dark:text-white'
+                                ? 'bg-[var(--accent-1)] text-white'
                                 : 'hover:bg-gray-100 dark:hover:bg-slate-800 text-gray-600 dark:text-slate-300'
                             }`}
                           >
@@ -732,19 +798,20 @@ export function AttendancePage() {
                         onClick={() => setPage(p => Math.min(totalPages, p + 1))}
                         disabled={page >= totalPages}
                         aria-label={t('common.nextPage')}
-                        className="min-h-10 min-w-10 flex items-center justify-center rounded-lg text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed"
+                        className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 flex items-center justify-center rounded-lg text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                       >
-                        <ChevronRight className="w-4 h-4" />
+                        <ChevronRight className="w-4 h-4" aria-hidden="true" />
                       </button>
                     </div>
                   </div>
                 )}
-              </>
+              </div>
             )}
           </div>
         </div>
       </div>
       )}
+      </div>
 
       {showManual && <ManualEntryModal onClose={() => setShowManual(false)} />}
       {showHeaderKiosks && <KioskCredentialsModal onClose={() => setShowHeaderKiosks(false)} />}

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE attendance_qr_tokens SET used = TRUE\n                 WHERE company_id = $1 AND used = FALSE AND kiosk_credential_id IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3c72d175c24f00ba9e6817653a95dffcfa53d7e96a2ed22e02accffa5bb1d42e"
+}

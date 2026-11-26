@@ -1,8 +1,9 @@
+import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Eye, Plus, Trash2 } from 'lucide-react';
+import { AlertTriangle, Eye, Loader2, Plus, Trash2 } from 'lucide-react';
 import { deletePayrollRun, getPayrollGroups, getPayrollRuns } from '@/api/payroll';
 import { formatMYR, getErrorMessage } from '@/lib/utils';
 import { formatNumber, formatPeriod } from '@/lib/format';
@@ -102,6 +103,7 @@ export function PayrollList() {
   const { can } = usePermissions();
   const canManageDraft = can('manage_payroll_draft');
   const [searchParams, setSearchParams] = useSearchParams();
+  const [deletingRunId, setDeletingRunId] = useState<string | null>(null);
 
   const rawStatus = searchParams.get('status') ?? '';
   const statusFilter = PAYROLL_STATUSES.includes(rawStatus as (typeof PAYROLL_STATUSES)[number])
@@ -140,7 +142,9 @@ export function PayrollList() {
   });
 
   const groupName = (id: string) =>
-    groups?.find((group) => group.id === id)?.name ?? t('payroll.unknownGroup');
+    groups === undefined
+      ? '\u2014'
+      : (groups.find((group) => group.id === id)?.name ?? t('payroll.unknownGroup'));
   const columns = buildColumns(groupName, t);
 
   const years = [...new Set((runs ?? []).map((run) => run.period_year))].sort((a, b) => b - a);
@@ -153,6 +157,7 @@ export function PayrollList() {
 
   const deleteMutation = useMutation({
     mutationFn: deletePayrollRun,
+    onMutate: (runId) => setDeletingRunId(runId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['payrollRuns'] });
       queryClient.invalidateQueries({ queryKey: ['payrollOverview'] });
@@ -162,6 +167,7 @@ export function PayrollList() {
     onError: (err: unknown) => {
       toast.error(getErrorMessage(err, t('payroll.deleteFailed')));
     },
+    onSettled: () => setDeletingRunId(null),
   });
 
   const handleDelete = async (run: PayrollRun) => {
@@ -197,7 +203,7 @@ export function PayrollList() {
           <select
             value={groupFilter}
             onChange={(e) => updateFilter('group', e.target.value)}
-            className="form-input"
+            className="form-input min-h-11 sm:min-h-10"
             aria-label={t('payroll.filterByGroup')}
           >
             <option value="">{t('payroll.allGroups')}</option>
@@ -208,7 +214,7 @@ export function PayrollList() {
           <select
             value={yearFilter}
             onChange={(e) => updateFilter('year', e.target.value)}
-            className="form-input"
+            className="form-input min-h-11 sm:min-h-10"
             aria-label={t('payroll.filterByYear')}
           >
             <option value="">{t('payroll.allYears')}</option>
@@ -219,7 +225,7 @@ export function PayrollList() {
           <select
             value={statusFilter}
             onChange={(e) => updateFilter('status', e.target.value)}
-            className="form-input"
+            className="form-input min-h-11 sm:min-h-10"
             aria-label={t('payroll.filterByStatus')}
           >
             <option value="">{t('payroll.allStatuses')}</option>
@@ -314,34 +320,50 @@ export function PayrollList() {
                 <button
                   type="button"
                   onClick={() => handleDelete(run)}
-                  disabled={deleteMutation.isPending}
-                  className="flex min-h-11 items-center justify-center gap-1.5 w-full py-2 text-sm font-medium text-red-600 dark:text-red-400 border border-red-200 dark:border-red-900/60 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors disabled:opacity-50"
+                  disabled={deletingRunId === run.id && deleteMutation.isPending}
+                  className="flex min-h-11 items-center justify-center gap-1.5 w-full py-2 text-sm font-medium text-red-600 dark:text-red-400 border border-red-200 dark:border-red-900/60 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                 >
-                  <Trash2 className="w-4 h-4" aria-hidden="true" /> {t('payroll.deleteRun')}
+                  {deletingRunId === run.id && deleteMutation.isPending ? (
+                    <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <Trash2 className="w-4 h-4" aria-hidden="true" />
+                  )}{' '}
+                  {t('payroll.deleteRun')}
                 </button>
               )}
             </div>
           )}
-          renderActions={(run) => (
-            <div className="flex items-center justify-center gap-1">
-              <Link
-                to={`/payroll/${run.id}`}
-                className="inline-flex min-h-11 sm:min-h-9 items-center gap-1 px-2 rounded-lg text-sm text-gray-900 dark:text-slate-100 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors"
-              >
-                <Eye className="w-4 h-4" aria-hidden="true" /> {t('common.view')}
-              </Link>
-              {canManageDraft && canDeletePayrollRun(run) && (
-                <button
-                  type="button"
-                  onClick={() => handleDelete(run)}
-                  disabled={deleteMutation.isPending}
-                  className="inline-flex min-h-11 sm:min-h-9 items-center gap-1 px-2 rounded-lg text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 disabled:opacity-50 transition-colors"
+          renderActions={(run) => {
+            const periodLabel = formatPeriod(run.period_year, run.period_month);
+            const isDeletingThis = deletingRunId === run.id && deleteMutation.isPending;
+            return (
+              <div className="flex items-center justify-center gap-1">
+                <Link
+                  to={`/payroll/${run.id}`}
+                  aria-label={`${t('common.view')} \u2014 ${periodLabel}`}
+                  className="inline-flex min-h-11 sm:min-h-9 items-center gap-1 px-2 rounded-lg text-sm text-gray-900 dark:text-slate-100 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                 >
-                  <Trash2 className="w-4 h-4" aria-hidden="true" /> {t('common.delete')}
-                </button>
-              )}
-            </div>
-          )}
+                  <Eye className="w-4 h-4" aria-hidden="true" /> {t('common.view')}
+                </Link>
+                {canManageDraft && canDeletePayrollRun(run) && (
+                  <button
+                    type="button"
+                    onClick={() => handleDelete(run)}
+                    disabled={isDeletingThis}
+                    aria-label={t('common.deleteName', { name: periodLabel })}
+                    className="inline-flex min-h-11 sm:min-h-9 items-center gap-1 px-2 rounded-lg text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 disabled:opacity-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+                  >
+                    {isDeletingThis ? (
+                      <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                    ) : (
+                      <Trash2 className="w-4 h-4" aria-hidden="true" />
+                    )}{' '}
+                    {t('common.delete')}
+                  </button>
+                )}
+              </div>
+            );
+          }}
         />
       )}
     </div>

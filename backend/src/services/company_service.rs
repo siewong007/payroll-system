@@ -82,9 +82,11 @@ pub async fn update_company(
 }
 
 pub async fn get_company_stats(pool: &PgPool, company_id: Uuid) -> AppResult<CompanyStats> {
+    let (total_employees, total_departments) =
+        employees::count_active_and_departments(pool, company_id).await?;
     Ok(CompanyStats {
-        total_employees: employees::count_active(pool, company_id).await?,
-        total_departments: employees::count_distinct_departments(pool, company_id).await?,
+        total_employees,
+        total_departments,
         total_payroll_groups: payroll_groups::count_active(pool, company_id).await?,
         total_documents: documents::count_active(pool, company_id).await?,
     })
@@ -95,11 +97,22 @@ pub async fn get_company_stats(pool: &PgPool, company_id: Uuid) -> AppResult<Com
 pub async fn delete_company(pool: &PgPool, company_id: Uuid, actor_id: Uuid) -> AppResult<()> {
     let mut tx = pool.begin().await?;
 
+    let stored_files =
+        crate::repositories::uploaded_files::list_stored_names_for_company(&mut *tx, company_id)
+            .await?;
+
     let deleted = companies::delete_cascade_for_actor(&mut tx, company_id, Some(actor_id)).await?;
     if deleted == 0 {
         return Err(AppError::NotFound("Company not found".into()));
     }
 
     tx.commit().await?;
+
+    for stored_name in stored_files {
+        if let Ok(path) = crate::core::upload_path::stored_path(&stored_name) {
+            let _ = tokio::fs::remove_file(&path).await;
+        }
+    }
+
     Ok(())
 }

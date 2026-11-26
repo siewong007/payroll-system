@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE leave_balances lb\n           SET entitled_days = lb.entitled_days - 1, updated_at = NOW()\n           FROM leave_types lt\n           WHERE lb.leave_type_id = lt.id\n             AND lb.employee_id = $1\n             AND lb.year = $2\n             AND lt.company_id = $3\n             AND lt.name = 'Replacement Leave'\n             AND lb.entitled_days >= 1\n             AND (lb.entitled_days - 1 + lb.carried_forward) >= (lb.taken_days + lb.pending_days)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c6496726ade4d152514103d0f4a1e94baeaaa23055ada14d45d897793437fb79"
+}

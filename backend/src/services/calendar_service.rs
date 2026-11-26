@@ -96,10 +96,22 @@ pub async fn update_working_days(
     company_id: Uuid,
     days: &[(i16, bool)],
 ) -> AppResult<Vec<WorkingDayConfig>> {
+    if days.len() > 7 {
+        return Err(AppError::BadRequest(
+            "At most 7 working day entries can be provided".into(),
+        ));
+    }
+    let mut seen = std::collections::HashSet::with_capacity(days.len());
     for &(day, _) in days {
         if !(0..=6).contains(&day) {
             return Err(AppError::BadRequest(format!(
                 "Invalid day_of_week: {}. Must be 0-6.",
+                day
+            )));
+        }
+        if !seen.insert(day) {
+            return Err(AppError::BadRequest(format!(
+                "Duplicate day_of_week: {}",
                 day
             )));
         }
@@ -374,10 +386,12 @@ pub async fn import_from_ics_text(
     }
 
     let mut tx = pool.begin().await?;
+    let pairs: Vec<(NaiveDate, String)> =
+        parsed.iter().map(|ev| (ev.date, ev.name.clone())).collect();
+    let mut existing = holiday_repo::find_existing_pairs(&mut *tx, company_id, &pairs).await?;
     let mut holidays = Vec::new();
     for ev in parsed {
-        let exists = holiday_repo::count_matching(&mut *tx, company_id, ev.date, &ev.name).await?;
-        if exists == 0 {
+        if existing.insert((ev.date, ev.name.clone())) {
             let h = holiday_repo::insert(
                 &mut *tx,
                 company_id,

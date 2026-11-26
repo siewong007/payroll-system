@@ -12,6 +12,7 @@ import {
   ExternalLink,
   Filter,
   Image,
+  Loader2,
   Paperclip,
   Plus,
   Trash2,
@@ -31,6 +32,7 @@ import {
   getClaims,
   getLeaveRequests,
   getOvertimeRequests,
+  getPendingApprovalCounts,
   rejectClaim,
   rejectLeave,
   rejectOvertime,
@@ -42,6 +44,7 @@ import { getLeaveTypes } from '@/api/portal';
 import { AttachmentLink, AttachmentPreview } from '@/components/ui/AttachmentPreview';
 import { DataTable, type Column } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { useAuth } from '@/context/AuthContext';
 import { runBulk, summarizeBulkFailure } from '@/lib/bulk';
 import { formatDate, getErrorMessage, isImageUrl } from '@/lib/utils';
@@ -65,6 +68,14 @@ import type { LeaveType } from '@/types';
 
 const fmt = formatMYR;
 const statusBadge = (status: string) => <RequestStatusBadge status={status} />;
+const getInitials = (name?: string | null) =>
+  (name || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part[0])
+    .slice(0, 2)
+    .join('');
 
 /** Rows per page in the approval inboxes. */
 const PER_PAGE = 20;
@@ -90,6 +101,7 @@ export function Approvals() {
   const [overtimeEditor, setOvertimeEditor] = useState<OvertimeWithEmployee | null>(null);
   const [selectedApprovalIds, setSelectedApprovalIds] = useState<string[]>([]);
   const [bulkError, setBulkError] = useState('');
+  const [busyId, setBusyId] = useState<string | null>(null);
   const [showLeaveModal, setShowLeaveModal] = useState(false);
   const [showClaimModal, setShowClaimModal] = useState(false);
   const [showOvertimeModal, setShowOvertimeModal] = useState(false);
@@ -159,6 +171,21 @@ export function Approvals() {
     enabled: tab === 'overtime',
     placeholderData: keepPreviousData,
   });
+
+  const pendingCountsQuery = useQuery({
+    queryKey: ['approvals-pending-count'],
+    queryFn: getPendingApprovalCounts,
+  });
+
+  const pendingCountForTab = (target: 'leave' | 'claims' | 'overtime') => {
+    const counts = pendingCountsQuery.data;
+    if (!counts) return 0;
+    return target === 'leave'
+      ? counts.pending_leave
+      : target === 'claims'
+        ? counts.pending_claims
+        : counts.pending_overtime;
+  };
 
   const refreshPendingCount = () =>
     queryClient.invalidateQueries({ queryKey: ['approvals-pending-count'] });
@@ -231,56 +258,68 @@ export function Approvals() {
 
   const cancelLeaveM = useMutation({
     mutationFn: cancelLeaveRequest,
+    onMutate: (id) => setBusyId(id),
     onSuccess: () => {
       refreshLeave();
       toast.success(t('approvals.cancelledSuccess'));
     },
     onError: (err: unknown) => toast.error(getErrorMessage(err, t('approvals.actionFailed'))),
+    onSettled: () => setBusyId(null),
   });
 
   const cancelClaimM = useMutation({
     mutationFn: cancelClaim,
+    onMutate: (id) => setBusyId(id),
     onSuccess: () => {
       refreshClaims();
       toast.success(t('approvals.cancelledSuccess'));
     },
     onError: (err: unknown) => toast.error(getErrorMessage(err, t('approvals.actionFailed'))),
+    onSettled: () => setBusyId(null),
   });
 
   const cancelOvertimeM = useMutation({
     mutationFn: cancelOvertimeRequest,
+    onMutate: (id) => setBusyId(id),
     onSuccess: () => {
       refreshOvertime();
       toast.success(t('approvals.cancelledSuccess'));
     },
     onError: (err: unknown) => toast.error(getErrorMessage(err, t('approvals.actionFailed'))),
+    onSettled: () => setBusyId(null),
   });
 
   const deleteLeaveM = useMutation({
     mutationFn: deleteLeaveRequest,
+    onMutate: (id) => setBusyId(id),
     onSuccess: () => {
       refreshLeave();
       toast.success(t('approvals.deletedSuccess'));
     },
     onError: (err: unknown) => toast.error(getErrorMessage(err, t('approvals.actionFailed'))),
+    onSettled: () => setBusyId(null),
   });
 
   const deleteClaimM = useMutation({
     mutationFn: deleteClaim,
+    onMutate: (id) => setBusyId(id),
     onSuccess: () => {
       refreshClaims();
       toast.success(t('approvals.deletedSuccess'));
     },
     onError: (err: unknown) => toast.error(getErrorMessage(err, t('approvals.actionFailed'))),
+    onSettled: () => setBusyId(null),
   });
 
   const deleteOvertimeM = useMutation({
     mutationFn: deleteOvertimeRequest,
+    onMutate: (id) => setBusyId(id),
     onSuccess: () => {
       refreshOvertime();
       toast.success(t('approvals.deletedSuccess'));
     },
     onError: (err: unknown) => toast.error(getErrorMessage(err, t('approvals.actionFailed'))),
+    onSettled: () => setBusyId(null),
   });
 
   const refreshAll = () => {
@@ -379,19 +418,23 @@ export function Approvals() {
     },
     { key: 'type', header: t('approvals.leaveType'), render: (request) => request.leave_type_name || '\u2014', primary: true },
     { key: 'period', header: t('approvals.period'), render: (request) => <span className="text-gray-600 dark:text-slate-300 whitespace-nowrap">{request.start_date} {'\u2192'} {request.end_date}</span> },
-    { key: 'days', header: t('approvals.days'), render: (request) => <span className="tabular-nums">{Number(request.days)}</span> },
+    { key: 'days', header: t('approvals.days'), align: 'right', render: (request) => <span className="tabular-nums">{Number(request.days)}</span> },
     { key: 'reason', header: t('common.reason'), render: (request) => <span className="text-gray-500 dark:text-slate-400 max-w-[180px] truncate block">{request.reason || '\u2014'}</span> },
     {
       key: 'attachment',
       header: t('approvals.attachment'),
       render: (request) =>
         request.attachment_url ? (
-          <span className="inline-flex items-center gap-1 text-gray-900 dark:text-slate-100 text-sm">
-            <Paperclip className="w-3 h-3 shrink-0" />
+          <AttachmentLink
+            url={request.attachment_url}
+            className="inline-flex items-center gap-1 text-gray-900 dark:text-slate-100 hover:underline text-sm"
+          >
+            <Paperclip className="w-3 h-3 shrink-0" aria-hidden="true" />
             <span className="truncate max-w-[80px]">{request.attachment_name || t('approvals.file')}</span>
-          </span>
+            <ExternalLink className="w-3 h-3 shrink-0" aria-hidden="true" />
+          </AttachmentLink>
         ) : (
-          <span className="text-gray-300 dark:text-slate-600">{'\u2014'}</span>
+          <span className="text-gray-400 dark:text-slate-500">{'\u2014'}</span>
         ),
     },
     { key: 'status', header: t('common.status'), render: (request) => statusBadge(request.status) },
@@ -432,12 +475,16 @@ export function Approvals() {
             url={claim.receipt_url}
             className="inline-flex items-center gap-1 text-gray-900 dark:text-slate-100 hover:text-black dark:hover:text-white text-sm"
           >
-            {isImageUrl(claim.receipt_url) ? <Image className="w-3 h-3 shrink-0" /> : <Paperclip className="w-3 h-3 shrink-0" />}
+            {isImageUrl(claim.receipt_url) ? (
+              <Image className="w-3 h-3 shrink-0" aria-hidden="true" />
+            ) : (
+              <Paperclip className="w-3 h-3 shrink-0" aria-hidden="true" />
+            )}
             <span className="truncate max-w-[80px]">{claim.receipt_file_name || t('approvals.receipt')}</span>
-            <ExternalLink className="w-3 h-3 shrink-0" />
+            <ExternalLink className="w-3 h-3 shrink-0" aria-hidden="true" />
           </AttachmentLink>
         ) : (
-          <span className="text-gray-300 dark:text-slate-600">{'\u2014'}</span>
+          <span className="text-gray-400 dark:text-slate-500">{'\u2014'}</span>
         ),
     },
     { key: 'status', header: t('common.status'), render: (claim) => statusBadge(claim.status) },
@@ -494,48 +541,75 @@ export function Approvals() {
     : ['pending', 'approved', 'rejected', 'cancelled', ''];
 
   const activeQuery = tab === 'leave' ? leaveQuery : tab === 'claims' ? claimsQuery : overtimeQuery;
+  const bulkPending = bulkCancelM.isPending || bulkDeleteM.isPending;
+  const resetFilterAction = statusFilter ? (
+    <button
+      type="button"
+      onClick={() => {
+        setSelectedApprovalIds([]);
+        setBulkError('');
+        setStatusFilter('');
+        setPageState(1);
+      }}
+      className="btn-secondary"
+    >
+      {t('ux.table.clearFilters')}
+    </button>
+  ) : undefined;
 
   return (
     <>
       <div className="space-y-6">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="page-header">
-            <h1 className="page-title">{t('approvals.title')}</h1>
-            <p className="page-subtitle">{t('approvals.subtitle')}</p>
-          </div>
-          {canManageApprovals && (
-            <button type="button" onClick={openCreateModal} className="btn-primary w-full sm:w-auto">
-              <Plus className="w-4 h-4" /> {headerButtonLabel}
-            </button>
-          )}
-        </div>
+        <PageHeader
+          className="mb-0"
+          title={t('approvals.title')}
+          subtitle={t('approvals.subtitle')}
+          actions={
+            canManageApprovals ? (
+              <button type="button" onClick={openCreateModal} className="btn-primary w-full sm:w-auto">
+                <Plus className="w-4 h-4" aria-hidden="true" /> {headerButtonLabel}
+              </button>
+            ) : undefined
+          }
+        />
 
         <div className="flex gap-1 border-b border-gray-200 dark:border-slate-800 overflow-x-auto">
-          {(['leave', 'claims', 'overtime'] as const).map((itemTab) => (
-            <button
-              key={itemTab}
-              type="button"
-              aria-pressed={tab === itemTab}
-              onClick={() => {
-                setTab(itemTab);
-                setStatusFilter('pending');
-                setSelectedApprovalIds([]);
-                setPageState(1);
-                setBulkError('');
-              }}
-              className={`px-5 py-2.5 text-sm font-medium border-b-2 transition-all-fast whitespace-nowrap shrink-0 ${
-                tab === itemTab
-                  ? 'border-[var(--accent-1)] text-gray-900 dark:text-slate-100'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-slate-400 dark:hover:text-slate-200'
-              }`}
-            >
-              {t(`approvals.tabs.${itemTab}`)}
-            </button>
-          ))}
+          {(['leave', 'claims', 'overtime'] as const).map((itemTab) => {
+            const count = pendingCountForTab(itemTab);
+            return (
+              <button
+                key={itemTab}
+                type="button"
+                aria-pressed={tab === itemTab}
+                onClick={() => {
+                  setTab(itemTab);
+                  setStatusFilter('pending');
+                  setSelectedApprovalIds([]);
+                  setPageState(1);
+                  setBulkError('');
+                }}
+                className={`min-h-11 sm:min-h-10 px-4 sm:px-5 py-2.5 text-sm font-medium border-b-2 transition-all-fast whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] ${
+                  tab === itemTab
+                    ? 'border-[var(--accent-1)] text-gray-900 dark:text-slate-100'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-slate-400 dark:hover:text-slate-200'
+                }`}
+              >
+                {t(`approvals.tabs.${itemTab}`)}
+                {count > 0 && (
+                  <span
+                    aria-hidden="true"
+                    className="ml-1.5 inline-flex items-center justify-center rounded-full bg-amber-100 dark:bg-amber-500/20 px-1.5 py-0.5 text-[11px] font-semibold text-amber-800 dark:text-amber-300 tabular-nums"
+                  >
+                    {count}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <Filter className="w-4 h-4 text-gray-400 dark:text-slate-500 shrink-0" />
+        <div className="flex items-center gap-2 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible sm:pb-0 scrollbar-thin">
+          <Filter className="w-4 h-4 text-gray-500 dark:text-slate-400 shrink-0" aria-hidden="true" />
           {statusOptions.map((status) => (
             <button
               key={status || 'all'}
@@ -547,7 +621,7 @@ export function Approvals() {
                 setStatusFilter(status);
                 setPageState(1);
               }}
-              className={`px-3.5 py-2 sm:py-1.5 text-xs font-medium rounded-full transition-all-fast ${
+              className={`shrink-0 min-h-11 sm:min-h-0 px-3.5 py-2 sm:py-1.5 text-xs font-medium rounded-full transition-all-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] ${
                 statusFilter === status
                   ? 'bg-[var(--accent-1)] text-white shadow-sm'
                   : 'bg-white dark:bg-slate-900 text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-slate-700 hover:border-gray-300 dark:hover:border-slate-600'
@@ -562,14 +636,16 @@ export function Approvals() {
           <div className="space-y-2">
             <div className="flex flex-col gap-2 rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex flex-wrap items-center gap-3">
-                <span className="text-sm font-medium text-gray-700 dark:text-slate-200">{t('common.selectedCount', { count: selectedApprovalIds.length })}</span>
+                <span className="text-sm font-medium text-gray-700 dark:text-slate-200 tabular-nums">
+                  {t('common.selectedCount', { count: selectedApprovalIds.length })}
+                </span>
                 <button
                   type="button"
                   onClick={() => {
                     setSelectedApprovalIds([]);
                     setBulkError('');
                   }}
-                  className="text-xs text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-200 underline"
+                  className="min-h-11 sm:min-h-0 px-1 text-xs text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-200 underline rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                 >
                   {t('ux.table.clearSelection')}
                 </button>
@@ -588,10 +664,14 @@ export function Approvals() {
                       bulkCancelM.mutate({ ids: selectedCancelableIds, target: tab });
                     }
                   }}
-                  disabled={selectedCancelableIds.length === 0 || bulkCancelM.isPending}
+                  disabled={selectedCancelableIds.length === 0 || bulkPending}
                   className="btn-secondary !py-2 text-sm disabled:opacity-50"
                 >
-                  <X className="w-4 h-4" />
+                  {bulkCancelM.isPending ? (
+                    <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <X className="w-4 h-4" aria-hidden="true" />
+                  )}
                   {bulkCancelM.isPending ? t('common.cancelling') : t('common.cancelSelected')}
                 </button>
                 <button
@@ -606,10 +686,14 @@ export function Approvals() {
                       bulkDeleteM.mutate({ ids: selectedDeletableIds, target: tab });
                     }
                   }}
-                  disabled={selectedDeletableIds.length === 0 || bulkDeleteM.isPending}
+                  disabled={selectedDeletableIds.length === 0 || bulkPending}
                   className="btn-secondary !py-2 text-sm text-red-600 dark:text-red-400 border-red-200 dark:border-red-500/30 hover:!bg-red-50 dark:hover:!bg-red-500/15 disabled:opacity-50"
                 >
-                  <Trash2 className="w-4 h-4" />
+                  {bulkDeleteM.isPending ? (
+                    <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <Trash2 className="w-4 h-4" aria-hidden="true" />
+                  )}
                   {bulkDeleteM.isPending ? t('common.deleting') : t('common.deleteSelected')}
                 </button>
               </div>
@@ -625,17 +709,21 @@ export function Approvals() {
         )}
 
         {activeQuery.isError ? (
-          <EmptyState
-            icon={AlertTriangle}
-            title={t('approvals.loadFailed')}
-            description={getErrorMessage(activeQuery.error, t('approvals.loadFailed'))}
-            action={
-              <button type="button" onClick={() => activeQuery.refetch()} className="btn-primary">
-                {t('common.retry')}
-              </button>
-            }
-          />
-        ) : tab === 'leave' ? (
+          <div className="card">
+            <EmptyState
+              icon={AlertTriangle}
+              title={t('approvals.loadFailed')}
+              description={getErrorMessage(activeQuery.error, t('approvals.loadFailed'))}
+              action={
+                <button type="button" onClick={() => activeQuery.refetch()} className="btn-primary">
+                  {t('common.retry')}
+                </button>
+              }
+            />
+          </div>
+        ) : (
+          <div className={activeQuery.isFetching && !activeQuery.isLoading ? 'opacity-75 transition-opacity' : undefined}>
+            {tab === 'leave' ? (
           <DataTable
             columns={leaveColumns}
             data={leaveQuery.data?.data ?? []}
@@ -645,7 +733,8 @@ export function Approvals() {
             perPage={PER_PAGE}
             isLoading={leaveQuery.isLoading}
             emptyMessage={t('approvals.noLeaveRequests')}
-            emptyIcon={<Clock className="w-8 h-8 text-gray-300 dark:text-slate-600" />}
+            emptyAction={resetFilterAction}
+            emptyIcon={<Clock className="w-8 h-8 text-gray-300 dark:text-slate-600" aria-hidden="true" />}
             selectable={canManageApprovals}
             selectedRowKeys={selectedApprovalIds}
             onSelectedRowKeysChange={setSelectedApprovalIds}
@@ -654,6 +743,8 @@ export function Approvals() {
               canManageApprovals
                 ? (request) => (
                     <ActionButtons
+                      itemLabel={request.employee_name ?? undefined}
+                      disabled={busyId === request.id}
                       onEdit={canEditLeave(request) ? () => {
                         setLeaveEditor(request);
                         setShowLeaveModal(true);
@@ -687,7 +778,7 @@ export function Approvals() {
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div className="flex items-center gap-3 min-w-0">
                     <div className="w-11 h-11 rounded-full bg-gray-100 dark:bg-slate-800 flex items-center justify-center text-gray-900 dark:text-slate-100 font-semibold text-sm shrink-0">
-                      {(request.employee_name || '').split(' ').map((name) => name[0]).slice(0, 2).join('')}
+                      {getInitials(request.employee_name)}
                     </div>
                     <div className="min-w-0">
                       <div className="font-semibold text-lg text-gray-900 dark:text-slate-100 break-words">{request.employee_name}</div>
@@ -741,18 +832,22 @@ export function Approvals() {
               canManageApprovals
                 ? (request, close) =>
                     request.status === 'pending' ? (
-                      <div className="flex flex-wrap items-center justify-end gap-3">
+                      <div className="flex flex-col-reverse sm:flex-row sm:flex-wrap items-stretch sm:items-center justify-end gap-3">
                         <button
                           type="button"
                           onClick={() => rejectLeaveM.mutate({ id: request.id, notes: reviewNotes[request.id] }, { onSuccess: close })}
                           disabled={rejectLeaveM.isPending || approveLeaveM.isPending}
-                          className="flex items-center gap-2 px-4 py-2.5 bg-white dark:bg-slate-900 border border-red-200 dark:border-red-500/40 text-red-600 dark:text-red-400 text-sm font-medium rounded-lg hover:bg-red-50 dark:hover:bg-red-500/15 hover:border-red-300 disabled:opacity-50 transition-colors"
+                          className="min-h-11 w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2.5 bg-white dark:bg-slate-900 border border-red-200 dark:border-red-500/40 text-red-600 dark:text-red-400 text-sm font-medium rounded-lg hover:bg-red-50 dark:hover:bg-red-500/15 hover:border-red-300 dark:hover:border-red-400/60 disabled:opacity-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                         >
-                          <XCircle className="w-4 h-4" />
+                          {rejectLeaveM.isPending ? (
+                            <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                          ) : (
+                            <XCircle className="w-4 h-4" aria-hidden="true" />
+                          )}
                           {rejectLeaveM.isPending ? t('common.rejecting') : t('common.reject')}
                         </button>
                         {isSelfApproval(request.employee_id) ? (
-                          <p className="text-sm text-gray-500 dark:text-slate-400 max-w-xs text-right">
+                          <p className="text-sm text-gray-500 dark:text-slate-400 max-w-xs text-left sm:text-right">
                             {t('approvals.selfApprovalLeave')}
                           </p>
                         ) : (
@@ -760,9 +855,13 @@ export function Approvals() {
                             type="button"
                             onClick={() => approveLeaveM.mutate({ id: request.id, notes: reviewNotes[request.id] }, { onSuccess: close })}
                             disabled={approveLeaveM.isPending || rejectLeaveM.isPending}
-                            className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 text-white text-sm font-medium rounded-lg hover:bg-emerald-700 disabled:opacity-50 transition-colors shadow-sm"
+                            className="min-h-11 w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-2.5 bg-emerald-600 text-white text-sm font-medium rounded-lg hover:bg-emerald-700 disabled:opacity-50 transition-colors shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                           >
-                            <CheckCircle className="w-4 h-4" />
+                            {approveLeaveM.isPending ? (
+                              <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                            ) : (
+                              <CheckCircle className="w-4 h-4" aria-hidden="true" />
+                            )}
                             {approveLeaveM.isPending ? t('common.approving') : t('common.approve')}
                           </button>
                         )}
@@ -781,7 +880,8 @@ export function Approvals() {
             perPage={PER_PAGE}
             isLoading={claimsQuery.isLoading}
             emptyMessage={t('approvals.noClaims')}
-            emptyIcon={<Clock className="w-8 h-8 text-gray-300 dark:text-slate-600" />}
+            emptyAction={resetFilterAction}
+            emptyIcon={<Clock className="w-8 h-8 text-gray-300 dark:text-slate-600" aria-hidden="true" />}
             selectable={canManageApprovals}
             selectedRowKeys={selectedApprovalIds}
             onSelectedRowKeysChange={setSelectedApprovalIds}
@@ -790,6 +890,8 @@ export function Approvals() {
               canManageApprovals
                 ? (claim) => (
                     <ActionButtons
+                      itemLabel={claim.employee_name ?? undefined}
+                      disabled={busyId === claim.id}
                       onEdit={canEditClaim(claim) ? () => {
                         setClaimEditor(claim);
                         setShowClaimModal(true);
@@ -826,7 +928,7 @@ export function Approvals() {
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div className="flex items-center gap-3 min-w-0">
                     <div className="w-11 h-11 rounded-full bg-gray-100 dark:bg-slate-800 flex items-center justify-center text-gray-900 dark:text-slate-100 font-semibold text-sm shrink-0">
-                      {(claim.employee_name || '').split(' ').map((name) => name[0]).slice(0, 2).join('')}
+                      {getInitials(claim.employee_name)}
                     </div>
                     <div className="min-w-0">
                       <div className="font-semibold text-lg text-gray-900 dark:text-slate-100 break-words">{claim.employee_name}</div>
@@ -890,18 +992,22 @@ export function Approvals() {
               canManageApprovals
                 ? (claim, close) =>
                     claim.status === 'pending' ? (
-                      <div className="flex flex-wrap items-center justify-end gap-3">
+                      <div className="flex flex-col-reverse sm:flex-row sm:flex-wrap items-stretch sm:items-center justify-end gap-3">
                         <button
                           type="button"
                           onClick={() => rejectClaimM.mutate({ id: claim.id, notes: reviewNotes[claim.id] }, { onSuccess: close })}
                           disabled={rejectClaimM.isPending || approveClaimM.isPending}
-                          className="flex items-center gap-2 px-4 py-2.5 bg-white dark:bg-slate-900 border border-red-200 dark:border-red-500/40 text-red-600 dark:text-red-400 text-sm font-medium rounded-lg hover:bg-red-50 dark:hover:bg-red-500/15 hover:border-red-300 disabled:opacity-50 transition-colors"
+                          className="min-h-11 w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2.5 bg-white dark:bg-slate-900 border border-red-200 dark:border-red-500/40 text-red-600 dark:text-red-400 text-sm font-medium rounded-lg hover:bg-red-50 dark:hover:bg-red-500/15 hover:border-red-300 dark:hover:border-red-400/60 disabled:opacity-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                         >
-                          <XCircle className="w-4 h-4" />
+                          {rejectClaimM.isPending ? (
+                            <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                          ) : (
+                            <XCircle className="w-4 h-4" aria-hidden="true" />
+                          )}
                           {rejectClaimM.isPending ? t('common.rejecting') : t('common.reject')}
                         </button>
                         {isSelfApproval(claim.employee_id) ? (
-                          <p className="text-sm text-gray-500 dark:text-slate-400 max-w-xs text-right">
+                          <p className="text-sm text-gray-500 dark:text-slate-400 max-w-xs text-left sm:text-right">
                             {t('approvals.selfApprovalClaim')}
                           </p>
                         ) : (
@@ -909,9 +1015,13 @@ export function Approvals() {
                             type="button"
                             onClick={() => approveClaimM.mutate({ id: claim.id, notes: reviewNotes[claim.id] }, { onSuccess: close })}
                             disabled={approveClaimM.isPending || rejectClaimM.isPending}
-                            className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 text-white text-sm font-medium rounded-lg hover:bg-emerald-700 disabled:opacity-50 transition-colors shadow-sm"
+                            className="min-h-11 w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-2.5 bg-emerald-600 text-white text-sm font-medium rounded-lg hover:bg-emerald-700 disabled:opacity-50 transition-colors shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                           >
-                            <CheckCircle className="w-4 h-4" />
+                            {approveClaimM.isPending ? (
+                              <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                            ) : (
+                              <CheckCircle className="w-4 h-4" aria-hidden="true" />
+                            )}
                             {approveClaimM.isPending ? t('common.approving') : t('common.approve')}
                           </button>
                         )}
@@ -930,7 +1040,8 @@ export function Approvals() {
             perPage={PER_PAGE}
             isLoading={overtimeQuery.isLoading}
             emptyMessage={t('approvals.noOvertime')}
-            emptyIcon={<Clock className="w-8 h-8 text-gray-300 dark:text-slate-600" />}
+            emptyAction={resetFilterAction}
+            emptyIcon={<Clock className="w-8 h-8 text-gray-300 dark:text-slate-600" aria-hidden="true" />}
             selectable={canManageApprovals}
             selectedRowKeys={selectedApprovalIds}
             onSelectedRowKeysChange={setSelectedApprovalIds}
@@ -939,6 +1050,8 @@ export function Approvals() {
               canManageApprovals
                 ? (overtime) => (
                     <ActionButtons
+                      itemLabel={overtime.employee_name ?? undefined}
+                      disabled={busyId === overtime.id}
                       onEdit={canEditOvertime(overtime) ? () => {
                         setOvertimeEditor(overtime);
                         setShowOvertimeModal(true);
@@ -972,7 +1085,7 @@ export function Approvals() {
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div className="flex items-center gap-3 min-w-0">
                     <div className="w-11 h-11 rounded-full bg-gray-100 dark:bg-slate-800 flex items-center justify-center text-gray-900 dark:text-slate-100 font-semibold text-sm shrink-0">
-                      {(overtime.employee_name || '').split(' ').map((name) => name[0]).slice(0, 2).join('')}
+                      {getInitials(overtime.employee_name)}
                     </div>
                     <div className="min-w-0">
                       <div className="font-semibold text-lg text-gray-900 dark:text-slate-100 break-words">{overtime.employee_name}</div>
@@ -1031,18 +1144,22 @@ export function Approvals() {
               canManageApprovals
                 ? (overtime, close) =>
                     overtime.status === 'pending' ? (
-                      <div className="flex flex-wrap items-center justify-end gap-3">
+                      <div className="flex flex-col-reverse sm:flex-row sm:flex-wrap items-stretch sm:items-center justify-end gap-3">
                         <button
                           type="button"
                           onClick={() => rejectOvertimeM.mutate({ id: overtime.id, notes: reviewNotes[overtime.id] }, { onSuccess: close })}
                           disabled={rejectOvertimeM.isPending || approveOvertimeM.isPending}
-                          className="flex items-center gap-2 px-4 py-2.5 bg-white dark:bg-slate-900 border border-red-200 dark:border-red-500/40 text-red-600 dark:text-red-400 text-sm font-medium rounded-lg hover:bg-red-50 dark:hover:bg-red-500/15 hover:border-red-300 disabled:opacity-50 transition-colors"
+                          className="min-h-11 w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2.5 bg-white dark:bg-slate-900 border border-red-200 dark:border-red-500/40 text-red-600 dark:text-red-400 text-sm font-medium rounded-lg hover:bg-red-50 dark:hover:bg-red-500/15 hover:border-red-300 dark:hover:border-red-400/60 disabled:opacity-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                         >
-                          <XCircle className="w-4 h-4" />
+                          {rejectOvertimeM.isPending ? (
+                            <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                          ) : (
+                            <XCircle className="w-4 h-4" aria-hidden="true" />
+                          )}
                           {rejectOvertimeM.isPending ? t('common.rejecting') : t('common.reject')}
                         </button>
                         {isSelfApproval(overtime.employee_id) ? (
-                          <p className="text-sm text-gray-500 dark:text-slate-400 max-w-xs text-right">
+                          <p className="text-sm text-gray-500 dark:text-slate-400 max-w-xs text-left sm:text-right">
                             {t('approvals.selfApprovalOvertime')}
                           </p>
                         ) : (
@@ -1050,9 +1167,13 @@ export function Approvals() {
                             type="button"
                             onClick={() => approveOvertimeM.mutate({ id: overtime.id, notes: reviewNotes[overtime.id] }, { onSuccess: close })}
                             disabled={approveOvertimeM.isPending || rejectOvertimeM.isPending}
-                            className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 text-white text-sm font-medium rounded-lg hover:bg-emerald-700 disabled:opacity-50 transition-colors shadow-sm"
+                            className="min-h-11 w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-2.5 bg-emerald-600 text-white text-sm font-medium rounded-lg hover:bg-emerald-700 disabled:opacity-50 transition-colors shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                           >
-                            <CheckCircle className="w-4 h-4" />
+                            {approveOvertimeM.isPending ? (
+                              <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                            ) : (
+                              <CheckCircle className="w-4 h-4" aria-hidden="true" />
+                            )}
                             {approveOvertimeM.isPending ? t('common.approving') : t('common.approve')}
                           </button>
                         )}
@@ -1061,6 +1182,8 @@ export function Approvals() {
                 : undefined
             }
           />
+            )}
+          </div>
         )}
       </div>
 

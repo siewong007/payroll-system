@@ -2,27 +2,25 @@ use printpdf::*;
 
 /// Convert sen (i64) to formatted RM string e.g. "1,234.56"
 pub fn sen_to_rm(sen: i64) -> String {
-    let rm = sen as f64 / 100.0;
-    let formatted = format!("{:.2}", rm.abs());
-    let parts: Vec<&str> = formatted.split('.').collect();
-    let int_part = parts[0];
-    let dec_part = parts[1];
-
-    // Add thousands separators
-    let chars: Vec<char> = int_part.chars().collect();
-    let mut result = String::new();
-    for (i, c) in chars.iter().enumerate() {
-        if i > 0 && (chars.len() - i).is_multiple_of(3) {
+    let abs = sen.unsigned_abs();
+    let ringgit = abs / 100;
+    let cents = abs % 100;
+    let int_str = ringgit.to_string();
+    let len = int_str.len();
+    let mut result = String::with_capacity(len + len / 3 + 5);
+    if sen < 0 {
+        result.push('-');
+    }
+    for (i, b) in int_str.bytes().enumerate() {
+        if i > 0 && (len - i).is_multiple_of(3) {
             result.push(',');
         }
-        result.push(*c);
+        result.push(b as char);
     }
-
-    if sen < 0 {
-        format!("-{}.{}", result, dec_part)
-    } else {
-        format!("{}.{}", result, dec_part)
-    }
+    result.push('.');
+    result.push((b'0' + (cents / 10) as u8) as char);
+    result.push((b'0' + (cents % 10) as u8) as char);
+    result
 }
 
 /// Employment income the named EA / payslip categories do not account for.

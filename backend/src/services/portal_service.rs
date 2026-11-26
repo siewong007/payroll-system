@@ -8,13 +8,13 @@ use crate::models::employee::Employee;
 use crate::models::portal::*;
 use crate::repositories::reads::portal as portal_reads;
 use crate::repositories::{
-    claims, employees as employee_repo, leave_balances, leave_requests, leave_types,
-    overtime_applications, payroll_entries,
+    claims, company_work_schedules, employees as employee_repo, leave_balances, leave_requests,
+    leave_types, overtime_applications, payroll_entries, payroll_runs,
 };
 use crate::services::approval_service::{
-    ensure_overtime_hours_within_window, validate_overtime_type,
+    ensure_overtime_hours_within_window, validate_overtime_type_for_date,
 };
-use crate::services::notification_service;
+use crate::services::{audit_service, notification_service};
 
 // ─── Profile ───
 
@@ -52,6 +52,7 @@ pub async fn create_leave_request(
     pool: &PgPool,
     employee_id: Uuid,
     company_id: Uuid,
+    actor_user_id: Uuid,
     req: CreateLeaveRequest,
     access: &crate::models::upload::UploadAccess,
 ) -> AppResult<LeaveRequest> {
@@ -112,6 +113,7 @@ pub async fn create_leave_request(
         req.reason,
         req.attachment_url,
         req.attachment_name,
+        Some(actor_user_id),
     )
     .await?;
 
@@ -153,6 +155,7 @@ pub async fn create_leave_request(
 pub async fn cancel_leave_request(
     pool: &PgPool,
     employee_id: Uuid,
+    actor_user_id: Uuid,
     request_id: Uuid,
 ) -> AppResult<()> {
     let mut tx = pool.begin().await?;
@@ -164,6 +167,31 @@ pub async fn cancel_leave_request(
         })?;
 
     if lr.status == "approved" {
+        let tz_name = crate::core::timezone::sanitize(
+            company_work_schedules::find_default_timezone(&mut *tx, lr.company_id).await?,
+        );
+        let tz = crate::core::timezone::parse(&tz_name).unwrap_or(chrono_tz::Asia::Kuala_Lumpur);
+        let today_local = chrono::Utc::now().with_timezone(&tz).date_naive();
+        if today_local >= lr.start_date {
+            return Err(AppError::BadRequest(
+                "Approved leave cannot be cancelled once it has started; contact HR".into(),
+            ));
+        }
+
+        if payroll_runs::has_non_draft_covering_dates(
+            &mut *tx,
+            lr.company_id,
+            lr.start_date,
+            lr.end_date,
+        )
+        .await?
+        {
+            return Err(AppError::BadRequest(
+                "Approved leave covered by a submitted or finalized payroll run cannot be cancelled"
+                    .into(),
+            ));
+        }
+
         let is_paid = leave_types::get_is_paid(&mut *tx, lr.leave_type_id).await?;
 
         if is_paid == Some(false) {
@@ -225,6 +253,20 @@ pub async fn cancel_leave_request(
             .await?;
     }
 
+    audit_service::log_action_with_metadata(
+        &mut *tx,
+        Some(lr.company_id),
+        Some(actor_user_id),
+        "cancel_leave_request_portal",
+        "leave_request",
+        Some(request_id),
+        Some(serde_json::to_value(&lr).unwrap_or_default()),
+        Some(serde_json::json!({ "status": "cancelled" })),
+        Some("Employee cancelled leave request"),
+        None,
+    )
+    .await?;
+
     tx.commit().await?;
 
     Ok(())
@@ -260,6 +302,7 @@ pub async fn create_claim(
     pool: &PgPool,
     employee_id: Uuid,
     company_id: Uuid,
+    actor_user_id: Uuid,
     req: CreateClaimRequest,
     access: &crate::models::upload::UploadAccess,
 ) -> AppResult<Claim> {
@@ -284,6 +327,7 @@ pub async fn create_claim(
         req.receipt_url,
         req.receipt_file_name,
         req.expense_date,
+        actor_user_id,
     )
     .await?;
     Ok(claim)
@@ -375,6 +419,7 @@ pub async fn create_overtime_application(
     pool: &PgPool,
     employee_id: Uuid,
     company_id: Uuid,
+    actor_user_id: Uuid,
     req: CreateOvertimeRequest,
 ) -> AppResult<OvertimeApplication> {
     let start_time = chrono::NaiveTime::parse_from_str(&req.start_time, "%H:%M")
@@ -382,15 +427,29 @@ pub async fn create_overtime_application(
     let end_time = chrono::NaiveTime::parse_from_str(&req.end_time, "%H:%M")
         .map_err(|_| AppError::BadRequest("Invalid end_time format, expected HH:MM".into()))?;
 
-    // Both rules live in `approval_service::common` now. This path used to own
-    // the only hours check in the codebase while the three admin paths had
-    // none, and a duplicated ot_type allow-list besides.
     let ot_type = req.ot_type.as_deref().unwrap_or("normal");
-    validate_overtime_type(ot_type)?;
     ensure_overtime_hours_within_window(req.hours, start_time, end_time)?;
+    validate_overtime_type_for_date(pool, company_id, req.ot_date, ot_type).await?;
+
+    let mut tx = pool.begin().await?;
+    employee_repo::lock_for_update(&mut *tx, employee_id, company_id).await?;
+    if overtime_applications::has_overlapping_window(
+        &mut *tx,
+        employee_id,
+        req.ot_date,
+        start_time,
+        end_time,
+        None,
+    )
+    .await?
+    {
+        return Err(AppError::BadRequest(
+            "You already have an overlapping overtime application on this date".into(),
+        ));
+    }
 
     let app = overtime_applications::insert(
-        pool,
+        &mut *tx,
         employee_id,
         company_id,
         req.ot_date,
@@ -399,8 +458,10 @@ pub async fn create_overtime_application(
         req.hours,
         ot_type,
         req.reason,
+        actor_user_id,
     )
     .await?;
+    tx.commit().await?;
 
     // Notify admins
     let name = employee_repo::full_name(pool, employee_id)
@@ -431,7 +492,16 @@ pub async fn cancel_overtime_application(
     employee_id: Uuid,
     id: Uuid,
 ) -> AppResult<()> {
+    let company_id = overtime_applications::get_company_id_for_employee(pool, id, employee_id)
+        .await?
+        .ok_or_else(|| {
+            AppError::BadRequest("OT application not found or cannot be cancelled".into())
+        })?;
+
     let mut tx = pool.begin().await?;
+    // Acquire employee row lock BEFORE overtime_applications FOR UPDATE to match
+    // approve_overtime / cancel_overtime_admin canonical lock ordering.
+    employee_repo::lock_for_update(&mut *tx, employee_id, company_id).await?;
 
     let app = overtime_applications::get_cancellable_for_employee(&mut *tx, id, employee_id)
         .await?
@@ -487,14 +557,25 @@ pub async fn cancel_overtime_application(
             ));
         }
 
-        if app.ot_type == "public_holiday" {
-            leave_balances::subtract_entitled_replacement(
+        if app.ot_type == "public_holiday"
+            && !overtime_applications::exists_replacement_granted_for_date(
+                &mut *tx,
+                app.employee_id,
+                app.ot_date,
+                id,
+            )
+            .await?
+            && !leave_balances::try_subtract_entitled_replacement(
                 &mut *tx,
                 app.employee_id,
                 period_year,
                 app.company_id,
             )
-            .await?;
+            .await?
+        {
+            return Err(AppError::BadRequest(
+                "Replacement leave earned from this overtime has already been used or reserved; cancel that leave request first.".into(),
+            ));
         }
     }
 
@@ -556,6 +637,30 @@ pub fn calculate_prorated_days(
     rounded / rust_decimal::Decimal::from(2)
 }
 
+/// Initialize leave balances for an employee using pre-loaded active leave types.
+pub(crate) async fn initialize_leave_balances_with_types(
+    pool: &PgPool,
+    employee_id: Uuid,
+    date_joined: chrono::NaiveDate,
+    year: i32,
+    leave_types: &[LeaveType],
+) -> AppResult<Vec<LeaveBalance>> {
+    if leave_types.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut emp_ids = Vec::with_capacity(leave_types.len());
+    let mut lt_ids = Vec::with_capacity(leave_types.len());
+    let mut years = Vec::with_capacity(leave_types.len());
+    let mut entitled = Vec::with_capacity(leave_types.len());
+    for lt in leave_types {
+        emp_ids.push(employee_id);
+        lt_ids.push(lt.id);
+        years.push(year);
+        entitled.push(calculate_prorated_days(lt.default_days, date_joined, year));
+    }
+    leave_balances::upsert_entitled_batch(pool, &emp_ids, &lt_ids, &years, &entitled).await
+}
+
 /// Initialize leave balances for an employee for a given year.
 /// Prorates based on date_joined if it's a mid-year join.
 pub async fn initialize_leave_balances(
@@ -566,18 +671,7 @@ pub async fn initialize_leave_balances(
     year: i32,
 ) -> AppResult<Vec<LeaveBalance>> {
     let leave_types = leave_types::list_active(pool, company_id).await?;
-
-    let mut balances = vec![];
-    for lt in &leave_types {
-        let entitled = calculate_prorated_days(lt.default_days, date_joined, year);
-        let balance =
-            leave_balances::upsert_entitled(pool, employee_id, lt.id, year, entitled).await?;
-
-        if let Some(b) = balance {
-            balances.push(b);
-        }
-    }
-    Ok(balances)
+    initialize_leave_balances_with_types(pool, employee_id, date_joined, year, &leave_types).await
 }
 
 // ─── Year-End Carry-Forward ───
@@ -600,23 +694,45 @@ pub async fn process_year_end_carry_forward(
     let employees = employee_repo::list_active_ids_and_joined_dates(pool, company_id).await?;
 
     let mut tx = pool.begin().await?;
-    let mut count = 0;
+    let existing_balances: std::collections::HashMap<
+        (Uuid, Uuid),
+        (
+            rust_decimal::Decimal,
+            rust_decimal::Decimal,
+            rust_decimal::Decimal,
+            rust_decimal::Decimal,
+        ),
+    > = leave_balances::list_for_company_year(&mut *tx, company_id, from_year)
+        .await?
+        .into_iter()
+        .map(|(emp_id, lt_id, entitled, taken, pending, carried)| {
+            ((emp_id, lt_id), (entitled, taken, pending, carried))
+        })
+        .collect();
+
+    let eligible_types: Vec<&LeaveType> = leave_types
+        .iter()
+        // Replacement Leave is earned dynamically per holiday worked, not
+        // provisioned via annual carry-forward; standard seeded leave types also
+        // carry `is_system = TRUE`, so do not skip on `is_system` alone.
+        .filter(|lt| !lt.name.eq_ignore_ascii_case("Replacement Leave"))
+        .collect();
+
+    let cap = employees.len().saturating_mul(eligible_types.len());
+    let mut emp_ids = Vec::with_capacity(cap);
+    let mut lt_ids = Vec::with_capacity(cap);
+    let mut years = Vec::with_capacity(cap);
+    let mut entitled_list = Vec::with_capacity(cap);
+    let mut carried_list = Vec::with_capacity(cap);
+
     for (emp_id, date_joined) in employees {
-        for lt in &leave_types {
-            // System types (e.g. Replacement Leave) are earned dynamically, not
-            // provisioned via annual carry-forward.
-            if lt.is_system {
-                continue;
-            }
-
-            // Get current year balance
-            let balance =
-                leave_balances::get_balance_for_year(&mut *tx, emp_id, lt.id, from_year).await?;
-
-            let carry = if let Some((entitled, taken, pending, carried_forward)) = balance {
-                let remaining = entitled + carried_forward - taken - pending;
-                let remaining = remaining.max(rust_decimal::Decimal::ZERO);
-                if lt.max_carry_forward > rust_decimal::Decimal::ZERO {
+        for lt in &eligible_types {
+            let carry = if let Some(&(entitled, taken, pending, carried_forward)) =
+                existing_balances.get(&(emp_id, lt.id))
+            {
+                let remaining =
+                    (entitled + carried_forward - taken - pending).max(rust_decimal::Decimal::ZERO);
+                if lt.is_paid && lt.max_carry_forward > rust_decimal::Decimal::ZERO {
                     remaining.min(lt.max_carry_forward)
                 } else {
                     rust_decimal::Decimal::ZERO
@@ -625,18 +741,25 @@ pub async fn process_year_end_carry_forward(
                 rust_decimal::Decimal::ZERO
             };
 
-            // Calculate entitled for next year (prorate for mid-year joiners)
             let entitled = calculate_prorated_days(lt.default_days, date_joined, to_year);
-
-            // UPSERT next year balance (preserving any existing entitled_days)
-            leave_balances::upsert_carried_forward(
-                &mut *tx, emp_id, lt.id, to_year, entitled, carry,
-            )
-            .await?;
-
-            count += 1;
+            emp_ids.push(emp_id);
+            lt_ids.push(lt.id);
+            years.push(to_year);
+            entitled_list.push(entitled);
+            carried_list.push(carry);
         }
     }
+
+    let count = emp_ids.len() as i32;
+    leave_balances::upsert_carried_forward_batch(
+        &mut *tx,
+        &emp_ids,
+        &lt_ids,
+        &years,
+        &entitled_list,
+        &carried_list,
+    )
+    .await?;
     tx.commit().await?;
 
     Ok(count)

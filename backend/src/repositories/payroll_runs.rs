@@ -7,6 +7,73 @@ use uuid::Uuid;
 use crate::core::error::AppResult;
 use crate::models::payroll::{PayrollRun, RunStatusRow};
 
+/// Acquire a transaction-scoped advisory lock serializing payroll runs and
+/// mutations for a `(company_id, year)` across concurrent workers/requests so
+/// cross-month YTD chains cannot diverge under concurrency.
+pub async fn acquire_tax_year_lock(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    year: i32,
+) -> AppResult<()> {
+    let lock_key = format!("payroll:{company_id}:{year}");
+    sqlx::query!(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+        lock_key
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
+/// Whether any non-draft (`pending_approval`, `approved`, `paid`) payroll run
+/// overlaps `[start_date, end_date]` for the company.
+pub async fn has_non_draft_covering_dates(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    start_date: NaiveDate,
+    end_date: NaiveDate,
+) -> AppResult<bool> {
+    let exists = sqlx::query_scalar!(
+        r#"SELECT EXISTS(
+            SELECT 1 FROM payroll_runs
+            WHERE company_id = $1
+              AND status IN ('pending_approval', 'approved', 'paid')
+              AND period_start <= $3
+              AND period_end >= $2
+        ) AS "exists!""#,
+        company_id,
+        start_date,
+        end_date,
+    )
+    .fetch_one(executor)
+    .await?;
+    Ok(exists)
+}
+
+/// Whether any finalized (`paid`) payroll run overlaps `[start_date, end_date]`.
+pub async fn has_paid_covering_dates(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    start_date: NaiveDate,
+    end_date: NaiveDate,
+) -> AppResult<bool> {
+    let exists = sqlx::query_scalar!(
+        r#"SELECT EXISTS(
+            SELECT 1 FROM payroll_runs
+            WHERE company_id = $1
+              AND status = 'paid'
+              AND period_start <= $3
+              AND period_end >= $2
+        ) AS "exists!""#,
+        company_id,
+        start_date,
+        end_date,
+    )
+    .fetch_one(executor)
+    .await?;
+    Ok(exists)
+}
+
 /// Count non-cancelled runs for a (company, group, period) — used to block duplicates.
 pub async fn count_active_for_period(
     executor: impl Executor<'_, Database = Postgres>,
@@ -355,8 +422,8 @@ pub async fn set_cancelled(
             status = 'cancelled', cancelled_by = $3, cancelled_at = NOW(),
             cancel_reason = $4, updated_by = $3, updated_at = NOW()
         WHERE id = $1 AND company_id = $2
-          AND status::text = $5
-          AND status::text IN ('draft', 'processed', 'pending_approval', 'approved')
+          AND status = ($5::varchar)::payroll_status
+          AND status IN ('draft', 'processed', 'pending_approval', 'approved')
         RETURNING id, company_id, payroll_group_id, period_year, period_month,
             period_start, period_end, pay_date, status::text AS "status!",
             total_gross, total_net, total_employer_cost,
@@ -403,10 +470,11 @@ pub async fn set_paid(
     Ok(run)
 }
 
-/// Recent runs for a company (newest period first, capped at 50).
-pub async fn list_for_company(
+/// Recent runs for a company (newest period first), capped by `limit`.
+pub async fn list_recent_for_company(
     executor: impl Executor<'_, Database = Postgres>,
     company_id: Uuid,
+    limit: i64,
 ) -> AppResult<Vec<PayrollRun>> {
     let runs = sqlx::query_as!(
         PayrollRun,
@@ -420,12 +488,21 @@ pub async fn list_for_company(
         FROM payroll_runs
         WHERE company_id = $1
         ORDER BY period_year DESC, period_month DESC, created_at DESC
-        LIMIT 50"#,
+        LIMIT $2"#,
         company_id,
+        limit,
     )
     .fetch_all(executor)
     .await?;
     Ok(runs)
+}
+
+/// Recent runs for a company (newest period first, capped at 50).
+pub async fn list_for_company(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+) -> AppResult<Vec<PayrollRun>> {
+    list_recent_for_company(executor, company_id, 50).await
 }
 
 /// Lock a run row and return its status + period (for the PCB-edit transaction).
@@ -463,7 +540,7 @@ pub async fn delete_if_unlocked(
         r#"DELETE FROM payroll_runs
         WHERE id = $1 AND company_id = $2
           AND locked_at IS NULL
-          AND status::text IN ('draft', 'processed')"#,
+          AND status IN ('draft', 'processed')"#,
         run_id,
         company_id,
     )

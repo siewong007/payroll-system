@@ -11,6 +11,7 @@ pub struct AttendanceQrToken {
     pub token: String,
     pub expires_at: DateTime<Utc>,
     pub used: bool,
+    pub kiosk_credential_id: Option<Uuid>,
     pub created_at: DateTime<Utc>,
 }
 

@@ -45,7 +45,7 @@ pub async fn expire_pending_for_employee(
     employee_id: Uuid,
 ) -> AppResult<()> {
     sqlx::query!(
-        "UPDATE password_reset_requests SET status = 'expired' WHERE user_id IN (SELECT id FROM users WHERE employee_id = $1 AND roles <@ ARRAY['employee']::VARCHAR(50)[]) AND status IN ('pending', 'approved')",
+        "UPDATE password_reset_requests SET status = 'expired' WHERE user_id IN (SELECT id FROM users WHERE employee_id = $1) AND status IN ('pending', 'approved')",
         employee_id,
     )
     .execute(executor)

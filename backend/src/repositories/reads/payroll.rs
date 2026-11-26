@@ -10,10 +10,9 @@ use uuid::Uuid;
 
 use crate::core::error::AppResult;
 use crate::models::payroll::{
-    EmployeeBonusCommission, EmployeeCategoryTotal, EmployeeHours, EmployeeOtTypeHours,
-    EmployeeTotal, EmployeeUnpaidLeave, EmployeeUnratedOvertime, LaterCommittedRun,
+    EmployeeHours, EmployeeOtTypeHours, EmployeeUnratedOvertime, LaterCommittedRun,
     OrphanedEntryEmployee, PayableClaim, PaymentFileRow, PayrollEntryWithEmployee,
-    PayrollItemSummary, PayrollYtd, PayslipSourceLine,
+    PayrollItemSummary, PayrollYtd, PayslipSourceLine, RunJournalItemTotals, StagedEntryRow,
 };
 use crate::models::report::DepartmentPayrollRow;
 
@@ -62,35 +61,31 @@ pub async fn recurring_allowance_lines(
     Ok(rows)
 }
 
-/// Staged payroll entries per employee, one row per entry.
+/// Load all unprocessed staged payroll entries for the run's employees in a single query.
 ///
-/// Filters match `entry_category_totals` exactly (including the `overtime` /
-/// `claim_reimbursement` exclusion), so these lines reconcile to the totals the
-/// engine puts into gross.
-pub async fn entry_lines(
+/// Matches the `overtime` / `claim_reimbursement` exclusions so the returned rows
+/// feed `entry_lines`, `entry_category_totals`, `unpaid_leave_totals`,
+/// `monthly_allowance_totals`, `bonus_commission_totals`, and `staged_entry_ids`
+/// from one consistent snapshot.
+pub async fn staged_entries_for_run(
     executor: impl Executor<'_, Database = Postgres>,
     employee_ids: &[Uuid],
     year: i32,
     month: i32,
-) -> AppResult<Vec<PayslipSourceLine>> {
+) -> AppResult<Vec<StagedEntryRow>> {
+    if employee_ids.is_empty() {
+        return Ok(Vec::new());
+    }
     let rows = sqlx::query_as!(
-        PayslipSourceLine,
-        r#"SELECT id AS "id?", employee_id, category,
-                  -- Carried so the breakdown can label an unpaid-leave deduction
-                  -- as one instead of folding it into "other deduction".
-                  item_type AS "item_type!",
-                  description AS "description!", amount,
-                  COALESCE(is_taxable, TRUE) AS "is_taxable!",
-                  -- Staged entries are keyed by (period_year, period_month) and
-                  -- carry no window of their own, so they are never prorated.
-                  NULL::date AS "effective_from?", NULL::date AS "effective_to?"
+        StagedEntryRow,
+        r#"SELECT id, employee_id, category, item_type, description, amount,
+                  quantity, COALESCE(is_taxable, TRUE) AS "is_taxable!"
            FROM payroll_entries
-           WHERE employee_id = ANY($1) AND period_year = $2 AND period_month = $3
+           WHERE employee_id = ANY($1)
+             AND period_year = $2
+             AND period_month = $3
              AND is_processed = FALSE
-             AND item_type NOT IN ('overtime', 'claim_reimbursement')
-           -- `id` breaks ties on `created_at`: a restore writes a whole period's
-           -- entries at one instant, and without it the breakdown's line order
-           -- is nondeterministic between two reads of the same payslip.
+             AND item_type <> 'claim_reimbursement'
            ORDER BY employee_id, category, created_at, id"#,
         employee_ids,
         year,
@@ -101,168 +96,35 @@ pub async fn entry_lines(
     Ok(rows)
 }
 
-/// Staged payroll entries per employee, summed by category.
-///
-/// Excludes the item types the engine recomputes from their own authoritative
-/// source: `overtime` comes from `approved_ot_totals`/`attendance_ot_hours` and
-/// `claim_reimbursement` from `payable_claims`. Approving an OT application
-/// stages a `payroll_entries` row, so counting those rows here would add the
-/// same money a second time.
-///
-/// The `claim_reimbursement` half of the exclusion is now defence in depth:
-/// claim approval no longer stages an entry and migration 1010 deleted the rows
-/// it used to write. It stays because dropping it would make a reimbursement
-/// EPF/SOCSO/EIS/PCB-liable the moment any future write path reintroduces the
-/// item type — which is the exact failure the staging was retired to prevent.
-///
-/// `taxable` is the same sum narrowed to rows the admin marked taxable. The flag
-/// was honoured by the rendered payslip line — which badges an earning
-/// "Non-taxable" — and by nothing else, so an earning staged as exempt was still
-/// inside the PCB base. Only the PCB base uses it; see `compute_payslip`.
-pub async fn entry_category_totals(
+/// Lock and load all unprocessed staged payroll entries inside the write transaction.
+/// Locks in deterministic `id` order before sorting into breakdown display order.
+pub async fn lock_and_load_staged_entries_for_run(
     executor: impl Executor<'_, Database = Postgres>,
     employee_ids: &[Uuid],
     year: i32,
     month: i32,
-) -> AppResult<Vec<EmployeeCategoryTotal>> {
+) -> AppResult<Vec<StagedEntryRow>> {
+    if employee_ids.is_empty() {
+        return Ok(Vec::new());
+    }
     let rows = sqlx::query_as!(
-        EmployeeCategoryTotal,
-        r#"SELECT employee_id, category, SUM(amount)::BIGINT AS "total!",
-                  COALESCE(SUM(amount) FILTER (WHERE COALESCE(is_taxable, TRUE)), 0)::BIGINT AS "taxable!"
-           FROM payroll_entries
-           WHERE employee_id = ANY($1) AND period_year = $2 AND period_month = $3
-             AND is_processed = FALSE
-             AND item_type NOT IN ('overtime', 'claim_reimbursement')
-           GROUP BY employee_id, category"#,
-        employee_ids,
-        year,
-        month,
-    )
-    .fetch_all(executor)
-    .await?;
-    Ok(rows)
-}
-
-#[derive(Debug)]
-pub struct StagedEntryIdRow {
-    pub id: Uuid,
-    pub employee_id: Uuid,
-}
-
-/// Every unprocessed `payroll_entries` id for the period (excluding `claim_reimbursement`,
-/// which is no longer staged/used by payroll) captured once inside the engine transaction so
-/// `mark_processed` only retires rows actually visible to this run.
-pub async fn staged_entry_ids(
-    executor: impl Executor<'_, Database = Postgres>,
-    employee_ids: &[Uuid],
-    year: i32,
-    month: i32,
-) -> AppResult<Vec<StagedEntryIdRow>> {
-    let rows = sqlx::query_as!(
-        StagedEntryIdRow,
-        r#"SELECT id, employee_id
-           FROM payroll_entries
-           WHERE employee_id = ANY($1)
-             AND period_year = $2
-             AND period_month = $3
-             AND is_processed = FALSE
-             AND item_type <> 'claim_reimbursement'"#,
-        employee_ids,
-        year,
-        month,
-    )
-    .fetch_all(executor)
-    .await?;
-    Ok(rows)
-}
-
-/// Staged unpaid-leave deductions per employee: amount and working days.
-///
-/// Same shape and filters as `bonus_commission_totals`, so the two reconcile
-/// against `entry_category_totals`. Both `payroll_items.unpaid_leave_deduction`
-/// and `unpaid_leave_days` existed and were never written, so the payslip, the
-/// portal, the PDF fallback and the backup archive all shipped a constant zero
-/// while the money sat anonymously inside `total_other_deductions`.
-///
-/// `quantity` is NULL on any row staged before it started being written, so the
-/// day count reads 0 for those rather than erroring.
-pub async fn unpaid_leave_totals(
-    executor: impl Executor<'_, Database = Postgres>,
-    employee_ids: &[Uuid],
-    year: i32,
-    month: i32,
-) -> AppResult<Vec<EmployeeUnpaidLeave>> {
-    let rows = sqlx::query_as!(
-        EmployeeUnpaidLeave,
-        r#"SELECT employee_id,
-                  COALESCE(SUM(amount), 0)::BIGINT AS "amount!",
-                  COALESCE(SUM(quantity), 0)::NUMERIC AS "days!"
-           FROM payroll_entries
-           WHERE employee_id = ANY($1) AND period_year = $2 AND period_month = $3
-             AND is_processed = FALSE
-             AND category = 'deduction'
-             AND item_type = 'unpaid_leave'
-           GROUP BY employee_id"#,
-        employee_ids,
-        year,
-        month,
-    )
-    .fetch_all(executor)
-    .await?;
-    Ok(rows)
-}
-
-/// Staged bonus and commission entries per employee.
-///
-/// These already reach gross through `entry_category_totals`; this read exists so
-/// the amounts can also be stored in their own `payroll_items` columns. Those
-/// columns defaulted to 0, so the payslip printed "Bonus 0" while the figure sat
-/// inside TOTAL EARNINGS, and the statutory EA form's income lines — which sum
-/// these columns — did not add up to the reported YTD gross.
-pub async fn bonus_commission_totals(
-    executor: impl Executor<'_, Database = Postgres>,
-    employee_ids: &[Uuid],
-    year: i32,
-    month: i32,
-) -> AppResult<Vec<EmployeeBonusCommission>> {
-    let rows = sqlx::query_as!(
-        EmployeeBonusCommission,
-        r#"SELECT employee_id,
-                  COALESCE(SUM(amount) FILTER (WHERE item_type = 'bonus'), 0)::BIGINT AS "bonus!",
-                  COALESCE(SUM(amount) FILTER (WHERE item_type = 'commission'), 0)::BIGINT AS "commission!",
-                  COALESCE(SUM(amount) FILTER (WHERE item_type = 'bonus' AND COALESCE(is_taxable, TRUE)), 0)::BIGINT AS "taxable_bonus!",
-                  COALESCE(SUM(amount) FILTER (WHERE item_type = 'commission' AND COALESCE(is_taxable, TRUE)), 0)::BIGINT AS "taxable_commission!"
-           FROM payroll_entries
-           WHERE employee_id = ANY($1) AND period_year = $2 AND period_month = $3
-             AND is_processed = FALSE
-             AND category = 'earning'
-             AND item_type IN ('bonus', 'commission')
-           GROUP BY employee_id"#,
-        employee_ids,
-        year,
-        month,
-    )
-    .fetch_all(executor)
-    .await?;
-    Ok(rows)
-}
-
-/// Staged monthly-allowance entries per employee.
-pub async fn monthly_allowance_totals(
-    executor: impl Executor<'_, Database = Postgres>,
-    employee_ids: &[Uuid],
-    year: i32,
-    month: i32,
-) -> AppResult<Vec<EmployeeTotal>> {
-    let rows = sqlx::query_as!(
-        EmployeeTotal,
-        r#"SELECT employee_id, SUM(amount)::BIGINT AS "total!"
-           FROM payroll_entries
-           WHERE employee_id = ANY($1) AND period_year = $2 AND period_month = $3
-             AND is_processed = FALSE
-             AND category = 'earning'
-             AND item_type IN ('allowance', 'monthly_allowance')
-           GROUP BY employee_id"#,
+        StagedEntryRow,
+        r#"WITH locked AS (
+               SELECT id
+               FROM payroll_entries
+               WHERE employee_id = ANY($1)
+                 AND period_year = $2
+                 AND period_month = $3
+                 AND is_processed = FALSE
+               ORDER BY id
+               FOR UPDATE
+           )
+           SELECT pe.id, pe.employee_id, pe.category, pe.item_type, pe.description,
+                  pe.amount, pe.quantity, COALESCE(pe.is_taxable, TRUE) AS "is_taxable!"
+           FROM payroll_entries pe
+           JOIN locked l ON l.id = pe.id
+           WHERE pe.item_type <> 'claim_reimbursement'
+           ORDER BY pe.employee_id, pe.category, pe.created_at, pe.id"#,
         employee_ids,
         year,
         month,
@@ -276,64 +138,83 @@ pub async fn monthly_allowance_totals(
 /// approved overtime application, absent records, or records above the company ceiling.
 pub async fn attendance_ot_hours(
     executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
     employee_ids: &[Uuid],
     period_start: NaiveDate,
     period_end: NaiveDate,
     tz: &str,
     max_overtime_hours: rust_decimal::Decimal,
 ) -> AppResult<Vec<EmployeeHours>> {
+    if employee_ids.is_empty() {
+        return Ok(Vec::new());
+    }
     let rows = sqlx::query_as!(
         EmployeeHours,
-        r#"SELECT employee_id, day_type AS "day_type!", COALESCE(SUM(overtime_hours), 0::NUMERIC) AS "hours!"
+        r#"WITH company_holidays AS (
+               SELECT date, is_recurring,
+                      EXTRACT(MONTH FROM date)::int AS h_month,
+                      EXTRACT(DAY FROM date)::int AS h_day
+               FROM holidays
+               WHERE company_id = $2
+           ),
+           company_working_days AS (
+               SELECT day_of_week, is_working_day
+               FROM working_day_config
+               WHERE company_id = $2
+           )
+           SELECT employee_id, day_type AS "day_type!", COALESCE(SUM(day_hours), 0::NUMERIC) AS "hours!"
            FROM (
-               SELECT ar.employee_id,
-                      ar.overtime_hours,
-                      -- The local calendar date decides what the day was worth:
-                      -- a public holiday or a configured rest day earns its own
-                      -- multiplier instead of being flattened into `normal`
-                      -- (plan item 12). Holidays match their original date or,
-                      -- for recurring rows, the same month/day.
-                      CASE
-                        WHEN EXISTS (
-                          SELECT 1 FROM holidays h
-                          WHERE h.company_id = ar.company_id
-                            AND (h.date = local_date
+               SELECT employee_id,
+                      local_date,
+                      day_type,
+                      LEAST(COALESCE(SUM(overtime_hours), 0::NUMERIC), $6) AS day_hours
+               FROM (
+                   SELECT ar.employee_id,
+                          ld.local_date,
+                          ar.overtime_hours,
+                          CASE
+                            WHEN EXISTS (
+                              SELECT 1 FROM company_holidays h
+                              WHERE h.date = ld.local_date
                                  OR (h.is_recurring
-                                     AND h.date <= local_date
-                                     AND EXTRACT(MONTH FROM h.date) = EXTRACT(MONTH FROM local_date)
-                                     AND EXTRACT(DAY FROM h.date) = EXTRACT(DAY FROM local_date)))
-                        ) THEN 'public_holiday'
-                        WHEN COALESCE(
-                          (SELECT w.is_working_day FROM working_day_config w
-                           WHERE w.company_id = ar.company_id
-                             AND w.day_of_week = EXTRACT(DOW FROM local_date)::int),
-                          TRUE
-                        ) = FALSE THEN 'rest_day'
-                        ELSE 'normal'
-                      END AS day_type
-               FROM attendance_records ar
-               LEFT JOIN overtime_applications oa
-                   ON ar.employee_id = oa.employee_id
-                   AND (ar.check_in_at AT TIME ZONE $4)::date = oa.ot_date
-                   AND oa.status = 'approved'
-               CROSS JOIN LATERAL (
-                   SELECT (ar.check_in_at AT TIME ZONE $4)::date AS local_date
-               ) ld
-               WHERE ar.employee_id = ANY($1)
-                 -- Bucket by the company's local date, as a half-open range on
-                 -- the raw timestamptz: a closed upper bound at period_end + 1
-                 -- put a check-in at exactly that midnight in two consecutive
-                 -- runs, and wrapping the column in AT TIME ZONE would cost the
-                 -- (company_id, check_in_at) index.
-                 AND ar.check_in_at >= ($2::date)::timestamp AT TIME ZONE $4
-                 AND ar.check_in_at < ($3::date + 1)::timestamp AT TIME ZONE $4
-                 AND ar.status <> 'absent'
-                 AND ar.overtime_hours IS NOT NULL
-                 AND ar.overtime_hours <= $5
-                 AND oa.id IS NULL
-           ) buckets
+                                     AND h.date <= ld.local_date
+                                     AND h.h_month = EXTRACT(MONTH FROM ld.local_date)::int
+                                     AND h.h_day = EXTRACT(DAY FROM ld.local_date)::int)
+                            ) THEN 'public_holiday'
+                            WHEN COALESCE(
+                              cwd.is_working_day,
+                              EXTRACT(DOW FROM ld.local_date)::int NOT IN (0, 6)
+                            ) = FALSE THEN 'rest_day'
+                            ELSE 'normal'
+                          END AS day_type
+                   FROM attendance_records ar
+                   CROSS JOIN LATERAL (
+                       SELECT (ar.check_in_at AT TIME ZONE $5)::date AS local_date
+                   ) ld
+                   LEFT JOIN company_working_days cwd
+                       ON cwd.day_of_week = EXTRACT(DOW FROM ld.local_date)::int
+                   LEFT JOIN overtime_applications oa
+                       ON ar.employee_id = oa.employee_id
+                       AND oa.ot_date = ld.local_date
+                       AND oa.ot_date >= $3 AND oa.ot_date <= $4
+                       AND oa.status = 'approved'
+                   WHERE ar.company_id = $2
+                     AND ar.employee_id = ANY($1)
+                     AND ar.check_in_at >= ($3::date)::timestamp AT TIME ZONE $5
+                     AND ar.check_in_at < ($4::date + 1)::timestamp AT TIME ZONE $5
+                     AND ar.status <> 'absent'
+                     AND ar.is_outside_geofence IS NOT TRUE
+                     AND ar.is_offsite_network IS NOT TRUE
+                     AND ar.overtime_hours IS NOT NULL
+                     AND ar.overtime_hours > 0
+                     AND ar.overtime_hours <= $6
+                     AND oa.id IS NULL
+               ) buckets
+               GROUP BY employee_id, local_date, day_type
+           ) daily_capped
            GROUP BY employee_id, day_type"#,
         employee_ids,
+        company_id,
         period_start,
         period_end,
         tz,
@@ -557,10 +438,14 @@ pub async fn staged_entries_outside_run(
 /// Year-to-date statutory figures per employee from prior committed runs this year.
 pub async fn payroll_ytd(
     executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
     employee_ids: &[Uuid],
     year: i32,
     month: i32,
 ) -> AppResult<Vec<PayrollYtd>> {
+    if employee_ids.is_empty() {
+        return Ok(Vec::new());
+    }
     let rows = sqlx::query_as!(
         PayrollYtd,
         r#"SELECT
@@ -575,9 +460,13 @@ pub async fn payroll_ytd(
             COALESCE(SUM(pi.net_salary), 0)::BIGINT AS "net!"
         FROM payroll_items pi
         JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
-        WHERE pi.employee_id = ANY($1) AND pr.period_year = $2 AND pr.period_month < $3
-        AND pr.status::text IN ('processed', 'pending_approval', 'approved', 'paid')
+        WHERE pr.company_id = $1
+          AND pi.employee_id = ANY($2)
+          AND pr.period_year = $3
+          AND pr.period_month < $4
+          AND pr.status IN ('processed', 'pending_approval', 'approved', 'paid')
         GROUP BY pi.employee_id"#,
+        company_id,
         employee_ids,
         year,
         month,
@@ -613,7 +502,8 @@ pub async fn entries_with_employee(
           AND ($4::uuid IS NULL OR pe.employee_id = $4)
           AND ($5::text IS NULL OR pe.item_type = $5)
           AND ($6::bool = TRUE OR pe.is_processed = FALSE)
-        ORDER BY pe.period_year DESC, pe.period_month DESC, e.employee_number, pe.created_at DESC"#,
+        ORDER BY pe.period_year DESC, pe.period_month DESC, e.employee_number, pe.created_at DESC
+        LIMIT 2000"#,
         company_id,
         period_year,
         period_month,
@@ -666,33 +556,32 @@ pub async fn item_summaries_for_run(
         .collect())
 }
 
-/// Whether any employee paid by `run_id` already appears in a later committed run.
-///
-/// Deleting a run that a later run's stored `ytd_*` and PCB annualisation were
-/// computed from would leave those figures describing a run that no longer
-/// exists. `payroll_ytd` sums exactly these statuses, so the guard matches what
-/// the YTD chain actually depends on — the same rule `employee_has_later_run`
-/// applies to PCB edits, lifted to the whole run.
+/// Whether any employee paid by `run_id` already appears in a later committed run
+/// within the SAME tax year (since YTD resets each Jan 1, runs in later years do not
+/// depend on prior-year runs).
 pub async fn run_has_later_committed_run(
     executor: impl Executor<'_, Database = Postgres>,
     company_id: Uuid,
     run_id: Uuid,
 ) -> AppResult<bool> {
     let exists = sqlx::query_scalar!(
-        r#"SELECT EXISTS(
-            SELECT 1
-            FROM payroll_items pi
-            JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
-            WHERE pr.company_id = $1
-              AND pr.id <> $2
-              AND pr.status::text IN ('processed', 'pending_approval', 'approved', 'paid')
-              AND pi.employee_id IN (
-                  SELECT employee_id FROM payroll_items WHERE payroll_run_id = $2
-              )
-              AND (pr.period_year, pr.period_month) > (
-                  SELECT period_year, period_month FROM payroll_runs WHERE id = $2
-              )
-        ) AS "exists!""#,
+        r#"WITH target AS (
+               SELECT period_year, period_month FROM payroll_runs WHERE id = $2
+           )
+           SELECT EXISTS(
+               SELECT 1
+               FROM payroll_items pi
+               JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
+               CROSS JOIN target t
+               WHERE pr.company_id = $1
+                 AND pr.id <> $2
+                 AND pr.status IN ('processed', 'pending_approval', 'approved', 'paid')
+                 AND pr.period_year = t.period_year
+                 AND pr.period_month > t.period_month
+                 AND pi.employee_id IN (
+                     SELECT employee_id FROM payroll_items WHERE payroll_run_id = $2
+                 )
+           ) AS "exists!""#,
         company_id,
         run_id,
     )
@@ -711,6 +600,9 @@ pub async fn employees_already_paid_in_period(
     period_month: i32,
     exclude_run_id: Option<Uuid>,
 ) -> AppResult<Vec<LaterCommittedRun>> {
+    if employee_ids.is_empty() {
+        return Ok(Vec::new());
+    }
     let rows = sqlx::query_as!(
         LaterCommittedRun,
         r#"SELECT e.id AS "employee_id!", e.employee_number AS "employee_number!",
@@ -723,7 +615,7 @@ pub async fn employees_already_paid_in_period(
              AND pr.company_id = $2
              AND pr.period_year = $3
              AND pr.period_month = $4
-             AND pr.status::text <> 'cancelled'
+             AND pr.status <> 'cancelled'
              AND ($5::uuid IS NULL OR pr.id <> $5)
            GROUP BY e.id, e.employee_number, e.full_name, pr.period_year, pr.period_month
            ORDER BY e.employee_number"#,
@@ -738,19 +630,7 @@ pub async fn employees_already_paid_in_period(
     Ok(rows)
 }
 
-/// Employees in a proposed run who already appear in a LATER committed run.
-///
-/// The batch, create-time mirror of `employee_has_later_run`. A run's
-/// `payroll_items.ytd_*` are frozen when it commits and its PCB annualisation
-/// already assumed every earlier month was in them, and nothing recomputes
-/// either — so processing February *after* March silently corrupts March's
-/// printed figures. A gap is legitimate (a group may simply not have been owed
-/// February); inserting behind a committed run is not, which is why the guard is
-/// on the later run's existence rather than on the gap.
-///
-/// The status filter is the one `payroll_ytd` sums, so the guard covers exactly
-/// what the YTD chain depends on. Employee number, name and the offending period
-/// come back with it so the refusal names who and when.
+/// Employees in a proposed run who already appear in a LATER committed run in the same tax year.
 pub async fn employees_with_later_committed_run(
     executor: impl Executor<'_, Database = Postgres>,
     employee_ids: &[Uuid],
@@ -758,6 +638,9 @@ pub async fn employees_with_later_committed_run(
     period_year: i32,
     period_month: i32,
 ) -> AppResult<Vec<LaterCommittedRun>> {
+    if employee_ids.is_empty() {
+        return Ok(Vec::new());
+    }
     let rows = sqlx::query_as!(
         LaterCommittedRun,
         r#"SELECT e.id AS "employee_id!", e.employee_number AS "employee_number!",
@@ -768,8 +651,9 @@ pub async fn employees_with_later_committed_run(
            JOIN employees e ON e.id = pi.employee_id
            WHERE pi.employee_id = ANY($1)
              AND pr.company_id = $2
-             AND pr.status::text IN ('processed', 'pending_approval', 'approved', 'paid')
-             AND (pr.period_year > $3 OR (pr.period_year = $3 AND pr.period_month > $4))
+             AND pr.status IN ('processed', 'pending_approval', 'approved', 'paid')
+             AND pr.period_year = $3
+             AND pr.period_month > $4
            GROUP BY e.id, e.employee_number, e.full_name
            ORDER BY e.employee_number"#,
         employee_ids,
@@ -783,11 +667,6 @@ pub async fn employees_with_later_committed_run(
 }
 
 /// Months of the given tax year for which this group already has a committed run.
-///
-/// Feeds the advisory "you skipped a month" diagnostic: a genuinely skipped
-/// month makes the PCB annualisation's `remaining_months` over-count and
-/// under-withhold, and no ordering rule can repair that after the fact — the
-/// operator has to decide.
 pub async fn committed_months_for_group(
     executor: impl Executor<'_, Database = Postgres>,
     company_id: Uuid,
@@ -800,7 +679,7 @@ pub async fn committed_months_for_group(
            WHERE company_id = $1
              AND payroll_group_id = $2
              AND period_year = $3
-             AND status::text IN ('processed', 'pending_approval', 'approved', 'paid')
+             AND status IN ('processed', 'pending_approval', 'approved', 'paid')
            GROUP BY period_month
            ORDER BY period_month"#,
         company_id,
@@ -812,7 +691,7 @@ pub async fn committed_months_for_group(
     Ok(months)
 }
 
-/// Whether a later committed run already exists for an employee — blocks PCB edits.
+/// Whether a later committed run in the same tax year already exists for an employee — blocks PCB edits.
 pub async fn employee_has_later_run(
     executor: impl Executor<'_, Database = Postgres>,
     employee_id: Uuid,
@@ -827,8 +706,9 @@ pub async fn employee_has_later_run(
             JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
             WHERE pi.employee_id = $1
               AND pr.company_id = $2
-              AND pr.status::text IN ('processed', 'pending_approval', 'approved', 'paid')
-              AND (pr.period_year > $3 OR (pr.period_year = $3 AND pr.period_month > $4))
+              AND pr.status IN ('processed', 'pending_approval', 'approved', 'paid')
+              AND pr.period_year = $3
+              AND pr.period_month > $4
         ) AS "exists!""#,
         employee_id,
         company_id,
@@ -838,6 +718,28 @@ pub async fn employee_has_later_run(
     .fetch_one(executor)
     .await?;
     Ok(exists)
+}
+
+/// Aggregated item-level sums for a run's journal preview in a single pass.
+pub async fn run_journal_item_totals(
+    executor: impl Executor<'_, Database = Postgres>,
+    run_id: Uuid,
+) -> AppResult<RunJournalItemTotals> {
+    let row = sqlx::query_as!(
+        RunJournalItemTotals,
+        r#"SELECT
+            COALESCE(SUM(total_claims), 0)::bigint AS "total_claims!",
+            COALESCE(SUM(ptptn_amount), 0)::bigint AS "total_ptptn!",
+            COALESCE(SUM(tabung_haji_amount), 0)::bigint AS "total_tabung_haji!",
+            COALESCE(SUM(total_loan_deductions + total_other_deductions), 0)::bigint AS "total_other_deductions!",
+            COALESCE(SUM(unpaid_leave_deduction), 0)::bigint AS "total_unpaid_leave!"
+        FROM payroll_items
+        WHERE payroll_run_id = $1"#,
+        run_id,
+    )
+    .fetch_one(executor)
+    .await?;
+    Ok(row)
 }
 
 /// Per-employee net pay and bank details for a run's payment file.
@@ -853,7 +755,7 @@ pub async fn payment_file_rows(
     let rows = sqlx::query_as!(
         PaymentFileRow,
         r#"SELECT e.employee_number, e.full_name AS employee_name,
-            e.bank_name, e.bank_account_number, e.bank_account_type,
+            pi.bank_name, pi.bank_account_number, pi.bank_account_type,
             pi.net_salary
         FROM payroll_items pi
         JOIN employees e ON pi.employee_id = e.id

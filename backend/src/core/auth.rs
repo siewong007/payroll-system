@@ -30,9 +30,7 @@ pub struct Claims {
     pub sid: Uuid,
     pub exp: i64,
     pub iat: i64,
-    #[serde(default)]
     pub iss: String,
-    #[serde(default)]
     pub aud: String,
 }
 
@@ -47,6 +45,30 @@ pub fn create_token(
     secret: &str,
     expiry_hours: i64,
 ) -> AppResult<String> {
+    let exp = (Utc::now() + Duration::hours(expiry_hours)).timestamp();
+    create_token_with_exp(
+        user_id,
+        email,
+        roles,
+        company_id,
+        employee_id,
+        session_id,
+        secret,
+        exp,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn create_token_with_exp(
+    user_id: Uuid,
+    email: &str,
+    roles: &[String],
+    company_id: Option<Uuid>,
+    employee_id: Option<Uuid>,
+    session_id: Uuid,
+    secret: &str,
+    exp: i64,
+) -> AppResult<String> {
     let now = Utc::now();
     let claims = Claims {
         sub: user_id,
@@ -55,7 +77,7 @@ pub fn create_token(
         company_id,
         employee_id,
         sid: session_id,
-        exp: (now + Duration::hours(expiry_hours)).timestamp(),
+        exp,
         iat: now.timestamp(),
         iss: JWT_ISSUER.to_string(),
         aud: JWT_AUDIENCE.to_string(),
@@ -80,6 +102,7 @@ fn normalized_roles(roles: &[String]) -> Vec<String> {
 
 pub fn verify_token(token: &str, secret: &str) -> AppResult<Claims> {
     let mut validation = Validation::default(); // HS256 + exp validation
+    validation.set_required_spec_claims(&["exp", "iss", "aud"]);
     validation.set_issuer(&[JWT_ISSUER]);
     validation.set_audience(&[JWT_AUDIENCE]);
 
@@ -98,21 +121,24 @@ pub fn verify_token(token: &str, secret: &str) -> AppResult<Claims> {
 /// as a bearer token anywhere else in the API.
 pub const MFA_PENDING_ISSUER: &str = "payroll-system-mfa-pending";
 pub const MFA_PENDING_AUDIENCE: &str = "payroll-system-mfa";
-const MFA_PENDING_EXPIRY_MINUTES: i64 = 5;
+pub const MFA_PENDING_EXPIRY_MINUTES: i64 = 5;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct MfaPendingClaims {
     sub: Uuid,
+    jti: Uuid,
     exp: i64,
     iat: i64,
     iss: String,
     aud: String,
 }
 
-pub fn create_mfa_pending_token(user_id: Uuid, secret: &str) -> AppResult<String> {
+pub fn create_mfa_pending_token(user_id: Uuid, secret: &str) -> AppResult<(String, Uuid)> {
     let now = Utc::now();
+    let jti = Uuid::new_v4();
     let claims = MfaPendingClaims {
         sub: user_id,
+        jti,
         exp: (now + Duration::minutes(MFA_PENDING_EXPIRY_MINUTES)).timestamp(),
         iat: now.timestamp(),
         iss: MFA_PENDING_ISSUER.to_string(),
@@ -122,13 +148,15 @@ pub fn create_mfa_pending_token(user_id: Uuid, secret: &str) -> AppResult<String
     let encoding_key = EncodingKey::from_secret(secret.as_bytes())
         .map_err(|e| AppError::Internal(format!("Failed to create MFA token key: {}", e)))?;
 
-    encode(&Header::default(), &claims, &encoding_key)
-        .map_err(|e| AppError::Internal(format!("Failed to create MFA token: {}", e)))
+    let token = encode(&Header::default(), &claims, &encoding_key)
+        .map_err(|e| AppError::Internal(format!("Failed to create MFA token: {}", e)))?;
+    Ok((token, jti))
 }
 
-/// Verifies an MFA-pending token and returns the user id it was issued for.
-pub fn verify_mfa_pending_token(token: &str, secret: &str) -> AppResult<Uuid> {
+/// Verifies an MFA-pending token and returns `(user_id, jti)`.
+pub fn verify_mfa_pending_token(token: &str, secret: &str) -> AppResult<(Uuid, Uuid)> {
     let mut validation = Validation::default();
+    validation.set_required_spec_claims(&["exp", "iss", "aud"]);
     validation.set_issuer(&[MFA_PENDING_ISSUER]);
     validation.set_audience(&[MFA_PENDING_AUDIENCE]);
 
@@ -136,7 +164,7 @@ pub fn verify_mfa_pending_token(token: &str, secret: &str) -> AppResult<Uuid> {
         .map_err(|e| AppError::Internal(format!("Invalid MFA decoding key: {}", e)))?;
 
     decode::<MfaPendingClaims>(token, &decoding_key, &validation)
-        .map(|data| data.claims.sub)
+        .map(|data| (data.claims.sub, data.claims.jti))
         .map_err(|e| AppError::Unauthorized(format!("Invalid or expired MFA token: {}", e)))
 }
 
@@ -197,6 +225,11 @@ impl FromRequestParts<AppState> for AuthUser {
         if !ctx.session_active {
             return Err(AppError::Unauthorized(
                 "Session has expired or was revoked".into(),
+            ));
+        }
+        if claims.company_id.is_some() && !ctx.company_member {
+            return Err(AppError::Unauthorized(
+                "Session company access has been revoked".into(),
             ));
         }
         if ctx.must_change_password {

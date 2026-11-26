@@ -90,9 +90,15 @@ pub async fn create_leave(
     let employee_id = get_employee_id(&auth)?;
     let company_id = get_company_id(&auth)?;
     let access = upload_service::access_from_auth(&auth, company_id);
-    let leave =
-        portal_service::create_leave_request(&state.pool, employee_id, company_id, req, &access)
-            .await?;
+    let leave = portal_service::create_leave_request(
+        &state.pool,
+        employee_id,
+        company_id,
+        auth.0.sub,
+        req,
+        &access,
+    )
+    .await?;
     Ok(Json(leave))
 }
 
@@ -102,7 +108,7 @@ pub async fn cancel_leave(
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<serde_json::Value>> {
     let employee_id = get_employee_id(&auth)?;
-    portal_service::cancel_leave_request(&state.pool, employee_id, id).await?;
+    portal_service::cancel_leave_request(&state.pool, employee_id, auth.0.sub, id).await?;
     Ok(Json(serde_json::json!({ "success": true })))
 }
 
@@ -136,8 +142,15 @@ pub async fn create_claim(
     let employee_id = get_employee_id(&auth)?;
     let company_id = get_company_id(&auth)?;
     let access = upload_service::access_from_auth(&auth, company_id);
-    let claim =
-        portal_service::create_claim(&state.pool, employee_id, company_id, req, &access).await?;
+    let claim = portal_service::create_claim(
+        &state.pool,
+        employee_id,
+        company_id,
+        auth.0.sub,
+        req,
+        &access,
+    )
+    .await?;
     Ok(Json(claim))
 }
 
@@ -189,9 +202,14 @@ pub async fn create_overtime(
 ) -> AppResult<Json<crate::models::portal::OvertimeApplication>> {
     let employee_id = get_employee_id(&auth)?;
     let company_id = get_company_id(&auth)?;
-    let app =
-        portal_service::create_overtime_application(&state.pool, employee_id, company_id, req)
-            .await?;
+    let app = portal_service::create_overtime_application(
+        &state.pool,
+        employee_id,
+        company_id,
+        auth.0.sub,
+        req,
+    )
+    .await?;
     Ok(Json(app))
 }
 

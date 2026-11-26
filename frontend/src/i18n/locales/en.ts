@@ -211,6 +211,7 @@ const en = {
     adminBadge: 'Admin',
     adminConsoleBadge: 'Admin Console',
     accountSecurity: 'Account & Security',
+    preferences: 'Preferences',
     signOut: 'Sign Out',
     portal: {
       profile: 'My Profile',
@@ -395,6 +396,9 @@ const en = {
       sessionLost: 'Your session could not be restored. Please sign in and try linking again.',
       missingData: 'Google account linking failed. Missing authentication data.',
       linkFailed: 'Could not link the Google account.',
+      confirmTitle: 'Confirm Google account link',
+      confirmPrompt: 'Enter your current password to finish linking your Google account.',
+      confirmAction: 'Link Google account',
     },
     twoFactor: {
       title: 'Two-factor authentication',
@@ -841,7 +845,7 @@ const en = {
       steps: {
         1: '1. Open PayrollMY on your phone',
         2: '2. Tap "Attendance" in the portal',
-        3: '3. Scan the QR code above',
+        3: '3. Scan the QR code on screen',
         4: '4. Confirm your location',
       },
       autoRegen: 'QR code regenerates automatically',

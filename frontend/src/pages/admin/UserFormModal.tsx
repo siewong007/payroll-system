@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useMutation } from '@tanstack/react-query';
-import { Building2 } from 'lucide-react';
+import { Building2, Loader2 } from 'lucide-react';
 import { createUser, updateUser } from '@/api/admin';
 import { Modal } from '@/components/ui/Modal';
 import { FieldGroup, FormField } from '@/components/ui/FormField';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { passwordPolicyHint, validatePassword } from '@/lib/password';
 import {
   ALL_ROLES,
@@ -181,7 +182,7 @@ export function UserFormModal({
   return (
     <Modal
       open={open}
-      onClose={onClose}
+      onClose={() => { if (!mutation.isPending) onClose(); }}
       title={isCreate ? t('users.addUser') : t('users.editUser')}
       maxWidth="max-w-lg"
       footer={
@@ -192,22 +193,25 @@ export function UserFormModal({
             </p>
           )}
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-            <button type="button" onClick={onClose} className="btn-secondary">
+            <button type="button" disabled={mutation.isPending} onClick={onClose} className="btn-secondary">
               {t('common.cancel')}
             </button>
             <button
               type="submit"
               form="user-form"
               disabled={submitDisabled}
-              className="btn-primary disabled:opacity-50"
+              className="btn-primary inline-flex items-center justify-center gap-2 disabled:opacity-50"
             >
-              {mutation.isPending
-                ? isCreate
-                  ? t('common.creating')
-                  : t('common.saving')
-                : isCreate
-                  ? t('users.createUser')
-                  : t('common.saveChanges')}
+              {mutation.isPending ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                  {isCreate ? t('common.creating') : t('common.saving')}
+                </>
+              ) : isCreate ? (
+                t('users.createUser')
+              ) : (
+                t('common.saveChanges')
+              )}
             </button>
           </div>
         </div>
@@ -270,7 +274,7 @@ export function UserFormModal({
             {selectableRoles.map((role) => (
               <label
                 key={role}
-                className="flex items-center gap-2 rounded-lg border border-gray-200 dark:border-slate-700 px-3 py-2 text-sm text-gray-700 dark:text-slate-200 hover:bg-gray-50 dark:hover:bg-slate-800/60 cursor-pointer"
+                className="flex items-center gap-2.5 min-h-11 rounded-lg border border-gray-200 dark:border-slate-700 px-3 py-2 text-sm text-gray-800 dark:text-slate-200 hover:bg-gray-50 dark:hover:bg-slate-800/60 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-[var(--ring)] cursor-pointer transition-colors"
               >
                 <input
                   type="checkbox"
@@ -307,25 +311,29 @@ export function UserFormModal({
         >
           <div className="space-y-2 mt-2 max-h-48 overflow-y-auto">
             {companiesLoading ? (
-              <p className="text-sm text-gray-400 dark:text-slate-500">{t('users.loadingCompanies')}</p>
+              <div role="status" className="space-y-2">
+                <span className="sr-only">{t('users.loadingCompanies')}</span>
+                <Skeleton className="h-11 w-full rounded-lg" />
+                <Skeleton className="h-11 w-full rounded-lg" />
+              </div>
             ) : companiesError ? (
-              <div className="text-sm text-red-600 dark:text-red-400">
-                {t('users.companiesLoadFailed')}{' '}
+              <div role="alert" className="text-sm text-red-700 dark:text-red-300 flex items-center justify-between gap-2">
+                <span>{t('users.companiesLoadFailed')}</span>
                 {onRetryCompanies && (
-                  <button type="button" onClick={onRetryCompanies} className="underline">
+                  <button type="button" onClick={onRetryCompanies} className="btn-secondary min-h-9 px-3 py-1 text-xs shrink-0">
                     {t('common.retry')}
                   </button>
                 )}
               </div>
             ) : companies.length === 0 ? (
-              <p className="text-sm text-gray-400 dark:text-slate-500">
+              <p className="text-sm text-gray-600 dark:text-slate-400">
                 {t('users.noCompanies')}
               </p>
             ) : (
               companies.map((company) => (
                 <label
                   key={company.id}
-                  className={`flex items-center gap-3 p-3 rounded-lg border transition-colors ${
+                  className={`flex items-center gap-3 min-h-11 p-3 rounded-lg border has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-[var(--ring)] transition-colors ${
                     hasEmployeeLink ? 'opacity-65 cursor-not-allowed' : 'cursor-pointer'
                   } ${
                     form.company_ids.includes(company.id)

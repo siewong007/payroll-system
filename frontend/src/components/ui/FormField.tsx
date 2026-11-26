@@ -74,7 +74,7 @@ export function FieldGroup({ legend, required, note, children }: FieldsetProps) 
         {legend}
         {required && <span aria-hidden="true"> *</span>}
         {required && <span className="sr-only"> ({t('common.required')})</span>}
-        {note && <span className="text-gray-400 font-normal"> {note}</span>}
+        {note && <span className="text-gray-500 dark:text-slate-400 font-normal"> {note}</span>}
       </legend>
       {children}
     </fieldset>

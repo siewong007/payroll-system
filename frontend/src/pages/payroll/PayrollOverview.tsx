@@ -20,10 +20,15 @@ const SEVERITY_STYLES: Record<string, { badge: string; icon: typeof AlertTriangl
 
 function KpiCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
-    <div className="card hover-lift !p-4">
-      <p className="text-xs text-gray-500 dark:text-slate-400">{label}</p>
-      <p className="text-lg font-bold mt-1 tabular-nums text-gray-900 dark:text-slate-100">{value}</p>
-      {sub && <p className="text-xs text-gray-400 dark:text-slate-500 mt-0.5">{sub}</p>}
+    <div className="card hover-lift !p-4 min-w-0">
+      <p className="text-xs text-gray-500 dark:text-slate-400 truncate">{label}</p>
+      <p
+        title={value}
+        className="text-lg font-bold mt-1 truncate tabular-nums text-gray-900 dark:text-slate-100"
+      >
+        {value}
+      </p>
+      {sub && <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5 truncate">{sub}</p>}
     </div>
   );
 }
@@ -197,7 +202,7 @@ export function PayrollOverview() {
                 <Link
                   key={row.status}
                   to={`/payroll/runs?status=${encodeURIComponent(row.status)}`}
-                  className={`inline-flex items-center gap-1.5 min-h-9 px-3 py-1.5 rounded-full text-sm font-medium transition-opacity hover:opacity-85 ${PAYROLL_STATUS_STYLES[row.status] ?? 'bg-gray-100 text-gray-700 dark:bg-slate-800 dark:text-slate-300'}`}
+                  className={`inline-flex items-center gap-1.5 min-h-11 sm:min-h-9 px-3 py-1.5 rounded-full text-sm font-medium transition-opacity hover:opacity-85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] ${PAYROLL_STATUS_STYLES[row.status] ?? 'bg-gray-100 text-gray-700 dark:bg-slate-800 dark:text-slate-300'}`}
                 >
                   {payrollStatusLabel(row.status)}
                   <span className="font-bold tabular-nums">{formatNumber(row.count)}</span>
@@ -250,45 +255,47 @@ export function PayrollOverview() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Trend */}
-        <div className="card !p-5 overflow-x-auto">
+        <div className="card !p-5 min-w-0">
           <h2 className="text-sm font-semibold text-gray-900 dark:text-slate-100 mb-3">
             {t('payroll.overview.trendTitle')}
           </h2>
           {data.trend.length === 0 ? (
             <p className="text-sm text-gray-500 dark:text-slate-400">{t('payroll.overview.trendEmpty')}</p>
           ) : (
-            <table className="w-full text-sm text-gray-900 dark:text-slate-100">
-              <thead>
-                <tr className="text-left text-xs text-gray-500 dark:text-slate-400 border-b border-gray-100 dark:border-slate-800">
-                  <th className="py-2 font-medium">{t('payroll.columns.period')}</th>
-                  <th className="py-2 font-medium text-right">{t('payroll.columns.employees')}</th>
-                  <th className="py-2 font-medium text-right">{t('payroll.columns.gross')}</th>
-                  <th className="py-2 font-medium text-right">{t('payroll.columns.net')}</th>
-                  <th className="py-2 font-medium text-right">{t('payroll.columns.employerCost')}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.trend.map((period) => (
-                  <tr
-                    key={`${period.period_year}-${period.period_month}`}
-                    className="border-b border-gray-50 dark:border-slate-800/60 last:border-0"
-                  >
-                    <td className="py-2 font-medium whitespace-nowrap">
-                      {formatPeriod(period.period_year, period.period_month)}
-                    </td>
-                    <td className="py-2 text-right tabular-nums">{formatNumber(period.employee_count)}</td>
-                    <td className="py-2 text-right tabular-nums whitespace-nowrap">{formatMYR(period.total_gross)}</td>
-                    <td className="py-2 text-right tabular-nums whitespace-nowrap">{formatMYR(period.total_net)}</td>
-                    <td className="py-2 text-right tabular-nums whitespace-nowrap">{formatMYR(period.total_employer_cost)}</td>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm text-gray-900 dark:text-slate-100">
+                <thead>
+                  <tr className="text-left text-xs text-gray-500 dark:text-slate-400 border-b border-gray-100 dark:border-slate-800">
+                    <th className="py-2 pr-3 font-medium whitespace-nowrap">{t('payroll.columns.period')}</th>
+                    <th className="py-2 px-2 font-medium text-right whitespace-nowrap">{t('payroll.columns.employees')}</th>
+                    <th className="py-2 px-2 font-medium text-right whitespace-nowrap">{t('payroll.columns.gross')}</th>
+                    <th className="py-2 px-2 font-medium text-right whitespace-nowrap">{t('payroll.columns.net')}</th>
+                    <th className="py-2 pl-2 font-medium text-right whitespace-nowrap">{t('payroll.columns.employerCost')}</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {data.trend.map((period) => (
+                    <tr
+                      key={`${period.period_year}-${period.period_month}`}
+                      className="border-b border-gray-50 dark:border-slate-800/60 last:border-0"
+                    >
+                      <td className="py-2 pr-3 font-medium whitespace-nowrap">
+                        {formatPeriod(period.period_year, period.period_month)}
+                      </td>
+                      <td className="py-2 px-2 text-right tabular-nums">{formatNumber(period.employee_count)}</td>
+                      <td className="py-2 px-2 text-right tabular-nums whitespace-nowrap">{formatMYR(period.total_gross)}</td>
+                      <td className="py-2 px-2 text-right tabular-nums whitespace-nowrap">{formatMYR(period.total_net)}</td>
+                      <td className="py-2 pl-2 text-right tabular-nums whitespace-nowrap">{formatMYR(period.total_employer_cost)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
 
         {/* Department split */}
-        <div className="card !p-5 overflow-x-auto">
+        <div className="card !p-5 min-w-0">
           <h2 className="text-sm font-semibold text-gray-900 dark:text-slate-100 mb-3">
             {t('payroll.overview.deptTitle')}
             {current && (
@@ -300,26 +307,28 @@ export function PayrollOverview() {
           {data.departments.length === 0 ? (
             <p className="text-sm text-gray-500 dark:text-slate-400">{t('payroll.overview.deptEmpty')}</p>
           ) : (
-            <table className="w-full text-sm text-gray-900 dark:text-slate-100">
-              <thead>
-                <tr className="text-left text-xs text-gray-500 dark:text-slate-400 border-b border-gray-100 dark:border-slate-800">
-                  <th className="py-2 font-medium">{t('employees.fields.department')}</th>
-                  <th className="py-2 font-medium text-right">{t('payroll.columns.employees')}</th>
-                  <th className="py-2 font-medium text-right">{t('payroll.columns.gross')}</th>
-                  <th className="py-2 font-medium text-right">{t('payroll.columns.employerCost')}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.departments.map((row) => (
-                  <tr key={row.department ?? '—'} className="border-b border-gray-50 dark:border-slate-800/60 last:border-0">
-                    <td className="py-2 font-medium">{row.department ?? t('payroll.overview.unassigned')}</td>
-                    <td className="py-2 text-right tabular-nums">{formatNumber(row.employee_count)}</td>
-                    <td className="py-2 text-right tabular-nums whitespace-nowrap">{formatMYR(row.total_gross)}</td>
-                    <td className="py-2 text-right tabular-nums whitespace-nowrap">{formatMYR(row.total_employer_cost)}</td>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm text-gray-900 dark:text-slate-100">
+                <thead>
+                  <tr className="text-left text-xs text-gray-500 dark:text-slate-400 border-b border-gray-100 dark:border-slate-800">
+                    <th className="py-2 pr-3 font-medium whitespace-nowrap">{t('employees.fields.department')}</th>
+                    <th className="py-2 px-2 font-medium text-right whitespace-nowrap">{t('payroll.columns.employees')}</th>
+                    <th className="py-2 px-2 font-medium text-right whitespace-nowrap">{t('payroll.columns.gross')}</th>
+                    <th className="py-2 pl-2 font-medium text-right whitespace-nowrap">{t('payroll.columns.employerCost')}</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {data.departments.map((row) => (
+                    <tr key={row.department ?? '—'} className="border-b border-gray-50 dark:border-slate-800/60 last:border-0">
+                      <td className="py-2 pr-3 font-medium">{row.department ?? t('payroll.overview.unassigned')}</td>
+                      <td className="py-2 px-2 text-right tabular-nums">{formatNumber(row.employee_count)}</td>
+                      <td className="py-2 px-2 text-right tabular-nums whitespace-nowrap">{formatMYR(row.total_gross)}</td>
+                      <td className="py-2 pl-2 text-right tabular-nums whitespace-nowrap">{formatMYR(row.total_employer_cost)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
       </div>

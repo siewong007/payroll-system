@@ -23,12 +23,15 @@ pub fn create_router(state: AppState) -> Router {
     // forwarded headers on a directly reachable API is worse — anyone could
     // spoof one and bypass the login limiter. The operator declares which
     // deployment this is; see core::rate_limit_key.
-    let ip_key = ClientIpKeyExtractor::new(state.config.trust_proxy_headers);
+    let ip_key = ClientIpKeyExtractor::with_header(
+        state.config.trust_proxy_headers,
+        state.config.client_ip_header.as_deref(),
+    );
 
     // Rate limiter: 5 requests per 60 seconds per IP
     let auth_rate_limit = Arc::new(
         GovernorConfigBuilder::default()
-            .key_extractor(ip_key)
+            .key_extractor(ip_key.clone())
             .per_second(12)
             .burst_size(5)
             .finish()
@@ -38,7 +41,7 @@ pub fn create_router(state: AppState) -> Router {
     // Rate limiter: 3 requests per 60 seconds per IP (1 token every 20s, burst 3)
     let forgot_rate_limit = Arc::new(
         GovernorConfigBuilder::default()
-            .key_extractor(ip_key)
+            .key_extractor(ip_key.clone())
             .per_second(20)
             .burst_size(3)
             .finish()
@@ -48,7 +51,7 @@ pub fn create_router(state: AppState) -> Router {
     // Rate limiter: 10 requests per 60 seconds per IP (OAuth2 flow)
     let oauth2_rate_limit = Arc::new(
         GovernorConfigBuilder::default()
-            .key_extractor(ip_key)
+            .key_extractor(ip_key.clone())
             .per_second(6)
             .burst_size(10)
             .finish()
@@ -117,8 +120,9 @@ pub fn create_router(state: AppState) -> Router {
     // in a loop, re-upload until the disk filled, or drive the SMTP relay hard
     // enough to get the sending domain blocked. These are keyed per verified
     // session rather than per IP — see `SessionOrIpKeyExtractor` for why.
-    let session_key = SessionOrIpKeyExtractor::new(
+    let session_key = SessionOrIpKeyExtractor::with_header(
         state.config.trust_proxy_headers,
+        state.config.client_ip_header.as_deref(),
         Arc::new(state.config.jwt_secret.clone()),
     );
 
@@ -219,15 +223,40 @@ pub fn create_router(state: AppState) -> Router {
 
     let rate_limited_session_auth = Router::new()
         .route("/auth/refresh", post(auth::refresh_token))
+        .route("/auth/switch-company", put(auth::switch_company))
         .route("/auth/change-password", put(auth::change_password))
+        .route("/auth/2fa/setup/begin", post(totp::setup_begin))
         .route("/auth/2fa/setup/confirm", post(totp::setup_confirm))
         .route("/auth/2fa/disable", post(totp::disable))
         .route(
             "/auth/2fa/backup-codes/regenerate",
             post(totp::regenerate_backup_codes),
         )
+        .route(
+            "/auth/passkey/register/begin",
+            post(passkey::registration_begin),
+        )
+        .route(
+            "/auth/passkey/register/complete",
+            post(passkey::registration_complete),
+        )
+        .route("/auth/oauth2/google/link", post(oauth2::link_google))
         .route("/admin/users/{id}/2fa/reset", post(admin::reset_user_2fa))
+        .route(
+            "/notifications/subscriptions",
+            post(notification::upsert_subscription).delete(notification::delete_subscription),
+        )
         .route("/notifications/test-push", post(notification::test_push))
+        .route("/attendance/check-in/qr", post(attendance::check_in_qr))
+        .route(
+            "/attendance/check-in/face-id/begin",
+            post(attendance::check_in_face_id_begin),
+        )
+        .route(
+            "/attendance/check-in/face-id",
+            post(attendance::check_in_face_id),
+        )
+        .route("/attendance/check-out", post(attendance::check_out))
         .layer(GovernorLayer::new(session_auth_rate_limit));
 
     let rate_limited_email = Router::new()
@@ -295,7 +324,6 @@ pub fn create_router(state: AppState) -> Router {
         .route("/auth/sessions", get(auth::list_sessions))
         .route("/auth/sessions/others", delete(auth::revoke_other_sessions))
         .route("/auth/sessions/{session_id}", delete(auth::revoke_session))
-        .route("/auth/switch-company", put(auth::switch_company))
         .route("/auth/my-companies", get(auth::my_companies))
         .route("/auth/permissions/matrix", get(permission::matrix))
         // User groups: company-scoped permission bundles layered on top of roles.
@@ -317,27 +345,16 @@ pub fn create_router(state: AppState) -> Router {
             "/user-groups/{group_id}/members/{user_id}",
             delete(user_group::remove_member),
         )
-        // Passkey (WebAuthn) — unauthenticated login/check routes are rate-limited above
-        // Passkey (WebAuthn) — authenticated
-        .route(
-            "/auth/passkey/register/begin",
-            post(passkey::registration_begin),
-        )
-        .route(
-            "/auth/passkey/register/complete",
-            post(passkey::registration_complete),
-        )
+        // Passkey (WebAuthn) — authenticated management (register routes rate-limited above)
         .route("/auth/passkeys", get(passkey::list_passkeys))
         .route(
             "/auth/passkeys/{id}",
             put(passkey::rename_passkey).delete(passkey::delete_passkey),
         )
         // TOTP 2FA (authenticated management; rate-limited endpoints live above)
-        .route("/auth/2fa/setup/begin", post(totp::setup_begin))
         .route("/auth/2fa/status", get(totp::status))
         // OAuth2 (non-rate-limited routes)
         .route("/auth/oauth2/providers", get(oauth2::list_providers))
-        .route("/auth/oauth2/google/link", post(oauth2::link_google))
         .route("/auth/oauth2/accounts", get(oauth2::my_linked_accounts))
         .route(
             "/auth/oauth2/accounts/{provider}",
@@ -502,10 +519,6 @@ pub fn create_router(state: AppState) -> Router {
         .route("/notifications/read-all", put(notification::mark_all_read))
         .route("/notifications/{id}/read", put(notification::mark_read))
         .route("/notifications/push-config", get(notification::push_config))
-        .route(
-            "/notifications/subscriptions",
-            post(notification::upsert_subscription).delete(notification::delete_subscription),
-        )
         // Approval Workflows (admin)
         .route("/approvals/pending-count", get(approval::pending_counts))
         .route(
@@ -674,18 +687,7 @@ pub fn create_router(state: AppState) -> Router {
             "/attendance/kiosks/{id}",
             delete(attendance::revoke_kiosk_credential),
         )
-        // Employee check-in
-        .route("/attendance/check-in/qr", post(attendance::check_in_qr))
-        .route(
-            "/attendance/check-in/face-id/begin",
-            post(attendance::check_in_face_id_begin),
-        )
-        .route(
-            "/attendance/check-in/face-id",
-            post(attendance::check_in_face_id),
-        )
-        .route("/attendance/check-out", post(attendance::check_out))
-        // Employee portal
+        // Employee portal (check-in/out routes rate-limited above)
         .route("/attendance/my/today", get(attendance::my_today))
         .route("/attendance/my", get(attendance::my_attendance))
         // Summary & export (admin)

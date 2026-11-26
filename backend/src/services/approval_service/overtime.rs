@@ -16,9 +16,9 @@ use crate::services::notification_service;
 use crate::services::settings_service;
 
 use super::common::{
-    Reviewer, audit_self_approval_override, ensure_employee_in_company, ensure_not_self_approval,
-    ensure_overtime_hours_within_window, parse_overtime_times, reviewer_employee_id,
-    validate_overtime_type,
+    Reviewer, audit_self_approval_override, ensure_employee_in_company,
+    ensure_not_creator_or_editor, ensure_not_self_approval, ensure_overtime_hours_within_window,
+    parse_overtime_times, reviewer_employee_id, validate_overtime_type_for_date,
 };
 
 pub use crate::models::approval::OvertimeWithEmployee;
@@ -33,12 +33,29 @@ pub async fn create_overtime_admin(
 ) -> AppResult<OvertimeApplication> {
     ensure_employee_in_company(pool, company_id, employee_id).await?;
     let ot_type = req.ot_type.as_deref().unwrap_or("normal");
-    validate_overtime_type(ot_type)?;
     let (start_time, end_time) = parse_overtime_times(&req.start_time, &req.end_time)?;
     ensure_overtime_hours_within_window(req.hours, start_time, end_time)?;
+    validate_overtime_type_for_date(pool, company_id, req.ot_date, ot_type).await?;
+
+    let mut tx = pool.begin().await?;
+    employee_repo::lock_for_update(&mut *tx, employee_id, company_id).await?;
+    if overtime_applications::has_overlapping_window(
+        &mut *tx,
+        employee_id,
+        req.ot_date,
+        start_time,
+        end_time,
+        None,
+    )
+    .await?
+    {
+        return Err(AppError::BadRequest(
+            "This employee already has an overlapping overtime application on this date".into(),
+        ));
+    }
 
     let overtime = overtime_applications::insert(
-        pool,
+        &mut *tx,
         employee_id,
         company_id,
         req.ot_date,
@@ -47,8 +64,10 @@ pub async fn create_overtime_admin(
         req.hours,
         ot_type,
         req.reason,
+        actor_id,
     )
     .await?;
+    tx.commit().await?;
 
     let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
@@ -101,7 +120,8 @@ pub async fn update_overtime_admin(
     let (start_time, end_time) = parse_overtime_times(&start_time_raw, &end_time_raw)?;
 
     let ot_type = req.ot_type.as_deref().unwrap_or(&current.ot_type);
-    validate_overtime_type(ot_type)?;
+    let effective_employee_id = req.employee_id.unwrap_or(current.employee_id);
+    let effective_ot_date = req.ot_date.unwrap_or(current.ot_date);
 
     // Validate the EFFECTIVE values, not just the supplied ones: `update_full`
     // COALESCEs, so validating only what the request carried would let an edit
@@ -110,9 +130,36 @@ pub async fn update_overtime_admin(
     // out-of-range row fails until the hours are corrected.
     let hours = req.hours.unwrap_or(current.hours);
     ensure_overtime_hours_within_window(hours, start_time, end_time)?;
+    validate_overtime_type_for_date(pool, company_id, effective_ot_date, ot_type).await?;
+
+    let mut tx = pool.begin().await?;
+    let (first_emp, second_emp) = if current.employee_id <= effective_employee_id {
+        (current.employee_id, effective_employee_id)
+    } else {
+        (effective_employee_id, current.employee_id)
+    };
+    employee_repo::lock_for_update(&mut *tx, first_emp, company_id).await?;
+    if second_emp != first_emp {
+        employee_repo::lock_for_update(&mut *tx, second_emp, company_id).await?;
+    }
+
+    if overtime_applications::has_overlapping_window(
+        &mut *tx,
+        effective_employee_id,
+        effective_ot_date,
+        start_time,
+        end_time,
+        Some(ot_id),
+    )
+    .await?
+    {
+        return Err(AppError::BadRequest(
+            "This employee already has an overlapping overtime application on this date".into(),
+        ));
+    }
 
     let updated = overtime_applications::update_full(
-        pool,
+        &mut *tx,
         ot_id,
         company_id,
         req.employee_id,
@@ -122,6 +169,7 @@ pub async fn update_overtime_admin(
         req.hours,
         ot_type,
         req.reason,
+        actor_id,
     )
     .await?
     .ok_or_else(|| {
@@ -129,6 +177,7 @@ pub async fn update_overtime_admin(
             "This overtime application changed state while it was being updated. Reload and try again.".into(),
         )
     })?;
+    tx.commit().await?;
 
     let _ = crate::services::audit_service::log_action_with_metadata(
         pool,
@@ -197,7 +246,16 @@ pub async fn cancel_overtime_admin(
     actor_id: Uuid,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<OvertimeApplication> {
+    let employee_id = overtime_applications::get_employee_id_for_company(pool, ot_id, company_id)
+        .await?
+        .ok_or_else(|| {
+            AppError::BadRequest("OT application not found or cannot be cancelled".into())
+        })?;
+
     let mut tx = pool.begin().await?;
+    // Lock employee BEFORE locking overtime_applications to avoid AB-BA deadlocks
+    // with `approve_overtime` and `update_overtime_admin`.
+    employee_repo::lock_for_update(&mut *tx, employee_id, company_id).await?;
 
     let current = overtime_applications::get_cancellable(&mut *tx, ot_id, company_id)
         .await?
@@ -257,14 +315,25 @@ pub async fn cancel_overtime_admin(
             ));
         }
 
-        if current.ot_type == "public_holiday" {
-            leave_balances::subtract_entitled_replacement(
+        if current.ot_type == "public_holiday"
+            && !overtime_applications::exists_replacement_granted_for_date(
+                &mut *tx,
+                current.employee_id,
+                current.ot_date,
+                ot_id,
+            )
+            .await?
+            && !leave_balances::try_subtract_entitled_replacement(
                 &mut *tx,
                 current.employee_id,
                 period_year,
                 company_id,
             )
-            .await?;
+            .await?
+        {
+            return Err(AppError::BadRequest(
+                "Replacement leave earned from this overtime has already been used or reserved; cancel that leave request first.".into(),
+            ));
         }
     }
 
@@ -391,7 +460,8 @@ pub async fn approve_overtime(
     {
         let ot = &preview;
         let multiplier = ot_settings.multiplier_for(&ot.ot_type);
-        let rating = ot_settings.rate_overtime(hourly_rate, basic_salary, &ot.ot_type, ot.hours);
+        let rating =
+            ot_settings.try_rate_overtime(hourly_rate, basic_salary, &ot.ot_type, ot.hours)?;
 
         Some(StagedOvertime {
             period_year: ot.ot_date.year(),
@@ -412,6 +482,7 @@ pub async fn approve_overtime(
     };
 
     let mut tx = pool.begin().await?;
+    employee_repo::lock_for_update(&mut *tx, preview.employee_id, company_id).await?;
     let ot = overtime_applications::set_approved(&mut *tx, ot_id, company_id, reviewer_id, notes)
         .await?
         .ok_or_else(|| AppError::BadRequest("OT application not found or not pending".into()))?;
@@ -419,17 +490,30 @@ pub async fn approve_overtime(
     // Compared against the row the CAS returned, inside the transaction, so a
     // denial rolls the approval back rather than leaving it approved.
     ensure_not_self_approval(reviewer_employee, ot.employee_id, "overtime")?;
+    ensure_not_creator_or_editor(
+        &reviewer,
+        ot.created_by,
+        ot.updated_by,
+        "overtime application",
+    )?;
 
     // The CAS guarantees the application was still pending, not that it was
     // unchanged since the figures above were computed.
-    if (ot.employee_id, ot.ot_date, ot.ot_type.as_str(), ot.hours)
-        != (
-            preview.employee_id,
-            preview.ot_date,
-            preview.ot_type.as_str(),
-            preview.hours,
-        )
-    {
+    if (
+        ot.employee_id,
+        ot.ot_date,
+        ot.start_time,
+        ot.end_time,
+        ot.ot_type.as_str(),
+        ot.hours,
+    ) != (
+        preview.employee_id,
+        preview.ot_date,
+        preview.start_time,
+        preview.end_time,
+        preview.ot_type.as_str(),
+        preview.hours,
+    ) {
         return Err(AppError::Conflict(
             "This overtime application changed while it was being approved. Please review it again."
                 .into(),
@@ -454,8 +538,16 @@ pub async fn approve_overtime(
         .await?;
     }
 
-    // Replacement leave: if OT was on a public holiday, grant 1 day replacement leave
-    if ot.ot_type == "public_holiday" {
+    // Replacement leave: grant at most 1 day per public holiday date per employee.
+    if ot.ot_type == "public_holiday"
+        && !overtime_applications::exists_replacement_granted_for_date(
+            &mut *tx,
+            ot.employee_id,
+            ot.ot_date,
+            ot.id,
+        )
+        .await?
+    {
         // Find or create system "Replacement Leave" type for this company
         let rl_type_id = leave_types::upsert_replacement_leave(&mut *tx, company_id).await?;
 

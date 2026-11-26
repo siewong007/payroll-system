@@ -19,6 +19,7 @@ import { getSettings, bulkUpdateSettings } from '@/api/settings';
 import type { CompanySetting, SettingUpdate } from '@/types';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { SessionManagement } from '@/components/SessionManagement';
 import { AppInstallCard } from '@/components/pwa/AppInstallCard';
 import { NotificationActivationCard } from '@/components/pwa/NotificationActivationCard';
@@ -156,28 +157,41 @@ export function SettingsPage() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="spinner" />
+      <div className="space-y-6">
+        <PageHeader title={t('settings.title')} subtitle={t('settings.subtitle')} />
+        <div role="status" aria-label={t('common.loading')} className="lg:grid lg:grid-cols-[220px_1fr] lg:gap-6 lg:items-start">
+          <div className="flex lg:flex-col gap-2">
+            {[0, 1, 2, 3].map((i) => (
+              <Skeleton key={i} className="h-10 w-28 lg:w-full rounded-xl shrink-0" />
+            ))}
+          </div>
+          <div className="card space-y-4 mt-4 lg:mt-0">
+            <Skeleton className="h-6 w-44" />
+            <Skeleton className="h-14 w-full rounded-xl" />
+            <Skeleton className="h-14 w-full rounded-xl" />
+            <Skeleton className="h-14 w-full rounded-xl" />
+          </div>
+        </div>
       </div>
     );
   }
 
   return (
-    <div>
+    <div className="space-y-6">
       <PageHeader
         title={t('settings.title')}
         subtitle={t('settings.subtitle')}
         actions={
           saved ? (
-            <span className="flex items-center gap-1 text-sm text-green-600 dark:text-emerald-400 font-medium">
-              <Check className="w-4 h-4" /> {t('common.saved')}
+            <span role="status" className="flex items-center gap-1 text-sm text-green-700 dark:text-emerald-400 font-medium">
+              <Check className="w-4 h-4" aria-hidden="true" /> {t('common.saved')}
             </span>
           ) : undefined
         }
       />
 
       {isError && (
-        <div className="card mb-6">
+        <div className="card">
           <EmptyState
             compact
             icon={AlertTriangle}
@@ -214,7 +228,7 @@ export function SettingsPage() {
           ) : (
             <>
               <h2 className="section-title">{t(`settings.sections.${active}.label`)}</h2>
-              <p className="text-sm text-gray-500 dark:text-slate-400 mt-1 mb-4">{t(`settings.sections.${active}.description`)}</p>
+              <p className="text-sm text-gray-600 dark:text-slate-300 mt-1 mb-4">{t(`settings.sections.${active}.description`)}</p>
               {active === 'security' ? (
                 <SecuritySection />
               ) : active === 'sessions' ? (

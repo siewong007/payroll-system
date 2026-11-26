@@ -203,6 +203,28 @@
       },
       {
         "ordinal": 18,
+        "name": "created_by",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "claims",
+            "name": "created_by"
+          }
+        }
+      },
+      {
+        "ordinal": 19,
+        "name": "updated_by",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "claims",
+            "name": "updated_by"
+          }
+        }
+      },
+      {
+        "ordinal": 20,
         "name": "employee_name?",
         "type_info": "Varchar",
         "origin": {
@@ -213,7 +235,7 @@
         }
       },
       {
-        "ordinal": 19,
+        "ordinal": 21,
         "name": "employee_number?",
         "type_info": "Varchar",
         "origin": {
@@ -248,6 +270,8 @@
       true,
       false,
       false,
+      true,
+      true,
       true,
       false,
       false

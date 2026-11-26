@@ -20,13 +20,13 @@ import { isImageUrl } from '@/lib/utils';
 /** A file the uploader never successfully stored, recorded as a `blob:` URL. */
 function UnavailableAttachment({ displayName, detail }: { displayName: string; detail: string }) {
   return (
-    <div className="mt-1 inline-flex items-center gap-2 px-4 py-3 bg-red-50 border border-red-200 rounded-lg">
-      <div className="w-10 h-10 rounded-lg bg-red-100 flex items-center justify-center shrink-0">
-        <FileText className="w-5 h-5 text-red-400" />
+    <div className="mt-1 inline-flex items-center gap-2 px-4 py-3 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/30 rounded-lg">
+      <div className="w-10 h-10 rounded-lg bg-red-100 dark:bg-red-500/20 flex items-center justify-center shrink-0">
+        <FileText className="w-5 h-5 text-red-500 dark:text-red-400" aria-hidden="true" />
       </div>
       <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium text-red-700 truncate">{displayName}</div>
-        <div className="text-xs text-red-400">{detail}</div>
+        <div className="text-sm font-medium text-red-700 dark:text-red-300 truncate">{displayName}</div>
+        <div className="text-xs text-red-500 dark:text-red-300/80">{detail}</div>
       </div>
     </div>
   );
@@ -59,13 +59,16 @@ export function AttachmentPreview({ url, name }: { url: string; name: string | n
 
   if (file.status === 'loading') {
     return (
-      <div className="mt-1 inline-flex items-center gap-2 px-4 py-3 bg-gray-50 border border-gray-200 rounded-lg">
-        <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center shrink-0">
-          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-400" />
+      <div
+        role="status"
+        className="mt-1 inline-flex items-center gap-2 px-4 py-3 bg-gray-50 dark:bg-slate-800/80 border border-gray-200 dark:border-slate-700 rounded-lg"
+      >
+        <div className="w-10 h-10 rounded-lg bg-gray-100 dark:bg-slate-700 flex items-center justify-center shrink-0">
+          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-500 dark:border-slate-300" />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium text-gray-500 truncate">{displayName}</div>
-          <div className="text-xs text-gray-400">{t('common.loading')}</div>
+          <div className="text-sm font-medium text-gray-600 dark:text-slate-200 truncate">{displayName}</div>
+          <div className="text-xs text-gray-500 dark:text-slate-400">{t('common.loading')}</div>
         </div>
       </div>
     );
@@ -83,16 +86,16 @@ export function AttachmentPreview({ url, name }: { url: string; name: string | n
               alt={displayName}
               loading="lazy"
               decoding="async"
-              className="max-w-full max-h-64 rounded-lg border border-gray-200 object-contain bg-gray-50"
+              className="max-w-full max-h-64 rounded-lg border border-gray-200 dark:border-slate-700 object-contain bg-gray-50 dark:bg-slate-800/60"
             />
           </a>
           <a
             href={href}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 text-sm text-gray-900 hover:text-black"
+            className="inline-flex min-h-10 sm:min-h-0 items-center gap-1.5 text-sm font-medium text-gray-800 dark:text-slate-200 hover:text-black dark:hover:text-white transition-colors"
           >
-            <ExternalLink className="w-3.5 h-3.5" />
+            <ExternalLink className="w-3.5 h-3.5" aria-hidden="true" />
             {t('common.openFullSize')}
           </a>
         </div>
@@ -101,16 +104,16 @@ export function AttachmentPreview({ url, name }: { url: string; name: string | n
           href={href}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-2 px-4 py-3 bg-gray-50 border border-gray-200 rounded-lg hover:bg-gray-100 hover:border-gray-300 transition-colors group"
+          className="inline-flex items-center gap-2 px-4 py-3 bg-gray-50 dark:bg-slate-800/80 border border-gray-200 dark:border-slate-700 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 hover:border-gray-300 dark:hover:border-slate-600 transition-colors group"
         >
-          <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center shrink-0">
-            <FileText className="w-5 h-5 text-gray-700" />
+          <div className="w-10 h-10 rounded-lg bg-gray-100 dark:bg-slate-700 flex items-center justify-center shrink-0">
+            <FileText className="w-5 h-5 text-gray-700 dark:text-slate-200" aria-hidden="true" />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-medium text-gray-700 group-hover:text-gray-900 truncate">{displayName}</div>
-            <div className="text-xs text-gray-400">{t('common.clickToOpen')}</div>
+            <div className="text-sm font-medium text-gray-700 dark:text-slate-200 group-hover:text-gray-900 dark:group-hover:text-white truncate">{displayName}</div>
+            <div className="text-xs text-gray-500 dark:text-slate-400">{t('common.clickToOpen')}</div>
           </div>
-          <ExternalLink className="w-4 h-4 text-gray-400 group-hover:text-gray-700 shrink-0" />
+          <ExternalLink className="w-4 h-4 text-gray-500 dark:text-slate-400 group-hover:text-gray-700 dark:group-hover:text-slate-200 shrink-0" aria-hidden="true" />
         </a>
       )}
     </div>

@@ -13,6 +13,7 @@ const approvalsMocks = vi.hoisted(() => ({
   getLeaveRequests: vi.fn(),
   getClaims: vi.fn(),
   getOvertimeRequests: vi.fn(),
+  getPendingApprovalCounts: vi.fn(),
   approveLeave: vi.fn(),
   rejectLeave: vi.fn(),
   approveClaim: vi.fn(),
@@ -98,6 +99,12 @@ beforeEach(() => {
     total: 0,
     page: 1,
     per_page: 20,
+  });
+  approvalsMocks.getPendingApprovalCounts.mockResolvedValue({
+    pending_leave: 0,
+    pending_claims: 0,
+    pending_overtime: 0,
+    total: 0,
   });
   portalMocks.getLeaveTypes.mockResolvedValue([]);
 

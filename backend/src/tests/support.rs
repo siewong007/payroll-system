@@ -96,15 +96,20 @@ pub async fn test_pool() -> Option<PgPool> {
             .await
             .expect("create test-only statutory rule sets");
 
-            for (table, dataset_key) in [
-                ("epf_rates", "test-fixture-epf-2024"),
-                ("socso_rates", "test-fixture-socso-2024"),
-                ("eis_rates", "test-fixture-eis-2024"),
-                ("pcb_brackets", "test-fixture-pcb-2024"),
-                ("pcb_reliefs", "test-fixture-pcb-2024"),
+            for (table, filter_col, filter_val, dataset_key) in [
+                ("epf_rates", "effective_from", "DATE '2024-01-01'", "test-fixture-epf-2024"),
+                ("socso_rates", "effective_from", "DATE '2024-01-01'", "test-fixture-socso-2024"),
+                ("eis_rates", "effective_from", "DATE '2024-01-01'", "test-fixture-eis-2024"),
+                ("pcb_brackets", "effective_year", "2024", "test-fixture-pcb-2024"),
+                ("pcb_reliefs", "effective_year", "2024", "test-fixture-pcb-2024"),
             ] {
                 let statement = format!(
-                    "UPDATE {table} SET rule_set_id = (SELECT id FROM statutory_rule_sets WHERE dataset_key = $1)"
+                    "UPDATE {table}
+                     SET rule_set_id = (SELECT id FROM statutory_rule_sets WHERE dataset_key = $1)
+                     WHERE {filter_col} = {filter_val}
+                       AND (rule_set_id IS NULL OR rule_set_id IN (
+                           SELECT id FROM statutory_rule_sets WHERE dataset_key LIKE 'legacy-prototype-%'
+                       ))"
                 );
                 sqlx::query(sqlx::AssertSqlSafe(statement))
                     .bind(dataset_key)
@@ -246,5 +251,15 @@ pub async fn seed_user(pool: &PgPool, company_id: Uuid, role: &str) -> Uuid {
     .execute(pool)
     .await
     .expect("insert user");
+    sqlx::query(
+        r#"INSERT INTO user_companies (user_id, company_id)
+           VALUES ($1, $2)
+           ON CONFLICT DO NOTHING"#,
+    )
+    .bind(user_id)
+    .bind(company_id)
+    .execute(pool)
+    .await
+    .expect("insert user_company");
     user_id
 }

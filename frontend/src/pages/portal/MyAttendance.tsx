@@ -2,12 +2,16 @@ import { useState } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import {
-  LogIn, LogOut, CheckCircle2, Clock, MapPin, Calendar, AlertCircle, RefreshCw, AlertTriangle, WifiOff, ChevronLeft, ChevronRight,
+  LogIn, LogOut, CheckCircle2, Clock, MapPin, Calendar, AlertTriangle, WifiOff, ChevronLeft, ChevronRight,
 } from 'lucide-react';
 import { getAttendanceMethod, getMyAttendance, getMyTodayAttendance, type AttendanceRecord } from '@/api/attendance';
 import { CheckInCard } from '@/components/attendance/CheckInCard';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { useAuth } from '@/context/AuthContext';
 import { formatZonedTime, zonedDateKey } from '@/lib/attendance';
+import { getErrorMessage } from '@/lib/utils';
 import { intlLocale } from '@/i18n';
 
 const FALLBACK_TZ = 'Asia/Kuala_Lumpur';
@@ -32,14 +36,22 @@ function HistoryList({
   activeOpenId,
   timeZone,
   isLoading,
+  isFetching,
   isError,
+  error,
+  hasFilters,
+  onClearFilters,
   onRetry,
 }: {
   records: AttendanceRecord[];
   activeOpenId: string | null;
   timeZone: string;
   isLoading: boolean;
+  isFetching: boolean;
   isError: boolean;
+  error: unknown;
+  hasFilters: boolean;
+  onClearFilters: () => void;
   onRetry: () => void;
 }) {
   const { t } = useTranslation();
@@ -47,8 +59,21 @@ function HistoryList({
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-40">
-        <div className="spinner" />
+      <div
+        role="status"
+        aria-busy="true"
+        aria-label={t('common.loading')}
+        className="divide-y divide-gray-100 dark:divide-slate-800"
+      >
+        {[0, 1, 2].map((idx) => (
+          <div key={idx} className="flex items-center justify-between gap-4 py-3.5 px-5">
+            <div className="space-y-2 flex-1">
+              <Skeleton className="h-4 w-32" />
+              <Skeleton className="h-3 w-48" />
+            </div>
+            <Skeleton className="h-6 w-20 rounded-full" />
+          </div>
+        ))}
       </div>
     );
   }
@@ -56,31 +81,41 @@ function HistoryList({
   // A failed fetch must not look like an empty history.
   if (isError) {
     return (
-      <div className="flex flex-col items-center justify-center h-40 text-gray-500 dark:text-slate-400 gap-2 px-4 text-center">
-        <AlertCircle className="w-10 h-10 text-red-400" />
-        <p className="text-sm">{t('portal.myAttendance.loadFailed')}</p>
-        <button
-          type="button"
-          onClick={onRetry}
-          className="flex items-center gap-1.5 text-sm font-medium text-gray-900 dark:text-slate-100 hover:underline"
-        >
-          <RefreshCw className="w-3.5 h-3.5" /> {t('common.retry')}
-        </button>
+      <div className="p-6">
+        <EmptyState
+          icon={AlertTriangle}
+          title={t('portal.myAttendance.loadFailed')}
+          description={getErrorMessage(error, t('portal.myAttendance.loadFailed'))}
+          action={
+            <button type="button" onClick={onRetry} className="btn-primary">
+              {t('common.retry')}
+            </button>
+          }
+        />
       </div>
     );
   }
 
   if (records.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center h-40 text-gray-400 dark:text-slate-500">
-        <Calendar className="w-10 h-10 mb-2 opacity-40" />
-        <p className="text-sm">{t('portal.myAttendance.empty')}</p>
+      <div className="p-6">
+        <EmptyState
+          icon={Calendar}
+          title={t('portal.myAttendance.empty')}
+          action={
+            hasFilters ? (
+              <button type="button" onClick={onClearFilters} className="btn-secondary">
+                {t('ux.table.clearFilters')}
+              </button>
+            ) : undefined
+          }
+        />
       </div>
     );
   }
 
   return (
-    <div className="divide-y divide-gray-100 dark:divide-slate-800">
+    <div className={`divide-y divide-gray-100 dark:divide-slate-800 ${isFetching ? 'opacity-75 transition-opacity' : ''}`}>
       {records.map(r => {
         const isActiveSession =
           !r.check_out_at &&
@@ -91,43 +126,43 @@ function HistoryList({
           zonedDateKey(r.check_out_at as string, timeZone) > zonedDateKey(r.check_in_at, timeZone);
 
         return (
-          <div key={r.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-3.5 px-5">
+          <div key={r.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-3.5 px-4 sm:px-5">
             <div className="flex-1 min-w-[200px]">
-              <p className="text-sm font-medium text-gray-900 dark:text-slate-100">
+              <p className="text-sm font-medium text-gray-900 dark:text-slate-100 tabular-nums">
                 {formatDate(r.check_in_at, timeZone)}
               </p>
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-0.5">
                 {/* An auto-absent placeholder carries a midnight timestamp that
                     never happened — showing "12:00 AM" reads as a real check-in. */}
                 {r.status === 'absent' ? (
-                  <span className="text-xs text-gray-400 dark:text-slate-500">{t('portal.myAttendance.noRecord')}</span>
+                  <span className="text-xs text-gray-500 dark:text-slate-400">{t('portal.myAttendance.noRecord')}</span>
                 ) : (
                   <>
                     <span className="text-xs text-gray-500 dark:text-slate-400 flex items-center gap-1 tabular-nums">
-                      <LogIn className="w-3 h-3 text-emerald-500 dark:text-emerald-400 shrink-0" />
+                      <LogIn className="w-3 h-3 text-emerald-500 dark:text-emerald-400 shrink-0" aria-hidden="true" />
                       {formatZonedTime(r.check_in_at, timeZone)}
                     </span>
                     {r.check_out_at ? (
                       <span className="text-xs text-gray-500 dark:text-slate-400 flex items-center gap-1 tabular-nums">
-                        <LogOut className="w-3 h-3 text-gray-400 dark:text-slate-500 shrink-0" />
+                        <LogOut className="w-3 h-3 text-gray-500 dark:text-slate-400 shrink-0" aria-hidden="true" />
                         {formatZonedTime(r.check_out_at, timeZone)}
                         {overnightOut && (
-                          <span className="ml-0.5 rounded bg-gray-100 dark:bg-slate-800 px-1 py-px text-[10px] font-medium text-gray-600 dark:text-slate-300">
+                          <span className="ml-0.5 rounded bg-gray-100 dark:bg-slate-800 px-1 py-px text-[10px] font-medium text-gray-600 dark:text-slate-300 tabular-nums">
                             {t('portal.myAttendance.nextDay')}
                           </span>
                         )}
                       </span>
                     ) : isActiveSession ? (
                       <span className="text-xs text-teal-600 dark:text-teal-400 font-medium flex items-center gap-1">
-                        <Clock className="w-3 h-3 shrink-0" /> {t('portal.myAttendance.inProgress')}
+                        <Clock className="w-3 h-3 shrink-0" aria-hidden="true" /> {t('portal.myAttendance.inProgress')}
                       </span>
                     ) : (
                       <span className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
-                        <Clock className="w-3 h-3 shrink-0" /> {t('portal.myAttendance.neverCheckedOut')}
+                        <Clock className="w-3 h-3 shrink-0" aria-hidden="true" /> {t('portal.myAttendance.neverCheckedOut')}
                       </span>
                     )}
                     {r.hours_worked && (
-                      <span className="text-xs text-gray-400 dark:text-slate-500 tabular-nums">
+                      <span className="text-xs text-gray-500 dark:text-slate-400 tabular-nums">
                         {t('attendance.hoursShort', { value: r.hours_worked })}
                       </span>
                     )}
@@ -135,21 +170,25 @@ function HistoryList({
                 )}
               </div>
             </div>
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
               {r.is_outside_geofence && (
                 <span
+                  role="img"
                   title={t('portal.myAttendance.outsideGeofence')}
-                  className="text-amber-500 dark:text-amber-400"
+                  aria-label={t('portal.myAttendance.outsideGeofence')}
+                  className="text-amber-500 dark:text-amber-400 inline-flex items-center"
                 >
-                  <AlertTriangle className="w-3.5 h-3.5" aria-label={t('portal.myAttendance.outsideGeofence')} />
+                  <AlertTriangle className="w-3.5 h-3.5" aria-hidden="true" />
                 </span>
               )}
               {r.is_offsite_network && (
                 <span
+                  role="img"
                   title={t('portal.myAttendance.offsiteNetwork')}
-                  className="text-amber-600 dark:text-amber-400"
+                  aria-label={t('portal.myAttendance.offsiteNetwork')}
+                  className="text-amber-600 dark:text-amber-400 inline-flex items-center"
                 >
-                  <WifiOff className="w-3.5 h-3.5" aria-label={t('portal.myAttendance.offsiteNetwork')} />
+                  <WifiOff className="w-3.5 h-3.5" aria-hidden="true" />
                 </span>
               )}
               {r.latitude && r.longitude && (
@@ -157,11 +196,12 @@ function HistoryList({
                   href={`https://maps.google.com/?q=${r.latitude},${r.longitude}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="p-1.5 rounded-lg text-sky-600 dark:text-sky-400 hover:bg-sky-50 dark:hover:bg-sky-500/10"
+                  className="min-h-11 sm:min-h-8 inline-flex items-center gap-1 px-2.5 rounded-lg text-xs font-medium text-sky-700 dark:text-sky-300 bg-sky-50 dark:bg-sky-500/15 hover:bg-sky-100 dark:hover:bg-sky-500/25 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                   title={t('portal.myAttendance.viewLocation')}
                   aria-label={t('portal.myAttendance.viewLocation')}
                 >
-                  <MapPin className="w-3.5 h-3.5" />
+                  <MapPin className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                  <span>{t('attendance.records.checkIn')}</span>
                 </a>
               )}
               {r.checkout_latitude && r.checkout_longitude && (
@@ -169,14 +209,15 @@ function HistoryList({
                   href={`https://maps.google.com/?q=${r.checkout_latitude},${r.checkout_longitude}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="p-1.5 rounded-lg text-teal-600 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-500/10"
+                  className="min-h-11 sm:min-h-8 inline-flex items-center gap-1 px-2.5 rounded-lg text-xs font-medium text-teal-700 dark:text-teal-300 bg-teal-50 dark:bg-teal-500/15 hover:bg-teal-100 dark:hover:bg-teal-500/25 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                   title={t('portal.myAttendance.viewCheckoutLocation')}
                   aria-label={t('portal.myAttendance.viewCheckoutLocation')}
                 >
-                  <MapPin className="w-3.5 h-3.5" />
+                  <MapPin className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                  <span>{t('attendance.records.checkOut')}</span>
                 </a>
               )}
-              <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_STYLE[r.status] ?? 'bg-gray-100 text-gray-600 dark:bg-slate-800 dark:text-slate-300'}`}>
+              <span className={`px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${STATUS_STYLE[r.status] ?? 'bg-gray-100 text-gray-600 dark:bg-slate-800 dark:text-slate-300'}`}>
                 {t(`enums.attendanceStatus.${r.status}`, { defaultValue: r.status })}
               </span>
             </div>
@@ -211,7 +252,9 @@ export function MyAttendance() {
   const {
     data: historyResult,
     isLoading: historyLoading,
+    isFetching: historyFetching,
     isError: historyError,
+    error: historyErrorObj,
     refetch: refetchHistory,
   } = useQuery({
     queryKey: ['attendance-my', { page, dateFrom, dateTo }],
@@ -234,51 +277,57 @@ export function MyAttendance() {
     todayData?.record && !todayData.record.check_out_at && todayData.record.status !== 'absent'
       ? todayData.record.id
       : null;
+  const hasFilters = Boolean(dateFrom || dateTo);
 
   return (
     <div className="space-y-6">
-      <div className="page-header">
-        <h1 className="page-title">{t('portal.myAttendance.title')}</h1>
-        <p className="page-subtitle">{t('portal.myAttendance.subtitle')}</p>
-      </div>
+      <PageHeader className="mb-0" title={t('portal.myAttendance.title')} subtitle={t('portal.myAttendance.subtitle')} />
 
       {/* The same card as the portal home — one implementation of check-in,
           so the two surfaces cannot drift apart. */}
       <CheckInCard />
 
       {hasEmployee && (
-        <div className="bg-white dark:bg-slate-900 border border-gray-200/80 dark:border-slate-800 rounded-2xl shadow-sm overflow-hidden">
-          <div className="px-5 py-4 border-b border-gray-100 dark:border-slate-800 flex flex-wrap items-center gap-3">
+        <div className="card !p-0 overflow-hidden">
+          <div className="px-4 sm:px-5 py-4 border-b border-gray-100 dark:border-slate-800 flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-2">
-              <Clock className="w-4 h-4 text-gray-400 dark:text-slate-500" />
-              <h3 className="font-semibold text-gray-900 dark:text-slate-100 text-sm">{t('portal.myAttendance.historyTitle')}</h3>
+              <Clock className="w-4 h-4 text-gray-500 dark:text-slate-400" aria-hidden="true" />
+              <h2 className="font-semibold text-gray-900 dark:text-slate-100 text-sm">{t('portal.myAttendance.historyTitle')}</h2>
             </div>
             {!historyError && history.length > 0 && (
-              <span className="flex items-center gap-1.5 text-xs text-gray-400 dark:text-slate-500">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 dark:text-emerald-400" />
+              <span className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-slate-400 tabular-nums">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 dark:text-emerald-400" aria-hidden="true" />
                 {t('portal.myAttendance.completed', { count: completedCount })}
               </span>
             )}
-            <div className="w-full sm:w-auto sm:ml-auto flex flex-wrap items-center gap-2">
-              <input
-                type="date"
-                value={dateFrom}
-                onChange={(e) => { setDateFrom(e.target.value); setPage(1); }}
-                aria-label={t('portal.myAttendance.filterFrom')}
-                className="form-input !w-auto min-w-[8.5rem] flex-1 sm:flex-none !py-1.5 text-xs"
-              />
-              <input
-                type="date"
-                value={dateTo}
-                onChange={(e) => { setDateTo(e.target.value); setPage(1); }}
-                aria-label={t('portal.myAttendance.filterTo')}
-                className="form-input !w-auto min-w-[8.5rem] flex-1 sm:flex-none !py-1.5 text-xs"
-              />
-              {(dateFrom || dateTo) && (
+            <div className="w-full sm:w-auto sm:ml-auto flex flex-wrap items-end gap-2">
+              <label className="flex flex-col gap-1 flex-1 sm:flex-none min-w-[8.5rem]" htmlFor="my-att-from">
+                <span className="text-[11px] font-medium text-gray-500 dark:text-slate-400">{t('portal.myAttendance.filterFrom')}</span>
+                <input
+                  id="my-att-from"
+                  type="date"
+                  value={dateFrom}
+                  max={dateTo || undefined}
+                  onChange={(e) => { setDateFrom(e.target.value); setPage(1); }}
+                  className="form-input !w-auto min-h-11 sm:min-h-8 sm:!py-1 sm:text-xs tabular-nums"
+                />
+              </label>
+              <label className="flex flex-col gap-1 flex-1 sm:flex-none min-w-[8.5rem]" htmlFor="my-att-to">
+                <span className="text-[11px] font-medium text-gray-500 dark:text-slate-400">{t('portal.myAttendance.filterTo')}</span>
+                <input
+                  id="my-att-to"
+                  type="date"
+                  value={dateTo}
+                  min={dateFrom || undefined}
+                  onChange={(e) => { setDateTo(e.target.value); setPage(1); }}
+                  className="form-input !w-auto min-h-11 sm:min-h-8 sm:!py-1 sm:text-xs tabular-nums"
+                />
+              </label>
+              {hasFilters && (
                 <button
                   type="button"
                   onClick={() => { setDateFrom(''); setDateTo(''); setPage(1); }}
-                  className="text-xs text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100 underline"
+                  className="min-h-11 sm:min-h-8 px-2.5 text-xs font-medium text-gray-600 dark:text-slate-300 hover:text-gray-900 dark:hover:text-slate-100 underline rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                 >
                   {t('common.clear')}
                 </button>
@@ -291,13 +340,17 @@ export function MyAttendance() {
             activeOpenId={activeOpenId}
             timeZone={timeZone}
             isLoading={historyLoading}
+            isFetching={historyFetching}
             isError={historyError}
+            error={historyErrorObj}
+            hasFilters={hasFilters}
+            onClearFilters={() => { setDateFrom(''); setDateTo(''); setPage(1); }}
             onRetry={() => void refetchHistory()}
           />
 
           {totalPages > 1 && (
-            <div className="flex items-center justify-between gap-3 px-5 py-3 border-t border-gray-100 dark:border-slate-800 text-xs text-gray-500 dark:text-slate-400">
-              <span>
+            <div className="flex items-center justify-between gap-3 px-4 sm:px-5 py-3 border-t border-gray-100 dark:border-slate-800 text-xs text-gray-500 dark:text-slate-400">
+              <span className="tabular-nums">
                 {t('common.showing', {
                   from: (page - 1) * perPage + 1,
                   to: Math.min(page * perPage, total),
@@ -310,9 +363,9 @@ export function MyAttendance() {
                   onClick={() => setPage(p => Math.max(1, p - 1))}
                   disabled={page <= 1}
                   aria-label={t('common.previousPage')}
-                  className="min-h-9 min-w-9 flex items-center justify-center rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-30"
+                  className="min-h-11 min-w-11 sm:min-h-8 sm:min-w-8 flex items-center justify-center rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                 >
-                  <ChevronLeft className="w-4 h-4" />
+                  <ChevronLeft className="w-4 h-4" aria-hidden="true" />
                 </button>
                 <span className="px-2 font-medium text-gray-700 dark:text-slate-200 tabular-nums">
                   {page} / {totalPages}
@@ -322,9 +375,9 @@ export function MyAttendance() {
                   onClick={() => setPage(p => Math.min(totalPages, p + 1))}
                   disabled={page >= totalPages}
                   aria-label={t('common.nextPage')}
-                  className="min-h-9 min-w-9 flex items-center justify-center rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-30"
+                  className="min-h-11 min-w-11 sm:min-h-8 sm:min-w-8 flex items-center justify-center rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                 >
-                  <ChevronRight className="w-4 h-4" />
+                  <ChevronRight className="w-4 h-4" aria-hidden="true" />
                 </button>
               </div>
             </div>

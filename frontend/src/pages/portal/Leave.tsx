@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation, Trans } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, ArrowLeft, Paperclip, ExternalLink, X, Calendar, AlertTriangle, Download, Trash2 } from 'lucide-react';
+import { Plus, ArrowLeft, Paperclip, ExternalLink, X, Calendar, AlertTriangle, Download, Trash2, Loader2 } from 'lucide-react';
 import { getLeaveBalances, getLeaveRequests, getLeaveTypes, createLeaveRequest, cancelLeaveRequest, deleteLeaveRequest, uploadFile, getMyProfile, exportLeaveIcs, getPortalHolidays, getPortalWorkingDays } from '@/api/portal';
 import { useAuth } from '@/context/AuthContext';
 import { runBulk, summarizeBulkFailure } from '@/lib/bulk';
@@ -9,7 +9,10 @@ import { formatDate, getErrorMessage } from '@/lib/utils';
 import { AttachmentLink, AttachmentPreview } from '@/components/ui/AttachmentPreview';
 import { DataTable, type Column } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { useConfirm } from '@/lib/confirm';
+import { useToast } from '@/lib/toast';
 import type { Employee, LeaveBalance, LeaveRequest, LeaveType } from '@/types';
 import i18n from '@/i18n';
 
@@ -78,14 +81,14 @@ function getBalanceColumns(
   t: (key: string, opts?: Record<string, unknown>) => string,
 ): Column<LeaveBalance>[] {
   return [
-    { key: 'type', header: t('portal.leave.cols.type'), render: (b) => <span className="font-semibold text-gray-900 dark:text-slate-100">{b.leave_type_name}</span> },
+    { key: 'type', primary: true, header: t('portal.leave.cols.type'), render: (b) => <span className="font-semibold text-gray-900 dark:text-slate-100">{b.leave_type_name}</span> },
     {
-      key: 'status', header: t('portal.leave.cols.statusRemarks'), render: (b) => {
+      key: 'status', primary: true, header: t('portal.leave.cols.statusRemarks'), render: (b) => {
         const elig = getLeaveEligibility(b.leave_type_name, profile);
         if (!elig.eligible) {
           return (
             <span className="inline-flex items-center gap-1.5 text-amber-600 dark:text-amber-400 text-sm">
-              <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
               {elig.reason}
             </span>
           );
@@ -105,28 +108,28 @@ function getBalanceColumns(
     {
       key: 'entitled', header: t('portal.leave.cols.entitled'), align: 'center', render: (b) => {
         const elig = getLeaveEligibility(b.leave_type_name, profile);
-        return elig.eligible ? Number(b.entitled_days) : <span className="text-gray-300 dark:text-slate-600">—</span>;
+        return elig.eligible ? <span className="tabular-nums">{Number(b.entitled_days)}</span> : <span className="text-gray-400 dark:text-slate-500">—</span>;
       },
     },
     {
       key: 'taken', header: t('portal.leave.cols.taken'), align: 'center', render: (b) => {
         const elig = getLeaveEligibility(b.leave_type_name, profile);
-        return elig.eligible ? Number(b.taken_days) : <span className="text-gray-300 dark:text-slate-600">—</span>;
+        return elig.eligible ? <span className="tabular-nums">{Number(b.taken_days)}</span> : <span className="text-gray-400 dark:text-slate-500">—</span>;
       },
     },
     {
       key: 'pending', header: t('portal.leave.cols.pending'), align: 'center', render: (b) => {
         const elig = getLeaveEligibility(b.leave_type_name, profile);
-        if (!elig.eligible) return <span className="text-gray-300 dark:text-slate-600">—</span>;
-        return <span className={Number(b.pending_days) > 0 ? 'text-amber-600 dark:text-amber-400' : ''}>{Number(b.pending_days)}</span>;
+        if (!elig.eligible) return <span className="text-gray-400 dark:text-slate-500">—</span>;
+        return <span className={`tabular-nums ${Number(b.pending_days) > 0 ? 'text-amber-600 dark:text-amber-400' : ''}`}>{Number(b.pending_days)}</span>;
       },
     },
     {
-      key: 'balance', header: t('portal.leave.cols.balance'), align: 'center', render: (b) => {
+      key: 'balance', primary: true, header: t('portal.leave.cols.balance'), align: 'center', render: (b) => {
         const elig = getLeaveEligibility(b.leave_type_name, profile);
-        if (!elig.eligible) return <span className="text-gray-300 dark:text-slate-600">—</span>;
+        if (!elig.eligible) return <span className="text-gray-400 dark:text-slate-500">—</span>;
         const balance = Number(b.entitled_days) + Number(b.carried_forward) - Number(b.taken_days) - Number(b.pending_days);
-        return <span className={`font-bold ${balance > 0 ? 'text-emerald-600 dark:text-emerald-400' : balance < 0 ? 'text-red-600 dark:text-red-400' : 'text-gray-600 dark:text-slate-300'}`}>{balance}</span>;
+        return <span className={`font-bold tabular-nums ${balance > 0 ? 'text-emerald-600 dark:text-emerald-400' : balance < 0 ? 'text-red-600 dark:text-red-400' : 'text-gray-600 dark:text-slate-300'}`}>{balance}</span>;
       },
     },
   ];
@@ -135,36 +138,45 @@ function getBalanceColumns(
 const getRequestColumns = (
   t: (key: string, opts?: Record<string, unknown>) => string,
 ): Column<LeaveRequest>[] => [
-  { key: 'type', header: t('portal.leave.cols.type'), render: (r) => <span className="font-semibold text-gray-900 dark:text-slate-100">{r.leave_type_name}</span> },
+  { key: 'type', primary: true, header: t('portal.leave.cols.type'), render: (r) => <span className="font-semibold text-gray-900 dark:text-slate-100">{r.leave_type_name}</span> },
   {
-    key: 'period', header: t('portal.leave.cols.period'), render: (r) => (
-      <span className="text-gray-600 dark:text-slate-300">{formatDate(r.start_date)} – {formatDate(r.end_date)}</span>
+    key: 'period', primary: true, header: t('portal.leave.cols.period'), render: (r) => (
+      <span className="text-gray-600 dark:text-slate-300 tabular-nums whitespace-nowrap">{formatDate(r.start_date)} – {formatDate(r.end_date)}</span>
     ),
   },
-  { key: 'days', header: t('portal.leave.cols.days'), align: 'center', render: (r) => Number(r.days) },
-  { key: 'reason', header: t('common.reason'), render: (r) => <span className="text-gray-500 dark:text-slate-400 max-w-[160px] truncate block">{r.reason || '—'}</span> },
+  { key: 'days', primary: true, header: t('portal.leave.cols.days'), align: 'center', render: (r) => <span className="tabular-nums">{Number(r.days)}</span> },
+  {
+    key: 'reason', header: t('common.reason'), render: (r) => (
+      <div className="min-w-0 max-w-[180px]">
+        <span className="text-gray-500 dark:text-slate-400 truncate block">{r.reason || '—'}</span>
+        {r.review_notes && (
+          <p className="text-xs text-amber-600 dark:text-amber-400 truncate mt-0.5">{r.review_notes}</p>
+        )}
+      </div>
+    ),
+  },
   {
     key: 'attachment', header: t('common.attachment'), render: (r) => (
       r.attachment_url ? (
         r.attachment_url.startsWith('blob:') ? (
-          <span className="inline-flex items-center gap-1 text-red-400 text-sm">
-            <Paperclip className="w-3 h-3" />
+          <span className="inline-flex items-center gap-1 text-red-500 dark:text-red-400 text-sm">
+            <Paperclip className="w-3 h-3" aria-hidden="true" />
             <span className="truncate max-w-[100px]">{t('common.unavailable')}</span>
           </span>
         ) : (
           <span onClick={(e) => e.stopPropagation()}>
             <AttachmentLink url={r.attachment_url}
               className="inline-flex items-center gap-1 text-gray-900 dark:text-slate-100 hover:underline text-sm">
-              <Paperclip className="w-3 h-3" />
+              <Paperclip className="w-3 h-3" aria-hidden="true" />
               <span className="truncate max-w-[100px]">{r.attachment_name || t('common.view')}</span>
-              <ExternalLink className="w-3 h-3" />
+              <ExternalLink className="w-3 h-3" aria-hidden="true" />
             </AttachmentLink>
           </span>
         )
-      ) : <span className="text-gray-300 dark:text-slate-600">—</span>
+      ) : <span className="text-gray-400 dark:text-slate-500">—</span>
     ),
   },
-  { key: 'status', header: t('common.status'), align: 'center', render: (r) => statusBadge(r.status, t) },
+  { key: 'status', primary: true, header: t('common.status'), align: 'center', render: (r) => statusBadge(r.status, t) },
 ];
 
 const canCancelLeave = (request: LeaveRequest) => ['pending', 'approved', 'rejected'].includes(request.status);
@@ -175,6 +187,7 @@ export function Leave() {
   const { user } = useAuth();
   const hasEmployee = Boolean(user?.employee_id);
   const confirmDialog = useConfirm();
+  const toast = useToast();
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<'balances' | 'requests'>('balances');
   const [showApply, setShowApply] = useState(false);
@@ -204,6 +217,7 @@ export function Leave() {
 
   const {
     data: requests,
+    isLoading: loadingRequests,
     isError: requestsError,
     error: requestsErr,
     refetch: refetchRequests,
@@ -230,6 +244,7 @@ export function Leave() {
       queryClient.invalidateQueries({ queryKey: ['leave-requests'] });
       queryClient.invalidateQueries({ queryKey: ['leave-balances'] });
     },
+    onError: (err) => toast.error(getErrorMessage(err, t('portal.leave.bulkCancelFailed'))),
   });
 
   const deleteMutation = useMutation({
@@ -239,6 +254,7 @@ export function Leave() {
       queryClient.invalidateQueries({ queryKey: ['leave-requests'] });
       queryClient.invalidateQueries({ queryKey: ['leave-balances'] });
     },
+    onError: (err) => toast.error(getErrorMessage(err, t('portal.leave.bulkDeleteFailed'))),
   });
 
   const refreshLeave = () => {
@@ -279,40 +295,52 @@ export function Leave() {
 
   if (!hasEmployee) {
     return (
-      <div className="card">
-        <EmptyState icon={Calendar} title={t('attendance.scan.noEmployeeProfile')} />
+      <div className="space-y-6">
+        <PageHeader className="mb-0" title={t('portal.leave.title')} subtitle={t('portal.leave.subtitle')} />
+        <div className="card">
+          <EmptyState icon={Calendar} title={t('attendance.scan.noEmployeeProfile')} />
+        </div>
       </div>
     );
   }
 
   if (loadingBalances) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 dark:border-slate-200" />
+      <div className="space-y-6" role="status" aria-busy="true" aria-label={t('common.loading')}>
+        <PageHeader className="mb-0" title={t('portal.leave.title')} subtitle={t('portal.leave.subtitle')} />
+        <Skeleton className="h-10 w-64 rounded-lg" />
+        <div className="card space-y-3">
+          {[0, 1, 2, 3].map((i) => (
+            <Skeleton key={i} className="h-12 w-full rounded-lg" />
+          ))}
+        </div>
       </div>
     );
   }
 
   if (balancesError || requestsError) {
     return (
-      <div className="card">
-        <EmptyState
-          icon={AlertTriangle}
-          title={t('portal.leave.loadFailed')}
-          description={getErrorMessage(balancesErr || requestsErr, t('portal.leave.loadFailed'))}
-          action={
-            <button
-              type="button"
-              onClick={() => {
-                void refetchBalances();
-                void refetchRequests();
-              }}
-              className="btn-primary"
-            >
-              {t('common.retry')}
-            </button>
-          }
-        />
+      <div className="space-y-6">
+        <PageHeader className="mb-0" title={t('portal.leave.title')} subtitle={t('portal.leave.subtitle')} />
+        <div className="card">
+          <EmptyState
+            icon={AlertTriangle}
+            title={t('portal.leave.loadFailed')}
+            description={getErrorMessage(balancesErr || requestsErr, t('portal.leave.loadFailed'))}
+            action={
+              <button
+                type="button"
+                onClick={() => {
+                  void refetchBalances();
+                  void refetchRequests();
+                }}
+                className="btn-primary"
+              >
+                {t('common.retry')}
+              </button>
+            }
+          />
+        </div>
       </div>
     );
   }
@@ -320,12 +348,17 @@ export function Leave() {
   if (showApply) {
     if (loadingLeaveTypes) {
       return (
-        <div className="space-y-6">
-          <button type="button" onClick={() => setShowApply(false)} aria-label={t('common.goBack')} className="btn-secondary !px-3 !py-2">
-            <ArrowLeft className="w-4 h-4" />
-          </button>
-          <div className="flex items-center justify-center h-64">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 dark:border-slate-200" />
+        <div className="space-y-6" role="status" aria-busy="true" aria-label={t('common.loading')}>
+          <div className="flex items-center gap-4">
+            <button type="button" onClick={() => setShowApply(false)} aria-label={t('common.goBack')} className="btn-secondary min-h-11 min-w-11 !px-3 !py-2">
+              <ArrowLeft className="w-4 h-4" aria-hidden="true" />
+            </button>
+            <PageHeader className="mb-0" title={t('portal.leave.apply')} subtitle={t('portal.leave.applySubtitle')} />
+          </div>
+          <div className="card p-6 space-y-4">
+            <Skeleton className="h-6 w-48" />
+            <Skeleton className="h-11 w-full max-w-md" />
+            <Skeleton className="h-32 w-full" />
           </div>
         </div>
       );
@@ -334,18 +367,18 @@ export function Leave() {
       return (
         <div className="space-y-6">
           <div className="flex items-center gap-4">
-            <button type="button" onClick={() => setShowApply(false)} aria-label={t('common.goBack')} className="btn-secondary !px-3 !py-2">
-              <ArrowLeft className="w-4 h-4" />
+            <button type="button" onClick={() => setShowApply(false)} aria-label={t('common.goBack')} className="btn-secondary min-h-11 min-w-11 !px-3 !py-2">
+              <ArrowLeft className="w-4 h-4" aria-hidden="true" />
             </button>
-            <h1 className="page-title">{t('portal.leave.apply')}</h1>
+            <PageHeader className="mb-0" title={t('portal.leave.apply')} subtitle={t('portal.leave.applySubtitle')} />
           </div>
           <div role="alert" className="card space-y-4 border-red-200 dark:border-red-500/30">
             <p className="text-sm text-red-700 dark:text-red-300">{t('portal.leave.typesLoadFailed')}</p>
-            <div className="flex gap-2">
-              <button type="button" onClick={() => void refetchLeaveTypes()} className="btn-primary text-xs">
+            <div className="flex flex-wrap gap-2">
+              <button type="button" onClick={() => void refetchLeaveTypes()} className="btn-primary">
                 {t('common.retry')}
               </button>
-              <button type="button" onClick={() => setShowApply(false)} className="btn-secondary text-xs">
+              <button type="button" onClick={() => setShowApply(false)} className="btn-secondary">
                 {t('common.goBack')}
               </button>
             </div>
@@ -365,36 +398,41 @@ export function Leave() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="page-header">
-          <h1 className="page-title">{t('portal.leave.title')}</h1>
-          <p className="page-subtitle">{t('portal.leave.subtitle')}</p>
-        </div>
-        <div className="flex gap-2 w-full sm:w-auto">
-          <button
-            type="button"
-            disabled={exportingIcs}
-            onClick={async () => {
-              setExportError('');
-              setExportingIcs(true);
-              try {
-                await exportLeaveIcs();
-              } catch (err) {
-                setExportError(getErrorMessage(err, t('portal.leave.exportFailed')));
-              } finally {
-                setExportingIcs(false);
-              }
-            }}
-            className="btn-secondary w-full sm:w-auto"
-          >
-            <Download className="w-4 h-4" />
-            {exportingIcs ? t('common.loading') : t('portal.leave.exportIcs')}
-          </button>
-          <button type="button" onClick={() => setShowApply(true)} className="btn-primary w-full sm:w-auto">
-            <Plus className="w-4 h-4" /> {t('portal.leave.apply')}
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        className="mb-0"
+        title={t('portal.leave.title')}
+        subtitle={t('portal.leave.subtitle')}
+        actions={
+          <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+            <button
+              type="button"
+              disabled={exportingIcs}
+              onClick={async () => {
+                setExportError('');
+                setExportingIcs(true);
+                try {
+                  await exportLeaveIcs();
+                } catch (err) {
+                  setExportError(getErrorMessage(err, t('portal.leave.exportFailed')));
+                } finally {
+                  setExportingIcs(false);
+                }
+              }}
+              className="btn-secondary w-full sm:w-auto"
+            >
+              {exportingIcs ? (
+                <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <Download className="w-4 h-4" aria-hidden="true" />
+              )}
+              {exportingIcs ? t('common.loading') : t('portal.leave.exportIcs')}
+            </button>
+            <button type="button" onClick={() => setShowApply(true)} className="btn-primary w-full sm:w-auto">
+              <Plus className="w-4 h-4" aria-hidden="true" /> {t('portal.leave.apply')}
+            </button>
+          </div>
+        }
+      />
 
       {exportError && (
         <div role="alert" className="bg-red-50 dark:bg-red-500/10 border border-red-100 dark:border-red-500/30 text-red-600 dark:text-red-300 text-sm px-4 py-3 rounded-xl">
@@ -403,18 +441,24 @@ export function Leave() {
       )}
 
       {/* Tabs */}
-      <div className="flex gap-1 border-b border-gray-200 dark:border-slate-800 overflow-x-auto">
+      <div
+        role="tablist"
+        aria-label={t('portal.leave.title')}
+        className="flex gap-1 border-b border-gray-200 dark:border-slate-800 overflow-x-auto scrollbar-thin"
+      >
         {[
           { key: 'balances' as const, label: t('portal.leave.tabs.balances') },
           { key: 'requests' as const, label: t('portal.leave.tabs.requests') },
         ].map((item) => (
           <button
             key={item.key}
+            role="tab"
             type="button"
+            aria-selected={tab === item.key}
             onClick={() => setTab(item.key)}
-            className={`min-h-10 px-4 py-2.5 text-sm font-medium border-b-2 whitespace-nowrap transition-all-fast ${
+            className={`min-h-11 sm:min-h-10 px-4 py-2.5 text-sm font-medium border-b-2 whitespace-nowrap transition-all-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] ${
               tab === item.key
-                ? 'border-gray-900 dark:border-teal-400 text-gray-900 dark:text-white'
+                ? 'border-[var(--accent-1)] text-gray-900 dark:text-white'
                 : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200'
             }`}
           >
@@ -429,6 +473,11 @@ export function Leave() {
           data={balances ?? []}
           perPage={10}
           emptyMessage={t('portal.leave.emptyBalances')}
+          emptyAction={
+            <button type="button" onClick={() => setShowApply(true)} className="btn-primary">
+              <Plus className="w-4 h-4" aria-hidden="true" /> {t('portal.leave.apply')}
+            </button>
+          }
           summaryTitle={(b) => t('portal.leave.balanceSummaryTitle', { type: b.leave_type_name })}
           renderSummary={(b) => {
             const balance = Number(b.entitled_days) + Number(b.carried_forward) - Number(b.taken_days) - Number(b.pending_days);
@@ -441,8 +490,8 @@ export function Leave() {
                 <SummaryField label={t('portal.leave.cols.taken')} value={String(Number(b.taken_days))} />
                 <SummaryField label={t('portal.leave.cols.pending')} value={String(Number(b.pending_days))} />
                 <div className="col-span-2 pt-2 border-t border-gray-100 dark:border-slate-800">
-                  <p className="text-xs text-gray-400 dark:text-slate-400 uppercase tracking-wide">{t('portal.leave.cols.balance')}</p>
-                  <p className={`text-lg font-bold mt-0.5 ${balance > 0 ? 'text-emerald-600 dark:text-emerald-400' : balance < 0 ? 'text-red-600 dark:text-red-400' : 'text-gray-600 dark:text-slate-300'}`}>
+                  <p className="text-xs text-gray-500 dark:text-slate-400 uppercase tracking-wide">{t('portal.leave.cols.balance')}</p>
+                  <p className={`text-lg font-bold tabular-nums mt-0.5 ${balance > 0 ? 'text-emerald-600 dark:text-emerald-400' : balance < 0 ? 'text-red-600 dark:text-red-400' : 'text-gray-600 dark:text-slate-300'}`}>
                     {t('portal.leave.days', { count: balance })}
                   </p>
                 </div>
@@ -455,7 +504,7 @@ export function Leave() {
           {selectedLeaveIds.length > 0 && (
             <div className="space-y-2">
               <div className="flex flex-col gap-2 rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-                <span className="text-sm font-medium text-gray-700 dark:text-slate-200">{t('common.selected', { count: selectedLeaveIds.length })}</span>
+                <span className="text-sm font-medium text-gray-700 dark:text-slate-200 tabular-nums">{t('common.selected', { count: selectedLeaveIds.length })}</span>
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
@@ -471,9 +520,9 @@ export function Leave() {
                       }
                     }}
                     disabled={selectedCancelableLeaveIds.length === 0 || bulkCancelMutation.isPending}
-                    className="btn-secondary !py-2 text-sm disabled:opacity-50"
+                    className="btn-secondary min-h-11 sm:!py-2 text-sm disabled:opacity-50"
                   >
-                    <X className="w-4 h-4" />
+                    <X className="w-4 h-4" aria-hidden="true" />
                     {bulkCancelMutation.isPending ? t('common.cancelling') : t('common.cancelSelected')}
                   </button>
                   <button
@@ -489,9 +538,9 @@ export function Leave() {
                       }
                     }}
                     disabled={selectedDeletableLeaveIds.length === 0 || bulkDeleteMutation.isPending}
-                    className="btn-secondary !py-2 text-sm text-red-600 dark:text-red-400 hover:!bg-red-50 dark:hover:!bg-red-500/10 disabled:opacity-50"
+                    className="btn-secondary min-h-11 sm:!py-2 text-sm text-red-600 dark:text-red-400 hover:!bg-red-50 dark:hover:!bg-red-500/10 disabled:opacity-50"
                   >
-                    <Trash2 className="w-4 h-4" />
+                    <Trash2 className="w-4 h-4" aria-hidden="true" />
                     {bulkDeleteMutation.isPending ? t('common.deleting') : t('common.deleteSelected')}
                   </button>
                 </div>
@@ -506,9 +555,15 @@ export function Leave() {
           <DataTable
             columns={requestColumns}
             data={requests ?? []}
+            isLoading={loadingRequests}
             perPage={10}
             emptyMessage={t('portal.leave.emptyRequests')}
-            emptyIcon={<Calendar className="w-10 h-10 opacity-40" />}
+            emptyIcon={<Calendar className="w-10 h-10 opacity-40" aria-hidden="true" />}
+            emptyAction={
+              <button type="button" onClick={() => setShowApply(true)} className="btn-primary">
+                <Plus className="w-4 h-4" aria-hidden="true" /> {t('portal.leave.apply')}
+              </button>
+            }
             selectable
             selectedRowKeys={selectedLeaveIds}
             onSelectedRowKeysChange={setSelectedLeaveIds}
@@ -517,7 +572,7 @@ export function Leave() {
             renderSummary={(r) => (
             <div className="space-y-5">
               {/* Header */}
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-3">
                 <span className="font-semibold text-lg text-gray-900 dark:text-slate-100">{r.leave_type_name}</span>
                 {statusBadge(r.status, t)}
               </div>
@@ -540,7 +595,7 @@ export function Leave() {
               {/* Attachment preview */}
               {r.attachment_url && (
                 <div>
-                  <p className="text-xs text-gray-400 dark:text-slate-400 uppercase tracking-wide mb-1">{t('common.attachment')}</p>
+                  <p className="text-xs text-gray-500 dark:text-slate-400 uppercase tracking-wide mb-1">{t('common.attachment')}</p>
                   <AttachmentPreview url={r.attachment_url} name={r.attachment_name} />
                 </div>
               )}
@@ -550,7 +605,7 @@ export function Leave() {
                 <div className="bg-amber-50 dark:bg-amber-500/10 border border-amber-100 dark:border-amber-500/30 rounded-lg p-4">
                   <SummaryField label={t('portal.leave.fields.reviewNotes')} value={r.review_notes} />
                   {r.reviewed_at && (
-                    <p className="text-xs text-gray-400 dark:text-slate-400 mt-1">{t('portal.leave.reviewedOn', { date: formatDate(r.reviewed_at) })}</p>
+                    <p className="text-xs text-gray-500 dark:text-slate-400 mt-1 tabular-nums">{t('portal.leave.reviewedOn', { date: formatDate(r.reviewed_at) })}</p>
                   )}
                 </div>
               )}
@@ -558,7 +613,7 @@ export function Leave() {
             )}
             renderSummaryFooter={(r, close) =>
             canCancelLeave(r) || canDeleteLeave(r) ? (
-              <div className="flex items-center justify-end gap-2">
+              <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-2">
                 {canCancelLeave(r) && (
                   <button
                     type="button"
@@ -573,9 +628,9 @@ export function Leave() {
                       }
                     }}
                     disabled={cancelMutation.isPending}
-                    className="flex items-center gap-2 px-4 py-2.5 bg-white dark:bg-slate-800 border border-red-200 dark:border-red-500/30 text-red-600 dark:text-red-400 text-sm font-medium rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 disabled:opacity-50 transition-colors"
+                    className="btn-secondary min-h-11 w-full sm:w-auto text-red-600 dark:text-red-400 hover:!bg-red-50 dark:hover:!bg-red-500/10"
                   >
-                    <X className="w-4 h-4" />
+                    <X className="w-4 h-4" aria-hidden="true" />
                     {cancelMutation.isPending ? t('common.cancelling') : t('portal.leave.cancelRequest')}
                   </button>
                 )}
@@ -592,9 +647,9 @@ export function Leave() {
                       }
                     }}
                     disabled={deleteMutation.isPending}
-                    className="flex items-center gap-2 px-4 py-2.5 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 disabled:opacity-50 transition-colors"
+                    className="btn-danger min-h-11 w-full sm:w-auto"
                   >
-                    <Trash2 className="w-4 h-4" />
+                    <Trash2 className="w-4 h-4" aria-hidden="true" />
                     {deleteMutation.isPending ? t('common.deleting') : t('portal.leave.deletePermanently')}
                   </button>
                 )}
@@ -602,10 +657,11 @@ export function Leave() {
             ) : null
             }
             renderActions={(r) => (
-            <>
+            <div className="flex items-center justify-center gap-1">
               {canCancelLeave(r) && (
                 <button
                   type="button"
+                  disabled={cancelMutation.isPending || deleteMutation.isPending}
                   onClick={async () => {
                     const ok = await confirmDialog({
                       description: t('portal.leave.cancelConfirm'),
@@ -614,14 +670,17 @@ export function Leave() {
                     });
                     if (ok) cancelMutation.mutate(r.id);
                   }}
-                  className="text-xs text-red-500 dark:text-red-400 hover:text-red-700 font-medium"
+                  aria-label={`${t('portal.leave.cancelRequest')} — ${r.leave_type_name}`}
+                  title={t('portal.leave.cancelRequest')}
+                  className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 inline-flex items-center justify-center rounded-lg text-gray-500 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-500/10 disabled:opacity-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                 >
-                  {t('portal.leave.cancelRequest')}
+                  <X className="w-4 h-4" aria-hidden="true" />
                 </button>
               )}
               {canDeleteLeave(r) && (
                 <button
                   type="button"
+                  disabled={cancelMutation.isPending || deleteMutation.isPending}
                   onClick={async () => {
                     const ok = await confirmDialog({
                       description: t('portal.leave.deleteConfirm'),
@@ -629,15 +688,14 @@ export function Leave() {
                     });
                     if (ok) deleteMutation.mutate(r.id);
                   }}
-                  className="text-xs text-red-500 dark:text-red-400 hover:text-red-700 font-medium"
+                  aria-label={t('common.deleteName', { name: r.leave_type_name })}
+                  title={t('common.delete')}
+                  className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 inline-flex items-center justify-center rounded-lg text-red-500 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-500/10 disabled:opacity-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                 >
-                  {t('common.delete')}
+                  <Trash2 className="w-4 h-4" aria-hidden="true" />
                 </button>
               )}
-              {r.review_notes && (
-                <div className="text-xs text-gray-500 dark:text-slate-400 mt-1">{r.review_notes}</div>
-              )}
-            </>
+            </div>
             )}
           />
         </div>
@@ -649,8 +707,8 @@ export function Leave() {
 function SummaryField({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <p className="text-xs text-gray-400 dark:text-slate-400 uppercase tracking-wide">{label}</p>
-      <p className="text-sm font-medium text-gray-900 dark:text-slate-100 mt-0.5">{value}</p>
+      <p className="text-xs text-gray-500 dark:text-slate-400 uppercase tracking-wide">{label}</p>
+      <p className="text-sm font-medium text-gray-900 dark:text-slate-100 mt-0.5 tabular-nums">{value}</p>
     </div>
   );
 }
@@ -838,15 +896,18 @@ function ApplyLeaveForm({
   };
 
   return (
-    <div className="space-y-6">
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        handleSubmit();
+      }}
+      className="space-y-6"
+    >
       <div className="flex items-center gap-4">
-        <button type="button" onClick={onClose} aria-label={t('common.goBack')} className="btn-secondary !px-3 !py-2">
-          <ArrowLeft className="w-4 h-4" />
+        <button type="button" onClick={onClose} aria-label={t('common.goBack')} className="btn-secondary min-h-11 min-w-11 !px-3 !py-2 shrink-0">
+          <ArrowLeft className="w-4 h-4" aria-hidden="true" />
         </button>
-        <div className="page-header">
-          <h1 className="page-title">{t('portal.leave.apply')}</h1>
-          <p className="page-subtitle">{t('portal.leave.applySubtitle')}</p>
-        </div>
+        <PageHeader className="mb-0" title={t('portal.leave.apply')} subtitle={t('portal.leave.applySubtitle')} />
       </div>
 
       {error && (
@@ -861,7 +922,7 @@ function ApplyLeaveForm({
       )}
 
       <div className="card !p-0 divide-y divide-gray-100 dark:divide-slate-800">
-        <div className="p-6 lg:p-8">
+        <div className="p-5 sm:p-6 lg:p-8">
           <div className="section-header">
             <span className="section-number">1</span>
             <span className="section-title">{t('portal.leave.sections.type')}</span>
@@ -871,6 +932,7 @@ function ApplyLeaveForm({
               <label className="form-label" htmlFor="leave-type">{t('portal.leave.selectType')} *</label>
               <select
                 id="leave-type"
+                required
                 value={form.leave_type_id}
                 onChange={(e) => setForm((prev) => ({ ...prev, leave_type_id: e.target.value }))}
                 className="form-input"
@@ -883,19 +945,19 @@ function ApplyLeaveForm({
             </div>
             {selectedType && !eligibility.eligible && (
               <div role="status" className="flex items-start gap-2 rounded-xl bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 p-3 text-xs text-amber-800 dark:text-amber-300">
-                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" aria-hidden="true" />
                 <span>{eligibility.reason}</span>
               </div>
             )}
             {selectedType && eligibility.eligible && availableDays !== null && (
-              <p className="text-xs font-medium text-teal-700 dark:text-teal-300">
+              <p className="text-xs font-medium text-teal-700 dark:text-teal-300 tabular-nums">
                 {t('portal.leave.availableBalance', { count: availableDays })}
               </p>
             )}
           </div>
         </div>
 
-        <div className="p-6 lg:p-8">
+        <div className="p-5 sm:p-6 lg:p-8">
           <div className="section-header">
             <span className="section-number">2</span>
             <span className="section-title">{t('portal.leave.sections.period')}</span>
@@ -907,9 +969,10 @@ function ApplyLeaveForm({
                 <input
                   id="leave-start"
                   type="date"
+                  required
                   value={form.start_date}
                   onChange={(e) => syncDatesAndDays(e.target.value, form.end_date)}
-                  className="form-input"
+                  className="form-input tabular-nums"
                 />
               </div>
               <div>
@@ -917,9 +980,10 @@ function ApplyLeaveForm({
                 <input
                   id="leave-end"
                   type="date"
+                  required
                   value={form.end_date}
                   onChange={(e) => syncDatesAndDays(form.start_date, e.target.value)}
-                  className="form-input"
+                  className="form-input tabular-nums"
                 />
               </div>
               <div>
@@ -936,15 +1000,15 @@ function ApplyLeaveForm({
                     setHalfDay(v === 0.5 && effectiveWorkingDays === 1);
                     setForm((prev) => ({ ...prev, days: v }));
                   }}
-                  className="form-input"
+                  className="form-input tabular-nums"
                 />
               </div>
             </div>
             {validDateRange && (
               <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-gray-500 dark:text-slate-400">
-                <span>{t('portal.leave.workingDaysHint', { count: effectiveWorkingDays })}</span>
+                <span className="tabular-nums">{t('portal.leave.workingDaysHint', { count: effectiveWorkingDays })}</span>
                 {effectiveWorkingDays === 1 && (
-                  <label className="inline-flex items-center gap-2 font-medium text-gray-700 dark:text-slate-200 cursor-pointer">
+                  <label className="min-h-11 sm:min-h-9 inline-flex items-center gap-2 font-medium text-gray-700 dark:text-slate-200 cursor-pointer">
                     <input
                       type="checkbox"
                       checked={halfDay}
@@ -953,7 +1017,7 @@ function ApplyLeaveForm({
                         setHalfDay(checked);
                         setForm((prev) => ({ ...prev, days: checked ? 0.5 : 1 }));
                       }}
-                      className="h-4 w-4 rounded border-gray-300 dark:border-slate-600 text-teal-600 focus:ring-teal-500"
+                      className="h-4 w-4 rounded border-gray-300 dark:border-slate-600 accent-[var(--accent-1)] focus:ring-[var(--ring)]"
                     />
                     {t('portal.leave.halfDay')}
                   </label>
@@ -963,7 +1027,7 @@ function ApplyLeaveForm({
           </div>
         </div>
 
-        <div className="p-6 lg:p-8">
+        <div className="p-5 sm:p-6 lg:p-8">
           <div className="section-header">
             <span className="section-number">3</span>
             <span className="section-title">{t('portal.leave.sections.details')}</span>
@@ -981,10 +1045,10 @@ function ApplyLeaveForm({
               />
             </div>
             <div>
-              <label className="form-label" htmlFor="leave-attachment">{t('common.attachment')}</label>
+              <span className="form-label">{t('common.attachment')}</span>
               <div className="flex items-center gap-3">
-                <label className="min-h-10 flex items-center gap-2 px-4 py-2.5 bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg text-sm text-gray-600 dark:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-700 cursor-pointer transition-all-fast focus-within:ring-2 focus-within:ring-teal-500/40">
-                  <Paperclip className="w-4 h-4 shrink-0" />
+                <label className="min-h-11 sm:min-h-10 flex items-center gap-2 px-4 py-2.5 bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg text-sm text-gray-600 dark:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-700 cursor-pointer transition-all-fast focus-within:ring-2 focus-within:ring-[var(--ring)]">
+                  <Paperclip className="w-4 h-4 shrink-0" aria-hidden="true" />
                   <span className="truncate max-w-[220px]">{form.attachment_name || t('common.chooseFile')}</span>
                   <input ref={fileInputRef} id="leave-attachment" type="file" onChange={handleFileChange} accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" className="sr-only" />
                 </label>
@@ -1001,9 +1065,9 @@ function ApplyLeaveForm({
                         setAttachmentPreview('');
                       }
                     }}
-                    className="min-h-10 min-w-10 inline-flex items-center justify-center text-gray-400 hover:text-red-500 rounded-lg"
+                    className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 inline-flex items-center justify-center text-gray-500 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                   >
-                    <X className="w-4 h-4" />
+                    <X className="w-4 h-4" aria-hidden="true" />
                   </button>
                 )}
               </div>
@@ -1014,18 +1078,19 @@ function ApplyLeaveForm({
                   className="mt-3 h-24 w-24 object-cover rounded-lg border border-gray-200 dark:border-slate-700"
                 />
               )}
-              <p className="text-xs text-gray-400 dark:text-slate-400 mt-1.5">{t('portal.leave.attachmentHint')}</p>
+              <p className="text-xs text-gray-500 dark:text-slate-400 mt-1.5">{t('portal.leave.attachmentHint')}</p>
             </div>
           </div>
         </div>
       </div>
 
-      <div className="flex justify-end gap-3">
-        <button type="button" onClick={onClose} className="btn-secondary">{t('common.cancel')}</button>
-        <button type="button" onClick={handleSubmit} disabled={mutation.isPending || success} className="btn-primary">
+      <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-3">
+        <button type="button" onClick={onClose} disabled={mutation.isPending} className="btn-secondary">{t('common.cancel')}</button>
+        <button type="submit" disabled={mutation.isPending || success} className="btn-primary">
+          {mutation.isPending && <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />}
           {mutation.isPending ? t('common.submitting') : success ? t('portal.leave.submittedShort') : t('portal.leave.submit')}
         </button>
       </div>
-    </div>
+    </form>
   );
 }

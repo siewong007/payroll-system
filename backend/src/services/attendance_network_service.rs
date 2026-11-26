@@ -103,13 +103,16 @@ pub async fn set_mode(
         ));
     }
 
+    let mut tx = pool.begin().await?;
+    companies::lock_for_update(&mut *tx, company_id).await?;
+
     // Turning on enforcement with an empty allow-list is the single most
     // effective way to lock a whole company out of attendance. The check-in
     // path also refuses to enforce against an empty list, so this is belt and
     // braces — but failing here gives the administrator the actionable error at
     // the moment they made the decision, rather than a silently inert setting.
     if mode == "enforce" {
-        let approved = company_networks::list_active(pool, company_id).await?;
+        let approved = company_networks::list_active(&mut *tx, company_id).await?;
         if approved.is_empty() {
             return Err(AppError::BadRequest(
                 "Approve at least one office network before switching to Enforce, \
@@ -119,8 +122,11 @@ pub async fn set_mode(
         }
     }
 
-    let old_mode = get_mode(pool, company_id).await?;
-    companies::set_attendance_network_mode(pool, company_id, mode).await?;
+    let old_mode = companies::get_attendance_network_mode(&mut *tx, company_id)
+        .await?
+        .unwrap_or_else(|| "none".to_string());
+    companies::set_attendance_network_mode(&mut *tx, company_id, mode).await?;
+    tx.commit().await?;
 
     let _ = audit_service::log_action_with_metadata(
         pool,
@@ -172,7 +178,10 @@ pub async fn update_network(
     actor_id: Uuid,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<CompanyNetwork> {
-    let existing = company_networks::get(pool, id, company_id)
+    let mut tx = pool.begin().await?;
+    companies::lock_for_update(&mut *tx, company_id).await?;
+
+    let existing = company_networks::get(&mut *tx, id, company_id)
         .await?
         .ok_or_else(|| AppError::NotFound("Network not found".into()))?;
 
@@ -185,10 +194,11 @@ pub async fn update_network(
     // Deactivating the last active network while enforcing would lock everyone
     // out just as surely as enabling enforce with an empty list.
     if existing.is_active && !is_active {
-        ensure_not_last_active_while_enforcing(pool, company_id, id).await?;
+        ensure_not_last_active_while_enforcing(&mut tx, company_id, id).await?;
     }
 
-    let updated = company_networks::update(pool, id, company_id, &label, is_active).await?;
+    let updated = company_networks::update(&mut *tx, id, company_id, &label, is_active).await?;
+    tx.commit().await?;
 
     let _ = audit_service::log_action_with_metadata(
         pool,
@@ -214,18 +224,22 @@ pub async fn delete_network(
     actor_id: Uuid,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<()> {
-    let existing = company_networks::get(pool, id, company_id)
+    let mut tx = pool.begin().await?;
+    companies::lock_for_update(&mut *tx, company_id).await?;
+
+    let existing = company_networks::get(&mut *tx, id, company_id)
         .await?
         .ok_or_else(|| AppError::NotFound("Network not found".into()))?;
 
     if existing.is_active {
-        ensure_not_last_active_while_enforcing(pool, company_id, id).await?;
+        ensure_not_last_active_while_enforcing(&mut tx, company_id, id).await?;
     }
 
-    let removed = company_networks::delete(pool, id, company_id).await?;
+    let removed = company_networks::delete(&mut *tx, id, company_id).await?;
     if removed == 0 {
         return Err(AppError::NotFound("Network not found".into()));
     }
+    tx.commit().await?;
 
     let _ = audit_service::log_action_with_metadata(
         pool,
@@ -247,14 +261,17 @@ pub async fn delete_network(
 /// Refuse to remove the last thing standing between the company and a
 /// company-wide check-in outage.
 async fn ensure_not_last_active_while_enforcing(
-    pool: &PgPool,
+    conn: &mut sqlx::PgConnection,
     company_id: Uuid,
     excluding: Uuid,
 ) -> AppResult<()> {
-    if get_mode(pool, company_id).await? != "enforce" {
+    let mode = companies::get_attendance_network_mode(&mut *conn, company_id)
+        .await?
+        .unwrap_or_else(|| "none".to_string());
+    if mode != "enforce" {
         return Ok(());
     }
-    let remaining = company_networks::list_active(pool, company_id)
+    let remaining = company_networks::list_active(&mut *conn, company_id)
         .await?
         .into_iter()
         .filter(|n| n.id != excluding)
@@ -313,6 +330,29 @@ async fn insert_approved(
     Ok(created)
 }
 
+async fn insert_approved_on(
+    conn: &mut sqlx::PgConnection,
+    company_id: Uuid,
+    label: &str,
+    prefix: IpPrefix,
+    actor_id: Uuid,
+    learned: bool,
+) -> AppResult<CompanyNetwork> {
+    let network = prefix.network().to_string();
+    let prefix_len = prefix.prefix_len() as i16;
+
+    if company_networks::exists(&mut *conn, company_id, &network, prefix_len).await? {
+        return Err(AppError::Conflict(format!(
+            "{prefix} is already on the approved list."
+        )));
+    }
+
+    company_networks::insert(
+        conn, company_id, label, &network, prefix_len, actor_id, learned,
+    )
+    .await
+}
+
 fn validate_label(label: &str) -> AppResult<String> {
     let label = label.trim();
     if label.is_empty() || label.chars().count() > 150 {
@@ -348,20 +388,40 @@ pub async fn approve_candidate(
     let network = prefix.network().to_string();
     let prefix_len = prefix.prefix_len() as i16;
 
+    let mut tx = pool.begin().await?;
+    companies::lock_for_update(&mut *tx, company_id).await?;
+
     // Approving something never observed is not an error worth blocking — an
     // administrator may legitimately pre-approve a block they know about — but
     // it must not be recorded as *learned*, because nothing was learned.
-    let observed = network_reads::get_candidate(pool, company_id, &network, prefix_len)
+    let observed = network_reads::get_candidate(&mut *tx, company_id, &network, prefix_len)
         .await?
         .is_some();
 
-    let created = insert_approved(
-        pool, company_id, &label, prefix, actor_id, observed, audit_meta,
-    )
-    .await?;
+    let created =
+        insert_approved_on(&mut tx, company_id, &label, prefix, actor_id, observed).await?;
 
-    attendance_network_observations::delete_for_network(pool, company_id, &network, prefix_len)
+    attendance_network_observations::delete_for_network(&mut *tx, company_id, &network, prefix_len)
         .await?;
+    tx.commit().await?;
+
+    let _ = audit_service::log_action_with_metadata(
+        pool,
+        Some(company_id),
+        Some(actor_id),
+        "create",
+        "company_network",
+        Some(created.id),
+        None,
+        Some(serde_json::to_value(&created).unwrap_or_default()),
+        Some(if observed {
+            "Learned attendance network approved"
+        } else {
+            "Attendance network added"
+        }),
+        audit_meta,
+    )
+    .await;
 
     Ok(created)
 }
@@ -377,10 +437,12 @@ pub async fn dismiss_candidate(
     let network = prefix.network().to_string();
     let prefix_len = prefix.prefix_len() as i16;
 
-    attendance_network_observations::dismiss(pool, company_id, &network, prefix_len, actor_id)
+    let mut tx = pool.begin().await?;
+    attendance_network_observations::dismiss(&mut *tx, company_id, &network, prefix_len, actor_id)
         .await?;
-    attendance_network_observations::delete_for_network(pool, company_id, &network, prefix_len)
+    attendance_network_observations::delete_for_network(&mut *tx, company_id, &network, prefix_len)
         .await?;
+    tx.commit().await?;
 
     let _ = audit_service::log_action_with_metadata(
         pool,
@@ -680,6 +742,7 @@ mod tests {
             observation_count: observations,
             anchored_count: anchored,
             denied_count: 0,
+            distinct_denied_employees: 0,
             first_seen_at: Utc::now(),
             last_seen_at: Utc::now(),
         }

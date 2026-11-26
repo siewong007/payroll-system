@@ -188,7 +188,8 @@ async fn list_users_paginates_and_reports_the_total() {
         return;
     };
     let company_id = seed_company(&pool).await;
-    let super_admin_id = seed_user(&pool, company_id, "super_admin").await;
+    let admin_company_id = seed_company(&pool).await;
+    let super_admin_id = seed_user(&pool, admin_company_id, "super_admin").await;
     for _ in 0..3 {
         let id = seed_user(&pool, company_id, "finance").await;
         user_companies::insert(&pool, id, company_id)

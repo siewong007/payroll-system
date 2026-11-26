@@ -8,6 +8,7 @@ import {
   Clock,
   Eye,
   FileText,
+  Loader2,
   Mail,
   Pencil,
   Plus,
@@ -32,6 +33,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { FormField } from '@/components/ui/FormField';
 import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { useAuth } from '@/context/AuthContext';
 import { useConfirm } from '@/lib/confirm';
 import { SUPER_ADMIN_ROLES, hasAnyRole } from '@/lib/roles';
@@ -178,6 +180,7 @@ export function LettersPage() {
   // only here for the "no email on file" warning below.
   const {
     data: selectedEmp,
+    isFetching: selectedEmpLoading,
     isError: selectedEmpError,
     error: selectedEmpErrorObj,
     refetch: refetchSelectedEmp,
@@ -354,12 +357,17 @@ export function LettersPage() {
   };
 
   const trimmedCustomEmail = customEmail.trim();
+  const hasInvalidCustomEmail =
+    effectiveRecipientMode === 'custom' &&
+    trimmedCustomEmail.length > 0 &&
+    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedCustomEmail);
   const hasValidRecipient =
     effectiveRecipientMode === 'employee'
       ? Boolean(canViewEmployees && selectedEmployee && selectedEmp?.email)
       : canUseCustomEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedCustomEmail);
 
   const canSend = canSendLetters && hasValidRecipient && subject.trim().length > 0 && bodyHtml.trim().length > 0;
+  const canSubmitPreview = canPreview && hasValidRecipient && subject.trim().length > 0 && bodyHtml.trim().length > 0;
 
   const handlePreview = () => {
     if (!hasValidRecipient || !subject.trim() || !bodyHtml.trim() || !canPreview) return;
@@ -405,7 +413,7 @@ export function LettersPage() {
     {
       key: 'date',
       header: t('common.date'),
-      render: (log) => <span className="text-gray-500 dark:text-slate-400 whitespace-nowrap">{formatDate(log.created_at)}</span>,
+      render: (log) => <span className="text-gray-500 dark:text-slate-400 whitespace-nowrap tabular-nums">{formatDate(log.created_at)}</span>,
     },
     {
       key: 'type',
@@ -422,7 +430,7 @@ export function LettersPage() {
       header: t('letters.recipient'),
       render: (log) => (
         <div className="min-w-0">
-          <p className="font-medium text-gray-900 dark:text-slate-100 truncate">{log.recipient_name || '-'}</p>
+          <p className="font-medium text-gray-900 dark:text-slate-100 truncate">{log.recipient_name || '\u2014'}</p>
           <p className="text-xs text-gray-500 dark:text-slate-400 truncate">{log.recipient_email}</p>
         </div>
       ),
@@ -456,22 +464,52 @@ export function LettersPage() {
       <PageHeader title={t('letters.title')} subtitle={t('letters.subtitle')} />
 
       {/* Tabs */}
-      <div className="flex gap-1 bg-gray-100 dark:bg-slate-800/70 p-1 rounded-xl mb-6 w-fit max-w-full overflow-x-auto">
+      <div
+        role="tablist"
+        aria-label={t('letters.title')}
+        className="flex gap-1 bg-gray-100 dark:bg-slate-800/70 p-1 rounded-xl mb-6 w-fit max-w-full overflow-x-auto scrollbar-thin"
+      >
         {availableTabs.map((tabKey) => (
           <button
             type="button"
+            role="tab"
             key={tabKey}
-            aria-pressed={activeTab === tabKey}
+            aria-selected={activeTab === tabKey}
             onClick={() => setTab(tabKey)}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors capitalize whitespace-nowrap shrink-0 ${
+            className={`min-h-11 sm:min-h-0 px-4 py-2 rounded-lg text-sm font-medium transition-colors capitalize whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] ${
               activeTab === tabKey
                 ? 'bg-white dark:bg-slate-900 text-gray-900 dark:text-slate-100 shadow-sm'
                 : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-200'
             }`}
           >
-            {tabKey === 'compose' && <span className="flex items-center gap-1.5"><Mail className="w-4 h-4" /> {t('letters.tabs.compose')}</span>}
-            {tabKey === 'history' && <span className="flex items-center gap-1.5"><Clock className="w-4 h-4" /> {t('letters.tabs.history')}</span>}
-            {tabKey === 'templates' && <span className="flex items-center gap-1.5"><FileText className="w-4 h-4" /> {t('letters.tabs.templates')}</span>}
+            {tabKey === 'compose' && (
+              <span className="flex items-center gap-1.5">
+                <Mail className="w-4 h-4" aria-hidden="true" />
+                {t('letters.tabs.compose')}
+              </span>
+            )}
+            {tabKey === 'history' && (
+              <span className="flex items-center gap-1.5">
+                <Clock className="w-4 h-4" aria-hidden="true" />
+                {t('letters.tabs.history')}
+                {logs?.total !== undefined && (
+                  <span className="ml-0.5 px-1.5 py-0.5 text-[11px] rounded-full bg-gray-200/80 dark:bg-slate-700 text-gray-700 dark:text-slate-200 tabular-nums" aria-hidden="true">
+                    {logs.total}
+                  </span>
+                )}
+              </span>
+            )}
+            {tabKey === 'templates' && (
+              <span className="flex items-center gap-1.5">
+                <FileText className="w-4 h-4" aria-hidden="true" />
+                {t('letters.tabs.templates')}
+                {templates !== undefined && (
+                  <span className="ml-0.5 px-1.5 py-0.5 text-[11px] rounded-full bg-gray-200/80 dark:bg-slate-700 text-gray-700 dark:text-slate-200 tabular-nums" aria-hidden="true">
+                    {templates.length}
+                  </span>
+                )}
+              </span>
+            )}
           </button>
         ))}
       </div>
@@ -482,18 +520,18 @@ export function LettersPage() {
           {/* Left: Compose form */}
           <div className="lg:col-span-2 space-y-4">
             {/* Letter Type */}
-            <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-gray-200 dark:border-slate-800 p-5 sm:p-6">
+            <div className="card p-5 sm:p-6">
               <h2 className="text-sm font-semibold text-gray-900 dark:text-slate-100 mb-3">{t('letters.type')}</h2>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2.5">
                 {LETTER_TYPE_VALUES.map((ltv) => (
                   <button
                     type="button"
                     key={ltv}
                     aria-pressed={selectedType === ltv}
                     onClick={() => { void handleTypeChange(ltv); }}
-                    className={`text-left p-3 rounded-xl border-2 transition-colors ${
+                    className={`text-left p-3 rounded-xl border-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] ${
                       selectedType === ltv
-                        ? 'border-black dark:border-slate-200 bg-gray-50 dark:bg-slate-800'
+                        ? 'border-[var(--accent-1)] bg-[var(--accent-soft)]'
                         : 'border-gray-100 dark:border-slate-800 hover:border-gray-200 dark:hover:border-slate-700'
                     }`}
                   >
@@ -505,33 +543,35 @@ export function LettersPage() {
             </div>
 
             {/* Recipient */}
-            <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-gray-200 dark:border-slate-800 p-5 sm:p-6">
+            <div className="card p-5 sm:p-6">
               <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
                 <h2 className="text-sm font-semibold text-gray-900 dark:text-slate-100">{t('letters.recipient')}</h2>
                 {canUseCustomEmail && (
                   <div className="flex gap-1 bg-gray-100 dark:bg-slate-800 p-0.5 rounded-lg">
                     <button
                       type="button"
+                      aria-pressed={effectiveRecipientMode === 'employee'}
                       onClick={() => setRecipientMode('employee')}
-                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                      className={`min-h-11 sm:min-h-9 flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] ${
                         effectiveRecipientMode === 'employee'
                           ? 'bg-white dark:bg-slate-900 text-gray-900 dark:text-slate-100 shadow-sm'
                           : 'text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200'
                       }`}
                     >
-                      <Users className="w-3.5 h-3.5" />
+                      <Users className="w-3.5 h-3.5" aria-hidden="true" />
                       {t('common.employee')}
                     </button>
                     <button
                       type="button"
+                      aria-pressed={effectiveRecipientMode === 'custom'}
                       onClick={() => setRecipientMode('custom')}
-                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                      className={`min-h-11 sm:min-h-9 flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] ${
                         effectiveRecipientMode === 'custom'
                           ? 'bg-white dark:bg-slate-900 text-gray-900 dark:text-slate-100 shadow-sm'
                           : 'text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200'
                       }`}
                     >
-                      <AtSign className="w-3.5 h-3.5" />
+                      <AtSign className="w-3.5 h-3.5" aria-hidden="true" />
                       {t('letters.customEmail')}
                     </button>
                   </div>
@@ -547,22 +587,33 @@ export function LettersPage() {
                   <>
                     {/* `isActive={null}` — a termination or an EA-form letter is
                         routinely addressed to someone who has already left. */}
-                    <EmployeePicker
-                      value={selectedEmployee}
-                      onChange={(id) => setSelectedEmployee(id)}
-                      isActive={null}
-                      placeholder={t('letters.searchEmployee')}
-                    />
+                    <FormField label={t('common.employee')} required>
+                      {(aria) => (
+                        <EmployeePicker
+                          {...aria}
+                          value={selectedEmployee}
+                          onChange={(id) => setSelectedEmployee(id)}
+                          isActive={null}
+                          placeholder={t('letters.searchEmployee')}
+                        />
+                      )}
+                    </FormField>
+                    {selectedEmployee && selectedEmpLoading && !selectedEmp && (
+                      <p role="status" className="text-xs text-gray-500 dark:text-slate-400 mt-2 flex items-center gap-1.5">
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" />
+                        {t('common.loading')}
+                      </p>
+                    )}
                     {selectedEmployee && selectedEmpError && (
                       <div role="alert" className="mt-2 flex items-center justify-between gap-2 rounded-lg border border-red-200 dark:border-red-500/30 bg-red-50 dark:bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-300">
                         <span>{getErrorMessage(selectedEmpErrorObj, t('letters.employeeLoadFailed'))}</span>
-                        <button type="button" onClick={() => void refetchSelectedEmp()} className="font-medium underline shrink-0">
+                        <button type="button" onClick={() => void refetchSelectedEmp()} className="min-h-10 sm:min-h-0 px-2 font-medium underline shrink-0">
                           {t('common.retry')}
                         </button>
                       </div>
                     )}
                     {selectedEmp && !selectedEmp.email && (
-                      <p className="text-xs text-red-500 dark:text-red-400 mt-2">{t('letters.noEmailOnFile')}</p>
+                      <p className="text-xs text-red-600 dark:text-red-400 mt-2">{t('letters.noEmailOnFile')}</p>
                     )}
                     {selectedEmp?.email && (
                       <p className="text-xs text-gray-500 dark:text-slate-400 mt-2">{t('common.email')}: {selectedEmp.email}</p>
@@ -571,7 +622,11 @@ export function LettersPage() {
                 )
               ) : (
                 <div className="space-y-3">
-                  <FormField label={t('common.email')} required>
+                  <FormField
+                    label={t('common.email')}
+                    required
+                    error={hasInvalidCustomEmail ? t('validation.email') : undefined}
+                  >
                     {(aria) => (
                       <input
                         {...aria}
@@ -602,7 +657,7 @@ export function LettersPage() {
             </div>
 
             {/* Subject & Body */}
-            <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-gray-200 dark:border-slate-800 p-5 sm:p-6 space-y-4">
+            <div className="card p-5 sm:p-6 space-y-4">
               <FormField label={t('letters.subject')} required>
                 {(aria) => (
                   <input
@@ -626,7 +681,7 @@ export function LettersPage() {
                       type="button"
                       key={token}
                       onClick={() => insertMergeVariable(token)}
-                      className="text-xs font-mono px-2.5 py-1 rounded-md bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-slate-200 hover:bg-gray-200 dark:hover:bg-slate-700 border border-gray-200 dark:border-slate-700 transition-colors"
+                      className="min-h-10 sm:min-h-0 text-xs font-mono px-2.5 py-1.5 sm:py-1 rounded-md bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-slate-200 hover:bg-gray-200 dark:hover:bg-slate-700 border border-gray-200 dark:border-slate-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                     >
                       {token}
                     </button>
@@ -642,7 +697,7 @@ export function LettersPage() {
                     value={bodyHtml}
                     onChange={(e) => setBodyHtml(e.target.value)}
                     rows={12}
-                    className="form-input font-mono text-sm"
+                    className="form-input font-mono sm:text-sm"
                   />
                 )}
               </FormField>
@@ -658,19 +713,24 @@ export function LettersPage() {
                 <button
                   type="button"
                   onClick={handlePreview}
-                  disabled={!canSend || previewMutation.isPending}
-                  className="btn-secondary"
+                  disabled={!canSubmitPreview || previewMutation.isPending}
+                  className="btn-primary w-full sm:w-auto"
                 >
-                  <Eye className="w-4 h-4" />
+                  {previewMutation.isPending ? (
+                    <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <Eye className="w-4 h-4" aria-hidden="true" />
+                  )}
                   {previewMutation.isPending ? t('common.loading') : t('letters.preview')}
                 </button>
                 {canManageTemplates && (
                   <button
                     type="button"
                     onClick={openSaveTemplateModal}
-                    className="btn-secondary"
+                    disabled={!subject.trim() || !bodyHtml.trim()}
+                    className="btn-secondary w-full sm:w-auto"
                   >
-                    <Plus className="w-4 h-4" />
+                    <Plus className="w-4 h-4" aria-hidden="true" />
                     {t('letters.saveAsTemplate')}
                   </button>
                 )}
@@ -679,11 +739,15 @@ export function LettersPage() {
           </div>
 
           {/* Right: Quick templates sidebar */}
-          <div className="space-y-4">
-            <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-gray-200 dark:border-slate-800 p-5 sm:p-6">
+          <div className="space-y-4 lg:sticky lg:top-20 lg:self-start">
+            <div className="card p-5 sm:p-6">
               <h2 className="text-sm font-semibold text-gray-900 dark:text-slate-100 mb-3">{t('letters.savedTemplates')}</h2>
               {templatesLoading ? (
-                <p className="text-sm text-gray-400 dark:text-slate-500">{t('common.loading')}</p>
+                <div role="status" aria-label={t('common.loading')} className="space-y-2.5">
+                  <Skeleton className="h-14 w-full rounded-xl" />
+                  <Skeleton className="h-14 w-full rounded-xl" />
+                  <Skeleton className="h-14 w-full rounded-xl" />
+                </div>
               ) : templatesError ? (
                 <EmptyState
                   compact
@@ -691,26 +755,34 @@ export function LettersPage() {
                   title={t('letters.templatesLoadFailed')}
                   description={getErrorMessage(templatesErrorObj)}
                   action={
-                    <button type="button" onClick={() => refetchTemplates()} className="btn-secondary !text-xs">
+                    <button type="button" onClick={() => refetchTemplates()} className="btn-secondary sm:!text-xs">
                       {t('common.retry')}
                     </button>
                   }
                 />
               ) : (!templates || templates.length === 0) ? (
-                <p className="text-sm text-gray-400 dark:text-slate-500">{t('letters.noSavedTemplates')}</p>
+                <EmptyState compact icon={FileText} title={t('letters.noSavedTemplates')} />
               ) : (
                 <div className="space-y-2">
-                  {templates.map((tpl) => (
-                    <button
-                      type="button"
-                      key={tpl.id}
-                      onClick={() => { void handleLoadTemplate(tpl); }}
-                      className="w-full text-left p-3 rounded-xl border border-gray-100 dark:border-slate-800 hover:border-gray-200 dark:hover:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-800/70 transition-colors"
-                    >
-                      <p className="text-sm font-medium text-gray-900 dark:text-slate-100 truncate">{tpl.name}</p>
-                      <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">{t(`letters.types.${tpl.letter_type}`, { defaultValue: tpl.letter_type })}</p>
-                    </button>
-                  ))}
+                  {templates.map((tpl) => {
+                    const isActive = tpl.id === loadedTemplateId;
+                    return (
+                      <button
+                        type="button"
+                        key={tpl.id}
+                        aria-current={isActive ? 'true' : undefined}
+                        onClick={() => { void handleLoadTemplate(tpl); }}
+                        className={`w-full text-left p-3 rounded-xl border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] ${
+                          isActive
+                            ? 'border-[var(--accent-1)] bg-[var(--accent-soft)]'
+                            : 'border-gray-100 dark:border-slate-800 hover:border-gray-200 dark:hover:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-800/70'
+                        }`}
+                      >
+                        <p className="text-sm font-medium text-gray-900 dark:text-slate-100 truncate">{tpl.name}</p>
+                        <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">{t(`letters.types.${tpl.letter_type}`, { defaultValue: tpl.letter_type })}</p>
+                      </button>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -749,30 +821,38 @@ export function LettersPage() {
       {/* ── Templates Tab ── */}
       {activeTab === 'templates' && (
         templatesLoading ? (
-          <div className="flex items-center justify-center py-12">
-            <div className="spinner" />
+          <div role="status" aria-label={t('common.loading')} className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
+            {[0, 1, 2].map((i) => (
+              <div key={i} className="card p-5 space-y-3">
+                <Skeleton className="h-5 w-1/2" />
+                <Skeleton className="h-4 w-24" />
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-4 w-1/3" />
+              </div>
+            ))}
           </div>
         ) : templatesError ? (
-          <EmptyState
-            icon={AlertTriangle}
-            title={t('letters.templatesLoadFailed')}
-            description={getErrorMessage(templatesErrorObj, t('letters.templatesLoadFailed'))}
-            action={
-              <button type="button" onClick={() => refetchTemplates()} className="btn-primary">
-                {t('common.retry')}
-              </button>
-            }
-          />
+          <div className="card">
+            <EmptyState
+              icon={AlertTriangle}
+              title={t('letters.templatesLoadFailed')}
+              description={getErrorMessage(templatesErrorObj, t('letters.templatesLoadFailed'))}
+              action={
+                <button type="button" onClick={() => refetchTemplates()} className="btn-primary">
+                  {t('common.retry')}
+                </button>
+              }
+            />
+          </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
             {(!templates || templates.length === 0) ? (
-              <div className="col-span-full text-center py-12 text-gray-400 dark:text-slate-500">
-                <FileText className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                <p>{t('letters.noTemplates')}</p>
+              <div className="col-span-full card">
+                <EmptyState icon={FileText} title={t('letters.noTemplates')} />
               </div>
             ) : (
               templates.map((tpl) => (
-                <div key={tpl.id} className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-gray-200 dark:border-slate-800 p-6 flex flex-col justify-between gap-4">
+                <div key={tpl.id} className="card p-5 flex flex-col justify-between gap-4">
                   <div className="min-w-0">
                     <div className="flex items-start justify-between gap-2 mb-2">
                       <div className="min-w-0">
@@ -788,9 +868,9 @@ export function LettersPage() {
                             onClick={() => openEditTemplateModal(tpl)}
                             aria-label={t('common.editName', { name: tpl.name })}
                             title={t('common.edit')}
-                            className="min-h-10 min-w-10 sm:min-h-8 sm:min-w-8 flex items-center justify-center rounded-lg text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors"
+                            className="min-h-11 min-w-11 md:min-h-8 md:min-w-8 flex items-center justify-center rounded-lg text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                           >
-                            <Pencil className="w-4 h-4" />
+                            <Pencil className="w-4 h-4" aria-hidden="true" />
                           </button>
                           <button
                             type="button"
@@ -804,21 +884,25 @@ export function LettersPage() {
                             }}
                             aria-label={t('common.deleteName', { name: tpl.name })}
                             title={t('common.delete')}
-                            className="min-h-10 min-w-10 sm:min-h-8 sm:min-w-8 flex items-center justify-center rounded-lg text-gray-400 dark:text-slate-500 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/15 disabled:opacity-50 transition-colors"
+                            className="min-h-11 min-w-11 md:min-h-8 md:min-w-8 flex items-center justify-center rounded-lg text-gray-500 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/15 disabled:opacity-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                           >
-                            <Trash2 className="w-4 h-4" />
+                            {deletingTemplateId === tpl.id && deleteTemplateMutation.isPending ? (
+                              <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                            ) : (
+                              <Trash2 className="w-4 h-4" aria-hidden="true" />
+                            )}
                           </button>
                         </div>
                       )}
                     </div>
                     <p className="text-sm text-gray-600 dark:text-slate-300 mt-2 truncate">{tpl.subject}</p>
-                    <p className="text-xs text-gray-400 dark:text-slate-500 mt-1">{t('letters.updatedAt', { date: formatDate(tpl.updated_at) })}</p>
+                    <p className="text-xs text-gray-500 dark:text-slate-400 mt-1 tabular-nums">{t('letters.updatedAt', { date: formatDate(tpl.updated_at) })}</p>
                   </div>
                   {canPreview && (
                     <button
                       type="button"
                       onClick={() => { void handleLoadTemplate(tpl); }}
-                      className="text-left text-sm font-medium text-black dark:text-slate-100 hover:text-gray-600 dark:hover:text-slate-300 transition-colors"
+                      className="min-h-11 sm:min-h-9 inline-flex items-center text-left text-sm font-medium text-[var(--accent-1)] hover:underline transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] rounded-md"
                     >
                       {t('letters.useTemplate')}
                     </button>
@@ -833,12 +917,17 @@ export function LettersPage() {
       {/* ── Preview Modal ── */}
       <Modal
         open={showPreview && preview !== null}
-        onClose={() => setShowPreview(false)}
+        onClose={() => { if (!sendMutation.isPending) setShowPreview(false); }}
         title={t('letters.reviewTitle')}
         maxWidth="max-w-2xl"
         footer={
           <div className="flex flex-col-reverse sm:flex-row justify-end gap-3">
-            <button type="button" onClick={() => setShowPreview(false)} className="btn-secondary">
+            <button
+              type="button"
+              onClick={() => setShowPreview(false)}
+              disabled={sendMutation.isPending}
+              className="btn-secondary"
+            >
               {t('common.cancel')}
             </button>
             {canSendLetters && (
@@ -848,7 +937,11 @@ export function LettersPage() {
                 disabled={sendMutation.isPending}
                 className="btn-primary"
               >
-                <Send className="w-4 h-4" />
+                {sendMutation.isPending ? (
+                  <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                ) : (
+                  <Send className="w-4 h-4" aria-hidden="true" />
+                )}
                 {sendMutation.isPending ? t('common.sending') : t('letters.sendEmail')}
               </button>
             )}
@@ -874,18 +967,18 @@ export function LettersPage() {
               <iframe
                 title={t('letters.previewTitle')}
                 sandbox=""
-                className="w-full min-h-[16rem] border border-gray-200 dark:border-slate-800 rounded-lg bg-white"
-                srcDoc={preview.body_html}
+                className="w-full min-h-[16rem] border border-gray-200 dark:border-slate-800 rounded-lg bg-white [color-scheme:light]"
+                srcDoc={`<!doctype html><html><head><meta name="color-scheme" content="light"><style>body{margin:16px;font-family:Inter,system-ui,-apple-system,sans-serif;font-size:14px;line-height:1.6;color:#111827;background:#ffffff;}</style></head><body>${preview.body_html}</body></html>`}
               />
             </div>
 
             {sendMutation.isError && (
-              <div role="alert" className="bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-300 text-sm px-4 py-3 rounded-lg">
+              <div role="alert" className="bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-300 text-sm px-4 py-3 rounded-lg border border-red-200 dark:border-red-500/30">
                 {getErrorMessage(sendMutation.error, t('letters.sendFailed'))}
               </div>
             )}
             {sendMutation.data && sendMutation.data.status !== 'sent' && sendMutation.data.status !== 'pending' && (
-              <div role="alert" className="bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-300 text-sm px-4 py-3 rounded-lg">
+              <div role="alert" className="bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-300 text-sm px-4 py-3 rounded-lg border border-red-200 dark:border-red-500/30">
                 {sendMutation.data.error_message || t('letters.recordedNotSent')}
               </div>
             )}
@@ -1012,7 +1105,7 @@ export function LettersPage() {
                     value={templateBodyHtml}
                     onChange={(e) => setTemplateBodyHtml(e.target.value)}
                     rows={8}
-                    className="form-input font-mono text-sm"
+                    className="form-input font-mono sm:text-sm"
                     required
                   />
                 )}

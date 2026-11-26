@@ -11,7 +11,7 @@ mod overtime;
 
 pub use common::{
     Reviewer, ensure_overtime_hours_within_window, ensure_positive_amount, get_pending_counts,
-    validate_overtime_type,
+    validate_overtime_type, validate_overtime_type_for_date,
 };
 
 pub use claim::{

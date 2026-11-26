@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, CheckCircle2, Clock, RefreshCw, ShieldCheck, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Clock, Loader2, RefreshCw, ShieldCheck, XCircle } from 'lucide-react';
 import {
   getPlatformHealth,
   getTwoFactorPolicy,
@@ -11,6 +11,7 @@ import {
 import { EmptyState } from '@/components/ui/EmptyState';
 import { FormField } from '@/components/ui/FormField';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { formatDateTime } from '@/lib/format';
 import { useToast } from '@/lib/toast';
 import { getErrorMessage } from '@/lib/utils';
@@ -158,8 +159,10 @@ export function PlatformSettingsPage() {
         </div>
 
         {policyQuery.isLoading ? (
-          <div className="flex justify-center py-6">
-            <div className="spinner" />
+          <div role="status" aria-label={t('common.loading')} className="space-y-4 py-2">
+            <Skeleton className="h-8 w-64" />
+            <Skeleton className="h-11 w-64 rounded-xl" />
+            <Skeleton className="h-4 w-48" />
           </div>
         ) : policyQuery.isError ? (
           <EmptyState
@@ -195,7 +198,7 @@ export function PlatformSettingsPage() {
               </div>
             )}
 
-            <label className="flex items-center gap-2.5 text-sm font-medium text-gray-800 dark:text-slate-200 cursor-pointer">
+            <label className="flex items-center gap-2.5 min-h-11 py-1 text-sm font-medium text-gray-800 dark:text-slate-200 cursor-pointer">
               <input
                 type="checkbox"
                 checked={enforce}
@@ -245,11 +248,16 @@ export function PlatformSettingsPage() {
               <button
                 type="submit"
                 disabled={savePolicyMutation.isPending}
-                className="btn-primary"
+                className="btn-primary w-full sm:w-auto inline-flex items-center justify-center gap-2"
               >
-                {savePolicyMutation.isPending
-                  ? t('common.saving')
-                  : t('platformAdmin.twoFactorPolicy.savePolicy')}
+                {savePolicyMutation.isPending ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                    {t('common.saving')}
+                  </>
+                ) : (
+                  t('platformAdmin.twoFactorPolicy.savePolicy')
+                )}
               </button>
             </div>
           </form>
@@ -263,8 +271,13 @@ export function PlatformSettingsPage() {
         </h2>
 
         {healthQuery.isLoading ? (
-          <div className="flex justify-center py-6">
-            <div className="spinner" />
+          <div role="status" aria-label={t('common.loading')} className="space-y-4 py-2">
+            <Skeleton className="h-20 w-full rounded-xl" />
+            <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-3">
+              {[0, 1, 2, 3, 4].map((i) => (
+                <Skeleton key={i} className="h-20 w-full rounded-xl" />
+              ))}
+            </div>
           </div>
         ) : healthQuery.isError || !healthQuery.data ? (
           <EmptyState
@@ -284,8 +297,8 @@ export function PlatformSettingsPage() {
           />
         ) : (
           <div className="space-y-6">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div className="rounded-xl border border-gray-100 dark:border-slate-800 p-4">
+            <div className="rounded-xl border border-gray-100 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-800/40 grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-gray-200/70 dark:divide-slate-700/60">
+              <div className="p-4">
                 <p className="text-xs text-gray-500 dark:text-slate-400">
                   {t('platformAdmin.health.version')}
                 </p>
@@ -293,7 +306,7 @@ export function PlatformSettingsPage() {
                   {healthQuery.data.version}
                 </p>
               </div>
-              <div className="rounded-xl border border-gray-100 dark:border-slate-800 p-4">
+              <div className="p-4">
                 <p className="text-xs text-gray-500 dark:text-slate-400">
                   {t('platformAdmin.health.revision')}
                 </p>
@@ -301,7 +314,7 @@ export function PlatformSettingsPage() {
                   {healthQuery.data.revision}
                 </p>
               </div>
-              <div className="rounded-xl border border-gray-100 dark:border-slate-800 p-4">
+              <div className="p-4">
                 <p className="text-xs text-gray-500 dark:text-slate-400">
                   {t('platformAdmin.health.migrations')}
                 </p>
@@ -315,58 +328,78 @@ export function PlatformSettingsPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-              <div className="rounded-xl border border-gray-100 dark:border-slate-800 p-4">
-                <p className="text-xs text-gray-500 dark:text-slate-400">
-                  {t('platformAdmin.health.emailPending')}
-                </p>
-                <p className="text-2xl font-bold text-gray-900 dark:text-slate-100 mt-1 tabular-nums">
-                  {healthQuery.data.queues.email_outbox_pending}
-                </p>
-              </div>
-              <div className="rounded-xl border border-gray-100 dark:border-slate-800 p-4">
-                <p className="text-xs text-gray-500 dark:text-slate-400">
-                  {t('platformAdmin.health.emailFailed24h')}
-                </p>
-                <p className="text-2xl font-bold text-gray-900 dark:text-slate-100 mt-1 tabular-nums">
-                  {healthQuery.data.queues.email_outbox_failed_24h}
-                </p>
-              </div>
-              <div className="rounded-xl border border-gray-100 dark:border-slate-800 p-4">
-                <p className="text-xs text-gray-500 dark:text-slate-400">
-                  {t('platformAdmin.health.pushPending')}
-                </p>
-                <p className="text-2xl font-bold text-gray-900 dark:text-slate-100 mt-1 tabular-nums">
-                  {healthQuery.data.queues.push_outbox_pending}
-                </p>
-              </div>
-              <div className="rounded-xl border border-gray-100 dark:border-slate-800 p-4">
-                <p className="text-xs text-gray-500 dark:text-slate-400">
-                  {t('platformAdmin.health.pushFailed24h')}
-                </p>
-                <p className="text-2xl font-bold text-gray-900 dark:text-slate-100 mt-1 tabular-nums">
-                  {healthQuery.data.queues.push_outbox_failed_24h}
-                </p>
-              </div>
-              <div className="rounded-xl border border-gray-100 dark:border-slate-800 p-4">
-                <p className="text-xs text-gray-500 dark:text-slate-400">
-                  {t('platformAdmin.health.jobsFailed24h')}
-                </p>
-                <p className="text-2xl font-bold text-gray-900 dark:text-slate-100 mt-1 tabular-nums">
-                  {healthQuery.data.queues.background_jobs_failed_24h}
-                </p>
-              </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-3">
+              {[
+                {
+                  key: 'emailPending',
+                  label: t('platformAdmin.health.emailPending'),
+                  value: healthQuery.data.queues.email_outbox_pending,
+                  alert: false,
+                },
+                {
+                  key: 'emailFailed',
+                  label: t('platformAdmin.health.emailFailed24h'),
+                  value: healthQuery.data.queues.email_outbox_failed_24h,
+                  alert: healthQuery.data.queues.email_outbox_failed_24h > 0,
+                },
+                {
+                  key: 'pushPending',
+                  label: t('platformAdmin.health.pushPending'),
+                  value: healthQuery.data.queues.push_outbox_pending,
+                  alert: false,
+                },
+                {
+                  key: 'pushFailed',
+                  label: t('platformAdmin.health.pushFailed24h'),
+                  value: healthQuery.data.queues.push_outbox_failed_24h,
+                  alert: healthQuery.data.queues.push_outbox_failed_24h > 0,
+                },
+                {
+                  key: 'jobsFailed',
+                  label: t('platformAdmin.health.jobsFailed24h'),
+                  value: healthQuery.data.queues.background_jobs_failed_24h,
+                  alert: healthQuery.data.queues.background_jobs_failed_24h > 0,
+                },
+              ].map((metric) => (
+                <div
+                  key={metric.key}
+                  className={`rounded-xl border p-4 ${
+                    metric.alert
+                      ? 'border-red-200 dark:border-red-500/30 bg-red-50/60 dark:bg-red-500/10'
+                      : 'border-gray-100 dark:border-slate-800'
+                  }`}
+                >
+                  <p
+                    className={`text-xs ${
+                      metric.alert
+                        ? 'text-red-700 dark:text-red-300 font-medium'
+                        : 'text-gray-500 dark:text-slate-400'
+                    }`}
+                  >
+                    {metric.label}
+                  </p>
+                  <p
+                    className={`text-2xl font-bold mt-1 tabular-nums ${
+                      metric.alert
+                        ? 'text-red-700 dark:text-red-300'
+                        : 'text-gray-900 dark:text-slate-100'
+                    }`}
+                  >
+                    {metric.value}
+                  </p>
+                </div>
+              ))}
             </div>
 
             <div className="space-y-3">
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-600 dark:text-slate-400">
                 {t('platformAdmin.health.jobsTitle')}
               </h3>
-              <div className="divide-y divide-gray-100 dark:divide-slate-800 rounded-xl border border-gray-100 dark:border-slate-800">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {jobRows.map(({ key, label, health }) => (
                   <div
                     key={key}
-                    className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 p-4"
+                    className="rounded-xl border border-gray-100 dark:border-slate-800 p-4 flex items-start justify-between gap-3"
                   >
                     <div className="space-y-0.5 min-w-0">
                       <p className="text-sm font-medium text-gray-900 dark:text-slate-100">

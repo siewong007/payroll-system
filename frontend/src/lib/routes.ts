@@ -40,6 +40,7 @@ export const ROUTES = {
   ATTENDANCE: '/attendance',
   ADMIN_ATTENDANCE_SETTINGS: '/admin/attendance-settings',
   ADMIN_PLATFORM: '/admin/platform',
+  NOTIFICATIONS: '/notifications',
   MY_ATTENDANCE: '/my/attendance',
   PORTAL: '/portal',
   PORTAL_PROFILE: '/portal/profile',

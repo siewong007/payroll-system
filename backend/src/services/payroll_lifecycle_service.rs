@@ -243,7 +243,9 @@ pub async fn cancel(
         })?;
 
     let actor_user_id = auth.0.sub;
+    let initial_run = load_run(pool, company_id, run_id).await?;
     let mut tx = pool.begin().await?;
+    payroll_runs::acquire_tax_year_lock(&mut *tx, company_id, initial_run.period_year).await?;
     let old_run = payroll_runs::get_for_company_locked(&mut *tx, run_id, company_id)
         .await?
         .ok_or_else(|| AppError::NotFound("Payroll run not found".into()))?;
@@ -391,7 +393,9 @@ pub async fn reverse_paid_run(
         })?;
 
     let actor_user_id = auth.0.sub;
+    let initial_run = load_run(pool, company_id, run_id).await?;
     let mut tx = pool.begin().await?;
+    payroll_runs::acquire_tax_year_lock(&mut *tx, company_id, initial_run.period_year).await?;
     let old_run = payroll_runs::get_for_company_locked(&mut *tx, run_id, company_id)
         .await?
         .ok_or_else(|| AppError::NotFound("Payroll run not found".into()))?;

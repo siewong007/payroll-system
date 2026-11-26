@@ -117,7 +117,7 @@ pub async fn list_page_for_admin_by_role(
               AND ($3::text IS NULL
                     OR u.full_name ILIKE '%' || $3 || '%' ESCAPE '\'
                     OR u.email ILIKE '%' || $3 || '%' ESCAPE '\')
-              AND $4 = ANY(u.roles)
+              AND u.roles @> ARRAY[$4]::varchar(50)[]
               AND NOT ($7::bool AND u.roles && ARRAY['admin', 'super_admin']::varchar[])
             ORDER BY u.created_at DESC
             LIMIT $5 OFFSET $6"#,
@@ -157,7 +157,7 @@ pub async fn count_for_admin_by_role(
               AND ($3::text IS NULL
                     OR u.full_name ILIKE '%' || $3 || '%' ESCAPE '\'
                     OR u.email ILIKE '%' || $3 || '%' ESCAPE '\')
-              AND $4 = ANY(u.roles)
+              AND u.roles @> ARRAY[$4]::varchar(50)[]
               AND NOT ($5::bool AND u.roles && ARRAY['admin', 'super_admin']::varchar[])"#,
     )
     .bind(caller_id)

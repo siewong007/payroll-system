@@ -1,9 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import { AlertTriangle, ChevronDown, ChevronRight, Download, FileText } from 'lucide-react';
 import type { LeaveReportRow } from '@/api/reports';
 import { getErrorMessage } from '@/lib/utils';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { getLeaveEligibility, groupByEmployee } from './leaveReportHelpers';
 
 function formatDayValue(value: number): string {
@@ -28,6 +29,7 @@ export function LeaveEntitlementReport({
   onExport: () => void;
 }) {
   const { t } = useTranslation();
+  const panelPrefix = useId();
   const [expandedEmployee, setExpandedEmployee] = useState<string | null>(null);
   const [search, setSearch] = useState('');
 
@@ -46,9 +48,10 @@ export function LeaveEntitlementReport({
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-48" role="status">
-        <span className="sr-only">{t('common.loading')}</span>
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[var(--accent-1)]" />
+      <div role="status" aria-busy="true" aria-label={t('common.loading')} className="space-y-2.5">
+        {[0, 1, 2, 3].map((i) => (
+          <Skeleton key={i} className="h-18 w-full rounded-2xl" />
+        ))}
       </div>
     );
   }
@@ -85,7 +88,7 @@ export function LeaveEntitlementReport({
             aria-label={t('reports.searchEmployee')}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="form-input w-full sm:w-56 !text-sm"
+            className="form-input min-h-11 sm:min-h-10 sm:w-56 sm:text-sm"
           />
           {hasRawData && (
             <button type="button" onClick={onExport} className="btn-secondary min-h-11 sm:min-h-9 !py-1.5 !px-3 !text-xs">
@@ -96,24 +99,28 @@ export function LeaveEntitlementReport({
       </div>
 
       {groups.length === 0 ? (
-        <div className="text-center py-16 text-gray-500 dark:text-slate-400 space-y-3">
-          <FileText className="w-8 h-8 mx-auto opacity-40" aria-hidden="true" />
-          <p className="text-sm">
-            {hasRawData && search.trim()
-              ? t('reports.noMatchingEmployees')
-              : t('reports.noLeaveData', { year })}
-          </p>
-          {hasRawData && search.trim() && (
-            <button type="button" onClick={() => setSearch('')} className="btn-secondary min-h-11 sm:min-h-9">
-              {t('reports.clearSearch')}
-            </button>
-          )}
+        <div className="card">
+          <EmptyState
+            icon={FileText}
+            title={
+              hasRawData && search.trim()
+                ? t('reports.noMatchingEmployees')
+                : t('reports.noLeaveData', { year })
+            }
+            action={
+              hasRawData && search.trim() ? (
+                <button type="button" onClick={() => setSearch('')} className="btn-secondary min-h-11 sm:min-h-9">
+                  {t('reports.clearSearch')}
+                </button>
+              ) : undefined
+            }
+          />
         </div>
       ) : (
         <div className="space-y-2">
-          {groups.map((g, groupIdx) => {
+          {groups.map((g) => {
             const isOpen = expandedEmployee === g.employee_number;
-            const panelId = `leave-report-panel-${groupIdx}`;
+            const panelId = `${panelPrefix}-${g.employee_number}`;
             const totalBalance = g.leaves.reduce((sum, l) => {
               const elig = getLeaveEligibility(
                 t,
@@ -138,7 +145,7 @@ export function LeaveEntitlementReport({
             return (
               <div
                 key={g.employee_number}
-                className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 overflow-hidden"
+                className="card !p-0 overflow-hidden"
               >
                 {/* Employee header */}
                 <button
@@ -146,9 +153,9 @@ export function LeaveEntitlementReport({
                   aria-expanded={isOpen}
                   aria-controls={panelId}
                   onClick={() => setExpandedEmployee(isOpen ? null : g.employee_number)}
-                  className="w-full min-h-11 flex items-center gap-3 sm:gap-4 px-4 sm:px-5 py-4 hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors text-left"
+                  className="w-full min-h-11 flex items-center gap-3 sm:gap-4 px-4 sm:px-5 py-4 hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ring)]"
                 >
-                  <div className="text-gray-400 dark:text-slate-500 shrink-0" aria-hidden="true">
+                  <div className="text-gray-500 dark:text-slate-400 shrink-0" aria-hidden="true">
                     {isOpen ? (
                       <ChevronDown className="w-4 h-4" />
                     ) : (
@@ -183,7 +190,7 @@ export function LeaveEntitlementReport({
                 {isOpen && (
                   <div id={panelId} className="border-t border-gray-100 dark:border-slate-800">
                     <div className="divide-y divide-gray-100 dark:divide-slate-800 md:hidden">
-                      {g.leaves.map((l, i) => {
+                      {g.leaves.map((l) => {
                         const elig = getLeaveEligibility(
                           t,
                           l.leave_type_name,
@@ -192,7 +199,7 @@ export function LeaveEntitlementReport({
                           g.num_children,
                         );
                         return (
-                          <div key={i} className={`p-4 space-y-2 ${!elig.eligible ? 'bg-gray-50/70 dark:bg-slate-800/30' : ''}`}>
+                          <div key={l.leave_type_name} className={`p-4 space-y-2 ${!elig.eligible ? 'bg-gray-50/70 dark:bg-slate-800/30' : ''}`}>
                             <p className="font-medium text-sm text-gray-900 dark:text-slate-100">{l.leave_type_name}</p>
                             <div>
                               {elig.eligible ? (
@@ -214,23 +221,23 @@ export function LeaveEntitlementReport({
                               )}
                             </div>
                             {elig.eligible && (
-                              <div className="grid grid-cols-4 gap-2 pt-1 text-xs tabular-nums">
+                              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 text-xs tabular-nums">
                                 <div>
-                                  <span className="text-gray-400 dark:text-slate-500 block">{t('reports.entitled')}</span>
+                                  <span className="text-gray-500 dark:text-slate-400 block">{t('reports.entitled')}</span>
                                   <span className="text-gray-700 dark:text-slate-200">{Number(l.entitled_days)}</span>
                                 </div>
                                 <div>
-                                  <span className="text-gray-400 dark:text-slate-500 block">{t('reports.taken')}</span>
+                                  <span className="text-gray-500 dark:text-slate-400 block">{t('reports.taken')}</span>
                                   <span className="text-gray-700 dark:text-slate-200">{Number(l.taken_days)}</span>
                                 </div>
                                 <div>
-                                  <span className="text-gray-400 dark:text-slate-500 block">{t('enums.requestStatus.pending')}</span>
+                                  <span className="text-gray-500 dark:text-slate-400 block">{t('enums.requestStatus.pending')}</span>
                                   <span className={Number(l.pending_days) > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-gray-700 dark:text-slate-200'}>
                                     {Number(l.pending_days)}
                                   </span>
                                 </div>
                                 <div>
-                                  <span className="text-gray-400 dark:text-slate-500 block">{t('reports.balance')}</span>
+                                  <span className="text-gray-500 dark:text-slate-400 block">{t('reports.balance')}</span>
                                   <span className={`font-bold ${Number(l.balance) > 0 ? 'text-emerald-600 dark:text-emerald-400' : Number(l.balance) < 0 ? 'text-red-600 dark:text-red-400' : 'text-gray-700 dark:text-slate-200'}`}>
                                     {Number(l.balance)}
                                   </span>
@@ -267,7 +274,7 @@ export function LeaveEntitlementReport({
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100 dark:divide-slate-800">
-                          {g.leaves.map((l, i) => {
+                          {g.leaves.map((l) => {
                             const elig = getLeaveEligibility(
                               t,
                               l.leave_type_name,
@@ -276,7 +283,7 @@ export function LeaveEntitlementReport({
                               g.num_children,
                             );
                             return (
-                              <tr key={i} className={!elig.eligible ? 'bg-gray-50/70 dark:bg-slate-800/30' : ''}>
+                              <tr key={l.leave_type_name} className={!elig.eligible ? 'bg-gray-50/70 dark:bg-slate-800/30' : ''}>
                                 <td className="px-5 py-3 font-medium text-gray-900 dark:text-slate-100 whitespace-nowrap">
                                   {l.leave_type_name}
                                 </td>

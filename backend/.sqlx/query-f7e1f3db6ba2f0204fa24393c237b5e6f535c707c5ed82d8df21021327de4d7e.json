@@ -112,6 +112,28 @@
             "name": "locked_until"
           }
         }
+      },
+      {
+        "ordinal": 10,
+        "name": "code_login_failed_attempts",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "user_totp",
+            "name": "code_login_failed_attempts"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "code_login_locked_until",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "user_totp",
+            "name": "code_login_locked_until"
+          }
+        }
       }
     ],
     "parameters": {
@@ -124,6 +146,8 @@
       false,
       true,
       false,
+      false,
+      true,
       false,
       true,
       false,

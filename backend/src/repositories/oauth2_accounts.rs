@@ -107,6 +107,17 @@ pub async fn delete_for_user(
     Ok(rows)
 }
 
+pub async fn delete_all_for_user(
+    executor: impl Executor<'_, Database = Postgres>,
+    user_id: Uuid,
+) -> AppResult<u64> {
+    let rows = sqlx::query!("DELETE FROM oauth2_accounts WHERE user_id = $1", user_id)
+        .execute(executor)
+        .await?
+        .rows_affected();
+    Ok(rows)
+}
+
 pub async fn list_for_user(
     executor: impl Executor<'_, Database = Postgres>,
     user_id: Uuid,

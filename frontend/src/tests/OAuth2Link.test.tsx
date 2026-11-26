@@ -1,5 +1,6 @@
 import { MemoryRouter } from 'react-router';
 import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { linkGoogleAccount } from '@/api/oauth2';
 
@@ -46,7 +47,8 @@ describe('OAuth2Link', () => {
     authState.isLoading = false;
   });
 
-  it('posts the code and state, then returns to the page that started the flow', async () => {
+  it('requires password confirmation before posting code and state, then returns', async () => {
+    const typer = userEvent.setup();
     sessionStorage.setItem('oauth2_link_return', '/settings');
     linkGoogle.mockResolvedValue({
       id: 'acc-1',
@@ -59,24 +61,27 @@ describe('OAuth2Link', () => {
 
     await loadLinkPage('?code=auth-code&state=state-hash');
 
-    await waitFor(() => expect(linkGoogle).toHaveBeenCalledWith('auth-code', 'state-hash'));
+    expect(linkGoogle).not.toHaveBeenCalled();
+    expect(window.location.search).toBe('');
+    expect(window.location.pathname).toBe('/oauth2/link');
+
+    const submit = await screen.findByRole('button', { name: 'Link Google account' });
+    expect(submit).toBeDisabled();
+
+    await typer.type(screen.getByPlaceholderText('Current password'), 'MyPass123!');
+    await typer.click(submit);
+
+    await waitFor(() =>
+      expect(linkGoogle).toHaveBeenCalledWith('auth-code', 'state-hash', 'MyPass123!'),
+    );
     await waitFor(() => expect(navigate).toHaveBeenCalledWith('/settings', { replace: true }));
     expect(sessionStorage.getItem('oauth2_link_return')).toBeNull();
   });
 
-  it('strips the credentials from the URL once read', async () => {
-    linkGoogle.mockResolvedValue({
-      id: 'acc-1',
-      provider: 'google',
-      provider_email: null,
-      provider_name: null,
-      avatar_url: null,
-      linked_at: '2026-09-12T00:00:00Z',
-    });
-
+  it('strips the credentials from the URL immediately on mount', async () => {
     await loadLinkPage('?code=auth-code&state=state-hash');
 
-    await waitFor(() => expect(linkGoogle).toHaveBeenCalled());
+    await screen.findByRole('button', { name: 'Link Google account' });
     expect(window.location.search).toBe('');
     expect(window.location.pathname).toBe('/oauth2/link');
   });
@@ -100,7 +105,7 @@ describe('OAuth2Link', () => {
     expect(linkGoogle).not.toHaveBeenCalled();
   });
 
-  it('does not post while the session refresh is still in flight', async () => {
+  it('does not prompt or post while the session refresh is still in flight', async () => {
     authState.isLoading = true;
     await loadLinkPage('?code=auth-code&state=state-hash');
 
@@ -117,9 +122,12 @@ describe('OAuth2Link', () => {
   });
 
   it('surfaces a failed link instead of navigating', async () => {
+    const typer = userEvent.setup();
     linkGoogle.mockRejectedValue(new Error('This Google account is already linked to another user'));
 
     await loadLinkPage('?code=auth-code&state=state-hash');
+    await typer.type(await screen.findByPlaceholderText('Current password'), 'MyPass123!');
+    await typer.click(screen.getByRole('button', { name: 'Link Google account' }));
 
     expect(
       await screen.findByText(/already linked to another user/i),

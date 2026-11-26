@@ -182,14 +182,16 @@ async fn user_group_members_must_share_the_group_company() {
     let company_a = crate::tests::support::seed_company(&pool).await;
     let company_b = crate::tests::support::seed_company(&pool).await;
     let owner = crate::tests::support::seed_user(&pool, company_a, "admin").await;
-    // A user whose only company is B.
+    // A user whose only company is B (seed_user already inserts user_companies).
     let outsider = crate::tests::support::seed_user(&pool, company_b, "admin").await;
-    sqlx::query("INSERT INTO user_companies (user_id, company_id) VALUES ($1, $2)")
-        .bind(outsider)
-        .bind(company_b)
-        .execute(&pool)
-        .await
-        .expect("link outsider to company B");
+    sqlx::query(
+        "INSERT INTO user_companies (user_id, company_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+    )
+    .bind(outsider)
+    .bind(company_b)
+    .execute(&pool)
+    .await
+    .expect("link outsider to company B");
 
     let group_id: uuid::Uuid = sqlx::query_scalar(
         "INSERT INTO user_groups (company_id, name, created_by) VALUES ($1, $2, $3) RETURNING id",

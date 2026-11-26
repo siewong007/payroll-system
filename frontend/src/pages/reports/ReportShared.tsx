@@ -10,18 +10,26 @@ export function SummaryField({ label, value }: { label: string; value: string })
 export function SummaryCard({
   label,
   value,
+  sub,
   className,
 }: {
   label: string;
   value: string;
+  sub?: string;
   className?: string;
 }) {
   return (
-    <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 px-4 py-3">
-      <p className="text-xs text-gray-500 dark:text-slate-400 uppercase tracking-wide">{label}</p>
-      <p className={`text-sm font-semibold mt-1 tabular-nums ${className || 'text-gray-900 dark:text-slate-100'}`}>
+    <div className="card hover-lift !px-4 !py-3 min-w-0">
+      <p className="text-xs text-gray-500 dark:text-slate-400 uppercase tracking-wide truncate">{label}</p>
+      <p
+        title={value}
+        className={`text-sm font-semibold mt-1 tabular-nums truncate ${className || 'text-gray-900 dark:text-slate-100'}`}
+      >
         {value}
       </p>
+      {sub && (
+        <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5 tabular-nums truncate">{sub}</p>
+      )}
     </div>
   );
 }

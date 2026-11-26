@@ -14,8 +14,9 @@ use crate::services::email_service;
 use crate::services::notification_service;
 
 use super::common::{
-    Reviewer, audit_self_approval_override, ensure_employee_in_company, ensure_not_self_approval,
-    ensure_positive_amount, reviewer_employee_id,
+    Reviewer, audit_self_approval_override, ensure_employee_in_company,
+    ensure_not_creator_or_editor, ensure_not_self_approval, ensure_positive_amount,
+    reviewer_employee_id,
 };
 use crate::models::upload::UploadAccess;
 use crate::services::upload_service;
@@ -55,6 +56,7 @@ pub async fn create_claim_admin(
         req.receipt_url,
         req.receipt_file_name,
         req.expense_date,
+        actor_id,
     )
     .await?;
 
@@ -112,6 +114,7 @@ pub async fn update_claim_admin(
         req.receipt_url,
         req.receipt_file_name,
         req.expense_date,
+        actor_id,
     )
     .await?
     .ok_or_else(|| {
@@ -283,6 +286,7 @@ pub async fn approve_claim(
         .ok_or_else(|| AppError::BadRequest("Claim not found or not pending".into()))?;
 
     ensure_not_self_approval(reviewer_employee, claim.employee_id, "claim")?;
+    ensure_not_creator_or_editor(&reviewer, claim.created_by, claim.updated_by, "claim")?;
 
     tx.commit().await?;
 

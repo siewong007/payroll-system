@@ -524,6 +524,22 @@ fn truncate_body_preview(body: &str, max_chars: usize) -> String {
         .collect()
 }
 
+async fn read_capped_error_body(mut response: reqwest::Response, max_bytes: usize) -> String {
+    let mut buf = Vec::with_capacity(max_bytes.min(4096));
+    while let Ok(Some(chunk)) = response.chunk().await {
+        let remaining = max_bytes.saturating_sub(buf.len());
+        if remaining == 0 {
+            break;
+        }
+        let take = chunk.len().min(remaining);
+        buf.extend_from_slice(&chunk[..take]);
+        if buf.len() >= max_bytes {
+            break;
+        }
+    }
+    String::from_utf8_lossy(&buf).into_owned()
+}
+
 pub async fn send_encrypted_push(
     client: &SharedPushClient,
     endpoint: &str,
@@ -589,7 +605,7 @@ pub async fn send_encrypted_push(
     }
 
     let code = status.as_u16();
-    let resp_text = response.text().await.unwrap_or_default();
+    let resp_text = read_capped_error_body(response, 4096).await;
     let detail = if resp_text.trim().is_empty() {
         format!("HTTP {code}")
     } else {
@@ -766,8 +782,11 @@ pub async fn send_test_push(
         ));
     }
 
-    let subs: Vec<PushSubscription> =
-        push_subscriptions::list_active_for_user(pool, user_id).await?;
+    let subs: Vec<PushSubscription> = push_subscriptions::list_active_for_user(pool, user_id)
+        .await?
+        .into_iter()
+        .take(20)
+        .collect();
     if subs.is_empty() {
         return Ok(TestPushResponse {
             queued: 0,

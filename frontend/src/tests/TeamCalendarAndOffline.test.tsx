@@ -200,4 +200,81 @@ describe('OfflineBanner and layout accessibility', () => {
       'min-w-11',
     );
   });
+
+  it('renders AppLayout notification bell to /notifications, preferences popover, and legal footer', async () => {
+    const user = userEvent.setup();
+    notificationMocks.getNotificationCount.mockResolvedValue({ unread: 120 });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/dashboard']}>
+          <Routes>
+            <Route element={<AppLayout />}>
+              <Route path="/dashboard" element={<div>Dashboard Content</div>} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    const bell = screen.getByRole('link', { name: i18n.t('nav.portal.notifications') });
+    expect(bell).toHaveAttribute('href', '/notifications');
+    expect(await screen.findByText('99+')).toBeInTheDocument();
+
+    const prefsBtn = screen.getByRole('button', { name: i18n.t('nav.preferences') });
+    await user.click(prefsBtn);
+    expect(screen.getByRole('group', { name: i18n.t('ux.appearance.label') })).toBeInTheDocument();
+    expect(screen.getByLabelText(i18n.t('language.label'))).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: i18n.t('nav.accountSecurity') })).toHaveAttribute(
+      'href',
+      '/account',
+    );
+
+    await user.keyboard('{Escape}');
+    await waitFor(() =>
+      expect(screen.queryByRole('group', { name: i18n.t('ux.appearance.label') })).not.toBeInTheDocument(),
+    );
+
+    expect(screen.getByRole('link', { name: i18n.t('legal.links.terms') })).toHaveAttribute('href', '/terms');
+    expect(screen.getByRole('link', { name: i18n.t('legal.links.privacy') })).toHaveAttribute('href', '/privacy');
+    expect(screen.getByRole('link', { name: i18n.t('legal.links.compliance') })).toHaveAttribute('href', '/compliance');
+  });
+
+  it('renders persistent bell and hides no-profile warning banner on /portal/notifications', async () => {
+    notificationMocks.getNotificationCount.mockResolvedValue({ unread: 4 });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { unmount } = render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/portal/notifications']}>
+          <Routes>
+            <Route element={<PortalLayout />}>
+              <Route path="/portal/notifications" element={<div>Notifications Body</div>} />
+              <Route path="/portal/profile" element={<div>Profile Body</div>} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    const bell = screen.getByRole('link', { name: i18n.t('nav.portal.notifications') });
+    expect(bell).toHaveAttribute('href', '/portal/notifications');
+    expect(await screen.findByText('4')).toBeInTheDocument();
+    expect(screen.queryByText(i18n.t('nav.portal.noProfileTitle'))).not.toBeInTheDocument();
+    unmount();
+
+    const client2 = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client2}>
+        <MemoryRouter initialEntries={['/portal/profile']}>
+          <Routes>
+            <Route element={<PortalLayout />}>
+              <Route path="/portal/profile" element={<div>Profile Body</div>} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByText(i18n.t('nav.portal.noProfileTitle'))).toBeInTheDocument();
+  });
 });

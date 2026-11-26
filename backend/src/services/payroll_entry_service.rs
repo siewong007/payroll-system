@@ -31,11 +31,11 @@ fn validate_payroll_entry(
         ));
     }
 
-    let normalized_type = item_type.trim();
+    let normalized_type = item_type.trim().to_ascii_lowercase();
     if normalized_type.is_empty() {
         return Err(AppError::BadRequest("Item type is required".into()));
     }
-    if matches!(normalized_type, "overtime" | "claim_reimbursement") {
+    if matches!(normalized_type.as_str(), "overtime" | "claim_reimbursement") {
         return Err(AppError::BadRequest(format!(
             "Item type '{normalized_type}' is managed automatically by approvals and cannot be created manually"
         )));
@@ -45,10 +45,11 @@ fn validate_payroll_entry(
         return Err(AppError::BadRequest("Description is required".into()));
     }
 
-    if amount <= 0 {
-        return Err(AppError::BadRequest(
-            "Amount must be greater than zero".into(),
-        ));
+    if amount <= 0 || amount > crate::models::payroll::MAX_MONEY_SEN {
+        return Err(AppError::BadRequest(format!(
+            "Amount must be between 1 and {} sen",
+            crate::models::payroll::MAX_MONEY_SEN
+        )));
     }
 
     Ok(())
@@ -119,6 +120,7 @@ pub async fn create_entry(
     )?;
     ensure_employee_in_company(pool, company_id, req.employee_id).await?;
 
+    let normalized_type = req.item_type.trim().to_ascii_lowercase();
     let entry = payroll_entries::insert(
         pool,
         req.employee_id,
@@ -126,7 +128,7 @@ pub async fn create_entry(
         req.period_year,
         req.period_month,
         req.category.trim(),
-        req.item_type.trim(),
+        &normalized_type,
         req.description.trim(),
         req.amount,
         req.quantity,
@@ -198,6 +200,7 @@ pub async fn update_entry(
     )?;
     ensure_employee_in_company(pool, company_id, employee_id).await?;
 
+    let normalized_type = item_type.trim().to_ascii_lowercase();
     let updated = payroll_entries::update(
         pool,
         id,
@@ -206,7 +209,7 @@ pub async fn update_entry(
         period_year,
         period_month,
         category.trim(),
-        item_type.trim(),
+        &normalized_type,
         description.trim(),
         amount,
         quantity,
@@ -214,7 +217,8 @@ pub async fn update_entry(
         req.is_taxable,
         actor_id,
     )
-    .await?;
+    .await?
+    .ok_or_else(|| AppError::Conflict("Payroll entry was already processed".into()))?;
 
     let _ = audit_service::log_action_with_metadata(
         pool,
@@ -247,7 +251,12 @@ pub async fn delete_entry(
         })?;
     ensure_entry_is_manual(&current)?;
 
-    payroll_entries::delete_unprocessed(pool, id, company_id).await?;
+    let deleted = payroll_entries::delete_unprocessed(pool, id, company_id).await?;
+    if deleted == 0 {
+        return Err(AppError::Conflict(
+            "Payroll entry was already processed".into(),
+        ));
+    }
 
     let _ = audit_service::log_action_with_metadata(
         pool,

@@ -1,0 +1,66 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n            (u.id IS NOT NULL) AS \"user_active!\",\n            COALESCE(u.must_change_password, FALSE) AS \"must_change_password!\",\n            e.is_active AS \"employee_active?\",\n            EXISTS(\n                SELECT 1 FROM user_sessions\n                WHERE id = $3\n                  AND user_id = $1\n                  AND revoked_at IS NULL\n                  AND expires_at > NOW()\n                  AND created_at > NOW() - INTERVAL '30 days'\n            ) AS \"session_active!\",\n            CASE\n                WHEN $4::uuid IS NULL THEN TRUE\n                ELSE EXISTS(\n                    SELECT 1 FROM user_companies\n                    WHERE user_id = $1 AND company_id = $4\n                )\n            END AS \"company_member!\",\n            CASE\n                WHEN $4::uuid IS NULL THEN ARRAY[]::text[]\n                ELSE COALESCE(\n                    ARRAY(\n                        SELECT DISTINCT p.permission\n                        FROM user_group_members m\n                        JOIN user_groups g ON g.id = m.group_id\n                        JOIN user_group_permissions p ON p.group_id = g.id\n                        WHERE m.user_id = $1 AND g.company_id = $4 AND g.is_active = TRUE\n                    ),\n                    ARRAY[]::text[]\n                )\n            END AS \"group_permissions!\"\n        FROM (VALUES (1)) AS _single(k)\n        LEFT JOIN users u\n          ON u.id = $1\n         AND u.is_active = TRUE\n         AND u.deleted_at IS NULL\n        LEFT JOIN employees e\n          ON e.id = $2\n         AND e.deleted_at IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "user_active!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "must_change_password!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "employee_active?",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "is_active"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "session_active!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "company_member!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "group_permissions!",
+        "type_info": "VarcharArray",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      true,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "c5735bc3f2d742fb921a2e144ac4446e53335949b12686e332f47424fd459f5a"
+}

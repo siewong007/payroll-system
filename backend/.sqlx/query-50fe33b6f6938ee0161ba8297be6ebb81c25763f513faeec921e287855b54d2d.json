@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT u.id FROM users u\n        INNER JOIN passkey_credentials pc ON pc.user_id = u.id\n        WHERE lower(btrim(u.email)) = lower(btrim($1))\n          AND u.is_active = TRUE\n          AND u.deleted_at IS NULL\n        LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "50fe33b6f6938ee0161ba8297be6ebb81c25763f513faeec921e287855b54d2d"
+}

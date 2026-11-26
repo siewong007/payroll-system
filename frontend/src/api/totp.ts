@@ -22,8 +22,8 @@ export async function totpSetupBegin(): Promise<TotpSetupResponse> {
   return data;
 }
 
-export async function totpSetupConfirm(code: string): Promise<TotpConfirmResponse> {
-  const { data } = await api.post('/auth/2fa/setup/confirm', { code });
+export async function totpSetupConfirm(code: string, password: string): Promise<TotpConfirmResponse> {
+  const { data } = await api.post('/auth/2fa/setup/confirm', { code, password });
   return data;
 }
 
@@ -37,8 +37,16 @@ export async function totpRegenerateBackupCodes(password: string): Promise<TotpC
 }
 
 // Login flow (unauthenticated — completes a pending 2FA challenge)
-export async function verifyTwoFactorLogin(mfaToken: string, code: string): Promise<LoginResponse> {
-  const { data } = await api.post('/auth/2fa/verify', { mfa_token: mfaToken, code });
+export async function verifyTwoFactorLogin(
+  mfaToken: string,
+  code: string,
+  turnstileToken?: string,
+): Promise<LoginResponse> {
+  const { data } = await api.post('/auth/2fa/verify', {
+    mfa_token: mfaToken,
+    code,
+    ...(turnstileToken ? { turnstile_token: turnstileToken } : {}),
+  });
   return data;
 }
 
