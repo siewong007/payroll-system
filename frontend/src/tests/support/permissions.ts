@@ -45,7 +45,7 @@ const ROLE_PERMISSIONS: Record<AppRole, PermissionKey[]> = {
     'view_approvals', 'manage_approvals', 'view_reports',
     'view_documents', 'manage_documents', 'view_email_logs', 'manage_email_templates', 'send_letters',
     'manage_company_settings', 'manage_work_schedules', 'manage_geofence',
-    'view_user_directory',
+    'view_user_directory', 'view_audit_log',
   ],
   payroll_admin: [
     'view_payroll', 'manage_payroll_draft', 'submit_payroll',

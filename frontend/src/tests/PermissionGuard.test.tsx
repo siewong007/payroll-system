@@ -156,8 +156,8 @@ describe('PermissionGuard route matrix', () => {
     {
       route: '/audit-trail',
       requires: 'view_audit_log',
-      admits: ['super_admin', 'admin'],
-      denies: ['manager', 'payroll_admin', 'hr_manager', 'finance', 'exec', 'employee'],
+      admits: ['super_admin', 'admin', 'manager'],
+      denies: ['payroll_admin', 'hr_manager', 'finance', 'exec', 'employee'],
     },
     {
       route: '/attendance',
