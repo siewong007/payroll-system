@@ -33,11 +33,26 @@ fn redact_payroll_fields(employee: &mut Employee) {
     employee.hrdf_contribution = None;
     employee.payroll_group_id = None;
     employee.salary_group = None;
+    redact_bank_fields(employee);
 }
 
-/// Identity, contact and banking details. Separate from payroll figures because
-/// HR roles legitimately need these while read-only roles (e.g. `exec`) do not,
-/// and a leaked bank account is what lets salary payment be redirected.
+/// Banking decides where salary lands, so it is payroll-sensitive on read as
+/// well as on write: a caller without `ViewPayroll` (e.g. `hr_manager` or
+/// `manager`, who still hold `ManageEmployees`) never receives these fields.
+/// Applied through `redact_payroll_fields`, so every path that hides payroll
+/// figures also hides banking.
+fn redact_bank_fields(employee: &mut Employee) {
+    employee.bank_name = None;
+    employee.bank_account_number = None;
+    employee.bank_account_type = None;
+}
+
+/// Identity and contact details. Separate from payroll figures because HR
+/// roles legitimately need these while read-only roles (e.g. `exec`) do not.
+/// Banking is deliberately NOT here: it is redacted with the payroll figures
+/// (see `redact_bank_fields`), because a leaked bank account is what lets a
+/// salary payment be redirected and HR roles without `ViewPayroll` have no
+/// need to read it.
 fn redact_personal_fields(employee: &mut Employee) {
     employee.ic_number = None;
     employee.passport_number = None;
@@ -48,9 +63,6 @@ fn redact_personal_fields(employee: &mut Employee) {
     employee.city = None;
     employee.state = None;
     employee.postcode = None;
-    employee.bank_name = None;
-    employee.bank_account_number = None;
-    employee.bank_account_type = None;
 }
 
 fn create_request_touches_payroll_fields(req: &CreateEmployeeRequest) -> bool {
@@ -99,6 +111,10 @@ fn update_request_touches_payroll_fields(req: &UpdateEmployeeRequest) -> bool {
         || req.bank_name.is_some()
         || req.bank_account_number.is_some()
         || req.bank_account_type.is_some()
+        // The clear flags wipe stored banking, which is just as sensitive as
+        // overwriting it. Only an explicit `true` counts: `false` is a no-op.
+        || req.clear_bank_name == Some(true)
+        || req.clear_bank_account_number == Some(true)
 }
 
 pub async fn list(

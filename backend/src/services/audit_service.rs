@@ -189,7 +189,8 @@ fn is_payroll_audit_key(key: &str, entity_type: &str) -> bool {
             | "salary_group"
             | "payroll_group_id"
             | "unpaid_leave_divisor"
-    ) || k.starts_with("epf_")
+    ) || k.starts_with("bank_")
+        || k.starts_with("epf_")
         || k.starts_with("socso_")
         || k.starts_with("eis_")
         || k.starts_with("hrdf_")

@@ -205,8 +205,8 @@ export function EmployeeProfile({ employeeId }: { employeeId: string }) {
               value={formatMYR(employee.basic_salary)}
             />
           )}
-          <InfoField label={t('employees.fields.bank')} value={employee.bank_name} restricted={!showPersonalSensitive} />
-          <InfoField label={t('employees.fields.accountNo')} value={employee.bank_account_number} restricted={!showPersonalSensitive} />
+          <InfoField label={t('employees.fields.bank')} value={employee.bank_name} restricted={!canViewPayroll} />
+          <InfoField label={t('employees.fields.accountNo')} value={employee.bank_account_number} restricted={!canViewPayroll} />
           <InfoField label={t('employees.fields.costCentre')} value={employee.cost_centre} />
           <InfoField label={t('employees.fields.branch')} value={employee.branch} />
         </div>

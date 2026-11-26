@@ -61,6 +61,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one canonical file per document type (`AGENTS.md`, `docs/*.md`), and erased
   implemented and stale plans/audits.
 
+### Security
+
+- **Bank details are payroll-only** — employee `bank_*` fields are now redacted
+  with the payroll figures (`redact_payroll_fields`) on every employee
+  list/detail/create/update response for callers without `view_payroll`
+  (e.g. `hr_manager`, `manager`); audit diffs redact any `bank_*` key;
+  `clear_bank_name`/`clear_bank_account_number` are rejected for those roles so
+  an HR save cannot wipe stored banking; the employee detail and profile
+  drawer show banking as restricted. Payroll roles and the employee's own
+  portal profile are unchanged.
+
 ## [0.2.0] - 2026-09-20
 
 ### Added
