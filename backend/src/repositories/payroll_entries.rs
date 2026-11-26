@@ -133,34 +133,6 @@ pub async fn delete_unprocessed(
     Ok(res.rows_affected())
 }
 
-/// Lock unprocessed staged entries for the employees in this run so concurrent
-/// payroll processing cannot double-include or mutate them before `mark_processed`.
-pub async fn lock_staged(
-    executor: impl Executor<'_, Database = Postgres>,
-    employee_ids: &[Uuid],
-    year: i32,
-    month: i32,
-) -> AppResult<()> {
-    if employee_ids.is_empty() {
-        return Ok(());
-    }
-    sqlx::query!(
-        r#"SELECT id FROM payroll_entries
-        WHERE employee_id = ANY($1)
-          AND period_year = $2
-          AND period_month = $3
-          AND is_processed = FALSE
-        ORDER BY id
-        FOR UPDATE"#,
-        employee_ids,
-        year,
-        month,
-    )
-    .fetch_all(executor)
-    .await?;
-    Ok(())
-}
-
 /// Mark the exact staged entries that fed a payslip as processed, attaching the run id.
 pub async fn mark_processed(
     executor: impl Executor<'_, Database = Postgres>,
@@ -179,6 +151,31 @@ pub async fn mark_processed(
     .execute(executor)
     .await?;
     Ok(res.rows_affected())
+}
+
+/// Whether `actor_user_id` created or edited any manual staged `payroll_entries`
+/// consumed by `run_id` (excludes system-generated overtime/unpaid-leave/claim markers).
+pub async fn actor_authored_manual_entries_for_run(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    run_id: Uuid,
+    actor_user_id: Uuid,
+) -> AppResult<bool> {
+    let authored = sqlx::query_scalar!(
+        r#"SELECT EXISTS(
+            SELECT 1 FROM payroll_entries
+            WHERE company_id = $1
+              AND payroll_run_id = $2
+              AND item_type NOT IN ('overtime', 'unpaid_leave', 'claim_reimbursement')
+              AND (created_by = $3 OR updated_by = $3)
+        ) AS "authored!""#,
+        company_id,
+        run_id,
+        actor_user_id,
+    )
+    .fetch_one(executor)
+    .await?;
+    Ok(authored)
 }
 
 /// Revert a run's staged entries back to unprocessed (used when deleting a run).

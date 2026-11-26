@@ -203,8 +203,10 @@ pub async fn purge_unreferenced_uploads(pool: &PgPool, min_age_hours: i32) -> Ap
     let removed = uploaded_files::purge_unreferenced_older_than_hours(pool, min_age_hours).await?;
     let count = removed.len() as u64;
     for stored_name in removed {
-        if let Ok(path) = upload_path::stored_path(&stored_name) {
-            let _ = tokio::fs::remove_file(&path).await;
+        if let Ok(path) = upload_path::stored_path(&stored_name)
+            && let Ok(confined) = upload_path::confine_existing_file(&path)
+        {
+            let _ = tokio::fs::remove_file(&confined).await;
         }
     }
     Ok(count)
@@ -249,7 +251,10 @@ pub async fn read_authorized(
         return Err(AppError::NotFound("File not found".into()));
     }
 
-    tokio::fs::read(&path)
+    let confined = upload_path::confine_existing_file(&path)
+        .map_err(|_| AppError::NotFound("File not found".into()))?;
+
+    tokio::fs::read(&confined)
         .await
         .map_err(|_| AppError::NotFound("File not found".into()))
 }

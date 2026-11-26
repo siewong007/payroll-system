@@ -60,6 +60,20 @@ pub async fn user_has_company(
     Ok(found.is_some())
 }
 
+/// First remaining company membership for `user_id` in deterministic order.
+pub async fn first_company_for_user(
+    executor: impl Executor<'_, Database = Postgres>,
+    user_id: Uuid,
+) -> AppResult<Option<Uuid>> {
+    let cid = sqlx::query_scalar!(
+        "SELECT company_id FROM user_companies WHERE user_id = $1 ORDER BY company_id LIMIT 1",
+        user_id,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(cid)
+}
+
 pub async fn delete_by_user(
     executor: impl Executor<'_, Database = Postgres>,
     user_id: Uuid,

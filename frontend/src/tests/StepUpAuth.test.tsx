@@ -41,6 +41,7 @@ describe('Step-up password confirmation on credential enrollment', () => {
   beforeEach(() => {
     Object.values(totpMocks).forEach((fn) => fn.mockReset());
     Object.values(passkeyMocks).forEach((fn) => fn.mockReset());
+    totpMocks.totpStatus.mockResolvedValue({ enabled: false });
     webauthnMocks.isWebAuthnSupported.mockReturnValue(true);
     webauthnMocks.createPasskeyCredential.mockReset();
   });
@@ -108,6 +109,47 @@ describe('Step-up password confirmation on credential enrollment', () => {
         { id: 'cred-1' },
         'Work Laptop',
       ),
+    );
+  });
+
+  it('requires password alongside 2FA code to disable 2FA or delete a passkey when 2FA is enabled', async () => {
+    const typer = userEvent.setup();
+    totpMocks.totpStatus.mockResolvedValue({ enabled: true });
+    totpMocks.totpDisable.mockResolvedValue(undefined);
+    passkeyMocks.listPasskeys.mockResolvedValue([
+      {
+        id: 'pk-1',
+        credential_name: 'Work Laptop',
+        created_at: '2026-01-01T00:00:00Z',
+        last_used_at: null,
+      },
+    ]);
+    passkeyMocks.deletePasskey.mockResolvedValue(undefined);
+
+    renderWithClient(<TwoFactorSetup />);
+    await typer.click(await screen.findByRole('button', { name: 'Disable 2FA' }));
+    const confirmDisable = await screen.findByRole('button', { name: 'Confirm' });
+    expect(confirmDisable).toBeDisabled();
+    await typer.type(screen.getByPlaceholderText('Current password'), 'MyStepUpPass1!');
+    expect(confirmDisable).toBeDisabled();
+    await typer.type(screen.getByPlaceholderText('123456'), '654321');
+    expect(confirmDisable).toBeEnabled();
+    await typer.click(confirmDisable);
+    await waitFor(() =>
+      expect(totpMocks.totpDisable).toHaveBeenCalledWith('MyStepUpPass1!', '654321'),
+    );
+
+    renderWithClient(<PasskeyManagement />);
+    await typer.click(await screen.findByRole('button', { name: 'Delete' }));
+    const deleteSubmit = await screen.findByRole('button', { name: 'Delete passkey' });
+    expect(deleteSubmit).toBeDisabled();
+    await typer.type(screen.getAllByPlaceholderText('Current password').at(-1)!, 'MyStepUpPass1!');
+    expect(deleteSubmit).toBeDisabled();
+    await typer.type(screen.getAllByPlaceholderText('123456').at(-1)!, '654321');
+    expect(deleteSubmit).toBeEnabled();
+    await typer.click(deleteSubmit);
+    await waitFor(() =>
+      expect(passkeyMocks.deletePasskey).toHaveBeenCalledWith('pk-1', 'MyStepUpPass1!', '654321'),
     );
   });
 });

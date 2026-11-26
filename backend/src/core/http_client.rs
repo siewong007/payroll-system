@@ -67,15 +67,16 @@ pub fn is_blocked_ip(ip: IpAddr) -> bool {
 }
 
 fn is_blocked_v4(ip: Ipv4Addr) -> bool {
-    let [a, b, _, _] = ip.octets();
+    let [a, b, c, _] = ip.octets();
 
     // The blocks with no stable predicate of their own: 0/8 "this network",
     // 100.64/10 carrier-grade NAT, 192.0.0/24 IETF protocol assignments,
-    // 198.18/15 benchmarking, and 240/4 reserved — which subsumes the
-    // 255.255.255.255 broadcast address.
+    // 192.88.99/24 6to4 relay anycast, 198.18/15 benchmarking, and
+    // 240/4 reserved — which subsumes the 255.255.255.255 broadcast address.
     let reserved = a == 0
         || (a == 100 && (64..=127).contains(&b))
         || (a == 192 && b == 0)
+        || (a == 192 && b == 88 && c == 99)
         || (a == 198 && (18..=19).contains(&b))
         || a >= 240;
 
@@ -217,6 +218,7 @@ pub async fn fetch_public_text(raw: &str, max_bytes: usize) -> AppResult<String>
     let mut builder = reqwest::Client::builder()
         .timeout(FETCH_TIMEOUT)
         .connect_timeout(CONNECT_TIMEOUT)
+        .no_proxy()
         .redirect(reqwest::redirect::Policy::none());
     if let Some(domain) = &domain {
         builder = builder.resolve_to_addrs(domain, &addrs);
@@ -307,6 +309,8 @@ mod tests {
             "169.254.169.254",
             "100.64.0.1",
             "192.0.0.1",
+            "192.88.99.1",
+            "::ffff:192.88.99.1",
             "198.18.0.1",
             "192.0.2.1",
             "198.51.100.1",

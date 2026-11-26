@@ -8,6 +8,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { AuthLayout } from '@/components/layout/AuthLayout';
 import { TurnstileWidget } from '@/components/TurnstileWidget';
 import { PASSWORD_MAX_BYTES, PASSWORD_MIN_LENGTH, passwordPolicyHint, validatePassword } from '@/lib/password';
+import { turnstileEnabled } from '@/lib/turnstile';
 import { useTurnstileWaiter } from '@/lib/useTurnstileWaiter';
 import { getErrorMessage } from '@/lib/utils';
 
@@ -84,6 +85,11 @@ export function ResetPassword() {
     setLoading(true);
     try {
       const captcha = await waitForTurnstileToken();
+      if (turnstileEnabled() && !captcha) {
+        resetTurnstileWidget();
+        setError(t('auth.verificationSlow'));
+        return;
+      }
       await resetPassword(token, password, captcha);
       setSuccess(true);
     } catch (err: unknown) {
@@ -219,6 +225,7 @@ export function ResetPassword() {
             <div className="flex justify-center">
               <TurnstileWidget
                 ref={turnstileRef}
+                action="reset_password"
                 onVerify={handleTurnstileVerify}
                 onExpire={handleTurnstileExpire}
                 onError={handleTurnstileError}

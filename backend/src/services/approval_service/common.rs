@@ -91,14 +91,10 @@ pub async fn validate_overtime_type_for_date(
         }
         "rest_day" => {
             let config = working_day_config::list_for_company(pool, company_id).await?;
-            let mut working_days_of_week = [false; 7];
-            if config.is_empty() {
-                working_days_of_week[1..=5].fill(true);
-            } else {
-                for c in &config {
-                    if (0..=6).contains(&c.day_of_week) {
-                        working_days_of_week[c.day_of_week as usize] = c.is_working_day;
-                    }
+            let mut working_days_of_week = [false, true, true, true, true, true, false];
+            for c in &config {
+                if (0..=6).contains(&c.day_of_week) {
+                    working_days_of_week[c.day_of_week as usize] = c.is_working_day;
                 }
             }
             let dow = ot_date.weekday().num_days_from_sunday() as usize;
@@ -185,31 +181,37 @@ pub struct Reviewer {
     pub may_self_approve: bool,
 }
 
-/// The employee record the reviewer is, if the guard applies to them.
-///
-/// `None` for an override holder (nothing to compare against) and for a
-/// reviewer with no employee record at all — an admin who is not on the payroll
-/// can approve anyone. Resolved on the pool *before* the approval transaction
-/// opens: acquiring a second pooled connection while holding one risks
-/// exhausting the pool.
-pub(super) async fn reviewer_employee_id(
-    pool: &PgPool,
+/// Refuse an approval whose subject belongs to the approver (checked inside the
+/// approval transaction against `target_employee_id` via `EXISTS`, so duplicate
+/// employee records can never shadow ownership).
+pub(super) async fn ensure_not_self_approval_on(
+    executor: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
     reviewer: &Reviewer,
     company_id: Uuid,
-) -> AppResult<Option<Uuid>> {
+    target_employee_id: Uuid,
+    what: &str,
+) -> AppResult<()> {
     if reviewer.may_self_approve {
-        return Ok(None);
+        return Ok(());
     }
-    user_repo::employee_id_for_user_in_company(pool, reviewer.user_id, company_id).await
+    if user_repo::is_employee_owned_by_user(
+        executor,
+        reviewer.user_id,
+        target_employee_id,
+        company_id,
+    )
+    .await?
+    {
+        return Err(AppError::Forbidden(format!(
+            "You cannot approve your own {what}. Ask another approver, or a super admin, to review it."
+        )));
+    }
+    Ok(())
 }
 
-/// Record that the guard was lifted, when it actually was.
-///
-/// A super admin approving their own claim must not be indistinguishable in
-/// `/api/audit-logs` from an ordinary approval, so the override gets an action
-/// of its own alongside the normal `approve_*` row. The extra `users` read
-/// happens only on the override branch — `reviewer_employee_id` returns `None`
-/// for an override holder, so there is nothing to compare until here.
+/// Record that a `super_admin` lifted a maker-checker guard (self-target,
+/// creator, or prior editor).
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn audit_self_approval_override(
     pool: &PgPool,
     reviewer: &Reviewer,
@@ -217,17 +219,26 @@ pub(super) async fn audit_self_approval_override(
     entity_type: &str,
     entity_id: Uuid,
     target_employee_id: Uuid,
+    created_by: Option<Uuid>,
+    updated_by: Option<Uuid>,
+    editor_ids: &[Uuid],
     audit_meta: Option<&crate::services::audit_service::AuditRequestMeta>,
 ) {
     if !reviewer.may_self_approve {
         return;
     }
-    let Ok(Some(employee_id)) =
-        user_repo::employee_id_for_user_in_company(pool, reviewer.user_id, company_id).await
-    else {
-        return;
-    };
-    if employee_id != target_employee_id {
+    let is_self_target = user_repo::is_employee_owned_by_user(
+        pool,
+        reviewer.user_id,
+        target_employee_id,
+        company_id,
+    )
+    .await
+    .unwrap_or(false);
+    let is_creator_or_editor = created_by == Some(reviewer.user_id)
+        || updated_by == Some(reviewer.user_id)
+        || editor_ids.contains(&reviewer.user_id);
+    if !is_self_target && !is_creator_or_editor {
         return;
     }
 
@@ -239,47 +250,35 @@ pub(super) async fn audit_self_approval_override(
         entity_type,
         Some(entity_id),
         None,
-        Some(serde_json::json!({ "employee_id": target_employee_id })),
-        Some("Super admin approved their own submission; the maker-checker guard was overridden"),
+        Some(serde_json::json!({
+            "employee_id": target_employee_id,
+            "self_target": is_self_target,
+            "creator_or_editor": is_creator_or_editor,
+        })),
+        Some("Super admin approved their own submission or edit; the maker-checker guard was overridden"),
         audit_meta,
     )
     .await;
 }
 
-/// Refuse an approval whose subject is the approver.
-///
-/// Pure, and compared against the employee id of the row the compare-and-swap
-/// actually returned rather than an earlier read, so the caller's `?` rolls the
-/// approval back. Only `approve_*` is guarded: rejecting yourself costs nothing,
-/// cancelling removes money, and raising your own claim through the portal is
-/// legitimate — the approval is the control point in maker-checker.
-pub(super) fn ensure_not_self_approval(
-    reviewer_employee_id: Option<Uuid>,
-    target_employee_id: Uuid,
-    what: &str,
-) -> AppResult<()> {
-    if reviewer_employee_id == Some(target_employee_id) {
-        return Err(AppError::Forbidden(format!(
-            "You cannot approve your own {what}. Ask another approver, or a super admin, to review it."
-        )));
-    }
-    Ok(())
-}
-
-/// Four-eyes maker-checker guard: the user who created or last edited a request
-/// may not be the same user who approves it.
+/// Four-eyes maker-checker guard: the user who created or ever edited a
+/// request may not be the same user who approves it.
 pub(super) fn ensure_not_creator_or_editor(
     reviewer: &Reviewer,
     created_by: Option<Uuid>,
     updated_by: Option<Uuid>,
+    editor_ids: &[Uuid],
     what: &str,
 ) -> AppResult<()> {
     if reviewer.may_self_approve {
         return Ok(());
     }
-    if created_by == Some(reviewer.user_id) || updated_by == Some(reviewer.user_id) {
+    if created_by == Some(reviewer.user_id)
+        || updated_by == Some(reviewer.user_id)
+        || editor_ids.contains(&reviewer.user_id)
+    {
         return Err(AppError::Forbidden(format!(
-            "You cannot approve a {what} you created or last edited. Ask another approver to review it."
+            "You cannot approve a {what} you created or edited. Ask another approver to review it."
         )));
     }
     Ok(())

@@ -80,6 +80,10 @@ pub struct CreateUserRequest {
     pub full_name: String,
     pub roles: Vec<String>,
     pub company_ids: Vec<Uuid>,
+    #[serde(default)]
+    pub actor_password: Option<String>,
+    #[serde(default)]
+    pub actor_totp_code: Option<String>,
 }
 
 impl std::fmt::Debug for CreateUserRequest {
@@ -90,6 +94,14 @@ impl std::fmt::Debug for CreateUserRequest {
             .field("full_name", &self.full_name)
             .field("roles", &self.roles)
             .field("company_ids", &self.company_ids)
+            .field(
+                "actor_password",
+                &self.actor_password.as_ref().map(|_| "***"),
+            )
+            .field(
+                "actor_totp_code",
+                &self.actor_totp_code.as_ref().map(|_| "***"),
+            )
             .finish()
     }
 }
@@ -97,7 +109,7 @@ impl std::fmt::Debug for CreateUserRequest {
 /// `full_name` and `email` carry `min = 1` because the repository update uses
 /// `COALESCE`, which only preserves the stored value for SQL NULL — an explicit
 /// `""` would otherwise blank the column.
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Deserialize, Validate)]
 pub struct UpdateUserRequest {
     #[validate(length(min = 1, max = 255, message = "full name cannot be blank"))]
     pub full_name: Option<String>,
@@ -109,6 +121,33 @@ pub struct UpdateUserRequest {
     pub roles: Option<Vec<String>>,
     pub is_active: Option<bool>,
     pub company_ids: Option<Vec<Uuid>>,
+    #[serde(default)]
+    pub actor_password: Option<String>,
+    #[serde(default)]
+    pub actor_totp_code: Option<String>,
+}
+
+impl std::fmt::Debug for UpdateUserRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UpdateUserRequest")
+            .field("full_name", &self.full_name)
+            .field(
+                "email",
+                &self.email.as_deref().map(crate::core::redact::email),
+            )
+            .field("roles", &self.roles)
+            .field("is_active", &self.is_active)
+            .field("company_ids", &self.company_ids)
+            .field(
+                "actor_password",
+                &self.actor_password.as_ref().map(|_| "***"),
+            )
+            .field(
+                "actor_totp_code",
+                &self.actor_totp_code.as_ref().map(|_| "***"),
+            )
+            .finish()
+    }
 }
 
 #[derive(Debug, Deserialize)]

@@ -216,6 +216,8 @@ impl SharedPushClient {
 
         let http = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
+            .no_proxy()
+            .connect_timeout(Duration::from_secs(5))
             .timeout(Duration::from_secs(15))
             .dns_resolver(Arc::new(PublicOnlyResolver))
             .build()

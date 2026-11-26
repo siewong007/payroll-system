@@ -6,6 +6,7 @@ import { forgotPassword } from '@/api/admin';
 import { BrandLogo } from '@/components/ui/BrandLogo';
 import { AuthLayout } from '@/components/layout/AuthLayout';
 import { TurnstileWidget } from '@/components/TurnstileWidget';
+import { turnstileEnabled } from '@/lib/turnstile';
 import { useTurnstileWaiter } from '@/lib/useTurnstileWaiter';
 import { getErrorMessage } from '@/lib/utils';
 
@@ -30,6 +31,11 @@ export function ForgotPassword() {
     setLoading(true);
     try {
       const token = await waitForTurnstileToken();
+      if (turnstileEnabled() && !token) {
+        resetTurnstileWidget();
+        setError(t('auth.verificationSlow'));
+        return;
+      }
       await forgotPassword(email, token);
       setSubmitted(true);
     } catch (err: unknown) {
@@ -95,6 +101,7 @@ export function ForgotPassword() {
             <div className="flex justify-center">
               <TurnstileWidget
                 ref={turnstileRef}
+                action="forgot_password"
                 onVerify={handleTurnstileVerify}
                 onExpire={handleTurnstileExpire}
                 onError={handleTurnstileError}

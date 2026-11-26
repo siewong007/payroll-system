@@ -25,15 +25,27 @@ pub async fn list_passkeys(pool: &PgPool, user_id: Uuid) -> AppResult<Vec<Passke
         .collect())
 }
 
-pub async fn get_passkeys_for_user(pool: &PgPool, user_id: Uuid) -> AppResult<Vec<Passkey>> {
+pub async fn get_passkey_records_for_user(
+    pool: &PgPool,
+    user_id: Uuid,
+) -> AppResult<Vec<(Uuid, Passkey)>> {
     let rows = passkey_credentials::all_for_user(pool, user_id).await?;
 
     rows.into_iter()
         .map(|r| {
-            serde_json::from_value::<Passkey>(r.credential_json)
-                .map_err(|e| AppError::Internal(format!("Failed to deserialize passkey: {}", e)))
+            let pk = serde_json::from_value::<Passkey>(r.credential_json)
+                .map_err(|e| AppError::Internal(format!("Failed to deserialize passkey: {e}")))?;
+            Ok((r.id, pk))
         })
         .collect()
+}
+
+pub async fn get_passkeys_for_user(pool: &PgPool, user_id: Uuid) -> AppResult<Vec<Passkey>> {
+    Ok(get_passkey_records_for_user(pool, user_id)
+        .await?
+        .into_iter()
+        .map(|(_, pk)| pk)
+        .collect())
 }
 
 pub async fn save_passkey(
@@ -54,18 +66,57 @@ pub async fn save_passkey(
 
 pub async fn update_passkey_after_auth(
     pool: &PgPool,
+    passkey_id: Uuid,
     user_id: Uuid,
-    updated_passkey: &Passkey,
+    auth_result: &webauthn_rs::prelude::AuthenticationResult,
 ) -> AppResult<()> {
-    // webauthn-rs may update the credential's counter; persist that
-    let json = serde_json::to_value(updated_passkey)
-        .map_err(|e| AppError::Internal(format!("Failed to serialize passkey: {}", e)))?;
+    let mut tx = pool.begin().await?;
+    let row = passkey_credentials::get_by_id_for_update(&mut *tx, passkey_id, user_id)
+        .await?
+        .ok_or_else(|| AppError::Unauthorized("Passkey credential was removed".into()))?;
 
-    // Match by the credential ID inside the JSON
-    let cred_id = serde_json::to_value(updated_passkey.cred_id())
-        .map_err(|e| AppError::Internal(format!("Failed to serialize cred_id: {}", e)))?;
+    let mut passkey: Passkey = serde_json::from_value(row.credential_json.clone())
+        .map_err(|e| AppError::Internal(format!("Failed to deserialize passkey: {e}")))?;
 
-    passkey_credentials::update_credential_json(pool, user_id, &cred_id, &json).await
+    let stored_counter = row
+        .credential_json
+        .pointer("/cred/counter")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let new_counter = u64::from(auth_result.counter());
+    // WebAuthn §7.2 step 17: if either counter is non-zero, the new signature
+    // counter must strictly exceed the locked database value. Re-checking after
+    // `FOR UPDATE` blocks concurrent assertions using the same counter value.
+    if (new_counter > 0 || stored_counter > 0) && new_counter <= stored_counter {
+        tracing::warn!(
+            %user_id,
+            %passkey_id,
+            stored_counter,
+            new_counter,
+            "passkey counter regression or concurrent replay detected"
+        );
+        return Err(AppError::Unauthorized(
+            "Authenticator counter regression detected".into(),
+        ));
+    }
+
+    passkey
+        .update_credential(auth_result)
+        .ok_or_else(|| AppError::Unauthorized("Credential mismatch during update".into()))?;
+
+    let json = serde_json::to_value(&passkey)
+        .map_err(|e| AppError::Internal(format!("Failed to serialize passkey: {e}")))?;
+
+    let affected =
+        passkey_credentials::update_credential_json_by_id(&mut *tx, passkey_id, user_id, &json)
+            .await?;
+    if affected != 1 {
+        return Err(AppError::Unauthorized(
+            "Passkey credential update failed".into(),
+        ));
+    }
+    tx.commit().await?;
+    Ok(())
 }
 
 pub async fn rename_passkey(

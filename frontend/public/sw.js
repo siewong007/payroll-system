@@ -125,8 +125,8 @@ function hasControlOrBackslash(value) {
 function isSafeRelativeAssetPath(value) {
   return (
     typeof value === 'string' &&
-    value.startsWith('/') &&
-    !value.startsWith('//') &&
+    value.startsWith('/icons/') &&
+    !value.includes('..') &&
     !hasControlOrBackslash(value)
   );
 }
@@ -136,15 +136,18 @@ function sanitizeNotificationUrl(rawUrl) {
     return DEFAULT_NOTIFICATION_URL;
   }
   const trimmed = rawUrl.trim();
-  if (hasControlOrBackslash(trimmed)) {
+  if (!trimmed || trimmed.startsWith('//') || hasControlOrBackslash(trimmed)) {
     return DEFAULT_NOTIFICATION_URL;
-  }
-  if (trimmed.startsWith('/') && !trimmed.startsWith('//')) {
-    return trimmed;
   }
   try {
     const parsed = new URL(trimmed, self.location.origin);
-    if (parsed.origin === self.location.origin && !hasControlOrBackslash(parsed.pathname)) {
+    if (
+      (parsed.protocol === 'http:' || parsed.protocol === 'https:') &&
+      parsed.origin === self.location.origin &&
+      parsed.pathname.startsWith('/') &&
+      !parsed.pathname.startsWith('//') &&
+      !hasControlOrBackslash(parsed.pathname)
+    ) {
       return `${parsed.pathname}${parsed.search}${parsed.hash}`;
     }
   } catch {
@@ -201,7 +204,16 @@ self.addEventListener('push', (event) => {
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const targetPath = sanitizeNotificationUrl(event.notification?.data?.url);
-  const targetUrl = new URL(targetPath, self.location.origin).href;
+  let targetUrl;
+  try {
+    const resolved = new URL(targetPath, self.location.origin);
+    if (resolved.origin !== self.location.origin) {
+      return;
+    }
+    targetUrl = resolved.href;
+  } catch {
+    return;
+  }
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async (clients) => {

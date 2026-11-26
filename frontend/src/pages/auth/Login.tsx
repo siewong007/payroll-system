@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useNavigate, Navigate, Link, useSearchParams } from 'react-router';
 import type { User } from '@/types';
 import { useQuery } from '@tanstack/react-query';
@@ -9,7 +9,7 @@ import { useTranslation } from 'react-i18next';
 import { AuthLayout } from '@/components/layout/AuthLayout';
 import { getErrorMessage, safeRedirectPath } from '@/lib/utils';
 import { hasOnlyEmployeeRole } from '@/lib/roles';
-import { checkPasskey, passkeyAuthBegin, passkeyAuthComplete, passkeyDiscoverableBegin, passkeyDiscoverableComplete } from '@/api/passkey';
+import { passkeyDiscoverableBegin, passkeyDiscoverableComplete } from '@/api/passkey';
 import { codeLogin } from '@/api/totp';
 import { getPasskeyCredential, isWebAuthnSupported } from '@/lib/webauthn';
 import { BrandLogo } from '@/components/ui/BrandLogo';
@@ -28,7 +28,6 @@ export function Login() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [passkeyLoading, setPasskeyLoading] = useState(false);
-  const [hasPasskey, setHasPasskey] = useState(false);
   const [webauthnSupported] = useState(isWebAuthnSupported());
   const [mfaToken, setMfaToken] = useState<string | null>(null);
   const [codeMethod, setCodeMethod] = useState<'totp' | 'backup' | null>(null);
@@ -49,11 +48,11 @@ export function Login() {
   // and resets the widget to mint the next one.
   const {
     widgetRef: turnstileRef,
-    takeToken: takeTurnstileToken,
     waitForToken: waitForTurnstileToken,
     handleVerify: handleTurnstileVerify,
     handleExpire: handleTurnstileExpire,
     handleError: handleTurnstileError,
+    resetWidget: resetTurnstileWidget,
   } = useTurnstileWaiter();
   const anySubmitting = loading || passkeyLoading || googleLoading;
 
@@ -64,24 +63,6 @@ export function Login() {
   });
 
   const googleProvider = providers?.find((p) => p.provider === 'google' && p.enabled);
-
-  // Check if email has passkeys when email changes (only when Turnstile is off,
-  // because probing /auth/passkey/check steals the single-use Turnstile token).
-  useEffect(() => {
-    if (!webauthnSupported || turnstileEnabled() || !email || !email.includes('@')) {
-      setHasPasskey(false);
-      return;
-    }
-    const timer = setTimeout(async () => {
-      try {
-        const { has_passkey } = await checkPasskey(email, takeTurnstileToken());
-        setHasPasskey(has_passkey);
-      } catch {
-        setHasPasskey(false);
-      }
-    }, 500);
-    return () => clearTimeout(timer);
-  }, [email, takeTurnstileToken, webauthnSupported]);
 
   if (isAuthenticated && user) {
     if (user.must_change_password) {
@@ -130,19 +111,9 @@ export function Login() {
         setError(t('auth.verificationSlow'));
         return;
       }
-      let response;
-
-      if (email && hasPasskey) {
-        // Email-based flow: server sends allowCredentials for this user
-        const { challenge_id, options } = await passkeyAuthBegin(email, token);
-        const credential = await getPasskeyCredential(options.publicKey);
-        response = await passkeyAuthComplete(challenge_id, credential);
-      } else {
-        // Discoverable flow: browser shows all available passkeys for this site
-        const { challenge_id, options } = await passkeyDiscoverableBegin(token);
-        const credential = await getPasskeyCredential(options.publicKey);
-        response = await passkeyDiscoverableComplete(challenge_id, credential);
-      }
+      const { challenge_id, options } = await passkeyDiscoverableBegin(token);
+      const credential = await getPasskeyCredential(options.publicKey);
+      const response = await passkeyDiscoverableComplete(challenge_id, credential);
 
       if ('requires_2fa' in response && response.requires_2fa) {
         setMfaToken(response.mfa_token);
@@ -209,7 +180,9 @@ export function Login() {
   // at a time; a view swap remounts and re-mints, which the waiter tolerates.
   const turnstile = (
     <TurnstileWidget
+      key={codeMethod ? 'code_login' : 'login'}
       ref={turnstileRef}
+      action={codeMethod ? 'code_login' : 'login'}
       onVerify={handleTurnstileVerify}
       onExpire={handleTurnstileExpire}
       onError={handleTurnstileError}
@@ -250,6 +223,7 @@ export function Login() {
                 <button
                   type="button"
                   onClick={() => {
+                    resetTurnstileWidget();
                     setCodeMethod(null);
                     setCodeValue('');
                     setError('');
@@ -487,6 +461,7 @@ export function Login() {
                       <button
                         type="button"
                         onClick={() => {
+                          resetTurnstileWidget();
                           setError('');
                           setCodeMethod('totp');
                         }}
@@ -499,6 +474,7 @@ export function Login() {
                       <button
                         type="button"
                         onClick={() => {
+                          resetTurnstileWidget();
                           setError('');
                           setCodeMethod('backup');
                         }}

@@ -66,20 +66,43 @@ pub struct TotpVerifyLoginRequest {
     pub turnstile_token: Option<String>,
 }
 
-#[derive(Debug, Deserialize, validator::Validate)]
+#[derive(Deserialize, validator::Validate)]
 pub struct TotpDisableRequest {
     #[validate(length(min = 1, message = "password is required"))]
     pub password: String,
+    #[serde(default)]
+    pub totp_code: Option<String>,
+}
+
+impl std::fmt::Debug for TotpDisableRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TotpDisableRequest")
+            .field("password", &"***")
+            .field("totp_code", &self.totp_code.as_ref().map(|_| "***"))
+            .finish()
+    }
 }
 
 /// Super-admin break-glass reset: the caller re-presents their own password
-/// so a stolen super_admin session cannot strip 2FA off other accounts.
+/// (and TOTP code when 2FA is enabled) so a stolen super_admin session cannot
+/// strip 2FA off other accounts.
 pub type AdminTotpResetRequest = TotpDisableRequest;
 
-#[derive(Debug, Deserialize, validator::Validate)]
+#[derive(Deserialize, validator::Validate)]
 pub struct TotpRegenerateBackupCodesRequest {
     #[validate(length(min = 1, message = "password is required"))]
     pub password: String,
+    #[serde(default)]
+    pub totp_code: Option<String>,
+}
+
+impl std::fmt::Debug for TotpRegenerateBackupCodesRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TotpRegenerateBackupCodesRequest")
+            .field("password", &"***")
+            .field("totp_code", &self.totp_code.as_ref().map(|_| "***"))
+            .finish()
+    }
 }
 
 /// Platform 2FA enforcement policy (plan item 36). `grace_until` is a UTC
@@ -96,10 +119,31 @@ pub struct TwoFactorPolicyResponse {
     pub non_compliant: Vec<String>,
 }
 
-#[derive(Debug, Deserialize, validator::Validate)]
+#[derive(Deserialize, validator::Validate)]
 pub struct TwoFactorPolicyRequest {
     pub enforce: bool,
     /// `Some(date)` sets/extends the grace window; `None` means a hard cut —
     /// refused while any privileged account still lacks an enrolment.
     pub grace_until: Option<NaiveDate>,
+    #[serde(default)]
+    pub actor_password: Option<String>,
+    #[serde(default)]
+    pub actor_totp_code: Option<String>,
+}
+
+impl std::fmt::Debug for TwoFactorPolicyRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TwoFactorPolicyRequest")
+            .field("enforce", &self.enforce)
+            .field("grace_until", &self.grace_until)
+            .field(
+                "actor_password",
+                &self.actor_password.as_ref().map(|_| "***"),
+            )
+            .field(
+                "actor_totp_code",
+                &self.actor_totp_code.as_ref().map(|_| "***"),
+            )
+            .finish()
+    }
 }

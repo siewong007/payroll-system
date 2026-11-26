@@ -68,6 +68,28 @@ pub fn stored_path(name: &str) -> AppResult<PathBuf> {
     Ok(Path::new(UPLOAD_DIR).join(sanitize_stored_name(name)?))
 }
 
+/// Verify an existing file under [`UPLOAD_DIR`] is a regular non-symlink file
+/// whose canonical path remains within the canonicalized [`UPLOAD_DIR`].
+pub fn confine_existing_file(path: &Path) -> AppResult<PathBuf> {
+    confine_existing_file_in(Path::new(UPLOAD_DIR), path)
+}
+
+fn confine_existing_file_in(base_dir: &Path, path: &Path) -> AppResult<PathBuf> {
+    let meta =
+        std::fs::symlink_metadata(path).map_err(|_| AppError::NotFound("File not found".into()))?;
+    if meta.file_type().is_symlink() || !meta.file_type().is_file() {
+        return Err(invalid_name());
+    }
+    let base =
+        std::fs::canonicalize(base_dir).map_err(|_| AppError::NotFound("File not found".into()))?;
+    let canonical =
+        std::fs::canonicalize(path).map_err(|_| AppError::NotFound("File not found".into()))?;
+    if !canonical.starts_with(&base) {
+        return Err(invalid_name());
+    }
+    Ok(canonical)
+}
+
 /// Mint a safe server-owned stored name while preserving only an allow-listed
 /// extension from an untrusted archive key.
 pub fn generated_stored_name(archive_key: &str) -> Option<String> {
@@ -233,5 +255,49 @@ mod tests {
         assert!(validate_optional_file_url(None).is_ok());
         assert!(validate_optional_file_url(Some("/api/uploads/a.pdf")).is_ok());
         assert!(validate_optional_file_url(Some("/api/uploads/../x")).is_err());
+    }
+
+    #[test]
+    fn confine_existing_file_accepts_regular_files_and_rejects_escapes() {
+        struct TempDir(PathBuf);
+        impl Drop for TempDir {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+
+        let root = std::env::temp_dir().join(format!("payroll_upload_confine_{}", Uuid::new_v4()));
+        let base_dir = root.join("uploads");
+        let nested_dir = base_dir.join("nested");
+        let outside_dir = root.join("outside");
+        std::fs::create_dir_all(&nested_dir).expect("create nested upload dir");
+        std::fs::create_dir_all(&outside_dir).expect("create outside dir");
+        let _guard = TempDir(root);
+
+        let safe_file = base_dir.join("receipt.pdf");
+        std::fs::write(&safe_file, b"%PDF-1.4").expect("write safe file");
+        let confined = confine_existing_file_in(&base_dir, &safe_file).expect("allow regular file");
+        assert!(confined.starts_with(std::fs::canonicalize(&base_dir).unwrap()));
+
+        let outside_file = outside_dir.join("secret.txt");
+        std::fs::write(&outside_file, b"secret").expect("write outside file");
+        assert!(matches!(
+            confine_existing_file_in(&base_dir, &outside_file),
+            Err(AppError::BadRequest(_))
+        ));
+        assert!(matches!(
+            confine_existing_file_in(&base_dir, &nested_dir),
+            Err(AppError::BadRequest(_))
+        ));
+
+        #[cfg(unix)]
+        {
+            let link_path = base_dir.join("escape.pdf");
+            std::os::unix::fs::symlink(&outside_file, &link_path).expect("create test symlink");
+            assert!(matches!(
+                confine_existing_file_in(&base_dir, &link_path),
+                Err(AppError::BadRequest(_))
+            ));
+        }
     }
 }

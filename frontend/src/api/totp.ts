@@ -27,12 +27,21 @@ export async function totpSetupConfirm(code: string, password: string): Promise<
   return data;
 }
 
-export async function totpDisable(password: string): Promise<void> {
-  await api.post('/auth/2fa/disable', { password });
+export async function totpDisable(password: string, totpCode?: string): Promise<void> {
+  await api.post('/auth/2fa/disable', {
+    password,
+    ...(totpCode ? { totp_code: totpCode } : {}),
+  });
 }
 
-export async function totpRegenerateBackupCodes(password: string): Promise<TotpConfirmResponse> {
-  const { data } = await api.post('/auth/2fa/backup-codes/regenerate', { password });
+export async function totpRegenerateBackupCodes(
+  password: string,
+  totpCode?: string,
+): Promise<TotpConfirmResponse> {
+  const { data } = await api.post('/auth/2fa/backup-codes/regenerate', {
+    password,
+    ...(totpCode ? { totp_code: totpCode } : {}),
+  });
   return data;
 }
 

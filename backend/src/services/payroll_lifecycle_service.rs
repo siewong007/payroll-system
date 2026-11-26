@@ -5,7 +5,7 @@ use crate::core::auth::{AuthUser, Permission};
 use crate::core::error::{AppError, AppResult};
 use crate::models::payroll::PayrollRun;
 use crate::repositories::reads::payroll as payroll_reads;
-use crate::repositories::{claims, payroll_entries, payroll_runs};
+use crate::repositories::{claims, overtime_applications, payroll_entries, payroll_runs};
 use crate::services::audit_service::AuditRequestMeta;
 
 async fn load_run(pool: &PgPool, company_id: Uuid, id: Uuid) -> AppResult<PayrollRun> {
@@ -86,7 +86,10 @@ pub async fn approve(
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<PayrollRun> {
     let actor_user_id = auth.0.sub;
-    let old_run = load_run(pool, company_id, run_id).await?;
+    let mut tx = pool.begin().await?;
+    let old_run = payroll_runs::get_for_company_locked(&mut *tx, run_id, company_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Payroll run not found".into()))?;
     if old_run.status != "pending_approval" {
         return Err(AppError::BadRequest(
             "Only submitted payroll runs can be approved".into(),
@@ -94,7 +97,14 @@ pub async fn approve(
     }
 
     let edited_run_items = crate::repositories::reads::audit::actor_edited_payroll_run_items(
-        pool,
+        &mut *tx,
+        company_id,
+        run_id,
+        actor_user_id,
+    )
+    .await?;
+    let authored_manual_entries = payroll_entries::actor_authored_manual_entries_for_run(
+        &mut *tx,
         company_id,
         run_id,
         actor_user_id,
@@ -103,7 +113,8 @@ pub async fn approve(
     let is_self_approval = old_run.processed_by == Some(actor_user_id)
         || old_run.submitted_by == Some(actor_user_id)
         || old_run.updated_by == Some(actor_user_id)
-        || edited_run_items;
+        || edited_run_items
+        || authored_manual_entries;
     if is_self_approval && !auth.is_super_admin() {
         return Err(AppError::Forbidden(
             "You cannot approve a payroll run that you processed, edited, or submitted. Ask another approver, or a super admin, to review it.".into(),
@@ -111,7 +122,7 @@ pub async fn approve(
     }
 
     let run = payroll_runs::set_approved(
-        pool,
+        &mut *tx,
         run_id,
         company_id,
         actor_user_id,
@@ -119,6 +130,7 @@ pub async fn approve(
     )
     .await?
     .ok_or_else(|| AppError::BadRequest("Payroll run could not be approved".into()))?;
+    tx.commit().await?;
 
     audit_transition(
         pool,
@@ -280,6 +292,7 @@ pub async fn cancel(
 
     payroll_entries::revert_for_run(&mut *tx, run_id, company_id, actor_user_id).await?;
     claims::revert_for_run(&mut *tx, run_id, company_id).await?;
+    overtime_applications::revert_for_run(&mut *tx, run_id, company_id).await?;
     // Bound to exact locked status so concurrent transitions cannot cross permissions.
     let run = payroll_runs::set_cancelled(
         &mut *tx,
@@ -414,6 +427,7 @@ pub async fn reverse_paid_run(
 
     payroll_entries::revert_for_run(&mut *tx, run_id, company_id, actor_user_id).await?;
     claims::revert_for_run(&mut *tx, run_id, company_id).await?;
+    overtime_applications::revert_for_run(&mut *tx, run_id, company_id).await?;
     let run = payroll_runs::set_reversed(&mut *tx, run_id, company_id, actor_user_id, &reason)
         .await?
         .ok_or_else(|| {

@@ -255,12 +255,25 @@ pub fn parse_csv(data: &[u8]) -> AppResult<(Vec<String>, Vec<Vec<String>>)> {
         .trim(csv::Trim::All)
         .from_reader(data);
 
-    let headers: Vec<String> = rdr
+    let headers_record = rdr
         .headers()
-        .map_err(|e| AppError::BadRequest(format!("Failed to read CSV headers: {}", e)))?
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+        .map_err(|e| AppError::BadRequest(format!("Failed to read CSV headers: {}", e)))?;
+    let mut total_bytes: usize = 0;
+    let mut headers = Vec::with_capacity(headers_record.len());
+    for s in headers_record.iter() {
+        if s.len() > MAX_CELL_BYTES {
+            return Err(AppError::BadRequest(format!(
+                "CSV cell exceeds maximum allowed length ({MAX_CELL_BYTES} bytes)"
+            )));
+        }
+        total_bytes = total_bytes
+            .checked_add(s.len())
+            .filter(|&n| n <= MAX_TOTAL_PARSED_BYTES)
+            .ok_or_else(|| {
+                AppError::BadRequest("CSV file exceeds maximum parsed text size".into())
+            })?;
+        headers.push(s.to_string());
+    }
 
     if headers.is_empty() {
         return Err(AppError::BadRequest("CSV file has no headers".into()));
@@ -280,7 +293,21 @@ pub fn parse_csv(data: &[u8]) -> AppResult<(Vec<String>, Vec<Vec<String>>)> {
                 "CSV row exceeds maximum supported column count ({MAX_XLSX_COLS})"
             )));
         }
-        let row: Vec<String> = record.iter().map(|s| s.to_string()).collect();
+        let mut row = Vec::with_capacity(record.len());
+        for s in record.iter() {
+            if s.len() > MAX_CELL_BYTES {
+                return Err(AppError::BadRequest(format!(
+                    "CSV cell exceeds maximum allowed length ({MAX_CELL_BYTES} bytes)"
+                )));
+            }
+            total_bytes = total_bytes
+                .checked_add(s.len())
+                .filter(|&n| n <= MAX_TOTAL_PARSED_BYTES)
+                .ok_or_else(|| {
+                    AppError::BadRequest("CSV file exceeds maximum parsed text size".into())
+                })?;
+            row.push(s.to_string());
+        }
         if row.iter().all(|s| s.trim().is_empty()) {
             continue;
         }
@@ -301,6 +328,8 @@ const MAX_XLSX_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_IMPORT_ROWS: usize = 1000;
 const MAX_XLSX_ROWS: usize = 10_000;
 const MAX_XLSX_COLS: usize = 200;
+const MAX_CELL_BYTES: usize = 4_096;
+const MAX_TOTAL_PARSED_BYTES: usize = 16 * 1024 * 1024;
 
 fn validate_xlsx_archive(data: &[u8]) -> AppResult<()> {
     use std::io::Read;
@@ -363,6 +392,22 @@ fn excel_serial_to_date(serial: f64) -> Option<chrono::NaiveDate> {
     epoch.checked_add_signed(chrono::Duration::days(whole))
 }
 
+fn check_xlsx_raw_cell_len(cell: &DataRef<'_>) -> AppResult<()> {
+    let raw_len = match cell {
+        DataRef::SharedString(s) => s.len(),
+        DataRef::String(s) => s.len(),
+        DataRef::DateTimeIso(s) => s.len(),
+        DataRef::DurationIso(s) => s.len(),
+        _ => 0,
+    };
+    if raw_len > MAX_CELL_BYTES {
+        return Err(AppError::BadRequest(format!(
+            "Excel cell exceeds maximum allowed length ({MAX_CELL_BYTES} bytes)"
+        )));
+    }
+    Ok(())
+}
+
 fn format_xlsx_cell_ref(cell: &DataRef<'_>) -> String {
     match cell {
         DataRef::DateTime(dt) => excel_serial_to_date(dt.as_f64())
@@ -400,6 +445,7 @@ pub fn parse_xlsx(data: &[u8]) -> AppResult<(Vec<String>, Vec<Vec<String>>)> {
         .map_err(|e| AppError::BadRequest(format!("Failed to read sheet: {}", e)))?;
 
     let mut rows_by_idx: BTreeMap<u32, Vec<String>> = BTreeMap::new();
+    let mut total_bytes: usize = 0;
     while let Some(cell) = cells_reader
         .next_cell()
         .map_err(|e| AppError::BadRequest(format!("Failed to read sheet: {}", e)))?
@@ -411,10 +457,22 @@ pub fn parse_xlsx(data: &[u8]) -> AppResult<(Vec<String>, Vec<Vec<String>>)> {
             ));
         }
 
+        check_xlsx_raw_cell_len(cell.get_value())?;
         let formatted = format_xlsx_cell_ref(cell.get_value());
         if formatted.is_empty() {
             continue;
         }
+        if formatted.len() > MAX_CELL_BYTES {
+            return Err(AppError::BadRequest(format!(
+                "Excel cell exceeds maximum allowed length ({MAX_CELL_BYTES} bytes)"
+            )));
+        }
+        total_bytes = total_bytes
+            .checked_add(formatted.len())
+            .filter(|&n| n <= MAX_TOTAL_PARSED_BYTES)
+            .ok_or_else(|| {
+                AppError::BadRequest("Excel sheet exceeds maximum parsed text size".into())
+            })?;
 
         if !rows_by_idx.contains_key(&row_idx) && rows_by_idx.len() >= MAX_IMPORT_ROWS + 2 {
             return Err(AppError::BadRequest(

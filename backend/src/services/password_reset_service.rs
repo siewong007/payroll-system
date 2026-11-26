@@ -31,22 +31,27 @@ pub async fn request_reset(
         return Ok(None);
     };
 
-    // Expire any existing pending/approved requests for this user
-    password_reset_requests::expire_pending_for_user(pool, contact.id).await?;
+    let mut tx = pool.begin().await?;
+    let locked = users::lock_for_update(&mut *tx, &[contact.id]).await?;
+    let Some(user) = locked.into_iter().next() else {
+        return Ok(None);
+    };
+
+    // Expire any existing pending/approved requests for this user atomically.
+    password_reset_requests::expire_pending_for_user(&mut *tx, contact.id).await?;
 
     // Generate reset token
     let raw_token = format!("rst_{}_{}", Uuid::new_v4(), Uuid::new_v4());
     let token_hash = hash_token(&raw_token);
     let expires_at = Utc::now() + Duration::hours(RESET_TOKEN_HOURS);
 
-    password_reset_requests::insert_approved(pool, contact.id, &token_hash, expires_at).await?;
+    password_reset_requests::insert_approved(&mut *tx, contact.id, &token_hash, expires_at).await?;
+    tx.commit().await?;
 
     // The request is an unauthenticated probe of a known address — exactly the
     // signal an incident review needs. Recorded against the user (company scope
     // resolved separately) but never surfaced to the requester.
-    let company_id = users::get_by_id(pool, contact.id)
-        .await?
-        .and_then(|u| u.company_id);
+    let company_id = user.company_id;
     let _ = audit_service::log_action_with_metadata(
         pool,
         company_id,

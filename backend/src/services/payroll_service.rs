@@ -17,8 +17,8 @@ use crate::repositories::reads::audit as audit_reads;
 use crate::repositories::reads::payroll as payroll_reads;
 use crate::repositories::reads::payroll_overview as overview_reads;
 use crate::repositories::{
-    claims, employees as employee_reads, payroll_entries, payroll_groups, payroll_item_details,
-    payroll_items, payroll_runs,
+    claims, employees as employee_reads, overtime_applications, payroll_entries, payroll_groups,
+    payroll_item_details, payroll_items, payroll_runs,
 };
 use crate::services::audit_service::{self, AuditRequestMeta};
 
@@ -146,6 +146,7 @@ pub async fn delete_run(
 
     payroll_entries::revert_for_run(&mut *tx, id, company_id, actor_id).await?;
     claims::revert_for_run(&mut *tx, id, company_id).await?;
+    overtime_applications::revert_for_run(&mut *tx, id, company_id).await?;
     payroll_item_details::delete_for_run(&mut *tx, id).await?;
     payroll_items::delete_for_run(&mut *tx, id).await?;
     if !payroll_runs::delete_if_unlocked(&mut *tx, id, company_id).await? {
@@ -194,6 +195,20 @@ pub async fn update_item_pcb(
         .await?
         .ok_or_else(|| AppError::NotFound("Payroll run not found".into()))?;
     let mut tx = pool.begin().await?;
+    if let Some(actor) = crate::repositories::users::get_by_id(&mut *tx, actor_id).await?
+        && !actor.roles.iter().any(|r| r == "super_admin")
+        && crate::repositories::users::is_employee_owned_by_user(
+            &mut *tx,
+            actor_id,
+            employee_id,
+            company_id,
+        )
+        .await?
+    {
+        return Err(AppError::Forbidden(
+            "You cannot modify PCB on your own payslip".into(),
+        ));
+    }
     payroll_runs::acquire_tax_year_lock(&mut *tx, company_id, existing.period_year).await?;
 
     let run_row = payroll_runs::get_status_locked(&mut *tx, run_id, company_id)
@@ -264,7 +279,7 @@ pub async fn update_item_pcb(
 
     // Write the item-edit audit trail inside the same transaction so maker-checker
     // enforcement in `approve` cannot miss a PCB edit via post-commit lag or failure.
-    let _ = audit_service::log_action_with_metadata(
+    audit_service::log_action_with_metadata(
         &mut *tx,
         Some(company_id),
         Some(actor_id),
@@ -284,7 +299,7 @@ pub async fn update_item_pcb(
         Some("Updated payroll item PCB amount"),
         audit_meta,
     )
-    .await;
+    .await?;
 
     tx.commit().await?;
 

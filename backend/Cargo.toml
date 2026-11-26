@@ -3,9 +3,22 @@ name = "payroll-system"
 version = "0.2.0"
 edition = "2024"
 
+[features]
+dev-seed = []
+
+[[bin]]
+name = "payroll-system"
+path = "src/main.rs"
+
+[[bin]]
+name = "seed_scenarios"
+path = "src/bin/seed_scenarios.rs"
+required-features = ["dev-seed"]
+
 [dependencies]
 # Web framework
 axum = { version = "0.8", features = ["macros", "multipart"] }
+http-body = "1"
 tokio = { version = "1", features = ["full"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "trace", "compression-gzip", "catch-panic", "timeout", "request-id", "set-header"] }
@@ -71,6 +84,7 @@ csv = "1"
 
 # Email
 lettre = { version = "0.11", default-features = false, features = ["tokio1-rustls-tls", "builder", "smtp-transport"] }
+ammonia = "4.2.5"
 
 # HTTP client
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "form"] }

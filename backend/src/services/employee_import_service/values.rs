@@ -29,13 +29,17 @@ pub(crate) fn parse_money_to_sen(s: &str) -> Result<i64, String> {
         return Err("Amount cannot be negative".into());
     }
 
-    amount
+    let sen = amount
         .checked_mul(Decimal::from(100))
         .and_then(|sen| {
             sen.round_dp_with_strategy(0, RoundingStrategy::MidpointAwayFromZero)
                 .to_i64()
         })
-        .ok_or_else(|| format!("Amount '{}' is outside the supported range", s))
+        .ok_or_else(|| format!("Amount '{}' is outside the supported range", s))?;
+    if sen > crate::models::payroll::MAX_MONEY_SEN {
+        return Err(format!("Amount '{}' is outside the supported range", s));
+    }
+    Ok(sen)
 }
 
 pub(crate) fn parse_bool(s: &str) -> Result<bool, String> {
@@ -72,7 +76,10 @@ mod tests {
         assert_eq!(parse_money_to_sen("rm0.29"), Ok(29));
         assert_eq!(parse_money_to_sen("10.004"), Ok(1_000));
         assert_eq!(parse_money_to_sen("10.005"), Ok(1_001));
-        assert_eq!(parse_money_to_sen("92233720368547758.07"), Ok(i64::MAX));
+        assert_eq!(
+            parse_money_to_sen("1000000000.00"),
+            Ok(crate::models::payroll::MAX_MONEY_SEN)
+        );
     }
 
     #[test]
@@ -82,7 +89,8 @@ mod tests {
             "inf",
             "-inf",
             "-0.01",
-            "92233720368547758.08",
+            "1000000000.01",
+            "92233720368547758.07",
             "not money",
         ] {
             assert!(

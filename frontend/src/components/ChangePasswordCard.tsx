@@ -8,12 +8,14 @@ import { passwordPolicyHint, validatePassword } from '@/lib/password';
 import { getErrorMessage } from '@/lib/utils';
 
 export function ChangePasswordCard() {
-  const { logout } = useAuth();
+  const { user, logout } = useAuth();
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const twoFactorEnabled = Boolean(user?.two_factor_enabled);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [totpCode, setTotpCode] = useState('');
   const [showCurrent, setShowCurrent] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
@@ -39,6 +41,7 @@ export function ChangePasswordCard() {
       await api.put('/auth/change-password', {
         current_password: currentPassword,
         new_password: newPassword,
+        ...(twoFactorEnabled && totpCode.trim() ? { totp_code: totpCode.trim() } : {}),
       });
       // The backend revokes every session on password change — including this
       // one — so skip the authenticated DELETE call and just clear local/cookie state.
@@ -140,8 +143,28 @@ export function ChangePasswordCard() {
             </button>
           </div>
         </div>
+        {twoFactorEnabled && (
+          <div>
+            <label className="form-label" htmlFor="cp-totp">{t('auth.twoFactor.title')}</label>
+            <input
+              id="cp-totp"
+              type="text"
+              inputMode="text"
+              autoComplete="one-time-code"
+              className="form-input text-center tracking-widest"
+              placeholder="123456"
+              value={totpCode}
+              onChange={(e) => setTotpCode(e.target.value)}
+              required
+            />
+          </div>
+        )}
         <div className="flex justify-end">
-          <button type="submit" disabled={loading} className="btn-primary">
+          <button
+            type="submit"
+            disabled={loading || (twoFactorEnabled && !totpCode.trim())}
+            className="btn-primary"
+          >
             {loading ? t('auth.passwordCard.submitting') : t('auth.passwordCard.submit')}
           </button>
         </div>

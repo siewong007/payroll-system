@@ -31,17 +31,21 @@ pub async fn record(
            ON CONFLICT (company_id, employee_id, network, prefix_len)
            DO UPDATE SET
                observation_count = CASE
-                   WHEN attendance_network_observations.last_seen_at < NOW() - INTERVAL '12 hours'
+                   WHEN attendance_network_observations.observation_count = 0
+                        OR attendance_network_observations.last_seen_at < NOW() - INTERVAL '12 hours'
                        THEN attendance_network_observations.observation_count + 1
                    ELSE attendance_network_observations.observation_count
                END,
                anchored_count = CASE
-                   WHEN attendance_network_observations.last_seen_at < NOW() - INTERVAL '12 hours'
+                   WHEN ($5 = 1 AND attendance_network_observations.anchored_count = 0)
+                        OR attendance_network_observations.last_seen_at < NOW() - INTERVAL '12 hours'
                        THEN attendance_network_observations.anchored_count + $5
                    ELSE attendance_network_observations.anchored_count
                END,
                last_seen_at = CASE
-                   WHEN attendance_network_observations.last_seen_at < NOW() - INTERVAL '12 hours'
+                   WHEN attendance_network_observations.observation_count = 0
+                        OR ($5 = 1 AND attendance_network_observations.anchored_count = 0)
+                        OR attendance_network_observations.last_seen_at < NOW() - INTERVAL '12 hours'
                        THEN NOW()
                    ELSE attendance_network_observations.last_seen_at
                END"#,
@@ -78,12 +82,14 @@ pub async fn record_denial(
            ON CONFLICT (company_id, employee_id, network, prefix_len)
            DO UPDATE SET
                denied_count = CASE
-                   WHEN attendance_network_observations.last_seen_at < NOW() - INTERVAL '12 hours'
+                   WHEN attendance_network_observations.denied_count = 0
+                        OR attendance_network_observations.last_seen_at < NOW() - INTERVAL '12 hours'
                        THEN attendance_network_observations.denied_count + 1
                    ELSE attendance_network_observations.denied_count
                END,
                last_seen_at = CASE
-                   WHEN attendance_network_observations.last_seen_at < NOW() - INTERVAL '12 hours'
+                   WHEN attendance_network_observations.denied_count = 0
+                        OR attendance_network_observations.last_seen_at < NOW() - INTERVAL '12 hours'
                        THEN NOW()
                    ELSE attendance_network_observations.last_seen_at
                END"#,

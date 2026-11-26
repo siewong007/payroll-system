@@ -9,6 +9,8 @@ export interface TwoFactorPolicyResponse {
 export interface TwoFactorPolicyRequest {
   enforce: boolean;
   grace_until: string | null;
+  actor_password?: string;
+  actor_totp_code?: string;
 }
 
 export interface AdminJobHealth {

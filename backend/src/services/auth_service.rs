@@ -7,7 +7,8 @@ use crate::models::audit::AuditRequestMeta;
 use crate::models::session::{LoginOutcome, LoginResponseWithRefresh};
 use crate::models::user::{CodeLoginRequest, LoginRequest, User, UserResponse};
 use crate::repositories::{
-    employees, mfa_challenges, platform_settings, refresh_tokens, user_groups, user_sessions, users,
+    employees, mfa_challenges, platform_settings, refresh_tokens, user_companies, user_groups,
+    user_sessions, users,
 };
 use crate::services::{audit_service, session_service, totp_service};
 
@@ -49,12 +50,30 @@ pub async fn hash_password(password: &str) -> AppResult<String> {
 
 static DUMMY_BCRYPT_HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
-pub async fn verify_user_password(pool: &PgPool, user_id: Uuid, password: &str) -> AppResult<User> {
+pub async fn verify_user_password(
+    pool: &PgPool,
+    user_id: Uuid,
+    password: &str,
+    audit_meta: Option<&AuditRequestMeta>,
+) -> AppResult<User> {
     let user = get_user_by_id(pool, user_id).await?;
     let valid = verify_password(password, &user.password_hash)
         .await
         .map_err(|_| AppError::BadRequest("Current password is incorrect".into()))?;
     if !valid {
+        let _ = audit_service::log_action_with_metadata(
+            pool,
+            user.company_id,
+            Some(user.id),
+            "step_up_password_failed",
+            "auth",
+            Some(user.id),
+            None::<serde_json::Value>,
+            Some(serde_json::json!({ "reason": "invalid_current_password" })),
+            Some("Step-up password confirmation failed"),
+            audit_meta,
+        )
+        .await;
         return Err(AppError::BadRequest("Current password is incorrect".into()));
     }
     Ok(user)
@@ -138,11 +157,37 @@ pub async fn login(
         }
     };
 
+    if user
+        .login_locked_until
+        .is_some_and(|until| until > chrono::Utc::now())
+    {
+        equalize_unknown_email_timing(&req.password).await;
+        let _ = audit_service::log_action_with_metadata(
+            pool,
+            user.company_id,
+            Some(user.id),
+            "login_failed",
+            "auth",
+            Some(user.id),
+            None::<serde_json::Value>,
+            Some(serde_json::json!({
+                "email": crate::core::redact::email(&req.email),
+                "reason": "account_locked",
+                "method": "password",
+            })),
+            Some("Failed login attempt"),
+            audit_meta,
+        )
+        .await;
+        return Err(AppError::Unauthorized("Invalid email or password".into()));
+    }
+
     let valid = verify_password(&req.password, &user.password_hash)
         .await
         .map_err(|_| AppError::Internal("Password verification failed".into()))?;
 
     if !valid {
+        let _ = users::record_failed_password_login(pool, user.id, 10, 15).await;
         let _ = audit_service::log_action_with_metadata(
             pool,
             user.company_id,
@@ -162,6 +207,8 @@ pub async fn login(
         .await;
         return Err(AppError::Unauthorized("Invalid email or password".into()));
     }
+
+    let _ = users::clear_failed_password_logins(pool, user.id).await;
 
     // The terminated-employee check lives in `get_active_user`, which
     // `complete_login` loads through — one gate covering every minting path
@@ -353,17 +400,19 @@ async fn issue_session_verified(
 /// platform-only and restricted-role payroll caps filtered out identically to
 /// `AuthUser`).
 pub async fn build_user_response(pool: &PgPool, user: User) -> AppResult<UserResponse> {
+    let user_id = user.id;
     let group_permissions = match user.company_id {
         Some(company_id) => {
-            let keys = user_groups::effective_permissions(pool, user.id, company_id).await?;
+            let keys = user_groups::effective_permissions(pool, user_id, company_id).await?;
             crate::core::permission::filter_group_permissions_for_roles(&user.roles, &keys)
         }
         None => Vec::new(),
     };
-    Ok(UserResponse::with_group_permissions(
-        user,
-        &group_permissions,
-    ))
+    let two_factor_enabled = totp_service::is_enabled(pool, user_id).await?;
+    Ok(
+        UserResponse::with_group_permissions(user, &group_permissions)
+            .with_two_factor(two_factor_enabled),
+    )
 }
 
 /// Single chokepoint for finishing any primary-auth flow (password, passkey,
@@ -428,7 +477,7 @@ pub async fn refresh_session(
         return Err(session_service::classify_rotation_miss(pool, raw_token).await);
     };
 
-    let Some(user) = users::get_active_by_id(&mut *tx, token.user_id).await? else {
+    let Some(mut user) = users::get_active_by_id(&mut *tx, token.user_id).await? else {
         user_sessions::revoke(&mut *tx, token.user_id, token.session_id).await?;
         refresh_tokens::revoke_for_session(&mut *tx, token.session_id).await?;
         tx.commit().await?;
@@ -442,6 +491,27 @@ pub async fn refresh_session(
         return Err(AppError::Unauthorized(
             "Session has expired or was revoked".into(),
         ));
+    }
+
+    if let Some(cid) = user.company_id
+        && !user_companies::user_has_company(&mut *tx, user.id, cid).await?
+    {
+        if let Some(fallback_cid) =
+            user_companies::first_company_for_user(&mut *tx, user.id).await?
+        {
+            users::update_active_company(&mut *tx, user.id, fallback_cid).await?;
+            user.company_id = Some(fallback_cid);
+        } else if user.roles.iter().any(|r| r == "super_admin") {
+            users::clear_active_company(&mut *tx, user.id).await?;
+            user.company_id = None;
+        } else {
+            user_sessions::revoke(&mut *tx, user.id, token.session_id).await?;
+            refresh_tokens::revoke_for_session(&mut *tx, token.session_id).await?;
+            tx.commit().await?;
+            return Err(AppError::Unauthorized(
+                "Session company access has been revoked".into(),
+            ));
+        }
     }
 
     // Checked inline rather than via `get_active_user` so a terminated employee
@@ -527,15 +597,10 @@ pub async fn change_password(
     user_id: Uuid,
     current_password: &str,
     new_password: &str,
+    totp_code: Option<&str>,
+    totp_encryption_key: &str,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<()> {
-    validate_password_strength(new_password)?;
-    if current_password == new_password {
-        return Err(AppError::BadRequest(
-            "New password must differ from current password".into(),
-        ));
-    }
-
     let user = get_user_by_id(pool, user_id).await?;
 
     // A malformed stored hash is an authentication failure, not a server fault.
@@ -558,6 +623,22 @@ pub async fn change_password(
         )
         .await;
         return Err(AppError::BadRequest("Current password is incorrect".into()));
+    }
+
+    totp_service::verify_step_up_if_enabled(
+        pool,
+        user_id,
+        totp_code,
+        totp_encryption_key,
+        audit_meta,
+    )
+    .await?;
+
+    validate_password_strength(new_password)?;
+    if current_password == new_password {
+        return Err(AppError::BadRequest(
+            "New password must differ from current password".into(),
+        ));
     }
 
     let new_hash = hash_password(new_password).await?;
@@ -607,10 +688,28 @@ pub(crate) const TWO_FACTOR_REQUIRED_GROUP_PERMS: &[&str] = &[
     "submit_payroll",
     "approve_payroll",
     "mark_payroll_paid",
+    "view_employees",
+    "manage_employees",
     "import_employees",
-    "view_statutory_exports",
     "view_salary_history",
+    "view_approvals",
+    "manage_approvals",
+    "view_reports",
+    "view_statutory_exports",
+    "view_documents",
+    "manage_documents",
+    "view_email_logs",
+    "manage_email_templates",
+    "send_letters",
     "manage_company_settings",
+    "manage_attendance",
+    "manage_attendance_networks",
+    "manage_kiosks",
+    "set_company_attendance_method",
+    "manage_work_schedules",
+    "manage_geofence",
+    "view_user_directory",
+    "view_audit_log",
 ];
 
 pub const ENFORCE_2FA_KEY: &str = "enforce_2fa";
@@ -618,14 +717,18 @@ pub const ENFORCE_2FA_GRACE_UNTIL_KEY: &str = "enforce_2fa_grace_until";
 
 /// Whether platform 2FA enforcement is active AND any grace period has expired.
 pub(crate) async fn is_hard_2fa_enforced(conn: &mut sqlx::PgConnection) -> AppResult<bool> {
-    let enabled = platform_settings::get_value(&mut *conn, ENFORCE_2FA_KEY)
+    let settings: std::collections::HashMap<String, String> =
+        platform_settings::get_values_for_keys(
+            &mut *conn,
+            &[ENFORCE_2FA_KEY, ENFORCE_2FA_GRACE_UNTIL_KEY],
+        )
         .await?
-        .as_deref()
-        == Some("true");
-    if !enabled {
+        .into_iter()
+        .collect();
+    if settings.get(ENFORCE_2FA_KEY).map(String::as_str) != Some("true") {
         return Ok(false);
     }
-    let grace = platform_settings::get_value(&mut *conn, ENFORCE_2FA_GRACE_UNTIL_KEY).await?;
+    let grace = settings.get(ENFORCE_2FA_GRACE_UNTIL_KEY).cloned();
     if let Some(until) = parse_grace(grace)
         && chrono::Utc::now().date_naive() <= until
     {
@@ -798,8 +901,9 @@ pub async fn set_two_factor_policy(
         )));
     }
 
+    let mut tx = pool.begin().await?;
     crate::repositories::platform_settings::set_value(
-        pool,
+        &mut *tx,
         ENFORCE_2FA_KEY,
         if req.enforce { "true" } else { "false" },
         Some(actor),
@@ -808,7 +912,7 @@ pub async fn set_two_factor_policy(
     match effective_grace {
         Some(until) => {
             crate::repositories::platform_settings::set_value(
-                pool,
+                &mut *tx,
                 ENFORCE_2FA_GRACE_UNTIL_KEY,
                 &until.to_string(),
                 Some(actor),
@@ -816,13 +920,16 @@ pub async fn set_two_factor_policy(
             .await?;
         }
         None => {
-            crate::repositories::platform_settings::delete_key(pool, ENFORCE_2FA_GRACE_UNTIL_KEY)
-                .await?;
+            crate::repositories::platform_settings::delete_key(
+                &mut *tx,
+                ENFORCE_2FA_GRACE_UNTIL_KEY,
+            )
+            .await?;
         }
     }
 
-    let _ = audit_service::log_action_with_metadata(
-        pool,
+    audit_service::log_action_with_metadata(
+        &mut *tx,
         None,
         Some(actor),
         "two_factor_policy_updated",
@@ -839,7 +946,8 @@ pub async fn set_two_factor_policy(
         Some("Platform 2FA enforcement policy changed"),
         audit_meta,
     )
-    .await;
+    .await?;
+    tx.commit().await?;
 
     get_two_factor_policy(pool).await
 }

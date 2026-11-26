@@ -36,6 +36,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useAuth } from '@/context/AuthContext';
 import { useConfirm } from '@/lib/confirm';
+import { buildLetterPreviewSrcDoc } from '@/lib/letterPreview';
 import { SUPER_ADMIN_ROLES, hasAnyRole } from '@/lib/roles';
 import { usePermissions } from '@/lib/usePermissions';
 import { useToast } from '@/lib/toast';
@@ -968,7 +969,7 @@ export function LettersPage() {
                 title={t('letters.previewTitle')}
                 sandbox=""
                 className="w-full min-h-[16rem] border border-gray-200 dark:border-slate-800 rounded-lg bg-white [color-scheme:light]"
-                srcDoc={`<!doctype html><html><head><meta name="color-scheme" content="light"><style>body{margin:16px;font-family:Inter,system-ui,-apple-system,sans-serif;font-size:14px;line-height:1.6;color:#111827;background:#ffffff;}</style></head><body>${preview.body_html}</body></html>`}
+                srcDoc={buildLetterPreviewSrcDoc(preview.body_html)}
               />
             </div>
 

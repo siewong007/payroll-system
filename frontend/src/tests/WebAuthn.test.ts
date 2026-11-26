@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createElement, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import {
@@ -258,14 +258,9 @@ describe('passkey login call sites', () => {
       switch (url) {
         case '/auth/refresh':
           return Promise.reject(new Error('No session'));
-        case '/auth/passkey/check':
-          return Promise.resolve({ data: { has_passkey: true } });
         case '/auth/passkey/discoverable/begin':
           return Promise.resolve({ data: discoverableBegin });
-        case '/auth/passkey/authenticate/begin':
-          return Promise.resolve({ data: emailBegin });
         case '/auth/passkey/discoverable/complete':
-        case '/auth/passkey/authenticate/complete':
           return Promise.resolve({ data: { token: 'session-token', user: sessionUser } });
         default:
           return Promise.resolve({ data: {} });
@@ -310,39 +305,31 @@ describe('passkey login call sites', () => {
     expect(screen.queryByText(/passkey authentication failed/i)).toBeNull();
   });
 
-  it('unwraps options.publicKey for the email flow, decoding allowCredentials', async () => {
+  it('avoids email-enumerating passkey/check probes and still decodes allowCredentials', async () => {
     const user = userEvent.setup();
     renderLogin();
 
     await user.type(screen.getByPlaceholderText('Enter your email'), 'employee@example.com');
-    // The passkey lookup is debounced 500ms; the email branch is only taken once
-    // it has reported back.
-    await waitFor(
-      () =>
-        expect(apiMocks.post).toHaveBeenCalledWith('/auth/passkey/check', {
-          email: 'employee@example.com',
-        }),
-      { timeout: 3000 },
-    );
-    await act(async () => {
-      await Promise.resolve();
-    });
-
     await user.click(screen.getByRole('button', { name: /more sign-in options/i }));
     await user.click(screen.getByRole('button', { name: /sign in with passkey/i }));
 
-    await waitFor(() => expect(getCredential).toHaveBeenCalled());
-    const browserOptions = getCredential.mock.calls[0][0] as CredentialRequestOptions;
-
-    expect(browserOptions.publicKey).not.toHaveProperty('publicKey');
-    expect(bytes(browserOptions.publicKey?.challenge as BufferSource)).toEqual([255, 238]);
-    expect(bytes(browserOptions.publicKey?.allowCredentials?.[0].id as BufferSource)).toEqual([8, 9]);
-
     await waitFor(() =>
       expect(apiMocks.post).toHaveBeenCalledWith(
-        '/auth/passkey/authenticate/complete',
-        expect.objectContaining({ challenge_id: 'challenge-email' }),
+        '/auth/passkey/discoverable/complete',
+        expect.objectContaining({ challenge_id: 'challenge-discoverable' }),
       ),
     );
+    expect(apiMocks.post).not.toHaveBeenCalledWith('/auth/passkey/check', expect.anything());
+    expect(apiMocks.post).not.toHaveBeenCalledWith(
+      '/auth/passkey/authenticate/begin',
+      expect.anything(),
+    );
+
+    // Direct helper decoding check for allowCredentials remains intact.
+    await getPasskeyCredential(emailBegin.options.publicKey as PublicKeyCredentialRequestOptionsJSON);
+    const emailOptions = getCredential.mock.calls.at(-1)?.[0] as CredentialRequestOptions;
+    expect(emailOptions.publicKey).not.toHaveProperty('publicKey');
+    expect(bytes(emailOptions.publicKey?.challenge as BufferSource)).toEqual([255, 238]);
+    expect(bytes(emailOptions.publicKey?.allowCredentials?.[0].id as BufferSource)).toEqual([8, 9]);
   });
 });

@@ -10,6 +10,7 @@ export interface User {
   company_id: string | null;
   employee_id: string | null;
   must_change_password?: boolean;
+  two_factor_enabled?: boolean;
   /**
    * Effective permissions, derived server-side from `roles`. Gate UI on these
    * via `usePermissions()` rather than on role names — see
@@ -71,6 +72,8 @@ export interface CreateUserRequest {
   full_name: string;
   roles: AppRole[];
   company_ids: string[];
+  actor_password?: string;
+  actor_totp_code?: string;
 }
 
 /** Every field is optional and only sent when it actually changed. In
@@ -82,6 +85,8 @@ export interface UpdateUserRequest {
   roles?: AppRole[];
   is_active?: boolean;
   company_ids?: string[];
+  actor_password?: string;
+  actor_totp_code?: string;
 }
 
 export interface ListUsersParams {
@@ -892,6 +897,7 @@ export interface OvertimeApplication {
   review_notes: string | null;
   created_at: string;
   updated_at: string;
+  payroll_run_id?: string | null;
 }
 
 export interface OvertimeWithEmployee extends OvertimeApplication {

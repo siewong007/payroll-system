@@ -32,11 +32,12 @@ describe('TurnstileWidget', () => {
     const api = mockTurnstile();
     const onVerify = vi.fn();
 
-    render(<TurnstileWidget onVerify={onVerify} />);
+    render(<TurnstileWidget onVerify={onVerify} action="login" />);
 
     await waitFor(() => expect(api.render).toHaveBeenCalledOnce());
     const options = api.render.mock.calls[0][1] as Record<string, unknown>;
     expect(options.sitekey).toBe('test-site-key');
+    expect(options.action).toBe('login');
 
     (options.callback as (t: string) => void)('tok-abc');
     expect(onVerify).toHaveBeenCalledWith('tok-abc');

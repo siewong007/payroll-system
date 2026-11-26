@@ -141,6 +141,9 @@ export function OAuth2Callback() {
           <p className="text-sm text-gray-600 dark:text-slate-300">{error}</p>
           <Link
             to="/login"
+            onClick={() => {
+              callbackParams = null;
+            }}
             className="inline-flex min-h-11 items-center justify-center px-3 text-sm text-black dark:text-indigo-400 font-medium hover:underline rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
           >
             {t('auth.backToLogin')}
@@ -159,8 +162,14 @@ export function OAuth2Callback() {
           </div>
           <TwoFactorPrompt
             mfaToken={mfaToken}
-            onSuccess={goPostLogin}
-            onBack={() => navigate('/login', { replace: true })}
+            onSuccess={(u) => {
+              callbackParams = null;
+              goPostLogin(u);
+            }}
+            onBack={() => {
+              callbackParams = null;
+              navigate('/login', { replace: true });
+            }}
           />
         </div>
       </AuthLayout>

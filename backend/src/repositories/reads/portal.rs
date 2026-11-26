@@ -72,7 +72,7 @@ pub async fn approved_leaves_for_year(
             lr.reviewed_by, lr.reviewed_at, lr.review_notes,
             lr.attachment_url, lr.attachment_name,
             lr.created_at, lr.updated_at,
-            lr.created_by, lr.updated_by,
+            lr.created_by, lr.updated_by, lr.editor_ids,
             lt.name AS "leave_type_name?"
         FROM leave_requests lr
         JOIN leave_types lt ON lr.leave_type_id = lt.id

@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id FROM overtime_applications\n        WHERE employee_id = ANY($1)\n          AND company_id = $2\n          AND status = 'approved'\n          AND payroll_run_id IS NULL\n          AND ot_date <= $3\n        ORDER BY id\n        FOR UPDATE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "overtime_applications",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "UuidArray",
+        "Uuid",
+        "Date"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "a3199e7e7f301669577a7d5eacdbab72841f07a7d9c203beef3011ce1775e7ca"
+}

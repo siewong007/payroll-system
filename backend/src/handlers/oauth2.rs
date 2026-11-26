@@ -12,10 +12,11 @@ use crate::core::error::{AppError, AppResult};
 use crate::core::extract::ValidatedJson;
 use crate::models::audit::AuditRequestMeta;
 use crate::models::oauth2::{
-    LinkGoogleRequest, LinkedAccount, OAuth2AuthorizeQuery, OAuth2CallbackQuery, OAuth2ProviderInfo,
+    LinkGoogleRequest, LinkedAccount, OAuth2AuthorizeRequest, OAuth2CallbackQuery,
+    OAuth2ProviderInfo, UnlinkOAuth2Request,
 };
 use crate::models::session::LoginOutcome;
-use crate::services::{audit_service, auth_service, oauth2_service};
+use crate::services::{audit_service, auth_service, oauth2_service, totp_service};
 
 /// List available OAuth2 providers and their status.
 pub async fn list_providers(
@@ -157,18 +158,14 @@ async fn google_callback_inner(
         ));
     }
 
-    // Try to find user by linked OAuth2 account first
-    let (user, should_auto_link) = match oauth2_service::find_user_by_oauth2(
-        &state.pool,
-        "google",
-        &google_user.sub,
-    )
-    .await?
+    // Only pre-linked Google identities may sign in here. Auto-linking by
+    // verified email on login would trust Google email claims before local
+    // authentication; users must link Google explicitly while signed in.
+    let user = match oauth2_service::find_user_by_oauth2(&state.pool, "google", &google_user.sub)
+        .await?
     {
-        Some(user) => (user, false),
+        Some(user) => user,
         None => {
-            // If this Google identity is already bound to a disabled or deleted
-            // account, never silently re-associate or sign in another user by email.
             if oauth2_service::find_oauth2_account(&state.pool, "google", &google_user.sub)
                 .await?
                 .is_some()
@@ -177,41 +174,15 @@ async fn google_callback_inner(
                     "Account is disabled or unavailable.".into(),
                 ));
             }
-
-            // No linked account — verify user and employee are active, then
-            // ensure no other Google account is already linked.
-            let user = oauth2_service::find_user_by_email(&state.pool, google_email)
-                .await?
-                .ok_or_else(|| {
-                    AppError::Unauthorized(
-                        "No account found for this email. Please contact your administrator."
-                            .into(),
-                    )
-                })?;
-            let user = auth_service::get_active_user(&state.pool, user.id).await?;
-            if user.must_change_password
-                || crate::services::totp_service::is_enabled(&state.pool, user.id).await?
-            {
-                return Err(AppError::Unauthorized(
-                        "Please sign in with your password to link Google in Account Security settings."
-                            .into(),
-                    ));
-            }
-            let existing_accounts =
-                oauth2_service::list_linked_accounts(&state.pool, user.id).await?;
-            if existing_accounts.iter().any(|a| a.provider == "google") {
-                return Err(AppError::Unauthorized(
-                    "A different Google account is already linked to this user.".into(),
-                ));
-            }
-
-            (user, true)
+            return Err(AppError::Unauthorized(
+                "No payroll account is linked to this Google identity. Sign in with your password and link Google in Account Security settings."
+                    .into(),
+            ));
         }
     };
 
     // Issue tokens (gated on 2FA if enabled) — this also records last_login,
-    // deferred until 2FA is actually completed if it's required. Auto-linking
-    // only commits after primary login/policy verification completes cleanly.
+    // deferred until 2FA is actually completed if it's required.
     let outcome = auth_service::complete_login(
         &state.pool,
         user.id,
@@ -225,46 +196,26 @@ async fn google_callback_inner(
     )
     .await?;
 
-    if matches!(outcome, LoginOutcome::Session(_)) {
-        if should_auto_link {
-            oauth2_service::link_oauth2_account(
-                &state.pool,
-                user.id,
-                "google",
-                &google_user.sub,
-                google_user.email.as_deref(),
-                google_user.name.as_deref(),
-                google_user.picture.as_deref(),
-                Some(&token_resp.access_token),
-                token_resp.refresh_token.as_deref(),
-                token_resp.expires_in,
-            )
-            .await?;
-
-            let _ = audit_service::log_action_with_metadata(
-                &state.pool,
-                user.company_id,
-                Some(user.id),
-                "oauth2_linked",
-                "auth",
-                Some(user.id),
-                None::<serde_json::Value>,
-                Some(serde_json::json!({ "provider": "google", "auto_linked": true })),
-                Some("Google account auto-linked on sign-in"),
-                Some(&audit_meta),
-            )
-            .await;
-        } else {
-            oauth2_service::update_oauth2_tokens(
-                &state.pool,
-                "google",
-                &google_user.sub,
-                &token_resp.access_token,
-                token_resp.refresh_token.as_deref(),
-                token_resp.expires_in,
-            )
-            .await?;
+    if matches!(outcome, LoginOutcome::Session(_))
+        && let Err(err) = oauth2_service::update_oauth2_tokens(
+            &state.pool,
+            "google",
+            &google_user.sub,
+            &token_resp.access_token,
+            token_resp.refresh_token.as_deref(),
+            token_resp.expires_in,
+        )
+        .await
+    {
+        if let LoginOutcome::Session(ref session) = outcome
+            && let Ok(claims) =
+                crate::core::auth::verify_token(&session.token, &state.config.jwt_secret)
+        {
+            let _ =
+                crate::services::session_service::revoke_session(&state.pool, user.id, claims.sid)
+                    .await;
         }
+        return Err(err);
     }
 
     let mut headers = HeaderMap::new();
@@ -302,14 +253,25 @@ async fn google_callback_inner(
 pub async fn google_authorize(
     State(state): State<AppState>,
     audit_meta: AuditRequestMeta,
-    Query(query): Query<OAuth2AuthorizeQuery>,
+    Json(body): Json<OAuth2AuthorizeRequest>,
 ) -> AppResult<Response> {
-    crate::core::turnstile::verify(
-        &state.config,
-        query.turnstile_token.as_deref(),
-        audit_meta.ip_address.as_deref(),
-    )
-    .await?;
+    if body.flow.as_deref() == Some("link") {
+        crate::core::turnstile::verify(
+            &state.config,
+            body.turnstile_token.as_deref(),
+            audit_meta.ip_address.as_deref(),
+            "oauth2_google",
+        )
+        .await?;
+    } else {
+        crate::core::turnstile::verify_any_action(
+            &state.config,
+            body.turnstile_token.as_deref(),
+            audit_meta.ip_address.as_deref(),
+            &["login", "oauth2_google"],
+        )
+        .await?;
+    }
 
     let client_id = state
         .config
@@ -319,7 +281,7 @@ pub async fn google_authorize(
 
     // `flow=link` is the account-linking journey: the code comes back to a SPA
     // route that POSTs it with the user's JWT, not to the login callback.
-    let redirect_uri = if query.flow.as_deref() == Some("link") {
+    let redirect_uri = if body.flow.as_deref() == Some("link") {
         state.config.google_link_redirect_uri()
     } else {
         state.config.google_redirect_uri()
@@ -372,7 +334,18 @@ pub async fn unlink_provider(
     auth: AuthUser,
     audit_meta: AuditRequestMeta,
     Path(provider): Path<String>,
+    ValidatedJson(body): ValidatedJson<UnlinkOAuth2Request>,
 ) -> AppResult<Json<serde_json::Value>> {
+    auth_service::verify_user_password(&state.pool, auth.0.sub, &body.password, Some(&audit_meta))
+        .await?;
+    totp_service::verify_step_up_if_enabled(
+        &state.pool,
+        auth.0.sub,
+        body.totp_code.as_deref(),
+        &state.config.totp_encryption_key,
+        Some(&audit_meta),
+    )
+    .await?;
     oauth2_service::unlink_oauth2_account(&state.pool, auth.0.sub, &provider).await?;
     let _ = audit_service::log_action_with_metadata(
         &state.pool,
@@ -398,7 +371,31 @@ pub async fn link_google(
     audit_meta: AuditRequestMeta,
     ValidatedJson(body): ValidatedJson<LinkGoogleRequest>,
 ) -> AppResult<Response> {
-    auth_service::verify_user_password(&state.pool, auth.0.sub, &body.password).await?;
+    let mut clear_headers = HeaderMap::new();
+    let (name, value) = cookie::clear_oauth_state_cookie(&state.config.frontend_url);
+    clear_headers.insert(name, value.parse().unwrap());
+
+    if let Err(err) = auth_service::verify_user_password(
+        &state.pool,
+        auth.0.sub,
+        &body.password,
+        Some(&audit_meta),
+    )
+    .await
+    {
+        return Ok((clear_headers, err.into_response()).into_response());
+    }
+    if let Err(err) = totp_service::verify_step_up_if_enabled(
+        &state.pool,
+        auth.0.sub,
+        body.totp_code.as_deref(),
+        &state.config.totp_encryption_key,
+        Some(&audit_meta),
+    )
+    .await
+    {
+        return Ok((clear_headers, err.into_response()).into_response());
+    }
 
     let client_id = state
         .config
@@ -417,16 +414,47 @@ pub async fn link_google(
     // POST carries the binder just like the callback does.
     let binder = cookie::extract_oauth_state_binder(&headers);
     let code_verifier =
-        oauth2_service::consume_oauth2_state(&state.pool, &body.state, binder.as_deref()).await?;
+        match oauth2_service::consume_oauth2_state(&state.pool, &body.state, binder.as_deref())
+            .await
+        {
+            Ok(v) => v,
+            Err(err) => return Ok((clear_headers, err.into_response()).into_response()),
+        };
 
+    let result = complete_link_google(
+        &state,
+        &auth,
+        &audit_meta,
+        &body.code,
+        &code_verifier,
+        client_id,
+        client_secret,
+    )
+    .await;
+
+    match result {
+        Ok(linked) => Ok((clear_headers, Json(linked)).into_response()),
+        Err(err) => Ok((clear_headers, err.into_response()).into_response()),
+    }
+}
+
+async fn complete_link_google(
+    state: &AppState,
+    auth: &AuthUser,
+    audit_meta: &AuditRequestMeta,
+    code: &str,
+    code_verifier: &str,
+    client_id: &str,
+    client_secret: &str,
+) -> AppResult<crate::models::oauth2::LinkedAccount> {
     // Must equal the redirect_uri the authorization URL was built with — the
     // SPA route that handed us this code, not the login callback.
     let token_resp = oauth2_service::google_exchange_code(
         client_id,
         client_secret,
         &state.config.google_link_redirect_uri(),
-        &body.code,
-        &code_verifier,
+        code,
+        code_verifier,
     )
     .await?;
 
@@ -493,15 +521,9 @@ pub async fn link_google(
         None::<serde_json::Value>,
         Some(serde_json::json!({ "provider": "google", "auto_linked": false })),
         Some("Google account linked by user"),
-        Some(&audit_meta),
+        Some(audit_meta),
     )
     .await;
 
-    // The flow is over either way, so the binder is spent — same invariant as
-    // the login callback.
-    let mut headers = HeaderMap::new();
-    let (name, value) = cookie::clear_oauth_state_cookie(&state.config.frontend_url);
-    headers.insert(name, value.parse().unwrap());
-
-    Ok((headers, Json(linked)).into_response())
+    Ok(linked)
 }

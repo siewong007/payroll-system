@@ -15,11 +15,12 @@ pub use common::{
 };
 
 pub use claim::{
-    ClaimWithEmployee, approve_claim, cancel_claim_admin, create_claim_admin, delete_claim_admin,
-    get_claim_with_employee_by_id, get_pending_claims, reject_claim, update_claim_admin,
+    ClaimWithEmployee, approve_claim, approve_claim_with_mailer, cancel_claim_admin,
+    create_claim_admin, delete_claim_admin, get_claim_with_employee_by_id, get_pending_claims,
+    reject_claim, update_claim_admin,
 };
 pub use leave::{
-    LeaveRequestWithEmployee, approve_leave, cancel_leave_request_admin,
+    LeaveRequestWithEmployee, approve_leave, approve_leave_with_mailer, cancel_leave_request_admin,
     create_leave_request_admin, delete_leave_request_admin, get_pending_leave_requests,
     reject_leave, update_leave_request_admin,
 };

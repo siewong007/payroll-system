@@ -42,10 +42,10 @@ pub async fn insert(
     Ok(overtime)
 }
 
-pub async fn lock_approved_for_period(
+pub async fn lock_payable(
     executor: impl Executor<'_, Database = Postgres>,
     employee_ids: &[Uuid],
-    period_start: NaiveDate,
+    company_id: Uuid,
     period_end: NaiveDate,
 ) -> AppResult<()> {
     if employee_ids.is_empty() {
@@ -54,16 +54,56 @@ pub async fn lock_approved_for_period(
     sqlx::query!(
         r#"SELECT id FROM overtime_applications
         WHERE employee_id = ANY($1)
-          AND ot_date >= $2
-          AND ot_date <= $3
+          AND company_id = $2
           AND status = 'approved'
+          AND payroll_run_id IS NULL
+          AND ot_date <= $3
         ORDER BY id
         FOR UPDATE"#,
         employee_ids,
-        period_start,
+        company_id,
         period_end,
     )
     .fetch_all(executor)
+    .await?;
+    Ok(())
+}
+
+/// Mark exactly the approved overtime applications a run paid, linking them to the run.
+pub async fn mark_paid(
+    executor: impl Executor<'_, Database = Postgres>,
+    run_id: Uuid,
+    ot_ids: &[Uuid],
+) -> AppResult<u64> {
+    if ot_ids.is_empty() {
+        return Ok(0);
+    }
+    let res = sqlx::query!(
+        r#"UPDATE overtime_applications
+        SET status = 'processed', payroll_run_id = $1, updated_at = NOW()
+        WHERE id = ANY($2) AND status = 'approved' AND payroll_run_id IS NULL"#,
+        run_id,
+        ot_ids,
+    )
+    .execute(executor)
+    .await?;
+    Ok(res.rows_affected())
+}
+
+/// Revert a run's paid overtime applications back to approved (used on delete/cancel/reverse).
+pub async fn revert_for_run(
+    executor: impl Executor<'_, Database = Postgres>,
+    run_id: Uuid,
+    company_id: Uuid,
+) -> AppResult<()> {
+    sqlx::query!(
+        r#"UPDATE overtime_applications
+        SET status = 'approved', payroll_run_id = NULL, updated_at = NOW()
+        WHERE payroll_run_id = $1 AND company_id = $2"#,
+        run_id,
+        company_id,
+    )
+    .execute(executor)
     .await?;
     Ok(())
 }
@@ -163,6 +203,25 @@ pub async fn get_pending(
     Ok(ot)
 }
 
+/// Lock and load a pending application inside a write transaction.
+pub async fn get_pending_locked(
+    executor: impl Executor<'_, Database = Postgres>,
+    ot_id: Uuid,
+    company_id: Uuid,
+) -> AppResult<Option<OvertimeApplication>> {
+    let ot = sqlx::query_as!(
+        OvertimeApplication,
+        r#"SELECT * FROM overtime_applications
+        WHERE id = $1 AND company_id = $2 AND status = 'pending'
+        FOR UPDATE"#,
+        ot_id,
+        company_id,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(ot)
+}
+
 /// A cancelled application, or `None` if missing/not deletable.
 pub async fn get_cancelled(
     executor: impl Executor<'_, Database = Postgres>,
@@ -194,6 +253,7 @@ pub async fn get_cancellable(
         WHERE id = $1
           AND company_id = $2
           AND status IN ('pending', 'approved', 'rejected')
+          AND payroll_run_id IS NULL
         FOR UPDATE"#,
         ot_id,
         company_id,
@@ -228,6 +288,10 @@ pub async fn update_full(
             ot_type = $8,
             reason = CASE WHEN $9::text IS NULL THEN reason ELSE NULLIF($9, '') END,
             updated_by = $10,
+            editor_ids = CASE
+                WHEN $10 = ANY(editor_ids) THEN editor_ids
+                ELSE array_append(editor_ids, $10)
+            END,
             updated_at = NOW()
         WHERE id = $1 AND company_id = $2 AND status = 'pending'
         RETURNING *"#,
@@ -274,6 +338,8 @@ pub async fn set_cancelled(
         SET status = 'cancelled', updated_at = NOW()
         WHERE id = $1 AND company_id = $2
           AND status = $3
+          AND status <> 'processed'
+          AND payroll_run_id IS NULL
         RETURNING *"#,
         ot_id,
         company_id,
@@ -294,11 +360,15 @@ pub async fn set_approved(
 ) -> AppResult<Option<OvertimeApplication>> {
     let ot = sqlx::query_as!(
         OvertimeApplication,
-        r#"UPDATE overtime_applications SET
+        r#"UPDATE overtime_applications oa SET
             status = 'approved', reviewed_by = $3, reviewed_at = NOW(),
             review_notes = $4, updated_at = NOW()
-        WHERE id = $1 AND company_id = $2 AND status = 'pending'
-        RETURNING *"#,
+        WHERE oa.id = $1 AND oa.company_id = $2 AND oa.status = 'pending'
+          AND EXISTS (
+              SELECT 1 FROM employees e
+              WHERE e.id = oa.employee_id AND e.company_id = $2 AND e.deleted_at IS NULL
+          )
+        RETURNING oa.*"#,
         ot_id,
         company_id,
         reviewer_id,
@@ -365,6 +435,7 @@ pub async fn get_cancellable_for_employee(
         WHERE id = $1
           AND employee_id = $2
           AND status IN ('pending', 'approved', 'rejected')
+          AND payroll_run_id IS NULL
         FOR UPDATE"#,
         ot_id,
         employee_id,
@@ -412,7 +483,8 @@ pub async fn mark_cancelled_for_employee(
 ) -> AppResult<bool> {
     let res = sqlx::query!(
         "UPDATE overtime_applications SET status = 'cancelled', updated_at = NOW()
-         WHERE id = $1 AND employee_id = $2 AND status = $3",
+         WHERE id = $1 AND employee_id = $2 AND status = $3
+           AND status <> 'processed' AND payroll_run_id IS NULL",
         ot_id,
         employee_id,
         expected_status,
@@ -428,7 +500,7 @@ pub async fn delete_cancelled_for_employee(
     employee_id: Uuid,
 ) -> AppResult<u64> {
     let rows = sqlx::query!(
-        "DELETE FROM overtime_applications WHERE id = $1 AND employee_id = $2 AND status = 'cancelled'",
+        "DELETE FROM overtime_applications WHERE id = $1 AND employee_id = $2 AND status = 'cancelled' AND reviewed_at IS NULL",
         ot_id,
         employee_id,
     )

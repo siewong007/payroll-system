@@ -40,8 +40,7 @@ pub async fn list_page_for_admin(
                     SELECT company_id FROM user_companies WHERE user_id = $1)
                   AND ($2::uuid IS NULL OR uc.company_id = $2))
               AND ($3::text IS NULL
-                    OR u.full_name ILIKE '%' || $3 || '%' ESCAPE '\'
-                    OR u.email ILIKE '%' || $3 || '%' ESCAPE '\')
+                    OR lower((u.full_name::text || ' ' || u.email::text)) LIKE '%' || lower($3) || '%' ESCAPE '\')
               AND NOT ($6::bool AND u.roles && ARRAY['admin', 'super_admin']::varchar[])
             ORDER BY u.created_at DESC
             LIMIT $4 OFFSET $5"#,
@@ -77,8 +76,7 @@ pub async fn count_for_admin(
                     SELECT company_id FROM user_companies WHERE user_id = $1)
                   AND ($2::uuid IS NULL OR uc.company_id = $2))
               AND ($3::text IS NULL
-                    OR u.full_name ILIKE '%' || $3 || '%' ESCAPE '\'
-                    OR u.email ILIKE '%' || $3 || '%' ESCAPE '\')
+                    OR lower((u.full_name::text || ' ' || u.email::text)) LIKE '%' || lower($3) || '%' ESCAPE '\')
               AND NOT ($4::bool AND u.roles && ARRAY['admin', 'super_admin']::varchar[])"#,
         caller_id,
         company_id,
@@ -115,8 +113,7 @@ pub async fn list_page_for_admin_by_role(
                     SELECT company_id FROM user_companies WHERE user_id = $1)
                   AND ($2::uuid IS NULL OR uc.company_id = $2))
               AND ($3::text IS NULL
-                    OR u.full_name ILIKE '%' || $3 || '%' ESCAPE '\'
-                    OR u.email ILIKE '%' || $3 || '%' ESCAPE '\')
+                    OR lower((u.full_name::text || ' ' || u.email::text)) LIKE '%' || lower($3) || '%' ESCAPE '\')
               AND u.roles @> ARRAY[$4]::varchar(50)[]
               AND NOT ($7::bool AND u.roles && ARRAY['admin', 'super_admin']::varchar[])
             ORDER BY u.created_at DESC
@@ -155,8 +152,7 @@ pub async fn count_for_admin_by_role(
                     SELECT company_id FROM user_companies WHERE user_id = $1)
                   AND ($2::uuid IS NULL OR uc.company_id = $2))
               AND ($3::text IS NULL
-                    OR u.full_name ILIKE '%' || $3 || '%' ESCAPE '\'
-                    OR u.email ILIKE '%' || $3 || '%' ESCAPE '\')
+                    OR lower((u.full_name::text || ' ' || u.email::text)) LIKE '%' || lower($3) || '%' ESCAPE '\')
               AND u.roles @> ARRAY[$4]::varchar(50)[]
               AND NOT ($5::bool AND u.roles && ARRAY['admin', 'super_admin']::varchar[])"#,
     )

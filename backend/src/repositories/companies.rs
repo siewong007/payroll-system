@@ -278,7 +278,10 @@ pub async fn set_attendance_network_mode(
 /// Runs many statements, so it takes the caller's transaction connection. Never
 /// call it outside a transaction: a mis-ordered statement must roll the whole
 /// wipe back rather than half-delete a tenant.
-pub async fn delete_company_data(conn: &mut sqlx::PgConnection, company_id: Uuid) -> AppResult<()> {
+pub async fn delete_company_data(
+    conn: &mut sqlx::PgConnection,
+    company_id: Uuid,
+) -> AppResult<Vec<String>> {
     // Payroll money rows. `payroll_item_details` carries no company_id of its
     // own (1009 explains why it was left out of the tenant anchoring), so it is
     // reached through its parent.
@@ -305,11 +308,11 @@ pub async fn delete_company_data(conn: &mut sqlx::PgConnection, company_id: Uuid
     sqlx::query!("DELETE FROM push_outbox WHERE company_id = $1", company_id)
         .execute(&mut *conn)
         .await?;
-    sqlx::query!(
-        "DELETE FROM uploaded_files WHERE company_id = $1",
+    let deleted_uploads = sqlx::query_scalar!(
+        "DELETE FROM uploaded_files WHERE company_id = $1 RETURNING stored_name",
         company_id
     )
-    .execute(&mut *conn)
+    .fetch_all(&mut *conn)
     .await?;
     sqlx::query!("DELETE FROM email_logs WHERE company_id = $1", company_id)
         .execute(&mut *conn)
@@ -435,7 +438,7 @@ pub async fn delete_company_data(conn: &mut sqlx::PgConnection, company_id: Uuid
     .execute(&mut *conn)
     .await?;
 
-    Ok(())
+    Ok(deleted_uploads)
 }
 
 /// Hard-delete a company and everything under it. Runs many statements, so it
@@ -448,15 +451,16 @@ pub async fn delete_company_data(conn: &mut sqlx::PgConnection, company_id: Uuid
 /// repository layer, and precisely what let two tables go missing from the list
 /// without the compiler noticing.
 pub async fn delete_cascade(conn: &mut sqlx::PgConnection, company_id: Uuid) -> AppResult<u64> {
-    delete_cascade_for_actor(conn, company_id, None).await
+    let (deleted, _) = delete_cascade_for_actor(conn, company_id, None).await?;
+    Ok(deleted)
 }
 
 pub async fn delete_cascade_for_actor(
     conn: &mut sqlx::PgConnection,
     company_id: Uuid,
     exclude_actor_id: Option<Uuid>,
-) -> AppResult<u64> {
-    delete_company_data(&mut *conn, company_id).await?;
+) -> AppResult<(u64, Vec<String>)> {
+    let deleted_uploads = delete_company_data(&mut *conn, company_id).await?;
 
     // Revoke active sessions and refresh tokens for users currently scoped to
     // this company or losing their sole remaining company membership (except
@@ -553,7 +557,7 @@ pub async fn delete_cascade_for_actor(
         .execute(&mut *conn)
         .await?;
 
-    Ok(result.rows_affected())
+    Ok((result.rows_affected(), deleted_uploads))
 }
 
 /// Advance this company's auto-absent bookmark to `date`.

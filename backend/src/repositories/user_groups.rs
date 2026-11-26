@@ -63,20 +63,45 @@ pub async fn list_for_company(
     Ok(groups)
 }
 
+pub async fn get_scoped(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    group_id: Uuid,
+    hide_privileged: bool,
+) -> AppResult<Option<UserGroup>> {
+    let group = sqlx::query_as!(
+        UserGroup,
+        r#"SELECT g.id, g.company_id, g.name, g.description, g.is_active,
+            g.created_at, g.updated_at,
+            CASE
+                WHEN $3::bool AND cu.id IS NOT NULL AND cu.roles && ARRAY['admin', 'super_admin']::varchar[]
+                THEN NULL::uuid
+                ELSE g.created_by
+            END AS created_by,
+            CASE
+                WHEN $3::bool AND uu.id IS NOT NULL AND uu.roles && ARRAY['admin', 'super_admin']::varchar[]
+                THEN NULL::uuid
+                ELSE g.updated_by
+            END AS updated_by
+        FROM user_groups g
+        LEFT JOIN users cu ON cu.id = g.created_by
+        LEFT JOIN users uu ON uu.id = g.updated_by
+        WHERE g.id = $1 AND g.company_id = $2"#,
+        group_id,
+        company_id,
+        hide_privileged,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(group)
+}
+
 pub async fn get(
     executor: impl Executor<'_, Database = Postgres>,
     company_id: Uuid,
     group_id: Uuid,
 ) -> AppResult<Option<UserGroup>> {
-    let group = sqlx::query_as!(
-        UserGroup,
-        "SELECT * FROM user_groups WHERE id = $1 AND company_id = $2",
-        group_id,
-        company_id,
-    )
-    .fetch_optional(executor)
-    .await?;
-    Ok(group)
+    get_scoped(executor, company_id, group_id, false).await
 }
 
 pub async fn lock_for_update(

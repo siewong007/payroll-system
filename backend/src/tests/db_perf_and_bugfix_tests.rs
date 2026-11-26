@@ -51,6 +51,7 @@ fn test_config() -> AppConfig {
         trust_proxy_headers: false,
         client_ip_header: None,
         turnstile_secret_key: None,
+        allow_unconfigured_turnstile: false,
         turnstile_verify_url: "https://challenges.cloudflare.com/turnstile/v0/siteverify".into(),
         vapid_public_key: None,
         vapid_private_key: None,
@@ -972,6 +973,8 @@ async fn inactive_super_admin_deletion_and_company_delete_cleans_uploads_and_pus
             roles: Some(vec!["admin".into()]),
             is_active: None,
             company_ids: None,
+            actor_password: None,
+            actor_totp_code: None,
         },
         active_sa,
         None,
@@ -1024,9 +1027,10 @@ async fn inactive_super_admin_deletion_and_company_delete_cleans_uploads_and_pus
         .expect("insert push_outbox");
 
     let mut tx = pool.begin().await.expect("begin tx");
-    companies::delete_company_data(&mut tx, company_id)
+    let deleted_uploads = companies::delete_company_data(&mut tx, company_id)
         .await
         .expect("delete_company_data");
+    assert!(deleted_uploads.contains(&stored_name));
     tx.commit().await.expect("commit tx");
 
     let rem_uploads: i64 =
@@ -1242,4 +1246,247 @@ async fn backup_roundtrip_preserves_network_mode_snapshot_and_entry_links() {
     .expect("read dst entry links");
     assert!(dst_ot.is_some());
     assert!(dst_lr.is_some());
+}
+
+#[tokio::test]
+async fn monthly_allowance_staged_entry_paid_and_money_bounds_enforced() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+
+    use crate::models::payroll::{MAX_MONEY_SEN, checked_round_sen};
+    use rust_decimal::Decimal;
+
+    assert!(checked_round_sen(Decimal::from(i64::MIN)).is_err());
+    assert!(checked_round_sen(Decimal::from(MAX_MONEY_SEN + 1)).is_err());
+    assert!(checked_round_sen(Decimal::from(-MAX_MONEY_SEN - 1)).is_err());
+    assert!(checked_round_sen(Decimal::MAX).is_err());
+    assert_eq!(
+        checked_round_sen(Decimal::from(MAX_MONEY_SEN)).unwrap(),
+        MAX_MONEY_SEN
+    );
+    assert_eq!(
+        checked_round_sen(Decimal::from(-MAX_MONEY_SEN)).unwrap(),
+        -MAX_MONEY_SEN
+    );
+
+    let company_id = seed_company(&pool).await;
+    let group_id = seed_payroll_group(&pool, company_id).await;
+    let emp_id = seed_employee(&pool, company_id, Some(group_id), 400_000).await;
+    let admin_id = seed_user(&pool, company_id, "payroll_admin").await;
+
+    sqlx::query(
+        r#"INSERT INTO payroll_entries (
+            id, employee_id, company_id, period_year, period_month,
+            category, item_type, description, amount, is_taxable, is_processed, created_by
+        ) VALUES ($1, $2, $3, 2024, 4, 'earning', 'monthly_allowance', 'Meal Allowance', 25000, TRUE, FALSE, $4)"#,
+    )
+    .bind(Uuid::new_v4())
+    .bind(emp_id)
+    .bind(company_id)
+    .bind(admin_id)
+    .execute(&pool)
+    .await
+    .expect("stage monthly_allowance");
+
+    let run = payroll_engine::process_payroll(
+        &pool,
+        company_id,
+        group_id,
+        2024,
+        4,
+        NaiveDate::from_ymd_opt(2024, 4, 28).unwrap(),
+        admin_id,
+        None,
+        None,
+    )
+    .await
+    .expect("process payroll with monthly_allowance");
+
+    let total_allowances: i64 = sqlx::query_scalar(
+        "SELECT total_allowances FROM payroll_items WHERE payroll_run_id = $1 AND employee_id = $2",
+    )
+    .bind(run.id)
+    .bind(emp_id)
+    .fetch_one(&pool)
+    .await
+    .expect("read total_allowances");
+    assert_eq!(total_allowances, 25_000);
+}
+
+#[tokio::test]
+async fn attendance_network_observations_allow_zero_to_one_transitions_within_12h() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+
+    use crate::repositories::attendance_network_observations as obs;
+
+    let company_id = seed_company(&pool).await;
+    let emp_id = seed_employee(&pool, company_id, None, 350_000).await;
+
+    // 1. Denial -> unanchored observation -> anchored observation within same second.
+    obs::record_denial(&pool, company_id, emp_id, "203.0.113.0", 24)
+        .await
+        .expect("record denial");
+    obs::record(&pool, company_id, emp_id, "203.0.113.0", 24, false)
+        .await
+        .expect("record 0->1 observation");
+    obs::record(&pool, company_id, emp_id, "203.0.113.0", 24, true)
+        .await
+        .expect("record 0->1 anchored");
+
+    // Repeating each within the 12h window must keep all three at 1.
+    obs::record_denial(&pool, company_id, emp_id, "203.0.113.0", 24)
+        .await
+        .expect("repeat denial");
+    obs::record(&pool, company_id, emp_id, "203.0.113.0", 24, true)
+        .await
+        .expect("repeat anchored");
+
+    let counts: (i32, i32, i32) = sqlx::query_as(
+        "SELECT observation_count, anchored_count, denied_count FROM attendance_network_observations WHERE company_id = $1 AND employee_id = $2",
+    )
+    .bind(company_id)
+    .bind(emp_id)
+    .fetch_one(&pool)
+    .await
+    .expect("read observation counts");
+    assert_eq!(counts, (1, 1, 1));
+}
+
+#[tokio::test]
+async fn audit_and_trigram_indexes_are_planner_usable() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+
+    fn collect_index_names(val: &serde_json::Value, out: &mut Vec<String>) {
+        match val {
+            serde_json::Value::Object(map) => {
+                if let Some(serde_json::Value::String(name)) = map.get("Index Name") {
+                    out.push(name.clone());
+                }
+                for child in map.values() {
+                    collect_index_names(child, out);
+                }
+            }
+            serde_json::Value::Array(arr) => {
+                for child in arr {
+                    collect_index_names(child, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let company_id = seed_company(&pool).await;
+    let run_id_str = Uuid::new_v4().to_string();
+
+    let mut tx = pool.begin().await.expect("begin tx");
+    sqlx::query("SET LOCAL enable_seqscan = off")
+        .execute(&mut *tx)
+        .await
+        .expect("disable seqscan");
+
+    let plan_new: serde_json::Value = sqlx::query_scalar(
+        "EXPLAIN (FORMAT JSON) SELECT id FROM audit_logs WHERE company_id = $1 AND entity_type = 'payroll_item' AND new_values->>'payroll_run_id' = $2",
+    )
+    .bind(company_id)
+    .bind(&run_id_str)
+    .fetch_one(&mut *tx)
+    .await
+    .expect("explain audit new");
+    let mut new_idxs = Vec::new();
+    collect_index_names(&plan_new, &mut new_idxs);
+    assert!(
+        new_idxs
+            .iter()
+            .any(|n| n == "idx_audit_logs_payroll_item_run_new"),
+        "expected idx_audit_logs_payroll_item_run_new, got {new_idxs:?} in {plan_new}"
+    );
+
+    let plan_old: serde_json::Value = sqlx::query_scalar(
+        "EXPLAIN (FORMAT JSON) SELECT id FROM audit_logs WHERE company_id = $1 AND entity_type = 'payroll_item' AND old_values->>'payroll_run_id' = $2",
+    )
+    .bind(company_id)
+    .bind(&run_id_str)
+    .fetch_one(&mut *tx)
+    .await
+    .expect("explain audit old");
+    let mut old_idxs = Vec::new();
+    collect_index_names(&plan_old, &mut old_idxs);
+    assert!(
+        old_idxs
+            .iter()
+            .any(|n| n == "idx_audit_logs_payroll_item_run_old"),
+        "expected idx_audit_logs_payroll_item_run_old, got {old_idxs:?} in {plan_old}"
+    );
+
+    sqlx::query(
+        r#"INSERT INTO documents (company_id, title, file_name, file_url, status)
+           SELECT $1, 'Doc ' || g, 'file_' || g || '.pdf', '/api/uploads/doc-' || g || '.pdf', 'active'
+           FROM generate_series(1, 1000) g"#,
+    )
+    .bind(company_id)
+    .execute(&mut *tx)
+    .await
+    .expect("seed documents for trigram explain");
+    sqlx::query("SELECT gin_clean_pending_list('idx_documents_search_trgm'::regclass)")
+        .execute(&mut *tx)
+        .await
+        .expect("flush documents trigram pending list");
+    sqlx::query("ANALYZE documents")
+        .execute(&mut *tx)
+        .await
+        .expect("analyze documents");
+
+    let plan_docs: serde_json::Value = sqlx::query_scalar(
+        r#"EXPLAIN (FORMAT JSON) SELECT id FROM documents WHERE company_id = $1 AND deleted_at IS NULL AND lower((title::text || ' ' || file_name::text)) LIKE '%' || lower($2) || '%' ESCAPE '\'"#,
+    )
+    .bind(company_id)
+    .bind("contract")
+    .fetch_one(&mut *tx)
+    .await
+    .expect("explain documents trgm");
+    let mut docs_idxs = Vec::new();
+    collect_index_names(&plan_docs, &mut docs_idxs);
+    assert!(
+        docs_idxs.iter().any(|n| n == "idx_documents_search_trgm"),
+        "expected idx_documents_search_trgm, got {docs_idxs:?} in {plan_docs}"
+    );
+
+    sqlx::query(
+        r#"INSERT INTO users (email, password_hash, full_name, roles, company_id)
+           SELECT 'trgm-user-' || g || '-' || $1::text || '@example.invalid', 'x', 'Trigram User ' || g, ARRAY['employee']::varchar(50)[], $1
+           FROM generate_series(1, 1000) g"#,
+    )
+    .bind(company_id)
+    .execute(&mut *tx)
+    .await
+    .expect("seed users for trigram explain");
+    sqlx::query("SELECT gin_clean_pending_list('idx_users_search_trgm'::regclass)")
+        .execute(&mut *tx)
+        .await
+        .expect("flush users trigram pending list");
+    sqlx::query("ANALYZE users")
+        .execute(&mut *tx)
+        .await
+        .expect("analyze users");
+
+    let plan_users: serde_json::Value = sqlx::query_scalar(
+        r#"EXPLAIN (FORMAT JSON) SELECT id FROM users WHERE deleted_at IS NULL AND lower((full_name::text || ' ' || email::text)) LIKE '%' || lower($1) || '%' ESCAPE '\'"#,
+    )
+    .bind("alice")
+    .fetch_one(&mut *tx)
+    .await
+    .expect("explain users trgm");
+    let mut users_idxs = Vec::new();
+    collect_index_names(&plan_users, &mut users_idxs);
+    assert!(
+        users_idxs.iter().any(|n| n == "idx_users_search_trgm"),
+        "expected idx_users_search_trgm, got {users_idxs:?} in {plan_users}"
+    );
+
+    tx.rollback().await.expect("rollback explain tx");
 }

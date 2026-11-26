@@ -255,8 +255,16 @@ pub async fn upsert_push_subscription(
     let (endpoint, p256dh, auth) =
         push_service::validate_push_subscription(&req.endpoint, &req.keys.p256dh, &req.keys.auth)?;
 
-    if !push_subscriptions::exists_active_for_user_endpoint(pool, user_id, &endpoint).await?
-        && push_subscriptions::count_active_for_user(pool, user_id).await?
+    let trimmed_ua = user_agent
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.chars().take(512).collect::<String>());
+
+    let mut tx = pool.begin().await?;
+    let _ = crate::repositories::users::lock_for_update(&mut *tx, &[user_id]).await?;
+
+    if !push_subscriptions::exists_active_for_user_endpoint(&mut *tx, user_id, &endpoint).await?
+        && push_subscriptions::count_active_for_user(&mut *tx, user_id).await?
             >= MAX_ACTIVE_PUSH_SUBSCRIPTIONS_PER_USER
     {
         return Err(AppError::BadRequest(
@@ -264,13 +272,8 @@ pub async fn upsert_push_subscription(
         ));
     }
 
-    let trimmed_ua = user_agent
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(|s| s.chars().take(512).collect::<String>());
-
     push_subscriptions::upsert(
-        pool,
+        &mut *tx,
         user_id,
         company_id,
         session_id,
@@ -281,7 +284,8 @@ pub async fn upsert_push_subscription(
     )
     .await?;
 
-    let active_subscriptions = push_subscriptions::count_active_for_user(pool, user_id).await?;
+    let active_subscriptions = push_subscriptions::count_active_for_user(&mut *tx, user_id).await?;
+    tx.commit().await?;
     Ok(PushSubscriptionStatusResponse {
         subscribed: active_subscriptions > 0,
         active_subscriptions,

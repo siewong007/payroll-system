@@ -49,6 +49,10 @@ pub struct AppConfig {
     /// Cloudflare Turnstile secret. Unset = verification skipped on every
     /// protected endpoint (local dev, CI). Set in production only.
     pub turnstile_secret_key: Option<String>,
+    /// Operator escape hatch allowing production startup without Turnstile.
+    /// Defaults to false so production deployments fail closed when
+    /// `TURNSTILE_SECRET_KEY` is missing.
+    pub allow_unconfigured_turnstile: bool,
     /// Operator-trusted verify endpoint; overridden only by tests pointing
     /// at an in-process stub. Never tenant-supplied, so no SSRF policy applies.
     pub turnstile_verify_url: String,
@@ -102,6 +106,9 @@ impl AppConfig {
             turnstile_secret_key: env::var("TURNSTILE_SECRET_KEY")
                 .ok()
                 .filter(|v| !v.is_empty()),
+            allow_unconfigured_turnstile: env::var("ALLOW_UNCONFIGURED_TURNSTILE")
+                .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+                .unwrap_or(false),
             turnstile_verify_url: env::var("TURNSTILE_VERIFY_URL").unwrap_or_else(|_| {
                 "https://challenges.cloudflare.com/turnstile/v0/siteverify".to_string()
             }),
@@ -168,9 +175,50 @@ impl AppConfig {
         if self.jwt_secret == self.totp_encryption_key {
             return Err("TOTP_ENCRYPTION_KEY must differ from JWT_SECRET in production".into());
         }
-        if self.turnstile_secret_key.is_none() {
+        if let Some(ref header_name) = self.client_ip_header
+            && axum::http::HeaderName::from_bytes(header_name.as_bytes()).is_err()
+        {
+            return Err(format!(
+                "CLIENT_IP_HEADER '{header_name}' is not a valid HTTP header name"
+            ));
+        }
+        if self
+            .turnstile_secret_key
+            .as_deref()
+            .is_none_or(str::is_empty)
+        {
+            let frontend_host_is_local = url::Url::parse(&self.frontend_url)
+                .ok()
+                .and_then(|u| {
+                    u.host_str().map(|h| {
+                        matches!(
+                            h.to_ascii_lowercase().as_str(),
+                            "localhost" | "127.0.0.1" | "::1"
+                        )
+                    })
+                })
+                .unwrap_or(false);
+            let require_turnstile = (self
+                .frontend_url
+                .to_ascii_lowercase()
+                .starts_with("https://")
+                && !frontend_host_is_local)
+                || std::env::var("RUST_ENV").as_deref() == Ok("production");
+            if require_turnstile && !self.allow_unconfigured_turnstile {
+                return Err(
+                    "TURNSTILE_SECRET_KEY must be set in production (or set ALLOW_UNCONFIGURED_TURNSTILE=true explicitly)"
+                        .into(),
+                );
+            }
             tracing::warn!(
                 "TURNSTILE_SECRET_KEY is unset in production; CAPTCHA verification on auth endpoints is disabled"
+            );
+        } else if self.turnstile_secret_key.as_deref()
+            == Some("1x0000000000000000000000000000000AA")
+        {
+            return Err(
+                "TURNSTILE_SECRET_KEY must not use Cloudflare's dummy test key in production"
+                    .into(),
             );
         }
         Ok(())
@@ -259,6 +307,7 @@ mod tests {
             trust_proxy_headers: false,
             client_ip_header: None,
             turnstile_secret_key: None,
+            allow_unconfigured_turnstile: false,
             turnstile_verify_url: "https://challenges.cloudflare.com/turnstile/v0/siteverify"
                 .into(),
             vapid_public_key: None,
@@ -369,12 +418,21 @@ mod tests {
         cfg.frontend_url = "https://payrollmy.com".into();
         cfg.jwt_secret = "change-me-too-short".into();
         cfg.totp_encryption_key = "0123456789abcdef0123456789abcdef".into();
+        cfg.turnstile_secret_key = Some("live-turnstile-secret-0123456789abcdef".into());
         assert!(cfg.validate_production_secrets().is_err());
 
         cfg.jwt_secret = "0123456789abcdef0123456789abcdef".into();
         assert!(cfg.validate_production_secrets().is_err()); // reused key
 
         cfg.jwt_secret = "fedcba9876543210fedcba9876543210".into();
+        assert!(cfg.validate_production_secrets().is_ok());
+
+        cfg.turnstile_secret_key = Some("1x0000000000000000000000000000000AA".into());
+        assert!(cfg.validate_production_secrets().is_err());
+
+        cfg.turnstile_secret_key = None;
+        assert!(cfg.validate_production_secrets().is_err());
+        cfg.allow_unconfigured_turnstile = true;
         assert!(cfg.validate_production_secrets().is_ok());
     }
 

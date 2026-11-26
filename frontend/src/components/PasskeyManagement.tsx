@@ -4,6 +4,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Fingerprint, Plus, Trash2, Pencil, Check, X } from 'lucide-react';
 import { listPasskeys, deletePasskey, renamePasskey, passkeyRegisterBegin, passkeyRegisterComplete } from '@/api/passkey';
 import type { PasskeyInfo } from '@/api/passkey';
+import { totpStatus } from '@/api/totp';
+import { FormField } from '@/components/ui/FormField';
 import { createPasskeyCredential, isWebAuthnSupported } from '@/lib/webauthn';
 import { formatDate, getErrorMessage } from '@/lib/utils';
 import { Modal } from '@/components/ui/Modal';
@@ -14,10 +16,13 @@ export function PasskeyManagement() {
   const [registering, setRegistering] = useState(false);
   const [newName, setNewName] = useState('');
   const [password, setPassword] = useState('');
+  const [totpCode, setTotpCode] = useState('');
   const [showNameInput, setShowNameInput] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deletePassword, setDeletePassword] = useState('');
+  const [deleteTotpCode, setDeleteTotpCode] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
@@ -25,13 +30,26 @@ export function PasskeyManagement() {
     queryKey: ['passkeys'],
     queryFn: listPasskeys,
   });
+  const totpQuery = useQuery({
+    queryKey: ['totp-status'],
+    queryFn: async () => (await totpStatus()) ?? { enabled: false },
+    retry: false,
+  });
+  const twoFactorEnabled = Boolean(totpQuery.data?.enabled);
+
+  const closeDeleteModal = () => {
+    setDeletingId(null);
+    setDeletePassword('');
+    setDeleteTotpCode('');
+  };
 
   const deleteMutation = useMutation({
-    mutationFn: deletePasskey,
+    mutationFn: ({ id, pw, code }: { id: string; pw: string; code?: string }) =>
+      deletePasskey(id, pw, code),
     onSuccess: () => {
       setError('');
       queryClient.invalidateQueries({ queryKey: ['passkeys'] });
-      setDeletingId(null);
+      closeDeleteModal();
       setSuccess(t('auth.passkeys.deleted'));
       setTimeout(() => setSuccess(''), 3000);
     },
@@ -57,7 +75,10 @@ export function PasskeyManagement() {
     setRegistering(true);
     try {
       // Step 1: Get challenge from server
-      const { challenge_id, options } = await passkeyRegisterBegin(password);
+      const { challenge_id, options } = await passkeyRegisterBegin(
+        password,
+        ...(twoFactorEnabled && totpCode.trim() ? [totpCode.trim()] : []),
+      );
 
       // Step 2: Browser WebAuthn ceremony
       const credential = await createPasskeyCredential(options.publicKey);
@@ -70,6 +91,7 @@ export function PasskeyManagement() {
       setShowNameInput(false);
       setNewName('');
       setPassword('');
+      setTotpCode('');
       setSuccess(t('auth.passkeys.registered'));
       setTimeout(() => setSuccess(''), 3000);
     } catch (err: unknown) {
@@ -198,7 +220,13 @@ export function PasskeyManagement() {
 
       {/* Register new passkey */}
       {showNameInput ? (
-        <div className="flex flex-wrap items-center gap-2">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void handleRegister();
+          }}
+          className="flex flex-wrap items-center gap-2"
+        >
           <input
             type="text"
             value={newName}
@@ -217,23 +245,34 @@ export function PasskeyManagement() {
             aria-label={t('auth.twoFactor.currentPasswordPlaceholder')}
             className="form-input flex-1 min-w-[160px]"
           />
+          {twoFactorEnabled && (
+            <input
+              type="text"
+              inputMode="text"
+              autoComplete="one-time-code"
+              value={totpCode}
+              onChange={(e) => setTotpCode(e.target.value)}
+              placeholder="123456"
+              aria-label={t('auth.twoFactor.title')}
+              className="form-input w-28 text-center tracking-widest"
+            />
+          )}
           <button
-            type="button"
-            onClick={handleRegister}
-            disabled={registering || !password}
+            type="submit"
+            disabled={registering || !password || (twoFactorEnabled && !totpCode.trim())}
             className="btn-primary !py-2 !min-h-10"
           >
             {registering ? t('auth.passkeys.registering') : t('auth.passkeys.register')}
           </button>
           <button
             type="button"
-            onClick={() => { setShowNameInput(false); setNewName(''); setPassword(''); }}
+            onClick={() => { setShowNameInput(false); setNewName(''); setPassword(''); setTotpCode(''); }}
             aria-label={t('common.cancel')}
             className="min-h-10 min-w-10 inline-flex items-center justify-center text-gray-400 dark:text-slate-400 hover:text-gray-600 dark:hover:text-slate-200 rounded-lg"
           >
             <X className="w-4 h-4" />
           </button>
-        </div>
+        </form>
       ) : (
         <button
           type="button"
@@ -247,18 +286,18 @@ export function PasskeyManagement() {
 
       <Modal
         open={deletingId !== null}
-        onClose={() => setDeletingId(null)}
+        onClose={closeDeleteModal}
         title={t('auth.passkeys.deleteTitle')}
         maxWidth="max-w-md"
         footer={
           <div className="flex justify-end gap-2">
-            <button type="button" className="btn-secondary !min-h-0 !py-2" onClick={() => setDeletingId(null)}>
+            <button type="button" className="btn-secondary !min-h-0 !py-2" onClick={closeDeleteModal}>
               {t('common.cancel')}
             </button>
             <button
-              type="button"
-              onClick={() => deletingId && deleteMutation.mutate(deletingId)}
-              disabled={deleteMutation.isPending}
+              type="submit"
+              form="delete-passkey-form"
+              disabled={deleteMutation.isPending || !deletePassword || (twoFactorEnabled && !deleteTotpCode.trim())}
               className="btn-primary !min-h-0 !py-2 !bg-none !bg-red-600 hover:!bg-red-700"
             >
               {deleteMutation.isPending ? t('auth.passkeys.deleting') : t('auth.passkeys.deleteSubmit')}
@@ -266,9 +305,54 @@ export function PasskeyManagement() {
           </div>
         }
       >
-        <p className="text-sm text-gray-600 dark:text-slate-300">
-          {t('auth.passkeys.deleteBody')}
-        </p>
+        <form
+          id="delete-passkey-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!deletingId || !deletePassword || (twoFactorEnabled && !deleteTotpCode.trim())) return;
+            deleteMutation.mutate({
+              id: deletingId,
+              pw: deletePassword,
+              ...(twoFactorEnabled && deleteTotpCode.trim() ? { code: deleteTotpCode.trim() } : {}),
+            });
+          }}
+          className="space-y-4"
+        >
+          <p className="text-sm text-gray-600 dark:text-slate-300">
+            {t('auth.passkeys.deleteBody')}
+          </p>
+          <FormField label={t('auth.twoFactor.confirmPasswordPrompt')} required>
+            {(aria) => (
+              <input
+                {...aria}
+                type="password"
+                autoComplete="current-password"
+                value={deletePassword}
+                onChange={(e) => setDeletePassword(e.target.value)}
+                placeholder={t('auth.twoFactor.currentPasswordPlaceholder')}
+                className="form-input !p-2.5"
+                required
+              />
+            )}
+          </FormField>
+          {twoFactorEnabled && (
+            <FormField label={t('auth.twoFactor.title')} required>
+              {(aria) => (
+                <input
+                  {...aria}
+                  type="text"
+                  inputMode="text"
+                  autoComplete="one-time-code"
+                  value={deleteTotpCode}
+                  onChange={(e) => setDeleteTotpCode(e.target.value)}
+                  placeholder="123456"
+                  className="form-input !p-2.5 text-center tracking-widest"
+                  required
+                />
+              )}
+            </FormField>
+          )}
+        </form>
       </Modal>
     </div>
   );

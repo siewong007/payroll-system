@@ -26,22 +26,29 @@ pub async fn acquire_tax_year_lock(
 }
 
 /// Whether any non-draft (`pending_approval`, `approved`, `paid`) payroll run
-/// overlaps `[start_date, end_date]` for the company.
+/// covering `[start_date, end_date]` includes `employee_id`.
 pub async fn has_non_draft_covering_dates(
     executor: impl Executor<'_, Database = Postgres>,
     company_id: Uuid,
+    employee_id: Uuid,
     start_date: NaiveDate,
     end_date: NaiveDate,
 ) -> AppResult<bool> {
     let exists = sqlx::query_scalar!(
         r#"SELECT EXISTS(
-            SELECT 1 FROM payroll_runs
-            WHERE company_id = $1
-              AND status IN ('pending_approval', 'approved', 'paid')
-              AND period_start <= $3
-              AND period_end >= $2
+            SELECT 1 FROM payroll_runs pr
+            WHERE pr.company_id = $1
+              AND pr.status IN ('pending_approval', 'approved', 'paid')
+              AND pr.period_start <= $4
+              AND pr.period_end >= $3
+              AND EXISTS (
+                  SELECT 1 FROM payroll_items pi
+                  WHERE pi.payroll_run_id = pr.id
+                    AND pi.employee_id = $2
+              )
         ) AS "exists!""#,
         company_id,
+        employee_id,
         start_date,
         end_date,
     )
@@ -50,22 +57,30 @@ pub async fn has_non_draft_covering_dates(
     Ok(exists)
 }
 
-/// Whether any finalized (`paid`) payroll run overlaps `[start_date, end_date]`.
+/// Whether any finalized (`paid`) payroll run covering `[start_date, end_date]`
+/// includes `employee_id`.
 pub async fn has_paid_covering_dates(
     executor: impl Executor<'_, Database = Postgres>,
     company_id: Uuid,
+    employee_id: Uuid,
     start_date: NaiveDate,
     end_date: NaiveDate,
 ) -> AppResult<bool> {
     let exists = sqlx::query_scalar!(
         r#"SELECT EXISTS(
-            SELECT 1 FROM payroll_runs
-            WHERE company_id = $1
-              AND status = 'paid'
-              AND period_start <= $3
-              AND period_end >= $2
+            SELECT 1 FROM payroll_runs pr
+            WHERE pr.company_id = $1
+              AND pr.status = 'paid'
+              AND pr.period_start <= $4
+              AND pr.period_end >= $3
+              AND EXISTS (
+                  SELECT 1 FROM payroll_items pi
+                  WHERE pi.payroll_run_id = pr.id
+                    AND pi.employee_id = $2
+              )
         ) AS "exists!""#,
         company_id,
+        employee_id,
         start_date,
         end_date,
     )

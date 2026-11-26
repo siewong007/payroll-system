@@ -20,6 +20,10 @@ pub struct User {
     pub last_login: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    #[serde(skip_serializing)]
+    pub failed_login_attempts: i32,
+    #[serde(skip_serializing)]
+    pub login_locked_until: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Deserialize, Validate)]
@@ -54,10 +58,22 @@ pub struct LoginResponse {
     pub user: UserResponse,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct ChangePasswordRequest {
     pub current_password: String,
     pub new_password: String,
+    #[serde(default)]
+    pub totp_code: Option<String>,
+}
+
+impl std::fmt::Debug for ChangePasswordRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ChangePasswordRequest")
+            .field("current_password", &"***")
+            .field("new_password", &"***")
+            .field("totp_code", &self.totp_code.as_ref().map(|_| "***"))
+            .finish()
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -69,6 +85,7 @@ pub struct UserResponse {
     pub company_id: Option<Uuid>,
     pub employee_id: Option<Uuid>,
     pub must_change_password: bool,
+    pub two_factor_enabled: bool,
     /// Effective permissions, derived from `roles`.
     ///
     /// Shipped with the session rather than fetched separately so the frontend
@@ -111,8 +128,14 @@ impl UserResponse {
             company_id: u.company_id,
             employee_id: u.employee_id,
             must_change_password: u.must_change_password,
+            two_factor_enabled: false,
             permissions,
         }
+    }
+
+    pub fn with_two_factor(mut self, enabled: bool) -> Self {
+        self.two_factor_enabled = enabled;
+        self
     }
 }
 

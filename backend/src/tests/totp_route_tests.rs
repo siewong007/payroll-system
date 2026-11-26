@@ -939,8 +939,18 @@ async fn enforcement_refuses_hard_cut_and_gates_only_privileged_logins() {
         id
     };
 
-    let super_token =
-        crate::tests::route_auth_tests::token_for(&pool, company_id, "super_admin").await;
+    let (super_token, super_user_id) =
+        crate::tests::route_auth_tests::token_and_user_for(&pool, company_id, "super_admin").await;
+    let super_password = "SuperAdminStepUp1!";
+    let super_hash = crate::services::auth_service::hash_password(super_password)
+        .await
+        .expect("hash super_admin password");
+    sqlx::query("UPDATE users SET password_hash = $1 WHERE id = $2")
+        .bind(&super_hash)
+        .bind(super_user_id)
+        .execute(&pool)
+        .await
+        .expect("set super_admin password");
     let app = app_for(pool.clone()).await;
 
     // Confirm the gate is actually off before flipping it — every other login
@@ -979,6 +989,19 @@ async fn enforcement_refuses_hard_cut_and_gates_only_privileged_logins() {
         "expected {email} listed non-compliant: {policy}"
     );
 
+    // Changing the platform 2FA policy without step-up password confirmation is refused.
+    let unconfirmed = app
+        .clone()
+        .oneshot(json_request(
+            "PUT",
+            "/api/admin/platform/2fa-policy",
+            Some(&super_token),
+            r#"{"enforce":true,"grace_until":null}"#,
+        ))
+        .await
+        .expect("unconfirmed policy response");
+    assert_eq!(unconfirmed.status(), StatusCode::BAD_REQUEST);
+
     // A hard cut while anyone is non-compliant is refused at the API.
     let resp = app
         .clone()
@@ -986,7 +1009,9 @@ async fn enforcement_refuses_hard_cut_and_gates_only_privileged_logins() {
             "PUT",
             "/api/admin/platform/2fa-policy",
             Some(&super_token),
-            r#"{"enforce":true,"grace_until":null}"#,
+            &format!(
+                r#"{{"enforce":true,"grace_until":null,"actor_password":"{super_password}"}}"#
+            ),
         ))
         .await
         .expect("hard cut response");
@@ -1002,7 +1027,7 @@ async fn enforcement_refuses_hard_cut_and_gates_only_privileged_logins() {
             "PUT",
             "/api/admin/platform/2fa-policy",
             Some(&super_token),
-            &format!(r#"{{"enforce":true,"grace_until":"{tomorrow}"}}"#),
+            &format!(r#"{{"enforce":true,"grace_until":"{tomorrow}","actor_password":"{super_password}"}}"#),
         ))
         .await
         .expect("grace switch response");

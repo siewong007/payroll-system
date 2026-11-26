@@ -68,6 +68,29 @@ fn ensure_entry_is_manual(entry: &PayrollEntry) -> AppResult<()> {
     Ok(())
 }
 
+async fn ensure_not_self_payroll_entry(
+    pool: &PgPool,
+    actor_id: Uuid,
+    employee_id: Uuid,
+    company_id: Uuid,
+) -> AppResult<()> {
+    if let Some(actor) = crate::repositories::users::get_by_id(pool, actor_id).await?
+        && !actor.roles.iter().any(|r| r == "super_admin")
+        && crate::repositories::users::is_employee_owned_by_user(
+            pool,
+            actor_id,
+            employee_id,
+            company_id,
+        )
+        .await?
+    {
+        return Err(AppError::Forbidden(
+            "You cannot create or modify payroll entries for your own employee record".into(),
+        ));
+    }
+    Ok(())
+}
+
 async fn ensure_employee_in_company(
     pool: &PgPool,
     company_id: Uuid,
@@ -119,6 +142,7 @@ pub async fn create_entry(
         req.amount,
     )?;
     ensure_employee_in_company(pool, company_id, req.employee_id).await?;
+    ensure_not_self_payroll_entry(pool, actor_id, req.employee_id, company_id).await?;
 
     let normalized_type = req.item_type.trim().to_ascii_lowercase();
     let entry = payroll_entries::insert(
@@ -169,6 +193,7 @@ pub async fn update_entry(
             AppError::BadRequest("Payroll entry not found or already processed".into())
         })?;
     ensure_entry_is_manual(&current)?;
+    ensure_not_self_payroll_entry(pool, actor_id, current.employee_id, company_id).await?;
 
     let employee_id = req.employee_id.unwrap_or(current.employee_id);
     let period_year = req.period_year.unwrap_or(current.period_year);
@@ -199,6 +224,10 @@ pub async fn update_entry(
         amount,
     )?;
     ensure_employee_in_company(pool, company_id, employee_id).await?;
+    ensure_not_self_payroll_entry(pool, actor_id, current.employee_id, company_id).await?;
+    if employee_id != current.employee_id {
+        ensure_not_self_payroll_entry(pool, actor_id, employee_id, company_id).await?;
+    }
 
     let normalized_type = item_type.trim().to_ascii_lowercase();
     let updated = payroll_entries::update(
@@ -250,6 +279,7 @@ pub async fn delete_entry(
             AppError::BadRequest("Payroll entry not found or already processed".into())
         })?;
     ensure_entry_is_manual(&current)?;
+    ensure_not_self_payroll_entry(pool, actor_id, current.employee_id, company_id).await?;
 
     let deleted = payroll_entries::delete_unprocessed(pool, id, company_id).await?;
     if deleted == 0 {

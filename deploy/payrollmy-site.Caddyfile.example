@@ -16,6 +16,8 @@ payrollmy.com {
     header X-Frame-Options "DENY"
     header Content-Security-Policy "frame-ancestors 'none'"
     header X-Content-Type-Options "nosniff"
+    header Referrer-Policy "strict-origin-when-cross-origin"
+    header Permissions-Policy "camera=(self), geolocation=(self), microphone=()"
 
     @sw path /sw.js
     header @sw Content-Type "application/javascript; charset=utf-8"

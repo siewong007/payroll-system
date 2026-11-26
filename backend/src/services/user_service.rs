@@ -651,21 +651,29 @@ pub async fn switch_company(
     user_id: Uuid,
     target_company_id: Uuid,
 ) -> AppResult<()> {
+    switch_company_on(pool, user_id, target_company_id).await
+}
+
+pub(crate) async fn switch_company_on<'e>(
+    executor: impl sqlx::Executor<'e, Database = sqlx::Postgres>,
+    user_id: Uuid,
+    target_company_id: Uuid,
+) -> AppResult<()> {
     // Single statement: the membership check and the write cannot interleave
     // with a concurrent revocation of that membership.
-    let switched = match users::set_active_company_if_member(pool, user_id, target_company_id).await
-    {
-        Ok(switched) => switched,
-        Err(AppError::Database(sqlx::Error::Database(ref e)))
-            if e.code().as_deref() == Some("23503")
-                && e.constraint() == Some("users_employee_tenant_fkey") =>
-        {
-            return Err(AppError::BadRequest(
-                "Users linked to an employee record cannot switch to another company".into(),
-            ));
-        }
-        Err(err) => return Err(err),
-    };
+    let switched =
+        match users::set_active_company_if_member(executor, user_id, target_company_id).await {
+            Ok(switched) => switched,
+            Err(AppError::Database(sqlx::Error::Database(ref e)))
+                if e.code().as_deref() == Some("23503")
+                    && e.constraint() == Some("users_employee_tenant_fkey") =>
+            {
+                return Err(AppError::BadRequest(
+                    "Users linked to an employee record cannot switch to another company".into(),
+                ));
+            }
+            Err(err) => return Err(err),
+        };
     if !switched {
         return Err(AppError::Forbidden(
             "You do not have access to this company".into(),

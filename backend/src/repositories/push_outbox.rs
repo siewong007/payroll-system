@@ -30,7 +30,9 @@ pub async fn enqueue_for_user(
           AND ps.revoked_at IS NULL
           AND u.is_active = TRUE
           AND u.deleted_at IS NULL
-          AND (ps.session_id IS NULL OR (us.revoked_at IS NULL AND us.expires_at > NOW()))"#,
+          AND (ps.session_id IS NULL OR (us.revoked_at IS NULL AND us.expires_at > NOW()))
+        ORDER BY ps.last_seen_at DESC NULLS LAST, ps.updated_at DESC, ps.id ASC
+        LIMIT 20"#,
         user_id,
         company_id,
         notification_id,
@@ -57,20 +59,28 @@ pub async fn enqueue_for_notifications(
         return Ok(0);
     }
     let res = sqlx::query!(
-        r#"INSERT INTO push_outbox (
+        r#"WITH eligible_subs AS (
+            SELECT ps.id, ps.user_id,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY ps.user_id
+                       ORDER BY ps.last_seen_at DESC NULLS LAST, ps.updated_at DESC, ps.id ASC
+                   ) AS rn
+            FROM push_subscriptions ps
+            JOIN users u ON u.id = ps.user_id
+            LEFT JOIN user_sessions us ON us.id = ps.session_id
+            WHERE ps.revoked_at IS NULL
+              AND u.is_active = TRUE
+              AND u.deleted_at IS NULL
+              AND (ps.session_id IS NULL OR (us.revoked_at IS NULL AND us.expires_at > NOW()))
+        )
+        INSERT INTO push_outbox (
             subscription_id, user_id, company_id, notification_id, title, body, url, tag
         )
-        SELECT ps.id, n.user_id, $1, n.id, $3, $4, $5, $6
+        SELECT es.id, n.user_id, $1, n.id, $3, $4, $5, $6
         FROM notifications n
-        JOIN users u ON u.id = n.user_id
-        JOIN push_subscriptions ps ON ps.user_id = n.user_id
-        LEFT JOIN user_sessions us ON us.id = ps.session_id
+        JOIN eligible_subs es ON es.user_id = n.user_id AND es.rn <= 20
         WHERE n.id = ANY($2)
-          AND n.company_id = $1
-          AND ps.revoked_at IS NULL
-          AND u.is_active = TRUE
-          AND u.deleted_at IS NULL
-          AND (ps.session_id IS NULL OR (us.revoked_at IS NULL AND us.expires_at > NOW()))"#,
+          AND n.company_id = $1"#,
         company_id,
         notification_ids,
         title,
@@ -92,17 +102,20 @@ pub async fn claim_pending_batch(pool: &PgPool, limit: i64) -> AppResult<Vec<Pus
         PushOutboxBatchRow,
         r#"WITH ranked AS (
             SELECT po.id, po.next_retry_at, po.created_at,
-                   ROW_NUMBER() OVER (PARTITION BY po.user_id ORDER BY po.next_retry_at ASC, po.created_at ASC) AS rn
+                   ROW_NUMBER() OVER (
+                       PARTITION BY po.user_id
+                       ORDER BY po.next_retry_at ASC, po.created_at ASC, po.id ASC
+                   ) AS rn
             FROM push_outbox po
             WHERE po.status = 'pending'
               AND po.next_retry_at <= NOW()
         ),
         candidates AS (
-            SELECT id
+            SELECT id, rn
             FROM ranked
             WHERE rn <= 5
-            ORDER BY rn ASC, next_retry_at ASC, created_at ASC
-            LIMIT $1
+            ORDER BY rn ASC, next_retry_at ASC, created_at ASC, id ASC
+            LIMIT ($1::bigint * 4)
         ),
         claimed AS (
             SELECT po.id
@@ -110,7 +123,8 @@ pub async fn claim_pending_batch(pool: &PgPool, limit: i64) -> AppResult<Vec<Pus
             JOIN candidates c ON c.id = po.id
             WHERE po.status = 'pending'
               AND po.next_retry_at <= NOW()
-            ORDER BY po.next_retry_at ASC, po.created_at ASC
+            ORDER BY c.rn ASC, po.next_retry_at ASC, po.created_at ASC, po.id ASC
+            LIMIT $1
             FOR UPDATE OF po SKIP LOCKED
         ),
         leased AS (

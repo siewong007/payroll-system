@@ -1,0 +1,168 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO oauth2_accounts (user_id, provider, provider_user_id, provider_email, provider_name, avatar_url, access_token_hash, refresh_token_hash, token_expires_at)\n        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)\n        ON CONFLICT (provider, provider_user_id) DO UPDATE SET\n            provider_email = EXCLUDED.provider_email,\n            provider_name = EXCLUDED.provider_name,\n            avatar_url = EXCLUDED.avatar_url,\n            access_token_hash = COALESCE(EXCLUDED.access_token_hash, oauth2_accounts.access_token_hash),\n            refresh_token_hash = COALESCE(EXCLUDED.refresh_token_hash, oauth2_accounts.refresh_token_hash),\n            token_expires_at = COALESCE(EXCLUDED.token_expires_at, oauth2_accounts.token_expires_at),\n            updated_at = NOW()\n        WHERE oauth2_accounts.user_id = EXCLUDED.user_id\n        RETURNING *",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "oauth2_accounts",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "user_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "oauth2_accounts",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "provider",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "oauth2_accounts",
+            "name": "provider"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "provider_user_id",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "oauth2_accounts",
+            "name": "provider_user_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "provider_email",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "oauth2_accounts",
+            "name": "provider_email"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "provider_name",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "oauth2_accounts",
+            "name": "provider_name"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "avatar_url",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "oauth2_accounts",
+            "name": "avatar_url"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "access_token_hash",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "oauth2_accounts",
+            "name": "access_token_hash"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "refresh_token_hash",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "oauth2_accounts",
+            "name": "refresh_token_hash"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "token_expires_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "oauth2_accounts",
+            "name": "token_expires_at"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "oauth2_accounts",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "updated_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "oauth2_accounts",
+            "name": "updated_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Text",
+        "Varchar",
+        "Varchar",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "a0fcd9a6e890c4cad1f93d35c58048569a7dc20a39a5fc167055f7a965a05d2b"
+}

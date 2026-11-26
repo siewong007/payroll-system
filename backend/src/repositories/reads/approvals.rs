@@ -31,7 +31,7 @@ pub async fn list_pending_leave(
             lr.reviewed_by, lr.reviewed_at, lr.review_notes,
             lr.attachment_url, lr.attachment_name,
             lr.created_at, lr.updated_at,
-            lr.created_by, lr.updated_by,
+            lr.created_by, lr.updated_by, lr.editor_ids,
             lt.name AS "leave_type_name?",
             e.full_name AS "employee_name?",
             e.employee_number AS "employee_number?"

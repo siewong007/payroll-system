@@ -203,6 +203,17 @@
       },
       {
         "ordinal": 18,
+        "name": "editor_ids",
+        "type_info": "UuidArray",
+        "origin": {
+          "Table": {
+            "table": "leave_requests",
+            "name": "editor_ids"
+          }
+        }
+      },
+      {
+        "ordinal": 19,
         "name": "leave_type_name?",
         "type_info": "Varchar",
         "origin": "Expression"
@@ -234,6 +245,7 @@
       false,
       true,
       true,
+      false,
       null
     ]
   },

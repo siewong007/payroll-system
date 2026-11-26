@@ -29,10 +29,38 @@ pub struct RenamePasskeyRequest {
     pub name: String,
 }
 
-#[derive(Debug, Deserialize, validator::Validate)]
+#[derive(Deserialize, validator::Validate)]
 pub struct RegistrationBeginRequest {
     #[validate(length(min = 1, message = "password is required"))]
     pub password: String,
+    #[serde(default)]
+    pub totp_code: Option<String>,
+}
+
+impl std::fmt::Debug for RegistrationBeginRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RegistrationBeginRequest")
+            .field("password", &"***")
+            .field("totp_code", &self.totp_code.as_ref().map(|_| "***"))
+            .finish()
+    }
+}
+
+#[derive(Deserialize, validator::Validate)]
+pub struct DeletePasskeyRequest {
+    #[validate(length(min = 1, message = "password is required"))]
+    pub password: String,
+    #[serde(default)]
+    pub totp_code: Option<String>,
+}
+
+impl std::fmt::Debug for DeletePasskeyRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DeletePasskeyRequest")
+            .field("password", &"***")
+            .field("totp_code", &self.totp_code.as_ref().map(|_| "***"))
+            .finish()
+    }
 }
 
 #[derive(Serialize)]

@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT company_id FROM user_companies WHERE user_id = $1 ORDER BY company_id LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "company_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "user_companies",
+            "name": "company_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "9c08c6fdf7937f052048765bdae2f48cf94208cf726b7d85e70b3f48b76c7bc0"
+}

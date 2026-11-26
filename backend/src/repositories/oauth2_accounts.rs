@@ -23,7 +23,9 @@ pub async fn find_by_provider_id(
     Ok(account)
 }
 
-/// Insert or update (by provider identity) an OAuth2 account link, returning the row.
+/// Insert or update (by provider identity) an OAuth2 account link belonging to
+/// `user_id`, returning `None` if `(provider, provider_user_id)` is already
+/// owned by a different user.
 #[allow(clippy::too_many_arguments)]
 pub async fn upsert(
     executor: impl Executor<'_, Database = Postgres>,
@@ -36,7 +38,7 @@ pub async fn upsert(
     access_token_hash: Option<&str>,
     refresh_token_hash: Option<&str>,
     token_expires_at: Option<DateTime<Utc>>,
-) -> AppResult<OAuth2Account> {
+) -> AppResult<Option<OAuth2Account>> {
     let account = sqlx::query_as!(
         OAuth2Account,
         r#"INSERT INTO oauth2_accounts (user_id, provider, provider_user_id, provider_email, provider_name, avatar_url, access_token_hash, refresh_token_hash, token_expires_at)
@@ -49,6 +51,7 @@ pub async fn upsert(
             refresh_token_hash = COALESCE(EXCLUDED.refresh_token_hash, oauth2_accounts.refresh_token_hash),
             token_expires_at = COALESCE(EXCLUDED.token_expires_at, oauth2_accounts.token_expires_at),
             updated_at = NOW()
+        WHERE oauth2_accounts.user_id = EXCLUDED.user_id
         RETURNING *"#,
         user_id,
         provider,
@@ -60,7 +63,7 @@ pub async fn upsert(
         refresh_token_hash,
         token_expires_at,
     )
-    .fetch_one(executor)
+    .fetch_optional(executor)
     .await?;
     Ok(account)
 }

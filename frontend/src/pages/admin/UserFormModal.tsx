@@ -6,6 +6,7 @@ import { createUser, updateUser } from '@/api/admin';
 import { Modal } from '@/components/ui/Modal';
 import { FieldGroup, FormField } from '@/components/ui/FormField';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { useAuth } from '@/context/AuthContext';
 import { passwordPolicyHint, validatePassword } from '@/lib/password';
 import {
   ALL_ROLES,
@@ -84,13 +85,19 @@ export function UserFormModal({
   onSaved,
 }: UserFormModalProps) {
   const { t } = useTranslation();
+  const { user: currentUser } = useAuth();
+  const actorTwoFactorEnabled = Boolean(currentUser?.two_factor_enabled);
   const [form, setForm] = useState<FormState>(() => initialState(mode, user));
+  const [actorPassword, setActorPassword] = useState('');
+  const [actorTotpCode, setActorTotpCode] = useState('');
   const [error, setError] = useState('');
 
   // Re-seed when the dialog is reopened, or pointed at a different user.
   useEffect(() => {
     if (open) {
       setForm(initialState(mode, user));
+      setActorPassword('');
+      setActorTotpCode('');
       setError('');
     }
   }, [open, mode, user]);
@@ -103,6 +110,13 @@ export function UserFormModal({
   const originalCompanyIds = user?.companies.map((company) => company.id) ?? [];
   const companiesChanged = !isCreate && !sameIdSet(form.company_ids, originalCompanyIds);
   const rolesChanged = !isCreate && !sameIdSet(form.roles, user?.roles ?? []);
+  const targetIsPrivileged = form.roles.some((role) => role === 'super_admin' || role === 'admin');
+  const existingIsPrivileged = Boolean(
+    !isCreate && user?.roles.some((role) => role === 'super_admin' || role === 'admin'),
+  );
+  const requiresStepUp = isCreate
+    ? targetIsPrivileged
+    : existingIsPrivileged || targetIsPrivileged || rolesChanged || companiesChanged;
   const deactivating = !isCreate && !form.is_active && user?.is_active !== false;
   const willRevokeSessions = companiesChanged || rolesChanged || deactivating;
 
@@ -115,6 +129,14 @@ export function UserFormModal({
           full_name: form.full_name.trim(),
           roles: form.roles,
           company_ids: form.company_ids,
+          ...(requiresStepUp
+            ? {
+                actor_password: actorPassword,
+                ...(actorTwoFactorEnabled && actorTotpCode.trim()
+                  ? { actor_totp_code: actorTotpCode.trim() }
+                  : {}),
+              }
+            : {}),
         };
         return createUser(payload);
       }
@@ -125,8 +147,16 @@ export function UserFormModal({
       const payload: UpdateUserRequest = {
         full_name: form.full_name.trim(),
         email: form.email.trim(),
-        roles: form.roles,
         is_active: form.is_active,
+        ...(rolesChanged ? { roles: form.roles } : {}),
+        ...(requiresStepUp
+          ? {
+              actor_password: actorPassword,
+              ...(actorTwoFactorEnabled && actorTotpCode.trim()
+                ? { actor_totp_code: actorTotpCode.trim() }
+                : {}),
+            }
+          : {}),
       };
       if (companiesChanged) payload.company_ids = form.company_ids;
       return updateUser(user!.id, payload);
@@ -163,6 +193,10 @@ export function UserFormModal({
       if (passwordError) return passwordError;
     }
     if (form.company_ids.length === 0) return t('users.errors.companyRequired');
+    if (requiresStepUp && !actorPassword) return t('users.errors.actorPasswordRequired');
+    if (requiresStepUp && actorTwoFactorEnabled && !actorTotpCode.trim()) {
+      return t('users.errors.actorTotpRequired');
+    }
     return null;
   };
 
@@ -358,6 +392,41 @@ export function UserFormModal({
             )}
           </div>
         </FieldGroup>
+
+        {requiresStepUp && (
+          <div className="space-y-4 pt-3 border-t border-gray-200 dark:border-slate-700">
+            <FormField label={t('users.confirmWithYourPassword')} required>
+              {(aria) => (
+                <input
+                  {...aria}
+                  type="password"
+                  value={actorPassword}
+                  onChange={(e) => setActorPassword(e.target.value)}
+                  className="form-input"
+                  autoComplete="current-password"
+                  required
+                />
+              )}
+            </FormField>
+            {actorTwoFactorEnabled && (
+              <FormField label={t('auth.twoFactor.title')} required>
+                {(aria) => (
+                  <input
+                    {...aria}
+                    type="text"
+                    inputMode="text"
+                    autoComplete="one-time-code"
+                    value={actorTotpCode}
+                    onChange={(e) => setActorTotpCode(e.target.value)}
+                    placeholder="123456"
+                    className="form-input text-center tracking-widest"
+                    required
+                  />
+                )}
+              </FormField>
+            )}
+          </div>
+        )}
       </form>
     </Modal>
   );

@@ -176,6 +176,26 @@ pub async fn create_user(
 ) -> AppResult<Json<UserWithCompanies>> {
     auth.require_permission(Permission::ManageUsers)?;
     require_super_admin(&auth)?;
+    let creating_privileged = req.roles.iter().any(|r| r == "super_admin" || r == "admin");
+    if creating_privileged {
+        let actor_password = req
+            .actor_password
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                AppError::BadRequest("Current password confirmation is required".into())
+            })?;
+        auth_service::verify_user_password(&state.pool, auth.0.sub, actor_password, Some(&meta))
+            .await?;
+        totp_service::verify_step_up_if_enabled(
+            &state.pool,
+            auth.0.sub,
+            req.actor_totp_code.as_deref(),
+            &state.config.totp_encryption_key,
+            Some(&meta),
+        )
+        .await?;
+    }
     let user = user_service::create_user(&state.pool, req, auth.0.sub, Some(&meta)).await?;
     Ok(Json(user))
 }
@@ -189,6 +209,46 @@ pub async fn update_user(
 ) -> AppResult<Json<UserWithCompanies>> {
     auth.require_permission(Permission::ManageUsers)?;
     require_super_admin(&auth)?;
+    let existing = crate::repositories::users::get_by_id(&state.pool, user_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("User not found".into()))?;
+    let existing_privileged = existing
+        .roles
+        .iter()
+        .any(|r| r == "super_admin" || r == "admin");
+    let target_privileged = req
+        .roles
+        .as_ref()
+        .is_some_and(|roles| roles.iter().any(|r| r == "super_admin" || r == "admin"));
+    let roles_changed = req.roles.as_ref().is_some_and(|roles| {
+        let mut next: Vec<&str> = roles.iter().map(String::as_str).collect();
+        let mut cur: Vec<&str> = existing.roles.iter().map(String::as_str).collect();
+        next.sort_unstable();
+        next.dedup();
+        cur.sort_unstable();
+        cur.dedup();
+        next != cur
+    });
+    let privilege_or_scope_change = roles_changed || req.company_ids.is_some();
+    if existing_privileged || target_privileged || privilege_or_scope_change {
+        let actor_password = req
+            .actor_password
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                AppError::BadRequest("Current password confirmation is required".into())
+            })?;
+        auth_service::verify_user_password(&state.pool, auth.0.sub, actor_password, Some(&meta))
+            .await?;
+        totp_service::verify_step_up_if_enabled(
+            &state.pool,
+            auth.0.sub,
+            req.actor_totp_code.as_deref(),
+            &state.config.totp_encryption_key,
+            Some(&meta),
+        )
+        .await?;
+    }
     let user =
         user_service::update_user(&state.pool, user_id, req, auth.0.sub, Some(&meta)).await?;
     Ok(Json(user))
@@ -228,6 +288,15 @@ pub async fn reset_user_2fa(
         return Err(AppError::Forbidden("super_admin only".into()));
     }
 
+    auth_service::verify_user_password(&state.pool, auth.0.sub, &req.password, Some(&meta)).await?;
+    totp_service::verify_step_up_if_enabled(
+        &state.pool,
+        auth.0.sub,
+        req.totp_code.as_deref(),
+        &state.config.totp_encryption_key,
+        Some(&meta),
+    )
+    .await?;
     totp_service::admin_reset(&state.pool, user_id, auth.0.sub, &req.password, Some(&meta)).await?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
@@ -255,6 +324,21 @@ pub async fn set_2fa_policy(
 ) -> AppResult<Json<TwoFactorPolicyResponse>> {
     auth.require_permission(Permission::ManagePlatformSettings)?;
     require_super_admin(&auth)?;
+    let actor_password = req
+        .actor_password
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| AppError::BadRequest("Current password confirmation is required".into()))?;
+    auth_service::verify_user_password(&state.pool, auth.0.sub, actor_password, Some(&audit_meta))
+        .await?;
+    totp_service::verify_step_up_if_enabled(
+        &state.pool,
+        auth.0.sub,
+        req.actor_totp_code.as_deref(),
+        &state.config.totp_encryption_key,
+        Some(&audit_meta),
+    )
+    .await?;
     let status =
         auth_service::set_two_factor_policy(&state.pool, req, auth.0.sub, Some(&audit_meta))
             .await?;

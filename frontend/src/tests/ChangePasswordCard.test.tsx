@@ -6,13 +6,19 @@ import { ChangePasswordCard } from '@/components/ChangePasswordCard';
 const putMock = vi.fn();
 const logoutMock = vi.fn();
 const navigateMock = vi.fn();
+let mockedUser: { two_factor_enabled?: boolean } | undefined;
 
 vi.mock('@/api/client', () => ({ default: { put: (...a: unknown[]) => putMock(...a) } }));
-vi.mock('@/context/AuthContext', () => ({ useAuth: () => ({ logout: logoutMock }) }));
+vi.mock('@/context/AuthContext', () => ({ useAuth: () => ({ user: mockedUser, logout: logoutMock }) }));
 vi.mock('react-router', () => ({ useNavigate: () => navigateMock }));
 
 describe('ChangePasswordCard', () => {
-  beforeEach(() => { putMock.mockReset(); logoutMock.mockReset(); navigateMock.mockReset(); });
+  beforeEach(() => {
+    mockedUser = undefined;
+    putMock.mockReset();
+    logoutMock.mockReset();
+    navigateMock.mockReset();
+  });
 
   it('rejects mismatched confirmation without calling the API', async () => {
     const typer = userEvent.setup();
@@ -62,5 +68,22 @@ describe('ChangePasswordCard', () => {
     await typer.click(screen.getByRole('button', { name: 'Change password' }));
     expect(await screen.findByText('Current password is incorrect')).toBeInTheDocument();
     expect(logoutMock).not.toHaveBeenCalled();
+  });
+
+  it('requires and sends totp_code when two_factor_enabled is true', async () => {
+    const typer = userEvent.setup();
+    mockedUser = { two_factor_enabled: true };
+    putMock.mockResolvedValue({ data: {} });
+    render(<ChangePasswordCard />);
+    await typer.type(screen.getByLabelText('Current password'), 'old-password-1');
+    await typer.type(screen.getByLabelText('New password'), 'Newpass12345');
+    await typer.type(screen.getByLabelText('Confirm new password'), 'Newpass12345');
+    await typer.type(screen.getByPlaceholderText('123456'), '654321');
+    await typer.click(screen.getByRole('button', { name: 'Change password' }));
+    await waitFor(() => expect(putMock).toHaveBeenCalledWith('/auth/change-password', {
+      current_password: 'old-password-1',
+      new_password: 'Newpass12345',
+      totp_code: '654321',
+    }));
   });
 });

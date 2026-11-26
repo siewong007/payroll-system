@@ -31,6 +31,8 @@ fn create_request(email: &str, role: &str, company_ids: Vec<Uuid>) -> CreateUser
         full_name: "Test Account".into(),
         roles: roles(&[role]),
         company_ids,
+        actor_password: None,
+        actor_totp_code: None,
     }
 }
 
@@ -41,6 +43,8 @@ fn blank_update() -> UpdateUserRequest {
         roles: None,
         is_active: None,
         company_ids: None,
+        actor_password: None,
+        actor_totp_code: None,
     }
 }
 

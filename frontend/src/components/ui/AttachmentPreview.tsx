@@ -75,14 +75,19 @@ export function AttachmentPreview({ url, name }: { url: string; name: string | n
   }
 
   const { href } = file;
+  const safeHref =
+    /^(?:https?:|blob:)/i.test(href) || href.startsWith('/api/uploads/') ? href : null;
+  if (!safeHref) {
+    return null;
+  }
 
   return (
     <div className="mt-1">
       {isImageUrl(url) ? (
         <div className="space-y-2">
-          <a href={href} target="_blank" rel="noopener noreferrer" className="block">
+          <a href={safeHref} target="_blank" rel="noopener noreferrer" className="block">
             <img
-              src={href}
+              src={safeHref}
               alt={displayName}
               loading="lazy"
               decoding="async"
@@ -90,7 +95,7 @@ export function AttachmentPreview({ url, name }: { url: string; name: string | n
             />
           </a>
           <a
-            href={href}
+            href={safeHref}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex min-h-10 sm:min-h-0 items-center gap-1.5 text-sm font-medium text-gray-800 dark:text-slate-200 hover:text-black dark:hover:text-white transition-colors"
@@ -101,7 +106,7 @@ export function AttachmentPreview({ url, name }: { url: string; name: string | n
         </div>
       ) : (
         <a
-          href={href}
+          href={safeHref}
           target="_blank"
           rel="noopener noreferrer"
           className="inline-flex items-center gap-2 px-4 py-3 bg-gray-50 dark:bg-slate-800/80 border border-gray-200 dark:border-slate-700 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 hover:border-gray-300 dark:hover:border-slate-600 transition-colors group"

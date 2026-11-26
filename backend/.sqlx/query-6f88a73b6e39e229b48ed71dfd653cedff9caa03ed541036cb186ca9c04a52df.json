@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM overtime_applications WHERE id = $1 AND employee_id = $2 AND status = 'cancelled' AND reviewed_at IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6f88a73b6e39e229b48ed71dfd653cedff9caa03ed541036cb186ca9c04a52df"
+}

@@ -80,6 +80,8 @@ pub struct LeaveRequestWithEmployee {
     pub updated_at: chrono::DateTime<chrono::Utc>,
     pub created_by: Option<Uuid>,
     pub updated_by: Option<Uuid>,
+    #[serde(skip_serializing)]
+    pub editor_ids: Vec<Uuid>,
     pub leave_type_name: Option<String>,
     pub employee_name: Option<String>,
     pub employee_number: Option<String>,
@@ -111,6 +113,9 @@ pub struct OvertimeWithEmployee {
     pub updated_at: chrono::DateTime<chrono::Utc>,
     pub created_by: Option<Uuid>,
     pub updated_by: Option<Uuid>,
+    #[serde(skip_serializing)]
+    pub editor_ids: Vec<Uuid>,
+    pub payroll_run_id: Option<Uuid>,
     pub employee_name: Option<String>,
     pub employee_number: Option<String>,
 }
@@ -139,6 +144,8 @@ pub struct ClaimWithEmployee {
     pub payroll_run_id: Option<Uuid>,
     pub created_by: Option<Uuid>,
     pub updated_by: Option<Uuid>,
+    #[serde(skip_serializing)]
+    pub editor_ids: Vec<Uuid>,
     pub employee_name: Option<String>,
     pub employee_number: Option<String>,
 }

@@ -258,7 +258,7 @@ fn missing_company_and_employee_context_is_forbidden() {
 fn refresh_cookie_has_security_attributes_and_narrow_path() {
     let (name, production) = set_refresh_cookie("opaque-token", "https://payroll.example");
     assert_eq!(name, header::SET_COOKIE);
-    assert!(production.starts_with("refresh_token=opaque-token;"));
+    assert!(production.starts_with("__Secure-refresh_token=opaque-token;"));
     assert!(production.contains("; HttpOnly"));
     assert!(production.contains("; Secure"));
     assert!(production.contains("; SameSite=Strict"));
@@ -266,10 +266,13 @@ fn refresh_cookie_has_security_attributes_and_narrow_path() {
     assert!(production.contains("; Max-Age=2592000"));
 
     let (_, local) = set_refresh_cookie("opaque-token", "http://localhost:5173");
+    assert!(local.starts_with("refresh_token=opaque-token;"));
+    assert!(local.contains("; Path=/api/auth"));
     assert!(!local.contains("; Secure"));
 
     let (_, cleared) = clear_refresh_cookie("https://payroll.example");
-    assert!(cleared.starts_with("refresh_token=;"));
+    assert!(cleared.starts_with("__Secure-refresh_token=;"));
+    assert!(cleared.contains("; Path=/api/auth"));
     assert!(cleared.contains("; Max-Age=0"));
     assert!(cleared.contains("; Secure"));
 }
@@ -290,7 +293,16 @@ fn refresh_cookie_extraction_matches_exact_non_empty_cookie() {
 
     headers.insert(
         header::COOKIE,
-        HeaderValue::from_static("session=abc; refresh_token="),
+        HeaderValue::from_static("session=abc; __Secure-refresh_token=prod=token; theme=dark"),
+    );
+    assert_eq!(
+        extract_refresh_token(&headers).as_deref(),
+        Some("prod=token")
+    );
+
+    headers.insert(
+        header::COOKIE,
+        HeaderValue::from_static("session=abc; refresh_token=; __Secure-refresh_token="),
     );
     assert_eq!(extract_refresh_token(&headers), None);
 }

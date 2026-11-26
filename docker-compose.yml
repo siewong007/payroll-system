@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgres:19beta2-alpine
+    image: postgres:19beta2-alpine@sha256:d37ce87b33b80bd76fb8d9bc9ff6ad2caaf6c4a50caf9ae25e393f247fc01d6e
     command:
       - postgres
       - -c
@@ -17,6 +17,10 @@ services:
       - track_io_timing=on
       - -c
       - log_min_duration_statement=250
+      - -c
+      - log_parameter_max_length=0
+      - -c
+      - log_parameter_max_length_on_error=0
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-payroll_db}
       POSTGRES_USER: ${POSTGRES_USER:-payroll}

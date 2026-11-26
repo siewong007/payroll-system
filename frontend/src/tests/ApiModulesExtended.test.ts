@@ -21,6 +21,8 @@ import * as settings from '@/api/settings';
 import * as calendar from '@/api/calendar';
 import * as teams from '@/api/teams';
 import * as admin from '@/api/admin';
+import * as oauth2 from '@/api/oauth2';
+import * as passkey from '@/api/passkey';
 import {
   OT_DEFAULT_END,
   OT_DEFAULT_HOURS,
@@ -322,10 +324,31 @@ describe('two-factor API', () => {
       password: 'current-password',
     });
 
+    await totp.totpDisable('current-password', '654321');
+    expect(apiMocks.post).toHaveBeenLastCalledWith('/auth/2fa/disable', {
+      password: 'current-password',
+      totp_code: '654321',
+    });
+
     apiMocks.post.mockResolvedValue({ data: { backup_codes: [] } });
-    await totp.totpRegenerateBackupCodes('current-password');
+    await totp.totpRegenerateBackupCodes('current-password', '654321');
     expect(apiMocks.post).toHaveBeenLastCalledWith('/auth/2fa/backup-codes/regenerate', {
       password: 'current-password',
+      totp_code: '654321',
+    });
+
+    apiMocks.post.mockResolvedValue({ data: { authorize_url: 'https://accounts.google.com/o/oauth2/auth' } });
+    await expect(oauth2.getGoogleAuthorizeUrl('link', 'ts-tok')).resolves.toBe(
+      'https://accounts.google.com/o/oauth2/auth',
+    );
+    expect(apiMocks.post).toHaveBeenLastCalledWith('/auth/oauth2/google/authorize', {
+      flow: 'link',
+      turnstile_token: 'ts-tok',
+    });
+
+    await passkey.deletePasskey('pk-1', 'current-password', '654321');
+    expect(apiMocks.delete).toHaveBeenLastCalledWith('/auth/passkeys/pk-1', {
+      data: { password: 'current-password', totp_code: '654321' },
     });
   });
 

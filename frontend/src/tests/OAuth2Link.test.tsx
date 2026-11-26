@@ -10,7 +10,10 @@ vi.mock('react-router', async () => {
   return { ...actual, useNavigate: () => navigate };
 });
 
-const authState = { isAuthenticated: true, isLoading: false };
+const authState: { isAuthenticated: boolean; isLoading: boolean; user?: { two_factor_enabled?: boolean } } = {
+  isAuthenticated: true,
+  isLoading: false,
+};
 vi.mock('@/context/AuthContext', () => ({
   useAuth: () => authState,
 }));
@@ -45,6 +48,7 @@ describe('OAuth2Link', () => {
     sessionStorage.clear();
     authState.isAuthenticated = true;
     authState.isLoading = false;
+    delete authState.user;
   });
 
   it('requires password confirmation before posting code and state, then returns', async () => {
@@ -133,5 +137,33 @@ describe('OAuth2Link', () => {
       await screen.findByText(/already linked to another user/i),
     ).toBeInTheDocument();
     expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it('requires and submits totpCode when user.two_factor_enabled is true', async () => {
+    const typer = userEvent.setup();
+    authState.user = { two_factor_enabled: true };
+    linkGoogle.mockResolvedValue({
+      id: 'acc-1',
+      provider: 'google',
+      provider_email: 'a@b.c',
+      provider_name: null,
+      avatar_url: null,
+      linked_at: '2026-09-12T00:00:00Z',
+    });
+
+    await loadLinkPage('?code=auth-code&state=state-hash');
+    const submit = await screen.findByRole('button', { name: 'Link Google account' });
+    expect(submit).toBeDisabled();
+
+    await typer.type(screen.getByPlaceholderText('Current password'), 'MyPass123!');
+    expect(submit).toBeDisabled();
+
+    await typer.type(screen.getByPlaceholderText('123456'), '654321');
+    expect(submit).toBeEnabled();
+
+    await typer.click(submit);
+    await waitFor(() =>
+      expect(linkGoogle).toHaveBeenCalledWith('auth-code', 'state-hash', 'MyPass123!', '654321'),
+    );
   });
 });

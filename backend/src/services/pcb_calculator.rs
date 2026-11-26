@@ -54,19 +54,36 @@ pub(crate) fn calculate_pcb_with(tables: &StatutoryTables, input: &PcbInput) -> 
         input.bonus_amount >= 0,
         "additional remuneration is never negative"
     );
-    let annual_income =
-        input.ytd_gross + (input.monthly_normal_remuneration * remaining_months as i64);
+    let remaining_i64 = i64::from(remaining_months);
+    let projected_normal = input
+        .monthly_normal_remuneration
+        .checked_mul(remaining_i64)
+        .ok_or_else(|| AppError::BadRequest("Payroll calculation overflow".into()))?;
+    let annual_income = input
+        .ytd_gross
+        .checked_add(projected_normal)
+        .ok_or_else(|| AppError::BadRequest("Payroll calculation overflow".into()))?;
 
     // Step 2: Calculate annual reliefs
     let reliefs = calculate_reliefs(tables, input, remaining_months, tax_year)?;
 
     // Steps 3-6: chargeable income, brackets, rebate, zakat.
-    let total_zakat = input.ytd_zakat + (input.zakat_monthly * remaining_months as i64);
+    let projected_zakat = input
+        .zakat_monthly
+        .checked_mul(remaining_i64)
+        .ok_or_else(|| AppError::BadRequest("Payroll calculation overflow".into()))?;
+    let total_zakat = input
+        .ytd_zakat
+        .checked_add(projected_zakat)
+        .ok_or_else(|| AppError::BadRequest("Payroll calculation overflow".into()))?;
     let annual_tax = annual_tax_payable(tables, annual_income, reliefs, total_zakat)?;
 
     // Step 7: Monthly PCB = (annual_tax - YTD_pcb) / remaining_months
     let monthly_pcb = if remaining_months > 0 {
-        (annual_tax - input.ytd_pcb) / remaining_months as i64
+        let remaining_tax = annual_tax
+            .checked_sub(input.ytd_pcb)
+            .ok_or_else(|| AppError::BadRequest("Payroll calculation overflow".into()))?;
+        remaining_tax / remaining_i64
     } else {
         0
     };
@@ -84,7 +101,8 @@ pub(crate) fn calculate_pcb_with(tables: &StatutoryTables, input: &PcbInput) -> 
             total_zakat,
             annual_tax,
         )?;
-        Ok(pcb + bonus_pcb)
+        pcb.checked_add(bonus_pcb)
+            .ok_or_else(|| AppError::BadRequest("Payroll calculation overflow".into()))
     } else {
         Ok(pcb)
     }

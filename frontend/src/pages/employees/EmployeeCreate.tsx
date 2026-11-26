@@ -756,15 +756,17 @@ export function EmployeeCreate() {
                       {t(`roles.${accountDialog.role}`, { defaultValue: accountDialog.role })}
                     </span>
                   </div>
-                  <div className="flex items-start justify-between gap-4 text-sm">
-                    <span className="text-gray-500 dark:text-slate-400 shrink-0">{t('employees.account.defaultPassword')}</span>
-                    <span className="font-mono font-medium text-gray-900 dark:text-slate-100 min-w-0 break-all text-right">
-                      {accountDialog.default_password}
-                    </span>
-                  </div>
+                  {accountDialog.default_password && (
+                    <div className="flex items-start justify-between gap-4 text-sm">
+                      <span className="text-gray-500 dark:text-slate-400 shrink-0">{t('employees.account.defaultPassword')}</span>
+                      <span className="font-mono font-medium text-gray-900 dark:text-slate-100 min-w-0 break-all text-right">
+                        {accountDialog.default_password}
+                      </span>
+                    </div>
+                  )}
                 </div>
                 <p className="text-xs text-amber-600 dark:text-amber-300 bg-amber-50 dark:bg-amber-500/10 rounded-lg px-3 py-2">
-                  {t('employees.account.adviseChange')}
+                  {accountDialog.default_password ? t('employees.account.adviseChange') : accountDialog.message}
                 </p>
               </>
             ) : (

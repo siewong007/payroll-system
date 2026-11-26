@@ -35,10 +35,11 @@ interface TurnstileWidgetProps {
   onVerify: (token: string) => void;
   onExpire?: () => void;
   onError?: () => void;
+  action?: string;
   ref?: React.Ref<TurnstileWidgetRef>;
 }
 
-export function TurnstileWidget({ onVerify, onExpire, onError, ref }: TurnstileWidgetProps) {
+export function TurnstileWidget({ onVerify, onExpire, onError, action, ref }: TurnstileWidgetProps) {
   // Read per render (not module scope) so vi.stubEnv works in tests.
   const sitekey = import.meta.env.VITE_TURNSTILE_SITE_KEY as string | undefined;
   const containerRef = useRef<HTMLDivElement>(null);
@@ -72,6 +73,7 @@ export function TurnstileWidget({ onVerify, onExpire, onError, ref }: TurnstileW
       }
       widgetId.current = window.turnstile.render(containerRef.current, {
         sitekey,
+        ...(action ? { action } : {}),
         callback: (token: string) => callbacks.current.onVerify(token),
         'expired-callback': () => callbacks.current.onExpire?.(),
         'error-callback': () => callbacks.current.onError?.(),
@@ -118,7 +120,7 @@ export function TurnstileWidget({ onVerify, onExpire, onError, ref }: TurnstileW
         widgetId.current = null;
       }
     };
-  }, [sitekey]);
+  }, [sitekey, action]);
 
   if (!sitekey) return null;
   return <div ref={containerRef} className="min-h-[65px]" />;

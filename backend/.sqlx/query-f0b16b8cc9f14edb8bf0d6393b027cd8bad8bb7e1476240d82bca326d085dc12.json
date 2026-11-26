@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE overtime_applications\n        SET status = 'approved', payroll_run_id = NULL, updated_at = NOW()\n        WHERE payroll_run_id = $1 AND company_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f0b16b8cc9f14edb8bf0d6393b027cd8bad8bb7e1476240d82bca326d085dc12"
+}

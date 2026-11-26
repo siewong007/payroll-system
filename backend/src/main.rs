@@ -229,9 +229,10 @@ async fn main() -> anyhow::Result<()> {
             tower_http::request_id::MakeRequestUuid,
         ))
         .layer(axum::Extension(JwtSecret(config.jwt_secret.clone())))
-        // Gzip-compress eligible responses (large JSON lists, CSV/report exports).
-        // Outermost so it wraps the final response body.
-        .layer(tower_http::compression::CompressionLayer::new());
+        // Gzip-compress eligible responses (large JSON lists, CSV/report exports),
+        // skipping `Cache-Control: no-store` responses (e.g. `/api/auth/*`) to mitigate
+        // BREACH compression side-channels (L-10).
+        .layer(routes::compression_layer());
 
     if config.frontend_url.starts_with("https://") {
         app = app.layer(SetResponseHeaderLayer::if_not_present(

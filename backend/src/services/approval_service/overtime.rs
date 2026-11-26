@@ -9,7 +9,7 @@ use crate::models::portal::{CreateOvertimeRequest, OvertimeApplication, UpdateOv
 use crate::repositories::reads::approvals as approval_reads;
 use crate::repositories::{
     employees as employee_repo, leave_balances, leave_types, overtime_applications,
-    payroll_entries, users as user_repo,
+    payroll_entries, payroll_runs, users as user_repo,
 };
 use crate::services::audit_service::AuditRequestMeta;
 use crate::services::notification_service;
@@ -17,8 +17,8 @@ use crate::services::settings_service;
 
 use super::common::{
     Reviewer, audit_self_approval_override, ensure_employee_in_company,
-    ensure_not_creator_or_editor, ensure_not_self_approval, ensure_overtime_hours_within_window,
-    parse_overtime_times, reviewer_employee_id, validate_overtime_type_for_date,
+    ensure_not_creator_or_editor, ensure_not_self_approval_on, ensure_overtime_hours_within_window,
+    parse_overtime_times, validate_overtime_type_for_date,
 };
 
 pub use crate::models::approval::OvertimeWithEmployee;
@@ -39,6 +39,20 @@ pub async fn create_overtime_admin(
 
     let mut tx = pool.begin().await?;
     employee_repo::lock_for_update(&mut *tx, employee_id, company_id).await?;
+    if payroll_runs::has_non_draft_covering_dates(
+        &mut *tx,
+        company_id,
+        employee_id,
+        req.ot_date,
+        req.ot_date,
+    )
+    .await?
+    {
+        return Err(AppError::BadRequest(
+            "Overtime cannot be created for a date covered by a submitted or finalized payroll run"
+                .into(),
+        ));
+    }
     if overtime_applications::has_overlapping_window(
         &mut *tx,
         employee_id,
@@ -141,6 +155,56 @@ pub async fn update_overtime_admin(
     employee_repo::lock_for_update(&mut *tx, first_emp, company_id).await?;
     if second_emp != first_emp {
         employee_repo::lock_for_update(&mut *tx, second_emp, company_id).await?;
+    }
+
+    let locked = overtime_applications::get_pending_locked(&mut *tx, ot_id, company_id)
+        .await?
+        .ok_or_else(|| {
+            AppError::Conflict(
+                "This overtime application changed state while it was being updated. Reload and try again.".into(),
+            )
+        })?;
+    if (
+        locked.employee_id,
+        locked.ot_date,
+        locked.start_time,
+        locked.end_time,
+        locked.ot_type.as_str(),
+        locked.hours,
+    ) != (
+        current.employee_id,
+        current.ot_date,
+        current.start_time,
+        current.end_time,
+        current.ot_type.as_str(),
+        current.hours,
+    ) {
+        return Err(AppError::Conflict(
+            "This overtime application was modified concurrently. Reload and try again.".into(),
+        ));
+    }
+
+    if payroll_runs::has_non_draft_covering_dates(
+        &mut *tx,
+        company_id,
+        locked.employee_id,
+        locked.ot_date,
+        locked.ot_date,
+    )
+    .await?
+        || payroll_runs::has_non_draft_covering_dates(
+            &mut *tx,
+            company_id,
+            effective_employee_id,
+            effective_ot_date,
+            effective_ot_date,
+        )
+        .await?
+    {
+        return Err(AppError::BadRequest(
+            "Overtime cannot be updated for a date covered by a submitted or finalized payroll run"
+                .into(),
+        ));
     }
 
     if overtime_applications::has_overlapping_window(
@@ -262,8 +326,33 @@ pub async fn cancel_overtime_admin(
         .ok_or_else(|| {
             AppError::BadRequest("OT application not found or cannot be cancelled".into())
         })?;
+    if current.employee_id != employee_id {
+        return Err(AppError::Conflict(
+            "This overtime application was reassigned concurrently. Reload and try again.".into(),
+        ));
+    }
+
+    if current.status == "processed" || current.payroll_run_id.is_some() {
+        return Err(AppError::BadRequest(
+            "Approved OT already included in processed payroll and cannot be cancelled".into(),
+        ));
+    }
 
     if current.status == "approved" {
+        if payroll_runs::has_non_draft_covering_dates(
+            &mut *tx,
+            company_id,
+            current.employee_id,
+            current.ot_date,
+            current.ot_date,
+        )
+        .await?
+        {
+            return Err(AppError::BadRequest(
+                "Approved OT covered by a submitted or finalized payroll run cannot be cancelled"
+                    .into(),
+            ));
+        }
         let description = format!(
             "OT {} - {}%",
             current.ot_date,
@@ -446,8 +535,6 @@ pub async fn approve_overtime(
             other => other,
         })?;
 
-    let reviewer_employee = reviewer_employee_id(pool, &reviewer, company_id).await?;
-
     // Rated through the same `OvertimeSettings::rate_overtime` the payroll engine
     // uses, so the amount quoted here is the amount the run pays. This used to
     // parse the settings itself as `i64`/`f64` and truncate four times — an
@@ -483,17 +570,33 @@ pub async fn approve_overtime(
 
     let mut tx = pool.begin().await?;
     employee_repo::lock_for_update(&mut *tx, preview.employee_id, company_id).await?;
+    if payroll_runs::has_non_draft_covering_dates(
+        &mut *tx,
+        company_id,
+        preview.employee_id,
+        preview.ot_date,
+        preview.ot_date,
+    )
+    .await?
+    {
+        return Err(AppError::BadRequest(
+            "Overtime cannot be approved for a date covered by a submitted or finalized payroll run"
+                .into(),
+        ));
+    }
     let ot = overtime_applications::set_approved(&mut *tx, ot_id, company_id, reviewer_id, notes)
         .await?
         .ok_or_else(|| AppError::BadRequest("OT application not found or not pending".into()))?;
 
     // Compared against the row the CAS returned, inside the transaction, so a
     // denial rolls the approval back rather than leaving it approved.
-    ensure_not_self_approval(reviewer_employee, ot.employee_id, "overtime")?;
+    ensure_not_self_approval_on(&mut *tx, &reviewer, company_id, ot.employee_id, "overtime")
+        .await?;
     ensure_not_creator_or_editor(
         &reviewer,
         ot.created_by,
         ot.updated_by,
+        &ot.editor_ids,
         "overtime application",
     )?;
 
@@ -566,6 +669,9 @@ pub async fn approve_overtime(
         "overtime",
         ot.id,
         ot.employee_id,
+        ot.created_by,
+        ot.updated_by,
+        &ot.editor_ids,
         audit_meta,
     )
     .await;

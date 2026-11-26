@@ -10,10 +10,10 @@
 //! fixtures (`test-fixture-*-2024`, `legacy-prototype-*-2024`).
 //!
 //! Usage:
-//!   cargo run --bin seed_scenarios
-//!   cargo run --bin seed_scenarios -- --reset
-//!   cargo run --bin seed_scenarios -- --reset --purge-test-junk
-//!   cargo run --bin seed_scenarios -- --reset --scale=perf
+//!   cargo run --features dev-seed --bin seed_scenarios
+//!   cargo run --features dev-seed --bin seed_scenarios -- --reset
+//!   cargo run --features dev-seed --bin seed_scenarios -- --reset --purge-test-junk
+//!   cargo run --features dev-seed --bin seed_scenarios -- --reset --scale=perf
 
 use std::env;
 use std::process;
@@ -110,13 +110,30 @@ fn det_id(key: &str) -> Uuid {
 }
 
 fn sha256_hex(input: &str) -> String {
-    let digest = Sha256::digest(input.as_bytes());
+    let hasher = Sha256::digest(input.as_bytes());
     let mut out = String::with_capacity(64);
-    for b in digest {
+    for b in hasher {
         use std::fmt::Write;
         let _ = write!(&mut out, "{b:02x}");
     }
     out
+}
+
+fn backup_code_lookup_hash(encryption_key: &str, user_id: Uuid, normalized_code: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"totp-backup-lookup-v1:");
+    hasher.update(encryption_key.as_bytes());
+    hasher.update(b":");
+    hasher.update(user_id.to_string().as_bytes());
+    hasher.update(b":");
+    hasher.update(normalized_code.as_bytes());
+    let digest = hasher.finalize();
+    let mut hex = String::with_capacity(64);
+    for b in digest {
+        use std::fmt::Write;
+        let _ = write!(&mut hex, "{b:02x}");
+    }
+    hex
 }
 
 fn enforce_non_production_guards(database_url: &str) -> Result<(), String> {
@@ -132,19 +149,36 @@ fn enforce_non_production_guards(database_url: &str) -> Result<(), String> {
     }
 
     let parsed = Url::parse(database_url)
-        .map_err(|e| format!("Invalid DATABASE_URL '{database_url}': {e}"))?;
+        .map_err(|e| format!("Invalid DATABASE_URL (details redacted): {e}"))?;
     let host = parsed
         .host_str()
         .unwrap_or("")
         .trim_matches(|c| c == '[' || c == ']')
         .to_ascii_lowercase();
-    let is_local = matches!(
-        host.as_str(),
-        "127.0.0.1" | "localhost" | "::1" | "db" | "postgres"
-    );
+    let is_local = matches!(host.as_str(), "127.0.0.1" | "localhost" | "::1");
     let allow_override = env::var("ALLOW_DEV_SEED")
         .map(|v| v.trim().eq_ignore_ascii_case("true"))
         .unwrap_or(false);
+
+    if let Ok(frontend_url) = env::var("FRONTEND_URL") {
+        let trimmed_frontend = frontend_url.trim();
+        if let Ok(parsed_frontend) = Url::parse(trimmed_frontend) {
+            let fhost = parsed_frontend
+                .host_str()
+                .unwrap_or("")
+                .trim_matches(|c| c == '[' || c == ']')
+                .to_ascii_lowercase();
+            let frontend_local = matches!(fhost.as_str(), "127.0.0.1" | "localhost" | "::1");
+            if parsed_frontend.scheme().eq_ignore_ascii_case("https")
+                && !frontend_local
+                && !allow_override
+            {
+                return Err(format!(
+                    "Refusing to seed: FRONTEND_URL points to non-local HTTPS origin '{fhost}'."
+                ));
+            }
+        }
+    }
 
     if !is_local && !allow_override {
         return Err(format!(
@@ -1622,8 +1656,8 @@ async fn seed_perf_scale(
 
     sqlx::query(
         r#"
-        INSERT INTO leave_requests (id, employee_id, company_id, leave_type_id, start_date, end_date, days, reason, status)
-        SELECT u.id, u.eid, $1, $2, u.d, u.d, 1.0, 'Perf test leave', u.st
+        INSERT INTO leave_requests (id, employee_id, company_id, leave_type_id, start_date, end_date, days, reason, status, created_by)
+        SELECT u.id, u.eid, $1, $2, u.d, u.d, 1.0, 'Perf test leave', u.st, $7
         FROM UNNEST($3::uuid[], $4::uuid[], $5::date[], $6::text[]) AS u(id, eid, d, st)
         ON CONFLICT DO NOTHING
         "#,
@@ -1634,13 +1668,14 @@ async fn seed_perf_scale(
     .bind(&lr_eids)
     .bind(&lr_sdate)
     .bind(&lr_st)
+    .bind(user_id)
     .execute(pool)
     .await?;
 
     sqlx::query(
         r#"
-        INSERT INTO claims (id, employee_id, company_id, title, amount, category, expense_date, status)
-        SELECT u.id, u.eid, $1, 'Travel claim', u.amt, 'travel', u.d, u.st
+        INSERT INTO claims (id, employee_id, company_id, title, amount, category, expense_date, status, created_by)
+        SELECT u.id, u.eid, $1, 'Travel claim', u.amt, 'travel', u.d, u.st, $7
         FROM UNNEST($2::uuid[], $3::uuid[], $4::bigint[], $5::date[], $6::text[]) AS u(id, eid, amt, d, st)
         ON CONFLICT DO NOTHING
         "#,
@@ -1651,13 +1686,14 @@ async fn seed_perf_scale(
     .bind(&cl_amt)
     .bind(&cl_date)
     .bind(&cl_st)
+    .bind(user_id)
     .execute(pool)
     .await?;
 
     sqlx::query(
         r#"
-        INSERT INTO overtime_applications (id, employee_id, company_id, ot_date, start_time, end_time, hours, ot_type, status)
-        SELECT u.id, u.eid, $1, u.d, TIME '18:30:00', TIME '20:30:00', 2.0, 'normal', u.st
+        INSERT INTO overtime_applications (id, employee_id, company_id, ot_date, start_time, end_time, hours, ot_type, status, created_by)
+        SELECT u.id, u.eid, $1, u.d, TIME '18:30:00', TIME '20:30:00', 2.0, 'normal', u.st, $6
         FROM UNNEST($2::uuid[], $3::uuid[], $4::date[], $5::text[]) AS u(id, eid, d, st)
         ON CONFLICT DO NOTHING
         "#,
@@ -1667,6 +1703,7 @@ async fn seed_perf_scale(
     .bind(&lr_eids)
     .bind(&ot_date)
     .bind(&ot_st)
+    .bind(user_id)
     .execute(pool)
     .await?;
 
@@ -1752,6 +1789,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let pool = create_pool(&database_url).await;
     run_migrations(&pool).await;
+
+    let allow_override = env::var("ALLOW_DEV_SEED")
+        .map(|v| v.trim().eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    if !allow_override {
+        let non_seed_companies: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM companies WHERE NOT (name = ANY($1)) AND name NOT LIKE 'test-fixture-%' AND name NOT LIKE 'legacy-prototype-%'",
+        )
+        .bind(SEEDED_COMPANY_NAMES)
+        .fetch_one(&pool)
+        .await?;
+        if non_seed_companies > 0 {
+            return Err(format!(
+                "Refusing to seed: database contains {non_seed_companies} non-seed company record(s). Set ALLOW_DEV_SEED=true if intentional on a dev database."
+            )
+            .into());
+        }
+    }
 
     if opts.purge_test_junk {
         purge_test_junk(&pool).await?;
@@ -3454,16 +3509,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
     }
 
-    let backup_hash_unused = sha256_hex("ABCD-1234-UNUSED");
-    let backup_hash_used = sha256_hex("EFGH-5678-USED");
-    for (bkey, hash, used) in [
-        ("unused", &backup_hash_unused, false),
-        ("used", &backup_hash_used, true),
+    let unused_code = "ABCD-1234-UNUSED";
+    let used_code = "EFGH-5678-USED";
+    let backup_hash_unused = bcrypt::hash(unused_code, 4)?;
+    let backup_hash_used = bcrypt::hash(used_code, 4)?;
+    let backup_lookup_unused = backup_code_lookup_hash(&totp_key, super_admin_id, unused_code);
+    let backup_lookup_used = backup_code_lookup_hash(&totp_key, super_admin_id, used_code);
+    for (bkey, hash, lookup_hash, used) in [
+        ("unused", &backup_hash_unused, &backup_lookup_unused, false),
+        ("used", &backup_hash_used, &backup_lookup_used, true),
     ] {
         sqlx::query(
             r#"
             INSERT INTO user_totp_backup_codes (id, user_id, code_hash, used_at, code_lookup_hash)
-            VALUES ($1, $2, $3, CASE WHEN $4 THEN NOW() - INTERVAL '1 day' ELSE NULL END, $3)
+            VALUES ($1, $2, $3, CASE WHEN $4 THEN NOW() - INTERVAL '1 day' ELSE NULL END, $5)
             ON CONFLICT DO NOTHING
             "#,
         )
@@ -3471,6 +3530,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .bind(super_admin_id)
         .bind(hash)
         .bind(used)
+        .bind(lookup_hash)
         .execute(&pool)
         .await?;
     }
@@ -3565,20 +3625,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let sess_active_sa = det_id("sess:sa-active");
+    let sess_active_emp = det_id("sess:emp-active");
     let sess_revoked_emp = det_id("sess:emp-revoked");
+    let sess_admin = det_id("sess:kl-admin-expired");
     sqlx::query(
         r#"
         INSERT INTO user_sessions (id, user_id, user_agent, ip_address, expires_at, revoked_at)
         VALUES
             ($1, $2, 'Mozilla/5.0 SeedBrowser/1.0', '203.0.113.10'::inet, NOW() + INTERVAL '7 days', NULL),
-            ($3, $4, 'Mozilla/5.0 OldDevice/1.0', '198.51.100.25'::inet, NOW() + INTERVAL '7 days', NOW() - INTERVAL '1 day')
+            ($3, $4, 'Mozilla/5.0 EmpMobile/1.0', '203.0.113.11'::inet, NOW() + INTERVAL '7 days', NULL),
+            ($5, $4, 'Mozilla/5.0 OldDevice/1.0', '198.51.100.25'::inet, NOW() + INTERVAL '7 days', NOW() - INTERVAL '1 day'),
+            ($6, $7, 'Mozilla/5.0 AdminBrowser/1.0', '203.0.113.12'::inet, NOW() + INTERVAL '7 days', NULL)
         ON CONFLICT DO NOTHING
         "#,
     )
     .bind(sess_active_sa)
     .bind(super_admin_id)
-    .bind(sess_revoked_emp)
+    .bind(sess_active_emp)
     .bind(kl_employee_user_id)
+    .bind(sess_revoked_emp)
+    .bind(sess_admin)
+    .bind(kl_admin_id)
     .execute(&pool)
     .await?;
 
@@ -3602,7 +3669,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         (
             "expired",
             kl_admin_id,
-            sess_active_sa,
+            sess_admin,
             "dev-seed-rt-expired",
             false,
             -5_i64,
@@ -3922,11 +3989,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             r#"
             INSERT INTO leave_requests (
                 id, employee_id, company_id, leave_type_id, start_date, end_date,
-                days, reason, status, attachment_url, reviewed_by, reviewed_at
+                days, reason, status, attachment_url, reviewed_by, reviewed_at, created_by
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7, 'Scenario leave request', $8, $9,
                 CASE WHEN $8 IN ('approved','rejected') THEN $10 ELSE NULL END,
-                CASE WHEN $8 IN ('approved','rejected') THEN NOW() - INTERVAL '3 days' ELSE NULL END
+                CASE WHEN $8 IN ('approved','rejected') THEN NOW() - INTERVAL '3 days' ELSE NULL END,
+                $11
             )
             ON CONFLICT DO NOTHING
             "#,
@@ -3941,6 +4009,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .bind(status)
         .bind(att)
         .bind(kl_hr_manager_id)
+        .bind(kl_employee_user_id)
         .execute(&pool)
         .await?;
     }
@@ -3996,11 +4065,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             r#"
             INSERT INTO overtime_applications (
                 id, employee_id, company_id, ot_date, start_time, end_time,
-                hours, ot_type, reason, status, reviewed_by, reviewed_at
+                hours, ot_type, reason, status, reviewed_by, reviewed_at, created_by
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8, 'Production release support', $9,
                 CASE WHEN $9 IN ('approved','rejected') THEN $10 ELSE NULL END,
-                CASE WHEN $9 IN ('approved','rejected') THEN NOW() - INTERVAL '2 days' ELSE NULL END
+                CASE WHEN $9 IN ('approved','rejected') THEN NOW() - INTERVAL '2 days' ELSE NULL END,
+                $11
             )
             ON CONFLICT DO NOTHING
             "#,
@@ -4016,6 +4086,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .bind(status)
         .bind(if cid == c_kl {
             kl_hr_manager_id
+        } else {
+            jb_admin_id
+        })
+        .bind(if cid == c_kl {
+            kl_employee_user_id
         } else {
             jb_admin_id
         })
@@ -4962,18 +5037,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         INSERT INTO push_subscriptions (id, user_id, company_id, session_id, endpoint, p256dh, auth, user_agent, revoked_at)
         VALUES
             ($1, $2, $3, $4, 'https://fcm.googleapis.com/fcm/send/dev-seed-sub-001', $5, $6, 'Chrome/130 Android', NULL),
-            ($7, $8, $3, $4, 'https://updates.push.services.mozilla.com/wpush/v2/dev-seed-sub-002', $9, $10, 'Firefox/132', NOW() - INTERVAL '3 days')
+            ($7, $8, $3, $9, 'https://updates.push.services.mozilla.com/wpush/v2/dev-seed-sub-002', $10, $11, 'Firefox/132', NOW() - INTERVAL '3 days')
         ON CONFLICT (endpoint) DO NOTHING
         "#,
     )
     .bind(push_sub_live)
     .bind(kl_employee_user_id)
     .bind(c_kl)
-    .bind(sess_active_sa)
+    .bind(sess_active_emp)
     .bind(&p256_a)
     .bind(&auth_a)
     .bind(push_sub_rev)
     .bind(super_admin_id)
+    .bind(sess_active_sa)
     .bind(&p256_b)
     .bind(&auth_b)
     .execute(&pool)

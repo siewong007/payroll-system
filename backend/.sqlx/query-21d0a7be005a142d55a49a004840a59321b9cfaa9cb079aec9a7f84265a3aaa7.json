@@ -1,0 +1,27 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO overtime_applications (id, employee_id, company_id, ot_date, start_time,\n               end_time, hours, ot_type, reason, status, payroll_run_id, review_notes, created_at, updated_at)\n               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Date",
+        "Time",
+        "Time",
+        "Numeric",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Uuid",
+        "Varchar",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "21d0a7be005a142d55a49a004840a59321b9cfaa9cb079aec9a7f84265a3aaa7"
+}

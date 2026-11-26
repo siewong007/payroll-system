@@ -89,3 +89,11 @@ pub struct ResetPasswordRequest {
     #[serde(default)]
     pub turnstile_token: Option<String>,
 }
+
+#[derive(Debug, Deserialize, validator::Validate)]
+pub struct ValidateResetTokenRequest {
+    #[validate(length(min = 1, message = "Token is required"))]
+    pub token: String,
+    #[serde(default)]
+    pub turnstile_token: Option<String>,
+}

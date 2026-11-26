@@ -15,20 +15,54 @@ use crate::handlers::auth::login_outcome_response;
 use crate::models::audit::AuditRequestMeta;
 use crate::models::passkey::{
     AuthBeginRequest, AuthBeginResponse, AuthCompleteRequest, CheckPasskeyRequest,
-    DiscoverableAuthBeginRequest, DiscoverableAuthBeginResponse, PasskeyInfo,
+    DeletePasskeyRequest, DiscoverableAuthBeginRequest, DiscoverableAuthBeginResponse, PasskeyInfo,
     RegistrationBeginRequest, RegistrationBeginResponse, RegistrationCompleteRequest,
     RenamePasskeyRequest,
 };
-use crate::services::{auth_service, passkey_service};
+use crate::services::{audit_service, auth_service, passkey_service, totp_service};
+
+async fn log_passkey_login_failed(
+    state: &AppState,
+    user_id: Option<Uuid>,
+    reason: &str,
+    audit_meta: &AuditRequestMeta,
+) {
+    let _ = audit_service::log_action_with_metadata(
+        &state.pool,
+        None,
+        user_id,
+        "login_failed",
+        "auth",
+        user_id,
+        None::<serde_json::Value>,
+        Some(serde_json::json!({
+            "reason": reason,
+            "method": "passkey",
+        })),
+        Some("Passkey authentication failed"),
+        Some(audit_meta),
+    )
+    .await;
+}
 
 // ── Registration (authenticated user adds a passkey) ───────────────────
 
 pub async fn registration_begin(
     State(state): State<AppState>,
     auth: AuthUser,
+    audit_meta: AuditRequestMeta,
     ValidatedJson(req): ValidatedJson<RegistrationBeginRequest>,
 ) -> AppResult<Json<RegistrationBeginResponse>> {
-    auth_service::verify_user_password(&state.pool, auth.0.sub, &req.password).await?;
+    auth_service::verify_user_password(&state.pool, auth.0.sub, &req.password, Some(&audit_meta))
+        .await?;
+    totp_service::verify_step_up_if_enabled(
+        &state.pool,
+        auth.0.sub,
+        req.totp_code.as_deref(),
+        &state.config.totp_encryption_key,
+        Some(&audit_meta),
+    )
+    .await?;
 
     let user_id = auth.0.sub;
     let user_email = &auth.0.email;
@@ -94,22 +128,23 @@ pub async fn authentication_begin(
     audit_meta: AuditRequestMeta,
     Json(req): Json<AuthBeginRequest>,
 ) -> AppResult<Json<AuthBeginResponse>> {
-    crate::core::turnstile::verify(
+    crate::core::turnstile::verify_any_action(
         &state.config,
         req.turnstile_token.as_deref(),
         audit_meta.ip_address.as_deref(),
+        &["login", "passkey_auth"],
     )
     .await?;
 
     let user_id = passkey_service::get_user_id_by_email_with_passkeys(&state.pool, &req.email)
         .await?
-        .ok_or_else(|| AppError::BadRequest("No passkeys registered for this email".into()))?;
+        .ok_or_else(|| AppError::BadRequest("Unable to start passkey sign-in".into()))?;
 
     let passkeys = passkey_service::get_passkeys_for_user(&state.pool, user_id).await?;
 
     if passkeys.is_empty() {
         return Err(AppError::BadRequest(
-            "No passkeys registered for this email".into(),
+            "Unable to start passkey sign-in".into(),
         ));
     }
 
@@ -149,20 +184,27 @@ pub async fn authentication_complete(
     let auth_state: PasskeyAuthentication = serde_json::from_value(state_json)
         .map_err(|e| AppError::BadRequest(format!("Invalid auth state: {}", e)))?;
 
-    let auth_result = state
+    let auth_result = match state
         .webauthn
         .finish_passkey_authentication(&req.credential, &auth_state)
-        .map_err(|e| AppError::Unauthorized(format!("Passkey authentication failed: {}", e)))?;
-
-    // Update credential counter
-    let mut passkeys = passkey_service::get_passkeys_for_user(&state.pool, user_id).await?;
-    for pk in passkeys.iter_mut() {
-        if pk.cred_id() == auth_result.cred_id() {
-            pk.update_credential(&auth_result);
-            passkey_service::update_passkey_after_auth(&state.pool, user_id, pk).await?;
-            break;
+    {
+        Ok(res) => res,
+        Err(e) => {
+            log_passkey_login_failed(&state, Some(user_id), "invalid_assertion", &audit_meta).await;
+            return Err(AppError::Unauthorized(format!(
+                "Passkey authentication failed: {}",
+                e
+            )));
         }
-    }
+    };
+
+    // Update credential counter (fail closed if the credential disappeared concurrently)
+    let passkeys = passkey_service::get_passkey_records_for_user(&state.pool, user_id).await?;
+    let (pk_id, _) = passkeys
+        .iter()
+        .find(|(_, pk)| pk.cred_id() == auth_result.cred_id())
+        .ok_or_else(|| AppError::Unauthorized("Passkey credential was removed".into()))?;
+    passkey_service::update_passkey_after_auth(&state.pool, *pk_id, user_id, &auth_result).await?;
 
     // Issue tokens (same as password login, gated on 2FA if enabled)
     let outcome = auth_service::complete_login(
@@ -188,10 +230,11 @@ pub async fn discoverable_auth_begin(
     audit_meta: AuditRequestMeta,
     Json(req): Json<DiscoverableAuthBeginRequest>,
 ) -> AppResult<Json<DiscoverableAuthBeginResponse>> {
-    crate::core::turnstile::verify(
+    crate::core::turnstile::verify_any_action(
         &state.config,
         req.turnstile_token.as_deref(),
         audit_meta.ip_address.as_deref(),
+        &["login", "passkey_discoverable"],
     )
     .await?;
 
@@ -233,37 +276,53 @@ pub async fn discoverable_auth_complete(
         .map_err(|e| AppError::BadRequest(format!("Invalid auth state: {}", e)))?;
 
     // Identify which user is authenticating from the credential response
-    let (user_uuid, cred_id_bytes) = state
+    let (user_uuid, cred_id_bytes) = match state
         .webauthn
         .identify_discoverable_authentication(&req.credential)
-        .map_err(|e| AppError::Unauthorized(format!("Failed to identify credential: {}", e)))?;
+    {
+        Ok(id) => id,
+        Err(e) => {
+            log_passkey_login_failed(&state, None, "unknown_credential", &audit_meta).await;
+            return Err(AppError::Unauthorized(format!(
+                "Failed to identify credential: {}",
+                e
+            )));
+        }
+    };
 
     let user_id = user_uuid;
 
     // Load the user's passkeys to finish verification
-    let mut passkeys = passkey_service::get_passkeys_for_user(&state.pool, user_id).await?;
-    let matched_passkey = passkeys
+    let passkeys = passkey_service::get_passkey_records_for_user(&state.pool, user_id).await?;
+    let Some((matched_id, matched_passkey)) = passkeys
         .iter()
-        .find(|pk| pk.cred_id().as_slice() == cred_id_bytes)
-        .ok_or_else(|| AppError::Unauthorized("Passkey authentication failed".into()))?;
+        .find(|(_, pk)| pk.cred_id().as_slice() == cred_id_bytes)
+    else {
+        log_passkey_login_failed(&state, Some(user_id), "credential_not_found", &audit_meta).await;
+        return Err(AppError::Unauthorized(
+            "Passkey authentication failed".into(),
+        ));
+    };
 
-    let auth_result = state
-        .webauthn
-        .finish_discoverable_authentication_v2(
-            &req.credential,
-            auth_state,
-            DiscoverableKey::from(matched_passkey),
-        )
-        .map_err(|e| AppError::Unauthorized(format!("Passkey authentication failed: {}", e)))?;
+    let matched_id = *matched_id;
+    let auth_result = match state.webauthn.finish_discoverable_authentication_v2(
+        &req.credential,
+        auth_state,
+        DiscoverableKey::from(matched_passkey),
+    ) {
+        Ok(res) => res,
+        Err(e) => {
+            log_passkey_login_failed(&state, Some(user_id), "invalid_assertion", &audit_meta).await;
+            return Err(AppError::Unauthorized(format!(
+                "Passkey authentication failed: {}",
+                e
+            )));
+        }
+    };
 
     // Update credential counter
-    for pk in passkeys.iter_mut() {
-        if pk.cred_id() == auth_result.cred_id() {
-            pk.update_credential(&auth_result);
-            passkey_service::update_passkey_after_auth(&state.pool, user_id, pk).await?;
-            break;
-        }
-    }
+    passkey_service::update_passkey_after_auth(&state.pool, matched_id, user_id, &auth_result)
+        .await?;
 
     // Issue tokens (gated on 2FA if enabled)
     let outcome = auth_service::complete_login(
@@ -298,7 +357,14 @@ pub async fn rename_passkey(
     Path(id): Path<Uuid>,
     Json(req): Json<RenamePasskeyRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
-    passkey_service::rename_passkey(&state.pool, auth.0.sub, id, &req.name).await?;
+    let trimmed = req.name.trim();
+    if trimmed.is_empty() || trimmed.chars().count() > 100 || trimmed.chars().any(char::is_control)
+    {
+        return Err(AppError::BadRequest(
+            "Passkey name must be 1-100 characters without control characters".into(),
+        ));
+    }
+    passkey_service::rename_passkey(&state.pool, auth.0.sub, id, trimmed).await?;
     Ok(Json(serde_json::json!({"message": "Passkey renamed"})))
 }
 
@@ -307,12 +373,24 @@ pub async fn delete_passkey(
     auth: AuthUser,
     audit_meta: AuditRequestMeta,
     Path(id): Path<Uuid>,
+    ValidatedJson(req): ValidatedJson<DeletePasskeyRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
+    auth_service::verify_user_password(&state.pool, auth.0.sub, &req.password, Some(&audit_meta))
+        .await?;
+    totp_service::verify_step_up_if_enabled(
+        &state.pool,
+        auth.0.sub,
+        req.totp_code.as_deref(),
+        &state.config.totp_encryption_key,
+        Some(&audit_meta),
+    )
+    .await?;
     passkey_service::delete_passkey(&state.pool, auth.0.sub, id, Some(&audit_meta)).await?;
     Ok(Json(serde_json::json!({"message": "Passkey deleted"})))
 }
 
-/// Check if a given email has passkeys (used by frontend to show passkey button)
+/// Deprecated passkey existence check: kept for route compatibility while
+/// always returning `false` so unauthenticated callers cannot enumerate emails.
 pub async fn check_passkey(
     State(state): State<AppState>,
     audit_meta: AuditRequestMeta,
@@ -322,11 +400,10 @@ pub async fn check_passkey(
         &state.config,
         req.turnstile_token.as_deref(),
         audit_meta.ip_address.as_deref(),
+        "passkey_check",
     )
     .await?;
 
-    let has = passkey_service::get_user_id_by_email_with_passkeys(&state.pool, &req.email)
-        .await?
-        .is_some();
-    Ok(Json(serde_json::json!({"has_passkey": has})))
+    let _ = &req.email;
+    Ok(Json(serde_json::json!({"has_passkey": false})))
 }

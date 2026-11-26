@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS(\n            SELECT 1 FROM employees\n            WHERE company_id = $1\n              AND deleted_at IS NULL\n              AND email IS NOT NULL\n              AND btrim(email) <> ''\n              AND lower(btrim(email)) = lower(btrim($2))\n              AND ($3::uuid IS NULL OR id <> $3)\n        ) AS \"exists!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "exists!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "dfe86b9d31a5520880be4dd767a8e9d920fbbe1e79fb29ed613b3d8969dd79e9"
+}

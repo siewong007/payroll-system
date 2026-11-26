@@ -52,21 +52,35 @@ pub(super) fn cap_warnings(mut lines: Vec<String>, noun: &str) -> Vec<String> {
 /// skipped, never read. The result is embedded in the JSON archive the caller
 /// downloads, so reading whatever path such a value names would hand it the
 /// contents of that file — the exfiltration half of the traversal defect.
-pub(super) fn collect_backup_files(
+pub(super) async fn collect_backup_files(
     documents: &[DocumentExport],
     leave_requests: &[LeaveRequestExport],
     claims: &[ClaimExport],
 ) -> HashMap<String, String> {
+    let mut urls: Vec<&String> = Vec::new();
+    for document in documents {
+        urls.push(&document.file_url);
+    }
+    for leave_request in leave_requests {
+        if let Some(url) = leave_request.attachment_url.as_ref() {
+            urls.push(url);
+        }
+    }
+    for claim in claims {
+        if let Some(url) = claim.receipt_url.as_ref() {
+            urls.push(url);
+        }
+    }
+
     let mut files = HashMap::new();
     let b64 = base64::engine::general_purpose::STANDARD;
 
-    let mut collect_file = |url: Option<&String>| {
-        let Some(url) = url else {
-            return;
-        };
+    for url in urls {
         match upload_path::local_upload_path(url) {
             Ok(Some(path)) => {
-                if let Ok(data) = std::fs::read(&path) {
+                if let Ok(confined) = upload_path::confine_existing_file(&path)
+                    && let Ok(data) = tokio::fs::read(&confined).await
+                {
                     files.insert(url.clone(), b64.encode(&data));
                 }
             }
@@ -77,16 +91,6 @@ pub(super) fn collect_backup_files(
                 "refusing to export a stored file URL that does not name a safe upload"
             ),
         }
-    };
-
-    for document in documents {
-        collect_file(Some(&document.file_url));
-    }
-    for leave_request in leave_requests {
-        collect_file(leave_request.attachment_url.as_ref());
-    }
-    for claim in claims {
-        collect_file(claim.receipt_url.as_ref());
     }
 
     files
@@ -102,10 +106,11 @@ pub(super) async fn collect_backup_files_for_company(
     leave_requests: &[LeaveRequestExport],
     claims: &[ClaimExport],
 ) -> AppResult<HashMap<String, String>> {
-    let mut files = collect_backup_files(documents, leave_requests, claims);
+    let mut files = collect_backup_files(documents, leave_requests, claims).await;
     if let Some(url) = company_logo_url
         && let Ok(Some(path)) = upload_path::local_upload_path(url)
-        && let Ok(data) = std::fs::read(&path)
+        && let Ok(confined) = upload_path::confine_existing_file(&path)
+        && let Ok(data) = tokio::fs::read(&confined).await
     {
         files.insert(
             url.clone(),
@@ -188,10 +193,11 @@ pub(super) fn plan_restore(files: &HashMap<String, String>) -> RestorePlan {
 /// Returns the warnings to surface on `ImportResult`. Failures here are per file
 /// and never fatal: the rows are already committed by the time this runs, so
 /// aborting on one unwritable blob would only cost the tenant the rest of them.
-pub(super) async fn restore_backup_files_with_names(
+/// Decode and magic-byte-validate all restorable blobs before opening/committing the DB tx.
+pub(super) fn decode_and_validate_blobs(
     files: &HashMap<String, String>,
     plan: &RestorePlan,
-) -> (Vec<String>, Vec<String>) {
+) -> (Vec<(String, Vec<u8>)>, Vec<String>) {
     let mut problems: Vec<String> = plan
         .dropped
         .iter()
@@ -204,19 +210,12 @@ pub(super) async fn restore_backup_files_with_names(
         .collect();
 
     if plan.rewrites.is_empty() {
-        return (cap_warnings(problems, "unrestored file(s)"), Vec::new());
-    }
-
-    let upload_dir = Path::new(upload_path::UPLOAD_DIR);
-    if let Err(error) = tokio::fs::create_dir_all(upload_dir).await {
-        problems.push(format!(
-            "No attached files were restored: the uploads directory could not be created ({error})."
-        ));
-        return (cap_warnings(problems, "unrestored file(s)"), Vec::new());
+        problems.sort();
+        return (Vec::new(), problems);
     }
 
     let b64 = base64::engine::general_purpose::STANDARD;
-    let mut restored_names = Vec::new();
+    let mut validated = Vec::new();
 
     for (archive_key, data_b64) in files {
         let Some(stored_name) = plan
@@ -225,11 +224,9 @@ pub(super) async fn restore_backup_files_with_names(
         else {
             continue;
         };
-        // The name is server-generated, so this cannot fail — but building the
-        // path any other way is exactly what the defect was.
-        let Ok(path) = upload_path::stored_path(stored_name) else {
+        if upload_path::stored_path(stored_name).is_err() {
             continue;
-        };
+        }
 
         match b64.decode(data_b64) {
             Ok(data) => {
@@ -243,13 +240,7 @@ pub(super) async fn restore_backup_files_with_names(
                     ));
                     continue;
                 }
-                match tokio::fs::write(&path, &data).await {
-                    Ok(()) => restored_names.push(stored_name.to_string()),
-                    Err(error) => problems.push(format!(
-                        "Attached file \"{}\" could not be written ({error}).",
-                        short_label(archive_key)
-                    )),
-                }
+                validated.push((stored_name.to_string(), data));
             }
             Err(error) => problems.push(format!(
                 "Attached file \"{}\" could not be decoded ({error}).",
@@ -258,9 +249,43 @@ pub(super) async fn restore_backup_files_with_names(
         }
     }
 
-    // `files` is a map, so iteration order — and therefore the order failures
-    // were appended in — is not stable. Sort so the same archive reports the
-    // same warnings in the same order.
+    problems.sort();
+    (validated, problems)
+}
+
+/// Write previously decoded and validated blobs to the uploads directory.
+pub(super) async fn write_validated_blobs(
+    validated: Vec<(String, Vec<u8>)>,
+    mut problems: Vec<String>,
+) -> (Vec<String>, Vec<String>) {
+    if validated.is_empty() {
+        problems.sort();
+        return (cap_warnings(problems, "unrestored file(s)"), Vec::new());
+    }
+
+    let upload_dir = Path::new(upload_path::UPLOAD_DIR);
+    if let Err(error) = tokio::fs::create_dir_all(upload_dir).await {
+        problems.push(format!(
+            "No attached files were restored: the uploads directory could not be created ({error})."
+        ));
+        problems.sort();
+        return (cap_warnings(problems, "unrestored file(s)"), Vec::new());
+    }
+
+    let mut restored_names = Vec::with_capacity(validated.len());
+    for (stored_name, data) in validated {
+        let Ok(path) = upload_path::stored_path(&stored_name) else {
+            continue;
+        };
+        match tokio::fs::write(&path, &data).await {
+            Ok(()) => restored_names.push(stored_name),
+            Err(error) => problems.push(format!(
+                "Attached file \"{}\" could not be written ({error}).",
+                short_label(&stored_name)
+            )),
+        }
+    }
+
     problems.sort();
     let files_restored = restored_names.len();
     let mut warnings = cap_warnings(problems, "unrestored file(s)");
@@ -271,6 +296,14 @@ pub(super) async fn restore_backup_files_with_names(
         );
     }
     (warnings, restored_names)
+}
+
+pub(super) async fn restore_backup_files_with_names(
+    files: &HashMap<String, String>,
+    plan: &RestorePlan,
+) -> (Vec<String>, Vec<String>) {
+    let (validated, problems) = decode_and_validate_blobs(files, plan);
+    write_validated_blobs(validated, problems).await
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -321,8 +354,8 @@ mod tests {
     /// stored in `file_url` must not be read at all. `uploads/../Cargo.toml`
     /// resolves to a file that really exists next to the test process, which is
     /// what makes this a regression test rather than a vacuous one.
-    #[test]
-    fn export_refuses_to_read_outside_the_upload_directory() {
+    #[tokio::test]
+    async fn export_refuses_to_read_outside_the_upload_directory() {
         let documents = [
             document_with_url("/api/uploads/../Cargo.toml"),
             document_with_url("/api/uploads//etc/ssl/private/key.pem"),
@@ -330,7 +363,7 @@ mod tests {
             document_with_url("https://example.com/handbook.pdf"),
         ];
 
-        let files = collect_backup_files(&documents, &[], &[]);
+        let files = collect_backup_files(&documents, &[], &[]).await;
 
         assert!(
             files.is_empty(),

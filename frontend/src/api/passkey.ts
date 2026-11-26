@@ -14,15 +14,6 @@ export interface PasskeyInfo {
   last_used_at: string | null;
 }
 
-// Check if email has passkeys registered
-export async function checkPasskey(
-  email: string,
-  turnstileToken?: string,
-): Promise<{ has_passkey: boolean }> {
-  const { data } = await api.post('/auth/passkey/check', { email, turnstile_token: turnstileToken });
-  return data;
-}
-
 /**
  * webauthn-rs serializes `RequestChallengeResponse` / `CreationChallengeResponse`
  * as `{ publicKey: { ... } }` (plus an optional sibling `mediation`), so the wire
@@ -79,8 +70,11 @@ export async function passkeyDiscoverableComplete(
 }
 
 // Registration flow (authenticated)
-export async function passkeyRegisterBegin(password: string) {
-  const { data } = await api.post('/auth/passkey/register/begin', { password });
+export async function passkeyRegisterBegin(password: string, totpCode?: string) {
+  const { data } = await api.post('/auth/passkey/register/begin', {
+    password,
+    ...(totpCode ? { totp_code: totpCode } : {}),
+  });
   return data as { challenge_id: string; options: PasskeyCreationOptionsEnvelope };
 }
 
@@ -103,6 +97,11 @@ export async function renamePasskey(id: string, name: string): Promise<void> {
   await api.put(`/auth/passkeys/${id}`, { name });
 }
 
-export async function deletePasskey(id: string): Promise<void> {
-  await api.delete(`/auth/passkeys/${id}`);
+export async function deletePasskey(id: string, password: string, totpCode?: string): Promise<void> {
+  await api.delete(`/auth/passkeys/${id}`, {
+    data: {
+      password,
+      ...(totpCode ? { totp_code: totpCode } : {}),
+    },
+  });
 }

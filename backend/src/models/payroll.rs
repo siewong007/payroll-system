@@ -266,6 +266,16 @@ pub struct PayslipBreakdown {
     pub lines: Vec<PayrollItemDetail>,
 }
 
+/// An approved, not-yet-paid overtime application a run will pay.
+#[derive(Debug, Clone)]
+pub struct PayableOvertime {
+    pub id: Uuid,
+    pub employee_id: Uuid,
+    pub ot_type: String,
+    pub hours: Decimal,
+    pub ot_date: NaiveDate,
+}
+
 /// An approved, not-yet-paid claim a run will reimburse.
 ///
 /// Selection is carry-forward (`expense_date <= period_end` AND
@@ -469,7 +479,7 @@ pub(crate) struct BulkPayrollData {
     /// rest-day or public-holiday shift earns its own multiplier instead of
     /// being flattened into `normal`.
     pub(crate) attendance_ot_hours: HashMap<Uuid, Vec<(String, Decimal)>>,
-    pub(crate) approved_ot: HashMap<Uuid, Vec<(String, Decimal)>>,
+    pub(crate) approved_ot: HashMap<Uuid, Vec<PayableOvertime>>,
     /// The individual claims this run will reimburse, not a per-employee sum.
     /// The engine used to SUM inside its transaction and then re-run the same
     /// predicate to mark them paid, so a claim approved between the two was
@@ -505,7 +515,7 @@ pub(crate) fn checked_round_sen(amount: Decimal) -> crate::core::error::AppResul
         .ok_or_else(|| {
             crate::core::error::AppError::BadRequest("Payroll calculation overflow".into())
         })?;
-    if sen.abs() > MAX_MONEY_SEN {
+    if !(-MAX_MONEY_SEN..=MAX_MONEY_SEN).contains(&sen) {
         return Err(crate::core::error::AppError::BadRequest(
             "Calculated monetary amount exceeds supported maximum".into(),
         ));

@@ -8,7 +8,10 @@ import {
   getOAuth2Providers,
   unlinkOAuth2Provider,
 } from '@/api/oauth2';
+import { totpStatus } from '@/api/totp';
+import { FormField } from '@/components/ui/FormField';
 import { getErrorMessage } from '@/lib/utils';
+import { turnstileEnabled } from '@/lib/turnstile';
 import { useTurnstileWaiter } from '@/lib/useTurnstileWaiter';
 import { GoogleIcon } from '@/components/ui/GoogleIcon';
 import { Modal } from '@/components/ui/Modal';
@@ -20,6 +23,8 @@ export function LinkedAccounts() {
   const [error, setError] = useState('');
   const [linking, setLinking] = useState(false);
   const [confirmingUnlink, setConfirmingUnlink] = useState(false);
+  const [unlinkPassword, setUnlinkPassword] = useState('');
+  const [unlinkTotpCode, setUnlinkTotpCode] = useState('');
   const {
     widgetRef: turnstileRef,
     waitForToken: waitForTurnstileToken,
@@ -38,15 +43,28 @@ export function LinkedAccounts() {
     queryFn: getOAuth2Providers,
     staleTime: 300_000,
   });
+  const totpQuery = useQuery({
+    queryKey: ['totp-status'],
+    queryFn: async () => (await totpStatus()) ?? { enabled: false },
+    retry: false,
+  });
+  const twoFactorEnabled = Boolean(totpQuery.data?.enabled);
 
   const google = accounts.find((a) => a.provider === 'google');
   const googleEnabled = providers.some((p) => p.provider === 'google' && p.enabled);
 
+  const closeUnlinkModal = () => {
+    setConfirmingUnlink(false);
+    setUnlinkPassword('');
+    setUnlinkTotpCode('');
+  };
+
   const unlink = useMutation({
-    mutationFn: unlinkOAuth2Provider,
+    mutationFn: ({ provider, password, totpCode }: { provider: string; password: string; totpCode?: string }) =>
+      unlinkOAuth2Provider(provider, password, totpCode),
     onSuccess: () => {
       setError('');
-      setConfirmingUnlink(false);
+      closeUnlinkModal();
       queryClient.invalidateQueries({ queryKey: ['oauth2-accounts'] });
     },
     onError: (err) => setError(getErrorMessage(err, t('auth.linkedAccounts.unlinkFailed'))),
@@ -64,6 +82,17 @@ export function LinkedAccounts() {
         // Ignore restricted storage.
       }
       const token = await waitForTurnstileToken();
+      if (turnstileEnabled() && !token) {
+        try {
+          sessionStorage.removeItem('oauth2_link_return');
+        } catch {
+          // Ignore restricted storage.
+        }
+        resetTurnstileWidget();
+        setLinking(false);
+        setError(t('auth.verificationSlow'));
+        return;
+      }
       window.location.href = await getGoogleAuthorizeUrl('link', token);
     } catch (err) {
       try {
@@ -143,6 +172,7 @@ export function LinkedAccounts() {
             <div className="flex flex-col items-start sm:items-end gap-2 max-w-full overflow-x-auto">
               <TurnstileWidget
                 ref={turnstileRef}
+                action="oauth2_google"
                 onVerify={handleTurnstileVerify}
                 onExpire={handleTurnstileExpire}
                 onError={handleTurnstileError}
@@ -162,18 +192,18 @@ export function LinkedAccounts() {
 
       <Modal
         open={confirmingUnlink}
-        onClose={() => setConfirmingUnlink(false)}
+        onClose={closeUnlinkModal}
         title={t('auth.linkedAccounts.unlinkTitle')}
         maxWidth="max-w-md"
         footer={
           <div className="flex justify-end gap-2">
-            <button type="button" className="btn-secondary !min-h-0 !py-2" onClick={() => setConfirmingUnlink(false)}>
+            <button type="button" className="btn-secondary !min-h-0 !py-2" onClick={closeUnlinkModal}>
               {t('common.cancel')}
             </button>
             <button
-              type="button"
-              onClick={() => unlink.mutate('google')}
-              disabled={unlink.isPending}
+              type="submit"
+              form="unlink-google-form"
+              disabled={unlink.isPending || !unlinkPassword || (twoFactorEnabled && !unlinkTotpCode.trim())}
               className="btn-primary !min-h-0 !py-2 !bg-none !bg-red-600 hover:!bg-red-700"
             >
               {unlink.isPending ? t('auth.linkedAccounts.unlinking') : t('auth.linkedAccounts.unlinkSubmit')}
@@ -181,9 +211,54 @@ export function LinkedAccounts() {
           </div>
         }
       >
-        <p className="text-sm text-gray-600 dark:text-slate-300">
-          {t('auth.linkedAccounts.unlinkBody')}
-        </p>
+        <form
+          id="unlink-google-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!unlinkPassword || (twoFactorEnabled && !unlinkTotpCode.trim())) return;
+            unlink.mutate({
+              provider: 'google',
+              password: unlinkPassword,
+              ...(twoFactorEnabled && unlinkTotpCode.trim() ? { totpCode: unlinkTotpCode.trim() } : {}),
+            });
+          }}
+          className="space-y-4"
+        >
+          <p className="text-sm text-gray-600 dark:text-slate-300">
+            {t('auth.linkedAccounts.unlinkBody')}
+          </p>
+          <FormField label={t('auth.twoFactor.confirmPasswordPrompt')} required>
+            {(aria) => (
+              <input
+                {...aria}
+                type="password"
+                autoComplete="current-password"
+                value={unlinkPassword}
+                onChange={(e) => setUnlinkPassword(e.target.value)}
+                placeholder={t('auth.twoFactor.currentPasswordPlaceholder')}
+                className="form-input !p-2.5"
+                required
+              />
+            )}
+          </FormField>
+          {twoFactorEnabled && (
+            <FormField label={t('auth.twoFactor.title')} required>
+              {(aria) => (
+                <input
+                  {...aria}
+                  type="text"
+                  inputMode="text"
+                  autoComplete="one-time-code"
+                  value={unlinkTotpCode}
+                  onChange={(e) => setUnlinkTotpCode(e.target.value)}
+                  placeholder="123456"
+                  className="form-input !p-2.5 text-center tracking-widest"
+                  required
+                />
+              )}
+            </FormField>
+          )}
+        </form>
       </Modal>
     </section>
   );

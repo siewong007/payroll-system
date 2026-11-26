@@ -278,23 +278,37 @@ jobs:
             *) echo "unexpected login probe status: $code"; exit 1 ;;
           esac
 
-      - name: Verify public HTTPS once DNS has been cut over
+      - name: Verify loopback revision and public HTTPS once DNS has been cut over
         shell: bash
         run: |
           set -euo pipefail
+          local_ready=$(ssh \
+            -i "$RUNNER_TEMP/vps-key" \
+            -p "$VPS_PORT" \
+            -o BatchMode=yes \
+            -o ConnectTimeout=15 \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o "UserKnownHostsFile=$RUNNER_TEMP/vps-known-hosts" \
+            "$VPS_USER@$VPS_HOST" \
+            "curl --fail --silent --show-error --max-time 10 http://127.0.0.1:8080/api/health/ready")
+          if ! grep -Eq "\"revision\"[[:space:]]*:[[:space:]]*\"${DEPLOY_SHA}\"" <<<"$local_ready"; then
+            echo "Loopback readiness revision mismatch (expected $DEPLOY_SHA): $local_ready" >&2
+            exit 1
+          fi
           if [[ "$PUBLIC_DNS_CUTOVER" != "true" ]]; then
-            echo "PUBLIC_DNS_CUTOVER is not true; localhost health checks passed and public HTTPS was skipped."
+            echo "PUBLIC_DNS_CUTOVER is not true; localhost revision check passed and public HTTPS was skipped."
             exit 0
           fi
           ready_body=$(curl --fail --silent --show-error \
             --retry 20 --retry-delay 5 --retry-all-errors \
             --max-time 20 \
             https://api.payrollmy.com/api/health/ready)
-          if ! grep -Eq "\"revision\"[[:space:]]*:[[:space:]]*\"${DEPLOY_SHA}\"" <<<"$ready_body"; then
-            echo "Public readiness revision mismatch (expected $DEPLOY_SHA): $ready_body" >&2
+          if ! grep -Eq '"status"[[:space:]]*:[[:space:]]*"(ready|degraded)"' <<<"$ready_body"; then
+            echo "Public readiness status check failed: $ready_body" >&2
             exit 1
           fi
-          echo "Public HTTPS readiness check passed for revision $DEPLOY_SHA through Cloudflare."
+          echo "Loopback revision ($DEPLOY_SHA) and public HTTPS readiness checks passed through Cloudflare."
 
       - name: Remove remote transfer files
         if: always()

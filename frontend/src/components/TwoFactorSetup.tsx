@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useContext, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ShieldCheck, ShieldOff, Copy, Download, Check, X } from 'lucide-react';
@@ -9,6 +9,7 @@ import {
   totpDisable,
   totpRegenerateBackupCodes,
 } from '@/api/totp';
+import { AuthContext } from '@/context/AuthContext';
 import { FormField } from '@/components/ui/FormField';
 import { triggerBlobDownload } from '@/lib/download';
 import { getErrorMessage } from '@/lib/utils';
@@ -18,9 +19,11 @@ type View = 'idle' | 'setting_up' | 'backup_codes' | 'disabling' | 'regenerating
 export function TwoFactorSetup() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const auth = useContext(AuthContext);
   const [view, setView] = useState<View>('idle');
   const [confirmCode, setConfirmCode] = useState('');
   const [password, setPassword] = useState('');
+  const [stepUpCode, setStepUpCode] = useState('');
   const [backupCodes, setBackupCodes] = useState<string[]>([]);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -48,6 +51,9 @@ export function TwoFactorSetup() {
       setView('backup_codes');
       setConfirmCode('');
       setPassword('');
+      if (auth?.user && auth.token) {
+        auth.setSession(auth.token, { ...auth.user, two_factor_enabled: true });
+      }
       queryClient.invalidateQueries({ queryKey: ['totp-status'] });
       queryClient.invalidateQueries({ queryKey: ['sessions'] });
     },
@@ -55,13 +61,17 @@ export function TwoFactorSetup() {
   });
 
   const disableMutation = useMutation({
-    mutationFn: (pw: string) => totpDisable(pw),
+    mutationFn: ({ pw, code }: { pw: string; code: string }) => totpDisable(pw, code),
     onSuccess: () => {
       setError('');
       setPassword('');
+      setStepUpCode('');
       setView('idle');
       setSuccess(t('auth.twoFactor.disabled'));
       setTimeout(() => setSuccess(''), 3000);
+      if (auth?.user && auth.token) {
+        auth.setSession(auth.token, { ...auth.user, two_factor_enabled: false });
+      }
       queryClient.invalidateQueries({ queryKey: ['totp-status'] });
       queryClient.invalidateQueries({ queryKey: ['sessions'] });
     },
@@ -69,10 +79,11 @@ export function TwoFactorSetup() {
   });
 
   const regenerateMutation = useMutation({
-    mutationFn: (pw: string) => totpRegenerateBackupCodes(pw),
+    mutationFn: ({ pw, code }: { pw: string; code: string }) => totpRegenerateBackupCodes(pw, code),
     onSuccess: (data) => {
       setError('');
       setPassword('');
+      setStepUpCode('');
       setBackupCodes(data.backup_codes);
       setView('backup_codes');
     },
@@ -162,7 +173,10 @@ export function TwoFactorSetup() {
           </div>
           <button
             type="button"
-            onClick={() => setView('idle')}
+            onClick={() => {
+              setBackupCodes([]);
+              setView('idle');
+            }}
             className="btn-primary w-full"
           >
             {t('auth.twoFactor.savedCodes')}
@@ -253,15 +267,29 @@ export function TwoFactorSetup() {
               />
             )}
           </FormField>
+          <FormField label={t('auth.twoFactor.title')}>
+            {(aria) => (
+              <input
+                {...aria}
+                type="text"
+                inputMode="text"
+                autoComplete="one-time-code"
+                value={stepUpCode}
+                onChange={(e) => setStepUpCode(e.target.value)}
+                className="form-input !p-2.5 text-center tracking-widest"
+                placeholder="123456"
+              />
+            )}
+          </FormField>
           <div className="flex gap-2">
             <button
               type="button"
               onClick={() =>
                 view === 'disabling'
-                  ? disableMutation.mutate(password)
-                  : regenerateMutation.mutate(password)
+                  ? disableMutation.mutate({ pw: password, code: stepUpCode.trim() })
+                  : regenerateMutation.mutate({ pw: password, code: stepUpCode.trim() })
               }
-              disabled={!password || disableMutation.isPending || regenerateMutation.isPending}
+              disabled={!password || !stepUpCode.trim() || disableMutation.isPending || regenerateMutation.isPending}
               className="btn-primary flex-1"
             >
               {disableMutation.isPending || regenerateMutation.isPending ? t('auth.twoFactor.confirming') : t('auth.twoFactor.confirm')}
@@ -271,6 +299,7 @@ export function TwoFactorSetup() {
               onClick={() => {
                 setView('idle');
                 setPassword('');
+                setStepUpCode('');
                 setError('');
               }}
               aria-label={t('common.cancel')}

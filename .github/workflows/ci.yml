@@ -56,7 +56,7 @@ jobs:
         working-directory: backend
     services:
       postgres:
-        image: postgres:19beta2-alpine
+        image: postgres:19beta2-alpine@sha256:d37ce87b33b80bd76fb8d9bc9ff6ad2caaf6c4a50caf9ae25e393f247fc01d6e
         env:
           POSTGRES_DB: payroll_db_test
           POSTGRES_USER: payroll
@@ -258,7 +258,7 @@ jobs:
 
       - name: Start PostgreSQL 19 Beta 2
         run: |
-          docker run --rm -d --name pg-migrate             -e POSTGRES_USER=payroll -e POSTGRES_PASSWORD=ci -e POSTGRES_DB=payroll_db             -p 5432:5432 postgres:19beta2-alpine
+          docker run --rm -d --name pg-migrate             -e POSTGRES_USER=payroll -e POSTGRES_PASSWORD=ci -e POSTGRES_DB=payroll_db             -p 5432:5432 postgres:19beta2-alpine@sha256:d37ce87b33b80bd76fb8d9bc9ff6ad2caaf6c4a50caf9ae25e393f247fc01d6e
           ready=0
           for i in $(seq 1 30); do
             if docker exec pg-migrate pg_isready -h 127.0.0.1 -U payroll -d payroll_db >/dev/null 2>&1; then

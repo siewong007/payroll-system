@@ -15,8 +15,7 @@ use crate::services::notification_service;
 
 use super::common::{
     Reviewer, audit_self_approval_override, ensure_employee_in_company,
-    ensure_not_creator_or_editor, ensure_not_self_approval, ensure_positive_amount,
-    reviewer_employee_id,
+    ensure_not_creator_or_editor, ensure_not_self_approval_on, ensure_positive_amount,
 };
 use crate::models::upload::UploadAccess;
 use crate::services::upload_service;
@@ -268,6 +267,22 @@ pub async fn approve_claim(
     notes: Option<&str>,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<Claim> {
+    let mailer = email_service::SharedMailer::from_config(config);
+    approve_claim_with_mailer(
+        pool, &mailer, company_id, claim_id, reviewer, notes, audit_meta,
+    )
+    .await
+}
+
+pub async fn approve_claim_with_mailer(
+    pool: &PgPool,
+    mailer: &email_service::SharedMailer,
+    company_id: Uuid,
+    claim_id: Uuid,
+    reviewer: Reviewer,
+    notes: Option<&str>,
+    audit_meta: Option<&AuditRequestMeta>,
+) -> AppResult<Claim> {
     let reviewer_id = reviewer.user_id;
 
     // Approval no longer stages a `payroll_entries` reimbursement. That row was
@@ -276,17 +291,21 @@ pub async fn approve_claim(
     // predicate. `claims` is the single authority now: the run selects
     // approved-and-unlinked claims and marks exactly those it paid.
     //
-    // Resolved before the transaction opens; the guard itself runs inside it,
-    // against the row the compare-and-swap returned.
-    let reviewer_employee = reviewer_employee_id(pool, &reviewer, company_id).await?;
-
+    // Self-approval guard runs inside the transaction against `claim.employee_id`.
     let mut tx = pool.begin().await?;
     let claim = claims::set_approved(&mut *tx, claim_id, company_id, reviewer_id, notes)
         .await?
         .ok_or_else(|| AppError::BadRequest("Claim not found or not pending".into()))?;
 
-    ensure_not_self_approval(reviewer_employee, claim.employee_id, "claim")?;
-    ensure_not_creator_or_editor(&reviewer, claim.created_by, claim.updated_by, "claim")?;
+    ensure_not_self_approval_on(&mut *tx, &reviewer, company_id, claim.employee_id, "claim")
+        .await?;
+    ensure_not_creator_or_editor(
+        &reviewer,
+        claim.created_by,
+        claim.updated_by,
+        &claim.editor_ids,
+        "claim",
+    )?;
 
     tx.commit().await?;
 
@@ -297,12 +316,16 @@ pub async fn approve_claim(
         "claim",
         claim.id,
         claim.employee_id,
+        claim.created_by,
+        claim.updated_by,
+        &claim.editor_ids,
         audit_meta,
     )
     .await;
 
     // Notify employee
     let employee_user = user_repo::active_id_for_employee(pool, claim.employee_id).await?;
+    let amount_rm = crate::services::pdf_helpers::sen_to_rm(claim.amount);
 
     if let Some(user_id) = employee_user {
         let _ = notification_service::create_notification(
@@ -312,8 +335,8 @@ pub async fn approve_claim(
             "claim_approved",
             "Claim Approved",
             &format!(
-                "Your claim \"{}\" (RM {:.2}) has been approved and will be included in your next payroll.",
-                claim.title, claim.amount as f64 / 100.0
+                "Your claim \"{}\" (RM {}) has been approved and will be included in your next payroll.",
+                claim.title, amount_rm
             ),
             Some("claim"),
             Some(claim.id),
@@ -327,8 +350,7 @@ pub async fn approve_claim(
     if let Some(emp) = emp_info
         && let Some(recipient_email) = emp.email.as_deref().filter(|e| !e.trim().is_empty())
     {
-        let amount_rm = claim.amount as f64 / 100.0;
-        let amount_str = format!("RM {:.2}", amount_rm);
+        let amount_str = format!("RM {}", amount_rm);
         let category = claim.category.as_deref().unwrap_or("General");
         let body = email_service::approval_email_html(
             &emp.full_name,
@@ -341,8 +363,8 @@ pub async fn approve_claim(
             ],
             "The approved amount will be included in your next payroll.",
         );
-        let _ = email_service::enqueue_email(
-            config,
+        let _ = email_service::enqueue_email_with_mailer(
+            mailer,
             pool,
             company_id,
             Some(claim.employee_id),
@@ -350,7 +372,7 @@ pub async fn approve_claim(
             "claim_approved",
             recipient_email,
             &emp.full_name,
-            &format!("Claim Approved - {} (RM {:.2})", claim.title, amount_rm),
+            &format!("Claim Approved - {} (RM {})", claim.title, amount_rm),
             &body,
             reviewer_id,
         )

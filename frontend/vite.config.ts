@@ -1,11 +1,37 @@
 /// <reference types="vitest" />
 import { defineConfig } from 'vitest/config'
+import { loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'path'
 
-export default defineConfig({
-  plugins: [react(), tailwindcss()],
+function cspConnectSrcPlugin(mode: string) {
+  const env = loadEnv(mode, import.meta.dirname, 'VITE_')
+  let apiOrigin = 'https://api.payrollmy.com'
+  if (env.VITE_API_URL) {
+    try {
+      const parsed = new URL(env.VITE_API_URL)
+      if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+        apiOrigin = parsed.origin
+      }
+    } catch {
+      // Relative VITE_API_URL uses 'self'.
+    }
+  }
+  return {
+    name: 'csp-connect-src',
+    transformIndexHtml(html: string, ctx?: { server?: unknown }) {
+      const devSources = ctx?.server
+        ? ' http://localhost:* ws://localhost:* http://127.0.0.1:* ws://127.0.0.1:*'
+        : ''
+      const connectSrc = `connect-src 'self'${devSources} ${apiOrigin} https://challenges.cloudflare.com https://cloudflareinsights.com;`
+      return html.replace(/connect-src\s+[^;]+;/, connectSrc)
+    },
+  }
+}
+
+export default defineConfig(({ mode }) => ({
+  plugins: [react(), tailwindcss(), cspConnectSrcPlugin(mode)],
   resolve: {
     alias: {
       '@': path.resolve(import.meta.dirname, './src'),
@@ -67,4 +93,4 @@ export default defineConfig({
       exclude: ['src/tests/**', 'src/types/**'],
     },
   },
-})
+}))

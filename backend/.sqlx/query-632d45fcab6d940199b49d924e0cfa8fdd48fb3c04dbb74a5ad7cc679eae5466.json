@@ -189,6 +189,28 @@
             "name": "updated_by"
           }
         }
+      },
+      {
+        "ordinal": 17,
+        "name": "editor_ids",
+        "type_info": "UuidArray",
+        "origin": {
+          "Table": {
+            "table": "overtime_applications",
+            "name": "editor_ids"
+          }
+        }
+      },
+      {
+        "ordinal": 18,
+        "name": "payroll_run_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "overtime_applications",
+            "name": "payroll_run_id"
+          }
+        }
       }
     ],
     "parameters": {
@@ -213,6 +235,8 @@
       false,
       false,
       true,
+      true,
+      false,
       true
     ]
   },

@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT u.roles AS \"roles!: Vec<String>\"\n        FROM users u\n        WHERE u.deleted_at IS NULL\n          AND (\n              u.employee_id = $1\n              OR EXISTS (\n                  SELECT 1 FROM employees e\n                  WHERE e.id = $1\n                    AND e.company_id = $2\n                    AND e.deleted_at IS NULL\n                    AND e.email IS NOT NULL\n                    AND btrim(e.email) <> ''\n                    AND lower(btrim(u.email)) = lower(btrim(e.email))\n              )\n          )",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "roles!: Vec<String>",
+        "type_info": "VarcharArray",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "roles"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "80064c4b21ce025185d843dd4d99aeed1840913a6753d37266f1e4ee9399be8a"
+}

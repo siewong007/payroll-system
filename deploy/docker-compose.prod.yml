@@ -41,7 +41,9 @@ services:
       - -c
       - effective_cache_size=128MB
       - -c
-      - effective_io_concurrency=200
+      - effective_io_concurrency=16
+      - -c
+      - autovacuum_work_mem=8MB
       - -c
       - jit=off
       - -c
@@ -49,7 +51,11 @@ services:
       - -c
       - log_min_duration_statement=500
       - -c
-      - track_io_timing=on
+      - log_parameter_max_length=0
+      - -c
+      - log_parameter_max_length_on_error=0
+      - -c
+      - track_io_timing=off
     environment:
       POSTGRES_USER: payroll
       POSTGRES_PASSWORD: '${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}'
@@ -115,9 +121,10 @@ services:
       WEBAUTHN_RP_ORIGIN: '${WEBAUTHN_RP_ORIGIN:-https://payrollmy.com}'
       GOOGLE_CLIENT_ID: '${GOOGLE_CLIENT_ID:-}'
       GOOGLE_CLIENT_SECRET: '${GOOGLE_CLIENT_SECRET:-}'
-      # Empty = Turnstile verification off; set the real secret in
-      # /opt/payroll/secrets.env to enforce it on public auth endpoints.
+      # Empty = Turnstile verification off (production refuses startup unless
+      # ALLOW_UNCONFIGURED_TURNSTILE=true is explicitly set).
       TURNSTILE_SECRET_KEY: '${TURNSTILE_SECRET_KEY:-}'
+      ALLOW_UNCONFIGURED_TURNSTILE: '${ALLOW_UNCONFIGURED_TURNSTILE:-}'
       SMTP_HOST: '${SMTP_HOST:-}'
       SMTP_PORT: '${SMTP_PORT:-}'
       SMTP_USERNAME: '${SMTP_USERNAME:-}'
@@ -144,6 +151,11 @@ services:
     mem_limit: 256m
     cpus: 0.45
     pids_limit: 256
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
     security_opt:
       - no-new-privileges:true
     stop_grace_period: 30s

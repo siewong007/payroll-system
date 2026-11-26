@@ -44,7 +44,7 @@ pub async fn count_filtered(
         AND ($2::uuid IS NULL OR employee_id = $2)
         AND ($3::uuid IS NULL OR category_id = $3)
         AND ($4::text IS NULL OR status::text = $4)
-        AND ($5::text IS NULL OR title ILIKE '%' || $5 || '%' ESCAPE '\' OR file_name ILIKE '%' || $5 || '%' ESCAPE '\')
+        AND ($5::text IS NULL OR lower((title::text || ' ' || file_name::text)) LIKE '%' || lower($5) || '%' ESCAPE '\')
         AND ($6::bool OR is_confidential IS NOT TRUE)
         AND ($7::bool IS NULL OR ($7 = TRUE AND employee_id IS NULL) OR ($7 = FALSE AND employee_id IS NOT NULL))"#,
         company_id,
@@ -89,7 +89,7 @@ pub async fn list_filtered(
         AND ($2::uuid IS NULL OR d.employee_id = $2)
         AND ($3::uuid IS NULL OR d.category_id = $3)
         AND ($4::text IS NULL OR d.status::text = $4)
-        AND ($5::text IS NULL OR d.title ILIKE '%' || $5 || '%' ESCAPE '\' OR d.file_name ILIKE '%' || $5 || '%' ESCAPE '\')
+        AND ($5::text IS NULL OR lower((d.title::text || ' ' || d.file_name::text)) LIKE '%' || lower($5) || '%' ESCAPE '\')
         AND ($6::bool OR d.is_confidential IS NOT TRUE)
         AND ($7::bool IS NULL OR ($7 = TRUE AND d.employee_id IS NULL) OR ($7 = FALSE AND d.employee_id IS NOT NULL))
         ORDER BY d.created_at DESC

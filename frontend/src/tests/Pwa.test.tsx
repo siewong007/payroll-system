@@ -822,4 +822,90 @@ describe('Web Push subscription & Service Worker runtime', () => {
     expect(swSubscribe).toHaveBeenCalledOnce();
     expect(postMessage).toHaveBeenCalledWith({ type: 'PUSH_SUBSCRIPTION_CHANGED' });
   });
+
+  it('rejects open-redirect bypasses and non-icon asset paths in sw.js', async () => {
+    const swPath = path.resolve(import.meta.dirname, '../../public/sw.js');
+    const swSource = fs.readFileSync(swPath, 'utf8');
+
+    const listeners = new Map<string, (event: unknown) => void>();
+    const showNotification = vi.fn().mockResolvedValue(undefined);
+    const openWindow = vi.fn().mockResolvedValue(undefined);
+
+    const fakeSelf = {
+      location: new URL('https://payrollmy.com/sw.js'),
+      skipWaiting: vi.fn().mockResolvedValue(undefined),
+      navigator: {
+        setAppBadge: vi.fn().mockResolvedValue(undefined),
+        clearAppBadge: vi.fn().mockResolvedValue(undefined),
+      },
+      registration: {
+        showNotification,
+        pushManager: { subscribe: vi.fn().mockResolvedValue({}) },
+      },
+      clients: {
+        claim: vi.fn().mockResolvedValue(undefined),
+        matchAll: vi.fn().mockResolvedValue([]),
+        openWindow,
+      },
+      addEventListener: (name: string, fn: (event: unknown) => void) => {
+        listeners.set(name, fn);
+      },
+    };
+
+    const runSw = new Function('self', 'caches', 'fetch', swSource);
+    runSw(fakeSelf, { open: vi.fn(), keys: vi.fn(), match: vi.fn() }, vi.fn());
+
+    for (const badUrl of [
+      '//evil.example/steal',
+      '/\\evil.example/steal',
+      'javascript:alert(1)',
+      '/portal/payslips\u0000',
+      'https://evil.example/phish',
+    ]) {
+      showNotification.mockClear();
+      const waits: Promise<unknown>[] = [];
+      listeners.get('push')?.({
+        data: {
+          json: () => ({
+            title: 'Test',
+            body: 'Body',
+            url: badUrl,
+            icon: '/api/v1/secret',
+            badge: '/icons/../secret.png',
+          }),
+        },
+        waitUntil: (p: Promise<unknown>) => waits.push(p),
+      });
+      await Promise.all(waits);
+      expect(showNotification).toHaveBeenCalledWith(
+        'Test',
+        expect.objectContaining({
+          icon: '/icons/icon-192.png',
+          badge: '/icons/badge-72.png',
+          data: { url: '/portal/notifications' },
+        }),
+      );
+    }
+
+    showNotification.mockClear();
+    const okWaits: Promise<unknown>[] = [];
+    listeners.get('push')?.({
+      data: {
+        json: () => ({
+          title: 'OK',
+          body: 'Safe',
+          url: 'https://payrollmy.com/portal/payslips?m=11#top',
+          icon: '/icons/icon-192.png',
+        }),
+      },
+      waitUntil: (p: Promise<unknown>) => okWaits.push(p),
+    });
+    await Promise.all(okWaits);
+    expect(showNotification).toHaveBeenCalledWith(
+      'OK',
+      expect.objectContaining({
+        data: { url: '/portal/payslips?m=11#top' },
+      }),
+    );
+  });
 });

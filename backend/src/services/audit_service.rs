@@ -275,6 +275,15 @@ pub fn redact_audit_logs(logs: &mut [AuditLogWithUser], hide_payroll: bool, hide
     }
     for row in logs {
         let entity_type = row.entity_type.clone();
+        if hide_payroll
+            && matches!(
+                entity_type.as_str(),
+                "payroll_run" | "payroll_item" | "payroll_entry" | "tp3_record"
+            )
+            && row.description.is_some()
+        {
+            row.description = Some("[REDACTED]".to_string());
+        }
         if let Some(ref mut old_val) = row.old_values {
             redact_audit_json(old_val, &entity_type, hide_payroll, hide_personal);
         }

@@ -181,6 +181,7 @@ pub async fn cancel_leave_request(
         if payroll_runs::has_non_draft_covering_dates(
             &mut *tx,
             lr.company_id,
+            lr.employee_id,
             lr.start_date,
             lr.end_date,
         )
@@ -348,10 +349,10 @@ pub async fn submit_claim(pool: &PgPool, employee_id: Uuid, claim_id: Uuid) -> A
         "claim_submitted",
         "New Claim Submitted",
         &format!(
-            "{} submitted a claim: \"{}\" (RM {:.2})",
+            "{} submitted a claim: \"{}\" (RM {})",
             name,
             claim.title,
-            claim.amount as f64 / 100.0
+            crate::services::pdf_helpers::sen_to_rm(claim.amount)
         ),
         Some("claim"),
         Some(claim.id),
@@ -361,7 +362,12 @@ pub async fn submit_claim(pool: &PgPool, employee_id: Uuid, claim_id: Uuid) -> A
     Ok(claim)
 }
 
-pub async fn cancel_claim(pool: &PgPool, employee_id: Uuid, claim_id: Uuid) -> AppResult<()> {
+pub async fn cancel_claim(
+    pool: &PgPool,
+    employee_id: Uuid,
+    claim_id: Uuid,
+    actor_user_id: Uuid,
+) -> AppResult<()> {
     let mut tx = pool.begin().await?;
 
     // The `payroll_entries` probe this used to carry is gone with the staging it
@@ -372,14 +378,12 @@ pub async fn cancel_claim(pool: &PgPool, employee_id: Uuid, claim_id: Uuid) -> A
     //
     // The read stays so a claim that was never cancellable still reports 400
     // rather than the 409 below, which means "someone got there first".
-    if claims::get_cancellable_for_employee(&mut *tx, claim_id, employee_id)
-        .await?
-        .is_none()
-    {
+    let Some(claim) = claims::get_cancellable_for_employee(&mut *tx, claim_id, employee_id).await?
+    else {
         return Err(AppError::BadRequest(
             "Claim not found or cannot be cancelled".into(),
         ));
-    }
+    };
 
     // Compare-and-swap, so a run committing between the read and this write
     // cannot have its just-paid claim cancelled.
@@ -389,6 +393,20 @@ pub async fn cancel_claim(pool: &PgPool, employee_id: Uuid, claim_id: Uuid) -> A
                 .into(),
         ));
     }
+
+    audit_service::log_action_with_metadata(
+        &mut *tx,
+        Some(claim.company_id),
+        Some(actor_user_id),
+        "cancel_claim_portal",
+        "claim",
+        Some(claim_id),
+        Some(serde_json::to_value(&claim).unwrap_or_default()),
+        Some(serde_json::json!({ "status": "cancelled" })),
+        Some("Employee cancelled claim"),
+        None,
+    )
+    .await?;
 
     tx.commit().await?;
 
@@ -433,6 +451,20 @@ pub async fn create_overtime_application(
 
     let mut tx = pool.begin().await?;
     employee_repo::lock_for_update(&mut *tx, employee_id, company_id).await?;
+    if payroll_runs::has_non_draft_covering_dates(
+        &mut *tx,
+        company_id,
+        employee_id,
+        req.ot_date,
+        req.ot_date,
+    )
+    .await?
+    {
+        return Err(AppError::BadRequest(
+            "Overtime cannot be applied for a date covered by a submitted or finalized payroll run"
+                .into(),
+        ));
+    }
     if overtime_applications::has_overlapping_window(
         &mut *tx,
         employee_id,
@@ -491,6 +523,7 @@ pub async fn cancel_overtime_application(
     pool: &PgPool,
     employee_id: Uuid,
     id: Uuid,
+    actor_user_id: Uuid,
 ) -> AppResult<()> {
     let company_id = overtime_applications::get_company_id_for_employee(pool, id, employee_id)
         .await?
@@ -509,7 +542,27 @@ pub async fn cancel_overtime_application(
             AppError::BadRequest("OT application not found or cannot be cancelled".into())
         })?;
 
+    if app.status == "processed" || app.payroll_run_id.is_some() {
+        return Err(AppError::BadRequest(
+            "Approved OT already included in processed payroll and cannot be cancelled".into(),
+        ));
+    }
+
     if app.status == "approved" {
+        if payroll_runs::has_non_draft_covering_dates(
+            &mut *tx,
+            app.company_id,
+            app.employee_id,
+            app.ot_date,
+            app.ot_date,
+        )
+        .await?
+        {
+            return Err(AppError::BadRequest(
+                "Approved OT covered by a submitted or finalized payroll run cannot be cancelled"
+                    .into(),
+            ));
+        }
         let description = format!("OT {} - {}%", app.ot_date, app.ot_type.replace('_', " "));
         let period_year = app.ot_date.year();
         let period_month = app.ot_date.month() as i32;
@@ -586,6 +639,20 @@ pub async fn cancel_overtime_application(
             "This overtime application has already been cancelled or modified.".into(),
         ));
     }
+
+    audit_service::log_action_with_metadata(
+        &mut *tx,
+        Some(app.company_id),
+        Some(actor_user_id),
+        "cancel_overtime_portal",
+        "overtime",
+        Some(id),
+        Some(serde_json::to_value(&app).unwrap_or_default()),
+        Some(serde_json::json!({ "status": "cancelled" })),
+        Some("Employee cancelled overtime application"),
+        None,
+    )
+    .await?;
 
     tx.commit().await?;
 

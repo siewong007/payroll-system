@@ -37,7 +37,7 @@ pub async fn insert_with_type(
             nlr.reviewed_by, nlr.reviewed_at, nlr.review_notes,
             nlr.attachment_url, nlr.attachment_name,
             nlr.created_at, nlr.updated_at,
-            nlr.created_by, nlr.updated_by,
+            nlr.created_by, nlr.updated_by, nlr.editor_ids,
             lt.name AS "leave_type_name?"
         FROM new_lr nlr
         JOIN leave_types lt ON nlr.leave_type_id = lt.id"#,
@@ -102,7 +102,7 @@ pub async fn get_pending_with_type(
             lr.reviewed_by, lr.reviewed_at, lr.review_notes,
             lr.attachment_url, lr.attachment_name,
             lr.created_at, lr.updated_at,
-            lr.created_by, lr.updated_by,
+            lr.created_by, lr.updated_by, lr.editor_ids,
             lt.name AS "leave_type_name?"
         FROM leave_requests lr
         JOIN leave_types lt ON lr.leave_type_id = lt.id
@@ -127,7 +127,7 @@ pub async fn get_pending_with_type_for_update(
             lr.reviewed_by, lr.reviewed_at, lr.review_notes,
             lr.attachment_url, lr.attachment_name,
             lr.created_at, lr.updated_at,
-            lr.created_by, lr.updated_by,
+            lr.created_by, lr.updated_by, lr.editor_ids,
             lt.name AS "leave_type_name?"
         FROM leave_requests lr
         JOIN leave_types lt ON lr.leave_type_id = lt.id
@@ -154,7 +154,7 @@ pub async fn get_cancelled_with_type(
             lr.reviewed_by, lr.reviewed_at, lr.review_notes,
             lr.attachment_url, lr.attachment_name,
             lr.created_at, lr.updated_at,
-            lr.created_by, lr.updated_by,
+            lr.created_by, lr.updated_by, lr.editor_ids,
             lt.name AS "leave_type_name?"
         FROM leave_requests lr
         JOIN leave_types lt ON lr.leave_type_id = lt.id
@@ -180,7 +180,7 @@ pub async fn get_cancellable_with_type(
             lr.reviewed_by, lr.reviewed_at, lr.review_notes,
             lr.attachment_url, lr.attachment_name,
             lr.created_at, lr.updated_at,
-            lr.created_by, lr.updated_by,
+            lr.created_by, lr.updated_by, lr.editor_ids,
             lt.name AS "leave_type_name?"
         FROM leave_requests lr
         JOIN leave_types lt ON lr.leave_type_id = lt.id
@@ -223,6 +223,10 @@ pub async fn update_full(
             attachment_url = CASE WHEN $9::text IS NULL THEN attachment_url ELSE NULLIF($9, '') END,
             attachment_name = CASE WHEN $10::text IS NULL THEN attachment_name ELSE NULLIF($10, '') END,
             updated_by = COALESCE($11, updated_by),
+            editor_ids = CASE
+                WHEN $11::uuid IS NULL OR $11 = ANY(editor_ids) THEN editor_ids
+                ELSE array_append(editor_ids, $11)
+            END,
             updated_at = NOW()
         WHERE id = $1 AND company_id = $2 AND status = 'pending'
         RETURNING *,
@@ -295,11 +299,15 @@ pub async fn set_approved(
 ) -> AppResult<Option<LeaveRequest>> {
     let lr = sqlx::query_as!(
         LeaveRequest,
-        r#"UPDATE leave_requests SET
+        r#"UPDATE leave_requests lr SET
             status = 'approved', reviewed_by = $3, reviewed_at = NOW(),
             review_notes = $4, updated_at = NOW()
-        WHERE id = $1 AND company_id = $2 AND status = 'pending'
-        RETURNING *, (SELECT name FROM leave_types WHERE id = leave_type_id) AS "leave_type_name?""#,
+        WHERE lr.id = $1 AND lr.company_id = $2 AND lr.status = 'pending'
+          AND EXISTS (
+              SELECT 1 FROM employees e
+              WHERE e.id = lr.employee_id AND e.company_id = $2 AND e.deleted_at IS NULL
+          )
+        RETURNING lr.*, (SELECT name FROM leave_types WHERE id = lr.leave_type_id) AS "leave_type_name?""#,
         request_id,
         company_id,
         reviewer_id,
@@ -349,7 +357,7 @@ pub async fn list_for_employee(
             lr.reviewed_by, lr.reviewed_at, lr.review_notes,
             lr.attachment_url, lr.attachment_name,
             lr.created_at, lr.updated_at,
-            lr.created_by, lr.updated_by,
+            lr.created_by, lr.updated_by, lr.editor_ids,
             lt.name AS "leave_type_name?"
         FROM leave_requests lr
         JOIN leave_types lt ON lr.leave_type_id = lt.id
@@ -391,7 +399,7 @@ pub async fn insert_self_service(
             nlr.reviewed_by, nlr.reviewed_at, nlr.review_notes,
             nlr.attachment_url, nlr.attachment_name,
             nlr.created_at AS "created_at!", nlr.updated_at AS "updated_at!",
-            nlr.created_by, nlr.updated_by,
+            nlr.created_by, nlr.updated_by, nlr.editor_ids AS "editor_ids!",
             lt.name AS "leave_type_name?"
         FROM new_lr nlr
         JOIN leave_types lt ON nlr.leave_type_id = lt.id"#,
@@ -424,7 +432,7 @@ pub async fn get_cancellable_for_employee(
             lr.reviewed_by, lr.reviewed_at, lr.review_notes,
             lr.attachment_url, lr.attachment_name,
             lr.created_at, lr.updated_at,
-            lr.created_by, lr.updated_by,
+            lr.created_by, lr.updated_by, lr.editor_ids,
             lt.name AS "leave_type_name?"
         FROM leave_requests lr
         JOIN leave_types lt ON lr.leave_type_id = lt.id

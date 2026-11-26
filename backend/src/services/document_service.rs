@@ -145,7 +145,9 @@ pub async fn soft_delete_document(
         Ok(remaining_refs) if remaining_refs.is_empty() => {
             match upload_path::local_upload_path(&file_url) {
                 Ok(Some(file_path)) => {
-                    let _ = tokio::fs::remove_file(&file_path).await;
+                    if let Ok(confined) = upload_path::confine_existing_file(&file_path) {
+                        let _ = tokio::fs::remove_file(&confined).await;
+                    }
                     if let Some(stored_name) = file_url.strip_prefix(upload_path::UPLOAD_URL_PREFIX)
                     {
                         let _ = crate::repositories::uploaded_files::delete_by_stored_name(

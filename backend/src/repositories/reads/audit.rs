@@ -240,7 +240,24 @@ pub async fn list_for_run(
                 ELSE al.user_id
             END AS "user_id?",
             al.action, al.entity_type, al.entity_id,
-            al.old_values, al.new_values,
+            CASE
+                WHEN $3::bool AND u.id IS NOT NULL AND u.roles && ARRAY['admin', 'super_admin']::varchar[]
+                     AND jsonb_typeof(al.old_values) = 'object'
+                THEN al.old_values - ARRAY[
+                    'processed_by', 'submitted_by', 'approved_by',
+                    'locked_by', 'cancelled_by', 'created_by', 'updated_by'
+                ]::text[]
+                ELSE al.old_values
+            END AS "old_values?",
+            CASE
+                WHEN $3::bool AND u.id IS NOT NULL AND u.roles && ARRAY['admin', 'super_admin']::varchar[]
+                     AND jsonb_typeof(al.new_values) = 'object'
+                THEN al.new_values - ARRAY[
+                    'processed_by', 'submitted_by', 'approved_by',
+                    'locked_by', 'cancelled_by', 'created_by', 'updated_by'
+                ]::text[]
+                ELSE al.new_values
+            END AS "new_values?",
             CASE
                 WHEN $3::bool AND u.id IS NOT NULL AND u.roles && ARRAY['admin', 'super_admin']::varchar[]
                 THEN NULL::text
@@ -251,7 +268,12 @@ pub async fn list_for_run(
                 THEN NULL::text
                 ELSE al.user_agent
             END AS "user_agent?",
-            al.description, al.created_at,
+            CASE
+                WHEN $3::bool AND u.id IS NOT NULL AND u.roles && ARRAY['admin', 'super_admin']::varchar[]
+                THEN NULL::text
+                ELSE al.description
+            END AS "description?",
+            al.created_at,
             CASE
                 WHEN $3::bool AND u.id IS NOT NULL AND u.roles && ARRAY['admin', 'super_admin']::varchar[]
                 THEN NULL::text

@@ -13,6 +13,8 @@ import { getErrorMessage, translateServerMessage } from '@/lib/utils';
 import { formatTimeSeconds } from '@/lib/format';
 import { hasOnlyEmployeeRole } from '@/lib/roles';
 
+type CheckInApiError = { response?: { status?: number; data?: { error?: string } } };
+
 type State =
   | 'authenticating'
   | 'locating'
@@ -113,7 +115,7 @@ export function AttendanceScanPage() {
           void queryClient.invalidateQueries({ queryKey: ['attendance-my'] });
         } catch (e: unknown) {
           if (cancelled) return;
-          const err = e as { response?: { status?: number; data?: { error?: string } } };
+          const err = e as CheckInApiError;
           const raw = err.response?.data?.error;
           const message = getErrorMessage(e, tRef.current('attendance.scan.checkInFailed'));
           setError(message);

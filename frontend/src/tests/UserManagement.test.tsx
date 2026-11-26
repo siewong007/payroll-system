@@ -284,16 +284,39 @@ describe('UserManagement — edit form', () => {
     expect(payload).toMatchObject({ full_name: 'Ahmad Renamed' });
   });
 
-  it('includes company_ids once the selection actually changes', async () => {
+  it('includes company_ids and actor_password once the selection actually changes', async () => {
     adminMocks.updateUser.mockResolvedValue({});
     await openEdit();
 
     await userEvent.click(screen.getByRole('checkbox', { name: 'Beta Sdn Bhd' }));
+    await userEvent.type(screen.getByLabelText(/confirm with your password/i), 'SuperSecret123!');
     await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
 
     await waitFor(() => expect(adminMocks.updateUser).toHaveBeenCalled());
     const [, payload] = adminMocks.updateUser.mock.calls[0];
     expect(payload.company_ids).toEqual(['company-1', 'company-2']);
+    expect(payload.actor_password).toBe('SuperSecret123!');
+  });
+
+  it('requires actor_totp_code on privileged edits when the actor has 2FA enabled', async () => {
+    authMocks.useAuth.mockReturnValue({
+      user: { ...currentUser, two_factor_enabled: true },
+    });
+    adminMocks.updateUser.mockResolvedValue({});
+    await openEdit();
+
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Beta Sdn Bhd' }));
+    await userEvent.type(screen.getByLabelText(/confirm with your password/i), 'SuperSecret123!');
+    await userEvent.type(screen.getByPlaceholderText('123456'), '654321');
+    await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
+
+    await waitFor(() => expect(adminMocks.updateUser).toHaveBeenCalled());
+    const [, payload] = adminMocks.updateUser.mock.calls[0];
+    expect(payload).toMatchObject({
+      company_ids: ['company-1', 'company-2'],
+      actor_password: 'SuperSecret123!',
+      actor_totp_code: '654321',
+    });
   });
 
   it('warns that an access change will sign the user out of every device', async () => {

@@ -225,6 +225,18 @@ pub async fn create(
     )
     .await?;
 
+    let response_account = if state.mailer.is_enabled() && emp.email.is_some() {
+        Some(serde_json::json!({
+            "created": false,
+            "email": emp.email,
+            "role": "employee",
+            "default_password": serde_json::Value::Null,
+            "message": "If this email is eligible for a new portal account, login instructions will be sent by email.",
+        }))
+    } else {
+        account_info.map(|info| serde_json::to_value(info).unwrap_or_default())
+    };
+
     if !auth.is_payroll_privileged() {
         redact_payroll_fields(&mut emp);
         if !auth.can(Permission::ManageEmployees) {
@@ -234,7 +246,7 @@ pub async fn create(
 
     Ok(Json(serde_json::json!({
         "employee": emp,
-        "account": account_info,
+        "account": response_account,
     })))
 }
 

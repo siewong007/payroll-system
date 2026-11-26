@@ -165,9 +165,9 @@ pub async fn approve_leave(
     Json(req): Json<ReviewRequest>,
 ) -> AppResult<Json<LeaveRequest>> {
     let company_id = auth.authorize(Permission::ManageApprovals)?;
-    let lr = approval_service::approve_leave(
+    let lr = approval_service::approve_leave_with_mailer(
         &state.pool,
-        &state.config,
+        &state.mailer,
         company_id,
         id,
         reviewer(&auth),
@@ -320,9 +320,9 @@ pub async fn approve_claim(
     Json(req): Json<ReviewRequest>,
 ) -> AppResult<Json<Claim>> {
     let company_id = auth.authorize(Permission::ManageApprovals)?;
-    let claim = approval_service::approve_claim(
+    let claim = approval_service::approve_claim_with_mailer(
         &state.pool,
-        &state.config,
+        &state.mailer,
         company_id,
         id,
         reviewer(&auth),

@@ -27,11 +27,9 @@ export async function getGoogleAuthorizeUrl(
   flow?: 'link',
   turnstileToken?: string,
 ): Promise<string> {
-  const { data } = await api.get<{ authorize_url: string }>('/auth/oauth2/google/authorize', {
-    params: {
-      ...(flow ? { flow } : {}),
-      ...(turnstileToken ? { turnstile_token: turnstileToken } : {}),
-    },
+  const { data } = await api.post<{ authorize_url: string }>('/auth/oauth2/google/authorize', {
+    ...(flow ? { flow } : {}),
+    ...(turnstileToken ? { turnstile_token: turnstileToken } : {}),
   });
   return data.authorize_url;
 }
@@ -45,11 +43,26 @@ export async function linkGoogleAccount(
   code: string,
   state: string,
   password: string,
+  totpCode?: string,
 ): Promise<LinkedAccount> {
-  const { data } = await api.post('/auth/oauth2/google/link', { code, state, password });
+  const { data } = await api.post('/auth/oauth2/google/link', {
+    code,
+    state,
+    password,
+    ...(totpCode ? { totp_code: totpCode } : {}),
+  });
   return data;
 }
 
-export async function unlinkOAuth2Provider(provider: string): Promise<void> {
-  await api.delete(`/auth/oauth2/accounts/${provider}`);
+export async function unlinkOAuth2Provider(
+  provider: string,
+  password: string,
+  totpCode?: string,
+): Promise<void> {
+  await api.delete(`/auth/oauth2/accounts/${provider}`, {
+    data: {
+      password,
+      ...(totpCode ? { totp_code: totpCode } : {}),
+    },
+  });
 }

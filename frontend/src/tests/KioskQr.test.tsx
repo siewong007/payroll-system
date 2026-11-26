@@ -118,4 +118,22 @@ describe('public kiosk QR lifecycle', () => {
     await advance(600_000);
     expect(kioskMocks.fetchKioskQr).toHaveBeenCalledTimes(1);
   });
+
+  it('scrubs a legacy /kiosk/:kioskKey URL path via history.replaceState', async () => {
+    const replaceSpy = vi.spyOn(window.history, 'replaceState');
+    window.history.replaceState(null, '', '/kiosk/legacy-secret');
+    kioskMocks.fetchKioskQr.mockResolvedValue({
+      token: 'tok-1',
+      scan_url: 'https://payroll.example/attendance/scan?token=tok-1',
+      expires_at: new Date().toISOString(),
+      ttl_seconds: 300,
+    });
+
+    renderKiosk();
+    await advance(0);
+
+    expect(replaceSpy).toHaveBeenCalledWith(null, '', '/kiosk');
+    expect(window.location.pathname).toBe('/kiosk');
+    window.history.replaceState(null, '', '/');
+  });
 });

@@ -155,12 +155,19 @@ pub async fn create_employee(
         None,
     )?;
 
-    // Check for duplicate employee number within the same company
+    // Check for duplicate employee number or normalized email within the same company
     if employees::exists_by_number(pool, company_id, &req.employee_number).await? {
         return Err(AppError::Conflict(format!(
             "Employee number '{}' already exists in this company",
             req.employee_number
         )));
+    }
+    if let Some(ref email) = req.email
+        && employees::exists_by_normalized_email(pool, company_id, email, None).await?
+    {
+        return Err(AppError::Conflict(
+            "An active employee already uses that email address.".into(),
+        ));
     }
 
     let id = Uuid::now_v7();
@@ -365,6 +372,45 @@ pub async fn create_user_for_employee_fields(
     }))
 }
 
+fn update_touches_self_restricted_fields(req: &UpdateEmployeeRequest, existing: &Employee) -> bool {
+    let changing_email = (req.clear_email == Some(true) && existing.email.is_some())
+        || req.email.as_deref().is_some_and(|e| {
+            existing
+                .email
+                .as_deref()
+                .is_none_or(|old| !old.trim().eq_ignore_ascii_case(e.trim()))
+        });
+    let changing_active = req.is_active.is_some_and(|a| Some(a) != existing.is_active);
+    changing_email
+        || changing_active
+        || req.basic_salary.is_some()
+        || req.hourly_rate.is_some()
+        || req.daily_rate.is_some()
+        || req.bank_name.is_some()
+        || req.bank_account_number.is_some()
+        || req.bank_account_type.is_some()
+        || req.clear_bank_name == Some(true)
+        || req.clear_bank_account_number == Some(true)
+        || req.tax_identification_number.is_some()
+        || req.epf_number.is_some()
+        || req.socso_number.is_some()
+        || req.eis_number.is_some()
+        || req.working_spouse.is_some()
+        || req.num_children.is_some()
+        || req.epf_category.is_some()
+        || req.clear_epf_category == Some(true)
+        || req.is_muslim.is_some()
+        || req.zakat_eligible.is_some()
+        || req.zakat_monthly_amount.is_some()
+        || req.ptptn_monthly_amount.is_some()
+        || req.tabung_haji_amount.is_some()
+        || req.hrdf_contribution.is_some()
+        || req.payroll_group_id.is_some()
+        || req.clear_payroll_group_id == Some(true)
+        || req.salary_group.is_some()
+        || req.clear_salary_group == Some(true)
+}
+
 pub async fn update_employee(
     pool: &PgPool,
     id: Uuid,
@@ -406,22 +452,24 @@ pub async fn update_employee(
 
     if let Some(actor) = crate::repositories::users::get_by_id(&mut *tx, updated_by).await?
         && !actor.roles.iter().any(|r| r == "super_admin")
-        && crate::repositories::users::employee_id_for_user_in_company(
-            &mut *tx, updated_by, company_id,
+        && crate::repositories::users::is_employee_owned_by_user(
+            &mut *tx, updated_by, id, company_id,
         )
         .await?
-            == Some(id)
+        && update_touches_self_restricted_fields(&req, &existing)
     {
-        let changing_email = req
-            .email
-            .as_deref()
-            .is_some_and(|e| Some(e) != existing.email.as_deref());
-        let changing_active = req.is_active.is_some_and(|a| Some(a) != existing.is_active);
-        if changing_email || changing_active {
-            return Err(AppError::Forbidden(
-                "You cannot modify your own employee email or active status".into(),
-            ));
-        }
+        return Err(AppError::Forbidden(
+            "You cannot modify your own compensation, banking, statutory, email, or active status fields"
+                .into(),
+        ));
+    }
+
+    if let Some(ref new_email) = req.email
+        && employees::exists_by_normalized_email(&mut *tx, company_id, new_email, Some(id)).await?
+    {
+        return Err(AppError::Conflict(
+            "An active employee already uses that email address.".into(),
+        ));
     }
 
     let effective_resigned = if clearing {
@@ -551,6 +599,15 @@ pub async fn soft_delete_employee(
     // Read before deleting: afterwards there is nothing left to describe.
     let existing = get_employee(pool, id, company_id).await?;
 
+    if let Some(actor) = users::get_by_id(pool, deleted_by).await?
+        && !actor.roles.iter().any(|r| r == "super_admin")
+        && users::is_employee_owned_by_user(pool, deleted_by, id, company_id).await?
+    {
+        return Err(AppError::Forbidden(
+            "You cannot delete your own employee record".into(),
+        ));
+    }
+
     let mut tx = pool.begin().await?;
     let rows = employees::soft_delete(&mut *tx, id, company_id).await?;
 
@@ -629,7 +686,7 @@ pub async fn ensure_may_revoke_linked_logins(
 ) -> AppResult<()> {
     // Company-scoped read first, so a foreign id is NotFound, not Forbidden.
     get_employee(pool, employee_id, company_id).await?;
-    for target_roles in users::roles_linked_to_employee(pool, employee_id).await? {
+    for target_roles in users::roles_linked_to_employee(pool, employee_id, company_id).await? {
         if !may_revoke_login(caller_roles, &target_roles) {
             return Err(AppError::Forbidden(
                 "This employee is linked to a login with a higher role than yours; ask a super admin".into(),
@@ -654,6 +711,14 @@ pub async fn create_tp3(
     req: CreateTp3Request,
     created_by: Uuid,
 ) -> AppResult<Tp3Record> {
+    if let Some(actor) = users::get_by_id(pool, created_by).await?
+        && !actor.roles.iter().any(|r| r == "super_admin")
+        && users::is_employee_owned_by_user(pool, created_by, employee_id, company_id).await?
+    {
+        return Err(AppError::Forbidden(
+            "You cannot record TP3 prior-employer tax figures for yourself".into(),
+        ));
+    }
     if !(2000..=2200).contains(&req.tax_year) {
         return Err(AppError::BadRequest(
             "TP3 tax_year must be between 2000 and 2200".into(),
@@ -668,6 +733,17 @@ pub async fn create_tp3(
     {
         return Err(AppError::BadRequest(
             "TP3 prior-employer YTD amounts cannot be negative".into(),
+        ));
+    }
+    let max_sen = crate::models::payroll::MAX_MONEY_SEN;
+    if req.previous_income_ytd > max_sen
+        || req.previous_epf_ytd > max_sen
+        || req.previous_pcb_ytd > max_sen
+        || req.previous_socso_ytd > max_sen
+        || zakat_ytd > max_sen
+    {
+        return Err(AppError::BadRequest(
+            "TP3 prior-employer YTD amount exceeds supported maximum".into(),
         ));
     }
     let id = Uuid::now_v7();

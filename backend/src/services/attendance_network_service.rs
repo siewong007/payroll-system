@@ -699,13 +699,13 @@ pub(crate) fn score_candidate(
         None
     } else if candidate.anchored_count > 0 {
         Some(format!(
-            "Seen {} time(s) from {} employee(s) with {} corroborated by a kiosk or geofence — \
+            "Seen {} time(s) from {} employee(s) with {} corroborated by a kiosk — \
              needs {ANCHORED_MIN_OBSERVATIONS} corroborated from {ANCHORED_MIN_EMPLOYEES} employees.",
             candidate.observation_count, candidate.distinct_employees, candidate.anchored_count,
         ))
     } else {
         Some(format!(
-            "No corroborating kiosk or geofence signal. Needs {UNANCHORED_MIN_EMPLOYEES} employees \
+            "No corroborating kiosk signal. Needs {UNANCHORED_MIN_EMPLOYEES} employees \
              and {UNANCHORED_MIN_OBSERVATIONS} check-ins before it can be suggested \
              (currently {} and {}).",
             candidate.distinct_employees, candidate.observation_count,

@@ -37,6 +37,7 @@ fn test_config() -> AppConfig {
         trust_proxy_headers: false,
         client_ip_header: None,
         turnstile_secret_key: None,
+        allow_unconfigured_turnstile: false,
         turnstile_verify_url: "https://challenges.cloudflare.com/turnstile/v0/siteverify".into(),
         vapid_public_key: None,
         vapid_private_key: None,
@@ -1347,4 +1348,346 @@ async fn approver_cannot_approve_own_leave() {
     .unwrap();
     assert_eq!(taken, dec!(0));
     assert_eq!(pending, dec!(1));
+}
+
+#[tokio::test]
+async fn append_only_editor_ids_blocks_earlier_editor_after_second_editor() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+
+    let company_id = seed_company(&pool).await;
+    let employee_id = seed_employee_with_email(&pool, company_id, None, 400_000).await;
+    let creator = seed_user(&pool, company_id, "hr_manager").await;
+    let editor_a = seed_user(&pool, company_id, "hr_manager").await;
+    let editor_b = seed_user(&pool, company_id, "hr_manager").await;
+    let approver_c = seed_user(&pool, company_id, "admin").await;
+
+    let access_for = |user_id: Uuid| crate::models::upload::UploadAccess {
+        company_id,
+        user_id,
+        employee_id: None,
+        can_view_approvals: true,
+        can_view_documents: false,
+        can_view_confidential: false,
+    };
+
+    // 1. Claim: creator -> editor_a -> editor_b -> editor_a blocked, approver_c allowed.
+    let claim = approval_service::create_claim_admin(
+        &pool,
+        company_id,
+        employee_id,
+        crate::models::portal::CreateClaimRequest {
+            title: "Original Taxi".into(),
+            description: None,
+            amount: 2_500,
+            category: Some("transport".into()),
+            receipt_url: None,
+            receipt_file_name: None,
+            expense_date: NaiveDate::from_ymd_opt(2024, 5, 13).unwrap(),
+        },
+        creator,
+        &access_for(creator),
+        None,
+    )
+    .await
+    .expect("create claim");
+
+    approval_service::update_claim_admin(
+        &pool,
+        company_id,
+        claim.id,
+        crate::models::portal::UpdateClaimRequest {
+            employee_id: None,
+            title: Some("Edited By A".into()),
+            description: None,
+            amount: Some(3_000),
+            category: None,
+            receipt_url: None,
+            receipt_file_name: None,
+            expense_date: None,
+        },
+        editor_a,
+        &access_for(editor_a),
+        None,
+    )
+    .await
+    .expect("editor A updates claim");
+
+    approval_service::update_claim_admin(
+        &pool,
+        company_id,
+        claim.id,
+        crate::models::portal::UpdateClaimRequest {
+            employee_id: None,
+            title: Some("Edited By B".into()),
+            description: None,
+            amount: Some(3_500),
+            category: None,
+            receipt_url: None,
+            receipt_file_name: None,
+            expense_date: None,
+        },
+        editor_b,
+        &access_for(editor_b),
+        None,
+    )
+    .await
+    .expect("editor B updates claim");
+
+    let claim_editors: Vec<Uuid> =
+        sqlx::query_scalar("SELECT editor_ids FROM claims WHERE id = $1")
+            .bind(claim.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(claim_editors.contains(&editor_a));
+    assert!(claim_editors.contains(&editor_b));
+
+    let err_claim = approval_service::approve_claim(
+        &pool,
+        &test_config(),
+        company_id,
+        claim.id,
+        Reviewer {
+            user_id: editor_a,
+            may_self_approve: false,
+        },
+        None,
+        None,
+    )
+    .await
+    .expect_err("earlier editor A must remain blocked after editor B edited");
+    assert!(matches!(err_claim, AppError::Forbidden(_)));
+
+    approval_service::approve_claim(
+        &pool,
+        &test_config(),
+        company_id,
+        claim.id,
+        Reviewer {
+            user_id: approver_c,
+            may_self_approve: false,
+        },
+        None,
+        None,
+    )
+    .await
+    .expect("independent approver C can approve claim");
+
+    // 2. Overtime: creator -> editor_a -> editor_b -> editor_a blocked, approver_c allowed.
+    let ot = approval_service::create_overtime_admin(
+        &pool,
+        company_id,
+        employee_id,
+        CreateOvertimeRequest {
+            ot_date: NaiveDate::from_ymd_opt(2024, 5, 13).unwrap(),
+            start_time: "18:00".into(),
+            end_time: "20:00".into(),
+            hours: dec!(2.0),
+            ot_type: Some("normal".into()),
+            reason: Some("Initial".into()),
+        },
+        creator,
+        None,
+    )
+    .await
+    .expect("create overtime");
+
+    approval_service::update_overtime_admin(
+        &pool,
+        company_id,
+        ot.id,
+        UpdateOvertimeRequest {
+            employee_id: None,
+            ot_date: None,
+            start_time: None,
+            end_time: None,
+            hours: Some(dec!(1.5)),
+            ot_type: None,
+            reason: Some("Edited A".into()),
+        },
+        editor_a,
+        None,
+    )
+    .await
+    .expect("editor A updates OT");
+
+    approval_service::update_overtime_admin(
+        &pool,
+        company_id,
+        ot.id,
+        UpdateOvertimeRequest {
+            employee_id: None,
+            ot_date: None,
+            start_time: None,
+            end_time: None,
+            hours: Some(dec!(2.0)),
+            ot_type: None,
+            reason: Some("Edited B".into()),
+        },
+        editor_b,
+        None,
+    )
+    .await
+    .expect("editor B updates OT");
+
+    let ot_editors: Vec<Uuid> =
+        sqlx::query_scalar("SELECT editor_ids FROM overtime_applications WHERE id = $1")
+            .bind(ot.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(ot_editors.contains(&editor_a));
+    assert!(ot_editors.contains(&editor_b));
+
+    let err_ot = approval_service::approve_overtime(
+        &pool,
+        company_id,
+        ot.id,
+        Reviewer {
+            user_id: editor_a,
+            may_self_approve: false,
+        },
+        None,
+        None,
+    )
+    .await
+    .expect_err("earlier editor A must remain blocked from approving OT");
+    assert!(matches!(err_ot, AppError::Forbidden(_)));
+
+    approval_service::approve_overtime(
+        &pool,
+        company_id,
+        ot.id,
+        Reviewer {
+            user_id: approver_c,
+            may_self_approve: false,
+        },
+        None,
+        None,
+    )
+    .await
+    .expect("independent approver C can approve OT");
+
+    // 3. Leave request: creator -> editor_a -> editor_b -> editor_a blocked, approver_c allowed.
+    let lt_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO leave_types (id, company_id, name, default_days, is_paid) VALUES ($1, $2, 'Annual Test', 12, TRUE)",
+    )
+    .bind(lt_id)
+    .bind(company_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO leave_balances (employee_id, leave_type_id, year, entitled_days, taken_days, pending_days) VALUES ($1, $2, 2024, 12, 0, 0)",
+    )
+    .bind(employee_id)
+    .bind(lt_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let lr = approval_service::create_leave_request_admin(
+        &pool,
+        company_id,
+        employee_id,
+        crate::models::portal::CreateLeaveRequest {
+            leave_type_id: lt_id,
+            start_date: NaiveDate::from_ymd_opt(2024, 5, 15).unwrap(),
+            end_date: NaiveDate::from_ymd_opt(2024, 5, 15).unwrap(),
+            days: dec!(1.0),
+            reason: Some("Original leave".into()),
+            attachment_url: None,
+            attachment_name: None,
+        },
+        creator,
+        &access_for(creator),
+        None,
+    )
+    .await
+    .expect("create leave");
+
+    approval_service::update_leave_request_admin(
+        &pool,
+        company_id,
+        lr.id,
+        crate::models::portal::UpdateLeaveRequest {
+            employee_id: None,
+            leave_type_id: None,
+            start_date: None,
+            end_date: None,
+            days: None,
+            reason: Some("Edited A".into()),
+            attachment_url: None,
+            attachment_name: None,
+        },
+        editor_a,
+        &access_for(editor_a),
+        None,
+    )
+    .await
+    .expect("editor A updates leave");
+
+    approval_service::update_leave_request_admin(
+        &pool,
+        company_id,
+        lr.id,
+        crate::models::portal::UpdateLeaveRequest {
+            employee_id: None,
+            leave_type_id: None,
+            start_date: None,
+            end_date: None,
+            days: None,
+            reason: Some("Edited B".into()),
+            attachment_url: None,
+            attachment_name: None,
+        },
+        editor_b,
+        &access_for(editor_b),
+        None,
+    )
+    .await
+    .expect("editor B updates leave");
+
+    let lr_editors: Vec<Uuid> =
+        sqlx::query_scalar("SELECT editor_ids FROM leave_requests WHERE id = $1")
+            .bind(lr.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(lr_editors.contains(&editor_a));
+    assert!(lr_editors.contains(&editor_b));
+
+    let err_lr = approval_service::approve_leave(
+        &pool,
+        &test_config(),
+        company_id,
+        lr.id,
+        Reviewer {
+            user_id: editor_a,
+            may_self_approve: false,
+        },
+        None,
+        None,
+    )
+    .await
+    .expect_err("earlier editor A must remain blocked from approving leave");
+    assert!(matches!(err_lr, AppError::Forbidden(_)));
+
+    approval_service::approve_leave(
+        &pool,
+        &test_config(),
+        company_id,
+        lr.id,
+        Reviewer {
+            user_id: approver_c,
+            may_self_approve: false,
+        },
+        None,
+        None,
+    )
+    .await
+    .expect("independent approver C can approve leave");
 }

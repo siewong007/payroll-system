@@ -252,7 +252,7 @@ pub async fn overtime_applications(
     let rows = sqlx::query_as!(
         OvertimeExport,
         r#"SELECT id, employee_id, company_id, ot_date, start_time, end_time, hours,
-                  ot_type, reason, status, review_notes, created_at, updated_at
+                  ot_type, reason, status, payroll_run_id, review_notes, created_at, updated_at
            FROM overtime_applications WHERE company_id = $1 ORDER BY id"#,
         company_id,
     )
@@ -1101,12 +1101,13 @@ pub async fn insert_overtime(
     id: Uuid,
     employee_id: Uuid,
     company_id: Uuid,
+    payroll_run_id: Option<Uuid>,
     ot: &OvertimeExport,
 ) -> AppResult<()> {
     sqlx::query!(
         r#"INSERT INTO overtime_applications (id, employee_id, company_id, ot_date, start_time,
-               end_time, hours, ot_type, reason, status, review_notes, created_at, updated_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)"#,
+               end_time, hours, ot_type, reason, status, payroll_run_id, review_notes, created_at, updated_at)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)"#,
         id,
         employee_id,
         company_id,
@@ -1117,6 +1118,7 @@ pub async fn insert_overtime(
         ot.ot_type,
         ot.reason,
         ot.status,
+        payroll_run_id,
         ot.review_notes,
         ot.created_at,
         ot.updated_at,

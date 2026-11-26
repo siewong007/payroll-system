@@ -10,9 +10,9 @@ use uuid::Uuid;
 
 use crate::core::error::AppResult;
 use crate::models::payroll::{
-    EmployeeHours, EmployeeOtTypeHours, EmployeeUnratedOvertime, LaterCommittedRun,
-    OrphanedEntryEmployee, PayableClaim, PaymentFileRow, PayrollEntryWithEmployee,
-    PayrollItemSummary, PayrollYtd, PayslipSourceLine, RunJournalItemTotals, StagedEntryRow,
+    EmployeeHours, EmployeeUnratedOvertime, LaterCommittedRun, OrphanedEntryEmployee, PayableClaim,
+    PayableOvertime, PaymentFileRow, PayrollEntryWithEmployee, PayrollItemSummary, PayrollYtd,
+    PayslipSourceLine, RunJournalItemTotals, StagedEntryRow,
 };
 use crate::models::report::DepartmentPayrollRow;
 
@@ -82,8 +82,10 @@ pub async fn staged_entries_for_run(
                   quantity, COALESCE(is_taxable, TRUE) AS "is_taxable!"
            FROM payroll_entries
            WHERE employee_id = ANY($1)
-             AND period_year = $2
-             AND period_month = $3
+             AND (
+                 (period_year = $2 AND period_month = $3)
+                 OR (item_type = 'unpaid_leave' AND (period_year < $2 OR (period_year = $2 AND period_month <= $3)))
+             )
              AND is_processed = FALSE
              AND item_type <> 'claim_reimbursement'
            ORDER BY employee_id, category, created_at, id"#,
@@ -110,21 +112,23 @@ pub async fn lock_and_load_staged_entries_for_run(
     let rows = sqlx::query_as!(
         StagedEntryRow,
         r#"WITH locked AS (
-               SELECT id
+               SELECT id, employee_id, category, item_type, description,
+                      amount, quantity, COALESCE(is_taxable, TRUE) AS is_taxable, created_at
                FROM payroll_entries
                WHERE employee_id = ANY($1)
-                 AND period_year = $2
-                 AND period_month = $3
+                 AND (
+                     (period_year = $2 AND period_month = $3)
+                     OR (item_type = 'unpaid_leave' AND (period_year < $2 OR (period_year = $2 AND period_month <= $3)))
+                 )
                  AND is_processed = FALSE
                ORDER BY id
                FOR UPDATE
            )
-           SELECT pe.id, pe.employee_id, pe.category, pe.item_type, pe.description,
-                  pe.amount, pe.quantity, COALESCE(pe.is_taxable, TRUE) AS "is_taxable!"
-           FROM payroll_entries pe
-           JOIN locked l ON l.id = pe.id
-           WHERE pe.item_type <> 'claim_reimbursement'
-           ORDER BY pe.employee_id, pe.category, pe.created_at, pe.id"#,
+           SELECT l.id, l.employee_id, l.category, l.item_type, l.description,
+                  l.amount, l.quantity, l.is_taxable AS "is_taxable!"
+           FROM locked l
+           WHERE l.item_type <> 'claim_reimbursement'
+           ORDER BY l.employee_id, l.category, l.created_at, l.id"#,
         employee_ids,
         year,
         month,
@@ -270,22 +274,32 @@ pub async fn unrated_overtime_records(
 }
 
 /// Approved overtime hours per employee, grouped by overtime type.
-pub async fn approved_ot_totals(
+/// Individual approved, not-yet-paid overtime applications a run will pay.
+///
+/// Carry-forward (`ot_date <= period_end` AND `payroll_run_id IS NULL`) matching
+/// claims, so exact IDs summed in `compute_payslip` are atomically retired by
+/// `persist_all_payslips`.
+pub async fn payable_overtime_applications(
     executor: impl Executor<'_, Database = Postgres>,
     employee_ids: &[Uuid],
-    period_start: NaiveDate,
+    company_id: Uuid,
     period_end: NaiveDate,
-) -> AppResult<Vec<EmployeeOtTypeHours>> {
+) -> AppResult<Vec<PayableOvertime>> {
+    if employee_ids.is_empty() {
+        return Ok(Vec::new());
+    }
     let rows = sqlx::query_as!(
-        EmployeeOtTypeHours,
-        r#"SELECT employee_id, ot_type, COALESCE(SUM(hours), 0::NUMERIC) AS "hours!"
+        PayableOvertime,
+        r#"SELECT id, employee_id, ot_type, hours, ot_date
            FROM overtime_applications
            WHERE employee_id = ANY($1)
-             AND ot_date >= $2 AND ot_date <= $3
+             AND company_id = $2
              AND status = 'approved'
-           GROUP BY employee_id, ot_type"#,
+             AND payroll_run_id IS NULL
+             AND ot_date <= $3
+           ORDER BY employee_id, ot_date, id"#,
         employee_ids,
-        period_start,
+        company_id,
         period_end,
     )
     .fetch_all(executor)
@@ -403,7 +417,10 @@ pub async fn staged_entries_outside_run(
            FROM payroll_entries pe
            JOIN employees e ON e.id = pe.employee_id
            WHERE pe.company_id = $1
-             AND pe.period_year = $2 AND pe.period_month = $3
+             AND (
+                 (pe.period_year = $2 AND pe.period_month = $3)
+                 OR (pe.item_type = 'unpaid_leave' AND (pe.period_year < $2 OR (pe.period_year = $2 AND pe.period_month <= $3)))
+             )
              AND pe.is_processed = FALSE
              AND pe.item_type NOT IN ('overtime', 'claim_reimbursement')
              -- COALESCE, not a bare NOT: an employee with no payroll group

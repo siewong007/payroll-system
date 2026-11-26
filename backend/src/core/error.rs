@@ -108,6 +108,10 @@ fn known_constraint(constraint: &str) -> Option<(StatusCode, &'static str)> {
             StatusCode::CONFLICT,
             "An active employee already uses that employee number.",
         ),
+        "idx_employees_company_email_unique" => (
+            StatusCode::CONFLICT,
+            "An active employee already uses that email address.",
+        ),
         "attendance_one_open_per_employee" => (
             StatusCode::CONFLICT,
             "This employee already has an open attendance session. Close it before starting another.",

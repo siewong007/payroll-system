@@ -1,0 +1,253 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE overtime_applications\n        SET employee_id = COALESCE($3, employee_id),\n            ot_date = COALESCE($4, ot_date),\n            start_time = $5,\n            end_time = $6,\n            hours = COALESCE($7, hours),\n            ot_type = $8,\n            reason = CASE WHEN $9::text IS NULL THEN reason ELSE NULLIF($9, '') END,\n            updated_by = $10,\n            editor_ids = CASE\n                WHEN $10 = ANY(editor_ids) THEN editor_ids\n                ELSE array_append(editor_ids, $10)\n            END,\n            updated_at = NOW()\n        WHERE id = $1 AND company_id = $2 AND status = 'pending'\n        RETURNING *",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "overtime_applications",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "employee_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "overtime_applications",
+            "name": "employee_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "company_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "overtime_applications",
+            "name": "company_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "ot_date",
+        "type_info": "Date",
+        "origin": {
+          "Table": {
+            "table": "overtime_applications",
+            "name": "ot_date"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "start_time",
+        "type_info": "Time",
+        "origin": {
+          "Table": {
+            "table": "overtime_applications",
+            "name": "start_time"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "end_time",
+        "type_info": "Time",
+        "origin": {
+          "Table": {
+            "table": "overtime_applications",
+            "name": "end_time"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "hours",
+        "type_info": "Numeric",
+        "origin": {
+          "Table": {
+            "table": "overtime_applications",
+            "name": "hours"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "ot_type",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "overtime_applications",
+            "name": "ot_type"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "reason",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "overtime_applications",
+            "name": "reason"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "status",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "overtime_applications",
+            "name": "status"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "reviewed_by",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "overtime_applications",
+            "name": "reviewed_by"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "reviewed_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "overtime_applications",
+            "name": "reviewed_at"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "review_notes",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "overtime_applications",
+            "name": "review_notes"
+          }
+        }
+      },
+      {
+        "ordinal": 13,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "overtime_applications",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 14,
+        "name": "updated_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "overtime_applications",
+            "name": "updated_at"
+          }
+        }
+      },
+      {
+        "ordinal": 15,
+        "name": "created_by",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "overtime_applications",
+            "name": "created_by"
+          }
+        }
+      },
+      {
+        "ordinal": 16,
+        "name": "updated_by",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "overtime_applications",
+            "name": "updated_by"
+          }
+        }
+      },
+      {
+        "ordinal": 17,
+        "name": "editor_ids",
+        "type_info": "UuidArray",
+        "origin": {
+          "Table": {
+            "table": "overtime_applications",
+            "name": "editor_ids"
+          }
+        }
+      },
+      {
+        "ordinal": 18,
+        "name": "payroll_run_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "overtime_applications",
+            "name": "payroll_run_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Date",
+        "Time",
+        "Time",
+        "Numeric",
+        "Varchar",
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "f1810888490ac3473682bd41c454e71ffd405e42f418b872702e550b0a68297c"
+}

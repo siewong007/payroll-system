@@ -1,0 +1,186 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH ranked AS (\n            SELECT po.id, po.next_retry_at, po.created_at,\n                   ROW_NUMBER() OVER (\n                       PARTITION BY po.user_id\n                       ORDER BY po.next_retry_at ASC, po.created_at ASC, po.id ASC\n                   ) AS rn\n            FROM push_outbox po\n            WHERE po.status = 'pending'\n              AND po.next_retry_at <= NOW()\n        ),\n        candidates AS (\n            SELECT id, rn\n            FROM ranked\n            WHERE rn <= 5\n            ORDER BY rn ASC, next_retry_at ASC, created_at ASC, id ASC\n            LIMIT ($1::bigint * 4)\n        ),\n        claimed AS (\n            SELECT po.id\n            FROM push_outbox po\n            JOIN candidates c ON c.id = po.id\n            WHERE po.status = 'pending'\n              AND po.next_retry_at <= NOW()\n            ORDER BY c.rn ASC, po.next_retry_at ASC, po.created_at ASC, po.id ASC\n            LIMIT $1\n            FOR UPDATE OF po SKIP LOCKED\n        ),\n        leased AS (\n            UPDATE push_outbox po\n            SET next_retry_at = NOW() + INTERVAL '5 minutes'\n            FROM claimed c\n            WHERE po.id = c.id\n            RETURNING po.id, po.subscription_id, po.user_id, po.company_id,\n                      po.title, po.body, po.url, po.tag, po.attempts, po.max_attempts\n        )\n        SELECT l.id, l.subscription_id, l.user_id, l.company_id,\n               l.title, l.body, l.url, l.tag, l.attempts, l.max_attempts,\n               ps.endpoint, ps.p256dh, ps.auth,\n               ps.revoked_at IS NOT NULL\n                   OR ps.user_id <> l.user_id\n                   OR u.is_active IS NOT TRUE\n                   OR u.deleted_at IS NOT NULL\n                   OR (ps.session_id IS NOT NULL AND (us.revoked_at IS NOT NULL OR us.expires_at <= NOW()))\n                   AS \"is_revoked!\",\n               (SELECT COUNT(*) FROM notifications n\n                WHERE n.user_id = l.user_id\n                  AND (l.company_id IS NULL OR n.company_id = l.company_id)\n                  AND n.is_read = FALSE) AS \"unread_count!\"\n        FROM leased l\n        JOIN push_subscriptions ps ON ps.id = l.subscription_id\n        JOIN users u ON u.id = l.user_id\n        LEFT JOIN user_sessions us ON us.id = ps.session_id\n        ORDER BY l.id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "push_outbox",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "subscription_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "push_outbox",
+            "name": "subscription_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "user_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "push_outbox",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "company_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "push_outbox",
+            "name": "company_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "title",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "push_outbox",
+            "name": "title"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "body",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "push_outbox",
+            "name": "body"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "url",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "push_outbox",
+            "name": "url"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "tag",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "push_outbox",
+            "name": "tag"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "attempts",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "push_outbox",
+            "name": "attempts"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "max_attempts",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "push_outbox",
+            "name": "max_attempts"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "endpoint",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "push_subscriptions",
+            "name": "endpoint"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "p256dh",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "push_subscriptions",
+            "name": "p256dh"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "auth",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "push_subscriptions",
+            "name": "auth"
+          }
+        }
+      },
+      {
+        "ordinal": 13,
+        "name": "is_revoked!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 14,
+        "name": "unread_count!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      null,
+      null
+    ]
+  },
+  "hash": "8c8f54190b277f615ae626a3c985631bea45712e6a2b1ecfc55161b08a6686e6"
+}

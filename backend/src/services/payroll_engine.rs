@@ -8,9 +8,9 @@ use uuid::Uuid;
 use crate::core::error::{AppError, AppResult};
 use crate::models::employee::Employee;
 use crate::models::payroll::{
-    BulkPayrollData, OvertimeSettings, PayableClaim, PayrollDiagnostic, PayrollItemBatchInsert,
-    PayrollPreview, PayrollPreviewEmployee, PayrollRun, PayslipLine, PayslipSourceLine, Tp3Totals,
-    YtdTotals, checked_round_sen,
+    BulkPayrollData, OvertimeSettings, PayableClaim, PayableOvertime, PayrollDiagnostic,
+    PayrollItemBatchInsert, PayrollPreview, PayrollPreviewEmployee, PayrollRun, PayslipLine,
+    PayslipSourceLine, Tp3Totals, YtdTotals, checked_round_sen,
 };
 use crate::models::statutory::{EisContribution, EpfContribution, PcbInput, SocsoContribution};
 use crate::repositories::reads::payroll as payroll_reads;
@@ -74,6 +74,8 @@ struct ComputedPayslip {
     /// those rows paid rather than re-running a predicate that may have picked
     /// up a claim approved since.
     claim_ids: Vec<Uuid>,
+    /// Exactly the approved `overtime_applications` paid by this payslip.
+    overtime_ids: Vec<Uuid>,
     /// Exactly the staged `payroll_entries` rows seen by this run.
     entry_ids: Vec<Uuid>,
     epf: EpfContribution,
@@ -178,7 +180,7 @@ async fn gather_run_inputs(
         effective_date,
     } = *period;
 
-    let employees = employee_repo::list_for_payroll_run(
+    let mut employees = employee_repo::list_for_payroll_run(
         &mut *conn,
         company_id,
         payroll_group_id,
@@ -186,6 +188,25 @@ async fn gather_run_inputs(
         period_start,
     )
     .await?;
+
+    if lock_rows {
+        let initial_ids: Vec<Uuid> = employees.iter().map(|e| e.id).collect();
+        employee_repo::lock_many_for_update(&mut *conn, &initial_ids, company_id).await?;
+        // Re-read under lock so edits committed immediately prior under READ COMMITTED
+        // (salary, resignation, group assignment) are never read stale.
+        employees = employee_repo::list_for_payroll_run(
+            &mut *conn,
+            company_id,
+            payroll_group_id,
+            period_end,
+            period_start,
+        )
+        .await?;
+        let final_ids: Vec<Uuid> = employees.iter().map(|e| e.id).collect();
+        if final_ids != initial_ids {
+            employee_repo::lock_many_for_update(&mut *conn, &final_ids, company_id).await?;
+        }
+    }
 
     // The rows the population predicate holds out for an unexplained reason.
     // Not an error here — `preview_payroll` reports them per employee and
@@ -202,16 +223,11 @@ async fn gather_run_inputs(
 
     // Lock mutable source rows when running inside a write transaction (process_payroll);
     // preview runs read-only and skips row locks so it never blocks active writes.
-    // Order is fixed: claims -> overtime_applications -> payroll_entries.
+    // Canonical order: employees -> claims -> overtime_applications -> payroll_entries.
     if lock_rows {
         claims::lock_payable(&mut *conn, &employee_ids, company_id, period_end).await?;
-        overtime_applications::lock_approved_for_period(
-            &mut *conn,
-            &employee_ids,
-            period_start,
-            period_end,
-        )
-        .await?;
+        overtime_applications::lock_payable(&mut *conn, &employee_ids, company_id, period_end)
+            .await?;
     }
 
     // Read path: a stored zone Postgres would reject degrades to the platform
@@ -273,44 +289,49 @@ async fn gather_run_inputs(
         }
 
         if row.category == "earning" {
-            *variable_earnings_map.entry(row.employee_id).or_insert(0) += row.amount;
+            let entry_earn = variable_earnings_map.entry(row.employee_id).or_insert(0);
+            *entry_earn = checked_add_money(*entry_earn, row.amount, "variable_earnings")?;
             if row.is_taxable {
-                *taxable_variable_earnings_map
+                let entry_tax_earn = taxable_variable_earnings_map
                     .entry(row.employee_id)
-                    .or_insert(0) += row.amount;
+                    .or_insert(0);
+                *entry_tax_earn =
+                    checked_add_money(*entry_tax_earn, row.amount, "taxable_variable_earnings")?;
             }
-            if row.item_type == "monthly_allowance" {
-                *monthly_allowances_map.entry(row.employee_id).or_insert(0) += row.amount;
+            if matches!(row.item_type.as_str(), "allowance" | "monthly_allowance") {
+                let entry_allow = monthly_allowances_map.entry(row.employee_id).or_insert(0);
+                *entry_allow = checked_add_money(*entry_allow, row.amount, "monthly_allowances")?;
             } else if row.item_type == "bonus" {
                 let bc = bonus_commission_map
                     .entry(row.employee_id)
                     .or_insert((0, 0));
-                bc.0 += row.amount;
+                bc.0 = checked_add_money(bc.0, row.amount, "total_bonus")?;
                 if row.is_taxable {
                     let tbc = taxable_bonus_commission_map
                         .entry(row.employee_id)
                         .or_insert((0, 0));
-                    tbc.0 += row.amount;
+                    tbc.0 = checked_add_money(tbc.0, row.amount, "taxable_bonus")?;
                 }
             } else if row.item_type == "commission" {
                 let bc = bonus_commission_map
                     .entry(row.employee_id)
                     .or_insert((0, 0));
-                bc.1 += row.amount;
+                bc.1 = checked_add_money(bc.1, row.amount, "total_commission")?;
                 if row.is_taxable {
                     let tbc = taxable_bonus_commission_map
                         .entry(row.employee_id)
                         .or_insert((0, 0));
-                    tbc.1 += row.amount;
+                    tbc.1 = checked_add_money(tbc.1, row.amount, "taxable_commission")?;
                 }
             }
         } else {
-            *variable_deductions_map.entry(row.employee_id).or_insert(0) += row.amount;
+            let entry_ded = variable_deductions_map.entry(row.employee_id).or_insert(0);
+            *entry_ded = checked_add_money(*entry_ded, row.amount, "variable_deductions")?;
             if row.item_type == "unpaid_leave" {
                 let ul = unpaid_leave_map
                     .entry(row.employee_id)
                     .or_insert((0, Decimal::ZERO));
-                ul.0 += row.amount;
+                ul.0 = checked_add_money(ul.0, row.amount, "unpaid_leave_deduction")?;
                 if let Some(q) = row.quantity {
                     ul.1 += q;
                 }
@@ -356,16 +377,20 @@ async fn gather_run_inputs(
         }
     }
 
-    // 3b. Batch fetch approved overtime applications
-    let mut approved_ot_map: HashMap<Uuid, Vec<(String, Decimal)>> = HashMap::new();
-    for row in
-        payroll_reads::approved_ot_totals(&mut *conn, &employee_ids, period_start, period_end)
-            .await?
+    // 3b. Batch fetch exact approved & unpaid overtime applications
+    let mut approved_ot_map: HashMap<Uuid, Vec<PayableOvertime>> = HashMap::new();
+    for row in payroll_reads::payable_overtime_applications(
+        &mut *conn,
+        &employee_ids,
+        company_id,
+        period_end,
+    )
+    .await?
     {
         approved_ot_map
             .entry(row.employee_id)
             .or_default()
-            .push((row.ot_type, row.hours));
+            .push(row);
     }
 
     // 3c. Batch fetch the approved claims this run will reimburse. Carry-forward
@@ -1587,10 +1612,28 @@ fn compute_payslip(
         None => 0,
     };
 
-    // Approved OT applications with type-based rate multipliers
-    let approved_ot_pay = if let Some(ot_entries) = bulk.approved_ot.get(&emp.id) {
+    // Approved OT applications with type-based rate multipliers (exact IDs captured for atomic retirement)
+    let payable_overtime: &[PayableOvertime] = bulk
+        .approved_ot
+        .get(&emp.id)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let approved_ot_pay = if !payable_overtime.is_empty() {
+        let mut by_type: std::collections::BTreeMap<(u8, &str), Decimal> =
+            std::collections::BTreeMap::new();
+        for entry in payable_overtime {
+            let rank = match entry.ot_type.as_str() {
+                "normal" => 0,
+                "rest_day" => 1,
+                "public_holiday" => 2,
+                _ => 3,
+            };
+            *by_type
+                .entry((rank, entry.ot_type.as_str()))
+                .or_insert(Decimal::ZERO) += entry.hours;
+        }
         let mut total = 0i64;
-        for &(ref ot_type, hours) in ot_entries {
+        for ((_, ot_type), hours) in by_type {
             let multiplier = ot.multiplier_for(ot_type);
             let rating = ot.try_rate_overtime(emp.hourly_rate, emp.basic_salary, ot_type, hours)?;
             let amount = rating.amount_sen;
@@ -1710,12 +1753,17 @@ fn compute_payslip(
     };
 
     // PCB
-    let additional_total = total_bonus + total_commission;
-    let bonus_amount = (taxable_bonus + taxable_commission).min(taxable_gross);
-    let normal_remuneration = taxable_gross - bonus_amount;
+    let additional_total = checked_add_money(total_bonus, total_commission, "additional_total")?;
+    let taxable_additional =
+        checked_add_money(taxable_bonus, taxable_commission, "taxable_additional")?;
+    let bonus_amount = taxable_additional.min(taxable_gross);
+    let normal_remuneration =
+        checked_sub_money(taxable_gross, bonus_amount, "normal_remuneration")?;
     let (pcb_epf_monthly, pcb_socso_monthly, pcb_eis_monthly) = if additional_total > 0 {
-        let normal_epf_wage = (statutory_epf_wage - additional_total).max(0);
-        let normal_se_wage = (statutory_socso_eis_wage - additional_total).max(0);
+        let normal_epf_wage =
+            checked_sub_money(statutory_epf_wage, additional_total, "normal_epf_wage")?.max(0);
+        let normal_se_wage =
+            checked_sub_money(statutory_socso_eis_wage, additional_total, "normal_se_wage")?.max(0);
         let n_epf = epf_service::calculate_epf_with(
             statutory,
             normal_epf_wage,
@@ -1743,12 +1791,12 @@ fn compute_payslip(
         working_spouse: emp.working_spouse.unwrap_or(false),
         num_children: emp.num_children.unwrap_or(0),
         months_worked: month,
-        ytd_gross: ytd_taxable_gross + tp3_income,
-        ytd_pcb: ytd_pcb + tp3_pcb,
-        ytd_epf: ytd_epf + tp3_epf,
-        ytd_socso: ytd_socso + tp3_socso,
+        ytd_gross: checked_add_money(ytd_taxable_gross, tp3_income, "ytd_taxable_plus_tp3")?,
+        ytd_pcb: checked_add_money(ytd_pcb, tp3_pcb, "ytd_pcb_plus_tp3")?,
+        ytd_epf: checked_add_money(ytd_epf, tp3_epf, "ytd_epf_plus_tp3")?,
+        ytd_socso: checked_add_money(ytd_socso, tp3_socso, "ytd_socso_plus_tp3")?,
         ytd_eis,
-        ytd_zakat: ytd_zakat + tp3_zakat,
+        ytd_zakat: checked_add_money(ytd_zakat, tp3_zakat, "ytd_zakat_plus_tp3")?,
         bonus_amount,
     };
 
@@ -1829,6 +1877,7 @@ fn compute_payslip(
         total_overtime,
         total_claims,
         claim_ids: payable_claims.iter().map(|claim| claim.id).collect(),
+        overtime_ids: payable_overtime.iter().map(|ot| ot.id).collect(),
         entry_ids: bulk
             .staged_entry_ids
             .get(&emp.id)
@@ -1846,7 +1895,15 @@ fn compute_payslip(
         // bucket, so the two partition. The invariant the portal depends on:
         // `total_other_deductions + unpaid_leave_deduction` equals what
         // `total_other_deductions` alone used to be.
-        other_deductions: recurring_deductions + variable_deductions - unpaid_leave_deduction,
+        other_deductions: checked_sub_money(
+            checked_add_money(
+                recurring_deductions,
+                variable_deductions,
+                "combined_other_deductions",
+            )?,
+            unpaid_leave_deduction,
+            "other_deductions",
+        )?,
         unpaid_leave_deduction,
         unpaid_leave_days,
         total_deductions,
@@ -1881,6 +1938,7 @@ async fn persist_all_payslips(
     let mut details_batch: Vec<(Uuid, &PayslipLine)> = Vec::with_capacity(total_lines);
     let mut entry_ids: Vec<Uuid> = Vec::new();
     let mut claim_ids: Vec<Uuid> = Vec::new();
+    let mut overtime_ids: Vec<Uuid> = Vec::new();
 
     for (emp, c) in employees.iter().zip(computed) {
         let item_id = Uuid::now_v7();
@@ -1930,6 +1988,7 @@ async fn persist_all_payslips(
         }
         entry_ids.extend_from_slice(&c.entry_ids);
         claim_ids.extend_from_slice(&c.claim_ids);
+        overtime_ids.extend_from_slice(&c.overtime_ids);
     }
 
     payroll_items::insert_batch(tx, run_id, &items_batch).await?;
@@ -1954,6 +2013,17 @@ async fn persist_all_payslips(
         if paid_claims != claim_ids.len() as u64 {
             return Err(AppError::Conflict(
                 "One or more approved claims were claimed by another run concurrently. Please retry."
+                    .into(),
+            ));
+        }
+    }
+
+    // Mark exactly the approved overtime applications this run paid, by id.
+    if !overtime_ids.is_empty() {
+        let paid_ot = overtime_applications::mark_paid(&mut **tx, run_id, &overtime_ids).await?;
+        if paid_ot != overtime_ids.len() as u64 {
+            return Err(AppError::Conflict(
+                "One or more approved overtime applications were claimed by another run concurrently. Please retry."
                     .into(),
             ));
         }
@@ -2468,9 +2538,27 @@ mod payslip_golden_tests {
         bulk.approved_ot.insert(
             emp.id,
             vec![
-                ("normal".to_string(), rust_decimal_macros::dec!(2.0)),
-                ("rest_day".to_string(), rust_decimal_macros::dec!(2.0)),
-                ("public_holiday".to_string(), rust_decimal_macros::dec!(1.0)),
+                PayableOvertime {
+                    id: Uuid::now_v7(),
+                    employee_id: emp.id,
+                    ot_type: "normal".to_string(),
+                    hours: rust_decimal_macros::dec!(2.0),
+                    ot_date: NaiveDate::from_ymd_opt(2025, 6, 10).unwrap(),
+                },
+                PayableOvertime {
+                    id: Uuid::now_v7(),
+                    employee_id: emp.id,
+                    ot_type: "rest_day".to_string(),
+                    hours: rust_decimal_macros::dec!(2.0),
+                    ot_date: NaiveDate::from_ymd_opt(2025, 6, 14).unwrap(),
+                },
+                PayableOvertime {
+                    id: Uuid::now_v7(),
+                    employee_id: emp.id,
+                    ot_type: "public_holiday".to_string(),
+                    hours: rust_decimal_macros::dec!(1.0),
+                    ot_date: NaiveDate::from_ymd_opt(2025, 6, 17).unwrap(),
+                },
             ],
         );
 

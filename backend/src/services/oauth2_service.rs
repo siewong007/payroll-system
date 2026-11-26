@@ -341,7 +341,10 @@ pub async fn link_oauth2_account(
         refresh_token_hash.as_deref(),
         token_expires_at,
     )
-    .await
+    .await?
+    .ok_or_else(|| {
+        AppError::BadRequest("This Google account is already linked to another user".into())
+    })
 }
 
 /// Update stored Google tokens for an existing OAuth2 account after login.

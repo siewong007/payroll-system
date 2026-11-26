@@ -29,7 +29,8 @@ pub async fn get_by_id(
     let user = sqlx::query_as!(
         User,
         r#"SELECT id, email, password_hash, full_name, roles, company_id,
-            employee_id, is_active, must_change_password, last_login, created_at, updated_at
+            employee_id, is_active, must_change_password, last_login, created_at, updated_at,
+            failed_login_attempts, login_locked_until
         FROM users WHERE id = $1"#,
         id,
     )
@@ -45,7 +46,8 @@ pub async fn get_active_by_id(
     let user = sqlx::query_as!(
         User,
         r#"SELECT id, email, password_hash, full_name, roles, company_id,
-            employee_id, is_active, must_change_password, last_login, created_at, updated_at
+            employee_id, is_active, must_change_password, last_login, created_at, updated_at,
+            failed_login_attempts, login_locked_until
         FROM users WHERE id = $1 AND is_active = TRUE AND deleted_at IS NULL"#,
         id,
     )
@@ -61,7 +63,8 @@ pub async fn find_active_by_email(
     let user = sqlx::query_as!(
         User,
         r#"SELECT id, email, password_hash, full_name, roles, company_id,
-            employee_id, is_active, must_change_password, last_login, created_at, updated_at
+            employee_id, is_active, must_change_password, last_login, created_at, updated_at,
+            failed_login_attempts, login_locked_until
         FROM users WHERE lower(btrim(email)) = lower(btrim($1)) AND is_active = TRUE AND deleted_at IS NULL"#,
         email,
     )
@@ -176,8 +179,7 @@ pub async fn list_page(
                     SELECT 1 FROM user_companies uc
                     WHERE uc.user_id = u.id AND uc.company_id = $1))
               AND ($2::text IS NULL
-                    OR u.full_name ILIKE '%' || $2 || '%' ESCAPE '\'
-                    OR u.email ILIKE '%' || $2 || '%' ESCAPE '\')
+                    OR lower((u.full_name::text || ' ' || u.email::text)) LIKE '%' || lower($2) || '%' ESCAPE '\')
             ORDER BY u.created_at DESC
             LIMIT $3 OFFSET $4"#,
         company_id,
@@ -205,8 +207,7 @@ pub async fn count_all(
                     SELECT 1 FROM user_companies uc
                     WHERE uc.user_id = u.id AND uc.company_id = $1))
               AND ($2::text IS NULL
-                    OR u.full_name ILIKE '%' || $2 || '%' ESCAPE '\'
-                    OR u.email ILIKE '%' || $2 || '%' ESCAPE '\')"#,
+                    OR lower((u.full_name::text || ' ' || u.email::text)) LIKE '%' || lower($2) || '%' ESCAPE '\')"#,
         company_id,
         escaped.as_deref(),
     )
@@ -235,8 +236,7 @@ pub async fn list_page_by_role(
                     SELECT 1 FROM user_companies uc
                     WHERE uc.user_id = u.id AND uc.company_id = $1))
               AND ($2::text IS NULL
-                    OR u.full_name ILIKE '%' || $2 || '%' ESCAPE '\'
-                    OR u.email ILIKE '%' || $2 || '%' ESCAPE '\')
+                    OR lower((u.full_name::text || ' ' || u.email::text)) LIKE '%' || lower($2) || '%' ESCAPE '\')
               AND u.roles @> ARRAY[$3]::varchar(50)[]
             ORDER BY u.created_at DESC
             LIMIT $4 OFFSET $5"#,
@@ -267,8 +267,7 @@ pub async fn count_all_by_role(
                     SELECT 1 FROM user_companies uc
                     WHERE uc.user_id = u.id AND uc.company_id = $1))
               AND ($2::text IS NULL
-                    OR u.full_name ILIKE '%' || $2 || '%' ESCAPE '\'
-                    OR u.email ILIKE '%' || $2 || '%' ESCAPE '\')
+                    OR lower((u.full_name::text || ' ' || u.email::text)) LIKE '%' || lower($2) || '%' ESCAPE '\')
               AND u.roles @> ARRAY[$3]::varchar(50)[]"#,
     )
     .bind(company_id)
@@ -366,6 +365,20 @@ pub async fn set_active_company_if_member(
     Ok(rows > 0)
 }
 
+/// Clear active company on `users` (for `super_admin` users when no company is active).
+pub async fn clear_active_company(
+    executor: impl Executor<'_, Database = Postgres>,
+    id: Uuid,
+) -> AppResult<()> {
+    sqlx::query!(
+        "UPDATE users SET company_id = NULL, updated_at = NOW() WHERE id = $1",
+        id,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
 /// Unconditional active-company repoint. Used by the admin reassignment path,
 /// which re-points to a link row written earlier in the same transaction (so
 /// `set_active_company_if_member` would race its own uncommitted write).
@@ -384,16 +397,32 @@ pub async fn update_active_company(
     Ok(())
 }
 
-/// Role sets of every live login linked to `employee_id`. Usually zero or one
-/// row; an employee promoted to a staff role keeps the link.
+/// Role sets of every live login linked to `employee_id` (either via explicit
+/// `users.employee_id` or via normalized email match on the non-deleted
+/// employee record in `company_id`).
 pub async fn roles_linked_to_employee(
     executor: impl Executor<'_, Database = Postgres>,
     employee_id: Uuid,
+    company_id: Uuid,
 ) -> AppResult<Vec<Vec<String>>> {
     let rows = sqlx::query_scalar!(
-        r#"SELECT roles AS "roles!: Vec<String>" FROM users
-        WHERE employee_id = $1 AND deleted_at IS NULL"#,
+        r#"SELECT u.roles AS "roles!: Vec<String>"
+        FROM users u
+        WHERE u.deleted_at IS NULL
+          AND (
+              u.employee_id = $1
+              OR EXISTS (
+                  SELECT 1 FROM employees e
+                  WHERE e.id = $1
+                    AND e.company_id = $2
+                    AND e.deleted_at IS NULL
+                    AND e.email IS NOT NULL
+                    AND btrim(e.email) <> ''
+                    AND lower(btrim(u.email)) = lower(btrim(e.email))
+              )
+          )"#,
         employee_id,
+        company_id,
     )
     .fetch_all(executor)
     .await?;
@@ -625,6 +654,45 @@ pub async fn employee_id_for_user(
     Ok(employee_id)
 }
 
+/// Checks whether `user_id` owns `employee_id` inside `company_id` — either via
+/// explicit `users.employee_id` or normalized email match on the active employee.
+/// Using `EXISTS` rather than selecting a single `LIMIT 1` id guarantees duplicate
+/// or decoy employee rows can never shadow an identity check.
+pub async fn is_employee_owned_by_user(
+    executor: impl Executor<'_, Database = Postgres>,
+    user_id: Uuid,
+    employee_id: Uuid,
+    company_id: Uuid,
+) -> AppResult<bool> {
+    let owned = sqlx::query_scalar!(
+        r#"SELECT EXISTS(
+            SELECT 1
+            FROM users u
+            JOIN employees e
+              ON e.id = $2
+             AND e.company_id = $3
+             AND e.deleted_at IS NULL
+            WHERE u.id = $1
+              AND u.is_active = TRUE
+              AND u.deleted_at IS NULL
+              AND (
+                  u.employee_id = $2
+                  OR (
+                      e.email IS NOT NULL
+                      AND btrim(e.email) <> ''
+                      AND lower(btrim(e.email)) = lower(btrim(u.email))
+                  )
+              )
+        ) AS "owned!""#,
+        user_id,
+        employee_id,
+        company_id,
+    )
+    .fetch_one(executor)
+    .await?;
+    Ok(owned)
+}
+
 /// Resolves the active employee record in `company_id` corresponding to
 /// `user_id` — preferring an explicit `users.employee_id` inside `company_id`,
 /// and falling back to an active employee matching the user's normalized email
@@ -704,4 +772,54 @@ pub async fn list_two_factor_non_compliant_emails(
     .map(|r| r.email)
     .collect();
     Ok(emails)
+}
+
+/// Increment consecutive password-login failures and lock the account for
+/// `lock_minutes` once `max_attempts` is reached. Expired lock windows reset to 1.
+pub async fn record_failed_password_login(
+    executor: impl Executor<'_, Database = Postgres>,
+    user_id: Uuid,
+    max_attempts: i32,
+    lock_minutes: i64,
+) -> AppResult<()> {
+    sqlx::query!(
+        r#"UPDATE users
+           SET failed_login_attempts = CASE
+                   WHEN login_locked_until IS NOT NULL AND login_locked_until <= NOW() THEN 1
+                   ELSE failed_login_attempts + 1
+               END,
+               login_locked_until = CASE
+                   WHEN login_locked_until IS NOT NULL AND login_locked_until <= NOW() THEN
+                       CASE WHEN 1 >= $2 THEN NOW() + ($3 * INTERVAL '1 minute') ELSE NULL END
+                   WHEN failed_login_attempts + 1 >= $2 THEN NOW() + ($3 * INTERVAL '1 minute')
+                   ELSE login_locked_until
+               END,
+               updated_at = NOW()
+           WHERE id = $1"#,
+        user_id,
+        max_attempts,
+        lock_minutes as f64,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
+/// Clear password-login failure counters after a verified password login.
+pub async fn clear_failed_password_logins(
+    executor: impl Executor<'_, Database = Postgres>,
+    user_id: Uuid,
+) -> AppResult<()> {
+    sqlx::query!(
+        r#"UPDATE users
+           SET failed_login_attempts = 0,
+               login_locked_until = NULL,
+               updated_at = NOW()
+           WHERE id = $1
+             AND (failed_login_attempts <> 0 OR login_locked_until IS NOT NULL)"#,
+        user_id,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
 }

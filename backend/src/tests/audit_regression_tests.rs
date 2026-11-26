@@ -41,6 +41,7 @@ fn test_config() -> AppConfig {
         trust_proxy_headers: false,
         client_ip_header: None,
         turnstile_secret_key: None,
+        allow_unconfigured_turnstile: false,
         turnstile_verify_url: "https://challenges.cloudflare.com/turnstile/v0/siteverify".into(),
         vapid_public_key: None,
         vapid_private_key: None,

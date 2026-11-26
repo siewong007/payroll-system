@@ -359,6 +359,8 @@ pub struct OvertimeExport {
     pub ot_type: String,
     pub reason: Option<String>,
     pub status: String,
+    #[serde(default)]
+    pub payroll_run_id: Option<Uuid>,
     pub review_notes: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,

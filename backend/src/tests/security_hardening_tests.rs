@@ -74,6 +74,7 @@ fn sec_test_config(database_url: String) -> AppConfig {
         trust_proxy_headers: true,
         client_ip_header: None,
         turnstile_secret_key: None,
+        allow_unconfigured_turnstile: false,
         turnstile_verify_url: "https://challenges.cloudflare.com/turnstile/v0/siteverify".into(),
         vapid_public_key: None,
         vapid_private_key: None,
@@ -584,7 +585,9 @@ async fn totp_replay_lockout_backup_codes_and_passkey_challenge_binding() {
     user_totp::upsert_pending(&pool, user_a, "encrypted-secret")
         .await
         .expect("upsert_pending");
-    user_totp::confirm(&pool, user_a, 0).await.expect("confirm");
+    user_totp::confirm(&pool, user_a, 0, "encrypted-secret")
+        .await
+        .expect("confirm");
 
     assert!(
         user_totp::claim_totp_step(&pool, user_a, 100)
@@ -1286,6 +1289,8 @@ async fn sod_rejection_mfa_challenge_single_use_and_step_up_passwords() {
             full_name: "SoD Violation".into(),
             roles: vec!["finance".into(), "payroll_admin".into()],
             company_ids: vec![company_a],
+            actor_password: None,
+            actor_totp_code: None,
         },
         admin_id,
         None,
@@ -1690,4 +1695,212 @@ async fn email_preview_and_send_with_employee_id_require_view_employees() {
         .await
         .unwrap();
     assert_eq!(send_res.status(), StatusCode::FORBIDDEN);
+}
+
+#[test]
+fn csv_and_xlsx_reject_oversized_cells() {
+    let huge = "x".repeat(4_097);
+    let csv_payload = format!("full_name\n{huge}\n");
+    let csv_err = employee_import_service::parse_csv(csv_payload.as_bytes())
+        .expect_err("CSV cell > 4096 bytes must fail");
+    assert!(matches!(csv_err, AppError::BadRequest(_)));
+
+    let mut wb = rust_xlsxwriter::Workbook::new();
+    let ws = wb.add_worksheet();
+    ws.write_string(0, 0, "full_name").unwrap();
+    ws.write_string(1, 0, &huge).unwrap();
+    let xlsx_buf = wb.save_to_buffer().unwrap();
+    let xlsx_err = employee_import_service::parse_xlsx(&xlsx_buf)
+        .expect_err("XLSX cell > 4096 bytes must fail");
+    assert!(matches!(xlsx_err, AppError::BadRequest(_)));
+}
+
+#[tokio::test]
+async fn totp_confirm_rejects_stale_secret_and_oauth_upsert_blocks_hijack() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let user_a = seed_user(&pool, company_id, "admin").await;
+    let user_b = seed_user(&pool, company_id, "admin").await;
+
+    // Rotating pending setup secret invalidates confirmation against the older secret.
+    user_totp::upsert_pending(&pool, user_a, "secret-1")
+        .await
+        .expect("upsert secret-1");
+    user_totp::upsert_pending(&pool, user_a, "secret-2")
+        .await
+        .expect("upsert secret-2");
+    assert!(
+        !user_totp::confirm(&pool, user_a, 0, "secret-1")
+            .await
+            .expect("confirm stale secret"),
+        "confirm against overwritten pending secret must fail"
+    );
+    let still_disabled = user_totp::find_by_user(&pool, user_a)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!still_disabled.enabled);
+    assert!(still_disabled.confirmed_at.is_none());
+
+    assert!(
+        user_totp::confirm(&pool, user_a, 0, "secret-2")
+            .await
+            .expect("confirm current secret"),
+        "confirm against matching secret must succeed"
+    );
+
+    // OAuth2 upsert refuses to reassign an existing (provider, provider_user_id) to user B.
+    let sub = format!("google-sub-{}", Uuid::new_v4());
+    crate::services::oauth2_service::link_oauth2_account(
+        &pool,
+        user_a,
+        "google",
+        &sub,
+        Some("owner@example.invalid"),
+        Some("Owner"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("initial OAuth2 link");
+
+    let hijack_err = crate::services::oauth2_service::link_oauth2_account(
+        &pool,
+        user_b,
+        "google",
+        &sub,
+        Some("attacker@example.invalid"),
+        Some("Attacker"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect_err("re-linking existing provider subject to another user must fail");
+    assert!(matches!(hijack_err, AppError::BadRequest(_)));
+
+    let owner = crate::repositories::oauth2_accounts::find_by_provider_id(&pool, "google", &sub)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(owner.user_id, user_a);
+}
+
+#[tokio::test]
+async fn refresh_session_revokes_or_rescopes_when_company_membership_removed() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_a = seed_company(&pool).await;
+    let company_b = seed_company(&pool).await;
+
+    // 1. Multi-company user losing active company_a falls back to remaining company_b.
+    let multi_user = seed_user(&pool, company_a, "admin").await;
+    user_companies::insert(&pool, multi_user, company_b)
+        .await
+        .expect("grant company_b");
+    let (_, raw_multi) = session_service::create_session(&pool, multi_user, None, None)
+        .await
+        .expect("create multi session");
+    sqlx::query("DELETE FROM user_companies WHERE user_id = $1 AND company_id = $2")
+        .bind(multi_user)
+        .bind(company_a)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let refreshed = auth_service::refresh_session(&pool, &raw_multi, JWT_SECRET, 1, None)
+        .await
+        .expect("multi-company user must rescope cleanly");
+    assert_eq!(refreshed.user.company_id, Some(company_b));
+
+    // 2. Single-company user losing their only company membership loses the session.
+    let solo_user = seed_user(&pool, company_a, "admin").await;
+    let (solo_sid, raw_solo) = session_service::create_session(&pool, solo_user, None, None)
+        .await
+        .expect("create solo session");
+    sqlx::query("DELETE FROM user_companies WHERE user_id = $1 AND company_id = $2")
+        .bind(solo_user)
+        .bind(company_a)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let solo_err = auth_service::refresh_session(&pool, &raw_solo, JWT_SECRET, 1, None)
+        .await
+        .expect_err("user with no remaining company access must fail refresh");
+    assert!(matches!(solo_err, AppError::Unauthorized(_)));
+
+    let revoked_at: Option<chrono::DateTime<Utc>> =
+        sqlx::query_scalar("SELECT revoked_at FROM user_sessions WHERE id = $1")
+            .bind(solo_sid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(revoked_at.is_some());
+}
+
+#[tokio::test]
+async fn audit_list_for_run_strips_privileged_actor_uuids_from_jsonb() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let admin_id = seed_user(&pool, company_id, "admin").await;
+    let run_id = Uuid::new_v4();
+    let item_id = Uuid::new_v4();
+
+    audit_service::log_action_with_metadata(
+        &pool,
+        Some(company_id),
+        Some(admin_id),
+        "update",
+        "payroll_item",
+        Some(item_id),
+        Some(serde_json::json!({
+            "payroll_run_id": run_id,
+            "processed_by": admin_id,
+            "net_salary": 100_000
+        })),
+        Some(serde_json::json!({
+            "payroll_run_id": run_id,
+            "approved_by": admin_id,
+            "updated_by": admin_id,
+            "net_salary": 120_000
+        })),
+        Some("Admin override"),
+        None,
+    )
+    .await
+    .expect("insert audit row");
+
+    let masked = crate::repositories::reads::audit::list_for_run(&pool, company_id, run_id, true)
+        .await
+        .expect("list masked");
+    assert_eq!(masked.len(), 1);
+    assert!(masked[0].user_id.is_none());
+    assert!(masked[0].user_email.is_none());
+    assert!(masked[0].user_full_name.is_none());
+    let old_obj = masked[0].old_values.as_ref().unwrap();
+    let new_obj = masked[0].new_values.as_ref().unwrap();
+    assert!(old_obj.get("processed_by").is_none());
+    assert!(new_obj.get("approved_by").is_none());
+    assert!(new_obj.get("updated_by").is_none());
+    assert_eq!(old_obj["net_salary"], serde_json::json!(100_000));
+    assert_eq!(new_obj["net_salary"], serde_json::json!(120_000));
+
+    let unmasked =
+        crate::repositories::reads::audit::list_for_run(&pool, company_id, run_id, false)
+            .await
+            .expect("list unmasked");
+    assert_eq!(unmasked[0].user_id, Some(admin_id));
+    assert_eq!(
+        unmasked[0].new_values.as_ref().unwrap()["approved_by"],
+        serde_json::json!(admin_id)
+    );
 }

@@ -21,10 +21,17 @@ mkdir -p "$APP_DIR/logs"
 
 ALERT_WEBHOOK_URL=""
 if [[ -r "$SECRETS_FILE" ]]; then
-  set +u
-  # shellcheck disable=SC1090
-  source "$SECRETS_FILE" || true
-  set -u
+  raw_webhook_line=$(grep -m1 -E '^[[:space:]]*ALERT_WEBHOOK_URL=' "$SECRETS_FILE" 2>/dev/null || true)
+  if [[ -n "$raw_webhook_line" ]]; then
+    raw_webhook=${raw_webhook_line#*=}
+    raw_webhook=${raw_webhook%$'\r'}
+    # Trim leading/trailing whitespace and matching single/double quotes without executing the file.
+    raw_webhook=$(sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' <<<"$raw_webhook")
+    if [[ ( $raw_webhook == \"*\" && $raw_webhook == *\" ) || ( $raw_webhook == \'*\' && $raw_webhook == *\' ) ]]; then
+      raw_webhook=${raw_webhook:1:${#raw_webhook}-2}
+    fi
+    ALERT_WEBHOOK_URL=$raw_webhook
+  fi
 fi
 
 log_msg() {
@@ -43,25 +50,35 @@ json_escape_string() {
   s=${s//$'\n'/\\n}
   s=${s//$'\r'/\\r}
   s=${s//$'\t'/\\t}
+  # Strip remaining ASCII control characters (0x00-0x1f and 0x7f).
+  s=$(LC_ALL=C tr -d '\000-\037\177' <<<"$s")
   printf '%s' "$s"
 }
 
 notify_webhook() {
   local message=$1
   [[ -n "${ALERT_WEBHOOK_URL:-}" ]] || return 0
-  local payload
+  if [[ "$ALERT_WEBHOOK_URL" != https://* ]]; then
+    log_msg WARN "Refusing insecure non-HTTPS ALERT_WEBHOOK_URL"
+    return 0
+  fi
+  local payload=""
   if command -v jq >/dev/null 2>&1; then
-    payload=$(jq -nc --arg text "$message" '{service: "payroll-backend", text: $text}')
-  else
+    payload=$(jq -nc --arg text "$message" '{service: "payroll-backend", text: $text}' 2>/dev/null) || payload=""
+  fi
+  if [[ -z "$payload" ]]; then
     local escaped
     escaped=$(json_escape_string "$message")
     payload="{\"service\":\"payroll-backend\",\"text\":\"${escaped}\"}"
   fi
-  curl --silent --show-error --max-time 10 \
+  if ! curl --fail --silent --show-error --max-time 10 \
+    --proto =https --proto-redir =https --max-redirs 0 \
     -X POST \
     -H 'content-type: application/json' \
-    -d "$payload" \
-    "$ALERT_WEBHOOK_URL" >/dev/null 2>&1 || true
+    --data-raw "$payload" \
+    -- "$ALERT_WEBHOOK_URL" >/dev/null 2>&1; then
+    log_msg WARN "Failed to deliver watchdog webhook alert"
+  fi
 }
 
 issues=()

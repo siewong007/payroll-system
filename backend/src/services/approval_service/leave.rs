@@ -22,8 +22,7 @@ use crate::services::notification_service;
 
 use super::common::{
     Reviewer, audit_self_approval_override, ensure_employee_in_company,
-    ensure_leave_type_in_company, ensure_not_creator_or_editor, ensure_not_self_approval,
-    reviewer_employee_id,
+    ensure_leave_type_in_company, ensure_not_creator_or_editor, ensure_not_self_approval_on,
 };
 use crate::models::upload::UploadAccess;
 use crate::services::upload_service;
@@ -352,6 +351,7 @@ pub async fn cancel_leave_request_admin(
         if payroll_runs::has_paid_covering_dates(
             &mut *tx,
             company_id,
+            current.employee_id,
             current.start_date,
             current.end_date,
         )
@@ -506,85 +506,121 @@ struct UnpaidLeaveDeduction {
 /// Pure reads, so it runs before the approval transaction opens. Returns `None`
 /// when there is nothing to stage (unknown employee, no working days in range,
 /// or an amount that rounds to zero).
-async fn compute_unpaid_leave_deduction(
+/// Compute per-month unpaid-leave deductions, splitting cross-month ranges across
+/// calendar months so each month uses its own working-day divisor and lands in
+/// that month's payroll run (H-06).
+async fn compute_unpaid_leave_deductions(
     pool: &PgPool,
     lr: &LeaveRequest,
-) -> AppResult<Option<UnpaidLeaveDeduction>> {
+) -> AppResult<Vec<UnpaidLeaveDeduction>> {
     let Some((basic_salary, emp_company_id)) =
         employee_repo::basic_salary_and_company(pool, lr.employee_id).await?
     else {
-        return Ok(None);
+        return Ok(Vec::new());
     };
 
-    // Count working days of unpaid leave (excluding weekends/holidays)
-    let unpaid_working_days = calendar_service::count_working_days_between(
-        pool,
-        emp_company_id,
-        lr.start_date,
-        lr.end_date,
-    )
-    .await?;
-
-    if unpaid_working_days <= 0 {
-        return Ok(None);
+    if lr.start_date > lr.end_date || lr.days <= Decimal::ZERO {
+        return Ok(Vec::new());
     }
 
-    // The divisor: the company's contractual paid days per month if HR has set
-    // one, otherwise the calendar's working days in the leave month.
-    let leave_month = lr.start_date.month();
-    let leave_year = lr.start_date.year();
     let configured_divisor = companies::get_unpaid_leave_divisor(pool, emp_company_id)
         .await?
         .filter(|divisor| *divisor > 0);
-    let divisor = match configured_divisor {
-        Some(divisor) => divisor,
-        None => {
-            calendar_service::get_working_days_in_month(
-                pool,
-                emp_company_id,
-                leave_year,
-                leave_month,
-            )
-            .await?
+
+    let is_single_month =
+        lr.start_date.year() == lr.end_date.year() && lr.start_date.month() == lr.end_date.month();
+    let mut remaining_days = lr.days;
+    let mut deductions = Vec::new();
+    let mut cursor = lr.start_date;
+
+    while cursor <= lr.end_date && remaining_days > Decimal::ZERO {
+        let year = cursor.year();
+        let month = cursor.month();
+        let next_month_start = if month == 12 {
+            chrono::NaiveDate::from_ymd_opt(year + 1, 1, 1)
+        } else {
+            chrono::NaiveDate::from_ymd_opt(year, month + 1, 1)
         }
-    };
+        .ok_or_else(|| AppError::Internal("Invalid leave month boundary".into()))?;
+        let month_end = next_month_start
+            .pred_opt()
+            .ok_or_else(|| AppError::Internal("Invalid leave month end".into()))?;
+        let chunk_end = lr.end_date.min(month_end);
 
-    if divisor <= 0 {
-        return Ok(None);
+        let chunk_working_days =
+            calendar_service::count_working_days_between(pool, emp_company_id, cursor, chunk_end)
+                .await?;
+
+        if chunk_working_days > 0 {
+            let chunk_days = remaining_days.min(Decimal::from(chunk_working_days));
+            remaining_days -= chunk_days;
+
+            let divisor = match configured_divisor {
+                Some(divisor) => divisor,
+                None => {
+                    calendar_service::get_working_days_in_month(pool, emp_company_id, year, month)
+                        .await?
+                }
+            };
+
+            if divisor > 0 && chunk_days > Decimal::ZERO {
+                let amount = checked_round_sen(
+                    Decimal::from(basic_salary) * chunk_days / Decimal::from(divisor),
+                )?;
+                if amount > 0 {
+                    let description = if is_single_month {
+                        format!(
+                            "Unpaid leave: {} to {} ({} working days)",
+                            lr.start_date,
+                            lr.end_date,
+                            chunk_days.normalize()
+                        )
+                    } else {
+                        format!(
+                            "Unpaid leave: {} to {} ({}/{:02}, {} working days)",
+                            cursor,
+                            chunk_end,
+                            year,
+                            month,
+                            chunk_days.normalize()
+                        )
+                    };
+                    deductions.push(UnpaidLeaveDeduction {
+                        period_year: year,
+                        period_month: month as i32,
+                        description,
+                        amount,
+                        working_days: chunk_days,
+                    });
+                }
+            }
+        }
+
+        cursor = next_month_start;
     }
 
-    let effective_days = lr.days.min(Decimal::from(unpaid_working_days));
-    if effective_days <= Decimal::ZERO {
-        return Ok(None);
-    }
-
-    let amount =
-        checked_round_sen(Decimal::from(basic_salary) * effective_days / Decimal::from(divisor))?;
-    if amount <= 0 {
-        return Ok(None);
-    }
-
-    Ok(Some(UnpaidLeaveDeduction {
-        // Staged against the month the leave was taken, not the month it happened
-        // to be approved in. Using the approval date deducted December leave from
-        // July payroll when approval lagged, and this matches how approved
-        // overtime is staged (by ot_date).
-        period_year: leave_year,
-        period_month: leave_month as i32,
-        description: format!(
-            "Unpaid leave: {} to {} ({} working days)",
-            lr.start_date,
-            lr.end_date,
-            effective_days.normalize()
-        ),
-        amount,
-        working_days: effective_days,
-    }))
+    Ok(deductions)
 }
 
 pub async fn approve_leave(
     pool: &PgPool,
     config: &AppConfig,
+    company_id: Uuid,
+    request_id: Uuid,
+    reviewer: Reviewer,
+    notes: Option<&str>,
+    audit_meta: Option<&AuditRequestMeta>,
+) -> AppResult<LeaveRequest> {
+    let mailer = email_service::SharedMailer::from_config(config);
+    approve_leave_with_mailer(
+        pool, &mailer, company_id, request_id, reviewer, notes, audit_meta,
+    )
+    .await
+}
+
+pub async fn approve_leave_with_mailer(
+    pool: &PgPool,
+    mailer: &email_service::SharedMailer,
     company_id: Uuid,
     request_id: Uuid,
     reviewer: Reviewer,
@@ -612,26 +648,34 @@ pub async fn approve_leave(
         .ok_or_else(|| AppError::BadRequest("Leave request not found or not pending".into()))?;
 
     let is_paid = leave_types::get_is_paid(pool, preview.leave_type_id).await?;
-    let deduction = if is_paid == Some(false) {
-        compute_unpaid_leave_deduction(pool, &preview).await?
+    let deductions = if is_paid == Some(false) {
+        compute_unpaid_leave_deductions(pool, &preview).await?
     } else {
-        None
+        Vec::new()
     };
-
-    // Resolved on the pool for the same reason as the deduction inputs, and
-    // compared inside the transaction against the row the CAS returned.
-    let reviewer_employee = reviewer_employee_id(pool, &reviewer, company_id).await?;
 
     let mut tx = pool.begin().await?;
     let lr = leave_requests::set_approved(&mut *tx, request_id, company_id, reviewer_id, notes)
         .await?
         .ok_or_else(|| AppError::BadRequest("Leave request not found or not pending".into()))?;
 
-    // Read from the CAS-returned row, not from `preview`: the drift check below
-    // does not cover `employee_id`, so comparing the earlier read would leave the
-    // guard raceable.
-    ensure_not_self_approval(reviewer_employee, lr.employee_id, "leave request")?;
-    ensure_not_creator_or_editor(&reviewer, lr.created_by, lr.updated_by, "leave request")?;
+    // Check inside the transaction against `lr.employee_id` via EXISTS so
+    // duplicate or decoy employee rows can never bypass the guard.
+    ensure_not_self_approval_on(
+        &mut *tx,
+        &reviewer,
+        company_id,
+        lr.employee_id,
+        "leave request",
+    )
+    .await?;
+    ensure_not_creator_or_editor(
+        &reviewer,
+        lr.created_by,
+        lr.updated_by,
+        &lr.editor_ids,
+        "leave request",
+    )?;
 
     // The request could have been edited between the read above and the CAS —
     // the CAS only guarantees it was still *pending*, not unchanged. Anything
@@ -668,7 +712,7 @@ pub async fn approve_leave(
     )
     .await?;
 
-    if let Some(d) = &deduction {
+    for d in &deductions {
         payroll_entries::insert_unpaid_leave_deduction(
             &mut *tx,
             Uuid::now_v7(),
@@ -694,6 +738,9 @@ pub async fn approve_leave(
         "leave_request",
         lr.id,
         lr.employee_id,
+        lr.created_by,
+        lr.updated_by,
+        &lr.editor_ids,
         audit_meta,
     )
     .await;
@@ -755,8 +802,8 @@ pub async fn approve_leave(
             &[("Type", leave_type), ("Period", &period_str)],
             extra,
         );
-        let _ = email_service::enqueue_email(
-            config,
+        let _ = email_service::enqueue_email_with_mailer(
+            mailer,
             pool,
             company_id,
             Some(lr.employee_id),

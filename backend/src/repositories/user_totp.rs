@@ -42,11 +42,13 @@ pub async fn confirm(
     executor: impl Executor<'_, Database = Postgres>,
     user_id: Uuid,
     last_used_step: i64,
+    secret_encrypted: &str,
 ) -> AppResult<bool> {
     let rows = sqlx::query!(
-        "UPDATE user_totp SET enabled = true, confirmed_at = NOW(), last_used_step = $2, updated_at = NOW() WHERE user_id = $1 AND enabled = FALSE",
+        "UPDATE user_totp SET enabled = true, confirmed_at = NOW(), last_used_step = $2, updated_at = NOW() WHERE user_id = $1 AND enabled = FALSE AND secret_encrypted = $3",
         user_id,
         last_used_step,
+        secret_encrypted,
     )
     .execute(executor)
     .await?

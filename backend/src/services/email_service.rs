@@ -34,9 +34,10 @@ pub async fn get_template(pool: &PgPool, id: Uuid, company_id: Uuid) -> AppResul
 pub async fn create_template(
     pool: &PgPool,
     company_id: Uuid,
-    req: CreateEmailTemplateRequest,
+    mut req: CreateEmailTemplateRequest,
     created_by: Uuid,
 ) -> AppResult<EmailTemplate> {
+    req.body_html = sanitize_email_html(&req.body_html);
     email_templates::insert(pool, company_id, &req, created_by).await
 }
 
@@ -44,9 +45,12 @@ pub async fn update_template(
     pool: &PgPool,
     id: Uuid,
     company_id: Uuid,
-    req: UpdateEmailTemplateRequest,
+    mut req: UpdateEmailTemplateRequest,
     updated_by: Uuid,
 ) -> AppResult<EmailTemplate> {
+    if let Some(ref mut body_html) = req.body_html {
+        *body_html = sanitize_email_html(body_html);
+    }
     email_templates::update(pool, id, company_id, &req, updated_by)
         .await?
         .ok_or_else(|| AppError::NotFound("Template not found".into()))
@@ -97,7 +101,29 @@ fn sanitize_header_text(s: &str) -> String {
         .collect()
 }
 
+/// Sanitize user-authored HTML email templates/bodies via `ammonia`, stripping
+/// scripts, event handlers, forms, iframes, stylesheets, and unsafe URI schemes
+/// while preserving standard semantic formatting and `https`/`http`/`mailto` links.
+pub fn sanitize_email_html(html: &str) -> String {
+    let mut builder = ammonia::Builder::default();
+    builder.url_schemes(std::collections::HashSet::from(["https", "http", "mailto"]));
+    builder.clean(html).to_string()
+}
+
+fn redact_smtp_error(raw: &str) -> &'static str {
+    if raw == "SMTP not configured" {
+        "SMTP not configured"
+    } else if raw.starts_with("Invalid recipient address") {
+        "Invalid recipient email address"
+    } else {
+        "SMTP delivery failed"
+    }
+}
+
 /// Replace template variables like {{employee_name}}, {{company_name}}, etc.
+///
+/// Single-pass scan so a substituted value that itself contains `{{...}}` is
+/// never expanded recursively on a subsequent replacement pass.
 #[allow(clippy::too_many_arguments)]
 pub fn substitute_variables(
     template: &str,
@@ -109,17 +135,42 @@ pub fn substitute_variables(
     date_joined: &str,
     company_name: &str,
 ) -> String {
-    template
-        .replace("{{employee_name}}", employee_name)
-        .replace("{{employee_number}}", employee_number)
-        .replace("{{employee_email}}", employee_email)
-        .replace("{{designation}}", designation)
-        .replace("{{department}}", department)
-        .replace("{{date_joined}}", date_joined)
-        .replace("{{company_name}}", company_name)
+    let mut out = String::with_capacity(template.len());
+    let mut rest = template;
+    while let Some(start) = rest.find("{{") {
+        out.push_str(&rest[..start]);
+        let after_open = &rest[start..];
+        if let Some(end_rel) = after_open[2..].find("}}") {
+            let token_len = end_rel + 4;
+            let token = &after_open[..token_len];
+            let replacement = match token {
+                "{{employee_name}}" => Some(employee_name),
+                "{{employee_number}}" => Some(employee_number),
+                "{{employee_email}}" => Some(employee_email),
+                "{{designation}}" => Some(designation),
+                "{{department}}" => Some(department),
+                "{{date_joined}}" => Some(date_joined),
+                "{{company_name}}" => Some(company_name),
+                _ => None,
+            };
+            if let Some(val) = replacement {
+                out.push_str(val);
+                rest = &after_open[token_len..];
+            } else {
+                out.push_str("{{");
+                rest = &after_open[2..];
+            }
+        } else {
+            out.push_str(after_open);
+            rest = "";
+            break;
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
-/// Substitute variables into an HTML letter template, escaping dynamic values.
+/// Substitute variables into an HTML letter template, escaping dynamic values and sanitizing markup.
 #[allow(clippy::too_many_arguments)]
 pub fn substitute_variables_html(
     template: &str,
@@ -131,7 +182,7 @@ pub fn substitute_variables_html(
     date_joined: &str,
     company_name: &str,
 ) -> String {
-    substitute_variables(
+    let substituted = substitute_variables(
         template,
         &escape_html(employee_name),
         &escape_html(employee_number),
@@ -140,7 +191,8 @@ pub fn substitute_variables_html(
         &escape_html(department),
         &escape_html(date_joined),
         &escape_html(company_name),
-    )
+    );
+    sanitize_email_html(&substituted)
 }
 
 // ── Send Email via SMTP ────────────────────────────────────────────────
@@ -364,7 +416,8 @@ pub async fn send_email(
         }
         Err(error_msg) => {
             let next_retry = Utc::now() + chrono::Duration::seconds(60);
-            let log = email_logs::schedule_retry(pool, log.id, 1, next_retry, &error_msg)
+            let safe_err = redact_smtp_error(&error_msg);
+            let log = email_logs::schedule_retry(pool, log.id, 1, next_retry, safe_err)
                 .await?
                 .unwrap_or(log);
             tracing::warn!(
@@ -378,10 +431,11 @@ pub async fn send_email(
 }
 
 /// Queue an email in `email_logs` for background outbox delivery without
-/// blocking the caller on SMTP.
+/// blocking the caller on SMTP, checking the prebuilt [`SharedMailer`] rather
+/// than re-evaluating transport initialization per request.
 #[allow(clippy::too_many_arguments)]
-pub async fn enqueue_email(
-    config: &AppConfig,
+pub async fn enqueue_email_with_mailer(
+    mailer: &SharedMailer,
     pool: &PgPool,
     company_id: Uuid,
     employee_id: Option<Uuid>,
@@ -399,7 +453,7 @@ pub async fn enqueue_email(
         AppError::Validation(format!("{recipient_email} is not a valid email address"))
     })?;
 
-    if !config.smtp_enabled() || from_mailbox(config).is_err() {
+    if !mailer.is_enabled() {
         return email_logs::insert_with_delivery_state(
             pool,
             company_id,
@@ -440,6 +494,39 @@ pub async fn enqueue_email(
     .await
 }
 
+/// Queue an email in `email_logs` for background outbox delivery without
+/// blocking the caller on SMTP.
+#[allow(clippy::too_many_arguments)]
+pub async fn enqueue_email(
+    config: &AppConfig,
+    pool: &PgPool,
+    company_id: Uuid,
+    employee_id: Option<Uuid>,
+    template_id: Option<Uuid>,
+    letter_type: &str,
+    recipient_email: &str,
+    recipient_name: &str,
+    subject: &str,
+    body_html: &str,
+    created_by: Uuid,
+) -> AppResult<EmailLog> {
+    let mailer = SharedMailer::from_config(config);
+    enqueue_email_with_mailer(
+        &mailer,
+        pool,
+        company_id,
+        employee_id,
+        template_id,
+        letter_type,
+        recipient_email,
+        recipient_name,
+        subject,
+        body_html,
+        created_by,
+    )
+    .await
+}
+
 /// Deliver a batch of due outbox emails with exponential retry backoff
 /// (`60s` -> `300s`, failing permanently on attempt `>= max_attempts`).
 pub async fn process_outbox_batch(
@@ -471,8 +558,9 @@ pub async fn process_outbox_batch(
             }
             Err(err) => {
                 failed += 1;
+                let safe_err = redact_smtp_error(&err);
                 if row.attempts >= row.max_attempts {
-                    email_logs::mark_failed(pool, row.id, &err).await?;
+                    email_logs::mark_failed(pool, row.id, safe_err).await?;
                     tracing::error!(
                         email_id = %row.id,
                         attempts = row.attempts,
@@ -483,7 +571,7 @@ pub async fn process_outbox_batch(
                     let backoff_secs =
                         60i64 * 5i64.saturating_pow((row.attempts - 1).max(0) as u32);
                     let next_retry = Utc::now() + chrono::Duration::seconds(backoff_secs);
-                    email_logs::schedule_retry(pool, row.id, row.attempts, next_retry, &err)
+                    email_logs::schedule_retry(pool, row.id, row.attempts, next_retry, safe_err)
                         .await?;
                     tracing::warn!(
                         email_id = %row.id,
@@ -800,7 +888,8 @@ pub async fn send_welcome_email(
                 }
             }
         }
-        let _ = email_logs::mark_failed(&pool, log_id, &last_err).await;
+        let safe_err = redact_smtp_error(&last_err);
+        let _ = email_logs::mark_failed(&pool, log_id, safe_err).await;
         tracing::error!(
             email_id = %log_id,
             error = %last_err,
@@ -868,4 +957,63 @@ fn welcome_html(
         login_email = login_email,
         password_cell = password_cell,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitize_email_html_strips_scripts_handlers_and_javascript_urls() {
+        let dirty = concat!(
+            r#"<p><strong>Hello</strong> <a href="https://payrollmy.com">Portal</a>"#,
+            r#" <a href="mailto:hr@example.com">HR</a></p>"#,
+            r#"<script>alert(1)</script>"#,
+            r#"<img src="https://example.com/a.png" onerror="alert(1)">"#,
+            r#"<a href="javascript:alert(1)">bad-link</a>"#,
+            r#"<iframe src="https://evil.example/frame"></iframe>"#,
+        );
+        let cleaned = sanitize_email_html(dirty);
+
+        assert!(!cleaned.contains("<script"));
+        assert!(!cleaned.contains("alert(1)"));
+        assert!(!cleaned.contains("onerror"));
+        assert!(!cleaned.to_ascii_lowercase().contains("javascript:"));
+        assert!(!cleaned.contains("<iframe"));
+
+        assert!(cleaned.contains("<strong>Hello</strong>"));
+        assert!(cleaned.contains("https://payrollmy.com"));
+        assert!(cleaned.contains("mailto:hr@example.com"));
+    }
+
+    #[test]
+    fn substitute_variables_is_single_pass() {
+        let rendered = substitute_variables(
+            "Hello {{employee_name}} at {{company_name}}",
+            "{{company_name}}",
+            "EMP-001",
+            "ali@example.com",
+            "Engineer",
+            "Engineering",
+            "2026-01-01",
+            "Acme Sdn Bhd",
+        );
+        assert_eq!(rendered, "Hello {{company_name}} at Acme Sdn Bhd");
+    }
+
+    #[test]
+    fn redact_smtp_error_hides_upstream_details() {
+        assert_eq!(
+            redact_smtp_error("SMTP not configured"),
+            "SMTP not configured"
+        );
+        assert_eq!(
+            redact_smtp_error("Invalid recipient address: bad@example"),
+            "Invalid recipient email address"
+        );
+        assert_eq!(
+            redact_smtp_error("535 5.7.8 auth failed user=admin@corp.internal host=10.0.0.5"),
+            "SMTP delivery failed"
+        );
+    }
 }

@@ -46,14 +46,14 @@ pub struct OAuth2CallbackQuery {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct OAuth2AuthorizeQuery {
+pub struct OAuth2AuthorizeRequest {
     /// `link` aims the Google redirect at the account-linking SPA route
     /// instead of the login callback.
     pub flow: Option<String>,
     pub turnstile_token: Option<String>,
 }
 
-#[derive(Debug, Deserialize, validator::Validate)]
+#[derive(Deserialize, validator::Validate)]
 pub struct LinkGoogleRequest {
     #[validate(length(min = 1, message = "code is required"))]
     pub code: String,
@@ -61,6 +61,36 @@ pub struct LinkGoogleRequest {
     pub state: String,
     #[validate(length(min = 1, message = "password is required"))]
     pub password: String,
+    #[serde(default)]
+    pub totp_code: Option<String>,
+}
+
+impl std::fmt::Debug for LinkGoogleRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LinkGoogleRequest")
+            .field("code", &"***")
+            .field("state", &self.state)
+            .field("password", &"***")
+            .field("totp_code", &self.totp_code.as_ref().map(|_| "***"))
+            .finish()
+    }
+}
+
+#[derive(Deserialize, validator::Validate)]
+pub struct UnlinkOAuth2Request {
+    #[validate(length(min = 1, message = "password is required"))]
+    pub password: String,
+    #[serde(default)]
+    pub totp_code: Option<String>,
+}
+
+impl std::fmt::Debug for UnlinkOAuth2Request {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UnlinkOAuth2Request")
+            .field("password", &"***")
+            .field("totp_code", &self.totp_code.as_ref().map(|_| "***"))
+            .finish()
+    }
 }
 
 /// Response for OAuth2 providers listing

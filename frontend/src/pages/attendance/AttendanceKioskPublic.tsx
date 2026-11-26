@@ -43,7 +43,14 @@ export function AttendanceKioskPublic() {
       }
       return fromHash;
     }
-    if (paramKey) return paramKey;
+    if (paramKey) {
+      try {
+        window.sessionStorage.setItem(KIOSK_SECRET_STORAGE_KEY, paramKey);
+      } catch {
+        /* ignore quota / privacy mode failures */
+      }
+      return paramKey;
+    }
     try {
       return window.sessionStorage.getItem(KIOSK_SECRET_STORAGE_KEY) ?? '';
     } catch {
@@ -52,9 +59,13 @@ export function AttendanceKioskPublic() {
   });
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  // Immediately scrub any kiosk secret from the address bar / browser history.
+  // Immediately scrub any kiosk secret from the address bar / browser history
+  // (both `#secret` fragments and legacy `/kiosk/:kioskKey` URLs).
   useEffect(() => {
-    if (window.location.hash) {
+    const legacyPath =
+      window.location.pathname.startsWith('/kiosk/') &&
+      window.location.pathname.length > '/kiosk/'.length;
+    if (window.location.hash || legacyPath) {
       window.history.replaceState(null, '', '/kiosk');
     }
   }, []);

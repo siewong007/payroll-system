@@ -87,6 +87,7 @@ export function TwoFactorPrompt({ mfaToken, onSuccess, onBack }: TwoFactorPrompt
         <div className="flex justify-center">
           <TurnstileWidget
             ref={turnstileRef}
+            action="totp_verify"
             onVerify={handleTurnstileVerify}
             onExpire={handleTurnstileExpire}
             onError={handleTurnstileError}

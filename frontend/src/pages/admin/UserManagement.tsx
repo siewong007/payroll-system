@@ -39,6 +39,7 @@ export function UserManagement() {
   const toast = useToast();
   const { user: currentUser } = useAuth();
   const isSuperAdmin = hasAnyRole(currentUser, ['super_admin']);
+  const actorTwoFactorEnabled = Boolean(currentUser?.two_factor_enabled);
 
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
@@ -50,6 +51,7 @@ export function UserManagement() {
   const [deleteError, setDeleteError] = useState('');
   const [reset2faTarget, setReset2faTarget] = useState<UserWithCompanies | null>(null);
   const [reset2faPassword, setReset2faPassword] = useState('');
+  const [reset2faTotpCode, setReset2faTotpCode] = useState('');
   const [reset2faError, setReset2faError] = useState('');
 
   const {
@@ -90,6 +92,7 @@ export function UserManagement() {
   const closeReset2fa = () => {
     setReset2faTarget(null);
     setReset2faPassword('');
+    setReset2faTotpCode('');
     setReset2faError('');
   };
 
@@ -104,8 +107,8 @@ export function UserManagement() {
   });
 
   const reset2faMutation = useMutation({
-    mutationFn: ({ userId, password }: { userId: string; password: string }) =>
-      resetUser2fa(userId, password),
+    mutationFn: ({ userId, password, totpCode }: { userId: string; password: string; totpCode?: string }) =>
+      resetUser2fa(userId, password, ...(totpCode ? [totpCode] : [])),
     onSuccess: () => {
       toast.success(t('users.reset2faSuccess'));
       closeReset2fa();
@@ -335,7 +338,11 @@ export function UserManagement() {
             <button
               type="submit"
               form="reset-2fa-form"
-              disabled={!reset2faPassword || reset2faMutation.isPending}
+              disabled={
+                !reset2faPassword ||
+                (actorTwoFactorEnabled && !reset2faTotpCode.trim()) ||
+                reset2faMutation.isPending
+              }
               className="inline-flex items-center justify-center gap-2 px-4 py-2 min-h-[44px] text-sm font-medium text-white bg-amber-600 hover:bg-amber-700 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 transition-colors disabled:opacity-50"
             >
               {reset2faMutation.isPending ? (
@@ -355,9 +362,15 @@ export function UserManagement() {
             id="reset-2fa-form"
             onSubmit={(e) => {
               e.preventDefault();
-              if (!reset2faPassword) return;
+              if (!reset2faPassword || (actorTwoFactorEnabled && !reset2faTotpCode.trim())) return;
               setReset2faError('');
-              reset2faMutation.mutate({ userId: reset2faTarget.id, password: reset2faPassword });
+              reset2faMutation.mutate({
+                userId: reset2faTarget.id,
+                password: reset2faPassword,
+                ...(actorTwoFactorEnabled && reset2faTotpCode.trim()
+                  ? { totpCode: reset2faTotpCode.trim() }
+                  : {}),
+              });
             }}
             className="space-y-4"
           >
@@ -388,6 +401,22 @@ export function UserManagement() {
                 />
               )}
             </FormField>
+            {actorTwoFactorEnabled && (
+              <FormField label={t('auth.twoFactor.title')} required>
+                {(aria) => (
+                  <input
+                    {...aria}
+                    type="text"
+                    inputMode="text"
+                    autoComplete="one-time-code"
+                    value={reset2faTotpCode}
+                    onChange={(e) => setReset2faTotpCode(e.target.value)}
+                    placeholder="123456"
+                    className="form-input text-center tracking-widest"
+                  />
+                )}
+              </FormField>
+            )}
           </form>
         )}
       </Modal>

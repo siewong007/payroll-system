@@ -28,6 +28,7 @@ fn validate_permissions(keys: &[String]) -> AppResult<Vec<String>> {
     let mut validated: Vec<String> = Vec::with_capacity(keys.len());
     let mut has_prepare = false;
     let mut has_approve = false;
+    let mut has_manage_employees = false;
 
     for key in keys {
         let perm = parse_permission(key)
@@ -46,6 +47,9 @@ fn validate_permissions(keys: &[String]) -> AppResult<Vec<String>> {
         if perm == Permission::ApprovePayroll {
             has_approve = true;
         }
+        if perm == Permission::ManageEmployees {
+            has_manage_employees = true;
+        }
         if !validated.contains(key) {
             validated.push(key.clone());
         }
@@ -55,6 +59,11 @@ fn validate_permissions(keys: &[String]) -> AppResult<Vec<String>> {
         return Err(AppError::BadRequest(
             "A single group cannot grant both submit_payroll/manage_payroll_draft and approve_payroll"
                 .into(),
+        ));
+    }
+    if has_manage_employees && has_approve {
+        return Err(AppError::BadRequest(
+            "A single group cannot grant both manage_employees and approve_payroll".into(),
         ));
     }
 
@@ -89,6 +98,7 @@ pub(crate) fn ensure_user_permission_invariants(
 
     let mut has_prepare = false;
     let mut has_approve = false;
+    let mut has_manage_employees = false;
 
     for role in user_roles {
         for perm in role_permissions(role) {
@@ -100,6 +110,9 @@ pub(crate) fn ensure_user_permission_invariants(
             }
             if *perm == Permission::ApprovePayroll {
                 has_approve = true;
+            }
+            if *perm == Permission::ManageEmployees {
+                has_manage_employees = true;
             }
         }
     }
@@ -126,12 +139,21 @@ pub(crate) fn ensure_user_permission_invariants(
             if perm == Permission::ApprovePayroll {
                 has_approve = true;
             }
+            if perm == Permission::ManageEmployees {
+                has_manage_employees = true;
+            }
         }
     }
 
     if !is_super_admin && has_prepare && has_approve {
         return Err(AppError::BadRequest(
             "User cannot hold both payroll preparation/submission and approve_payroll across roles and groups"
+                .into(),
+        ));
+    }
+    if !is_super_admin && has_manage_employees && has_approve {
+        return Err(AppError::BadRequest(
+            "User cannot hold both manage_employees and approve_payroll across roles and groups"
                 .into(),
         ));
     }
@@ -147,8 +169,13 @@ pub async fn list_groups(
     user_groups::list_for_company(pool, company_id, hide_privileged).await
 }
 
-pub async fn get_group(pool: &PgPool, company_id: Uuid, group_id: Uuid) -> AppResult<UserGroup> {
-    user_groups::get(pool, company_id, group_id)
+pub async fn get_group(
+    pool: &PgPool,
+    company_id: Uuid,
+    group_id: Uuid,
+    hide_privileged: bool,
+) -> AppResult<UserGroup> {
+    user_groups::get_scoped(pool, company_id, group_id, hide_privileged)
         .await?
         .ok_or_else(|| AppError::NotFound("Group not found".into()))
 }
@@ -310,7 +337,7 @@ pub async fn delete_group(
     actor_id: Uuid,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<()> {
-    let existing = get_group(pool, company_id, group_id).await?;
+    let existing = get_group(pool, company_id, group_id, false).await?;
     let permissions = user_groups::permissions_for(pool, group_id).await?;
 
     let rows = user_groups::delete(pool, company_id, group_id).await?;
@@ -349,7 +376,7 @@ pub async fn list_members(
     group_id: Uuid,
     hide_privileged: bool,
 ) -> AppResult<Vec<UserGroupMember>> {
-    get_group(pool, company_id, group_id).await?;
+    get_group(pool, company_id, group_id, hide_privileged).await?;
     user_groups::list_members(pool, company_id, group_id, hide_privileged).await
 }
 

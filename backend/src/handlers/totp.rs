@@ -58,6 +58,21 @@ pub async fn disable(
     audit_meta: AuditRequestMeta,
     ValidatedJson(req): ValidatedJson<TotpDisableRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
+    crate::services::auth_service::verify_user_password(
+        &state.pool,
+        auth.0.sub,
+        &req.password,
+        Some(&audit_meta),
+    )
+    .await?;
+    totp_service::verify_step_up_if_enabled(
+        &state.pool,
+        auth.0.sub,
+        req.totp_code.as_deref(),
+        &state.config.totp_encryption_key,
+        Some(&audit_meta),
+    )
+    .await?;
     totp_service::disable_with_session(
         &state.pool,
         auth.0.sub,
@@ -75,9 +90,25 @@ pub async fn regenerate_backup_codes(
     audit_meta: AuditRequestMeta,
     ValidatedJson(req): ValidatedJson<TotpRegenerateBackupCodesRequest>,
 ) -> AppResult<Json<TotpConfirmResponse>> {
-    let backup_codes = totp_service::regenerate_backup_codes(
+    crate::services::auth_service::verify_user_password(
         &state.pool,
         auth.0.sub,
+        &req.password,
+        Some(&audit_meta),
+    )
+    .await?;
+    totp_service::verify_step_up_if_enabled(
+        &state.pool,
+        auth.0.sub,
+        req.totp_code.as_deref(),
+        &state.config.totp_encryption_key,
+        Some(&audit_meta),
+    )
+    .await?;
+    let backup_codes = totp_service::regenerate_backup_codes_with_session(
+        &state.pool,
+        auth.0.sub,
+        Some(auth.0.sid),
         &req.password,
         &state.config.totp_encryption_key,
         Some(&audit_meta),
@@ -99,6 +130,7 @@ pub async fn verify_login(
         &state.config,
         req.turnstile_token.as_deref(),
         audit_meta.ip_address.as_deref(),
+        "totp_verify",
     )
     .await?;
 

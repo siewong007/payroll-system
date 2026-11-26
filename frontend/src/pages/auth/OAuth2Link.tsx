@@ -53,7 +53,9 @@ export function OAuth2Link() {
   const [error, setError] = useState('');
   const [pendingLink, setPendingLink] = useState<{ code: string; state: string } | null>(null);
   const [password, setPassword] = useState('');
+  const [totpCode, setTotpCode] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const twoFactorEnabled = Boolean(user?.two_factor_enabled);
 
   // Where the LinkedAccounts card sat before the round-trip to Google.
   const returnTo = readReturnPath();
@@ -97,13 +99,18 @@ export function OAuth2Link() {
 
   const handleConfirm = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!pendingLink || !password) {
+    if (!pendingLink || !password || (twoFactorEnabled && !totpCode.trim())) {
       return;
     }
     setError('');
     setSubmitting(true);
     try {
-      await linkGoogleAccount(pendingLink.code, pendingLink.state, password);
+      await linkGoogleAccount(
+        pendingLink.code,
+        pendingLink.state,
+        password,
+        ...(twoFactorEnabled && totpCode.trim() ? [totpCode.trim()] : []),
+      );
       linkParams = null;
       clearReturnPath();
       navigate(user?.must_change_password ? '/change-password' : (returnTo ?? '/'), { replace: true });
@@ -152,9 +159,28 @@ export function OAuth2Link() {
               />
             </div>
 
+            {twoFactorEnabled && (
+              <div>
+                <label className="form-label" htmlFor="oauth-link-totp">
+                  {t('auth.twoFactor.title')}
+                </label>
+                <input
+                  id="oauth-link-totp"
+                  type="text"
+                  inputMode="text"
+                  autoComplete="one-time-code"
+                  value={totpCode}
+                  onChange={(e) => setTotpCode(e.target.value)}
+                  placeholder="123456"
+                  className="form-input !p-2.5 text-center tracking-widest"
+                  required
+                />
+              </div>
+            )}
+
             <button
               type="submit"
-              disabled={submitting || !password}
+              disabled={submitting || !password || (twoFactorEnabled && !totpCode.trim())}
               className="btn-primary w-full inline-flex items-center justify-center gap-2"
             >
               {submitting ? (
@@ -197,6 +223,10 @@ export function OAuth2Link() {
           <p className="text-sm text-gray-600 dark:text-slate-300">{error}</p>
           <Link
             to={returnTo ?? '/'}
+            onClick={() => {
+              linkParams = null;
+              clearReturnPath();
+            }}
             className="inline-flex min-h-11 items-center justify-center px-3 text-sm text-black dark:text-indigo-400 font-medium hover:underline rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
           >
             {t('common.goBack')}

@@ -358,15 +358,13 @@ pub async fn face_id_verify(
         .finish_passkey_authentication(credential, &auth_state)
         .map_err(|e| AppError::Unauthorized(format!("Face ID verification failed: {}", e)))?;
 
-    // Persist the updated signature counter, mirroring the login flow.
-    let mut passkeys = passkey_service::get_passkeys_for_user(pool, user_id).await?;
-    for pk in passkeys.iter_mut() {
-        if pk.cred_id() == auth_result.cred_id() {
-            pk.update_credential(&auth_result);
-            passkey_service::update_passkey_after_auth(pool, user_id, pk).await?;
-            break;
-        }
-    }
+    // Persist the updated signature counter, mirroring the login flow (fail closed if removed).
+    let passkeys = passkey_service::get_passkey_records_for_user(pool, user_id).await?;
+    let (pk_id, _) = passkeys
+        .iter()
+        .find(|(_, pk)| pk.cred_id() == auth_result.cred_id())
+        .ok_or_else(|| AppError::Unauthorized("Passkey credential was removed".into()))?;
+    passkey_service::update_passkey_after_auth(pool, *pk_id, user_id, &auth_result).await?;
 
     Ok(())
 }
@@ -661,12 +659,10 @@ pub async fn check_in_qr(
     })
     .await?;
 
-    // A QR token minted by a kiosk credential is corroboration the employee
-    // cannot manufacture: a device physically in the building displayed it.
-    let anchored = kiosk_minted
-        || geofence_service::geofence_anchor(pool, company_id, latitude, longitude)
-            .await
-            .unwrap_or(false);
+    // A QR token minted by a physical kiosk credential is corroboration the
+    // employee cannot manufacture. Client-supplied GPS coordinates are spoofable
+    // and never promote an IP observation into an anchored office candidate.
+    let anchored = kiosk_minted;
     observe_network(pool, company_id, employee_id, client_ip, anchored).await;
 
     Ok(record)
@@ -729,14 +725,9 @@ pub async fn check_in_face_id(
     })
     .await?;
 
-    // No kiosk token on this path, so the geofence is the only corroboration
-    // available. A face-id company with the fence off learns nothing anchored,
-    // which is the correct outcome: there is genuinely nothing vouching for
-    // where the employee was.
-    let anchored = geofence_service::geofence_anchor(pool, company_id, latitude, longitude)
-        .await
-        .unwrap_or(false);
-    observe_network(pool, company_id, employee_id, client_ip, anchored).await;
+    // Face ID check-ins carry no physical kiosk token, and client-supplied GPS
+    // coordinates are spoofable, so they never anchor an office candidate.
+    observe_network(pool, company_id, employee_id, client_ip, false).await;
 
     Ok(record)
 }

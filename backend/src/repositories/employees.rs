@@ -222,6 +222,26 @@ pub async fn lock_for_update(
     Ok(())
 }
 
+/// Lock a batch of employees in deterministic `id` order so concurrent
+/// payroll runs and HR edits serialize without deadlocks.
+pub async fn lock_many_for_update(
+    executor: impl Executor<'_, Database = Postgres>,
+    employee_ids: &[Uuid],
+    company_id: Uuid,
+) -> AppResult<()> {
+    if employee_ids.is_empty() {
+        return Ok(());
+    }
+    sqlx::query_scalar!(
+        "SELECT id FROM employees WHERE id = ANY($1) AND company_id = $2 ORDER BY id FOR UPDATE",
+        employee_ids,
+        company_id,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(())
+}
+
 /// Count of active, non-deleted employees and distinct non-null departments in one scan.
 pub async fn count_active_and_departments(
     executor: impl Executor<'_, Database = Postgres>,
@@ -368,6 +388,31 @@ pub async fn exists_by_number(
         r#"SELECT EXISTS(SELECT 1 FROM employees WHERE company_id = $1 AND employee_number = $2 AND deleted_at IS NULL) AS "exists!""#,
         company_id,
         employee_number,
+    )
+    .fetch_one(executor)
+    .await?;
+    Ok(exists)
+}
+
+pub async fn exists_by_normalized_email(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    email: &str,
+    exclude_employee_id: Option<Uuid>,
+) -> AppResult<bool> {
+    let exists = sqlx::query_scalar!(
+        r#"SELECT EXISTS(
+            SELECT 1 FROM employees
+            WHERE company_id = $1
+              AND deleted_at IS NULL
+              AND email IS NOT NULL
+              AND btrim(email) <> ''
+              AND lower(btrim(email)) = lower(btrim($2))
+              AND ($3::uuid IS NULL OR id <> $3)
+        ) AS "exists!""#,
+        company_id,
+        email,
+        exclude_employee_id,
     )
     .fetch_one(executor)
     .await?;

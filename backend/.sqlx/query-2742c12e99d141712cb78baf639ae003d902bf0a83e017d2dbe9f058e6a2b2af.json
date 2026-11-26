@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH eligible_subs AS (\n            SELECT ps.id, ps.user_id,\n                   ROW_NUMBER() OVER (\n                       PARTITION BY ps.user_id\n                       ORDER BY ps.last_seen_at DESC NULLS LAST, ps.updated_at DESC, ps.id ASC\n                   ) AS rn\n            FROM push_subscriptions ps\n            JOIN users u ON u.id = ps.user_id\n            LEFT JOIN user_sessions us ON us.id = ps.session_id\n            WHERE ps.revoked_at IS NULL\n              AND u.is_active = TRUE\n              AND u.deleted_at IS NULL\n              AND (ps.session_id IS NULL OR (us.revoked_at IS NULL AND us.expires_at > NOW()))\n        )\n        INSERT INTO push_outbox (\n            subscription_id, user_id, company_id, notification_id, title, body, url, tag\n        )\n        SELECT es.id, n.user_id, $1, n.id, $3, $4, $5, $6\n        FROM notifications n\n        JOIN eligible_subs es ON es.user_id = n.user_id AND es.rn <= 20\n        WHERE n.id = ANY($2)\n          AND n.company_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "UuidArray",
+        "Varchar",
+        "Text",
+        "Varchar",
+        "Varchar"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2742c12e99d141712cb78baf639ae003d902bf0a83e017d2dbe9f058e6a2b2af"
+}

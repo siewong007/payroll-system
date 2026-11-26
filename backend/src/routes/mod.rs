@@ -4,9 +4,40 @@ use std::time::Duration;
 use axum::{
     Router,
     extract::DefaultBodyLimit,
+    http::{HeaderValue, header},
     routing::{delete, get, post, put},
 };
 use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
+use tower_http::compression::{CompressionLayer, DefaultPredicate, Predicate};
+use tower_http::set_header::SetResponseHeaderLayer;
+
+#[derive(Clone, Default)]
+pub struct NoStorePredicate(DefaultPredicate);
+
+impl Predicate for NoStorePredicate {
+    fn should_compress<B>(&self, response: &axum::http::Response<B>) -> bool
+    where
+        B: http_body::Body,
+    {
+        let has_no_store = response
+            .headers()
+            .get_all(header::CACHE_CONTROL)
+            .iter()
+            .any(|v| {
+                v.to_str()
+                    .map(|s| s.to_ascii_lowercase().contains("no-store"))
+                    .unwrap_or(false)
+            });
+        if has_no_store {
+            return false;
+        }
+        self.0.should_compress(response)
+    }
+}
+
+pub fn compression_layer() -> CompressionLayer<NoStorePredicate> {
+    CompressionLayer::new().compress_when(NoStorePredicate::default())
+}
 
 use crate::core::app_state::AppState;
 use crate::core::rate_limit_key::{ClientIpKeyExtractor, SessionOrIpKeyExtractor};
@@ -61,14 +92,24 @@ pub fn create_router(state: AppState) -> Router {
     // Public kiosk QR endpoint (~120/min/IP — 1 token every 500ms, burst 10).
     let kiosk_rate_limit = Arc::new(
         GovernorConfigBuilder::default()
-            .key_extractor(ip_key)
+            .key_extractor(ip_key.clone())
             .per_millisecond(500)
             .burst_size(10)
             .finish()
             .expect("Failed to build rate limiter"),
     );
 
-    // Rate-limited auth & passkey routes
+    // Public readiness endpoint (max 15 burst, ~30/min per IP) — L-11.
+    let health_rate_limit = Arc::new(
+        GovernorConfigBuilder::default()
+            .key_extractor(ip_key)
+            .per_second(2)
+            .burst_size(15)
+            .finish()
+            .expect("Failed to build health rate limiter"),
+    );
+
+    // Rate-limited auth & passkey routes (L-10: no-store cache headers + BREACH exemption).
     let rate_limited_auth = Router::new()
         .route("/auth/login", post(auth::login))
         .route("/auth/login/code", post(auth::code_login))
@@ -95,23 +136,51 @@ pub fn create_router(state: AppState) -> Router {
             "/auth/passkey/discoverable/complete",
             post(passkey::discoverable_auth_complete),
         )
-        .layer(GovernorLayer::new(auth_rate_limit.clone()));
+        .layer(GovernorLayer::new(auth_rate_limit.clone()))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("no-store"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::PRAGMA,
+            HeaderValue::from_static("no-cache"),
+        ));
 
     let rate_limited_forgot = Router::new()
         .route("/auth/forgot-password", post(auth::forgot_password))
-        .layer(GovernorLayer::new(forgot_rate_limit.clone()));
+        .layer(GovernorLayer::new(forgot_rate_limit.clone()))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("no-store"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::PRAGMA,
+            HeaderValue::from_static("no-cache"),
+        ));
 
     let rate_limited_oauth2 = Router::new()
         .route(
             "/auth/oauth2/google/authorize",
-            get(oauth2::google_authorize),
+            post(oauth2::google_authorize),
         )
         .route("/auth/oauth2/google/callback", get(oauth2::google_callback))
-        .layer(GovernorLayer::new(oauth2_rate_limit.clone()));
+        .layer(GovernorLayer::new(oauth2_rate_limit.clone()))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("no-store"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::PRAGMA,
+            HeaderValue::from_static("no-cache"),
+        ));
 
     let rate_limited_kiosk = Router::new()
         .route("/attendance/kiosk/qr", post(attendance::kiosk_qr))
         .layer(GovernorLayer::new(kiosk_rate_limit.clone()));
+
+    let rate_limited_health = Router::new()
+        .route("/health/ready", get(health::ready))
+        .layer(GovernorLayer::new(health_rate_limit.clone()));
 
     // ─── Authenticated cost controls ───
     //
@@ -186,6 +255,7 @@ pub fn create_router(state: AppState) -> Router {
             Arc::downgrade(&forgot_rate_limit),
             Arc::downgrade(&oauth2_rate_limit),
             Arc::downgrade(&kiosk_rate_limit),
+            Arc::downgrade(&health_rate_limit),
         ];
         let session_limiters = vec![
             Arc::downgrade(&session_auth_rate_limit),
@@ -221,7 +291,7 @@ pub fn create_router(state: AppState) -> Router {
         });
     }
 
-    let rate_limited_session_auth = Router::new()
+    let rate_limited_session_auth_only = Router::new()
         .route("/auth/refresh", post(auth::refresh_token))
         .route("/auth/switch-company", put(auth::switch_company))
         .route("/auth/change-password", put(auth::change_password))
@@ -240,7 +310,26 @@ pub fn create_router(state: AppState) -> Router {
             "/auth/passkey/register/complete",
             post(passkey::registration_complete),
         )
+        .route(
+            "/auth/passkeys/{id}",
+            put(passkey::rename_passkey).delete(passkey::delete_passkey),
+        )
         .route("/auth/oauth2/google/link", post(oauth2::link_google))
+        .route(
+            "/auth/oauth2/accounts/{provider}",
+            delete(oauth2::unlink_provider),
+        )
+        .layer(GovernorLayer::new(session_auth_rate_limit.clone()))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("no-store"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::PRAGMA,
+            HeaderValue::from_static("no-cache"),
+        ));
+
+    let rate_limited_session_ops = Router::new()
         .route("/admin/users/{id}/2fa/reset", post(admin::reset_user_2fa))
         .route(
             "/notifications/subscriptions",
@@ -258,6 +347,27 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route("/attendance/check-out", post(attendance::check_out))
         .layer(GovernorLayer::new(session_auth_rate_limit));
+
+    let auth_unthrottled = Router::new()
+        .route("/auth/me", get(auth::me))
+        .route("/auth/logout", post(auth::logout))
+        .route("/auth/sessions", get(auth::list_sessions))
+        .route("/auth/sessions/others", delete(auth::revoke_other_sessions))
+        .route("/auth/sessions/{session_id}", delete(auth::revoke_session))
+        .route("/auth/my-companies", get(auth::my_companies))
+        .route("/auth/permissions/matrix", get(permission::matrix))
+        .route("/auth/passkeys", get(passkey::list_passkeys))
+        .route("/auth/2fa/status", get(totp::status))
+        .route("/auth/oauth2/providers", get(oauth2::list_providers))
+        .route("/auth/oauth2/accounts", get(oauth2::my_linked_accounts))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("no-store"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::PRAGMA,
+            HeaderValue::from_static("no-cache"),
+        ));
 
     let rate_limited_email = Router::new()
         .route("/email/send", post(email::send_letter))
@@ -307,25 +417,19 @@ pub fn create_router(state: AppState) -> Router {
     let api = Router::new()
         // Health check (no auth required, used by ALB)
         .route("/health", get(|| async { "ok" }))
-        // Readiness probe: checks DB connectivity and migration state.
-        .route("/health/ready", get(health::ready))
+        // Readiness probe: rate-limited, cached 5s, loopback-only detailed diagnostics.
+        .merge(rate_limited_health)
         .merge(rate_limited_auth)
         .merge(rate_limited_forgot)
         .merge(rate_limited_oauth2)
         .merge(rate_limited_kiosk)
-        .merge(rate_limited_session_auth)
+        .merge(rate_limited_session_auth_only)
+        .merge(rate_limited_session_ops)
         .merge(rate_limited_email)
         .merge(rate_limited_heavy)
         .merge(rate_limited_uploads)
         .merge(rate_limited_imports)
-        // Auth (non-rate-limited)
-        .route("/auth/me", get(auth::me))
-        .route("/auth/logout", post(auth::logout))
-        .route("/auth/sessions", get(auth::list_sessions))
-        .route("/auth/sessions/others", delete(auth::revoke_other_sessions))
-        .route("/auth/sessions/{session_id}", delete(auth::revoke_session))
-        .route("/auth/my-companies", get(auth::my_companies))
-        .route("/auth/permissions/matrix", get(permission::matrix))
+        .merge(auth_unthrottled)
         // User groups: company-scoped permission bundles layered on top of roles.
         .route(
             "/user-groups",
@@ -344,21 +448,6 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/user-groups/{group_id}/members/{user_id}",
             delete(user_group::remove_member),
-        )
-        // Passkey (WebAuthn) — authenticated management (register routes rate-limited above)
-        .route("/auth/passkeys", get(passkey::list_passkeys))
-        .route(
-            "/auth/passkeys/{id}",
-            put(passkey::rename_passkey).delete(passkey::delete_passkey),
-        )
-        // TOTP 2FA (authenticated management; rate-limited endpoints live above)
-        .route("/auth/2fa/status", get(totp::status))
-        // OAuth2 (non-rate-limited routes)
-        .route("/auth/oauth2/providers", get(oauth2::list_providers))
-        .route("/auth/oauth2/accounts", get(oauth2::my_linked_accounts))
-        .route(
-            "/auth/oauth2/accounts/{provider}",
-            delete(oauth2::unlink_provider),
         )
         // Admin (super_admin)
         .route(

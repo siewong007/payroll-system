@@ -66,6 +66,8 @@ pub struct LeaveRequest {
     pub updated_at: DateTime<Utc>,
     pub created_by: Option<Uuid>,
     pub updated_by: Option<Uuid>,
+    #[serde(skip_serializing)]
+    pub editor_ids: Vec<Uuid>,
     // joined
     pub leave_type_name: Option<String>,
 }
@@ -128,6 +130,8 @@ pub struct Claim {
     pub payroll_run_id: Option<Uuid>,
     pub created_by: Option<Uuid>,
     pub updated_by: Option<Uuid>,
+    #[serde(skip_serializing)]
+    pub editor_ids: Vec<Uuid>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -178,6 +182,9 @@ pub struct OvertimeApplication {
     pub updated_at: DateTime<Utc>,
     pub created_by: Option<Uuid>,
     pub updated_by: Option<Uuid>,
+    #[serde(skip_serializing)]
+    pub editor_ids: Vec<Uuid>,
+    pub payroll_run_id: Option<Uuid>,
 }
 
 #[derive(Debug, Deserialize)]

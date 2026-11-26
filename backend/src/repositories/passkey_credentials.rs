@@ -54,28 +54,45 @@ pub async fn insert(
     Ok(())
 }
 
-/// Persist an updated credential (e.g. signature counter) matched by its cred_id.
-pub async fn update_credential_json(
+/// Lock a single passkey row owned by `user_id` for atomic counter progression.
+pub async fn get_by_id_for_update(
     executor: impl Executor<'_, Database = Postgres>,
+    id: Uuid,
     user_id: Uuid,
-    cred_id: &serde_json::Value,
+) -> AppResult<Option<PasskeyCredential>> {
+    let row = sqlx::query_as!(
+        PasskeyCredential,
+        r#"SELECT id, user_id, credential_name, credential_json, created_at, last_used_at
+        FROM passkey_credentials
+        WHERE id = $1 AND user_id = $2
+        FOR UPDATE"#,
+        id,
+        user_id,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(row)
+}
+
+/// Persist an updated credential (e.g. signature counter) matched by primary key `id`.
+pub async fn update_credential_json_by_id(
+    executor: impl Executor<'_, Database = Postgres>,
+    id: Uuid,
+    user_id: Uuid,
     credential_json: &serde_json::Value,
-) -> AppResult<()> {
+) -> AppResult<u64> {
     let result = sqlx::query!(
         r#"UPDATE passkey_credentials
         SET credential_json = $3, last_used_at = NOW()
-        WHERE user_id = $1 AND credential_json->'cred'->'cred_id' = $2::jsonb
+        WHERE id = $1 AND user_id = $2
         "#,
+        id,
         user_id,
-        cred_id,
         credential_json,
     )
     .execute(executor)
     .await?;
-    if result.rows_affected() == 0 {
-        tracing::warn!(%user_id, "passkey update_credential_json matched 0 rows");
-    }
-    Ok(())
+    Ok(result.rows_affected())
 }
 
 pub async fn rename(

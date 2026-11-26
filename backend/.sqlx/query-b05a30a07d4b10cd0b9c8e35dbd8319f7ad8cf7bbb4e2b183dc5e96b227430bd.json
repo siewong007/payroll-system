@@ -222,6 +222,17 @@
             "name": "updated_by"
           }
         }
+      },
+      {
+        "ordinal": 20,
+        "name": "editor_ids",
+        "type_info": "UuidArray",
+        "origin": {
+          "Table": {
+            "table": "claims",
+            "name": "editor_ids"
+          }
+        }
       }
     ],
     "parameters": {
@@ -250,7 +261,8 @@
       false,
       true,
       true,
-      true
+      true,
+      false
     ]
   },
   "hash": "b05a30a07d4b10cd0b9c8e35dbd8319f7ad8cf7bbb4e2b183dc5e96b227430bd"

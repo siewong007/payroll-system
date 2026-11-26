@@ -225,6 +225,17 @@
       },
       {
         "ordinal": 20,
+        "name": "editor_ids",
+        "type_info": "UuidArray",
+        "origin": {
+          "Table": {
+            "table": "claims",
+            "name": "editor_ids"
+          }
+        }
+      },
+      {
+        "ordinal": 21,
         "name": "employee_name?",
         "type_info": "Varchar",
         "origin": {
@@ -235,7 +246,7 @@
         }
       },
       {
-        "ordinal": 21,
+        "ordinal": 22,
         "name": "employee_number?",
         "type_info": "Varchar",
         "origin": {
@@ -273,6 +284,7 @@
       true,
       true,
       true,
+      false,
       false,
       false
     ]

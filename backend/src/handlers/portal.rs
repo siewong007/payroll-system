@@ -170,7 +170,7 @@ pub async fn cancel_claim(
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<serde_json::Value>> {
     let employee_id = get_employee_id(&auth)?;
-    portal_service::cancel_claim(&state.pool, employee_id, id).await?;
+    portal_service::cancel_claim(&state.pool, employee_id, id, auth.0.sub).await?;
     Ok(Json(serde_json::json!({ "success": true })))
 }
 
@@ -219,7 +219,7 @@ pub async fn cancel_overtime(
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<serde_json::Value>> {
     let employee_id = get_employee_id(&auth)?;
-    portal_service::cancel_overtime_application(&state.pool, employee_id, id).await?;
+    portal_service::cancel_overtime_application(&state.pool, employee_id, id, auth.0.sub).await?;
     Ok(Json(serde_json::json!({ "success": true })))
 }
 
@@ -438,6 +438,11 @@ pub async fn export_leave_ics(
 
     let employee_id = get_employee_id(&auth)?;
     let year = q.year.unwrap_or(chrono::Utc::now().year());
+    if !(1900..=2100).contains(&year) {
+        return Err(AppError::BadRequest(
+            "Year must be between 1900 and 2100".into(),
+        ));
+    }
 
     let leaves = crate::repositories::reads::portal::approved_leaves_for_year(
         &state.pool,
@@ -580,16 +585,16 @@ pub async fn serve_upload(
     //   - `private` caching keeps user documents out of shared/CDN caches, and
     //     now also out of a cache that a *different* user could read from: the
     //     response body varies by caller, not by URL alone.
-    Ok(Response::builder()
+    Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, content_type)
         .header(header::CONTENT_DISPOSITION, content_disposition)
-        .header(header::CACHE_CONTROL, "private, max-age=300")
+        .header(header::CACHE_CONTROL, "no-store, private")
         .header("X-Content-Type-Options", "nosniff")
         .header(
             "Content-Security-Policy",
             "default-src 'none'; img-src 'self'; sandbox",
         )
         .body(Body::from(data))
-        .unwrap())
+        .map_err(|_| AppError::Internal("Failed to build upload response".into()))
 }

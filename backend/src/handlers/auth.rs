@@ -13,6 +13,7 @@ use crate::core::extract::ValidatedJson;
 use crate::models::audit::AuditRequestMeta;
 use crate::models::session::{
     ForgotPasswordRequest, LoginOutcome, ResetPasswordRequest, UserSessionResponse,
+    ValidateResetTokenRequest,
 };
 use crate::models::user::{
     ChangePasswordRequest, CodeLoginRequest, LoginRequest, LoginResponse, UserResponse,
@@ -63,6 +64,7 @@ pub async fn login(
         &state.config,
         req.turnstile_token.as_deref(),
         audit_meta.ip_address.as_deref(),
+        "login",
     )
     .await?;
 
@@ -93,6 +95,7 @@ pub async fn code_login(
         &state.config,
         req.turnstile_token.as_deref(),
         audit_meta.ip_address.as_deref(),
+        "code_login",
     )
     .await?;
 
@@ -132,10 +135,12 @@ pub async fn switch_company(
     auth: AuthUser,
     Json(req): Json<SwitchCompanyRequest>,
 ) -> AppResult<Json<LoginResponse>> {
-    // Validate access and update active company
-    user_service::switch_company(&state.pool, auth.0.sub, req.company_id).await?;
+    // Keep the company switch, push subscription sync, and 2FA policy check inside
+    // one transaction so a 422 2FA refusal leaves `users.company_id` untouched.
+    let mut tx = state.pool.begin().await?;
+    user_service::switch_company_on(&mut *tx, auth.0.sub, req.company_id).await?;
     let _ = crate::repositories::push_subscriptions::update_company_for_session(
-        &state.pool,
+        &mut *tx,
         auth.0.sub,
         auth.0.sid,
         req.company_id,
@@ -145,8 +150,11 @@ pub async fn switch_company(
     // Fetch updated user and re-check 2FA enforcement in case company group
     // permissions elevated the user into a 2FA-required tier (M5), while
     // preserving the original token expiration (H1).
-    let user = auth_service::get_user_by_id(&state.pool, auth.0.sub).await?;
-    auth_service::enforce_two_factor_policy(&state.pool, &user).await?;
+    let user = crate::repositories::users::get_by_id(&mut *tx, auth.0.sub)
+        .await?
+        .ok_or_else(|| AppError::Internal("User not found".into()))?;
+    auth_service::enforce_two_factor_policy_with(&mut tx, &user).await?;
+    tx.commit().await?;
 
     let token = create_token_with_exp(
         user.id,
@@ -172,6 +180,7 @@ pub async fn refresh_token(
     headers: HeaderMap,
     audit_meta: AuditRequestMeta,
 ) -> Result<impl IntoResponse, AppError> {
+    cookie::validate_cookie_csrf_origin(&headers, &state.config.frontend_url)?;
     let refresh = cookie::extract_refresh_token(&headers)
         .ok_or_else(|| AppError::Unauthorized("No refresh token".into()))?;
 
@@ -205,6 +214,7 @@ pub async fn logout(
     headers: HeaderMap,
     audit_meta: AuditRequestMeta,
 ) -> Result<impl IntoResponse, AppError> {
+    cookie::validate_cookie_csrf_origin(&headers, &state.config.frontend_url)?;
     let mut revoked = false;
     if let Some(refresh) = cookie::extract_refresh_token(&headers) {
         if let Ok((user_id, session_id)) =
@@ -316,6 +326,7 @@ pub async fn forgot_password(
         &state.config,
         req.turnstile_token.as_deref(),
         audit_meta.ip_address.as_deref(),
+        "forgot_password",
     )
     .await?;
 
@@ -358,6 +369,7 @@ pub async fn reset_password(
         &state.config,
         req.turnstile_token.as_deref(),
         audit_meta.ip_address.as_deref(),
+        "reset_password",
     )
     .await?;
 
@@ -376,13 +388,9 @@ pub async fn reset_password(
 /// Validate a reset token (used by the frontend to check if the link is still valid).
 pub async fn validate_reset_token(
     State(state): State<AppState>,
-    Json(req): Json<serde_json::Value>,
+    ValidatedJson(req): ValidatedJson<ValidateResetTokenRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
-    let token = req
-        .get("token")
-        .and_then(|t| t.as_str())
-        .ok_or_else(|| AppError::BadRequest("Token is required".into()))?;
-    password_reset_service::validate_reset_token(&state.pool, token).await?;
+    password_reset_service::validate_reset_token(&state.pool, &req.token).await?;
     Ok(Json(serde_json::json!({ "valid": true })))
 }
 
@@ -397,6 +405,8 @@ pub async fn change_password(
         auth.0.sub,
         &req.current_password,
         &req.new_password,
+        req.totp_code.as_deref(),
+        &state.config.totp_encryption_key,
         Some(&audit_meta),
     )
     .await?;

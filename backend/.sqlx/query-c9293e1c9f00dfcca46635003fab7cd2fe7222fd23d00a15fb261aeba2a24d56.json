@@ -1,0 +1,109 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH locked AS (\n               SELECT id, employee_id, category, item_type, description,\n                      amount, quantity, COALESCE(is_taxable, TRUE) AS is_taxable, created_at\n               FROM payroll_entries\n               WHERE employee_id = ANY($1)\n                 AND (\n                     (period_year = $2 AND period_month = $3)\n                     OR (item_type = 'unpaid_leave' AND (period_year < $2 OR (period_year = $2 AND period_month <= $3)))\n                 )\n                 AND is_processed = FALSE\n               ORDER BY id\n               FOR UPDATE\n           )\n           SELECT l.id, l.employee_id, l.category, l.item_type, l.description,\n                  l.amount, l.quantity, l.is_taxable AS \"is_taxable!\"\n           FROM locked l\n           WHERE l.item_type <> 'claim_reimbursement'\n           ORDER BY l.employee_id, l.category, l.created_at, l.id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "payroll_entries",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "employee_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "payroll_entries",
+            "name": "employee_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "category",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "payroll_entries",
+            "name": "category"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "item_type",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "payroll_entries",
+            "name": "item_type"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "description",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "payroll_entries",
+            "name": "description"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "amount",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_entries",
+            "name": "amount"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "quantity",
+        "type_info": "Numeric",
+        "origin": {
+          "Table": {
+            "table": "payroll_entries",
+            "name": "quantity"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "is_taxable!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "UuidArray",
+        "Int4",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      null
+    ]
+  },
+  "hash": "c9293e1c9f00dfcca46635003fab7cd2fe7222fd23d00a15fb261aeba2a24d56"
+}

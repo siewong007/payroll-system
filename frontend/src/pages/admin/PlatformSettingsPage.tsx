@@ -12,6 +12,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { FormField } from '@/components/ui/FormField';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { useAuth } from '@/context/AuthContext';
 import { formatDateTime } from '@/lib/format';
 import { useToast } from '@/lib/toast';
 import { getErrorMessage } from '@/lib/utils';
@@ -55,9 +56,13 @@ export function PlatformSettingsPage() {
   const { t } = useTranslation();
   const toast = useToast();
   const queryClient = useQueryClient();
+  const { user } = useAuth();
+  const twoFactorEnabled = Boolean(user?.two_factor_enabled);
 
   const [enforceDraft, setEnforceDraft] = useState<boolean | null>(null);
   const [graceUntilDraft, setGraceUntilDraft] = useState<string | null>(null);
+  const [actorPassword, setActorPassword] = useState('');
+  const [actorTotpCode, setActorTotpCode] = useState('');
   const [policyError, setPolicyError] = useState('');
 
   const policyQuery = useQuery({
@@ -78,11 +83,17 @@ export function PlatformSettingsPage() {
       setTwoFactorPolicy({
         enforce,
         grace_until: graceUntil.trim() || null,
+        actor_password: actorPassword,
+        ...(twoFactorEnabled && actorTotpCode.trim()
+          ? { actor_totp_code: actorTotpCode.trim() }
+          : {}),
       }),
     onSuccess: (updated) => {
       queryClient.setQueryData(['platform-2fa-policy'], updated);
       setEnforceDraft(null);
       setGraceUntilDraft(null);
+      setActorPassword('');
+      setActorTotpCode('');
       setPolicyError('');
       toast.success(t('platformAdmin.twoFactorPolicy.saved'));
     },
@@ -244,10 +255,48 @@ export function PlatformSettingsPage() {
               </div>
             )}
 
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-xl pt-2 border-t border-gray-100 dark:border-slate-800">
+              <FormField label={t('users.confirmWithYourPassword')} required>
+                {(aria) => (
+                  <input
+                    {...aria}
+                    type="password"
+                    autoComplete="current-password"
+                    value={actorPassword}
+                    onChange={(e) => setActorPassword(e.target.value)}
+                    placeholder={t('auth.twoFactor.currentPasswordPlaceholder')}
+                    className="form-input"
+                    required
+                  />
+                )}
+              </FormField>
+              {twoFactorEnabled && (
+                <FormField label={t('auth.twoFactor.title')} required>
+                  {(aria) => (
+                    <input
+                      {...aria}
+                      type="text"
+                      inputMode="text"
+                      autoComplete="one-time-code"
+                      value={actorTotpCode}
+                      onChange={(e) => setActorTotpCode(e.target.value)}
+                      placeholder="123456"
+                      className="form-input text-center tracking-widest"
+                      required
+                    />
+                  )}
+                </FormField>
+              )}
+            </div>
+
             <div className="flex justify-end">
               <button
                 type="submit"
-                disabled={savePolicyMutation.isPending}
+                disabled={
+                  savePolicyMutation.isPending ||
+                  !actorPassword ||
+                  (twoFactorEnabled && !actorTotpCode.trim())
+                }
                 className="btn-primary w-full sm:w-auto inline-flex items-center justify-center gap-2"
               >
                 {savePolicyMutation.isPending ? (

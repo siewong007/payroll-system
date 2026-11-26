@@ -207,6 +207,10 @@ pub async fn update_full(
             receipt_file_name = CASE WHEN $9::text IS NULL THEN receipt_file_name ELSE NULLIF($9, '') END,
             expense_date = COALESCE($10, expense_date),
             updated_by = $11,
+            editor_ids = CASE
+                WHEN $11 = ANY(editor_ids) THEN editor_ids
+                ELSE array_append(editor_ids, $11)
+            END,
             updated_at = NOW()
         WHERE id = $1 AND company_id = $2
           AND status IN ('draft', 'pending', 'rejected')
@@ -279,11 +283,15 @@ pub async fn set_approved(
 ) -> AppResult<Option<Claim>> {
     let claim = sqlx::query_as!(
         Claim,
-        r#"UPDATE claims SET
+        r#"UPDATE claims c SET
             status = 'approved', reviewed_by = $3, reviewed_at = NOW(),
             review_notes = $4, updated_at = NOW()
-        WHERE id = $1 AND company_id = $2 AND status = 'pending'
-        RETURNING *"#,
+        WHERE c.id = $1 AND c.company_id = $2 AND c.status = 'pending'
+          AND EXISTS (
+              SELECT 1 FROM employees e
+              WHERE e.id = c.employee_id AND e.company_id = $2 AND e.deleted_at IS NULL
+          )
+        RETURNING c.*"#,
         claim_id,
         company_id,
         reviewer_id,
@@ -442,7 +450,7 @@ pub async fn delete_draft_or_cancelled(
     employee_id: Uuid,
 ) -> AppResult<u64> {
     let rows = sqlx::query!(
-        "DELETE FROM claims WHERE id = $1 AND employee_id = $2 AND status IN ('draft', 'cancelled')",
+        "DELETE FROM claims WHERE id = $1 AND employee_id = $2 AND (status = 'draft' OR (status = 'cancelled' AND reviewed_at IS NULL))",
         claim_id,
         employee_id,
     )

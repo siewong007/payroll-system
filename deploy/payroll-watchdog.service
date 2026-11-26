@@ -8,8 +8,16 @@ After=docker.service
 Type=oneshot
 ExecStart=/opt/payroll/payroll-watchdog.sh
 NoNewPrivileges=yes
-ProtectSystem=full
+ProtectSystem=strict
 ProtectHome=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 ReadWritePaths=/opt/payroll/logs
 PrivateTmp=yes
 

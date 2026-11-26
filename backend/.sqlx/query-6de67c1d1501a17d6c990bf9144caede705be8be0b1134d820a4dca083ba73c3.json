@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE users\n           SET failed_login_attempts = CASE\n                   WHEN login_locked_until IS NOT NULL AND login_locked_until <= NOW() THEN 1\n                   ELSE failed_login_attempts + 1\n               END,\n               login_locked_until = CASE\n                   WHEN login_locked_until IS NOT NULL AND login_locked_until <= NOW() THEN\n                       CASE WHEN 1 >= $2 THEN NOW() + ($3 * INTERVAL '1 minute') ELSE NULL END\n                   WHEN failed_login_attempts + 1 >= $2 THEN NOW() + ($3 * INTERVAL '1 minute')\n                   ELSE login_locked_until\n               END,\n               updated_at = NOW()\n           WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4",
+        "Float8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6de67c1d1501a17d6c990bf9144caede705be8be0b1134d820a4dca083ba73c3"
+}

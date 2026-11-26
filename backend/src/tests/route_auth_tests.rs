@@ -47,6 +47,7 @@ fn test_config(database_url: String) -> AppConfig {
         trust_proxy_headers: true,
         client_ip_header: None,
         turnstile_secret_key: None,
+        allow_unconfigured_turnstile: false,
         turnstile_verify_url: "https://challenges.cloudflare.com/turnstile/v0/siteverify".into(),
         vapid_public_key: None,
         vapid_private_key: None,
@@ -1122,15 +1123,48 @@ async fn ready_and_admin_platform_health_surface_revision_and_job_state() {
     let super_token = token_for(&pool, company_id, "super_admin").await;
     let app = app_for(pool).await;
 
+    let mut public_ready_req = Request::builder()
+        .method("GET")
+        .uri("/api/health/ready")
+        .header("x-forwarded-for", "203.0.113.10")
+        .body(Body::empty())
+        .expect("build public ready request");
+    public_ready_req
+        .extensions_mut()
+        .insert(axum::extract::ConnectInfo(std::net::SocketAddr::from((
+            [203, 0, 113, 10],
+            12345,
+        ))));
+    let public_ready_resp = app
+        .clone()
+        .oneshot(public_ready_req)
+        .await
+        .expect("public ready response");
+    assert_eq!(public_ready_resp.status(), StatusCode::OK);
+    let public_ready_bytes = axum::body::to_bytes(public_ready_resp.into_body(), 1024 * 64)
+        .await
+        .expect("public ready body");
+    let public_ready_json: serde_json::Value =
+        serde_json::from_slice(&public_ready_bytes).expect("json");
+    assert!(public_ready_json["status"].is_string());
+    assert!(public_ready_json.get("revision").is_none());
+    assert!(public_ready_json.get("version").is_none());
+    assert!(public_ready_json.get("jobs").is_none());
+
+    let mut ready_req = Request::builder()
+        .method("GET")
+        .uri("/api/health/ready")
+        .body(Body::empty())
+        .expect("build ready request");
+    ready_req
+        .extensions_mut()
+        .insert(axum::extract::ConnectInfo(std::net::SocketAddr::from((
+            [127, 0, 0, 1],
+            12345,
+        ))));
     let ready_resp = app
         .clone()
-        .oneshot(
-            Request::builder()
-                .method("GET")
-                .uri("/api/health/ready")
-                .body(Body::empty())
-                .expect("build ready request"),
-        )
+        .oneshot(ready_req)
         .await
         .expect("ready response");
     assert_eq!(ready_resp.status(), StatusCode::OK);
@@ -1746,5 +1780,66 @@ async fn manager_audit_log_redacts_bank_details() {
     assert_eq!(
         body["data"][0]["new_values"]["bank_account_number"],
         SEEDED_BANK_ACCOUNT
+    );
+}
+
+#[tokio::test]
+async fn auth_me_emits_no_store_and_skips_gzip_compression() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let token = token_for(&pool, company_id, "admin").await;
+    let app = app_for(pool).await.layer(routes::compression_layer());
+
+    let mut req = request("GET", "/api/auth/me", &token, "");
+    req.headers_mut().insert(
+        header::ACCEPT_ENCODING,
+        header::HeaderValue::from_static("gzip"),
+    );
+    let response = app.oneshot(req).await.expect("auth/me response");
+    assert_eq!(response.status(), StatusCode::OK);
+    let cache_control = response
+        .headers()
+        .get(header::CACHE_CONTROL)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(
+        cache_control.contains("no-store"),
+        "expected no-store Cache-Control header, got {cache_control:?}"
+    );
+    assert_eq!(
+        response
+            .headers()
+            .get(header::PRAGMA)
+            .and_then(|v| v.to_str().ok()),
+        Some("no-cache")
+    );
+    assert!(
+        response.headers().get(header::CONTENT_ENCODING).is_none(),
+        "no-store auth response must not be gzip-compressed"
+    );
+
+    // Control route without no-store confirms CompressionLayer actively gzips normal responses.
+    let control = axum::Router::new()
+        .route("/ok", axum::routing::get(|| async { "a".repeat(256) }))
+        .layer(routes::compression_layer());
+    let control_req = Request::builder()
+        .method("GET")
+        .uri("/ok")
+        .header(header::ACCEPT_ENCODING, "gzip")
+        .body(Body::empty())
+        .expect("build control request");
+    let control_res = control
+        .oneshot(control_req)
+        .await
+        .expect("control response");
+    assert_eq!(control_res.status(), StatusCode::OK);
+    assert_eq!(
+        control_res
+            .headers()
+            .get(header::CONTENT_ENCODING)
+            .and_then(|v| v.to_str().ok()),
+        Some("gzip")
     );
 }

@@ -11,7 +11,8 @@ use crate::core::upload_path;
 use crate::models::audit::AuditRequestMeta;
 use crate::models::backup::{CompanyBackup, ImportResult};
 use crate::repositories::{
-    backup as backup_repo, companies, refresh_tokens, user_companies, user_sessions, users,
+    backup as backup_repo, companies, mfa_challenges, refresh_tokens, user_companies,
+    user_sessions, users,
 };
 use crate::services::audit_service;
 
@@ -24,6 +25,10 @@ const SUPPORTED_FORMAT_VERSIONS: [&str; 2] = ["1.0", "1.1"];
 
 /// `companies.geofence_mode` values permitted by `companies_geofence_mode_check`.
 const GEOFENCE_MODES: [&str; 3] = ["none", "warn", "enforce"];
+
+/// `companies.attendance_network_mode` values permitted by
+/// `companies_attendance_network_mode_check`.
+const NETWORK_MODES: [&str; 4] = ["none", "learn", "warn", "enforce"];
 
 /// `companies.attendance_method` values permitted by
 /// `companies_attendance_method_check`. NULL is also legal (nothing configured).
@@ -311,6 +316,15 @@ fn sanitize_attendance_config(backup: &mut CompanyBackup, warnings: &mut Vec<Str
         company.geofence_mode = Some("none".to_owned());
     }
 
+    if let Some(stored) = company.attendance_network_mode.as_deref()
+        && sanitize_choice(stored, &NETWORK_MODES).is_none()
+    {
+        warnings.push(format!(
+            "Backup attendance network mode \"{stored}\" is not one of none/learn/warn/enforce; network binding is left off on the restored company."
+        ));
+        company.attendance_network_mode = Some("none".to_owned());
+    }
+
     if let Some(stored) = company.attendance_method.as_deref()
         && sanitize_choice(stored, &ATTENDANCE_METHODS).is_none()
     {
@@ -356,6 +370,8 @@ pub async fn import_company(
     // out of the restore transaction and clear of the fail-closed id remaps.
     let file_plan = files::plan_restore(&backup.files);
     let broken_links = rewrite_attachment_urls(&mut backup, &file_plan);
+    let (validated_blobs, pre_blob_warnings) =
+        files::decode_and_validate_blobs(&backup.files, &file_plan);
 
     // Also above `pool.begin()`: every value the archive supplies for a
     // CHECK-constrained or trigger-guarded column is brought inside what the
@@ -518,13 +534,6 @@ pub async fn import_company(
         Vec::new()
     };
     let replaced_uploads = if is_overwrite {
-        crate::repositories::uploaded_files::list_stored_names_for_company(&mut *tx, new_company_id)
-            .await?
-    } else {
-        Vec::new()
-    };
-
-    if is_overwrite {
         warnings.push(format!(
             "Target company \"{new_company_name}\" data was overwritten from backup \"{}\".",
             backup.company.name,
@@ -536,11 +545,13 @@ pub async fn import_company(
         // also clears `notifications` and `bulk_import_sessions`, neither of
         // which is in `CompanyBackup` and both of which point at entities being
         // replaced wholesale.
-        companies::delete_company_data(&mut tx, new_company_id).await?;
+        let removed_uploads = companies::delete_company_data(&mut tx, new_company_id).await?;
         backup_repo::update_company(&mut *tx, new_company_id, &backup.company, now).await?;
+        removed_uploads
     } else {
         backup_repo::insert_company(&mut *tx, new_company_id, &backup.company).await?;
-    }
+        Vec::new()
+    };
 
     for pg in &backup.payroll_groups {
         backup_repo::insert_payroll_group(
@@ -593,6 +604,8 @@ pub async fn import_company(
     for user_id in &deactivated {
         user_sessions::revoke_all_for_user(&mut *tx, *user_id).await?;
         refresh_tokens::revoke_all_for_user(&mut *tx, *user_id).await?;
+        mfa_challenges::revoke_for_user(&mut *tx, *user_id).await?;
+        crate::repositories::push_subscriptions::revoke_all_for_user(&mut *tx, *user_id).await?;
     }
 
     for a in &backup.employee_allowances {
@@ -629,15 +642,48 @@ pub async fn import_company(
         backup_repo::insert_leave_type(&mut *tx, r(lt.id, "leave_types.id")?, new_company_id, lt)
             .await?;
     }
+    let mut clamped_leave_balances = 0usize;
     for lb in &backup.leave_balances {
+        let mut sanitized_lb = crate::models::backup::LeaveBalanceExport {
+            id: lb.id,
+            employee_id: lb.employee_id,
+            leave_type_id: lb.leave_type_id,
+            year: lb.year,
+            entitled_days: lb.entitled_days,
+            taken_days: lb.taken_days,
+            pending_days: lb.pending_days,
+            carried_forward: lb.carried_forward,
+            created_at: lb.created_at,
+            updated_at: lb.updated_at,
+        };
+        let mut clamped = false;
+        for val in [
+            &mut sanitized_lb.entitled_days,
+            &mut sanitized_lb.taken_days,
+            &mut sanitized_lb.pending_days,
+            &mut sanitized_lb.carried_forward,
+        ] {
+            if *val < rust_decimal::Decimal::ZERO {
+                *val = rust_decimal::Decimal::ZERO;
+                clamped = true;
+            }
+        }
+        if clamped {
+            clamped_leave_balances += 1;
+        }
         backup_repo::insert_leave_balance(
             &mut *tx,
-            r(lb.id, "leave_balances.id")?,
-            r(lb.employee_id, "leave_balances.employee_id")?,
-            r(lb.leave_type_id, "leave_balances.leave_type_id")?,
-            lb,
+            r(sanitized_lb.id, "leave_balances.id")?,
+            r(sanitized_lb.employee_id, "leave_balances.employee_id")?,
+            r(sanitized_lb.leave_type_id, "leave_balances.leave_type_id")?,
+            &sanitized_lb,
         )
         .await?;
+    }
+    if clamped_leave_balances > 0 {
+        warnings.push(format!(
+            "Clamped negative day balance(s) to 0 in {clamped_leave_balances} legacy leave balance row(s)."
+        ));
     }
     for lr in &backup.leave_requests {
         backup_repo::insert_leave_request(
@@ -677,19 +723,43 @@ pub async fn import_company(
             r(ot.id, "overtime_applications.id")?,
             r(ot.employee_id, "overtime_applications.employee_id")?,
             new_company_id,
+            ro(ot.payroll_run_id, "overtime_applications.payroll_run_id")?,
             ot,
         )
         .await?;
     }
+    let emp_by_old_id: HashMap<Uuid, &crate::models::backup::EmployeeExport> =
+        backup.employees.iter().map(|e| (e.id, e)).collect();
     for pi in &backup.payroll_items {
+        let (bank_name, bank_account_number, bank_account_type) =
+            if pi.bank_name.is_none() && pi.bank_account_number.is_none() {
+                match emp_by_old_id.get(&pi.employee_id) {
+                    Some(e) => (
+                        e.bank_name.as_deref(),
+                        e.bank_account_number.as_deref(),
+                        e.bank_account_type.as_deref(),
+                    ),
+                    None => (
+                        pi.bank_name.as_deref(),
+                        pi.bank_account_number.as_deref(),
+                        pi.bank_account_type.as_deref(),
+                    ),
+                }
+            } else {
+                (
+                    pi.bank_name.as_deref(),
+                    pi.bank_account_number.as_deref(),
+                    pi.bank_account_type.as_deref(),
+                )
+            };
         backup_repo::insert_payroll_item(
             &mut *tx,
             r(pi.id, "payroll_items.id")?,
             r(pi.payroll_run_id, "payroll_items.payroll_run_id")?,
             r(pi.employee_id, "payroll_items.employee_id")?,
-            pi.bank_name.as_deref(),
-            pi.bank_account_number.as_deref(),
-            pi.bank_account_type.as_deref(),
+            bank_name,
+            bank_account_number,
+            bank_account_type,
             pi,
         )
         .await?;
@@ -844,6 +914,14 @@ pub async fn import_company(
         ));
     }
 
+    if let Some(mode) = backup.company.attendance_network_mode.as_deref()
+        && matches!(mode, "warn" | "enforce")
+    {
+        warnings.push(format!(
+            "Attendance network binding is set to \"{mode}\", but company backups do not include approved office networks; nothing will be enforced until a network is added."
+        ));
+    }
+
     // Older backup formats may omit one or more setup domains. Fill only
     // missing defaults before exposing the restored company. The partial unique
     // index on `(company_id) WHERE is_default` makes this ON CONFLICT DO NOTHING,
@@ -880,7 +958,7 @@ pub async fn import_company(
     tx.commit().await?;
 
     let (mut file_warnings, restored_names) =
-        files::restore_backup_files_with_names(&backup.files, &file_plan).await;
+        files::write_validated_blobs(validated_blobs, pre_blob_warnings).await;
     for stored_name in &restored_names {
         if let Err(err) =
             crate::repositories::uploaded_files::insert(pool, stored_name, new_company_id, None)
