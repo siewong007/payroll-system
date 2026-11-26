@@ -399,7 +399,7 @@ pub async fn enqueue_email(
         AppError::Validation(format!("{recipient_email} is not a valid email address"))
     })?;
 
-    if !config.smtp_enabled() || !SharedMailer::from_config(config).is_enabled() {
+    if !config.smtp_enabled() || from_mailbox(config).is_err() {
         return email_logs::insert_with_delivery_state(
             pool,
             company_id,

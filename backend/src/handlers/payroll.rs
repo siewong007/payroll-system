@@ -158,7 +158,9 @@ pub async fn list_run_audit_logs(
         .company_id
         .ok_or_else(|| AppError::Forbidden("No company assigned".into()))?;
 
-    let mut logs = payroll_service::list_run_audit_logs(&state.pool, company_id, id).await?;
+    let hide_privileged = crate::services::user_service::hides_privileged_users(&auth);
+    let mut logs =
+        payroll_service::list_run_audit_logs(&state.pool, company_id, id, hide_privileged).await?;
     crate::services::audit_service::redact_audit_logs(
         &mut logs,
         false,

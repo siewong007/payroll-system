@@ -39,6 +39,7 @@ fn test_config() -> AppConfig {
         smtp_from_email: None,
         smtp_from_name: None,
         trust_proxy_headers: false,
+        client_ip_header: None,
         turnstile_secret_key: None,
         turnstile_verify_url: "https://challenges.cloudflare.com/turnstile/v0/siteverify".into(),
         vapid_public_key: None,
@@ -403,6 +404,7 @@ async fn portal_create_claim_rejects_zero_and_negative_amounts() {
             &pool,
             employee_id,
             company_id,
+            user_id,
             CreateClaimRequest {
                 title: "Parking".into(),
                 description: None,

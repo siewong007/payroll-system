@@ -33,12 +33,16 @@ export function ErrorPage({ status, title, description, homePath, path }: ErrorP
   const navigate = useNavigate();
   const { t } = useTranslation();
   const { icon: Icon, iconClassName } = errorStyles[status];
+  const canGoBack =
+    typeof window === 'undefined' || !window.history.state || window.history.state.idx > 0;
 
   return (
-    <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-gray-50 dark:bg-slate-950 px-4 py-12">
+    <main className="relative flex min-h-[100dvh] items-center justify-center overflow-hidden bg-gray-50 dark:bg-slate-950 px-4 pt-[max(3rem,env(safe-area-inset-top))] pb-[max(3rem,env(safe-area-inset-bottom))]">
       <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-gray-300 dark:via-slate-700 to-transparent" />
-      <div className="absolute -left-32 top-20 h-72 w-72 rounded-full bg-gray-200/50 dark:bg-indigo-500/10 blur-3xl" />
-      <div className="absolute -right-32 bottom-20 h-72 w-72 rounded-full bg-gray-200/50 dark:bg-teal-500/10 blur-3xl" />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_15%_20%,rgba(99,102,241,0.08),transparent_45%),radial-gradient(circle_at_85%_80%,rgba(20,184,166,0.08),transparent_45%)]"
+      />
 
       <section className="relative w-full max-w-lg text-center" aria-labelledby="error-title">
         <BrandLogo variant="lockup-dark" className="mx-auto mb-10 h-10 w-auto rounded-xl" />
@@ -47,24 +51,26 @@ export function ErrorPage({ status, title, description, homePath, path }: ErrorP
           <Icon className="h-7 w-7" aria-hidden="true" />
         </div>
 
-        <p className="text-sm font-semibold tracking-[0.2em] text-gray-500 dark:text-slate-400">{t('errors.label', { status })}</p>
+        <p className="text-sm font-semibold tracking-[0.2em] text-gray-600 dark:text-slate-400">{t('errors.label', { status })}</p>
         <h1 id="error-title" className="mt-3 text-3xl font-bold tracking-tight text-gray-950 dark:text-slate-50 sm:text-4xl">
           {title}
         </h1>
         <p className="mx-auto mt-4 max-w-md text-base leading-7 text-gray-600 dark:text-slate-300">{description}</p>
 
         {path && (
-          <p className="mx-auto mt-4 max-w-full truncate rounded-lg border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 font-mono text-xs text-gray-500 dark:text-slate-400">
+          <p className="mx-auto mt-4 max-w-full truncate rounded-lg border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 font-mono text-xs text-gray-600 dark:text-slate-300">
             {path}
           </p>
         )}
 
         <div className="mt-8 flex flex-col-reverse justify-center gap-3 sm:flex-row">
-          <button type="button" onClick={() => navigate(-1)} className="btn-secondary">
-            <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-            {t('common.goBack')}
-          </button>
-          <Link to={homePath} className="btn-primary">
+          {canGoBack && (
+            <button type="button" onClick={() => navigate(-1)} className="btn-secondary w-full sm:w-auto">
+              <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+              {t('common.goBack')}
+            </button>
+          )}
+          <Link to={homePath} className="btn-primary w-full sm:w-auto">
             <Home className="h-4 w-4" aria-hidden="true" />
             {t('common.goHome')}
           </Link>
@@ -75,9 +81,9 @@ export function ErrorPage({ status, title, description, homePath, path }: ErrorP
 }
 
 function useHomePath() {
-  const { user } = useAuth();
+  const { user, isLoading } = useAuth();
 
-  if (!user) return '/login';
+  if (isLoading || !user) return '/login';
   if (!canUseAdminConsole(user)) return '/portal/profile';
   const home = defaultAdminHome(user);
   return home === '/dashboard' ? '/' : home;

@@ -243,6 +243,23 @@ fn is_identifying_v6(ip: Ipv6Addr) -> bool {
     if segments[0] & 0xfe00 == 0xfc00 {
         return false;
     }
+    // Only global unicast (2000::/3) is eligible.
+    if segments[0] & 0xe000 != 0x2000 {
+        return false;
+    }
+    // Teredo (2001:0000::/32), Benchmarking (2001:0002::/48),
+    // ORCHIDv1/v2 (2001:0010::/28, 2001:0020::/28), and 6to4 (2002::/16).
+    if segments[0] == 0x2001
+        && (segments[1] == 0x0000
+            || (segments[1] == 0x0002 && segments[2] == 0x0000)
+            || (segments[1] & 0xfff0) == 0x0010
+            || (segments[1] & 0xfff0) == 0x0020)
+    {
+        return false;
+    }
+    if segments[0] == 0x2002 {
+        return false;
+    }
     true
 }
 

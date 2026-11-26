@@ -193,6 +193,7 @@ pub async fn preview_letter(
     let company = company_service::get_company(&state.pool, company_id).await?;
 
     if let Some(employee_id) = req.employee_id {
+        auth.require_permission(Permission::ViewEmployees)?;
         // Employee-based preview: substitute variables
         let employee = employee_service::get_employee(&state.pool, employee_id, company_id).await?;
 
@@ -295,6 +296,7 @@ pub async fn send_letter(
     let company = company_service::get_company(&state.pool, company_id).await?;
 
     if let Some(employee_id) = req.employee_id {
+        auth.require_permission(Permission::ViewEmployees)?;
         // Employee-based send
         let employee = employee_service::get_employee(&state.pool, employee_id, company_id).await?;
 

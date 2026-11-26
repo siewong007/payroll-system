@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Plus, Building2, Pencil, Trash2 } from 'lucide-react';
+import { AlertTriangle, Plus, Building2, Loader2, Pencil, Trash2 } from 'lucide-react';
 import { listCompanies, createCompany, updateCompanyAdmin, deleteCompany } from '@/api/admin';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Modal } from '@/components/ui/Modal';
 import { FormField } from '@/components/ui/FormField';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/lib/toast';
 import { getErrorMessage } from '@/lib/utils';
@@ -80,8 +81,14 @@ export function CompanyManagement() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="spinner" />
+      <div className="space-y-6">
+        <PageHeader title={t('companies.title')} subtitle={t('companies.subtitle')} />
+        <div role="status" aria-label={t('common.loading')} className="card space-y-4">
+          <Skeleton className="h-6 w-48" />
+          <Skeleton className="h-12 w-full rounded-xl" />
+          <Skeleton className="h-12 w-full rounded-xl" />
+          <Skeleton className="h-12 w-full rounded-xl" />
+        </div>
       </div>
     );
   }
@@ -101,12 +108,12 @@ export function CompanyManagement() {
             }}
             className="btn-primary w-full sm:w-auto"
           >
-            <Plus className="w-4 h-4" /> {t('companies.add')}
+            <Plus className="w-4 h-4" aria-hidden="true" /> {t('companies.add')}
           </button>
         }
       />
 
-      {/* Companies Table */}
+      {/* Companies List / Table */}
       <div className="card p-0 overflow-hidden">
         {isError ? (
           <EmptyState
@@ -133,82 +140,157 @@ export function CompanyManagement() {
                 }}
                 className="btn-primary"
               >
-                <Plus className="w-4 h-4" /> {t('companies.add')}
+                <Plus className="w-4 h-4" aria-hidden="true" /> {t('companies.add')}
               </button>
             }
           />
         ) : (
-          <div className="overflow-x-auto">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>{t('companies.name')}</th>
-                  <th>{t('companies.regNo')}</th>
-                  <th>{t('companies.taxNo')}</th>
-                  <th>{t('common.email')}</th>
-                  <th>{t('companies.phone')}</th>
-                  <th className="text-center">{t('common.status')}</th>
-                  <th className="text-center">{t('common.actions')}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {companies.map((c) => (
-                  <tr key={c.id}>
-                    <td><span className="font-semibold text-gray-900 dark:text-slate-100">{c.name}</span></td>
-                    <td className="text-gray-500 dark:text-slate-400">{c.registration_number || '—'}</td>
-                    <td className="text-gray-500 dark:text-slate-400">{c.tax_number || '—'}</td>
-                    <td className="text-gray-500 dark:text-slate-400">{c.email || '—'}</td>
-                    <td className="text-gray-500 dark:text-slate-400">{c.phone || '—'}</td>
-                    <td className="text-center">
-                      <span className={`badge ${c.is_active !== false ? 'badge-approved' : 'badge-rejected'}`}>
-                        {c.is_active !== false ? t('common.active') : t('common.inactive')}
-                      </span>
-                    </td>
-                    <td className="text-center whitespace-nowrap">
-                      <div className="inline-flex items-center justify-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() => setEditCompany(c)}
-                          aria-label={t('common.editName', { name: c.name })}
-                          className="text-sm text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100 min-h-10 min-w-10 sm:min-h-8 sm:min-w-8 px-2.5 py-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors inline-flex items-center gap-1"
-                        >
-                          <Pencil className="w-3.5 h-3.5" aria-hidden="true" />
-                          <span>{t('common.edit')}</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setError('');
-                            setDeleteConfirmName('');
-                            setDeleteTarget(c);
-                          }}
-                          aria-label={t('common.deleteName', { name: c.name })}
-                          className="text-sm text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 min-h-10 min-w-10 sm:min-h-8 sm:min-w-8 px-2.5 py-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors inline-flex items-center gap-1"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
-                          <span>{t('common.delete')}</span>
-                        </button>
-                      </div>
-                    </td>
+          <>
+            {/* Mobile cards */}
+            <div className="sm:hidden divide-y divide-gray-100 dark:divide-slate-800">
+              {companies.map((c) => (
+                <div key={c.id} className="p-4 space-y-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="font-semibold text-gray-900 dark:text-slate-100 break-words">{c.name}</p>
+                      <p className="text-xs text-gray-600 dark:text-slate-400 mt-0.5 break-all">
+                        {c.email || c.phone || c.registration_number || '—'}
+                      </p>
+                    </div>
+                    <span className={`badge shrink-0 ${c.is_active !== false ? 'badge-approved' : 'badge-rejected'}`}>
+                      {c.is_active !== false ? t('common.active') : t('common.inactive')}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-xs text-gray-600 dark:text-slate-400">
+                    <div>
+                      <span className="font-medium text-gray-700 dark:text-slate-300">{t('companies.regNo')}: </span>
+                      <span>{c.registration_number || '—'}</span>
+                    </div>
+                    <div>
+                      <span className="font-medium text-gray-700 dark:text-slate-300">{t('companies.taxNo')}: </span>
+                      <span>{c.tax_number || '—'}</span>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setEditCompany(c)}
+                      aria-label={t('common.editName', { name: c.name })}
+                      className="btn-secondary flex-1 min-h-11 text-sm inline-flex items-center justify-center gap-1.5"
+                    >
+                      <Pencil className="w-3.5 h-3.5" aria-hidden="true" />
+                      <span>{t('common.edit')}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setError('');
+                        setDeleteConfirmName('');
+                        setDeleteTarget(c);
+                      }}
+                      aria-label={t('common.deleteName', { name: c.name })}
+                      className="flex-1 min-h-11 px-3 py-2 text-sm font-medium text-red-700 dark:text-red-300 border border-red-200 dark:border-red-500/30 rounded-xl hover:bg-red-50 dark:hover:bg-red-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] transition-colors inline-flex items-center justify-center gap-1.5"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+                      <span>{t('common.delete')}</span>
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Desktop table */}
+            <div className="hidden sm:block overflow-x-auto">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>{t('companies.name')}</th>
+                    <th>{t('companies.regNo')}</th>
+                    <th>{t('companies.taxNo')}</th>
+                    <th>{t('common.email')}</th>
+                    <th>{t('companies.phone')}</th>
+                    <th className="text-center">{t('common.status')}</th>
+                    <th className="text-center">{t('common.actions')}</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {companies.map((c) => (
+                    <tr key={c.id}>
+                      <td><span className="font-semibold text-gray-900 dark:text-slate-100">{c.name}</span></td>
+                      <td className="text-gray-600 dark:text-slate-300">{c.registration_number || '—'}</td>
+                      <td className="text-gray-600 dark:text-slate-300">{c.tax_number || '—'}</td>
+                      <td className="text-gray-600 dark:text-slate-300 break-all">{c.email || '—'}</td>
+                      <td className="text-gray-600 dark:text-slate-300">{c.phone || '—'}</td>
+                      <td className="text-center">
+                        <span className={`badge ${c.is_active !== false ? 'badge-approved' : 'badge-rejected'}`}>
+                          {c.is_active !== false ? t('common.active') : t('common.inactive')}
+                        </span>
+                      </td>
+                      <td className="text-center whitespace-nowrap">
+                        <div className="inline-flex items-center justify-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => setEditCompany(c)}
+                            aria-label={t('common.editName', { name: c.name })}
+                            className="text-sm text-gray-600 dark:text-slate-300 hover:text-gray-900 dark:hover:text-slate-100 min-h-10 min-w-10 sm:min-h-8 sm:min-w-8 px-2.5 py-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] transition-colors inline-flex items-center gap-1"
+                          >
+                            <Pencil className="w-3.5 h-3.5" aria-hidden="true" />
+                            <span>{t('common.edit')}</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setError('');
+                              setDeleteConfirmName('');
+                              setDeleteTarget(c);
+                            }}
+                            aria-label={t('common.deleteName', { name: c.name })}
+                            className="text-sm text-red-700 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 min-h-10 min-w-10 sm:min-h-8 sm:min-w-8 px-2.5 py-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] transition-colors inline-flex items-center gap-1"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+                            <span>{t('common.delete')}</span>
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </div>
 
       {/* Create Company Modal */}
       <Modal
         open={showCreate}
-        onClose={() => { setShowCreate(false); setForm({ name: '' }); setError(''); }}
+        onClose={() => { if (!createMutation.isPending) { setShowCreate(false); setForm({ name: '' }); setError(''); } }}
         title={t('companies.createTitle')}
         maxWidth="max-w-lg"
         footer={
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-            <button type="button" onClick={() => { setShowCreate(false); setForm({ name: '' }); setError(''); }} className="btn-secondary">{t('common.cancel')}</button>
-            <button type="submit" form="create-company-form" disabled={createMutation.isPending} className="btn-primary">
-              {createMutation.isPending ? t('common.creating') : t('companies.createTitle')}
+            <button
+              type="button"
+              disabled={createMutation.isPending}
+              onClick={() => { setShowCreate(false); setForm({ name: '' }); setError(''); }}
+              className="btn-secondary"
+            >
+              {t('common.cancel')}
+            </button>
+            <button
+              type="submit"
+              form="create-company-form"
+              disabled={createMutation.isPending}
+              className="btn-primary inline-flex items-center justify-center gap-2"
+            >
+              {createMutation.isPending ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                  {t('common.creating')}
+                </>
+              ) : (
+                t('companies.createTitle')
+              )}
             </button>
           </div>
         }
@@ -280,19 +362,33 @@ export function CompanyManagement() {
       {/* Delete Company Confirmation Modal */}
       <Modal
         open={deleteTarget !== null}
-        onClose={() => { setDeleteTarget(null); setDeleteConfirmName(''); setError(''); }}
+        onClose={() => { if (!deleteMutation.isPending) { setDeleteTarget(null); setDeleteConfirmName(''); setError(''); } }}
         title={t('companies.deleteTitle')}
         maxWidth="max-w-md"
         footer={
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-            <button type="button" onClick={() => { setDeleteTarget(null); setDeleteConfirmName(''); setError(''); }} className="btn-secondary">{t('common.cancel')}</button>
+            <button
+              type="button"
+              disabled={deleteMutation.isPending}
+              onClick={() => { setDeleteTarget(null); setDeleteConfirmName(''); setError(''); }}
+              className="btn-secondary"
+            >
+              {t('common.cancel')}
+            </button>
             <button
               type="button"
               onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
               disabled={!deleteTarget || deleteConfirmName !== deleteTarget.name || deleteMutation.isPending}
-              className="px-4 py-2 min-h-[44px] text-sm font-semibold text-white bg-red-600 rounded-xl hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="inline-flex items-center justify-center gap-2 px-4 py-2 min-h-[44px] text-sm font-semibold text-white bg-red-600 rounded-xl hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 transition-colors"
             >
-              {deleteMutation.isPending ? t('common.deleting') : t('companies.deleteTitle')}
+              {deleteMutation.isPending ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                  {t('common.deleting')}
+                </>
+              ) : (
+                t('companies.deleteTitle')
+              )}
             </button>
           </div>
         }
@@ -382,14 +478,30 @@ function EditCompanyModal({
   return (
     <Modal
       open
-      onClose={onClose}
+      onClose={() => {
+        if (!mutation.isPending) onClose();
+      }}
       title={t('companies.editTitle')}
       maxWidth="max-w-2xl"
       footer={
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-          <button type="button" onClick={onClose} className="btn-secondary">{t('common.cancel')}</button>
-          <button type="submit" form="edit-company-form" disabled={mutation.isPending} className="btn-primary">
-            {mutation.isPending ? t('common.saving') : t('common.saveChanges')}
+          <button type="button" disabled={mutation.isPending} onClick={onClose} className="btn-secondary">
+            {t('common.cancel')}
+          </button>
+          <button
+            type="submit"
+            form="edit-company-form"
+            disabled={mutation.isPending}
+            className="btn-primary inline-flex items-center justify-center gap-2"
+          >
+            {mutation.isPending ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                {t('common.saving')}
+              </>
+            ) : (
+              t('common.saveChanges')
+            )}
           </button>
         </div>
       }

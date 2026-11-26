@@ -115,6 +115,9 @@ pub struct PayrollItem {
 
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub bank_name: Option<String>,
+    pub bank_account_number: Option<String>,
+    pub bank_account_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -490,6 +493,27 @@ pub(crate) struct BulkPayrollData {
 /// `compute_payslip`, so the approval path rounded a different way (it did not
 /// round at all — it truncated, four times) and quoted an employee less than the
 /// run would pay them.
+pub const MAX_MONEY_SEN: i64 = 100_000_000_000;
+
+pub(crate) fn checked_round_sen(amount: Decimal) -> crate::core::error::AppResult<i64> {
+    use rust_decimal::RoundingStrategy;
+    use rust_decimal::prelude::ToPrimitive;
+
+    let sen = amount
+        .round_dp_with_strategy(0, RoundingStrategy::MidpointAwayFromZero)
+        .to_i64()
+        .ok_or_else(|| {
+            crate::core::error::AppError::BadRequest("Payroll calculation overflow".into())
+        })?;
+    if sen.abs() > MAX_MONEY_SEN {
+        return Err(crate::core::error::AppError::BadRequest(
+            "Calculated monetary amount exceeds supported maximum".into(),
+        ));
+    }
+    Ok(sen)
+}
+
+#[cfg(test)]
 pub(crate) fn round_sen(amount: Decimal) -> i64 {
     use rust_decimal::RoundingStrategy;
     use rust_decimal::prelude::ToPrimitive;
@@ -578,6 +602,7 @@ impl OvertimeSettings {
     /// Rate one overtime claim. The single authority both the payroll engine and
     /// overtime approval price from, so a quoted amount and a paid amount cannot
     /// disagree.
+    #[cfg(test)]
     pub(crate) fn rate_overtime(
         &self,
         hourly_rate: Option<i64>,
@@ -591,6 +616,27 @@ impl OvertimeSettings {
             rate_sen: round_sen(base * multiplier),
             amount_sen: round_sen(base * multiplier * hours),
         }
+    }
+
+    pub(crate) fn try_rate_overtime(
+        &self,
+        hourly_rate: Option<i64>,
+        basic_salary: i64,
+        ot_type: &str,
+        hours: Decimal,
+    ) -> crate::core::error::AppResult<OvertimeRating> {
+        let base = self.hourly_rate(hourly_rate, basic_salary);
+        let multiplier = self.multiplier_for(ot_type);
+        let rate_dec = base.checked_mul(multiplier).ok_or_else(|| {
+            crate::core::error::AppError::BadRequest("Overtime rate overflow".into())
+        })?;
+        let amt_dec = rate_dec.checked_mul(hours).ok_or_else(|| {
+            crate::core::error::AppError::BadRequest("Overtime amount overflow".into())
+        })?;
+        Ok(OvertimeRating {
+            rate_sen: checked_round_sen(rate_dec)?,
+            amount_sen: checked_round_sen(amt_dec)?,
+        })
     }
 }
 
@@ -665,6 +711,73 @@ pub struct PayslipSourceLine {
     pub is_taxable: bool,
     pub effective_from: Option<NaiveDate>,
     pub effective_to: Option<NaiveDate>,
+}
+
+/// One raw unprocessed row from `payroll_entries` loaded in a single pass for `gather_run_inputs`.
+#[derive(Debug, Clone)]
+pub struct StagedEntryRow {
+    pub id: Uuid,
+    pub employee_id: Uuid,
+    pub category: String,
+    pub item_type: String,
+    pub description: String,
+    pub amount: i64,
+    pub quantity: Option<Decimal>,
+    pub is_taxable: bool,
+}
+
+/// Aggregated item-level figures summed in one pass for `journal_preview`.
+#[derive(Debug)]
+pub struct RunJournalItemTotals {
+    pub total_claims: i64,
+    pub total_ptptn: i64,
+    pub total_tabung_haji: i64,
+    pub total_other_deductions: i64,
+    pub total_unpaid_leave: i64,
+}
+
+/// Parameters for one row in `payroll_items::insert_batch`.
+#[derive(Debug, Clone)]
+pub struct PayrollItemBatchInsert {
+    pub id: Uuid,
+    pub employee_id: Uuid,
+    pub basic_salary: i64,
+    pub gross_salary: i64,
+    pub taxable_gross: i64,
+    pub total_allowances: i64,
+    pub total_overtime: i64,
+    pub total_claims: i64,
+    pub epf_employee: i64,
+    pub epf_employer: i64,
+    pub socso_employee: i64,
+    pub socso_employer: i64,
+    pub eis_employee: i64,
+    pub eis_employer: i64,
+    pub pcb_amount: i64,
+    pub zakat_amount: i64,
+    pub ptptn_amount: i64,
+    pub tabung_haji_amount: i64,
+    pub total_other_deductions: i64,
+    pub total_deductions: i64,
+    pub net_salary: i64,
+    pub employer_cost: i64,
+    pub ytd_gross: i64,
+    pub ytd_epf_employee: i64,
+    pub ytd_pcb: i64,
+    pub ytd_socso_employee: i64,
+    pub ytd_eis_employee: i64,
+    pub ytd_zakat: i64,
+    pub ytd_net: i64,
+    pub total_bonus: i64,
+    pub total_commission: i64,
+    pub working_days: Option<i32>,
+    pub days_worked: Option<Decimal>,
+    pub is_prorated: bool,
+    pub unpaid_leave_deduction: i64,
+    pub unpaid_leave_days: Decimal,
+    pub bank_name: Option<String>,
+    pub bank_account_number: Option<String>,
+    pub bank_account_type: Option<String>,
 }
 
 #[derive(Debug)]
@@ -770,7 +883,7 @@ pub struct PayrollStatusCount {
 }
 
 /// An employee surfaced by an action-queue check (number + name for display).
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ActionEmployeeRef {
     pub employee_id: Uuid,
     pub employee_number: String,

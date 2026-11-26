@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   AlertCircle,
   AlertTriangle,
+  Loader2,
   LogIn,
   LogOut,
   MapPin,
@@ -40,6 +41,7 @@ export function ManualEntryModal({
   presetEmployee?: { id: string; label: string };
 }) {
   const { t } = useTranslation();
+  const formId = useId();
   const queryClient = useQueryClient();
   const [form, setForm] = useState({
     employee_id: presetEmployee?.id ?? '',
@@ -89,21 +91,56 @@ export function ManualEntryModal({
   };
 
   return (
-    <Modal open onClose={onClose} title={t('attendance.manual.title')} maxWidth="max-w-md">
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <span className="form-label">{t('common.employee')}</span>
-          {presetEmployee ? (
-            <div className="px-3 py-2 bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg text-sm text-gray-800 dark:text-slate-100">
-              {presetEmployee.label}
-            </div>
-          ) : (
-            <EmployeePicker
-              value={form.employee_id}
-              onChange={(id) => setForm((p) => ({ ...p, employee_id: id }))}
-            />
-          )}
+    <Modal
+      open
+      onClose={() => {
+        if (!mutation.isPending) onClose();
+      }}
+      title={t('attendance.manual.title')}
+      maxWidth="max-w-md"
+      footer={
+        <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={mutation.isPending}
+            className="btn-secondary"
+          >
+            {t('common.cancel')}
+          </button>
+          <button
+            type="submit"
+            form={formId}
+            disabled={mutation.isPending}
+            className="btn-primary inline-flex items-center justify-center gap-2"
+          >
+            {mutation.isPending ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                {t('common.saving')}
+              </>
+            ) : (
+              t('common.save')
+            )}
+          </button>
         </div>
+      }
+    >
+      <form id={formId} onSubmit={handleSubmit} className="space-y-4">
+        <FormField label={t('common.employee')} required>
+          {() =>
+            presetEmployee ? (
+              <div className="px-3 py-2 bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg text-sm text-gray-800 dark:text-slate-100">
+                {presetEmployee.label}
+              </div>
+            ) : (
+              <EmployeePicker
+                value={form.employee_id}
+                onChange={(id) => setForm((p) => ({ ...p, employee_id: id }))}
+              />
+            )
+          }
+        </FormField>
         <FormField label={t('attendance.manual.checkIn')} required>
           {(aria) => (
             <input
@@ -121,6 +158,7 @@ export function ManualEntryModal({
             <input
               {...aria}
               type="datetime-local"
+              min={form.check_in_at || undefined}
               value={form.check_out_at}
               onChange={(e) => setForm((p) => ({ ...p, check_out_at: e.target.value }))}
               className="form-input"
@@ -156,19 +194,11 @@ export function ManualEntryModal({
           )}
         </FormField>
         {error && (
-          <p className="text-sm text-red-600 dark:text-red-400 flex items-center gap-1">
-            <AlertCircle className="w-3.5 h-3.5" />
+          <p role="alert" className="text-sm text-red-600 dark:text-red-400 flex items-center gap-1">
+            <AlertCircle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
             {error}
           </p>
         )}
-        <div className="flex gap-3 pt-2">
-          <button type="button" onClick={onClose} className="btn-secondary flex-1">
-            {t('common.cancel')}
-          </button>
-          <button type="submit" disabled={mutation.isPending} className="btn-primary flex-1">
-            {mutation.isPending ? t('common.saving') : t('common.save')}
-          </button>
-        </div>
       </form>
     </Modal>
   );
@@ -182,6 +212,7 @@ export function EditAttendanceModal({
   onClose: () => void;
 }) {
   const { t } = useTranslation();
+  const formId = useId();
   const queryClient = useQueryClient();
   const [form, setForm] = useState({
     check_in_at: toDateTimeLocalValue(record.check_in_at),
@@ -232,11 +263,41 @@ export function EditAttendanceModal({
   };
 
   return (
-    <Modal open onClose={onClose} title={t('attendance.edit.title')} maxWidth="max-w-md">
+    <Modal
+      open
+      onClose={() => {
+        if (!mutation.isPending) {
+          onClose();
+        }
+      }}
+      title={t('attendance.edit.title')}
+      maxWidth="max-w-md"
+      footer={
+        <div className="flex flex-col-reverse sm:flex-row justify-end gap-3">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={mutation.isPending}
+            className="btn-secondary w-full sm:w-auto"
+          >
+            {t('common.cancel')}
+          </button>
+          <button
+            type="submit"
+            form={formId}
+            disabled={mutation.isPending}
+            className="btn-primary w-full sm:w-auto"
+          >
+            {mutation.isPending && <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />}
+            {mutation.isPending ? t('common.saving') : t('common.saveChanges')}
+          </button>
+        </div>
+      }
+    >
       <p className="text-sm text-gray-500 dark:text-slate-400 -mt-2 mb-4">
         {record.full_name} ({record.employee_number})
       </p>
-      <form onSubmit={handleSubmit} className="space-y-4">
+      <form id={formId} onSubmit={handleSubmit} className="space-y-4">
         <FormField label={t('attendance.manual.checkIn')} required>
           {(aria) => (
             <input
@@ -257,6 +318,7 @@ export function EditAttendanceModal({
                   {...aria}
                   type="datetime-local"
                   value={form.check_out_at}
+                  min={form.check_in_at || undefined}
                   onChange={(e) => setForm((p) => ({ ...p, check_out_at: e.target.value }))}
                   className="form-input flex-1 min-w-0"
                 />
@@ -264,11 +326,11 @@ export function EditAttendanceModal({
                   <button
                     type="button"
                     onClick={() => setForm((p) => ({ ...p, check_out_at: '' }))}
-                    className="btn-secondary !py-2 !px-2.5 text-xs shrink-0"
+                    className="btn-secondary min-h-11 sm:min-h-9 !py-2 !px-2.5 text-xs shrink-0"
                     title={t('attendance.edit.clearCheckOut')}
                     aria-label={t('attendance.edit.clearCheckOut')}
                   >
-                    <X className="w-3.5 h-3.5" />
+                    <X className="w-3.5 h-3.5" aria-hidden="true" />
                     <span className="hidden sm:inline">{t('attendance.edit.clearCheckOut')}</span>
                   </button>
                 )}
@@ -277,7 +339,7 @@ export function EditAttendanceModal({
           </FormField>
           {hadCheckOut && !form.check_out_at && (
             <p className="mt-1 text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
-              <AlertTriangle className="w-3 h-3 shrink-0" />
+              <AlertTriangle className="w-3 h-3 shrink-0" aria-hidden="true" />
               {t('attendance.edit.reopenWarning')}
             </p>
           )}
@@ -319,6 +381,7 @@ export function EditAttendanceModal({
             <input
               {...aria}
               type="text"
+              required
               value={form.reason}
               onChange={(e) => setForm((p) => ({ ...p, reason: e.target.value }))}
               placeholder={t('attendance.edit.reasonPlaceholder')}
@@ -328,19 +391,11 @@ export function EditAttendanceModal({
           )}
         </FormField>
         {error && (
-          <p className="text-sm text-red-600 dark:text-red-400 flex items-center gap-1">
-            <AlertCircle className="w-3.5 h-3.5" />
+          <p role="alert" className="text-sm text-red-600 dark:text-red-400 flex items-center gap-1.5">
+            <AlertCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
             {error}
           </p>
         )}
-        <div className="flex gap-3 pt-2">
-          <button type="button" onClick={onClose} className="btn-secondary flex-1">
-            {t('common.cancel')}
-          </button>
-          <button type="submit" disabled={mutation.isPending} className="btn-primary flex-1">
-            {mutation.isPending ? t('common.saving') : t('common.saveChanges')}
-          </button>
-        </div>
       </form>
     </Modal>
   );
@@ -378,35 +433,43 @@ export function RecordCard({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="font-medium text-gray-900 dark:text-slate-100 line-clamp-2">{r.full_name}</p>
-          <p className="text-xs text-gray-400 dark:text-slate-500 truncate">
+          <p className="text-xs text-gray-500 dark:text-slate-400 truncate">
             {r.employee_number} · {formatDate(r.check_in_at, timeZone)}
           </p>
         </div>
-        <div className="flex items-center gap-1.5 shrink-0">
+        <div className="flex flex-wrap items-center justify-end gap-1.5 shrink-0">
           {statusCfg && (
             <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${statusCfg}`}>
               {attStatusLabel(r.status)}
             </span>
           )}
           {r.is_outside_geofence && (
-            <span title={t('attendance.records.outsideGeofence')} className="text-amber-500 dark:text-amber-400">
-              <AlertTriangle className="w-4 h-4" aria-label={t('attendance.records.outsideGeofence')} />
+            <span
+              title={t('attendance.records.outsideGeofence')}
+              className="inline-flex items-center gap-1 rounded-full bg-amber-50 dark:bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300"
+            >
+              <AlertTriangle className="w-3.5 h-3.5" aria-hidden="true" />
+              <span>{t('attendance.records.outsideGeofence')}</span>
             </span>
           )}
           {r.is_offsite_network && (
-            <span title={t('attendance.records.offsiteNetwork')} className="text-amber-600 dark:text-amber-400">
-              <WifiOff className="w-4 h-4" aria-label={t('attendance.records.offsiteNetwork')} />
+            <span
+              title={t('attendance.records.offsiteNetwork')}
+              className="inline-flex items-center gap-1 rounded-full bg-amber-50 dark:bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300"
+            >
+              <WifiOff className="w-3.5 h-3.5" aria-hidden="true" />
+              <span>{t('attendance.records.offsiteNetwork')}</span>
             </span>
           )}
           {canEdit && (
             <button
               type="button"
               onClick={onEdit}
-              className="-mr-1 min-h-10 min-w-10 flex items-center justify-center rounded-lg text-gray-400 dark:text-slate-500 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors"
+              className="-mr-1 min-h-11 min-w-11 flex items-center justify-center rounded-lg text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
               title={t('attendance.records.editRecord')}
-              aria-label={t('attendance.records.editRecord')}
+              aria-label={`${t('attendance.records.editRecord')} \u2014 ${r.full_name}`}
             >
-              <Pencil className="w-4 h-4" />
+              <Pencil className="w-4 h-4" aria-hidden="true" />
             </button>
           )}
         </div>
@@ -414,20 +477,20 @@ export function RecordCard({
 
       <div className="mt-3 grid grid-cols-2 gap-3">
         <div>
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400">
             {t('attendance.records.checkIn')}
           </p>
           <p className="mt-0.5 flex items-center gap-1.5 text-sm tabular-nums text-gray-700 dark:text-slate-200">
-            <LogIn className="w-3.5 h-3.5 shrink-0 text-emerald-500 dark:text-emerald-400" />
+            <LogIn className="w-3.5 h-3.5 shrink-0 text-emerald-500 dark:text-emerald-400" aria-hidden="true" />
             {isAbsentPlaceholder ? '—' : formatTime(r.check_in_at, timeZone)}
           </p>
         </div>
         <div>
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400">
             {t('attendance.records.checkOut')}
           </p>
           <p className="mt-0.5 flex items-center gap-1.5 text-sm tabular-nums text-gray-700 dark:text-slate-200">
-            <LogOut className="w-3.5 h-3.5 shrink-0 text-gray-400 dark:text-slate-500" />
+            <LogOut className="w-3.5 h-3.5 shrink-0 text-gray-500 dark:text-slate-400" aria-hidden="true" />
             {isAbsentPlaceholder ? '—' : formatTime(r.check_out_at, timeZone)}
             {overnightOut && (
               <span className="rounded bg-gray-100 dark:bg-slate-800 px-1 py-px text-[10px] font-medium text-gray-600 dark:text-slate-300">
@@ -449,13 +512,13 @@ export function RecordCard({
             : '—'}
           {r.overtime_hours != null && Number(r.overtime_hours) > 0 && (
             <span className="ml-1 text-amber-600 dark:text-amber-400 font-medium">
-              <Timer className="w-3 h-3 inline" />{' '}
+              <Timer className="w-3 h-3 inline" aria-hidden="true" />{' '}
               {t('attendance.hoursOtShort', { value: Number(r.overtime_hours).toFixed(1) })}
             </span>
           )}
         </span>
         <span className={`flex items-center gap-1.5 ${methodCfg?.color ?? 'text-gray-500 dark:text-slate-400'}`}>
-          <MethodIcon className="w-3.5 h-3.5" />
+          <MethodIcon className="w-3.5 h-3.5" aria-hidden="true" />
           <span className="font-medium">{methodCfg ? attMethodLabel(r.method) : r.method}</span>
         </span>
         {r.latitude && r.longitude && (
@@ -463,9 +526,9 @@ export function RecordCard({
             href={`https://maps.google.com/?q=${r.latitude},${r.longitude}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-1 text-sky-600 dark:text-sky-400 hover:text-sky-700 dark:hover:text-sky-300"
+            className="min-h-9 inline-flex items-center gap-1 text-sky-600 dark:text-sky-400 hover:text-sky-700 dark:hover:text-sky-300 hover:underline"
           >
-            <MapPin className="w-3.5 h-3.5" />
+            <MapPin className="w-3.5 h-3.5" aria-hidden="true" />
             {t('attendance.records.checkInLocation')}
           </a>
         )}
@@ -474,9 +537,9 @@ export function RecordCard({
             href={`https://maps.google.com/?q=${r.checkout_latitude},${r.checkout_longitude}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-1 text-teal-600 dark:text-teal-400 hover:text-teal-700 dark:hover:text-teal-300"
+            className="min-h-9 inline-flex items-center gap-1 text-teal-600 dark:text-teal-400 hover:text-teal-700 dark:hover:text-teal-300 hover:underline"
           >
-            <MapPin className="w-3.5 h-3.5" />
+            <MapPin className="w-3.5 h-3.5" aria-hidden="true" />
             {t('attendance.records.checkOutLocation')}
           </a>
         )}

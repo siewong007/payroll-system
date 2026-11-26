@@ -1,7 +1,7 @@
-import { useId, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, Loader2 } from 'lucide-react';
 import {
   createEmployee,
   getEmployee,
@@ -12,10 +12,12 @@ import { getPayrollGroups } from '@/api/payroll';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { FormField } from '@/components/ui/FormField';
 import { Modal } from '@/components/ui/Modal';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { stripPayrollFields } from '@/lib/employeeFields';
 import { usePermissions } from '@/lib/usePermissions';
 import { useConfirm } from '@/lib/confirm';
 import { useToast } from '@/lib/toast';
+import { useUnsavedChanges } from '@/lib/useUnsavedChanges';
 import { getErrorMessage, todayLocalDate } from '@/lib/utils';
 import type { CreateEmployeeRequest, Employee, UpdateEmployeeRequest } from '@/types';
 
@@ -145,8 +147,15 @@ export function EmployeeFormModal({
     return (
       <Modal open onClose={onClose} title={title} maxWidth="max-w-3xl">
         {loadingEmployee ? (
-          <div className="flex items-center justify-center py-12">
-            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-gray-900 dark:border-slate-200" />
+          <div
+            role="status"
+            aria-busy="true"
+            aria-label={t('common.loading')}
+            className="space-y-4 py-2"
+          >
+            <Skeleton className="h-24 w-full rounded-xl" />
+            <Skeleton className="h-32 w-full rounded-xl" />
+            <Skeleton className="h-24 w-full rounded-xl" />
           </div>
         ) : isError ? (
           <EmptyState
@@ -160,9 +169,7 @@ export function EmployeeFormModal({
             }
           />
         ) : (
-          <div className="text-center py-12 text-sm text-gray-500 dark:text-slate-400">
-            {t('employees.notFound')}
-          </div>
+          <EmptyState compact icon={AlertTriangle} title={t('employees.notFound')} />
         )}
       </Modal>
     );
@@ -202,6 +209,7 @@ function EmployeeFormContent({
   const toast = useToast();
   const confirm = useConfirm();
   const formId = useId();
+  const errorRef = useRef<HTMLDivElement>(null);
   const [defaultJoinedDate] = useState(() => todayLocalDate());
 
   const initialState = useMemo(() => {
@@ -260,6 +268,14 @@ function EmployeeFormContent({
       salaryDisplay !== initialState.salaryDisplay ||
       zakatDisplay !== initialState.zakatDisplay ||
       ptptnDisplay !== initialState.ptptnDisplay);
+
+  useUnsavedChanges(isDirty);
+
+  useEffect(() => {
+    if (mutation.isError) {
+      errorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }, [mutation.isError]);
 
   const handleRequestClose = async () => {
     if (mutation.isPending) return;
@@ -399,52 +415,58 @@ function EmployeeFormContent({
   };
 
   const sectionClass =
-    'bg-gray-50 dark:bg-slate-800/50 rounded-xl border border-gray-100 dark:border-slate-800 p-5 sm:p-6';
+    'bg-gray-50 dark:bg-slate-800/50 rounded-xl border border-gray-100 dark:border-slate-800 p-4 sm:p-6';
   const sectionTitleClass =
     'text-xs font-bold text-gray-500 dark:text-slate-400 uppercase tracking-wider mb-4';
 
   return (
-    <Modal
-      open
-      onClose={handleRequestClose}
-      title={mode === 'create' ? t('employees.createTitle') : t('employees.editTitle')}
-      maxWidth="max-w-3xl"
-      footer={
-        <div className="flex flex-col-reverse sm:flex-row justify-end gap-3">
-          <button
-            type="button"
-            onClick={handleRequestClose}
-            disabled={mutation.isPending}
-            className="btn-secondary"
-          >
-            {t('common.cancel')}
-          </button>
-          <button
-            type="submit"
-            form={formId}
-            disabled={mutation.isPending}
-            className="btn-primary"
-          >
-            {mutation.isPending
-              ? mode === 'create'
-                ? t('common.creating')
-                : t('common.saving')
-              : mode === 'create'
-                ? t('employees.createSubmit')
-                : t('common.saveChanges')}
-          </button>
-        </div>
-      }
-    >
-      <form id={formId} onSubmit={handleSubmit} className="space-y-6">
-        {mutation.isError && (
-          <div className="bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-300 text-sm px-4 py-3 rounded-xl border border-red-100 dark:border-red-500/30">
-            {getErrorMessage(
-              mutation.error,
-              t(mode === 'create' ? 'employees.createFailed' : 'employees.updateFailed'),
-            )}
+    <>
+      <Modal
+        open={accountDialog === null}
+        onClose={handleRequestClose}
+        title={mode === 'create' ? t('employees.createTitle') : t('employees.editTitle')}
+        maxWidth="max-w-3xl"
+        footer={
+          <div className="flex flex-col-reverse sm:flex-row justify-end gap-3">
+            <button
+              type="button"
+              onClick={handleRequestClose}
+              disabled={mutation.isPending}
+              className="btn-secondary"
+            >
+              {t('common.cancel')}
+            </button>
+            <button
+              type="submit"
+              form={formId}
+              disabled={mutation.isPending}
+              className="btn-primary"
+            >
+              {mutation.isPending && <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />}
+              {mutation.isPending
+                ? mode === 'create'
+                  ? t('common.creating')
+                  : t('common.saving')
+                : mode === 'create'
+                  ? t('employees.createSubmit')
+                  : t('common.saveChanges')}
+            </button>
           </div>
-        )}
+        }
+      >
+        <form id={formId} onSubmit={handleSubmit} className="space-y-6">
+          {mutation.isError && (
+            <div
+              ref={errorRef}
+              role="alert"
+              className="bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-300 text-sm px-4 py-3 rounded-xl border border-red-100 dark:border-red-500/30"
+            >
+              {getErrorMessage(
+                mutation.error,
+                t(mode === 'create' ? 'employees.createFailed' : 'employees.updateFailed'),
+              )}
+            </div>
+          )}
 
         {/* Personal Information */}
         <section className={sectionClass}>
@@ -733,11 +755,12 @@ function EmployeeFormContent({
                     <input
                       {...aria}
                       type="number"
+                      inputMode="decimal"
                       min="0"
                       step="0.01"
                       value={salaryDisplay}
                       onChange={(e) => handleSalaryChange(e.target.value)}
-                      className="form-input"
+                      className="form-input tabular-nums"
                       required
                       placeholder={t('employees.form.salaryPlaceholder')}
                     />
@@ -807,7 +830,7 @@ function EmployeeFormContent({
                   */}
                   {!form.is_active && !form.date_resigned && (
                     <p className="mt-1.5 text-xs text-amber-700 dark:text-amber-300 flex items-start gap-1.5">
-                      <AlertTriangle className="w-3.5 h-3.5 mt-px shrink-0" />
+                      <AlertTriangle className="w-3.5 h-3.5 mt-px shrink-0" aria-hidden="true" />
                       <span>{t('employees.form.inactiveNoResignWarning')}</span>
                     </p>
                   )}
@@ -980,15 +1003,16 @@ function EmployeeFormContent({
                   <input
                     {...aria}
                     type="number"
+                    inputMode="numeric"
                     min="0"
                     value={form.num_children ?? 0}
                     onChange={(e) => updateField('num_children', Math.max(0, parseInt(e.target.value, 10) || 0))}
-                    className="form-input"
+                    className="form-input tabular-nums"
                   />
                 )}
               </FormField>
               <div className="md:col-span-2 flex flex-wrap items-center gap-6 pt-2">
-                <label className="flex items-center gap-2.5 cursor-pointer">
+                <label className="min-h-11 sm:min-h-0 flex items-center gap-2.5 cursor-pointer">
                   <input
                     type="checkbox"
                     checked={form.is_muslim || false}
@@ -1000,14 +1024,14 @@ function EmployeeFormContent({
                         setZakatDisplay('');
                       }
                     }}
-                    className="rounded border-gray-300 dark:border-slate-700 w-4 h-4 text-gray-900 focus:ring-black"
+                    className="rounded border-gray-300 dark:border-slate-700 w-4 h-4 accent-[var(--accent-1)]"
                   />
                   <span className="text-sm font-medium text-gray-700 dark:text-slate-200">
                     {t('employees.fields.muslim')}
                   </span>
                 </label>
                 {form.is_muslim && (
-                  <label className="flex items-center gap-2.5 cursor-pointer">
+                  <label className="min-h-11 sm:min-h-0 flex items-center gap-2.5 cursor-pointer">
                     <input
                       type="checkbox"
                       checked={form.zakat_eligible || false}
@@ -1018,7 +1042,7 @@ function EmployeeFormContent({
                           setZakatDisplay('');
                         }
                       }}
-                      className="rounded border-gray-300 dark:border-slate-700 w-4 h-4 text-gray-900 focus:ring-black"
+                      className="rounded border-gray-300 dark:border-slate-700 w-4 h-4 accent-[var(--accent-1)]"
                     />
                     <span className="text-sm font-medium text-gray-700 dark:text-slate-200">
                       {t('employees.form.zakatEligible')}
@@ -1032,12 +1056,13 @@ function EmployeeFormContent({
                     <input
                       {...aria}
                       type="number"
+                      inputMode="decimal"
                       min="0"
                       step="0.01"
                       value={zakatDisplay}
                       onChange={(e) => handleZakatChange(e.target.value)}
                       placeholder="0.00"
-                      className="form-input"
+                      className="form-input tabular-nums"
                     />
                   )}
                 </FormField>
@@ -1047,93 +1072,95 @@ function EmployeeFormContent({
                   <input
                     {...aria}
                     type="number"
+                    inputMode="decimal"
                     min="0"
                     step="0.01"
                     value={ptptnDisplay}
                     onChange={(e) => handlePtptnChange(e.target.value)}
                     placeholder="0.00"
-                    className="form-input"
+                    className="form-input tabular-nums"
                   />
                 )}
               </FormField>
             </div>
           </section>
         )}
-
-        {/* Account Created Dialog */}
-        <Modal
-          open={accountDialog !== null}
-          onClose={() => {
-            setAccountDialog(null);
-            onClose();
-          }}
-          title={
-            accountDialog?.created
-              ? t('employees.account.createdTitle')
-              : t('employees.account.noticeTitle')
-          }
-          maxWidth="max-w-md"
-          footer={
-            <div className="flex justify-end">
-              <button
-                type="button"
-                onClick={() => {
-                  setAccountDialog(null);
-                  onClose();
-                }}
-                className="btn-primary"
-              >
-                {t('common.done')}
-              </button>
-            </div>
-          }
-        >
-          {accountDialog && (
-            <div className="space-y-4">
-              {accountDialog.created ? (
-                <>
-                  <p className="text-sm text-gray-600 dark:text-slate-300">
-                    {t('employees.account.createdBody')}
-                  </p>
-                  <div className="bg-gray-50 dark:bg-slate-950/60 rounded-xl p-4 space-y-3">
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-500 dark:text-slate-400">{t('common.email')}</span>
-                      <span className="font-medium text-gray-900 dark:text-slate-100">
-                        {accountDialog.email}
-                      </span>
-                    </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-500 dark:text-slate-400">
-                        {t('employees.account.role')}
-                      </span>
-                      <span className="font-medium text-gray-900 dark:text-slate-100">
-                        {t(`roles.${accountDialog.role}`, { defaultValue: accountDialog.role })}
-                      </span>
-                    </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-500 dark:text-slate-400">
-                        {t('employees.account.defaultPassword')}
-                      </span>
-                      <span className="font-mono font-medium text-gray-900 dark:text-slate-100">
-                        {accountDialog.default_password}
-                      </span>
-                    </div>
-                  </div>
-                  <p className="text-xs text-amber-600 dark:text-amber-300 bg-amber-50 dark:bg-amber-500/10 rounded-lg px-3 py-2">
-                    {t('employees.account.adviseChange')}
-                  </p>
-                </>
-              ) : (
-                <div className="bg-amber-50 dark:bg-amber-500/10 rounded-xl p-4">
-                  <p className="text-sm text-amber-800 dark:text-amber-200">
-                    {accountDialog.message}
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
-        </Modal>
       </form>
     </Modal>
+
+      {/* Account Created Dialog */}
+      <Modal
+        open={accountDialog !== null}
+        onClose={() => {
+          setAccountDialog(null);
+          onClose();
+        }}
+        title={
+          accountDialog?.created
+            ? t('employees.account.createdTitle')
+            : t('employees.account.noticeTitle')
+        }
+        maxWidth="max-w-md"
+        footer={
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={() => {
+                setAccountDialog(null);
+                onClose();
+              }}
+              className="btn-primary w-full sm:w-auto"
+            >
+              {t('common.done')}
+            </button>
+          </div>
+        }
+      >
+        {accountDialog && (
+          <div className="space-y-4">
+            {accountDialog.created ? (
+              <>
+                <p className="text-sm text-gray-600 dark:text-slate-300">
+                  {t('employees.account.createdBody')}
+                </p>
+                <div className="bg-gray-50 dark:bg-slate-950/60 rounded-xl p-4 space-y-3">
+                  <div className="flex items-start justify-between gap-4 text-sm">
+                    <span className="text-gray-500 dark:text-slate-400 shrink-0">{t('common.email')}</span>
+                    <span className="font-medium text-gray-900 dark:text-slate-100 min-w-0 break-all text-right">
+                      {accountDialog.email}
+                    </span>
+                  </div>
+                  <div className="flex items-start justify-between gap-4 text-sm">
+                    <span className="text-gray-500 dark:text-slate-400 shrink-0">
+                      {t('employees.account.role')}
+                    </span>
+                    <span className="font-medium text-gray-900 dark:text-slate-100 min-w-0 break-all text-right">
+                      {t(`roles.${accountDialog.role}`, { defaultValue: accountDialog.role })}
+                    </span>
+                  </div>
+                  <div className="flex items-start justify-between gap-4 text-sm">
+                    <span className="text-gray-500 dark:text-slate-400 shrink-0">
+                      {t('employees.account.defaultPassword')}
+                    </span>
+                    <span className="font-mono font-medium text-gray-900 dark:text-slate-100 min-w-0 break-all text-right">
+                      {accountDialog.default_password}
+                    </span>
+                  </div>
+                </div>
+                <p className="text-xs text-amber-600 dark:text-amber-300 bg-amber-50 dark:bg-amber-500/10 rounded-lg px-3 py-2">
+                  {t('employees.account.adviseChange')}
+                </p>
+              </>
+            ) : (
+              <div className="bg-amber-50 dark:bg-amber-500/10 rounded-xl p-4">
+                <p className="text-sm text-amber-800 dark:text-amber-200">
+                  {accountDialog.message}
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+      </Modal>
+    </>
   );
 }

@@ -1,0 +1,88 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT e.employee_number, e.full_name AS employee_name,\n            pi.bank_name, pi.bank_account_number, pi.bank_account_type,\n            pi.net_salary\n        FROM payroll_items pi\n        JOIN employees e ON pi.employee_id = e.id\n        WHERE pi.payroll_run_id = $1\n        ORDER BY e.employee_number",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "employee_number",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "employee_number"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "employee_name",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "full_name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "bank_name",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "bank_name"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "bank_account_number",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "bank_account_number"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "bank_account_type",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "bank_account_type"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "net_salary",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payroll_items",
+            "name": "net_salary"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "2c77cf12e1e9a21b18dc968c508d52559988e609fceab2756bd934111f72377f"
+}

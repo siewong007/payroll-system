@@ -106,7 +106,10 @@ pub async fn update_location(
     actor_id: Uuid,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<CompanyLocation> {
-    let existing = company_locations::get(pool, location_id, company_id)
+    let mut tx = pool.begin().await?;
+    companies::lock_for_update(&mut *tx, company_id).await?;
+
+    let existing = company_locations::get(&mut *tx, location_id, company_id)
         .await?
         .ok_or_else(|| AppError::NotFound("Location not found".into()))?;
 
@@ -125,11 +128,11 @@ pub async fn update_location(
     // Only when the edit actually deactivates — renaming an already-inactive
     // row must not trip the guard.
     if existing.is_active && !active {
-        ensure_not_the_last_active_location(pool, company_id, location_id).await?;
+        ensure_not_the_last_active_location(&mut tx, company_id, location_id).await?;
     }
 
     let loc = company_locations::update(
-        pool,
+        &mut *tx,
         location_id,
         company_id,
         &name,
@@ -139,6 +142,7 @@ pub async fn update_location(
         active,
     )
     .await?;
+    tx.commit().await?;
 
     let _ = audit_service::log_action_with_metadata(
         pool,
@@ -164,20 +168,24 @@ pub async fn delete_location(
     actor_id: Uuid,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<()> {
-    let existing = company_locations::get(pool, location_id, company_id)
+    let mut tx = pool.begin().await?;
+    companies::lock_for_update(&mut *tx, company_id).await?;
+
+    let existing = company_locations::get(&mut *tx, location_id, company_id)
         .await?
         .ok_or_else(|| AppError::NotFound("Location not found".into()))?;
 
     // Removing an already-inactive row cannot empty the active list, so it is
     // never the operation that arms the fail-closed path.
     if existing.is_active {
-        ensure_not_the_last_active_location(pool, company_id, location_id).await?;
+        ensure_not_the_last_active_location(&mut tx, company_id, location_id).await?;
     }
 
-    let rows = company_locations::delete(pool, location_id, company_id).await?;
+    let rows = company_locations::delete(&mut *tx, location_id, company_id).await?;
     if rows == 0 {
         return Err(AppError::NotFound("Location not found".into()));
     }
+    tx.commit().await?;
 
     let _ = audit_service::log_action_with_metadata(
         pool,
@@ -210,14 +218,19 @@ pub async fn delete_location(
 /// blocking a tidy-up an admin is entitled to make would be friction bought
 /// with nothing. The evaluation path still fails closed for both modes.
 async fn ensure_not_the_last_active_location(
-    pool: &PgPool,
+    conn: &mut sqlx::PgConnection,
     company_id: Uuid,
     location_id: Uuid,
 ) -> AppResult<()> {
-    if get_geofence_mode(pool, company_id).await? != "enforce" {
+    let mode = companies::get_geofence_mode(&mut *conn, company_id)
+        .await?
+        .unwrap_or_else(|| "none".to_string());
+    if mode != "enforce" {
         return Ok(());
     }
-    if company_locations::count_active_excluding(pool, company_id, Some(location_id)).await? == 0 {
+    if company_locations::count_active_excluding(&mut *conn, company_id, Some(location_id)).await?
+        == 0
+    {
         return Err(AppError::Conflict(
             "This is the only active office location and the geofence is enforcing check-ins against it. Add another location, or set the geofence mode to 'none' or 'warn', before removing this one.".into(),
         ));
@@ -245,12 +258,15 @@ pub async fn set_geofence_mode(
         ));
     }
 
+    let mut tx = pool.begin().await?;
+    companies::lock_for_update(&mut *tx, company_id).await?;
+
     // This is the entry that used to let an admin arm enforcement against an
     // empty location list in one click — after which every check-in with
     // coordinates was accepted and recorded as inside a fence that did not
     // exist, while every GPS-less one was refused.
     if mode != "none" {
-        let active = company_locations::count_active_excluding(pool, company_id, None).await?;
+        let active = company_locations::count_active_excluding(&mut *tx, company_id, None).await?;
         if active == 0 {
             return Err(AppError::Conflict(format!(
                 "Add at least one active office location before setting the geofence mode to '{mode}'."
@@ -258,9 +274,12 @@ pub async fn set_geofence_mode(
         }
     }
 
-    let old_mode = get_geofence_mode(pool, company_id).await?;
+    let old_mode = companies::get_geofence_mode(&mut *tx, company_id)
+        .await?
+        .unwrap_or_else(|| "none".to_string());
 
-    companies::set_geofence_mode(pool, company_id, mode).await?;
+    companies::set_geofence_mode(&mut *tx, company_id, mode).await?;
+    tx.commit().await?;
 
     let _ = audit_service::log_action_with_metadata(
         pool,

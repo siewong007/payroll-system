@@ -54,13 +54,28 @@ fn validate_employee_fields(
             "Basic salary cannot be negative".into(),
         ));
     }
+    if basic_salary > crate::models::payroll::MAX_MONEY_SEN {
+        return Err(AppError::Validation(
+            "Basic salary exceeds supported maximum".into(),
+        ));
+    }
     if hourly_rate.is_some_and(|v| v < 0) {
         return Err(AppError::Validation(
             "Hourly rate cannot be negative".into(),
         ));
     }
+    if hourly_rate.is_some_and(|v| v > crate::models::payroll::MAX_MONEY_SEN) {
+        return Err(AppError::Validation(
+            "Hourly rate exceeds supported maximum".into(),
+        ));
+    }
     if daily_rate.is_some_and(|v| v < 0) {
         return Err(AppError::Validation("Daily rate cannot be negative".into()));
+    }
+    if daily_rate.is_some_and(|v| v > crate::models::payroll::MAX_MONEY_SEN) {
+        return Err(AppError::Validation(
+            "Daily rate exceeds supported maximum".into(),
+        ));
     }
     if num_children.is_some_and(|v| !(0..=30).contains(&v)) {
         return Err(AppError::Validation(
@@ -72,14 +87,29 @@ fn validate_employee_fields(
             "Monthly Zakat amount cannot be negative".into(),
         ));
     }
+    if zakat_monthly_amount.is_some_and(|v| v > crate::models::payroll::MAX_MONEY_SEN) {
+        return Err(AppError::Validation(
+            "Monthly Zakat amount exceeds supported maximum".into(),
+        ));
+    }
     if ptptn_monthly_amount.is_some_and(|v| v < 0) {
         return Err(AppError::Validation(
             "Monthly PTPTN amount cannot be negative".into(),
         ));
     }
+    if ptptn_monthly_amount.is_some_and(|v| v > crate::models::payroll::MAX_MONEY_SEN) {
+        return Err(AppError::Validation(
+            "Monthly PTPTN amount exceeds supported maximum".into(),
+        ));
+    }
     if tabung_haji_amount.is_some_and(|v| v < 0) {
         return Err(AppError::Validation(
             "Monthly Tabung Haji amount cannot be negative".into(),
+        ));
+    }
+    if tabung_haji_amount.is_some_and(|v| v > crate::models::payroll::MAX_MONEY_SEN) {
+        return Err(AppError::Validation(
+            "Monthly Tabung Haji amount exceeds supported maximum".into(),
         ));
     }
     if let (Some(start), Some(end)) = (probation_start, probation_end)
@@ -374,6 +404,26 @@ pub async fn update_employee(
         .await?
         .ok_or_else(|| AppError::NotFound("Employee not found".into()))?;
 
+    if let Some(actor) = crate::repositories::users::get_by_id(&mut *tx, updated_by).await?
+        && !actor.roles.iter().any(|r| r == "super_admin")
+        && crate::repositories::users::employee_id_for_user_in_company(
+            &mut *tx, updated_by, company_id,
+        )
+        .await?
+            == Some(id)
+    {
+        let changing_email = req
+            .email
+            .as_deref()
+            .is_some_and(|e| Some(e) != existing.email.as_deref());
+        let changing_active = req.is_active.is_some_and(|a| Some(a) != existing.is_active);
+        if changing_email || changing_active {
+            return Err(AppError::Forbidden(
+                "You cannot modify your own employee email or active status".into(),
+            ));
+        }
+    }
+
     let effective_resigned = if clearing {
         None
     } else {
@@ -452,6 +502,8 @@ pub async fn update_employee(
     if req.is_active == Some(false) {
         user_sessions::revoke_by_employee(&mut *tx, id).await?;
         refresh_tokens::delete_by_employee(&mut *tx, id).await?;
+        crate::repositories::mfa_challenges::revoke_for_employee(&mut *tx, id).await?;
+        crate::repositories::push_subscriptions::revoke_all_for_employee(&mut *tx, id).await?;
     }
 
     tx.commit().await?;
@@ -518,6 +570,8 @@ pub async fn soft_delete_employee(
     user_companies::delete_by_employee(&mut *tx, id, company_id).await?;
     user_sessions::revoke_by_employee(&mut *tx, id).await?;
     refresh_tokens::delete_by_employee(&mut *tx, id).await?;
+    crate::repositories::mfa_challenges::revoke_for_employee(&mut *tx, id).await?;
+    crate::repositories::push_subscriptions::revoke_all_for_employee(&mut *tx, id).await?;
     crate::repositories::password_reset_requests::expire_pending_for_employee(&mut *tx, id).await?;
     users::soft_delete_by_employee(&mut *tx, id, deleted_by).await?;
     users::unlink_staff_from_employee(&mut *tx, id, company_id).await?;
@@ -585,8 +639,12 @@ pub async fn ensure_may_revoke_linked_logins(
     Ok(())
 }
 
-pub async fn get_salary_history(pool: &PgPool, employee_id: Uuid) -> AppResult<Vec<SalaryHistory>> {
-    salary_history::list_by_employee(pool, employee_id).await
+pub async fn get_salary_history(
+    pool: &PgPool,
+    employee_id: Uuid,
+    company_id: Uuid,
+) -> AppResult<Vec<SalaryHistory>> {
+    salary_history::list_by_employee(pool, employee_id, company_id).await
 }
 
 pub async fn create_tp3(

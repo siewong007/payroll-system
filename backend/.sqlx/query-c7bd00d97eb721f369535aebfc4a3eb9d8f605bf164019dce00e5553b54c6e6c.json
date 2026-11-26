@@ -1,0 +1,149 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT al.id,\n            CASE\n                WHEN $3::bool AND u.id IS NOT NULL AND u.roles && ARRAY['admin', 'super_admin']::varchar[]\n                THEN NULL::uuid\n                ELSE al.user_id\n            END AS \"user_id?\",\n            al.action, al.entity_type, al.entity_id,\n            al.old_values, al.new_values,\n            CASE\n                WHEN $3::bool AND u.id IS NOT NULL AND u.roles && ARRAY['admin', 'super_admin']::varchar[]\n                THEN NULL::text\n                ELSE al.ip_address\n            END AS \"ip_address?\",\n            CASE\n                WHEN $3::bool AND u.id IS NOT NULL AND u.roles && ARRAY['admin', 'super_admin']::varchar[]\n                THEN NULL::text\n                ELSE al.user_agent\n            END AS \"user_agent?\",\n            al.description, al.created_at,\n            CASE\n                WHEN $3::bool AND u.id IS NOT NULL AND u.roles && ARRAY['admin', 'super_admin']::varchar[]\n                THEN NULL::text\n                ELSE u.email\n            END AS \"user_email?\",\n            CASE\n                WHEN $3::bool AND u.id IS NOT NULL AND u.roles && ARRAY['admin', 'super_admin']::varchar[]\n                THEN NULL::text\n                ELSE u.full_name\n            END AS \"user_full_name?\"\n        FROM audit_logs al\n        LEFT JOIN users u ON al.user_id = u.id\n        WHERE al.company_id = $1\n          AND (\n            (al.entity_type = 'payroll_run' AND al.entity_id = $2)\n            OR (\n                al.entity_type = 'payroll_item'\n                AND (\n                    al.old_values->>'payroll_run_id' = $2::text\n                    OR al.new_values->>'payroll_run_id' = $2::text\n                )\n            )\n          )\n        ORDER BY al.created_at DESC\n        LIMIT 100",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "audit_logs",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "user_id?",
+        "type_info": "Uuid",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "action",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "audit_logs",
+            "name": "action"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "entity_type",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "audit_logs",
+            "name": "entity_type"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "entity_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "audit_logs",
+            "name": "entity_id"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "old_values",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "audit_logs",
+            "name": "old_values"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "new_values",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "audit_logs",
+            "name": "new_values"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "ip_address?",
+        "type_info": "Varchar",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 8,
+        "name": "user_agent?",
+        "type_info": "Varchar",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 9,
+        "name": "description",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "audit_logs",
+            "name": "description"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "audit_logs",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "user_email?",
+        "type_info": "Varchar",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 12,
+        "name": "user_full_name?",
+        "type_info": "Varchar",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Bool"
+      ]
+    },
+    "nullable": [
+      false,
+      null,
+      false,
+      false,
+      true,
+      true,
+      true,
+      null,
+      null,
+      true,
+      false,
+      null,
+      null
+    ]
+  },
+  "hash": "c7bd00d97eb721f369535aebfc4a3eb9d8f605bf164019dce00e5553b54c6e6c"
+}

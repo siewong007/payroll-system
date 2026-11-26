@@ -2,7 +2,7 @@ use chrono::NaiveDate;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::core::error::AppResult;
+use crate::core::error::{AppError, AppResult};
 use crate::models::notification::{
     Notification, NotificationCount, PushConfigResponse, PushSubscriptionStatusResponse,
     UpsertPushSubscriptionRequest,
@@ -50,8 +50,7 @@ pub async fn get_notification_count(
     user_id: Uuid,
     company_id: Uuid,
 ) -> AppResult<NotificationCount> {
-    let unread = notifications::count_unread(pool, user_id, company_id).await?;
-    let total = notifications::count_total(pool, user_id, company_id).await?;
+    let (unread, total) = notifications::count_summary(pool, user_id, company_id).await?;
     Ok(NotificationCount { unread, total })
 }
 
@@ -243,6 +242,8 @@ pub fn get_push_config(push: &SharedPushClient) -> PushConfigResponse {
     }
 }
 
+const MAX_ACTIVE_PUSH_SUBSCRIPTIONS_PER_USER: i64 = 20;
+
 pub async fn upsert_push_subscription(
     pool: &PgPool,
     user_id: Uuid,
@@ -253,6 +254,16 @@ pub async fn upsert_push_subscription(
 ) -> AppResult<PushSubscriptionStatusResponse> {
     let (endpoint, p256dh, auth) =
         push_service::validate_push_subscription(&req.endpoint, &req.keys.p256dh, &req.keys.auth)?;
+
+    if !push_subscriptions::exists_active_for_user_endpoint(pool, user_id, &endpoint).await?
+        && push_subscriptions::count_active_for_user(pool, user_id).await?
+            >= MAX_ACTIVE_PUSH_SUBSCRIPTIONS_PER_USER
+    {
+        return Err(AppError::BadRequest(
+            "Maximum active push subscriptions (20) reached. Remove an old device first.".into(),
+        ));
+    }
+
     let trimmed_ua = user_agent
         .map(str::trim)
         .filter(|s| !s.is_empty())

@@ -33,7 +33,7 @@ export function PayrollLifecycleStepper({ status }: { status: string }) {
   if (status === 'cancelled') {
     return (
       <div
-        className="card mb-6 !py-3.5 !px-4 flex items-center gap-2.5 border-red-200/80 dark:border-red-900/50 bg-red-50/70 dark:bg-red-950/30"
+        className="card mb-6 !py-3.5 !px-4 flex items-center gap-2.5 !border-red-200/80 dark:!border-red-900/50 !bg-red-50/70 dark:!bg-red-950/30"
         role="status"
       >
         <XCircle className="h-5 w-5 shrink-0 text-red-600 dark:text-red-400" aria-hidden="true" />
@@ -48,7 +48,7 @@ export function PayrollLifecycleStepper({ status }: { status: string }) {
   if (activeIndex < 0) return null;
 
   return (
-    <nav className="card mb-6 !py-3.5 !px-4" aria-label={t('ux.payrollStepper.navLabel')}>
+    <section className="card mb-6 !py-3.5 !px-4" aria-label={t('ux.payrollStepper.navLabel')}>
       <ol className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         {STAGES.map((stage, idx) => {
           const completed = idx < activeIndex;
@@ -60,7 +60,7 @@ export function PayrollLifecycleStepper({ status }: { status: string }) {
               aria-current={current ? 'step' : undefined}
             >
               <span
-                className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold transition-all ${
+                className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold tabular-nums transition-all ${
                   completed
                     ? 'bg-emerald-500 text-white shadow-xs'
                     : current
@@ -86,6 +86,6 @@ export function PayrollLifecycleStepper({ status }: { status: string }) {
           );
         })}
       </ol>
-    </nav>
+    </section>
   );
 }

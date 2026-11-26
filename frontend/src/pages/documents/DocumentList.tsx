@@ -25,6 +25,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { FormField } from '@/components/ui/FormField';
 import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { EmployeePicker } from '@/components/employees/EmployeePicker';
 import { useAuth } from '@/context/AuthContext';
 import { useConfirm } from '@/lib/confirm';
@@ -124,6 +125,7 @@ export function DocumentList() {
   const {
     data: employees,
     isLoading: loadingEmployees,
+    isPlaceholderData: fetchingEmployees,
     isError: employeesError,
     error: employeesErrorObj,
     refetch: refetchEmployees,
@@ -156,7 +158,7 @@ export function DocumentList() {
               onClick={() => setShowCreate(true)}
               className="btn-primary w-full sm:w-auto"
             >
-              <Plus className="w-4 h-4" />
+              <Plus className="w-4 h-4" aria-hidden="true" />
               {t('documents.add')}
             </button>
           ) : undefined
@@ -167,12 +169,12 @@ export function DocumentList() {
       <button
         type="button"
         onClick={() => setSelectedTarget({ type: 'company' })}
-        className="w-full mb-6 bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-5 text-left hover:border-gray-300 dark:hover:border-slate-700 hover:shadow-md transition-all group"
+        className="card hover-lift w-full mb-6 text-left hover:border-gray-300 dark:hover:border-slate-700 transition-all group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
       >
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-3.5 min-w-0">
             <div className="w-10 h-10 rounded-xl bg-indigo-50 dark:bg-indigo-500/15 flex items-center justify-center text-indigo-600 dark:text-indigo-300 shrink-0">
-              <Building2 className="w-5 h-5" />
+              <Building2 className="w-5 h-5" aria-hidden="true" />
             </div>
             <div className="min-w-0">
               <div className="font-semibold text-sm text-gray-900 dark:text-slate-100">
@@ -184,10 +186,16 @@ export function DocumentList() {
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-slate-200 tabular-nums">
-              {t('documents.count', { count: companyWideCount })}
-            </span>
-            <ChevronRight className="w-4 h-4 text-gray-400 dark:text-slate-500 group-hover:text-gray-700 dark:group-hover:text-slate-200 transition-colors" />
+            {companyDocsSummary.isLoading ? (
+              <Skeleton className="h-6 w-20 rounded-full" />
+            ) : companyDocsSummary.isError ? (
+              <AlertTriangle className="w-4 h-4 text-amber-500 dark:text-amber-400" aria-hidden="true" />
+            ) : (
+              <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-slate-200 tabular-nums">
+                {t('documents.count', { count: companyWideCount })}
+              </span>
+            )}
+            <ChevronRight className="w-4 h-4 text-gray-500 dark:text-slate-400 group-hover:text-gray-700 dark:group-hover:text-slate-200 transition-colors" aria-hidden="true" />
           </div>
         </div>
       </button>
@@ -196,14 +204,14 @@ export function DocumentList() {
         <>
           {/* Search */}
           <div className="relative mb-6 max-w-md">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 dark:text-slate-500 pointer-events-none" />
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 dark:text-slate-400 pointer-events-none" aria-hidden="true" />
             <input
               type="text"
               placeholder={t('documents.searchPlaceholder')}
               aria-label={t('documents.searchPlaceholder')}
               value={search}
               onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-              className="form-input !pl-10 !pr-11 !py-2.5"
+              className="form-input pl-10 pr-11 py-2.5"
             />
             {search && (
               <button
@@ -211,61 +219,81 @@ export function DocumentList() {
                 onClick={() => { setSearch(''); setPage(1); }}
                 aria-label={t('common.clear')}
                 title={t('common.clear')}
-                className="absolute right-1 top-1/2 -translate-y-1/2 min-h-10 min-w-10 flex items-center justify-center rounded-md text-gray-400 dark:text-slate-500 hover:text-gray-700 dark:hover:text-slate-200"
+                className="absolute right-0.5 top-1/2 -translate-y-1/2 min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 flex items-center justify-center rounded-md text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
               >
-                <X className="w-4 h-4" />
+                <X className="w-4 h-4" aria-hidden="true" />
               </button>
             )}
           </div>
 
           {/* Employee List */}
           {loadingEmployees ? (
-            <div className="flex items-center justify-center py-12">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-black dark:border-slate-200" />
+            <div
+              role="status"
+              aria-busy="true"
+              aria-label={t('common.loading')}
+              className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4"
+            >
+              {[0, 1, 2, 3, 4, 5].map((i) => (
+                <div key={i} className="card flex items-center gap-3">
+                  <Skeleton className="w-10 h-10 rounded-full shrink-0" />
+                  <div className="flex-1 space-y-1.5">
+                    <Skeleton className="h-4 w-2/3" />
+                    <Skeleton className="h-3 w-1/3" />
+                  </div>
+                </div>
+              ))}
             </div>
           ) : employeesError ? (
-            <EmptyState
-              icon={AlertTriangle}
-              title={t('documents.loadFailed')}
-              description={getErrorMessage(employeesErrorObj, t('documents.loadFailed'))}
-              action={
-                <button type="button" onClick={() => refetchEmployees()} className="btn-primary">
-                  {t('common.retry')}
-                </button>
-              }
-            />
+            <div className="card">
+              <EmptyState
+                icon={AlertTriangle}
+                title={t('documents.loadFailed')}
+                description={getErrorMessage(employeesErrorObj, t('documents.loadFailed'))}
+                action={
+                  <button type="button" onClick={() => refetchEmployees()} className="btn-primary">
+                    {t('common.retry')}
+                  </button>
+                }
+              />
+            </div>
           ) : employeeList.length === 0 ? (
-            <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 py-12 text-center text-gray-400 dark:text-slate-500">
-              <User className="w-8 h-8 mx-auto mb-2 text-gray-300 dark:text-slate-600" />
-              <p className="text-sm">{search ? t('employees.noMatch') : t('employees.empty')}</p>
-              {search && (
-                <button
-                  type="button"
-                  onClick={() => { setSearch(''); setPage(1); }}
-                  className="btn-secondary mt-3"
-                >
-                  {t('reports.clearSearch')}
-                </button>
-              )}
+            <div className="card">
+              <EmptyState
+                compact
+                icon={User}
+                title={search ? t('employees.noMatch') : t('employees.empty')}
+                action={
+                  search ? (
+                    <button
+                      type="button"
+                      onClick={() => { setSearch(''); setPage(1); }}
+                      className="btn-secondary"
+                    >
+                      {t('reports.clearSearch')}
+                    </button>
+                  ) : undefined
+                }
+              />
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className={`grid grid-cols-1 sm:grid-cols-2 md:grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 ${fetchingEmployees ? 'opacity-75 transition-opacity' : ''}`}>
               {employeeList.map((emp) => (
                 <button
                   type="button"
                   key={emp.id}
                   onClick={() => setSelectedTarget({ type: 'employee', id: emp.id, name: emp.full_name, number: emp.employee_number })}
-                  className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-5 text-left hover:border-gray-300 dark:hover:border-slate-700 hover:shadow-md transition-all group"
+                  className="card hover-lift text-left hover:border-gray-300 dark:hover:border-slate-700 transition-all group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                 >
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-full bg-gray-100 dark:bg-slate-800 flex items-center justify-center text-gray-900 dark:text-slate-100 font-semibold text-sm group-hover:bg-gray-200 dark:group-hover:bg-slate-700 transition-colors shrink-0">
-                      {emp.full_name.split(' ').map(n => n[0]).slice(0, 2).join('')}
+                      {emp.full_name.trim().split(/\s+/).filter(Boolean).map(n => n[0]).slice(0, 2).join('')}
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="font-medium text-sm text-gray-900 dark:text-slate-100 truncate">{emp.full_name}</div>
                       <div className="text-xs text-gray-500 dark:text-slate-400">{emp.employee_number}</div>
                     </div>
-                    <FileText className="w-4 h-4 text-gray-300 dark:text-slate-600 group-hover:text-gray-500 dark:group-hover:text-slate-300 transition-colors shrink-0" />
+                    <FileText className="w-4 h-4 text-gray-400 dark:text-slate-500 group-hover:text-gray-600 dark:group-hover:text-slate-300 transition-colors shrink-0" aria-hidden="true" />
                   </div>
                   {emp.department && (
                     <div className="text-xs text-gray-500 dark:text-slate-400 mt-2 truncate">{emp.department}</div>
@@ -278,7 +306,7 @@ export function DocumentList() {
           {/* Paging — the roster is served a page at a time, so the count and the
               controls are what tell an admin the tail exists at all. */}
           {employeeTotal > PER_PAGE && (
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mt-6 text-sm text-gray-500 dark:text-slate-400">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mt-6 text-sm text-gray-500 dark:text-slate-400 tabular-nums">
               <span>
                 {t('common.showing', { from: (page - 1) * PER_PAGE + 1, to: Math.min(page * PER_PAGE, employeeTotal), total: employeeTotal })}
               </span>
@@ -287,17 +315,17 @@ export function DocumentList() {
                   type="button"
                   onClick={() => setPage((p) => Math.max(1, p - 1))}
                   disabled={page <= 1}
-                  className="min-h-10 flex items-center gap-1 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-slate-700 disabled:opacity-40 hover:bg-gray-50 dark:hover:bg-slate-800"
+                  className="min-h-11 sm:min-h-9 flex items-center gap-1 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-slate-700 disabled:opacity-40 hover:bg-gray-50 dark:hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                 >
-                  <ChevronLeft className="w-4 h-4" /> {t('common.previous')}
+                  <ChevronLeft className="w-4 h-4" aria-hidden="true" /> {t('common.previous')}
                 </button>
                 <button
                   type="button"
                   onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                   disabled={page >= totalPages}
-                  className="min-h-10 flex items-center gap-1 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-slate-700 disabled:opacity-40 hover:bg-gray-50 dark:hover:bg-slate-800"
+                  className="min-h-11 sm:min-h-9 flex items-center gap-1 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-slate-700 disabled:opacity-40 hover:bg-gray-50 dark:hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                 >
-                  {t('common.next')} <ChevronRight className="w-4 h-4" />
+                  {t('common.next')} <ChevronRight className="w-4 h-4" aria-hidden="true" />
                 </button>
               </div>
             </div>
@@ -398,30 +426,30 @@ function EmployeeDocumentsModal({
         maxWidth="max-w-4xl"
         footer={
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <span className="text-sm text-gray-500 dark:text-slate-400">
+            <span className="text-sm text-gray-500 dark:text-slate-400 tabular-nums">
               {totalCount > 0 ? t('documents.count', { count: totalCount }) : ''}
             </span>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {totalCount > PER_PAGE && (
                 <div className="flex items-center gap-2 mr-2">
                   <button
                     type="button"
                     onClick={() => setPage((p) => Math.max(1, p - 1))}
                     disabled={page <= 1}
-                    className="min-h-10 min-w-10 sm:min-h-8 sm:min-w-8 flex items-center justify-center rounded-lg border border-gray-200 dark:border-slate-700 disabled:opacity-40 hover:bg-white dark:hover:bg-slate-800"
+                    className="min-h-11 min-w-11 md:min-h-8 md:min-w-8 flex items-center justify-center rounded-lg border border-gray-200 dark:border-slate-700 disabled:opacity-40 hover:bg-white dark:hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                     aria-label={t('common.previousPage')}
                   >
-                    <ChevronLeft className="w-4 h-4" />
+                    <ChevronLeft className="w-4 h-4" aria-hidden="true" />
                   </button>
-                  <span className="text-sm text-gray-500 dark:text-slate-400">{t('common.pageOf', { page, total: totalPages })}</span>
+                  <span className="text-sm text-gray-500 dark:text-slate-400 tabular-nums">{t('common.pageOf', { page, total: totalPages })}</span>
                   <button
                     type="button"
                     onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                     disabled={page >= totalPages}
-                    className="min-h-10 min-w-10 sm:min-h-8 sm:min-w-8 flex items-center justify-center rounded-lg border border-gray-200 dark:border-slate-700 disabled:opacity-40 hover:bg-white dark:hover:bg-slate-800"
+                    className="min-h-11 min-w-11 md:min-h-8 md:min-w-8 flex items-center justify-center rounded-lg border border-gray-200 dark:border-slate-700 disabled:opacity-40 hover:bg-white dark:hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                     aria-label={t('common.nextPage')}
                   >
-                    <ChevronRight className="w-4 h-4" />
+                    <ChevronRight className="w-4 h-4" aria-hidden="true" />
                   </button>
                 </div>
               )}
@@ -429,9 +457,9 @@ function EmployeeDocumentsModal({
                 <button
                   type="button"
                   onClick={() => setShowCreate(true)}
-                  className="btn-primary !py-2 !min-h-9"
+                  className="btn-primary min-h-11 sm:!min-h-9 !py-2"
                 >
-                  <Plus className="w-3.5 h-3.5" />
+                  <Plus className="w-3.5 h-3.5" aria-hidden="true" />
                   {t('documents.add')}
                 </button>
               )}
@@ -441,8 +469,15 @@ function EmployeeDocumentsModal({
       >
         <div>
           {isLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <div className="spinner" />
+            <div
+              role="status"
+              aria-busy="true"
+              aria-label={t('common.loading')}
+              className="space-y-3 py-2"
+            >
+              {[0, 1, 2].map((i) => (
+                <Skeleton key={i} className="h-16 w-full rounded-xl" />
+              ))}
             </div>
           ) : isError ? (
             <EmptyState
@@ -456,93 +491,181 @@ function EmployeeDocumentsModal({
               }
             />
           ) : rows.length === 0 ? (
-            <div className="text-center py-12 text-gray-400 dark:text-slate-500">
-              <FileText className="w-8 h-8 mx-auto mb-2 opacity-40" />
-              <p className="text-sm">{isCompanyWide ? t('documents.emptyCompanyWide') : t('documents.emptyForEmployee')}</p>
-            </div>
+            <EmptyState
+              compact
+              icon={FileText}
+              title={isCompanyWide ? t('documents.emptyCompanyWide') : t('documents.emptyForEmployee')}
+              action={
+                canManageDocs ? (
+                  <button type="button" onClick={() => setShowCreate(true)} className="btn-secondary">
+                    <Plus className="w-4 h-4" aria-hidden="true" />
+                    {t('documents.add')}
+                  </button>
+                ) : undefined
+              }
+            />
           ) : (
-            <div className="overflow-x-auto -mx-6">
-              <table className="w-full">
-                <thead className="bg-gray-50 dark:bg-slate-900/60 border-b border-gray-200 dark:border-slate-800">
-                  <tr>
-                    <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase">{t('documents.cols.title')}</th>
-                    <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase">{t('documents.cols.category')}</th>
-                    <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase">{t('documents.cols.file')}</th>
-                    <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase whitespace-nowrap">{t('documents.cols.issueDate')}</th>
-                    <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase whitespace-nowrap">{t('documents.cols.expiry')}</th>
-                    <th className="text-center px-6 py-3 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase">{t('common.status')}</th>
-                    {canManageDocs && <th className="text-center px-6 py-3 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase w-16" />}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100 dark:divide-slate-800">
-                  {rows.map((doc) => (
-                    <tr key={doc.id} className="hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors">
-                      <td className="px-6 py-3">
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium text-sm text-gray-900 dark:text-slate-100">{doc.title}</span>
+            <>
+              <div className="md:hidden space-y-3">
+                {rows.map((doc) => (
+                  <div
+                    key={doc.id}
+                    className="rounded-xl border border-gray-200 dark:border-slate-800 bg-gray-50/70 dark:bg-slate-800/40 p-4 space-y-2.5"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-semibold text-sm text-gray-900 dark:text-slate-100 break-words">{doc.title}</span>
                           {doc.is_confidential && (
                             <Lock className="w-3.5 h-3.5 text-amber-500 shrink-0" aria-label={t('documents.confidential')} />
                           )}
                         </div>
                         {doc.description && (
-                          <div className="text-xs text-gray-500 dark:text-slate-400 mt-0.5 truncate max-w-xs">{doc.description}</div>
+                          <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5 line-clamp-2">{doc.description}</p>
                         )}
-                      </td>
-                      <td className="px-6 py-3 text-sm text-gray-600 dark:text-slate-300">
-                        {doc.category_id ? categoryMap.get(doc.category_id) ?? '-' : '-'}
-                      </td>
-                      <td className="px-6 py-3">
-                        <AttachmentLink
-                          url={doc.file_url}
-                          className="text-sm text-gray-900 dark:text-slate-100 hover:text-black dark:hover:text-white hover:underline"
-                        >
-                          {doc.file_name}
-                        </AttachmentLink>
-                        {doc.file_size && (
-                          <div className="text-xs text-gray-500 dark:text-slate-400">{(doc.file_size / 1024).toFixed(0)} KB</div>
-                        )}
-                      </td>
-                      <td className="px-6 py-3 text-sm text-gray-600 dark:text-slate-300 whitespace-nowrap">
-                        {doc.issue_date ? formatDate(doc.issue_date) : '-'}
-                      </td>
-                      <td className="px-6 py-3 text-sm text-gray-600 dark:text-slate-300 whitespace-nowrap">
-                        {doc.expiry_date ? (
-                          <span className="inline-flex items-center gap-1">
-                            {doc.expiry_date < today && <AlertTriangle className="w-3.5 h-3.5 text-red-500 dark:text-red-400 shrink-0" />}
-                            {formatDate(doc.expiry_date)}
-                          </span>
-                        ) : '-'}
-                      </td>
-                      <td className="px-6 py-3 text-center">
-                        <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium whitespace-nowrap ${getStatusColor(doc.status, doc.expiry_date)}`}>
-                          {getStatusLabel(t, doc.status, doc.expiry_date)}
-                        </span>
-                      </td>
+                      </div>
+                      <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium whitespace-nowrap shrink-0 ${getStatusColor(doc.status, doc.expiry_date)}`}>
+                        {getStatusLabel(t, doc.status, doc.expiry_date)}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-xs text-gray-600 dark:text-slate-300">
+                      <div>
+                        <span className="text-gray-500 dark:text-slate-400">{t('documents.cols.category')}: </span>
+                        {doc.category_id ? categoryMap.get(doc.category_id) ?? '\u2014' : '\u2014'}
+                      </div>
+                      <div className="tabular-nums">
+                        <span className="text-gray-500 dark:text-slate-400">{t('documents.cols.issueDate')}: </span>
+                        {doc.issue_date ? formatDate(doc.issue_date) : '\u2014'}
+                      </div>
+                      <div className="tabular-nums col-span-2">
+                        <span className="text-gray-500 dark:text-slate-400">{t('documents.cols.expiry')}: </span>
+                        {doc.expiry_date ? formatDate(doc.expiry_date) : '\u2014'}
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 pt-2 border-t border-gray-200/70 dark:border-slate-700/70">
+                      <AttachmentLink
+                        url={doc.file_url}
+                        className="text-sm text-gray-900 dark:text-slate-100 hover:underline truncate min-w-0"
+                      >
+                        {doc.file_name}
+                      </AttachmentLink>
                       {canManageDocs && (
-                        <td className="px-6 py-3 text-center">
-                          <button
-                            type="button"
-                            disabled={deletingId === doc.id && deleteMutation.isPending}
-                            onClick={async () => {
-                              const ok = await confirmDialog({
-                                description: t('documents.deleteConfirm'),
-                                variant: 'danger',
-                              });
-                              if (ok) deleteMutation.mutate(doc.id);
-                            }}
-                            aria-label={t('common.deleteName', { name: doc.title })}
-                            title={t('common.deleteName', { name: doc.title })}
-                            className="min-h-11 min-w-11 sm:min-h-8 sm:min-w-8 inline-flex items-center justify-center text-gray-400 dark:text-slate-500 hover:text-red-600 dark:hover:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/15 disabled:opacity-50 transition-colors"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </td>
+                        <button
+                          type="button"
+                          disabled={deletingId === doc.id && deleteMutation.isPending}
+                          onClick={async () => {
+                            const ok = await confirmDialog({
+                              description: t('documents.deleteConfirm'),
+                              variant: 'danger',
+                            });
+                            if (ok) deleteMutation.mutate(doc.id);
+                          }}
+                          aria-label={t('common.deleteName', { name: doc.title })}
+                          title={t('common.deleteName', { name: doc.title })}
+                          className="min-h-11 min-w-11 shrink-0 inline-flex items-center justify-center text-gray-500 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/15 disabled:opacity-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+                        >
+                          {deletingId === doc.id && deleteMutation.isPending ? (
+                            <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                          ) : (
+                            <Trash2 className="w-4 h-4" aria-hidden="true" />
+                          )}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="hidden md:block overflow-x-auto -mx-6">
+                <table className="w-full">
+                  <thead className="bg-gray-50 dark:bg-slate-800/70 border-b border-gray-200 dark:border-slate-800">
+                    <tr>
+                      <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase">{t('documents.cols.title')}</th>
+                      <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase">{t('documents.cols.category')}</th>
+                      <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase">{t('documents.cols.file')}</th>
+                      <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase whitespace-nowrap">{t('documents.cols.issueDate')}</th>
+                      <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase whitespace-nowrap">{t('documents.cols.expiry')}</th>
+                      <th className="text-center px-6 py-3 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase">{t('common.status')}</th>
+                      {canManageDocs && (
+                        <th className="text-center px-6 py-3 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase w-16">
+                          <span className="sr-only">{t('common.actions')}</span>
+                        </th>
                       )}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 dark:divide-slate-800">
+                    {rows.map((doc) => (
+                      <tr key={doc.id} className="hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors">
+                        <td className="px-6 py-3">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-sm text-gray-900 dark:text-slate-100">{doc.title}</span>
+                            {doc.is_confidential && (
+                              <Lock className="w-3.5 h-3.5 text-amber-500 shrink-0" aria-label={t('documents.confidential')} />
+                            )}
+                          </div>
+                          {doc.description && (
+                            <div className="text-xs text-gray-500 dark:text-slate-400 mt-0.5 truncate max-w-xs">{doc.description}</div>
+                          )}
+                        </td>
+                        <td className="px-6 py-3 text-sm text-gray-600 dark:text-slate-300">
+                          {doc.category_id ? categoryMap.get(doc.category_id) ?? '\u2014' : '\u2014'}
+                        </td>
+                        <td className="px-6 py-3">
+                          <AttachmentLink
+                            url={doc.file_url}
+                            className="text-sm text-gray-900 dark:text-slate-100 hover:text-black dark:hover:text-white hover:underline"
+                          >
+                            {doc.file_name}
+                          </AttachmentLink>
+                          {doc.file_size && (
+                            <div className="text-xs text-gray-500 dark:text-slate-400 tabular-nums">{(doc.file_size / 1024).toFixed(0)} KB</div>
+                          )}
+                        </td>
+                        <td className="px-6 py-3 text-sm text-gray-600 dark:text-slate-300 whitespace-nowrap tabular-nums">
+                          {doc.issue_date ? formatDate(doc.issue_date) : '\u2014'}
+                        </td>
+                        <td className="px-6 py-3 text-sm text-gray-600 dark:text-slate-300 whitespace-nowrap tabular-nums">
+                          {doc.expiry_date ? (
+                            <span className="inline-flex items-center gap-1">
+                              {doc.expiry_date < today && <AlertTriangle className="w-3.5 h-3.5 text-red-500 dark:text-red-400 shrink-0" aria-hidden="true" />}
+                              {formatDate(doc.expiry_date)}
+                            </span>
+                          ) : '\u2014'}
+                        </td>
+                        <td className="px-6 py-3 text-center">
+                          <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium whitespace-nowrap ${getStatusColor(doc.status, doc.expiry_date)}`}>
+                            {getStatusLabel(t, doc.status, doc.expiry_date)}
+                          </span>
+                        </td>
+                        {canManageDocs && (
+                          <td className="px-6 py-3 text-center">
+                            <button
+                              type="button"
+                              disabled={deletingId === doc.id && deleteMutation.isPending}
+                              onClick={async () => {
+                                const ok = await confirmDialog({
+                                  description: t('documents.deleteConfirm'),
+                                  variant: 'danger',
+                                });
+                                if (ok) deleteMutation.mutate(doc.id);
+                              }}
+                              aria-label={t('common.deleteName', { name: doc.title })}
+                              title={t('common.deleteName', { name: doc.title })}
+                              className="min-h-11 min-w-11 sm:min-h-8 sm:min-w-8 inline-flex items-center justify-center text-gray-500 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/15 disabled:opacity-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+                            >
+                              {deletingId === doc.id && deleteMutation.isPending ? (
+                                <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                              ) : (
+                                <Trash2 className="w-4 h-4" aria-hidden="true" />
+                              )}
+                            </button>
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
         </div>
       </Modal>
@@ -583,6 +706,7 @@ function CreateDocumentModal({
   const toast = useToast();
   const formId = useId();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
 
   const { data: categories } = useQuery({
     queryKey: ['document-categories'],
@@ -605,6 +729,12 @@ function CreateDocumentModal({
   const [inputMode, setInputMode] = useState<'upload' | 'url'>('upload');
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (error) {
+      errorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }, [error]);
 
   const mutation = useMutation({
     mutationFn: createDocument,
@@ -670,12 +800,21 @@ function CreateDocumentModal({
   return (
     <Modal
       open
-      onClose={onClose}
+      onClose={() => {
+        if (!mutation.isPending && !uploading) {
+          onClose();
+        }
+      }}
       title={t('documents.add')}
       maxWidth="max-w-xl"
       footer={
         <div className="flex flex-col-reverse sm:flex-row justify-end gap-3">
-          <button type="button" onClick={onClose} className="btn-secondary">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={mutation.isPending || uploading}
+            className="btn-secondary"
+          >
             {t('common.cancel')}
           </button>
           <button
@@ -684,6 +823,7 @@ function CreateDocumentModal({
             disabled={mutation.isPending || uploading}
             className="btn-primary"
           >
+            {mutation.isPending && <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />}
             {mutation.isPending ? t('common.creating') : t('documents.create')}
           </button>
         </div>
@@ -691,7 +831,11 @@ function CreateDocumentModal({
     >
       <form id={formId} onSubmit={handleSubmit} className="space-y-5">
         {error && (
-          <div role="alert" className="text-sm text-red-600 dark:text-red-300 bg-red-50 dark:bg-red-500/10 p-4 rounded-xl border border-red-100 dark:border-red-500/25">
+          <div
+            ref={errorRef}
+            role="alert"
+            className="text-sm text-red-600 dark:text-red-300 bg-red-50 dark:bg-red-500/10 p-4 rounded-xl border border-red-100 dark:border-red-500/25"
+          >
             {error}
           </div>
         )}
@@ -707,6 +851,7 @@ function CreateDocumentModal({
                 onChange={(e) => setForm(f => ({ ...f, title: e.target.value }))}
                 className="form-input"
                 placeholder={t('documents.titlePlaceholder')}
+                required
               />
             )}
           </FormField>
@@ -717,6 +862,7 @@ function CreateDocumentModal({
                 {(aria) => (
                   <EmployeePicker
                     id={aria.id}
+                    aria-describedby={aria['aria-describedby']}
                     value={employeeId}
                     onChange={(id) => setEmployeeId(id)}
                     isActive={null}
@@ -762,26 +908,28 @@ function CreateDocumentModal({
             <div className="flex gap-1 bg-gray-100 dark:bg-slate-800 p-0.5 rounded-lg">
               <button
                 type="button"
+                aria-pressed={inputMode === 'upload'}
                 onClick={() => setInputMode('upload')}
-                className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                className={`min-h-11 sm:min-h-8 flex items-center gap-1.5 px-3 sm:px-2.5 py-1 rounded-md text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] ${
                   inputMode === 'upload'
                     ? 'bg-white dark:bg-slate-900 text-gray-900 dark:text-slate-100 shadow-sm'
                     : 'text-gray-500 dark:text-slate-400'
                 }`}
               >
-                <Upload className="w-3 h-3" />
+                <Upload className="w-3 h-3" aria-hidden="true" />
                 {t('common.upload')}
               </button>
               <button
                 type="button"
+                aria-pressed={inputMode === 'url'}
                 onClick={() => setInputMode('url')}
-                className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                className={`min-h-11 sm:min-h-8 flex items-center gap-1.5 px-3 sm:px-2.5 py-1 rounded-md text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] ${
                   inputMode === 'url'
                     ? 'bg-white dark:bg-slate-900 text-gray-900 dark:text-slate-100 shadow-sm'
                     : 'text-gray-500 dark:text-slate-400'
                 }`}
               >
-                <LinkIcon className="w-3 h-3" />
+                <LinkIcon className="w-3 h-3" aria-hidden="true" />
                 {t('documents.enterUrl')}
               </button>
             </div>
@@ -793,7 +941,7 @@ function CreateDocumentModal({
                 ref={fileInputRef}
                 type="file"
                 accept={ALLOWED_UPLOAD_ACCEPT}
-                className="sr-only"
+                className="hidden"
                 onChange={(e) => {
                   const picked = e.target.files?.[0];
                   e.currentTarget.value = '';
@@ -805,9 +953,14 @@ function CreateDocumentModal({
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
                   disabled={uploading}
+                  aria-busy={uploading}
                   className="btn-secondary"
                 >
-                  {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+                  {uploading ? (
+                    <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <Upload className="w-4 h-4" aria-hidden="true" />
+                  )}
                   {uploading ? t('common.uploading') : t('approvals.uploadFile')}
                 </button>
                 {form.file_url && (
@@ -815,16 +968,19 @@ function CreateDocumentModal({
                     type="button"
                     onClick={() => setForm((f) => ({ ...f, file_url: '', file_name: '' }))}
                     aria-label={t('common.remove')}
-                    className="min-h-10 min-w-10 flex items-center justify-center rounded-lg text-gray-400 dark:text-slate-500 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/15"
+                    title={t('common.remove')}
+                    className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 flex items-center justify-center rounded-lg text-gray-500 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                   >
-                    <X className="w-4 h-4" />
+                    <X className="w-4 h-4" aria-hidden="true" />
                   </button>
                 )}
               </div>
-              {form.file_name ? (
-                <p className="text-sm text-gray-700 dark:text-slate-300 break-all">{form.file_name}</p>
-              ) : (
-                <p className="text-xs text-gray-500 dark:text-slate-400">{t('approvals.uploadHint')}</p>
+              {!form.file_url && (
+                form.file_name ? (
+                  <p className="text-sm text-gray-700 dark:text-slate-300 break-all">{form.file_name}</p>
+                ) : (
+                  <p className="text-xs text-gray-500 dark:text-slate-400">{t('approvals.uploadHint')}</p>
+                )
               )}
               {form.file_url && (
                 <FormField label={t('documents.fileName')} required>
@@ -835,6 +991,7 @@ function CreateDocumentModal({
                       value={form.file_name}
                       onChange={(e) => setForm(f => ({ ...f, file_name: e.target.value }))}
                       className="form-input"
+                      required
                     />
                   )}
                 </FormField>
@@ -850,6 +1007,7 @@ function CreateDocumentModal({
                     value={form.file_name}
                     onChange={(e) => setForm(f => ({ ...f, file_name: e.target.value }))}
                     className="form-input"
+                    required
                     // i18n-ok: filename example, not prose copy
                     placeholder="document.pdf"
                   />
@@ -863,6 +1021,7 @@ function CreateDocumentModal({
                     value={form.file_url}
                     onChange={(e) => setForm(f => ({ ...f, file_url: e.target.value }))}
                     className="form-input"
+                    required
                     placeholder="/api/uploads/document.pdf"
                   />
                 )}
@@ -897,12 +1056,12 @@ function CreateDocumentModal({
           </div>
 
           {canMarkConfidential && (
-            <label className="flex items-center gap-2.5 cursor-pointer pt-1">
+            <label className="min-h-11 sm:min-h-9 flex items-center gap-2.5 cursor-pointer pt-1">
               <input
                 type="checkbox"
                 checked={form.is_confidential}
                 onChange={(e) => setForm(f => ({ ...f, is_confidential: e.target.checked }))}
-                className="rounded border-gray-300 dark:border-slate-700 w-4 h-4 text-[var(--accent-1)] focus:ring-[var(--ring)]"
+                className="rounded border-gray-300 dark:border-slate-700 w-4 h-4 accent-[var(--accent-1)]"
               />
               <span className="text-sm font-medium text-gray-700 dark:text-slate-200">{t('documents.confidentialDoc')}</span>
             </label>

@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO attendance_network_observations\n               (company_id, employee_id, network, prefix_len, observation_count,\n                anchored_count, denied_count)\n           VALUES ($1, $2, $3, $4, 0, 0, 1)\n           ON CONFLICT (company_id, employee_id, network, prefix_len)\n           DO UPDATE SET\n               denied_count = CASE\n                   WHEN attendance_network_observations.last_seen_at < NOW() - INTERVAL '12 hours'\n                       THEN attendance_network_observations.denied_count + 1\n                   ELSE attendance_network_observations.denied_count\n               END,\n               last_seen_at = CASE\n                   WHEN attendance_network_observations.last_seen_at < NOW() - INTERVAL '12 hours'\n                       THEN NOW()\n                   ELSE attendance_network_observations.last_seen_at\n               END",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Int2"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "02431e21d1c591d3a91cc1b323242c8d8c6b06f469692a6a545e7c611e85989a"
+}

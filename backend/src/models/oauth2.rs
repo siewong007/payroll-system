@@ -53,10 +53,14 @@ pub struct OAuth2AuthorizeQuery {
     pub turnstile_token: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, validator::Validate)]
 pub struct LinkGoogleRequest {
+    #[validate(length(min = 1, message = "code is required"))]
     pub code: String,
+    #[validate(length(min = 1, message = "state is required"))]
     pub state: String,
+    #[validate(length(min = 1, message = "password is required"))]
+    pub password: String,
 }
 
 /// Response for OAuth2 providers listing

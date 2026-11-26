@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS(\n               SELECT 1\n               FROM push_subscriptions ps\n               LEFT JOIN user_sessions us ON us.id = ps.session_id\n               WHERE ps.user_id = $1\n                 AND ps.endpoint = $2\n                 AND ps.revoked_at IS NULL\n                 AND (ps.session_id IS NULL OR (us.revoked_at IS NULL AND us.expires_at > NOW()))\n           ) AS \"exists!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "exists!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "a96ea9edd52c08d3d4b7248a8c6312dd574d79704e746c5725e1d5883c5d8c17"
+}

@@ -272,23 +272,23 @@ pub async fn generate_qr_token(
 /// same active token during its TTL window. The `used` flag means admin-revoked (a new
 /// token was generated), not employee-scanned.
 pub async fn validate_qr_token(pool: &PgPool, token: &str, company_id: Uuid) -> AppResult<Uuid> {
+    let (token_id, _) = validate_qr_token_details(pool, token, company_id).await?;
+    Ok(token_id)
+}
+
+async fn validate_qr_token_details(
+    pool: &PgPool,
+    token: &str,
+    company_id: Uuid,
+) -> AppResult<(Uuid, bool)> {
     let token_hash = sha256_hex(token);
     let row = attendance_qr_tokens::find_by_token(pool, &token_hash).await?;
 
     match row {
-        None => Err(AppError::BadRequest(
-            "Invalid QR code: token not found".into(),
-        )),
-        Some(t) if t.company_id != company_id => Err(AppError::BadRequest(
-            "Invalid QR code: this code belongs to a different company".into(),
-        )),
-        Some(t) if t.used => Err(AppError::BadRequest(
-            "This QR code has been revoked — please refresh the kiosk screen.".into(),
-        )),
-        Some(t) if t.expires_at < Utc::now() => Err(AppError::BadRequest(
-            "QR code has expired — please refresh the kiosk screen.".into(),
-        )),
-        Some(t) => Ok(t.id),
+        Some(t) if t.company_id == company_id && !t.used && t.expires_at >= Utc::now() => {
+            Ok((t.id, t.kiosk_credential_id.is_some()))
+        }
+        _ => Err(AppError::BadRequest("Invalid or expired QR code".into())),
     }
 }
 
@@ -455,10 +455,8 @@ pub async fn revoke_kiosk_credential(
     revoked_by: Uuid,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<()> {
-    let existing = attendance_kiosk_credentials::list_for_company(pool, company_id)
+    let existing = attendance_kiosk_credentials::get_active_for_company(pool, id, company_id)
         .await?
-        .into_iter()
-        .find(|credential| credential.id == id && credential.revoked_at.is_none())
         .ok_or_else(|| {
             AppError::NotFound("Kiosk credential not found or already revoked".into())
         })?;
@@ -638,7 +636,7 @@ pub async fn check_in_qr(
         attendance_network_service::validate_for_checkin(pool, company_id, employee_id, client_ip)
             .await?;
 
-    let token_id = validate_qr_token(pool, token, company_id).await?;
+    let (token_id, kiosk_minted) = validate_qr_token_details(pool, token, company_id).await?;
     let status = determine_checkin_status(pool, employee_id, company_id, &tz).await?;
 
     let record = insert_checkin(pool, employee_id, &tz, || async {
@@ -665,9 +663,6 @@ pub async fn check_in_qr(
 
     // A QR token minted by a kiosk credential is corroboration the employee
     // cannot manufacture: a device physically in the building displayed it.
-    let kiosk_minted = attendance_qr_tokens::is_kiosk_minted(pool, token_id)
-        .await
-        .unwrap_or(false);
     let anchored = kiosk_minted
         || geofence_service::geofence_anchor(pool, company_id, latitude, longitude)
             .await
@@ -1029,8 +1024,11 @@ pub async fn update_attendance_record(
         )));
     }
 
-    // Fetch existing record
-    let existing = attendance_records::get_by_id(pool, record_id, company_id)
+    // Lock, read, update, and audit atomically inside a transaction so concurrent
+    // corrections to the same record cannot lose an update or compute stale hours.
+    let mut tx = pool.begin().await?;
+
+    let existing = attendance_records::get_by_id_locked(&mut *tx, record_id, company_id)
         .await?
         .ok_or_else(|| AppError::NotFound("Attendance record not found".into()))?;
 
@@ -1066,10 +1064,6 @@ pub async fn update_attendance_record(
     }
 
     validate_correction_span(check_in, check_out)?;
-
-    // Update and audit atomically: a correction to a payroll-feeding record
-    // must never exist without its audit row, and vice versa.
-    let mut tx = pool.begin().await?;
 
     let record = match attendance_records::update(
         &mut *tx, record_id, company_id, check_in, check_out, status, notes,
@@ -1378,6 +1372,17 @@ pub async fn get_attendance_summary(
     company_id: Uuid,
     q: &AttendanceSummaryQuery,
 ) -> AppResult<Vec<AttendanceSummaryItem>> {
+    if q.date_from > q.date_to {
+        return Err(AppError::BadRequest(format!(
+            "The start date ({}) must not be after the end date ({})",
+            q.date_from, q.date_to
+        )));
+    }
+    if (q.date_to - q.date_from).num_days() > MAX_EXPORT_RANGE_DAYS {
+        return Err(AppError::BadRequest(format!(
+            "Attendance summary may cover at most {MAX_EXPORT_RANGE_DAYS} days. Narrow the date range."
+        )));
+    }
     let tz = get_company_timezone(pool, company_id).await;
     attendance_reads::summary(pool, company_id, &tz, q).await
 }

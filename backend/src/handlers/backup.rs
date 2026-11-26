@@ -72,7 +72,7 @@ pub async fn export_company(
             .metadata
             .source_company_name
             .replace(' ', "_")
-            .replace(|c: char| !c.is_alphanumeric() && c != '_', ""),
+            .replace(|c: char| !c.is_ascii_alphanumeric() && c != '_', ""),
         Utc::now().format("%Y%m%d_%H%M%S")
     );
 

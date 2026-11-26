@@ -79,6 +79,22 @@ pub async fn get(
     Ok(group)
 }
 
+pub async fn lock_for_update(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    group_id: Uuid,
+) -> AppResult<Option<UserGroup>> {
+    let group = sqlx::query_as!(
+        UserGroup,
+        "SELECT * FROM user_groups WHERE id = $1 AND company_id = $2 FOR UPDATE",
+        group_id,
+        company_id,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(group)
+}
+
 pub async fn insert(
     executor: impl Executor<'_, Database = Postgres>,
     company_id: Uuid,

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE user_totp\n           SET code_login_failed_attempts = 0,\n               code_login_locked_until = NULL,\n               updated_at = NOW()\n           WHERE user_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "246f13ae475cd3bec994a131a509d0821dd72e8232d8ab2b0d16c97b162562a8"
+}

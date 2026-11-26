@@ -81,7 +81,7 @@ pub async fn update(
     rate: Option<i64>,
     is_taxable: Option<bool>,
     updated_by: Uuid,
-) -> AppResult<PayrollEntry> {
+) -> AppResult<Option<PayrollEntry>> {
     let updated = sqlx::query_as!(
         PayrollEntry,
         r#"UPDATE payroll_entries
@@ -113,7 +113,7 @@ pub async fn update(
         is_taxable,
         updated_by,
     )
-    .fetch_one(executor)
+    .fetch_optional(executor)
     .await?;
     Ok(updated)
 }
@@ -122,13 +122,41 @@ pub async fn delete_unprocessed(
     executor: impl Executor<'_, Database = Postgres>,
     id: Uuid,
     company_id: Uuid,
-) -> AppResult<()> {
-    sqlx::query!(
+) -> AppResult<u64> {
+    let res = sqlx::query!(
         "DELETE FROM payroll_entries WHERE id = $1 AND company_id = $2 AND is_processed = FALSE",
         id,
         company_id,
     )
     .execute(executor)
+    .await?;
+    Ok(res.rows_affected())
+}
+
+/// Lock unprocessed staged entries for the employees in this run so concurrent
+/// payroll processing cannot double-include or mutate them before `mark_processed`.
+pub async fn lock_staged(
+    executor: impl Executor<'_, Database = Postgres>,
+    employee_ids: &[Uuid],
+    year: i32,
+    month: i32,
+) -> AppResult<()> {
+    if employee_ids.is_empty() {
+        return Ok(());
+    }
+    sqlx::query!(
+        r#"SELECT id FROM payroll_entries
+        WHERE employee_id = ANY($1)
+          AND period_year = $2
+          AND period_month = $3
+          AND is_processed = FALSE
+        ORDER BY id
+        FOR UPDATE"#,
+        employee_ids,
+        year,
+        month,
+    )
+    .fetch_all(executor)
     .await?;
     Ok(())
 }
@@ -138,11 +166,11 @@ pub async fn mark_processed(
     executor: impl Executor<'_, Database = Postgres>,
     run_id: Uuid,
     entry_ids: &[Uuid],
-) -> AppResult<()> {
+) -> AppResult<u64> {
     if entry_ids.is_empty() {
-        return Ok(());
+        return Ok(0);
     }
-    sqlx::query!(
+    let res = sqlx::query!(
         r#"UPDATE payroll_entries SET is_processed = TRUE, payroll_run_id = $1, updated_at = NOW()
         WHERE id = ANY($2) AND is_processed = FALSE"#,
         run_id,
@@ -150,7 +178,7 @@ pub async fn mark_processed(
     )
     .execute(executor)
     .await?;
-    Ok(())
+    Ok(res.rows_affected())
 }
 
 /// Revert a run's staged entries back to unprocessed (used when deleting a run).

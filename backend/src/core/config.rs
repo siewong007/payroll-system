@@ -39,10 +39,13 @@ pub struct AppConfig {
     pub smtp_password: Option<String>,
     pub smtp_from_email: Option<String>,
     pub smtp_from_name: Option<String>,
-    /// Whether `X-Forwarded-For` / `X-Real-IP` may be trusted for rate-limiting
-    /// keys. Enable only when a trusted proxy (CloudFront/ALB) is the sole path
-    /// to the API — otherwise clients can spoof the header and bypass limits.
+    /// Whether forwarded headers may be trusted for rate-limiting keys and
+    /// client IP resolution. Enable only when a trusted proxy (e.g. Caddy /
+    /// Cloudflare / ALB) is the sole path to the API.
     pub trust_proxy_headers: bool,
+    /// Optional single HTTP header name to read client IP from when
+    /// `trust_proxy_headers` is true (e.g. `cf-connecting-ip`).
+    pub client_ip_header: Option<String>,
     /// Cloudflare Turnstile secret. Unset = verification skipped on every
     /// protected endpoint (local dev, CI). Set in production only.
     pub turnstile_secret_key: Option<String>,
@@ -92,6 +95,10 @@ impl AppConfig {
             trust_proxy_headers: env::var("TRUST_PROXY_HEADERS")
                 .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
                 .unwrap_or(false),
+            client_ip_header: env::var("CLIENT_IP_HEADER")
+                .ok()
+                .map(|v| v.trim().to_ascii_lowercase())
+                .filter(|v| !v.is_empty()),
             turnstile_secret_key: env::var("TURNSTILE_SECRET_KEY")
                 .ok()
                 .filter(|v| !v.is_empty()),
@@ -160,6 +167,11 @@ impl AppConfig {
         }
         if self.jwt_secret == self.totp_encryption_key {
             return Err("TOTP_ENCRYPTION_KEY must differ from JWT_SECRET in production".into());
+        }
+        if self.turnstile_secret_key.is_none() {
+            tracing::warn!(
+                "TURNSTILE_SECRET_KEY is unset in production; CAPTCHA verification on auth endpoints is disabled"
+            );
         }
         Ok(())
     }
@@ -245,6 +257,7 @@ mod tests {
             smtp_from_email: None,
             smtp_from_name: None,
             trust_proxy_headers: false,
+            client_ip_header: None,
             turnstile_secret_key: None,
             turnstile_verify_url: "https://challenges.cloudflare.com/turnstile/v0/siteverify"
                 .into(),

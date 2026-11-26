@@ -415,6 +415,25 @@ describe('NotificationActivationCard', () => {
     expect(dialog).toHaveTextContent('Tap the Share button');
     expect(dialog).toHaveTextContent('Select "Add to Home Screen"');
   });
+
+  it('supports compact layout for NotificationActivationCard on Notifications page', async () => {
+    setBrowserEnvironment({ notificationPermission: 'default' });
+    const { unmount } = renderWithPwa(<NotificationActivationCard compact />);
+
+    expect(screen.getByText('Device Notifications')).toBeInTheDocument();
+    expect(screen.getByText('Not Enabled')).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Allow Notifications' }),
+    ).toBeInTheDocument();
+    unmount();
+
+    setBrowserEnvironment({ notificationPermission: 'granted' });
+    renderWithPwa(<NotificationActivationCard compact />);
+    expect(await screen.findByText('Notifications Enabled')).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Send Test Notification' }),
+    ).toBeInTheDocument();
+  });
 });
 
 describe('PwaInstallBanner and InstallAppModal', () => {

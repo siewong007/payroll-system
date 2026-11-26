@@ -63,6 +63,21 @@ pub async fn delete_by_stored_name(
     Ok(())
 }
 
+/// List all managed upload filenames owned by `company_id` (used before
+/// deleting or overwriting a company so physical files can be unlinked post-commit).
+pub async fn list_stored_names_for_company(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+) -> AppResult<Vec<String>> {
+    let names = sqlx::query_scalar!(
+        "SELECT stored_name FROM uploaded_files WHERE company_id = $1",
+        company_id,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(names)
+}
+
 /// Delete and return stale uploaded filenames older than `hours` that have no
 /// referencing claim, leave request, active document, or company logo.
 pub async fn purge_unreferenced_older_than_hours(

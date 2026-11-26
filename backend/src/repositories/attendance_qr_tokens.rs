@@ -16,15 +16,27 @@ pub async fn revoke_unused_for_issuer(
     company_id: Uuid,
     kiosk_credential_id: Option<Uuid>,
 ) -> AppResult<()> {
-    sqlx::query!(
-        "UPDATE attendance_qr_tokens SET used = TRUE
-         WHERE company_id = $1 AND used = FALSE
-           AND kiosk_credential_id IS NOT DISTINCT FROM $2",
-        company_id,
-        kiosk_credential_id,
-    )
-    .execute(executor)
-    .await?;
+    match kiosk_credential_id {
+        Some(kiosk_id) => {
+            sqlx::query!(
+                "UPDATE attendance_qr_tokens SET used = TRUE
+                 WHERE company_id = $1 AND used = FALSE AND kiosk_credential_id = $2",
+                company_id,
+                kiosk_id,
+            )
+            .execute(executor)
+            .await?;
+        }
+        None => {
+            sqlx::query!(
+                "UPDATE attendance_qr_tokens SET used = TRUE
+                 WHERE company_id = $1 AND used = FALSE AND kiosk_credential_id IS NULL",
+                company_id,
+            )
+            .execute(executor)
+            .await?;
+        }
+    }
     Ok(())
 }
 
@@ -98,7 +110,7 @@ pub async fn find_by_token(
 ) -> AppResult<Option<AttendanceQrToken>> {
     let row = sqlx::query_as!(
         AttendanceQrToken,
-        "SELECT id, company_id, token, expires_at, used, created_at
+        "SELECT id, company_id, token, expires_at, used, kiosk_credential_id, created_at
          FROM attendance_qr_tokens WHERE token = $1",
         token,
     )

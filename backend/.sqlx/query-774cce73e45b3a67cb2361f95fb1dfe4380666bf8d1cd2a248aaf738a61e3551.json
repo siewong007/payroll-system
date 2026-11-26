@@ -1,0 +1,27 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH req AS (\n            SELECT\n                (EXTRACT(EPOCH FROM $3::time) / 60.0)::double precision AS s1,\n                CASE\n                    WHEN $4::time <= $3::time THEN (EXTRACT(EPOCH FROM $4::time) / 60.0)::double precision + 1440.0\n                    ELSE (EXTRACT(EPOCH FROM $4::time) / 60.0)::double precision\n                END AS e1\n        )\n        SELECT EXISTS(\n            SELECT 1\n            FROM overtime_applications oa\n            CROSS JOIN req\n            CROSS JOIN LATERAL (\n                SELECT\n                    ((oa.ot_date - $2::date) * 1440.0)::double precision\n                        + (EXTRACT(EPOCH FROM oa.start_time) / 60.0)::double precision AS oa_start,\n                    ((oa.ot_date - $2::date) * 1440.0)::double precision\n                        + CASE\n                            WHEN oa.end_time <= oa.start_time THEN (EXTRACT(EPOCH FROM oa.end_time) / 60.0)::double precision + 1440.0\n                            ELSE (EXTRACT(EPOCH FROM oa.end_time) / 60.0)::double precision\n                        END AS oa_end\n            ) w\n            WHERE oa.employee_id = $1\n              AND oa.ot_date BETWEEN ($2::date - 1) AND ($2::date + 1)\n              AND oa.status NOT IN ('rejected', 'cancelled')\n              AND ($5::uuid IS NULL OR oa.id <> $5)\n              AND req.s1 < w.oa_end\n              AND w.oa_start < req.e1\n        ) AS \"exists!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "exists!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Date",
+        "Time",
+        "Time",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "774cce73e45b3a67cb2361f95fb1dfe4380666bf8d1cd2a248aaf738a61e3551"
+}

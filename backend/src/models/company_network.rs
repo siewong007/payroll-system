@@ -86,6 +86,8 @@ pub struct NetworkCandidate {
     /// this is how the office's new address surfaces after an ISP change, when
     /// everyone is being turned away and nothing else is being recorded.
     pub denied_count: i64,
+    #[serde(default)]
+    pub distinct_denied_employees: i64,
     pub first_seen_at: DateTime<Utc>,
     pub last_seen_at: DateTime<Utc>,
 }

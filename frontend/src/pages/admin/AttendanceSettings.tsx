@@ -1,8 +1,11 @@
 import { useId, useState } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { QrCode, Fingerprint, Shield, CheckCircle2, AlertCircle, Info, Building2, RefreshCw } from 'lucide-react';
+import { QrCode, Fingerprint, CheckCircle2, AlertCircle, Info, Building2, Loader2 } from 'lucide-react';
 import { getPlatformAttendanceMethod, setPlatformAttendanceMethod } from '@/api/attendance';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { useAuth } from '@/context/AuthContext';
 import { userCan } from '@/lib/usePermissions';
 import { getErrorMessage } from '@/lib/utils';
@@ -51,42 +54,43 @@ export function AttendanceSettings() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="spinner" />
+      <div className="space-y-6">
+        <PageHeader title={t('attendanceSettings.title')} subtitle={t('attendanceSettings.subtitle')} />
+        <div role="status" aria-label={t('common.loading')} className="max-w-2xl card space-y-5">
+          <Skeleton className="h-5 w-48" />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Skeleton className="h-36 w-full rounded-2xl" />
+            <Skeleton className="h-36 w-full rounded-2xl" />
+          </div>
+          <Skeleton className="h-14 w-full rounded-xl" />
+        </div>
       </div>
     );
   }
 
   if (isError) {
     return (
-      <div className="max-w-2xl bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl shadow-sm p-6 flex flex-col items-center justify-center gap-3 text-center">
-        <AlertCircle className="w-8 h-8 text-red-500" />
-        <p className="text-sm text-gray-700 dark:text-slate-300">
-          {getErrorMessage(loadError, t('common.loadFailed'))}
-        </p>
-        <button
-          type="button"
-          onClick={() => void refetch()}
-          className="btn-secondary !py-2"
-        >
-          <RefreshCw className="w-4 h-4" />
-          {t('common.retry')}
-        </button>
+      <div className="space-y-6">
+        <PageHeader title={t('attendanceSettings.title')} subtitle={t('attendanceSettings.subtitle')} />
+        <div className="max-w-2xl card">
+          <EmptyState
+            icon={AlertCircle}
+            title={t('common.loadFailed')}
+            description={getErrorMessage(loadError, t('common.error'))}
+            action={
+              <button type="button" onClick={() => void refetch()} className="btn-secondary">
+                {t('common.retry')}
+              </button>
+            }
+          />
+        </div>
       </div>
     );
   }
 
   return (
-    <div>
-      <div className="flex items-center gap-3 mb-6">
-        <div className="w-10 h-10 bg-gray-900 dark:bg-slate-800 border border-transparent dark:border-slate-700 rounded-xl flex items-center justify-center">
-          <Shield className="w-5 h-5 text-white" />
-        </div>
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-slate-100">{t('attendanceSettings.title')}</h1>
-          <p className="text-sm text-gray-500 dark:text-slate-400 mt-0.5">{t('attendanceSettings.subtitle')}</p>
-        </div>
-      </div>
+    <div className="space-y-6">
+      <PageHeader title={t('attendanceSettings.title')} subtitle={t('attendanceSettings.subtitle')} />
 
       <div className="max-w-2xl space-y-6">
 
@@ -94,7 +98,7 @@ export function AttendanceSettings() {
         <div className="bg-white dark:bg-slate-900 border border-gray-200/80 dark:border-slate-800 rounded-2xl shadow-sm divide-y divide-gray-100 dark:divide-slate-800">
           <div className="p-6">
             <h2 className="font-semibold text-gray-900 dark:text-slate-100 mb-1">{t('attendanceSettings.methodTitle')}</h2>
-            <p className="text-sm text-gray-500 dark:text-slate-400 mb-5">
+            <p className="text-sm text-gray-600 dark:text-slate-300 mb-5">
               {t('attendanceSettings.methodDescription')}
             </p>
 
@@ -104,7 +108,7 @@ export function AttendanceSettings() {
                 type="button"
                 aria-pressed={method === 'qr_code'}
                 onClick={() => { setDraftMethod('qr_code'); setSaved(false); }}
-                className={`flex flex-col gap-4 p-5 rounded-2xl border-2 text-left transition-all ${
+                className={`flex flex-col gap-4 p-5 rounded-2xl border-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] transition-all ${
                   method === 'qr_code'
                     ? 'border-violet-500 bg-violet-50 dark:bg-violet-500/10'
                     : 'border-gray-200 dark:border-slate-700 hover:border-gray-300 dark:hover:border-slate-600 bg-gray-50 dark:bg-slate-800/60'
@@ -113,17 +117,17 @@ export function AttendanceSettings() {
                 <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${
                   method === 'qr_code' ? 'bg-violet-100 dark:bg-violet-500/20' : 'bg-gray-100 dark:bg-slate-800'
                 }`}>
-                  <QrCode className={`w-6 h-6 ${method === 'qr_code' ? 'text-violet-600 dark:text-violet-300' : 'text-gray-400 dark:text-slate-500'}`} />
+                  <QrCode className={`w-6 h-6 ${method === 'qr_code' ? 'text-violet-600 dark:text-violet-300' : 'text-gray-500 dark:text-slate-400'}`} aria-hidden="true" />
                 </div>
                 <div>
                   <p className="font-semibold text-gray-900 dark:text-slate-100">{t('attendanceSettings.qrTitle')}</p>
-                  <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">
+                  <p className="text-xs text-gray-600 dark:text-slate-300 mt-0.5">
                     {t('attendanceSettings.qrDescription')}
                   </p>
                 </div>
                 {method === 'qr_code' && (
-                  <div className="flex items-center gap-1.5 text-violet-600 dark:text-violet-300 text-xs font-medium">
-                    <CheckCircle2 className="w-3.5 h-3.5" /> {t('common.selectedState')}
+                  <div className="flex items-center gap-1.5 text-violet-700 dark:text-violet-300 text-xs font-medium">
+                    <CheckCircle2 className="w-3.5 h-3.5" aria-hidden="true" /> {t('common.selectedState')}
                   </div>
                 )}
               </button>
@@ -133,7 +137,7 @@ export function AttendanceSettings() {
                 type="button"
                 aria-pressed={method === 'face_id'}
                 onClick={() => { setDraftMethod('face_id'); setSaved(false); }}
-                className={`flex flex-col gap-4 p-5 rounded-2xl border-2 text-left transition-all ${
+                className={`flex flex-col gap-4 p-5 rounded-2xl border-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] transition-all ${
                   method === 'face_id'
                     ? 'border-sky-500 bg-sky-50 dark:bg-sky-500/10'
                     : 'border-gray-200 dark:border-slate-700 hover:border-gray-300 dark:hover:border-slate-600 bg-gray-50 dark:bg-slate-800/60'
@@ -142,17 +146,17 @@ export function AttendanceSettings() {
                 <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${
                   method === 'face_id' ? 'bg-sky-100 dark:bg-sky-500/20' : 'bg-gray-100 dark:bg-slate-800'
                 }`}>
-                  <Fingerprint className={`w-6 h-6 ${method === 'face_id' ? 'text-sky-600 dark:text-sky-300' : 'text-gray-400 dark:text-slate-500'}`} />
+                  <Fingerprint className={`w-6 h-6 ${method === 'face_id' ? 'text-sky-600 dark:text-sky-300' : 'text-gray-500 dark:text-slate-400'}`} aria-hidden="true" />
                 </div>
                 <div>
                   <p className="font-semibold text-gray-900 dark:text-slate-100">{t('attendanceSettings.faceIdTitle')}</p>
-                  <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">
+                  <p className="text-xs text-gray-600 dark:text-slate-300 mt-0.5">
                     {t('attendanceSettings.faceIdDescription')}
                   </p>
                 </div>
                 {method === 'face_id' && (
-                  <div className="flex items-center gap-1.5 text-sky-600 dark:text-sky-300 text-xs font-medium">
-                    <CheckCircle2 className="w-3.5 h-3.5" /> {t('common.selectedState')}
+                  <div className="flex items-center gap-1.5 text-sky-700 dark:text-sky-300 text-xs font-medium">
+                    <CheckCircle2 className="w-3.5 h-3.5" aria-hidden="true" /> {t('common.selectedState')}
                   </div>
                 )}
               </button>
@@ -160,8 +164,8 @@ export function AttendanceSettings() {
 
             {/* Face ID note */}
             {method === 'face_id' && (
-              <div className="mt-4 flex items-start gap-2.5 bg-sky-50 dark:bg-sky-500/10 border border-sky-100 dark:border-sky-500/20 rounded-xl p-4 text-sm text-sky-700 dark:text-sky-200">
-                <Info className="w-4 h-4 shrink-0 mt-0.5" />
+              <div className="mt-4 flex items-start gap-2.5 bg-sky-50 dark:bg-sky-500/10 border border-sky-100 dark:border-sky-500/20 rounded-xl p-4 text-sm text-sky-800 dark:text-sky-200">
+                <Info className="w-4 h-4 shrink-0 mt-0.5" aria-hidden="true" />
                 <span>
                   <Trans i18nKey="attendanceSettings.faceIdNote" components={{ b: <strong /> }} />
                 </span>
@@ -174,13 +178,13 @@ export function AttendanceSettings() {
             <div className="flex items-start justify-between gap-4">
               <div className="flex items-start gap-3">
                 <div className="mt-0.5">
-                  <Building2 className="w-5 h-5 text-gray-400 dark:text-slate-500" />
+                  <Building2 className="w-5 h-5 text-gray-500 dark:text-slate-400" aria-hidden="true" />
                 </div>
                 <div>
                   <p id={overrideHeadingId} className="font-medium text-gray-900 dark:text-slate-100">
                     {t('attendanceSettings.overrideTitle')}
                   </p>
-                  <p className="text-sm text-gray-500 dark:text-slate-400 mt-0.5">
+                  <p className="text-sm text-gray-600 dark:text-slate-300 mt-0.5">
                     {t('attendanceSettings.overrideDescription')}
                   </p>
                 </div>
@@ -191,7 +195,7 @@ export function AttendanceSettings() {
                 aria-checked={allowOverride}
                 aria-labelledby={overrideHeadingId}
                 onClick={() => { setDraftOverride(!allowOverride); setSaved(false); }}
-                className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors ${
+                className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] transition-colors ${
                   allowOverride ? 'bg-gray-900 dark:bg-[var(--accent-1)]' : 'bg-gray-300 dark:bg-slate-700'
                 }`}
               >
@@ -203,16 +207,16 @@ export function AttendanceSettings() {
           </div>
 
           {/* Save Bar */}
-          <div className="flex flex-wrap items-center justify-between gap-3 px-6 py-4 bg-gray-50 dark:bg-slate-950/60 rounded-b-2xl">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-6 py-4 bg-gray-50 dark:bg-slate-950/60 rounded-b-2xl">
             <div className="min-h-5">
               {saved && (
-                <span className="flex items-center gap-1.5 text-sm text-emerald-600 dark:text-emerald-400 font-medium">
-                  <CheckCircle2 className="w-4 h-4" /> {t('attendanceSettings.saved')}
+                <span role="status" className="flex items-center gap-1.5 text-sm text-emerald-700 dark:text-emerald-400 font-medium">
+                  <CheckCircle2 className="w-4 h-4" aria-hidden="true" /> {t('attendanceSettings.saved')}
                 </span>
               )}
               {error && (
-                <span role="alert" className="flex items-center gap-1.5 text-sm text-red-600 dark:text-red-400">
-                  <AlertCircle className="w-4 h-4" /> {error}
+                <span role="alert" className="flex items-center gap-1.5 text-sm text-red-700 dark:text-red-300">
+                  <AlertCircle className="w-4 h-4" aria-hidden="true" /> {error}
                 </span>
               )}
             </div>
@@ -220,9 +224,16 @@ export function AttendanceSettings() {
               type="button"
               onClick={() => mutation.mutate()}
               disabled={mutation.isPending}
-              className="btn-primary !rounded-xl shrink-0"
+              className="btn-primary !rounded-xl shrink-0 w-full sm:w-auto inline-flex items-center justify-center gap-2"
             >
-              {mutation.isPending ? t('common.saving') : t('common.saveChanges')}
+              {mutation.isPending ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                  {t('common.saving')}
+                </>
+              ) : (
+                t('common.saveChanges')
+              )}
             </button>
           </div>
         </div>

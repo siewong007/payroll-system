@@ -60,6 +60,7 @@ export function AttendanceKioskPublic() {
   }, []);
   const [status, setStatus] = useState<Status>({ kind: 'loading' });
   const [timeLeft, setTimeLeft] = useState(FALLBACK_TTL);
+  const [retrying, setRetrying] = useState(false);
   const backoffRef = useRef(2000);
   const lastMintRef = useRef(Number.NEGATIVE_INFINITY);
   const mintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -131,6 +132,7 @@ export function AttendanceKioskPublic() {
       const data = await fetchKioskQr(kioskKey);
       if (!mountedRef.current) return;
       backoffRef.current = 2000;
+      setRetrying(false);
       const ttl = data.ttl_seconds > 0 ? data.ttl_seconds : FALLBACK_TTL;
       setStatus({
         kind: 'ok',
@@ -141,6 +143,7 @@ export function AttendanceKioskPublic() {
       scheduleMint(Math.max(MIN_MINT_INTERVAL_MS, (ttl - GUARD_SECONDS) * 1000));
     } catch (err: unknown) {
       if (!mountedRef.current) return;
+      setRetrying(false);
       const e = err as { response?: { status?: number } };
       const code = e.response?.status;
       if (code === 401) {
@@ -262,83 +265,118 @@ export function AttendanceKioskPublic() {
   const isLow = timeLeft <= 10;
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white flex flex-col items-center justify-center p-4 sm:p-6 select-none">
-      <div className="w-full max-w-md lg:max-w-4xl bg-gray-900 border border-gray-800 rounded-3xl p-6 sm:p-8 shadow-2xl lg:grid lg:grid-cols-2 lg:items-center lg:gap-10">
-        {/* Info / Clock column (top on portrait, left on landscape tablet) */}
-        <div className="flex flex-col items-center lg:items-start text-center lg:text-left gap-6 mb-6 lg:mb-0">
+    <main className="min-h-[100dvh] safe-area-top safe-area-bottom bg-gray-950 text-white flex flex-col items-center justify-center p-4 sm:p-6 select-none">
+      <div className="w-full max-w-md sm:max-w-lg md:max-w-xl lg:max-w-4xl bg-gray-900 border border-gray-800 rounded-3xl p-6 sm:p-8 shadow-2xl grid grid-cols-1 lg:grid-cols-2 lg:items-center gap-6 lg:gap-10">
+        {/* Info / Clock column (left on landscape, split cleanly below QR on portrait) */}
+        <div className="flex flex-col items-center lg:items-start text-center lg:text-left gap-6">
           <div>
             <BrandLogo variant="lockup-dark" priority className="h-10 w-auto mx-auto lg:mx-0 mb-2 rounded-xl" />
-            <p className="text-gray-300 text-sm font-medium uppercase tracking-wider">
+            <h1 className="text-gray-300 text-sm font-medium uppercase tracking-wider">
               {t('attendance.kiosk.title')}
-            </p>
+            </h1>
           </div>
 
           <KioskWallClock alignedLeftOnLarge />
 
-          <div className="w-full bg-gray-800/70 border border-gray-700/60 rounded-2xl p-4 space-y-2 text-left">
+          <ol className="hidden lg:block w-full bg-gray-800/70 border border-gray-700/60 rounded-2xl p-4 space-y-2 text-left">
             {[1, 2, 3, 4].map((step) => (
-              <div key={step} className="text-gray-200 text-sm flex items-start gap-2">
-                <span className="text-emerald-400 shrink-0">›</span>
+              <li key={step} className="text-gray-200 text-sm flex items-start gap-2">
+                <span className="text-emerald-400 shrink-0" aria-hidden="true">›</span>
                 <span>{t(`attendance.kiosk.steps.${step}`)}</span>
-              </div>
+              </li>
             ))}
-          </div>
+          </ol>
         </div>
 
         {/* QR column */}
         <div className="flex flex-col items-center gap-5 w-full">
           <div className="relative w-full flex justify-center">
             {effectiveStatus.kind === 'loading' && (
-              <div className="w-full max-w-[320px] aspect-square flex items-center justify-center bg-gray-800 rounded-2xl">
+              <div
+                role="status"
+                aria-label={t('common.loading')}
+                className="w-full max-w-[320px] md:max-w-[360px] aspect-square flex flex-col items-center justify-center gap-3 bg-gray-800 rounded-2xl"
+              >
                 <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white" />
+                <span className="sr-only">{t('common.loading')}</span>
               </div>
             )}
             {effectiveStatus.kind === 'transient' && (
-              <div className="w-full max-w-[320px] aspect-square flex flex-col items-center justify-center bg-amber-950/40 border border-amber-500/30 rounded-2xl gap-3 px-6 text-center">
-                <Wifi className="w-10 h-10 text-amber-400" />
+              <div
+                role="alert"
+                className="w-full max-w-[320px] md:max-w-[360px] aspect-square flex flex-col items-center justify-center bg-amber-950/40 border border-amber-500/30 rounded-2xl gap-3 px-6 text-center"
+              >
+                <Wifi className="w-10 h-10 text-amber-400" aria-hidden="true" />
                 <p className="text-amber-200 text-sm">{effectiveStatus.message}</p>
                 <button
                   type="button"
-                  onClick={() => { backoffRef.current = 2000; scheduleMint(0); }}
-                  className="mt-1 inline-flex items-center gap-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 px-3.5 py-2 text-xs font-semibold text-amber-100 transition-colors"
+                  disabled={retrying}
+                  onClick={() => {
+                    setRetrying(true);
+                    backoffRef.current = 2000;
+                    scheduleMint(0);
+                  }}
+                  className="mt-1 min-h-11 inline-flex items-center gap-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 px-4 py-2.5 text-sm font-semibold text-amber-100 transition-colors disabled:opacity-60"
                 >
-                  <RefreshCw className="w-3.5 h-3.5" />
+                  <RefreshCw className={`w-4 h-4 ${retrying ? 'animate-spin' : ''}`} aria-hidden="true" />
                   {t('attendance.kiosk.retryNow')}
                 </button>
               </div>
             )}
             {effectiveStatus.kind === 'fatal' && (
-              <div className="w-full max-w-[320px] aspect-square flex flex-col items-center justify-center bg-red-950/50 border border-red-500/30 rounded-2xl gap-3 px-6 text-center">
-                <ShieldAlert className="w-10 h-10 text-red-400" />
+              <div
+                role="alert"
+                className="w-full max-w-[320px] md:max-w-[360px] aspect-square flex flex-col items-center justify-center bg-red-950/50 border border-red-500/30 rounded-2xl gap-3 px-6 text-center"
+              >
+                <ShieldAlert className="w-10 h-10 text-red-400" aria-hidden="true" />
                 <p className="text-red-200 text-sm">{effectiveStatus.message}</p>
               </div>
             )}
             {effectiveStatus.kind === 'ok' && (
-              <div className="w-full max-w-[320px] lg:max-w-[380px] bg-white p-3 sm:p-4 rounded-2xl shadow-[0_0_50px_rgba(255,255,255,0.15)]">
+              <div className="relative w-full max-w-[320px] md:max-w-[360px] lg:max-w-[380px] bg-white p-3 sm:p-4 rounded-2xl shadow-[0_0_50px_rgba(255,255,255,0.15)]">
                 <canvas
                   ref={canvasRef}
                   role="img"
                   aria-label={t('attendance.kiosk.title')}
-                  className="block w-full !h-auto aspect-square rounded-lg shadow-sm"
+                  className={`block w-full !h-auto aspect-square rounded-lg shadow-sm transition-opacity ${
+                    timeLeft === 0 ? 'opacity-30' : 'opacity-100'
+                  }`}
                 />
+                {timeLeft === 0 && (
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <div
+                      role="status"
+                      className="rounded-xl bg-gray-900/90 border border-gray-700 px-4 py-2 text-sm font-semibold text-white shadow-lg"
+                    >
+                      {t('attendance.qrPanel.refreshing')}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
 
           {effectiveStatus.kind === 'ok' && (
-            <div className="w-full max-w-[320px] lg:max-w-[380px]">
+            <div className="w-full max-w-[320px] md:max-w-[360px] lg:max-w-[380px]">
               <div className="flex items-center justify-between text-xs mb-2">
                 <div className="flex items-center gap-1.5 text-gray-300">
-                  <RefreshCw className="w-3 h-3" />
+                  <RefreshCw className="w-3 h-3" aria-hidden="true" />
                   {t('attendance.kiosk.refreshesIn')}
                 </div>
                 <span
-                  className={`font-bold tabular-nums text-base ${isLow ? 'text-red-400 animate-pulse' : 'text-white'}`}
+                  className={`font-bold tabular-nums text-base ${isLow ? 'text-red-400 motion-safe:animate-pulse' : 'text-white'}`}
                 >
                   {t('attendance.kiosk.secondsShort', { count: timeLeft })}
                 </span>
               </div>
-              <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
+              <div
+                role="progressbar"
+                aria-label={t('attendance.kiosk.refreshesIn')}
+                aria-valuemin={0}
+                aria-valuemax={ttl}
+                aria-valuenow={timeLeft}
+                className="h-2 bg-gray-800 rounded-full overflow-hidden"
+              >
                 <div
                   className={`h-full rounded-full transition-all duration-1000 ${isLow ? 'bg-red-500' : 'bg-emerald-500'}`}
                   style={{ width: `${pctLeft}%` }}
@@ -346,14 +384,24 @@ export function AttendanceKioskPublic() {
               </div>
             </div>
           )}
+
+          {/* Instructions sit below QR on portrait tablets/phones so the QR code stays prominent */}
+          <ol className="lg:hidden w-full bg-gray-800/70 border border-gray-700/60 rounded-2xl p-4 space-y-2 text-left">
+            {[1, 2, 3, 4].map((step) => (
+              <li key={step} className="text-gray-200 text-sm flex items-start gap-2">
+                <span className="text-emerald-400 shrink-0" aria-hidden="true">›</span>
+                <span>{t(`attendance.kiosk.steps.${step}`)}</span>
+              </li>
+            ))}
+          </ol>
         </div>
       </div>
 
       <div className="mt-6 flex items-center gap-2 text-gray-400 text-xs">
-        <Clock className="w-3.5 h-3.5" />
+        <Clock className="w-3.5 h-3.5" aria-hidden="true" />
         <span>{t('attendance.kiosk.autoRegen')}</span>
       </div>
-    </div>
+    </main>
   );
 }
 

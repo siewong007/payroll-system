@@ -7,6 +7,8 @@ import { hasOnlyEmployeeRole } from '@/lib/roles';
 import { safeRedirectPath, translateServerMessage } from '@/lib/utils';
 import { TwoFactorPrompt } from '@/components/TwoFactorPrompt';
 import { BrandLogo } from '@/components/ui/BrandLogo';
+import { Skeleton } from '@/components/ui/Skeleton';
+import { AuthLayout } from '@/components/layout/AuthLayout';
 import type { LoginResponse, User } from '@/types';
 
 /**
@@ -129,40 +131,55 @@ export function OAuth2Callback() {
 
   if (error) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-slate-950 px-4">
-        <div role="alert" className="bg-white dark:bg-slate-900 dark:border dark:border-slate-800 rounded-2xl shadow p-8 max-w-md w-full text-center space-y-4">
+      <AuthLayout>
+        <div role="alert" className="bg-white dark:bg-slate-900 dark:border dark:border-slate-800 rounded-2xl shadow p-6 sm:p-8 text-center space-y-4">
           <div className="w-16 h-16 bg-red-50 dark:bg-red-500/15 rounded-full flex items-center justify-center mx-auto">
-            <svg className="w-8 h-8 text-red-500 dark:text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+            <svg className="w-8 h-8 text-red-600 dark:text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
           </div>
           <p className="text-sm text-gray-600 dark:text-slate-300">{error}</p>
-          <Link to="/login" className="inline-block text-sm text-black dark:text-indigo-400 font-medium hover:underline">
+          <Link
+            to="/login"
+            className="inline-flex min-h-11 items-center justify-center px-3 text-sm text-black dark:text-indigo-400 font-medium hover:underline rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+          >
             {t('auth.backToLogin')}
           </Link>
         </div>
-      </div>
+      </AuthLayout>
     );
   }
 
   if (mfaToken) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-slate-950 px-4">
-        <div className="w-full max-w-md">
-          <div className="bg-white dark:bg-slate-900 dark:border dark:border-slate-800 rounded-2xl shadow p-6 sm:p-8">
-            <div className="text-center mb-8">
-              <BrandLogo variant="lockup-dark" className="h-12 w-auto mx-auto mb-4 rounded-xl" />
-            </div>
-            <TwoFactorPrompt mfaToken={mfaToken} onSuccess={goPostLogin} />
+      <AuthLayout>
+        <div className="bg-white dark:bg-slate-900 dark:border dark:border-slate-800 rounded-2xl shadow p-6 sm:p-8">
+          <div className="text-center mb-8">
+            <BrandLogo variant="lockup-dark" className="h-12 w-auto mx-auto mb-4 rounded-xl" />
           </div>
+          <TwoFactorPrompt
+            mfaToken={mfaToken}
+            onSuccess={goPostLogin}
+            onBack={() => navigate('/login', { replace: true })}
+          />
         </div>
-      </div>
+      </AuthLayout>
     );
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-slate-950 px-4">
-      <div className="text-gray-500 dark:text-slate-400">{t('auth.oauth.completing')}</div>
-    </div>
+    <AuthLayout>
+      <div
+        role="status"
+        className="bg-white dark:bg-slate-900 dark:border dark:border-slate-800 rounded-2xl shadow p-6 sm:p-8 text-center space-y-4"
+      >
+        <BrandLogo variant="lockup-dark" className="h-12 w-auto mx-auto rounded-xl" />
+        <div className="space-y-2.5 py-2">
+          <div className="spinner mx-auto" />
+          <Skeleton className="h-3 w-32 mx-auto" />
+        </div>
+        <p className="text-sm text-gray-600 dark:text-slate-300">{t('auth.oauth.completing')}</p>
+      </div>
+    </AuthLayout>
   );
 }

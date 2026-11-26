@@ -1,12 +1,16 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Clock, X, Trash2, AlertTriangle } from 'lucide-react';
+import { Plus, Clock, X, Trash2, AlertTriangle, Loader2 } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { FieldGroup } from '@/components/ui/FormField';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { TimeSelector } from '@/components/ui/TimeSelector';
 import { useAuth } from '@/context/AuthContext';
 import { useConfirm } from '@/lib/confirm';
+import { useToast } from '@/lib/toast';
 import { getOvertimeApplications, createOvertimeApplication, cancelOvertimeApplication, deleteOvertimeApplication } from '@/api/portal';
 import { runBulk, summarizeBulkFailure } from '@/lib/bulk';
 import { formatDate, getErrorMessage } from '@/lib/utils';
@@ -35,13 +39,23 @@ const otTypeMultiplier = (t: string) => {
   return m[t] || '';
 };
 
+const STATUS_FILTERS = [
+  { key: null, labelKey: 'common.all' },
+  { key: 'pending', labelKey: 'enums.requestStatus.pending' },
+  { key: 'approved', labelKey: 'enums.requestStatus.approved' },
+  { key: 'rejected', labelKey: 'enums.requestStatus.rejected' },
+  { key: 'cancelled', labelKey: 'enums.requestStatus.cancelled' },
+] as const;
+
 export function Overtime() {
   const { t } = useTranslation();
   const { user } = useAuth();
   const hasEmployee = Boolean(user?.employee_id);
   const confirmDialog = useConfirm();
+  const toast = useToast();
   const queryClient = useQueryClient();
   const selectAllRef = useRef<HTMLInputElement>(null);
+  const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [selectedOvertimeIds, setSelectedOvertimeIds] = useState<string[]>([]);
   const [formError, setFormError] = useState('');
@@ -76,6 +90,7 @@ export function Overtime() {
   const cancelMutation = useMutation({
     mutationFn: cancelOvertimeApplication,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['my-overtime'] }),
+    onError: (err) => toast.error(getErrorMessage(err, t('portal.overtime.bulkCancelFailed'))),
   });
 
   const deleteMutation = useMutation({
@@ -84,6 +99,7 @@ export function Overtime() {
       setSelectedOvertimeIds((prev) => prev.filter((id) => id !== deletedId));
       queryClient.invalidateQueries({ queryKey: ['my-overtime'] });
     },
+    onError: (err) => toast.error(getErrorMessage(err, t('portal.overtime.bulkDeleteFailed'))),
   });
 
   // Partial failure is an outcome, not an exception: the refetch runs whatever
@@ -172,7 +188,11 @@ export function Overtime() {
   };
 
   const canCancel = (app: OvertimeApplication) => ['pending', 'approved', 'rejected'].includes(app.status);
-  const displayedOvertimeIds = applications.map((app) => app.id);
+  const filteredApplications = useMemo(
+    () => (statusFilter ? applications.filter((app) => app.status === statusFilter) : applications),
+    [applications, statusFilter],
+  );
+  const displayedOvertimeIds = filteredApplications.map((app) => app.id);
   const selectedDisplayedIds = selectedOvertimeIds.filter((id) => displayedOvertimeIds.includes(id));
   const allDisplayedSelected = displayedOvertimeIds.length > 0 && selectedDisplayedIds.length === displayedOvertimeIds.length;
   const someDisplayedSelected = selectedDisplayedIds.length > 0 && !allDisplayedSelected;
@@ -202,40 +222,72 @@ export function Overtime() {
 
   if (!hasEmployee) {
     return (
-      <div className="card">
-        <EmptyState icon={Clock} title={t('attendance.scan.noEmployeeProfile')} />
+      <div className="space-y-6">
+        <PageHeader className="mb-0" title={t('portal.overtime.title')} subtitle={t('portal.overtime.subtitle')} />
+        <div className="card">
+          <EmptyState icon={Clock} title={t('attendance.scan.noEmployeeProfile')} />
+        </div>
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="page-header">
-          <h1 className="page-title">{t('portal.overtime.title')}</h1>
-          <p className="page-subtitle">{t('portal.overtime.subtitle')}</p>
-        </div>
-        <button
-          onClick={() => { resetForm(); setShowModal(true); }}
-          className="btn-primary flex items-center gap-2 w-full sm:w-auto"
-        >
-          <Plus className="w-4 h-4" />
-          {t('portal.overtime.apply')}
-        </button>
+      <PageHeader
+        className="mb-0"
+        title={t('portal.overtime.title')}
+        subtitle={t('portal.overtime.subtitle')}
+        actions={
+          <button
+            type="button"
+            onClick={() => { resetForm(); setShowModal(true); }}
+            className="btn-primary w-full sm:w-auto"
+          >
+            <Plus className="w-4 h-4" aria-hidden="true" />
+            {t('portal.overtime.apply')}
+          </button>
+        }
+      />
+
+      {/* Status Filter Pills */}
+      <div className="flex gap-2 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible sm:pb-0 scrollbar-thin">
+        {STATUS_FILTERS.map((tab) => {
+          const isActive = statusFilter === tab.key;
+          const count = tab.key ? applications.filter((a) => a.status === tab.key).length : applications.length;
+          return (
+            <button
+              key={tab.key ?? 'all'}
+              type="button"
+              aria-pressed={isActive}
+              onClick={() => {
+                setSelectedOvertimeIds([]);
+                setBulkError('');
+                setStatusFilter(tab.key);
+              }}
+              className={`shrink-0 min-h-11 sm:min-h-9 px-4 py-1.5 rounded-full text-sm font-medium transition-all-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] ${
+                isActive
+                  ? 'bg-gradient-to-r from-[var(--accent-1)] to-[var(--accent-2)] text-white shadow-sm'
+                  : 'bg-white dark:bg-slate-900 text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-slate-800 hover:border-gray-300 dark:hover:border-slate-700 hover:text-gray-900 dark:hover:text-white'
+              }`}
+            >
+              {t(tab.labelKey)} {count > 0 && <span className="ml-1 opacity-80 tabular-nums">{count}</span>}
+            </button>
+          );
+        })}
       </div>
 
       {/* Applications List */}
       <div className="card !p-0 overflow-hidden">
         <div className="flex items-center justify-between gap-3 px-4 sm:px-6 py-4 border-b border-gray-100 dark:border-slate-800">
-          <h3 className="text-sm font-semibold text-gray-900 dark:text-slate-100">{t('portal.overtime.myApplications')}</h3>
-          {applications.length > 0 && (
-            <label className="inline-flex items-center gap-2 text-xs font-medium text-gray-500 dark:text-slate-400 cursor-pointer">
+          <h2 className="text-sm font-semibold text-gray-900 dark:text-slate-100">{t('portal.overtime.myApplications')}</h2>
+          {filteredApplications.length > 0 && (
+            <label className="min-h-11 sm:min-h-9 inline-flex items-center gap-2 text-xs font-medium text-gray-500 dark:text-slate-400 cursor-pointer">
               <input
                 ref={selectAllRef}
                 type="checkbox"
                 checked={allDisplayedSelected}
                 onChange={toggleAllDisplayedOvertime}
-                className="h-4 w-4 rounded border-gray-300 dark:border-slate-600 text-gray-900 dark:text-teal-500 focus:ring-teal-500"
+                className="h-4 w-4 rounded border-gray-300 dark:border-slate-600 accent-[var(--accent-1)] focus:ring-[var(--ring)]"
               />
               {t('common.selectAll')}
             </label>
@@ -244,7 +296,7 @@ export function Overtime() {
         {selectedOvertimeIds.length > 0 && (
           <div className="border-b border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/60">
             <div className="flex flex-col gap-2 px-4 sm:px-6 py-3 sm:flex-row sm:items-center sm:justify-between">
-              <span className="text-sm font-medium text-gray-700 dark:text-slate-200">{t('common.selected', { count: selectedOvertimeIds.length })}</span>
+              <span className="text-sm font-medium text-gray-700 dark:text-slate-200 tabular-nums">{t('common.selected', { count: selectedOvertimeIds.length })}</span>
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
@@ -260,9 +312,9 @@ export function Overtime() {
                     }
                   }}
                   disabled={selectedCancelableIds.length === 0 || bulkCancelMutation.isPending}
-                  className="btn-secondary !py-2 text-sm disabled:opacity-50"
+                  className="btn-secondary min-h-11 sm:!py-2 text-sm disabled:opacity-50"
                 >
-                  <X className="w-4 h-4" />
+                  <X className="w-4 h-4" aria-hidden="true" />
                   {bulkCancelMutation.isPending ? t('common.cancelling') : t('common.cancelSelected')}
                 </button>
                 <button
@@ -278,9 +330,9 @@ export function Overtime() {
                     }
                   }}
                   disabled={selectedDeletableIds.length === 0 || bulkDeleteMutation.isPending}
-                  className="btn-secondary !py-2 text-sm text-red-600 dark:text-red-400 hover:!bg-red-50 dark:hover:!bg-red-500/10 disabled:opacity-50"
+                  className="btn-secondary min-h-11 sm:!py-2 text-sm text-red-600 dark:text-red-400 hover:!bg-red-50 dark:hover:!bg-red-500/10 disabled:opacity-50"
                 >
-                  <Trash2 className="w-4 h-4" />
+                  <Trash2 className="w-4 h-4" aria-hidden="true" />
                   {bulkDeleteMutation.isPending ? t('common.deleting') : t('common.deleteSelected')}
                 </button>
               </div>
@@ -291,9 +343,13 @@ export function Overtime() {
           </div>
         )}
         {isLoading ? (
-          <div className="p-8 text-center text-sm text-gray-400 dark:text-slate-400">{t('common.loading')}</div>
+          <div role="status" aria-busy="true" aria-label={t('common.loading')} className="p-4 sm:p-6 space-y-3">
+            {[0, 1, 2].map((i) => (
+              <Skeleton key={i} className="h-20 w-full rounded-xl" />
+            ))}
+          </div>
         ) : isError ? (
-          <div className="p-8">
+          <div className="p-6 sm:p-8">
             <EmptyState
               icon={AlertTriangle}
               title={t('portal.overtime.loadFailed')}
@@ -305,29 +361,49 @@ export function Overtime() {
               }
             />
           </div>
-        ) : applications.length === 0 ? (
-          <div className="p-12 text-center">
-            <Clock className="w-10 h-10 text-gray-200 dark:text-slate-700 mx-auto mb-3" />
-            <p className="text-sm text-gray-500 dark:text-slate-400">{t('portal.overtime.empty')}</p>
+        ) : filteredApplications.length === 0 ? (
+          <div className="p-6">
+            <EmptyState
+              icon={Clock}
+              title={t('portal.overtime.empty')}
+              action={
+                statusFilter ? (
+                  <button type="button" onClick={() => setStatusFilter(null)} className="btn-secondary">
+                    {t('ux.table.clearFilters')}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => { resetForm(); setShowModal(true); }}
+                    className="btn-primary"
+                  >
+                    <Plus className="w-4 h-4" aria-hidden="true" />
+                    {t('portal.overtime.apply')}
+                  </button>
+                )
+              }
+            />
           </div>
         ) : (
           <div className="divide-y divide-gray-100 dark:divide-slate-800">
-            {applications.map((app) => (
+            {filteredApplications.map((app) => (
               <div key={app.id} className="px-4 sm:px-6 py-4">
                 <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-start gap-3 min-w-0">
-                    <input
-                      type="checkbox"
-                      checked={selectedOvertimeIds.includes(app.id)}
-                      onChange={() => toggleOvertimeSelection(app.id)}
-                      className="mt-1 h-4 w-4 rounded border-gray-300 dark:border-slate-600 text-gray-900 dark:text-teal-500 focus:ring-teal-500"
-                      aria-label={t('portal.overtime.selectAria', { date: formatDate(app.ot_date) })}
-                    />
+                  <div className="flex items-start gap-2 sm:gap-3 min-w-0">
+                    <label className="-m-2 inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={selectedOvertimeIds.includes(app.id)}
+                        onChange={() => toggleOvertimeSelection(app.id)}
+                        className="h-4 w-4 rounded border-gray-300 dark:border-slate-600 accent-[var(--accent-1)] focus:ring-[var(--ring)]"
+                        aria-label={t('portal.overtime.selectAria', { date: formatDate(app.ot_date) })}
+                      />
+                    </label>
                     <div className="space-y-1 min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-sm font-semibold text-gray-900 dark:text-slate-100">{formatDate(app.ot_date)}</span>
+                        <span className="text-sm font-semibold text-gray-900 dark:text-slate-100 tabular-nums">{formatDate(app.ot_date)}</span>
                         {statusBadge(app.status)}
-                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium tabular-nums ${
                           app.ot_type === 'public_holiday' ? 'bg-red-100 dark:bg-red-500/20 text-red-700 dark:text-red-300' :
                           app.ot_type === 'rest_day' ? 'bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-300' :
                           'bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-slate-300'
@@ -335,7 +411,7 @@ export function Overtime() {
                           {otTypeLabel(app.ot_type)} ({otTypeMultiplier(app.ot_type)})
                         </span>
                       </div>
-                      <p className="text-sm text-gray-500 dark:text-slate-400">
+                      <p className="text-sm text-gray-500 dark:text-slate-400 tabular-nums">
                         {app.start_time?.slice(0, 5)} — {app.end_time?.slice(0, 5)}
                         <span className="ml-2 font-medium text-gray-700 dark:text-slate-200">{t('attendance.hoursShort', { value: Number(app.hours) })}</span>
                       </p>
@@ -351,11 +427,11 @@ export function Overtime() {
                         type="button"
                         onClick={() => handleCancel(app)}
                         disabled={cancelMutation.isPending}
-                        aria-label={t('portal.overtime.cancelApplication')}
-                        className="min-h-10 min-w-10 inline-flex items-center justify-center rounded-lg text-gray-400 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10"
+                        aria-label={`${t('portal.overtime.cancelApplication')} — ${formatDate(app.ot_date)}`}
+                        className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 inline-flex items-center justify-center rounded-lg text-gray-500 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-500/10 disabled:opacity-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                         title={t('portal.overtime.cancelApplication')}
                       >
-                        <X className="w-4 h-4" />
+                        <X className="w-4 h-4" aria-hidden="true" />
                       </button>
                     )}
                     {app.status === 'cancelled' && (
@@ -363,11 +439,11 @@ export function Overtime() {
                         type="button"
                         onClick={() => handleDelete(app)}
                         disabled={deleteMutation.isPending}
-                        aria-label={t('common.deletePermanently')}
-                        className="min-h-10 min-w-10 inline-flex items-center justify-center rounded-lg text-red-500 dark:text-red-400 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-500/10"
+                        aria-label={`${t('common.deletePermanently')} — ${formatDate(app.ot_date)}`}
+                        className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 inline-flex items-center justify-center rounded-lg text-red-500 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-500/10 disabled:opacity-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                         title={t('common.deletePermanently')}
                       >
-                        <Trash2 className="w-4 h-4" />
+                        <Trash2 className="w-4 h-4" aria-hidden="true" />
                       </button>
                     )}
                   </div>
@@ -381,47 +457,62 @@ export function Overtime() {
       {/* Create Modal */}
       <Modal
         open={showModal}
-        onClose={() => setShowModal(false)}
+        onClose={() => { if (!createMutation.isPending) setShowModal(false); }}
         title={t('portal.overtime.modalTitle')}
         footer={
-          <div className="flex justify-end gap-3">
-            <button type="button" onClick={() => setShowModal(false)} className="btn-secondary">{t('common.cancel')}</button>
+          <div className="flex flex-col-reverse sm:flex-row justify-end gap-3">
             <button
               type="button"
-              onClick={handleSubmit}
+              onClick={() => setShowModal(false)}
+              disabled={createMutation.isPending}
+              className="btn-secondary"
+            >
+              {t('common.cancel')}
+            </button>
+            <button
+              type="submit"
+              form="overtime-create-form"
               disabled={createMutation.isPending}
               className="btn-primary"
             >
+              {createMutation.isPending && <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />}
               {createMutation.isPending ? t('common.submitting') : t('portal.overtime.submit')}
             </button>
           </div>
         }
       >
-        <div className="space-y-4">
+        <form
+          id="overtime-create-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            handleSubmit();
+          }}
+          className="space-y-4"
+        >
           <div>
             <label className="form-label" htmlFor="ot-date">{t('portal.overtime.otDate')} *</label>
             <input
               id="ot-date"
               type="date"
+              required
               value={form.ot_date}
               onChange={(e) => setForm({ ...form, ot_date: e.target.value })}
-              className="form-input"
+              className="form-input tabular-nums"
             />
           </div>
 
-          <div>
-            <span className="form-label">{t('portal.overtime.otType')} *</span>
+          <FieldGroup legend={t('portal.overtime.otType')} required>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               {(['normal', 'rest_day', 'public_holiday'] as const).map((otType) => (
                 <label
                   key={otType}
-                  className={`flex sm:flex-col items-center justify-between sm:justify-center gap-1 px-3 py-3 rounded-lg border-2 cursor-pointer transition-all text-center ${
+                  className={`min-h-11 flex sm:flex-col items-center justify-between sm:justify-center gap-1 px-3 py-3 rounded-lg border-2 cursor-pointer transition-all text-center focus-within:ring-2 focus-within:ring-[var(--ring)] focus-within:ring-offset-1 ${
                     form.ot_type === otType
                       ? otType === 'public_holiday'
                         ? 'border-red-400 dark:border-red-500 bg-red-50 dark:bg-red-500/15 text-red-900 dark:text-red-200'
                         : otType === 'rest_day'
                           ? 'border-blue-400 dark:border-blue-500 bg-blue-50 dark:bg-blue-500/15 text-blue-900 dark:text-blue-200'
-                          : 'border-gray-900 dark:border-teal-400 bg-gray-50 dark:bg-teal-500/15 text-gray-900 dark:text-slate-100'
+                          : 'border-[var(--accent-1)] bg-[var(--accent-soft)] text-gray-900 dark:text-slate-100'
                       : 'border-gray-200 dark:border-slate-700 hover:border-gray-300 dark:hover:border-slate-600 text-gray-700 dark:text-slate-200'
                   }`}
                 >
@@ -434,31 +525,37 @@ export function Overtime() {
                     className="sr-only"
                   />
                   <span className="text-xs font-medium">{otTypeLabel(otType)}</span>
-                  <span className="text-[10px] text-gray-500 dark:text-slate-400">{otTypeMultiplier(otType)}</span>
+                  <span className="text-xs text-gray-500 dark:text-slate-400 tabular-nums">{otTypeMultiplier(otType)}</span>
                 </label>
               ))}
             </div>
-          </div>
+          </FieldGroup>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <TimeSelector
-              label={t('portal.overtime.startTime')}
+              label={t('portal.overtime.startTime').replace(/\s*\*$/, '')}
+              required
               value={form.start_time}
               onChange={(value) => updateTime('start_time', value)}
             />
             <TimeSelector
-              label={t('portal.overtime.endTime')}
+              label={t('portal.overtime.endTime').replace(/\s*\*$/, '')}
+              required
               value={form.end_time}
               onChange={(value) => updateTime('end_time', value)}
             />
           </div>
 
-          {form.hours > 0 && (
-            <div className="bg-gray-50 dark:bg-slate-800/80 rounded-lg p-3 text-center">
-              <span className="text-2xl font-bold text-gray-900 dark:text-slate-100 tabular-nums">{form.hours}</span>
-              <span className="text-sm text-gray-500 dark:text-slate-400 ml-1">{t('portal.overtime.hoursUnit')}</span>
-            </div>
-          )}
+          <div className={`rounded-lg p-3 text-center ${form.hours > 0 ? 'bg-gray-50 dark:bg-slate-800/80' : 'bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30'}`}>
+            {form.hours > 0 ? (
+              <>
+                <span className="text-2xl font-bold text-gray-900 dark:text-slate-100 tabular-nums">{form.hours}</span>
+                <span className="text-sm text-gray-500 dark:text-slate-400 ml-1">{t('portal.overtime.hoursUnit')}</span>
+              </>
+            ) : (
+              <span className="text-sm font-medium text-amber-800 dark:text-amber-300">{t('portal.overtime.timesMustDiffer')}</span>
+            )}
+          </div>
 
           <div>
             <label className="form-label" htmlFor="ot-reason">{t('common.reason')}</label>
@@ -477,7 +574,7 @@ export function Overtime() {
           {createMutation.isError && (
             <p role="alert" className="text-sm text-red-600 dark:text-red-400">{getErrorMessage(createMutation.error, t('portal.overtime.submitFailed'))}</p>
           )}
-        </div>
+        </form>
       </Modal>
     </div>
   );

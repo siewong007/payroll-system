@@ -1,4 +1,4 @@
-import { Save } from 'lucide-react';
+import { Loader2, Save } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { CompanySetting } from '@/types';
 
@@ -25,10 +25,10 @@ export function CompanyCategorySection({
   const dirtyCount = settings.filter((s) => `${s.category}/${s.key}` in edits).length;
 
   return (
-    <div className="card !p-0 overflow-hidden">
+    <div className="card !p-0 overflow-x-clip">
       <div className="p-6 pb-0">
         <h2 className="section-title">{title}</h2>
-        <p className="text-sm text-gray-500 dark:text-slate-400 mt-1 mb-4">{description}</p>
+        <p className="text-sm text-gray-600 dark:text-slate-300 mt-1 mb-4">{description}</p>
       </div>
       <div className="px-6 divide-y divide-gray-100 dark:divide-slate-800 [&>*]:py-4">
         {settings.map((s) => (
@@ -41,21 +41,31 @@ export function CompanyCategorySection({
         ))}
       </div>
       {dirtyCount > 0 && (
-        <div className="sticky bottom-0 flex flex-wrap items-center justify-between gap-3 px-6 py-3.5 border-t border-gray-200/80 dark:border-slate-800 bg-white/85 dark:bg-slate-900/90 backdrop-blur">
-          <span className="text-sm text-gray-500 dark:text-slate-400">
+        <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 px-6 py-3.5 rounded-b-2xl border-t border-gray-200/80 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur">
+          <span className="text-sm text-gray-600 dark:text-slate-300">
             {t('settings.unsavedChanges', { count: dirtyCount })}
           </span>
-          <div className="flex gap-2">
-            <button type="button" className="btn-secondary !min-h-0 !py-2" onClick={onDiscard}>
+          <div className="flex w-full sm:w-auto gap-2">
+            <button
+              type="button"
+              disabled={saving}
+              className="btn-secondary flex-1 sm:flex-initial min-h-11 sm:min-h-9 !py-2"
+              onClick={onDiscard}
+            >
               {t('common.discard')}
             </button>
             <button
               type="button"
-              className="btn-primary !min-h-0 !py-2"
+              className="btn-primary flex-1 sm:flex-initial min-h-11 sm:min-h-9 !py-2 inline-flex items-center justify-center gap-2"
               onClick={onSave}
               disabled={saving}
             >
-              <Save className="w-4 h-4" /> {saving ? t('common.saving') : t('settings.saveChanges')}
+              {saving ? (
+                <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <Save className="w-4 h-4" aria-hidden="true" />
+              )}
+              {saving ? t('common.saving') : t('settings.saveChanges')}
             </button>
           </div>
         </div>
@@ -75,6 +85,7 @@ function SettingField({
 }) {
   const { t } = useTranslation();
   const inputId = `setting-${setting.category}-${setting.key}`;
+  const descId = setting.description ? `${inputId}-desc` : undefined;
   const isBool = typeof setting.value === 'boolean';
   const isNumber =
     typeof setting.value === 'number' ||
@@ -82,7 +93,7 @@ function SettingField({
       setting.value.trim() !== '' &&
       Number.isFinite(Number(setting.value)));
   const fieldClass =
-    'px-3 py-2 border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-100 rounded-lg text-sm focus:ring-2 focus:ring-[var(--ring)] outline-none';
+    'px-3 py-2 min-h-11 sm:min-h-10 border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-100 rounded-lg text-base sm:text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]';
 
   // Rest time: show with "minutes" suffix
   if (setting.key === 'rest_time_minutes') {
@@ -90,11 +101,12 @@ function SettingField({
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
         <div>
           <label htmlFor={inputId} className="text-sm font-medium text-gray-900 dark:text-slate-100">{setting.label || setting.key}</label>
-          {setting.description && <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">{setting.description}</p>}
+          {setting.description && <p id={descId} className="text-xs text-gray-600 dark:text-slate-400 mt-0.5">{setting.description}</p>}
         </div>
         <div className="flex items-center gap-2">
           <input
             id={inputId}
+            aria-describedby={descId}
             type="number"
             value={String(value ?? '')}
             onChange={(e) => onChange(e.target.value)}
@@ -103,7 +115,7 @@ function SettingField({
             step="15"
             className={`${fieldClass} text-right w-24`}
           />
-          <span className="text-sm text-gray-500 dark:text-slate-400">{t('settings.units.min')}</span>
+          <span className="text-sm text-gray-600 dark:text-slate-300">{t('settings.units.min')}</span>
         </div>
       </div>
     );
@@ -115,11 +127,12 @@ function SettingField({
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
         <div>
           <label htmlFor={inputId} className="text-sm font-medium text-gray-900 dark:text-slate-100">{setting.label || setting.key}</label>
-          {setting.description && <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">{setting.description}</p>}
+          {setting.description && <p id={descId} className="text-xs text-gray-600 dark:text-slate-400 mt-0.5">{setting.description}</p>}
         </div>
         <div className="flex items-center gap-2">
           <input
             id={inputId}
+            aria-describedby={descId}
             type="number"
             value={String(value ?? '')}
             onChange={(e) => onChange(e.target.value)}
@@ -128,7 +141,7 @@ function SettingField({
             step="0.5"
             className={`${fieldClass} text-right w-24`}
           />
-          <span className="text-sm text-gray-500 dark:text-slate-400">{t('settings.units.hrs')}</span>
+          <span className="text-sm text-gray-600 dark:text-slate-300">{t('settings.units.hrs')}</span>
         </div>
       </div>
     );
@@ -140,10 +153,11 @@ function SettingField({
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
         <div>
           <label htmlFor={inputId} className="text-sm font-medium text-gray-900 dark:text-slate-100">{setting.label || setting.key}</label>
-          {setting.description && <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">{setting.description}</p>}
+          {setting.description && <p id={descId} className="text-xs text-gray-600 dark:text-slate-400 mt-0.5">{setting.description}</p>}
         </div>
         <select
           id={inputId}
+          aria-describedby={descId}
           value={String(value ?? '')}
           onChange={(e) => onChange(e.target.value)}
           className={`${fieldClass} w-full sm:w-44`}
@@ -162,10 +176,11 @@ function SettingField({
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
         <div>
           <label htmlFor={inputId} className="text-sm font-medium text-gray-900 dark:text-slate-100">{setting.label || setting.key}</label>
-          {setting.description && <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">{setting.description}</p>}
+          {setting.description && <p id={descId} className="text-xs text-gray-600 dark:text-slate-400 mt-0.5">{setting.description}</p>}
         </div>
         <select
           id={inputId}
+          aria-describedby={descId}
           value={String(value ?? '')}
           onChange={(e) => onChange(e.target.value)}
           className={`${fieldClass} w-full sm:w-44`}
@@ -183,23 +198,29 @@ function SettingField({
       <div className="flex items-center justify-between gap-4">
         <div>
           <label htmlFor={inputId} className="text-sm font-medium text-gray-900 dark:text-slate-100">{setting.label || setting.key}</label>
-          {setting.description && <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">{setting.description}</p>}
+          {setting.description && <p id={descId} className="text-xs text-gray-600 dark:text-slate-400 mt-0.5">{setting.description}</p>}
         </div>
         <button
           id={inputId}
           type="button"
           role="switch"
           aria-checked={Boolean(value)}
+          aria-describedby={descId}
           onClick={() => onChange(!value)}
-          className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] ${
-            value ? 'bg-black dark:bg-[var(--accent-1)]' : 'bg-gray-300 dark:bg-slate-600'
-          }`}
+          className="relative inline-flex min-h-11 min-w-12 shrink-0 items-center justify-end rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
         >
           <span
-            className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-              value ? 'translate-x-6' : 'translate-x-1'
+            aria-hidden="true"
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+              value ? 'bg-black dark:bg-[var(--accent-1)]' : 'bg-gray-300 dark:bg-slate-600'
             }`}
-          />
+          >
+            <span
+              className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                value ? 'translate-x-6' : 'translate-x-1'
+              }`}
+            />
+          </span>
         </button>
       </div>
     );
@@ -210,10 +231,11 @@ function SettingField({
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
         <div>
           <label htmlFor={inputId} className="text-sm font-medium text-gray-900 dark:text-slate-100">{setting.label || setting.key}</label>
-          {setting.description && <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">{setting.description}</p>}
+          {setting.description && <p id={descId} className="text-xs text-gray-600 dark:text-slate-400 mt-0.5">{setting.description}</p>}
         </div>
         <input
           id={inputId}
+          aria-describedby={descId}
           type="number"
           value={String(value ?? '')}
           onChange={(e) => onChange(e.target.value)}
@@ -228,10 +250,11 @@ function SettingField({
     <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
       <div>
         <label htmlFor={inputId} className="text-sm font-medium text-gray-900 dark:text-slate-100">{setting.label || setting.key}</label>
-        {setting.description && <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">{setting.description}</p>}
+        {setting.description && <p id={descId} className="text-xs text-gray-600 dark:text-slate-400 mt-0.5">{setting.description}</p>}
       </div>
       <input
         id={inputId}
+        aria-describedby={descId}
         type="text"
         value={String(value ?? '')}
         onChange={(e) => onChange(e.target.value)}

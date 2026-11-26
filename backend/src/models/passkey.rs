@@ -29,6 +29,12 @@ pub struct RenamePasskeyRequest {
     pub name: String,
 }
 
+#[derive(Debug, Deserialize, validator::Validate)]
+pub struct RegistrationBeginRequest {
+    #[validate(length(min = 1, message = "password is required"))]
+    pub password: String,
+}
+
 #[derive(Serialize)]
 pub struct RegistrationBeginResponse {
     pub challenge_id: Uuid,

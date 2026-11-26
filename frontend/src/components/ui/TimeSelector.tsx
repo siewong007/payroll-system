@@ -7,6 +7,7 @@ interface TimeSelectorProps {
   onChange: (value: string) => void;
   minuteStep?: number;
   disabled?: boolean;
+  required?: boolean;
 }
 
 function pad(value: number) {
@@ -37,6 +38,7 @@ export function TimeSelector({
   onChange,
   minuteStep = 30,
   disabled = false,
+  required = false,
 }: TimeSelectorProps) {
   const { t } = useTranslation();
   const { hour, minute } = getValueParts(value || '');
@@ -54,7 +56,11 @@ export function TimeSelector({
 
   return (
     <fieldset className="border-0 p-0 m-0 min-w-0">
-      <legend className="form-label p-0">{label}</legend>
+      <legend className="form-label p-0">
+        {label}
+        {required && <span aria-hidden="true"> *</span>}
+        {required && <span className="sr-only"> ({t('common.required')})</span>}
+      </legend>
       <div
         className={`flex items-center gap-1 rounded-xl border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900/80 px-2.5 py-1.5 transition-shadow focus-within:border-[var(--ring)] focus-within:ring-2 focus-within:ring-[var(--ring)]/25 ${
           disabled ? 'bg-gray-50 dark:bg-slate-800/60' : ''

@@ -4,6 +4,7 @@ mod audit_regression_tests;
 mod audit_tests;
 mod auth_audit_tests;
 mod backup_tests;
+mod db_perf_and_bugfix_tests;
 mod email_privacy_tests;
 mod employee_lifecycle_tests;
 mod export_and_report_tests;

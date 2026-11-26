@@ -155,3 +155,51 @@ pub async fn employee_headcount(
     .await?;
     Ok(counts)
 }
+
+/// Single-pass employee headcounts and active department breakdown.
+pub async fn employee_department_summary(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+) -> AppResult<(i64, i64, Vec<DepartmentCountRow>)> {
+    let rows = sqlx::query!(
+        r#"WITH base AS (
+            SELECT department, is_active
+            FROM employees
+            WHERE company_id = $1 AND deleted_at IS NULL
+        ),
+        totals AS (
+            SELECT COUNT(*) AS total_employees,
+                   COUNT(*) FILTER (WHERE is_active IS TRUE) AS active_employees
+            FROM base
+        ),
+        depts AS (
+            SELECT department, COUNT(*) AS dept_count
+            FROM base
+            WHERE is_active IS TRUE
+            GROUP BY department
+        )
+        SELECT t.total_employees AS "total_employees!",
+               t.active_employees AS "active_employees!",
+               d.department AS "department?",
+               d.dept_count AS "dept_count?"
+        FROM totals t
+        LEFT JOIN depts d ON TRUE
+        ORDER BY d.dept_count DESC NULLS LAST"#,
+        company_id,
+    )
+    .fetch_all(executor)
+    .await?;
+
+    let total = rows.first().map_or(0, |r| r.total_employees);
+    let active = rows.first().map_or(0, |r| r.active_employees);
+    let depts = rows
+        .into_iter()
+        .filter_map(|r| {
+            r.dept_count.map(|count| DepartmentCountRow {
+                department: r.department,
+                count,
+            })
+        })
+        .collect();
+    Ok((total, active, depts))
+}

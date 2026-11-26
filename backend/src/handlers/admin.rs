@@ -93,7 +93,7 @@ pub async fn delete_company(
             )
             .await;
         }
-        let token = crate::core::auth::create_token(
+        let token = crate::core::auth::create_token_with_exp(
             user.id,
             &user.email,
             &user.roles,
@@ -101,7 +101,7 @@ pub async fn delete_company(
             user.employee_id,
             auth.0.sid,
             &state.config.jwt_secret,
-            state.config.jwt_expiry_hours,
+            auth.0.exp,
         )?;
         let user_response = auth_service::build_user_response(&state.pool, user).await?;
         return Ok(Json(serde_json::json!({

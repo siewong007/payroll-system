@@ -100,6 +100,14 @@ async fn seed_login(
     .execute(pool)
     .await
     .expect("insert a login");
+    sqlx::query(
+        "INSERT INTO user_companies (user_id, company_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+    )
+    .bind(user_id)
+    .bind(company_id)
+    .execute(pool)
+    .await
+    .expect("insert login company");
     user_id
 }
 

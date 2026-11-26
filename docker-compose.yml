@@ -1,6 +1,22 @@
 services:
   db:
     image: postgres:19beta2-alpine
+    command:
+      - postgres
+      - -c
+      - random_page_cost=1.1
+      - -c
+      - effective_io_concurrency=200
+      - -c
+      - effective_cache_size=512MB
+      - -c
+      - work_mem=8MB
+      - -c
+      - jit=off
+      - -c
+      - track_io_timing=on
+      - -c
+      - log_min_duration_statement=250
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-payroll_db}
       POSTGRES_USER: ${POSTGRES_USER:-payroll}

@@ -67,6 +67,20 @@ pub(crate) fn parse_positive_decimal(value: &serde_json::Value) -> Option<Decima
 /// one being written. Rejecting names the field and the offending value, because
 /// the settings UI saves the whole category at once and "invalid value" alone
 /// leaves the operator hunting.
+fn bounds_for_payroll_key(key: &str) -> Option<(Decimal, Decimal)> {
+    match key {
+        "effective_hours_per_day" => Some((Decimal::from(1), Decimal::from(24))),
+        "working_days_per_month" | "unpaid_leave_divisor" => {
+            Some((Decimal::from(1), Decimal::from(31)))
+        }
+        "overtime_multiplier_normal"
+        | "overtime_multiplier_rest"
+        | "overtime_multiplier_public" => Some((Decimal::new(5, 1), Decimal::from(5))),
+        "max_overtime_hours_per_day" => Some((Decimal::new(1, 2), Decimal::from(24))),
+        _ => None,
+    }
+}
+
 pub(crate) fn validate_numeric_payroll_setting(
     category: &str,
     key: &str,
@@ -76,15 +90,23 @@ pub(crate) fn validate_numeric_payroll_setting(
         return Ok(());
     }
 
-    if parse_positive_decimal(value).is_some() {
-        Ok(())
-    } else {
-        Err(AppError::BadRequest(format!(
+    let Some(parsed) = parse_positive_decimal(value) else {
+        return Err(AppError::BadRequest(format!(
             "Setting payroll/{key} must be a number greater than zero, but {value} was supplied. \
              It divides or multiplies overtime and unpaid-leave pay, so zero, a blank and a \
              non-numeric value are all unusable."
-        )))
+        )));
+    };
+
+    if let Some((min, max)) = bounds_for_payroll_key(key)
+        && (parsed < min || parsed > max)
+    {
+        return Err(AppError::BadRequest(format!(
+            "Setting payroll/{key} must be between {min} and {max}, but {value} was supplied."
+        )));
     }
+
+    Ok(())
 }
 
 /// The company's overtime configuration, read once by every caller that rates
@@ -108,38 +130,31 @@ pub(crate) async fn overtime_settings_on(
     conn: &mut sqlx::PgConnection,
     company_id: Uuid,
 ) -> OvertimeSettings {
-    async fn decimal_setting(
-        conn: &mut sqlx::PgConnection,
-        company_id: Uuid,
-        key: &str,
-    ) -> Option<Decimal> {
-        get_setting(&mut *conn, company_id, "payroll", key)
-            .await
-            .ok()
-            .and_then(|s| parse_positive_decimal(&s.value))
-    }
-
     let defaults = OvertimeSettings::statutory_defaults();
+    let settings = company_settings::list(&mut *conn, company_id, Some("payroll"))
+        .await
+        .unwrap_or_default();
 
-    // One `let` per read, deliberately: each call reborrows `conn`, and the
-    // temporaries of a single struct-literal expression all live to the end of
-    // that statement, which would overlap the mutable borrows.
-    let effective_hours = decimal_setting(conn, company_id, "effective_hours_per_day").await;
+    let decimal_setting = |key: &str| -> Option<Decimal> {
+        let row = settings.iter().find(|s| s.key == key)?;
+        let parsed = parse_positive_decimal(&row.value)?;
+        if let Some((min, max)) = bounds_for_payroll_key(key)
+            && (parsed < min || parsed > max)
+        {
+            return None;
+        }
+        Some(parsed)
+    };
 
-    // Migration 1017 renamed this key: it has always been the divisor that
-    // derives the OVERTIME hourly rate, never anything to do with unpaid leave.
-    // The old name is still read as a fallback for one release, for a tenant
-    // whose migration ran but whose settings row was restored from an older
-    // backup.
-    let mut working_days = decimal_setting(conn, company_id, "working_days_per_month").await;
-    if working_days.is_none() {
-        working_days = decimal_setting(conn, company_id, "unpaid_leave_divisor").await;
-    }
-
-    let normal = decimal_setting(conn, company_id, "overtime_multiplier_normal").await;
-    let rest_day = decimal_setting(conn, company_id, "overtime_multiplier_rest").await;
-    let public_holiday = decimal_setting(conn, company_id, "overtime_multiplier_public").await;
-    let max_overtime = decimal_setting(conn, company_id, "max_overtime_hours_per_day").await;
+    let effective_hours = decimal_setting("effective_hours_per_day");
+    // Migration 1017 renamed `unpaid_leave_divisor` -> `working_days_per_month`;
+    // keep reading the legacy key as a fallback for restored older backups.
+    let working_days = decimal_setting("working_days_per_month")
+        .or_else(|| decimal_setting("unpaid_leave_divisor"));
+    let normal = decimal_setting("overtime_multiplier_normal");
+    let rest_day = decimal_setting("overtime_multiplier_rest");
+    let public_holiday = decimal_setting("overtime_multiplier_public");
+    let max_overtime = decimal_setting("max_overtime_hours_per_day");
 
     OvertimeSettings {
         effective_hours_per_day: effective_hours.unwrap_or(defaults.effective_hours_per_day),

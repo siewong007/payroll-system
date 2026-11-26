@@ -309,8 +309,11 @@ describe('two-factor API', () => {
     expect(apiMocks.post).toHaveBeenLastCalledWith('/auth/2fa/setup/begin');
 
     apiMocks.post.mockResolvedValue({ data: { backup_codes: ['a', 'b'] } });
-    await expect(totp.totpSetupConfirm('123456')).resolves.toEqual({ backup_codes: ['a', 'b'] });
-    expect(apiMocks.post).toHaveBeenLastCalledWith('/auth/2fa/setup/confirm', { code: '123456' });
+    await expect(totp.totpSetupConfirm('123456', 'current-password')).resolves.toEqual({ backup_codes: ['a', 'b'] });
+    expect(apiMocks.post).toHaveBeenLastCalledWith('/auth/2fa/setup/confirm', {
+      code: '123456',
+      password: 'current-password',
+    });
   });
 
   it('requires the current password to disable 2FA or reissue backup codes', async () => {

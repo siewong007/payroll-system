@@ -1,0 +1,53 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO payroll_items (\n                id, payroll_run_id, employee_id,\n                basic_salary, gross_salary, total_allowances, total_overtime, total_claims,\n                epf_employee, epf_employer, socso_employee, socso_employer,\n                eis_employee, eis_employer, pcb_amount, zakat_amount,\n                ptptn_amount, tabung_haji_amount,\n                total_other_deductions, total_deductions, net_salary, employer_cost,\n                ytd_gross, ytd_epf_employee, ytd_pcb, ytd_socso_employee,\n                ytd_eis_employee, ytd_zakat, ytd_net,\n                total_bonus, total_commission,\n                working_days, days_worked, is_prorated,\n                unpaid_leave_deduction, unpaid_leave_days,\n                taxable_gross,\n                bank_name, bank_account_number, bank_account_type\n            )\n            SELECT\n                t.id, $1, t.employee_id,\n                t.basic_salary, t.gross_salary, t.total_allowances, t.total_overtime, t.total_claims,\n                t.epf_employee, t.epf_employer, t.socso_employee, t.socso_employer,\n                t.eis_employee, t.eis_employer, t.pcb_amount, t.zakat_amount,\n                t.ptptn_amount, t.tabung_haji_amount,\n                t.total_other_deductions, t.total_deductions, t.net_salary, t.employer_cost,\n                t.ytd_gross, t.ytd_epf_employee, t.ytd_pcb, t.ytd_socso_employee,\n                t.ytd_eis_employee, t.ytd_zakat, t.ytd_net,\n                t.total_bonus, t.total_commission,\n                t.working_days, t.days_worked, t.is_prorated,\n                t.unpaid_leave_deduction, t.unpaid_leave_days,\n                t.taxable_gross,\n                t.bank_name, t.bank_account_number, t.bank_account_type\n            FROM UNNEST(\n                $2::uuid[], $3::uuid[],\n                $4::bigint[], $5::bigint[], $6::bigint[], $7::bigint[], $8::bigint[],\n                $9::bigint[], $10::bigint[], $11::bigint[], $12::bigint[],\n                $13::bigint[], $14::bigint[], $15::bigint[], $16::bigint[],\n                $17::bigint[], $18::bigint[],\n                $19::bigint[], $20::bigint[], $21::bigint[], $22::bigint[],\n                $23::bigint[], $24::bigint[], $25::bigint[], $26::bigint[],\n                $27::bigint[], $28::bigint[], $29::bigint[],\n                $30::bigint[], $31::bigint[],\n                $32::int4[], $33::numeric[], $34::bool[],\n                $35::bigint[], $36::numeric[],\n                $37::bigint[],\n                $38::text[], $39::text[], $40::text[]\n            ) AS t(\n                id, employee_id,\n                basic_salary, gross_salary, total_allowances, total_overtime, total_claims,\n                epf_employee, epf_employer, socso_employee, socso_employer,\n                eis_employee, eis_employer, pcb_amount, zakat_amount,\n                ptptn_amount, tabung_haji_amount,\n                total_other_deductions, total_deductions, net_salary, employer_cost,\n                ytd_gross, ytd_epf_employee, ytd_pcb, ytd_socso_employee,\n                ytd_eis_employee, ytd_zakat, ytd_net,\n                total_bonus, total_commission,\n                working_days, days_worked, is_prorated,\n                unpaid_leave_deduction, unpaid_leave_days,\n                taxable_gross,\n                bank_name, bank_account_number, bank_account_type\n            )",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "UuidArray",
+        "UuidArray",
+        "Int8Array",
+        "Int8Array",
+        "Int8Array",
+        "Int8Array",
+        "Int8Array",
+        "Int8Array",
+        "Int8Array",
+        "Int8Array",
+        "Int8Array",
+        "Int8Array",
+        "Int8Array",
+        "Int8Array",
+        "Int8Array",
+        "Int8Array",
+        "Int8Array",
+        "Int8Array",
+        "Int8Array",
+        "Int8Array",
+        "Int8Array",
+        "Int8Array",
+        "Int8Array",
+        "Int8Array",
+        "Int8Array",
+        "Int8Array",
+        "Int8Array",
+        "Int8Array",
+        "Int8Array",
+        "Int8Array",
+        "Int4Array",
+        "NumericArray",
+        "BoolArray",
+        "Int8Array",
+        "NumericArray",
+        "Int8Array",
+        "TextArray",
+        "TextArray",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8d52389e89a87c573b4c2e43b58d6d93b07c35f0af0e6778254591f375829dd4"
+}

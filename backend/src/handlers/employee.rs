@@ -106,7 +106,9 @@ fn update_request_touches_payroll_fields(req: &UpdateEmployeeRequest) -> bool {
         || req.tabung_haji_amount.is_some()
         || req.hrdf_contribution.is_some()
         || req.payroll_group_id.is_some()
+        || req.clear_payroll_group_id == Some(true)
         || req.salary_group.is_some()
+        || req.clear_salary_group == Some(true)
         // Banking decides where salary lands, so it is payroll-sensitive.
         || req.bank_name.is_some()
         || req.bank_account_number.is_some()
@@ -318,7 +320,7 @@ pub async fn salary_history(
     // before exposing salary history. `get_employee` is company-scoped and
     // returns NotFound for cross-tenant ids.
     employee_service::get_employee(&state.pool, id, company_id).await?;
-    let history = employee_service::get_salary_history(&state.pool, id).await?;
+    let history = employee_service::get_salary_history(&state.pool, id, company_id).await?;
     Ok(Json(history))
 }
 

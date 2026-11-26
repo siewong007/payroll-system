@@ -64,6 +64,8 @@ pub struct LeaveRequest {
     pub attachment_name: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub created_by: Option<Uuid>,
+    pub updated_by: Option<Uuid>,
     // joined
     pub leave_type_name: Option<String>,
 }
@@ -124,6 +126,8 @@ pub struct Claim {
     /// Declared last because these queries use `SELECT *` / `RETURNING *` and
     /// the column was added by `ALTER TABLE`, so it arrives after `updated_at`.
     pub payroll_run_id: Option<Uuid>,
+    pub created_by: Option<Uuid>,
+    pub updated_by: Option<Uuid>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -172,6 +176,8 @@ pub struct OvertimeApplication {
     pub review_notes: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub created_by: Option<Uuid>,
+    pub updated_by: Option<Uuid>,
 }
 
 #[derive(Debug, Deserialize)]

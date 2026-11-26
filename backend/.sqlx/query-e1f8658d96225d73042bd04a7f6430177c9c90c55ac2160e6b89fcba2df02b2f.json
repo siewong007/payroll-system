@@ -1,0 +1,66 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT entitled_days, taken_days, pending_days, carried_forward\n                    FROM leave_balances\n                    WHERE employee_id = $1 AND leave_type_id = $2 AND year = $3\n                    FOR UPDATE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "entitled_days",
+        "type_info": "Numeric",
+        "origin": {
+          "Table": {
+            "table": "leave_balances",
+            "name": "entitled_days"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "taken_days",
+        "type_info": "Numeric",
+        "origin": {
+          "Table": {
+            "table": "leave_balances",
+            "name": "taken_days"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "pending_days",
+        "type_info": "Numeric",
+        "origin": {
+          "Table": {
+            "table": "leave_balances",
+            "name": "pending_days"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "carried_forward",
+        "type_info": "Numeric",
+        "origin": {
+          "Table": {
+            "table": "leave_balances",
+            "name": "carried_forward"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "e1f8658d96225d73042bd04a7f6430177c9c90c55ac2160e6b89fcba2df02b2f"
+}

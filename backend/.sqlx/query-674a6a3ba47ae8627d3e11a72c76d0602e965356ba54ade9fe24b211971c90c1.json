@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE user_totp\n           SET code_login_failed_attempts = CASE\n                   WHEN code_login_locked_until IS NOT NULL AND code_login_locked_until <= NOW() THEN 1\n                   ELSE code_login_failed_attempts + 1\n               END,\n               code_login_locked_until = CASE\n                   WHEN code_login_locked_until IS NOT NULL AND code_login_locked_until <= NOW() THEN\n                       CASE WHEN 1 >= $2 THEN NOW() + ($3 * INTERVAL '1 minute') ELSE NULL END\n                   WHEN code_login_failed_attempts + 1 >= $2 THEN NOW() + ($3 * INTERVAL '1 minute')\n                   ELSE code_login_locked_until\n               END,\n               updated_at = NOW()\n           WHERE user_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4",
+        "Float8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "674a6a3ba47ae8627d3e11a72c76d0602e965356ba54ade9fe24b211971c90c1"
+}

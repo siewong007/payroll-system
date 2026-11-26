@@ -41,8 +41,12 @@ export async function getLinkedAccounts(): Promise<LinkedAccount[]> {
   return data;
 }
 
-export async function linkGoogleAccount(code: string, state: string): Promise<LinkedAccount> {
-  const { data } = await api.post('/auth/oauth2/google/link', { code, state });
+export async function linkGoogleAccount(
+  code: string,
+  state: string,
+  password: string,
+): Promise<LinkedAccount> {
+  const { data } = await api.post('/auth/oauth2/google/link', { code, state, password });
   return data;
 }
 

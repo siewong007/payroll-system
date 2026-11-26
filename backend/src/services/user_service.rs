@@ -24,7 +24,10 @@ use crate::models::user_company::{
     CompanySummary, CreateUserRequest, UpdateUserRequest, UserRow, UserWithCompanies,
 };
 use crate::repositories::reads::user_management;
-use crate::repositories::{audit_logs, refresh_tokens, user_companies, user_sessions, users};
+use crate::repositories::{
+    audit_logs, mfa_challenges, oauth2_accounts, refresh_tokens, user_companies, user_sessions,
+    users,
+};
 
 const VALID_ROLES: &[&str] = &[
     "super_admin",
@@ -154,6 +157,7 @@ pub(crate) fn same_set(a: &[Uuid], b: &[Uuid]) -> bool {
 async fn revoke_access(conn: &mut sqlx::PgConnection, user_id: Uuid) -> AppResult<()> {
     user_sessions::revoke_all_for_user(&mut *conn, user_id).await?;
     refresh_tokens::revoke_all_for_user(&mut *conn, user_id).await?;
+    mfa_challenges::revoke_for_user(&mut *conn, user_id).await?;
     crate::repositories::push_subscriptions::revoke_all_for_user(&mut *conn, user_id).await?;
     Ok(())
 }
@@ -208,6 +212,7 @@ pub async fn create_user(
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<UserWithCompanies> {
     let roles = normalize_requested_roles(&req.roles)?;
+    crate::services::user_group_service::ensure_user_permission_invariants(&roles, &[])?;
 
     // `employee` accounts are provisioned alongside an employee record, which
     // owns the tenancy and profile link. Creating one here would produce an
@@ -490,9 +495,10 @@ pub async fn update_user(
     let mut tx = pool.begin().await?;
 
     // Refuse a change that would leave the platform with no way to administer
-    // it. Checked inside the transaction so two concurrent demotions cannot both
-    // observe a count of 2.
-    let losing_super_admin = existing.roles.iter().any(|role| role == "super_admin")
+    // it. Only an *active* super_admin counts toward the surviving minimum —
+    // demoting an already-inactive account does not reduce active capacity.
+    let losing_super_admin = existing.is_active == Some(true)
+        && existing.roles.iter().any(|role| role == "super_admin")
         && (!roles.iter().any(|role| role == "super_admin") || deactivating);
     if losing_super_admin && users::count_active_super_admins(&mut *tx).await? <= 1 {
         return Err(AppError::Conflict(
@@ -531,8 +537,9 @@ pub async fn update_user(
         }
     }
 
-    // Re-check SoD and restricted-role invariants against surviving group
-    // memberships whenever roles change or an inactive user is reactivated.
+    // Enforce SoD and restricted-role invariants unconditionally against global
+    // roles and surviving company group memberships.
+    crate::services::user_group_service::ensure_user_permission_invariants(&roles, &[])?;
     if roles_changed || reactivating {
         let mut by_company: HashMap<Uuid, Vec<String>> = HashMap::new();
         for (cid, perm) in
@@ -545,10 +552,14 @@ pub async fn update_user(
         }
     }
 
-    if roles_changed || companies_changed || deactivating {
+    let email_changed = email.as_deref().is_some_and(|e| e != existing.email);
+    if roles_changed || companies_changed || deactivating || email_changed {
         revoke_access(&mut tx, user_id).await?;
     }
-    if deactivating || email.as_deref().is_some_and(|e| e != existing.email) {
+    if email_changed {
+        oauth2_accounts::delete_all_for_user(&mut *tx, user_id).await?;
+    }
+    if deactivating || email_changed {
         crate::repositories::password_reset_requests::expire_pending_for_user(&mut *tx, user_id)
             .await?;
     }
@@ -594,7 +605,8 @@ pub async fn delete_user(
 
     let mut tx = pool.begin().await?;
 
-    if existing.roles.iter().any(|role| role == "super_admin")
+    if existing.is_active == Some(true)
+        && existing.roles.iter().any(|role| role == "super_admin")
         && users::count_active_super_admins(&mut *tx).await? <= 1
     {
         return Err(AppError::Conflict(

@@ -1,0 +1,42 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT h.date AS \"date!\", h.name AS \"name!\"\n        FROM holidays h\n        JOIN UNNEST($2::date[], $3::varchar[]) AS v(d, n)\n          ON h.date = v.d AND h.name = v.n\n        WHERE h.company_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "date!",
+        "type_info": "Date",
+        "origin": {
+          "Table": {
+            "table": "holidays",
+            "name": "date"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name!",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "holidays",
+            "name": "name"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "DateArray",
+        "VarcharArray"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "a6e2d07e912b6c5aecb388733f5793b82fee77d23f90b6a7c78bd5b8d57e6530"
+}

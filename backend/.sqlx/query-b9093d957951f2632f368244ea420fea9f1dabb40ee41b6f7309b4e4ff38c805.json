@@ -1,0 +1,45 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT c.id AS \"company_id!\",\n                  COALESCE(ws.timezone, 'Asia/Kuala_Lumpur') AS \"timezone!\",\n                  c.auto_absent_last_run_date AS \"last_run_date?\"\n           FROM companies c\n           LEFT JOIN company_work_schedules ws\n             ON ws.company_id = c.id\n            AND ws.is_default = TRUE\n           WHERE c.is_active = TRUE\n           ORDER BY c.id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "company_id!",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "timezone!",
+        "type_info": "Varchar",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "last_run_date?",
+        "type_info": "Date",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "auto_absent_last_run_date"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      null,
+      true
+    ]
+  },
+  "hash": "b9093d957951f2632f368244ea420fea9f1dabb40ee41b6f7309b4e4ff38c805"
+}

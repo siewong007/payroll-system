@@ -1,0 +1,51 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n            COALESCE(SUM(total_claims), 0)::bigint AS \"total_claims!\",\n            COALESCE(SUM(ptptn_amount), 0)::bigint AS \"total_ptptn!\",\n            COALESCE(SUM(tabung_haji_amount), 0)::bigint AS \"total_tabung_haji!\",\n            COALESCE(SUM(total_loan_deductions + total_other_deductions), 0)::bigint AS \"total_other_deductions!\",\n            COALESCE(SUM(unpaid_leave_deduction), 0)::bigint AS \"total_unpaid_leave!\"\n        FROM payroll_items\n        WHERE payroll_run_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "total_claims!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "total_ptptn!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "total_tabung_haji!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "total_other_deductions!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "total_unpaid_leave!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "850c4acf9b3765deb7acc734e5b89b801c420ed839bc68bd940bfbb46235d02b"
+}

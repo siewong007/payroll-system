@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, Info, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Info, Loader2, XCircle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { formatMYR } from '@/lib/utils';
 import { formatDate, formatNumber } from '@/lib/format';
@@ -124,26 +124,30 @@ export function PayrollPreviewPanel({
                   key={employee.employee_id}
                   className={
                     employee.error
-                      ? 'bg-red-50/70 dark:bg-red-950/25'
-                      : 'hover:bg-gray-50 dark:hover:bg-slate-800/50'
+                      ? 'bg-red-50/70 dark:bg-[#2a1216]'
+                      : 'group hover:bg-gray-50 dark:hover:bg-slate-800/50'
                   }
                 >
                   <td
-                    className={`sticky left-0 z-10 px-4 py-3 whitespace-nowrap ${
+                    className={`sticky left-0 z-10 px-4 py-3 max-w-[160px] sm:max-w-xs whitespace-nowrap transition-colors ${
                       employee.error
-                        ? 'bg-red-50 dark:bg-red-950/60'
-                        : 'bg-white dark:bg-slate-900'
+                        ? 'bg-red-50 dark:bg-[#2a1216]'
+                        : 'bg-white dark:bg-slate-900 group-hover:bg-gray-50 dark:group-hover:bg-slate-800'
                     }`}
                   >
-                    <div className="text-sm font-medium text-gray-900 dark:text-slate-100">{employee.employee_name}</div>
-                    <div className="text-xs text-gray-500 dark:text-slate-400">{employee.employee_number}</div>
+                    <div className="text-sm font-medium text-gray-900 dark:text-slate-100 truncate">
+                      {employee.employee_name}
+                    </div>
+                    <div className="text-xs text-gray-500 dark:text-slate-400 truncate">
+                      {employee.employee_number}
+                    </div>
                     {employee.is_prorated && !employee.error && (
                       <div className="mt-1 inline-flex rounded-full bg-amber-50 dark:bg-amber-950/50 px-2 py-0.5 text-xs text-amber-700 dark:text-amber-300">
                         {t('payroll.preview.prorated', { worked: employee.days_worked, total: employee.working_days })}
                       </div>
                     )}
                     {employee.error && (
-                      <div className="mt-1 text-xs text-red-700 dark:text-red-300 whitespace-normal max-w-xs">
+                      <div className="mt-1 text-xs text-red-700 dark:text-red-300 whitespace-normal">
                         {translateServerMessage(employee.error)}
                       </div>
                     )}
@@ -156,10 +160,10 @@ export function PayrollPreviewPanel({
                     <>
                       <td className="px-4 py-3 text-right text-sm tabular-nums whitespace-nowrap text-gray-900 dark:text-slate-100">{formatMYR(employee.basic_salary)}</td>
                       <td className="px-4 py-3 text-right text-sm tabular-nums whitespace-nowrap text-gray-900 dark:text-slate-100">
-                        {employee.total_allowances > 0 ? formatMYR(employee.total_allowances) : '-'}
+                        {employee.total_allowances > 0 ? formatMYR(employee.total_allowances) : '\u2014'}
                       </td>
                       <td className="px-4 py-3 text-right text-sm tabular-nums whitespace-nowrap text-gray-900 dark:text-slate-100">
-                        {employee.total_overtime > 0 ? formatMYR(employee.total_overtime) : '-'}
+                        {employee.total_overtime > 0 ? formatMYR(employee.total_overtime) : '\u2014'}
                       </td>
                       <td className="px-4 py-3 text-right text-sm tabular-nums whitespace-nowrap text-gray-900 dark:text-slate-100">{formatMYR(employee.gross_salary)}</td>
                       <td className="px-4 py-3 text-right text-sm tabular-nums whitespace-nowrap text-gray-900 dark:text-slate-100">{formatMYR(employee.epf_employee)}</td>
@@ -183,9 +187,13 @@ export function PayrollPreviewPanel({
           type="button"
           onClick={onProcess}
           disabled={!preview.can_process || isProcessing}
-          className="btn-primary min-h-11 justify-center px-6"
+          className="btn-primary min-h-11 justify-center px-6 w-full sm:w-auto"
         >
-          <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+          {isProcessing ? (
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+          ) : (
+            <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+          )}
           {isProcessing ? t('payroll.preview.processing') : t('payroll.preview.confirmButton')}
         </button>
         {isProcessing && processingNote && (
@@ -195,7 +203,7 @@ export function PayrollPreviewPanel({
           type="button"
           onClick={onBack}
           disabled={isProcessing}
-          className="btn-secondary min-h-11 justify-center px-6"
+          className="btn-secondary min-h-11 justify-center px-6 w-full sm:w-auto"
         >
           {t('payroll.preview.backToAdjustments')}
         </button>

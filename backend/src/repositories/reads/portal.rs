@@ -28,7 +28,7 @@ pub async fn my_payslips(
         FROM payroll_items pi
         JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
         WHERE pi.employee_id = $1
-        AND pr.status::text IN ('approved', 'paid')
+        AND pr.status IN ('approved', 'paid')
         ORDER BY pr.period_year DESC, pr.period_month DESC"#,
         employee_id,
     )
@@ -72,11 +72,13 @@ pub async fn approved_leaves_for_year(
             lr.reviewed_by, lr.reviewed_at, lr.review_notes,
             lr.attachment_url, lr.attachment_name,
             lr.created_at, lr.updated_at,
+            lr.created_by, lr.updated_by,
             lt.name AS "leave_type_name?"
         FROM leave_requests lr
         JOIN leave_types lt ON lr.leave_type_id = lt.id
         WHERE lr.employee_id = $1 AND lr.status = 'approved'
-        AND EXTRACT(YEAR FROM lr.start_date)::int = $2
+        AND lr.start_date <= make_date($2, 12, 31)
+        AND lr.end_date >= make_date($2, 1, 1)
         ORDER BY lr.start_date"#,
         employee_id,
         year,
@@ -96,26 +98,31 @@ pub async fn team_calendar(
 ) -> AppResult<Vec<TeamLeaveEntry>> {
     let entries = sqlx::query_as!(
         TeamLeaveEntry,
-        r#"SELECT DISTINCT lr.id, lr.employee_id, e.full_name AS employee_name,
+        r#"WITH viewer_teammates AS (
+            SELECT $2::uuid AS employee_id
+            UNION
+            SELECT tm2.employee_id
+            FROM team_members tm1
+            JOIN teams t ON t.id = tm1.team_id
+            JOIN team_members tm2 ON tm2.team_id = tm1.team_id
+            WHERE tm1.employee_id = $2
+              AND t.company_id = $1
+              AND t.is_active = TRUE
+        )
+        SELECT lr.id, lr.employee_id, e.full_name AS employee_name,
             e.department, lt.name AS leave_type_name,
             lr.start_date, lr.end_date, lr.days, lr.status
         FROM leave_requests lr
+        JOIN viewer_teammates vt ON vt.employee_id = lr.employee_id
         JOIN employees e ON lr.employee_id = e.id
         JOIN leave_types lt ON lr.leave_type_id = lt.id
-        WHERE e.company_id = $1
+        WHERE lr.company_id = $1
+          AND e.company_id = $1
+          AND e.is_active = TRUE
           AND e.deleted_at IS NULL
           AND lr.status = 'approved'
           AND lr.start_date <= $4
           AND lr.end_date >= $3
-          AND (lr.employee_id = $2
-               OR lr.employee_id IN (
-                  SELECT tm2.employee_id FROM team_members tm2
-                  WHERE tm2.team_id IN (
-                      SELECT tm1.team_id FROM team_members tm1
-                      JOIN teams t ON t.id = tm1.team_id
-                      WHERE tm1.employee_id = $2 AND t.is_active = TRUE
-                  )
-              ))
         ORDER BY lr.start_date, e.full_name"#,
         company_id,
         employee_id,

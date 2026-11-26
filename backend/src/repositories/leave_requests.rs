@@ -22,13 +22,14 @@ pub async fn insert_with_type(
     reason: Option<String>,
     attachment_url: Option<String>,
     attachment_name: Option<String>,
+    created_by: Option<Uuid>,
 ) -> AppResult<LeaveRequest> {
     let leave = sqlx::query_as!(
         LeaveRequest,
         r#"WITH new_lr AS (
             INSERT INTO leave_requests
-                (employee_id, company_id, leave_type_id, start_date, end_date, days, reason, attachment_url, attachment_name)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                (employee_id, company_id, leave_type_id, start_date, end_date, days, reason, attachment_url, attachment_name, created_by)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             RETURNING *
         )
         SELECT nlr.id, nlr.employee_id, nlr.company_id, nlr.leave_type_id,
@@ -36,6 +37,7 @@ pub async fn insert_with_type(
             nlr.reviewed_by, nlr.reviewed_at, nlr.review_notes,
             nlr.attachment_url, nlr.attachment_name,
             nlr.created_at, nlr.updated_at,
+            nlr.created_by, nlr.updated_by,
             lt.name AS "leave_type_name?"
         FROM new_lr nlr
         JOIN leave_types lt ON nlr.leave_type_id = lt.id"#,
@@ -48,6 +50,7 @@ pub async fn insert_with_type(
         reason,
         attachment_url,
         attachment_name,
+        created_by,
     )
     .fetch_one(executor)
     .await?;
@@ -99,10 +102,37 @@ pub async fn get_pending_with_type(
             lr.reviewed_by, lr.reviewed_at, lr.review_notes,
             lr.attachment_url, lr.attachment_name,
             lr.created_at, lr.updated_at,
+            lr.created_by, lr.updated_by,
             lt.name AS "leave_type_name?"
         FROM leave_requests lr
         JOIN leave_types lt ON lr.leave_type_id = lt.id
         WHERE lr.id = $1 AND lr.company_id = $2 AND lr.status = 'pending'"#,
+        request_id,
+        company_id,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(leave)
+}
+
+pub async fn get_pending_with_type_for_update(
+    executor: impl Executor<'_, Database = Postgres>,
+    request_id: Uuid,
+    company_id: Uuid,
+) -> AppResult<Option<LeaveRequest>> {
+    let leave = sqlx::query_as!(
+        LeaveRequest,
+        r#"SELECT lr.id, lr.employee_id, lr.company_id, lr.leave_type_id,
+            lr.start_date, lr.end_date, lr.days, lr.reason, lr.status,
+            lr.reviewed_by, lr.reviewed_at, lr.review_notes,
+            lr.attachment_url, lr.attachment_name,
+            lr.created_at, lr.updated_at,
+            lr.created_by, lr.updated_by,
+            lt.name AS "leave_type_name?"
+        FROM leave_requests lr
+        JOIN leave_types lt ON lr.leave_type_id = lt.id
+        WHERE lr.id = $1 AND lr.company_id = $2 AND lr.status = 'pending'
+        FOR UPDATE OF lr"#,
         request_id,
         company_id,
     )
@@ -124,6 +154,7 @@ pub async fn get_cancelled_with_type(
             lr.reviewed_by, lr.reviewed_at, lr.review_notes,
             lr.attachment_url, lr.attachment_name,
             lr.created_at, lr.updated_at,
+            lr.created_by, lr.updated_by,
             lt.name AS "leave_type_name?"
         FROM leave_requests lr
         JOIN leave_types lt ON lr.leave_type_id = lt.id
@@ -149,6 +180,7 @@ pub async fn get_cancellable_with_type(
             lr.reviewed_by, lr.reviewed_at, lr.review_notes,
             lr.attachment_url, lr.attachment_name,
             lr.created_at, lr.updated_at,
+            lr.created_by, lr.updated_by,
             lt.name AS "leave_type_name?"
         FROM leave_requests lr
         JOIN leave_types lt ON lr.leave_type_id = lt.id
@@ -177,6 +209,7 @@ pub async fn update_full(
     reason: Option<String>,
     attachment_url: Option<String>,
     attachment_name: Option<String>,
+    updated_by: Option<Uuid>,
 ) -> AppResult<Option<LeaveRequest>> {
     let updated = sqlx::query_as!(
         LeaveRequest,
@@ -189,6 +222,7 @@ pub async fn update_full(
             reason = CASE WHEN $8::text IS NULL THEN reason ELSE NULLIF($8, '') END,
             attachment_url = CASE WHEN $9::text IS NULL THEN attachment_url ELSE NULLIF($9, '') END,
             attachment_name = CASE WHEN $10::text IS NULL THEN attachment_name ELSE NULLIF($10, '') END,
+            updated_by = COALESCE($11, updated_by),
             updated_at = NOW()
         WHERE id = $1 AND company_id = $2 AND status = 'pending'
         RETURNING *,
@@ -203,6 +237,7 @@ pub async fn update_full(
         reason,
         attachment_url,
         attachment_name,
+        updated_by,
     )
     .fetch_optional(executor)
     .await?;
@@ -314,6 +349,7 @@ pub async fn list_for_employee(
             lr.reviewed_by, lr.reviewed_at, lr.review_notes,
             lr.attachment_url, lr.attachment_name,
             lr.created_at, lr.updated_at,
+            lr.created_by, lr.updated_by,
             lt.name AS "leave_type_name?"
         FROM leave_requests lr
         JOIN leave_types lt ON lr.leave_type_id = lt.id
@@ -341,12 +377,13 @@ pub async fn insert_self_service(
     reason: Option<String>,
     attachment_url: Option<String>,
     attachment_name: Option<String>,
+    created_by: Option<Uuid>,
 ) -> AppResult<LeaveRequest> {
     let leave = sqlx::query_as!(
         LeaveRequest,
         r#"WITH new_lr AS (
-            INSERT INTO leave_requests (employee_id, company_id, leave_type_id, start_date, end_date, days, reason, attachment_url, attachment_name)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            INSERT INTO leave_requests (employee_id, company_id, leave_type_id, start_date, end_date, days, reason, attachment_url, attachment_name, created_by)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             RETURNING *
         )
         SELECT nlr.id AS "id!", nlr.employee_id AS "employee_id!", nlr.company_id AS "company_id!", nlr.leave_type_id AS "leave_type_id!",
@@ -354,6 +391,7 @@ pub async fn insert_self_service(
             nlr.reviewed_by, nlr.reviewed_at, nlr.review_notes,
             nlr.attachment_url, nlr.attachment_name,
             nlr.created_at AS "created_at!", nlr.updated_at AS "updated_at!",
+            nlr.created_by, nlr.updated_by,
             lt.name AS "leave_type_name?"
         FROM new_lr nlr
         JOIN leave_types lt ON nlr.leave_type_id = lt.id"#,
@@ -366,6 +404,7 @@ pub async fn insert_self_service(
         reason,
         attachment_url,
         attachment_name,
+        created_by,
     )
     .fetch_one(executor)
     .await?;
@@ -385,6 +424,7 @@ pub async fn get_cancellable_for_employee(
             lr.reviewed_by, lr.reviewed_at, lr.review_notes,
             lr.attachment_url, lr.attachment_name,
             lr.created_at, lr.updated_at,
+            lr.created_by, lr.updated_by,
             lt.name AS "leave_type_name?"
         FROM leave_requests lr
         JOIN leave_types lt ON lr.leave_type_id = lt.id
@@ -420,14 +460,14 @@ pub async fn mark_cancelled(
     Ok(result.rows_affected() > 0)
 }
 
-/// Delete an employee's own cancelled request; returns rows removed (0 = not deletable).
+/// Delete an employee's own unreviewed cancelled request; returns rows removed (0 = not deletable).
 pub async fn delete_cancelled_for_employee(
     executor: impl Executor<'_, Database = Postgres>,
     request_id: Uuid,
     employee_id: Uuid,
 ) -> AppResult<u64> {
     let rows = sqlx::query!(
-        "DELETE FROM leave_requests WHERE id = $1 AND employee_id = $2 AND status = 'cancelled'",
+        "DELETE FROM leave_requests WHERE id = $1 AND employee_id = $2 AND status = 'cancelled' AND reviewed_at IS NULL",
         request_id,
         employee_id,
     )

@@ -30,16 +30,42 @@ pub async fn summary(
     can_view_attendance: bool,
     window_days: i64,
 ) -> AppResult<DashboardSummary> {
-    let current_year = chrono::Utc::now().year();
+    // Resolve company timezone once so both YTD employer totals and the attendance
+    // exception window use the tenant's local calendar (e.g. MYT on Jan 1 00:00–07:59).
+    let tz = attendance_service::get_company_timezone(pool, company_id).await;
+    let parsed_tz = timezone::parse(&tz).unwrap_or(chrono_tz::Asia::Kuala_Lumpur);
+    let today = chrono::Utc::now().with_timezone(&parsed_tz).date_naive();
+    let current_year = today.year();
 
-    let payroll_fut = async {
-        if can_access_payroll {
-            tokio::try_join!(
-                dashboard_reads::last_payroll(pool, company_id),
-                dashboard_reads::ytd_employer_totals(pool, company_id, current_year),
-            )
+    // Group queries into at most 2 concurrent pool branches (instead of 6 simultaneous
+    // acquires) so concurrent dashboard loads do not saturate the 10-connection pool.
+    let org_and_approvals_fut = async {
+        let (total_employees, active_employees, departments) =
+            dashboard_reads::employee_department_summary(pool, company_id).await?;
+        let pending = if can_view_approvals {
+            dashboard_reads::pending_approval_counts(pool, company_id).await?
         } else {
-            Ok((
+            PendingApprovalCounts {
+                pending_leave: 0,
+                pending_claims: 0,
+                pending_overtime: 0,
+            }
+        };
+        Ok::<_, crate::core::error::AppError>((
+            total_employees,
+            active_employees,
+            departments,
+            pending,
+        ))
+    };
+
+    let payroll_and_exceptions_fut = async {
+        let (last_payroll, ytd) = if can_access_payroll {
+            let last = dashboard_reads::last_payroll(pool, company_id).await?;
+            let ytd = dashboard_reads::ytd_employer_totals(pool, company_id, current_year).await?;
+            (last, ytd)
+        } else {
+            (
                 None,
                 YtdEmployerTotals {
                     total_gross: 0,
@@ -47,56 +73,28 @@ pub async fn summary(
                     total_socso_employer: 0,
                     total_eis_employer: 0,
                 },
-            ))
-        }
-    };
-
-    let exceptions_fut = async {
-        if can_view_attendance {
-            // Bucket the exception window on the company's own calendar, so "last 7
-            // days" here means the same 7 days the attendance list shows.
-            let tz = attendance_service::get_company_timezone(pool, company_id).await;
-            let parsed_tz = timezone::parse(&tz).unwrap_or(chrono_tz::Asia::Kuala_Lumpur);
-            let today = chrono::Utc::now().with_timezone(&parsed_tz).date_naive();
+            )
+        };
+        let exceptions = if can_view_attendance {
             let date_from = today - chrono::Duration::days(window_days - 1);
             dashboard_reads::attendance_exception_totals(pool, company_id, &tz, date_from, today)
-                .await
+                .await?
         } else {
-            Ok(AttendanceExceptionTotals {
+            AttendanceExceptionTotals {
                 late_count: 0,
                 absent_count: 0,
                 open_session_count: 0,
                 outside_geofence_count: 0,
                 manual_entry_count: 0,
-            })
-        }
-    };
-
-    let pending_fut = async {
-        if can_view_approvals {
-            dashboard_reads::pending_approval_counts(pool, company_id).await
-        } else {
-            Ok(PendingApprovalCounts {
-                pending_leave: 0,
-                pending_claims: 0,
-                pending_overtime: 0,
-            })
-        }
+            }
+        };
+        Ok::<_, crate::core::error::AppError>((last_payroll, ytd, exceptions))
     };
 
     let (
-        (total_employees, active_employees),
-        (last_payroll, ytd),
-        departments,
-        pending,
-        exceptions,
-    ) = tokio::try_join!(
-        dashboard_reads::employee_headcount(pool, company_id),
-        payroll_fut,
-        dashboard_reads::department_counts(pool, company_id),
-        pending_fut,
-        exceptions_fut,
-    )?;
+        (total_employees, active_employees, departments, pending),
+        (last_payroll, ytd, exceptions),
+    ) = tokio::try_join!(org_and_approvals_fut, payroll_and_exceptions_fut)?;
 
     let needs_attention = NeedsAttention::new(window_days, exceptions, pending);
 

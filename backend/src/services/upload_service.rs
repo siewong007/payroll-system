@@ -107,11 +107,10 @@ fn permits(access: &UploadAccess, reference: &UploadReference) -> bool {
     }
 }
 
-/// Reject attempts to attach another tenant's local upload path to a record.
+/// Reject attempts to attach unowned or cross-tenant local upload paths.
 ///
-/// Legacy SQL-seeded URLs without an `uploaded_files` row remain allowed here
-/// so seeded fixtures keep working; newly uploaded files always carry a row
-/// proving which company created them.
+/// Fails closed when an `/api/uploads/<name>` path has neither a matching
+/// `uploaded_files` row nor an existing reference inside `company_id`.
 pub async fn ensure_upload_belongs_to_company(
     pool: &PgPool,
     company_id: Uuid,
@@ -125,9 +124,16 @@ pub async fn ensure_upload_belongs_to_company(
     };
     upload_path::sanitize_stored_name(stored_name)?;
 
-    if let Some(owner) = uploaded_files::find_by_stored_name(pool, stored_name).await?
-        && owner.company_id != company_id
-    {
+    if let Some(owner) = uploaded_files::find_by_stored_name(pool, stored_name).await? {
+        if owner.company_id != company_id {
+            return Err(AppError::BadRequest("Invalid file URL".into()));
+        }
+        return Ok(());
+    }
+
+    let full_url = format!("{}{}", upload_path::UPLOAD_URL_PREFIX, stored_name);
+    let references = uploads::find_references(pool, company_id, &full_url).await?;
+    if references.is_empty() {
         return Err(AppError::BadRequest("Invalid file URL".into()));
     }
     Ok(())
@@ -166,17 +172,17 @@ pub async fn ensure_upload_attach_authorized(
     };
     upload_path::sanitize_stored_name(stored_name)?;
 
-    let Some(owner) = uploaded_files::find_by_stored_name(pool, stored_name).await? else {
-        return Ok(());
-    };
-    if owner.company_id != access.company_id {
+    let owner = uploaded_files::find_by_stored_name(pool, stored_name).await?;
+    if let Some(ref record) = owner
+        && record.company_id != access.company_id
+    {
         return Err(AppError::BadRequest("Invalid file URL".into()));
     }
 
     let full_url = format!("{}{}", upload_path::UPLOAD_URL_PREFIX, stored_name);
     let references = uploads::find_references(pool, access.company_id, &full_url).await?;
     if references.is_empty() {
-        if owner.uploaded_by == Some(access.user_id) {
+        if owner.as_ref().and_then(|o| o.uploaded_by) == Some(access.user_id) {
             return Ok(());
         }
         return Err(AppError::BadRequest("Invalid file URL".into()));
@@ -231,6 +237,8 @@ pub async fn read_authorized(
             .as_ref()
             .and_then(|record| record.uploaded_by)
             .is_some_and(|uploader| uploader == access.user_id)
+    } else if references.iter().any(|r| r.is_confidential) && !access.can_view_confidential {
+        false
     } else {
         references
             .iter()

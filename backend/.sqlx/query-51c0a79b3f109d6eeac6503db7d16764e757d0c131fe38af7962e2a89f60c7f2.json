@@ -1,0 +1,96 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT o.network                                                           AS \"network!\",\n                  o.prefix_len                                                        AS \"prefix_len!\",\n                  COUNT(DISTINCT o.employee_id) FILTER (WHERE o.observation_count > 0) AS \"distinct_employees!\",\n                  COUNT(DISTINCT o.employee_id) FILTER (WHERE o.anchored_count > 0)    AS \"anchored_employees!\",\n                  SUM(o.observation_count)::bigint                                    AS \"observation_count!\",\n                  SUM(o.anchored_count)::bigint                                       AS \"anchored_count!\",\n                  SUM(o.denied_count)::bigint                                         AS \"denied_count!\",\n                  COUNT(DISTINCT o.employee_id) FILTER (WHERE o.denied_count > 0)     AS \"distinct_denied_employees!\",\n                  MIN(o.first_seen_at)                                                AS \"first_seen_at!\",\n                  MAX(o.last_seen_at)                                                 AS \"last_seen_at!\"\n           FROM attendance_network_observations o\n           WHERE o.company_id = $1\n             AND NOT EXISTS (\n                 SELECT 1 FROM company_networks n\n                 WHERE n.company_id = o.company_id\n                   AND ((o.network || '/' || o.prefix_len)::cidr <<= (n.network || '/' || n.prefix_len)::cidr)\n             )\n             AND NOT EXISTS (\n                 SELECT 1 FROM attendance_network_dismissals d\n                 WHERE d.company_id = o.company_id\n                   AND ((o.network || '/' || o.prefix_len)::cidr <<= (d.network || '/' || d.prefix_len)::cidr)\n                   AND d.expires_at > NOW()\n             )\n           GROUP BY o.network, o.prefix_len\n           -- Order by distinct employees affected (not raw request volume) so one\n           -- employee spamming check-in retries cannot hijack candidate ranking.\n           ORDER BY COUNT(DISTINCT o.employee_id) FILTER (WHERE o.denied_count > 0) DESC,\n                    COUNT(DISTINCT o.employee_id) FILTER (WHERE o.anchored_count > 0) DESC,\n                    COUNT(DISTINCT o.employee_id) FILTER (WHERE o.observation_count > 0) DESC,\n                    MAX(o.last_seen_at) DESC\n           LIMIT 50",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "network!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "attendance_network_observations",
+            "name": "network"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "prefix_len!",
+        "type_info": "Int2",
+        "origin": {
+          "Table": {
+            "table": "attendance_network_observations",
+            "name": "prefix_len"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "distinct_employees!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "anchored_employees!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "observation_count!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "anchored_count!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "denied_count!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 7,
+        "name": "distinct_denied_employees!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 8,
+        "name": "first_seen_at!",
+        "type_info": "Timestamptz",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 9,
+        "name": "last_seen_at!",
+        "type_info": "Timestamptz",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "51c0a79b3f109d6eeac6503db7d16764e757d0c131fe38af7962e2a89f60c7f2"
+}

@@ -100,6 +100,10 @@ pub struct CompanyExport {
     pub timezone: Option<String>,
     #[serde(default)]
     pub geofence_mode: Option<String>,
+    #[serde(default)]
+    pub attendance_network_mode: Option<String>,
+    #[serde(default)]
+    pub auto_absent_last_run_date: Option<NaiveDate>,
 }
 
 fn default_unpaid_break_minutes() -> i32 {
@@ -389,6 +393,8 @@ pub struct PayrollRunExport {
     pub cancelled_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub cancel_reason: Option<String>,
+    #[serde(default)]
+    pub calculation_snapshot: Option<serde_json::Value>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -434,6 +440,12 @@ pub struct PayrollItemExport {
     pub working_days: Option<i32>,
     pub days_worked: Option<rust_decimal::Decimal>,
     pub is_prorated: Option<bool>,
+    #[serde(default)]
+    pub bank_name: Option<String>,
+    #[serde(default)]
+    pub bank_account_number: Option<String>,
+    #[serde(default)]
+    pub bank_account_type: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -467,6 +479,10 @@ pub struct PayrollEntryExport {
     pub is_taxable: Option<bool>,
     pub is_processed: Option<bool>,
     pub payroll_run_id: Option<Uuid>,
+    #[serde(default)]
+    pub overtime_application_id: Option<Uuid>,
+    #[serde(default)]
+    pub leave_request_id: Option<Uuid>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

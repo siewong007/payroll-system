@@ -1,0 +1,139 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO leave_balances (employee_id, leave_type_id, year, entitled_days)\n            SELECT employee_id, leave_type_id, year, entitled_days\n            FROM UNNEST($1::uuid[], $2::uuid[], $3::int4[], $4::numeric[])\n                AS t(employee_id, leave_type_id, year, entitled_days)\n            ON CONFLICT (employee_id, leave_type_id, year) DO NOTHING\n            RETURNING *",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "leave_balances",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "employee_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "leave_balances",
+            "name": "employee_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "leave_type_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "leave_balances",
+            "name": "leave_type_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "year",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "leave_balances",
+            "name": "year"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "entitled_days",
+        "type_info": "Numeric",
+        "origin": {
+          "Table": {
+            "table": "leave_balances",
+            "name": "entitled_days"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "taken_days",
+        "type_info": "Numeric",
+        "origin": {
+          "Table": {
+            "table": "leave_balances",
+            "name": "taken_days"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "pending_days",
+        "type_info": "Numeric",
+        "origin": {
+          "Table": {
+            "table": "leave_balances",
+            "name": "pending_days"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "carried_forward",
+        "type_info": "Numeric",
+        "origin": {
+          "Table": {
+            "table": "leave_balances",
+            "name": "carried_forward"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "leave_balances",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "updated_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "leave_balances",
+            "name": "updated_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "UuidArray",
+        "UuidArray",
+        "Int4Array",
+        "NumericArray"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "29fa7be07439ec4c6a6b56f83879b7e79b0ba3dfdcf771cfb71502ba47ee0e9e"
+}

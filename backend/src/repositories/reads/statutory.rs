@@ -42,7 +42,7 @@ pub async fn statutory_rows(
         JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
         JOIN employees e ON pi.employee_id = e.id
         WHERE pr.company_id = $1 AND pr.period_year = $2 AND pr.period_month = $3
-        AND pr.status::text IN ('approved', 'paid')
+        AND pr.status IN ('approved', 'paid')
         ORDER BY e.employee_number"#,
         company_id,
         year,

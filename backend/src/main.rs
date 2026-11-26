@@ -447,6 +447,17 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
 
+            match payroll_system::repositories::mfa_challenges::purge_expired(&cleanup_pool).await {
+                Ok(rows) => {
+                    cleanup_processed += rows;
+                    tracing::info!(rows, "mfa-challenges retention: completed");
+                }
+                Err(e) => {
+                    tracing::error!("Failed to clean up expired MFA challenges: {}", e);
+                    cleanup_errors.push(format!("mfa_challenges: {e}"));
+                }
+            }
+
             match payroll_system::repositories::background_jobs::delete_finished_older_than_days(
                 &cleanup_pool,
                 BACKGROUND_JOB_RETENTION_DAYS,

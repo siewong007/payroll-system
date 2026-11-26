@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id FROM claims\n        WHERE employee_id = ANY($1)\n          AND company_id = $2\n          AND status = 'approved'\n          AND payroll_run_id IS NULL\n          AND expense_date <= $3\n        ORDER BY id\n        FOR UPDATE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "claims",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "UuidArray",
+        "Uuid",
+        "Date"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "caeecd8ec414156f75c6eb4202b505ab06acaa90eeaaac80fc16a211165c1c48"
+}

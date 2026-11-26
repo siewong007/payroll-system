@@ -30,9 +30,21 @@ pub async fn record(
            VALUES ($1, $2, $3, $4, 1, $5)
            ON CONFLICT (company_id, employee_id, network, prefix_len)
            DO UPDATE SET
-               observation_count = attendance_network_observations.observation_count + 1,
-               anchored_count = attendance_network_observations.anchored_count + $5,
-               last_seen_at = NOW()"#,
+               observation_count = CASE
+                   WHEN attendance_network_observations.last_seen_at < NOW() - INTERVAL '12 hours'
+                       THEN attendance_network_observations.observation_count + 1
+                   ELSE attendance_network_observations.observation_count
+               END,
+               anchored_count = CASE
+                   WHEN attendance_network_observations.last_seen_at < NOW() - INTERVAL '12 hours'
+                       THEN attendance_network_observations.anchored_count + $5
+                   ELSE attendance_network_observations.anchored_count
+               END,
+               last_seen_at = CASE
+                   WHEN attendance_network_observations.last_seen_at < NOW() - INTERVAL '12 hours'
+                       THEN NOW()
+                   ELSE attendance_network_observations.last_seen_at
+               END"#,
         company_id,
         employee_id,
         network,
@@ -65,8 +77,16 @@ pub async fn record_denial(
            VALUES ($1, $2, $3, $4, 0, 0, 1)
            ON CONFLICT (company_id, employee_id, network, prefix_len)
            DO UPDATE SET
-               denied_count = attendance_network_observations.denied_count + 1,
-               last_seen_at = NOW()"#,
+               denied_count = CASE
+                   WHEN attendance_network_observations.last_seen_at < NOW() - INTERVAL '12 hours'
+                       THEN attendance_network_observations.denied_count + 1
+                   ELSE attendance_network_observations.denied_count
+               END,
+               last_seen_at = CASE
+                   WHEN attendance_network_observations.last_seen_at < NOW() - INTERVAL '12 hours'
+                       THEN NOW()
+                   ELSE attendance_network_observations.last_seen_at
+               END"#,
         company_id,
         employee_id,
         network,

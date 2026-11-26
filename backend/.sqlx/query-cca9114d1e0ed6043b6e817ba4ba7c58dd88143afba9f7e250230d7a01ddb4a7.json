@@ -1,0 +1,340 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, name, registration_number, tax_number, epf_number, socso_code, eis_code,\n                  hrdf_number, address_line1, address_line2, city, state, postcode, country,\n                  phone, email, logo_url, hrdf_enabled, unpaid_leave_divisor, is_active,\n                  created_at, updated_at,\n                  attendance_method, timezone AS \"timezone?\", geofence_mode AS \"geofence_mode?\",\n                  attendance_network_mode AS \"attendance_network_mode?\",\n                  auto_absent_last_run_date\n           FROM companies WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "registration_number",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "registration_number"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "tax_number",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "tax_number"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "epf_number",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "epf_number"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "socso_code",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "socso_code"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "eis_code",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "eis_code"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "hrdf_number",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "hrdf_number"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "address_line1",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "address_line1"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "address_line2",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "address_line2"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "city",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "city"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "state",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "state"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "postcode",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "postcode"
+          }
+        }
+      },
+      {
+        "ordinal": 13,
+        "name": "country",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "country"
+          }
+        }
+      },
+      {
+        "ordinal": 14,
+        "name": "phone",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "phone"
+          }
+        }
+      },
+      {
+        "ordinal": 15,
+        "name": "email",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "email"
+          }
+        }
+      },
+      {
+        "ordinal": 16,
+        "name": "logo_url",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "logo_url"
+          }
+        }
+      },
+      {
+        "ordinal": 17,
+        "name": "hrdf_enabled",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "hrdf_enabled"
+          }
+        }
+      },
+      {
+        "ordinal": 18,
+        "name": "unpaid_leave_divisor",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "unpaid_leave_divisor"
+          }
+        }
+      },
+      {
+        "ordinal": 19,
+        "name": "is_active",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "is_active"
+          }
+        }
+      },
+      {
+        "ordinal": 20,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 21,
+        "name": "updated_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "updated_at"
+          }
+        }
+      },
+      {
+        "ordinal": 22,
+        "name": "attendance_method",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "attendance_method"
+          }
+        }
+      },
+      {
+        "ordinal": 23,
+        "name": "timezone?",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "timezone"
+          }
+        }
+      },
+      {
+        "ordinal": 24,
+        "name": "geofence_mode?",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "geofence_mode"
+          }
+        }
+      },
+      {
+        "ordinal": 25,
+        "name": "attendance_network_mode?",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "attendance_network_mode"
+          }
+        }
+      },
+      {
+        "ordinal": 26,
+        "name": "auto_absent_last_run_date",
+        "type_info": "Date",
+        "origin": {
+          "Table": {
+            "table": "companies",
+            "name": "auto_absent_last_run_date"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "cca9114d1e0ed6043b6e817ba4ba7c58dd88143afba9f7e250230d7a01ddb4a7"
+}

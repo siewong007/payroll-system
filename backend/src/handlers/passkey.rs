@@ -10,12 +10,14 @@ use webauthn_rs::prelude::*;
 use crate::core::app_state::AppState;
 use crate::core::auth::AuthUser;
 use crate::core::error::{AppError, AppResult};
+use crate::core::extract::ValidatedJson;
 use crate::handlers::auth::login_outcome_response;
 use crate::models::audit::AuditRequestMeta;
 use crate::models::passkey::{
     AuthBeginRequest, AuthBeginResponse, AuthCompleteRequest, CheckPasskeyRequest,
     DiscoverableAuthBeginRequest, DiscoverableAuthBeginResponse, PasskeyInfo,
-    RegistrationBeginResponse, RegistrationCompleteRequest, RenamePasskeyRequest,
+    RegistrationBeginRequest, RegistrationBeginResponse, RegistrationCompleteRequest,
+    RenamePasskeyRequest,
 };
 use crate::services::{auth_service, passkey_service};
 
@@ -24,7 +26,10 @@ use crate::services::{auth_service, passkey_service};
 pub async fn registration_begin(
     State(state): State<AppState>,
     auth: AuthUser,
+    ValidatedJson(req): ValidatedJson<RegistrationBeginRequest>,
 ) -> AppResult<Json<RegistrationBeginResponse>> {
+    auth_service::verify_user_password(&state.pool, auth.0.sub, &req.password).await?;
+
     let user_id = auth.0.sub;
     let user_email = &auth.0.email;
 

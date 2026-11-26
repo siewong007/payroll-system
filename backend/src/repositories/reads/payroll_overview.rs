@@ -5,37 +5,48 @@
 //! Nothing is estimated: a company that has never run payroll gets empty
 //! sections, not placeholder numbers.
 
+use std::collections::HashMap;
+
 use sqlx::{Executor, Postgres};
 use uuid::Uuid;
 
 use crate::core::error::AppResult;
 use crate::models::payroll::{ActionEmployeeRef, PayrollPeriodTotals, PayrollStatusCount};
 
-/// Per-period totals across all committed runs, newest first.
+/// Per-period totals across the 12 most recent committed periods, newest first.
 ///
 /// "Committed" is `processed` through `paid` — the same status set
 /// `reads/payroll.rs::payroll_ytd` trusts. `draft`, `processing` and
 /// `cancelled` never contribute to reported totals.
 ///
-/// Item-level sums (overtime, deductions) cannot share the run-level GROUP BY
-/// without multiplying run totals per item, so they are aggregated in a CTE
-/// and joined back on the period.
+/// Top 12 `(period_year, period_month)` pairs are selected BEFORE joining
+/// `payroll_items`, bounding the item-level aggregation to at most 12 periods.
 pub async fn period_totals(
     executor: impl Executor<'_, Database = Postgres>,
     company_id: Uuid,
 ) -> AppResult<Vec<PayrollPeriodTotals>> {
     let rows = sqlx::query_as!(
         PayrollPeriodTotals,
-        r#"WITH committed AS (
-            SELECT id, period_year, period_month, employee_count,
-                total_gross, total_net, total_employer_cost,
-                total_epf_employee, total_epf_employer,
-                total_socso_employee, total_socso_employer,
-                total_eis_employee, total_eis_employer,
-                total_pcb, total_zakat
+        r#"WITH top_periods AS (
+            SELECT DISTINCT period_year, period_month
             FROM payroll_runs
             WHERE company_id = $1
-              AND status::text IN ('processed', 'pending_approval', 'approved', 'paid')
+              AND status IN ('processed', 'pending_approval', 'approved', 'paid')
+            ORDER BY period_year DESC, period_month DESC
+            LIMIT 12
+        ),
+        committed AS (
+            SELECT pr.id, pr.period_year, pr.period_month, pr.employee_count,
+                pr.total_gross, pr.total_net, pr.total_employer_cost,
+                pr.total_epf_employee, pr.total_epf_employer,
+                pr.total_socso_employee, pr.total_socso_employer,
+                pr.total_eis_employee, pr.total_eis_employer,
+                pr.total_pcb, pr.total_zakat
+            FROM payroll_runs pr
+            JOIN top_periods tp
+              ON tp.period_year = pr.period_year AND tp.period_month = pr.period_month
+            WHERE pr.company_id = $1
+              AND pr.status IN ('processed', 'pending_approval', 'approved', 'paid')
         ),
         item_sums AS (
             SELECT c.period_year, c.period_month,
@@ -113,7 +124,7 @@ pub async fn runs_awaiting_action(
         FROM payroll_runs pr
         JOIN payroll_groups pg ON pr.payroll_group_id = pg.id
         WHERE pr.company_id = $1
-          AND pr.status::text IN ('processed', 'pending_approval', 'approved')
+          AND pr.status IN ('processed', 'pending_approval', 'approved')
         ORDER BY pr.period_year, pr.period_month, pg.name"#,
         company_id,
     )
@@ -137,108 +148,85 @@ pub async fn unprocessed_entry_count(
     Ok(count)
 }
 
-/// The employees a data-quality check flags, with the true total via a window
-/// count so the caller does not run a second COUNT query. `limit` caps the
-/// sample — the action item carries `count` separately.
-async fn employee_flags(
+/// All five action-queue employee data-quality flags evaluated in a single scan
+/// over `employees`, returning `(total_count, sample_employees)` per flag key.
+pub async fn action_queue_employee_flags(
     executor: impl Executor<'_, Database = Postgres>,
-    where_clause: &'static str,
     company_id: Uuid,
     limit: i64,
-) -> AppResult<(i64, Vec<ActionEmployeeRef>)> {
-    // The WHERE clause is a fixed string chosen by the caller, never request
-    // input — this helper exists only so the five flag queries below share one
-    // sample-with-total shape without duplicating the boilerplate.
-    let sql = format!(
-        r#"SELECT id AS employee_id, employee_number, full_name AS employee_name,
-               COUNT(*) OVER() AS "total!"
-        FROM employees
-        WHERE company_id = $1 AND deleted_at IS NULL AND {where_clause}
-        ORDER BY full_name
-        LIMIT $2"#
-    );
-    let rows = sqlx::query_as::<_, (Uuid, String, String, i64)>(sqlx::AssertSqlSafe(sql))
-        .bind(company_id)
-        .bind(limit)
-        .fetch_all(executor)
-        .await?;
-    let total = rows.first().map(|row| row.3).unwrap_or(0);
-    let employees = rows
-        .into_iter()
-        .map(
-            |(employee_id, employee_number, employee_name, _)| ActionEmployeeRef {
-                employee_id,
-                employee_number,
-                employee_name,
-            },
+) -> AppResult<HashMap<String, (i64, Vec<ActionEmployeeRef>)>> {
+    let rows = sqlx::query!(
+        r#"WITH base AS (
+            SELECT id, employee_number, full_name, is_active, payroll_group_id,
+                   date_of_birth, date_resigned, bank_account_number,
+                   epf_number, tax_identification_number
+            FROM employees
+            WHERE company_id = $1 AND deleted_at IS NULL
+        ),
+        flagged AS (
+            SELECT v.flag_key, b.id, b.employee_number, b.full_name
+            FROM base b
+            CROSS JOIN LATERAL (VALUES
+                (
+                    'missing_date_of_birth',
+                    b.is_active IS TRUE AND b.payroll_group_id IS NOT NULL AND b.date_of_birth IS NULL
+                ),
+                (
+                    'inactive_without_resignation_date',
+                    b.is_active IS NOT TRUE AND b.date_resigned IS NULL AND b.payroll_group_id IS NOT NULL
+                ),
+                (
+                    'missing_payroll_group',
+                    b.is_active IS TRUE AND b.payroll_group_id IS NULL
+                ),
+                (
+                    'missing_bank_account',
+                    b.is_active IS TRUE AND b.payroll_group_id IS NOT NULL
+                        AND (b.bank_account_number IS NULL OR btrim(b.bank_account_number) = '')
+                ),
+                (
+                    'missing_statutory_ids',
+                    b.is_active IS TRUE AND b.payroll_group_id IS NOT NULL AND (
+                        ((b.date_of_birth IS NULL OR age(CURRENT_DATE, b.date_of_birth) < INTERVAL '75 years')
+                         AND (b.epf_number IS NULL OR btrim(b.epf_number) = ''))
+                        OR (b.tax_identification_number IS NULL OR btrim(b.tax_identification_number) = '')
+                    )
+                )
+            ) AS v(flag_key, matches)
+            WHERE v.matches
+        ),
+        numbered AS (
+            SELECT flag_key, id, employee_number, full_name,
+                   ROW_NUMBER() OVER (PARTITION BY flag_key ORDER BY full_name, id) AS rn,
+                   COUNT(*) OVER (PARTITION BY flag_key) AS total
+            FROM flagged
         )
-        .collect();
-    Ok((total, employees))
-}
-
-/// Active employees in a payroll group with no bank account — the run pays
-/// them but no payment file can carry them.
-pub async fn missing_bank_account(
-    executor: impl Executor<'_, Database = Postgres>,
-    company_id: Uuid,
-    limit: i64,
-) -> AppResult<(i64, Vec<ActionEmployeeRef>)> {
-    employee_flags(
-        executor,
-        "is_active AND payroll_group_id IS NOT NULL
-         AND (bank_account_number IS NULL OR btrim(bank_account_number) = '')",
+        SELECT flag_key AS "flag_key!",
+               total AS "total!",
+               id AS "employee_id!",
+               employee_number AS "employee_number!",
+               full_name AS "employee_name!"
+        FROM numbered
+        WHERE rn <= $2
+        ORDER BY flag_key, rn"#,
         company_id,
         limit,
     )
-    .await
-}
+    .fetch_all(executor)
+    .await?;
 
-/// Active employees in a payroll group with no date of birth. Blocking: the
-/// engine refuses to rate them, and the preview reports the same condition
-/// under the same code.
-pub async fn missing_date_of_birth(
-    executor: impl Executor<'_, Database = Postgres>,
-    company_id: Uuid,
-    limit: i64,
-) -> AppResult<(i64, Vec<ActionEmployeeRef>)> {
-    employee_flags(
-        executor,
-        "is_active AND payroll_group_id IS NOT NULL AND date_of_birth IS NULL",
-        company_id,
-        limit,
-    )
-    .await
-}
-
-/// Active employees with no payroll group — no run will ever include them.
-pub async fn missing_payroll_group(
-    executor: impl Executor<'_, Database = Postgres>,
-    company_id: Uuid,
-    limit: i64,
-) -> AppResult<(i64, Vec<ActionEmployeeRef>)> {
-    employee_flags(
-        executor,
-        "is_active AND payroll_group_id IS NULL",
-        company_id,
-        limit,
-    )
-    .await
-}
-
-/// Inactive employees with no resignation date — the population rule that
-/// blocks a run outright (`inactive_without_resignation_date` in preview).
-pub async fn inactive_without_resignation(
-    executor: impl Executor<'_, Database = Postgres>,
-    company_id: Uuid,
-    limit: i64,
-) -> AppResult<(i64, Vec<ActionEmployeeRef>)> {
-    employee_flags(
-        executor,
-        "is_active IS NOT TRUE AND date_resigned IS NULL AND payroll_group_id IS NOT NULL",
-        company_id,
-        limit,
-    )
-    .await
+    let mut out: HashMap<String, (i64, Vec<ActionEmployeeRef>)> = HashMap::new();
+    for row in rows {
+        let entry = out
+            .entry(row.flag_key)
+            .or_insert_with(|| (row.total, Vec::new()));
+        entry.1.push(ActionEmployeeRef {
+            employee_id: row.employee_id,
+            employee_number: row.employee_number,
+            employee_name: row.employee_name,
+        });
+    }
+    Ok(out)
 }
 
 /// Department breakdown for one period across all committed runs (`processed` through `paid`),
@@ -261,7 +249,7 @@ pub async fn department_totals_committed(
         JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
         JOIN employees e ON pi.employee_id = e.id
         WHERE pr.company_id = $1 AND pr.period_year = $2 AND pr.period_month = $3
-          AND pr.status::text IN ('processed', 'pending_approval', 'approved', 'paid')
+          AND pr.status IN ('processed', 'pending_approval', 'approved', 'paid')
         GROUP BY e.department
         ORDER BY COALESCE(SUM(pi.gross_salary), 0) DESC"#,
         company_id,
@@ -271,25 +259,4 @@ pub async fn department_totals_committed(
     .fetch_all(executor)
     .await?;
     Ok(rows)
-}
-
-/// Citizens/PRs with no EPF number, or anyone with no TIN — statutory filings
-/// (EPF Borang A, EA/CP8D) are produced per employee and a missing identifier
-/// produces a row the submission rejects.
-pub async fn missing_statutory_ids(
-    executor: impl Executor<'_, Database = Postgres>,
-    company_id: Uuid,
-    limit: i64,
-) -> AppResult<(i64, Vec<ActionEmployeeRef>)> {
-    employee_flags(
-        executor,
-        "is_active AND payroll_group_id IS NOT NULL AND (
-            (residency_status <> 'foreigner'
-             AND (epf_number IS NULL OR btrim(epf_number) = ''))
-            OR (tax_identification_number IS NULL OR btrim(tax_identification_number) = '')
-         )",
-        company_id,
-        limit,
-    )
-    .await
 }

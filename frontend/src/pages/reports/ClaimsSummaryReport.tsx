@@ -5,6 +5,7 @@ import type { ClaimsReportRow } from '@/api/reports';
 import { formatMYR, formatNumber } from '@/lib/format';
 import { getErrorMessage } from '@/lib/utils';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { SummaryCard } from './ReportShared';
 
 const fmt = formatMYR;
@@ -43,9 +44,13 @@ export function ClaimsSummaryReport({
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-48" role="status">
-        <span className="sr-only">{t('common.loading')}</span>
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[var(--accent-1)]" />
+      <div role="status" aria-busy="true" aria-label={t('common.loading')} className="space-y-4">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {[0, 1, 2, 3].map((i) => (
+            <Skeleton key={i} className="h-18 w-full rounded-2xl" />
+          ))}
+        </div>
+        <Skeleton className="h-64 w-full rounded-2xl" />
       </div>
     );
   }
@@ -96,7 +101,7 @@ export function ClaimsSummaryReport({
             aria-label={t('reports.searchEmployee')}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="form-input w-full sm:w-56 !text-sm"
+            className="form-input min-h-11 sm:min-h-10 sm:w-56 sm:text-sm"
           />
           {hasRawData && (
             <button type="button" onClick={onExport} className="btn-secondary min-h-11 sm:min-h-9 !py-1.5 !px-3 !text-xs">
@@ -113,30 +118,36 @@ export function ClaimsSummaryReport({
           <SummaryCard label={t('reports.totalAmount')} value={fmt(totals.amount)} />
           <SummaryCard
             label={t('enums.requestStatus.approved')}
-            value={`${formatNumber(totals.approved)} (${fmt(totals.approvedAmt)})`}
+            value={formatNumber(totals.approved)}
+            sub={fmt(totals.approvedAmt)}
             className="text-emerald-600 dark:text-emerald-400"
           />
           <SummaryCard
             label={t('enums.requestStatus.pending')}
-            value={`${formatNumber(totals.pending)} (${fmt(totals.pendingAmt)})`}
+            value={formatNumber(totals.pending)}
+            sub={fmt(totals.pendingAmt)}
             className="text-amber-600 dark:text-amber-400"
           />
         </div>
       )}
 
       {filtered.length === 0 ? (
-        <div className="text-center py-16 text-gray-500 dark:text-slate-400 space-y-3">
-          <FileText className="w-8 h-8 mx-auto opacity-40" aria-hidden="true" />
-          <p className="text-sm">
-            {hasRawData && search.trim()
-              ? t('reports.noMatchingEmployees')
-              : t('reports.noClaimsData', { year })}
-          </p>
-          {hasRawData && search.trim() && (
-            <button type="button" onClick={() => setSearch('')} className="btn-secondary min-h-11 sm:min-h-9">
-              {t('reports.clearSearch')}
-            </button>
-          )}
+        <div className="card">
+          <EmptyState
+            icon={FileText}
+            title={
+              hasRawData && search.trim()
+                ? t('reports.noMatchingEmployees')
+                : t('reports.noClaimsData', { year })
+            }
+            action={
+              hasRawData && search.trim() ? (
+                <button type="button" onClick={() => setSearch('')} className="btn-secondary min-h-11 sm:min-h-9">
+                  {t('reports.clearSearch')}
+                </button>
+              ) : undefined
+            }
+          />
         </div>
       ) : (
         <>
@@ -144,7 +155,7 @@ export function ClaimsSummaryReport({
             {filtered.map((r) => (
               <div
                 key={r.employee_number}
-                className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-4 space-y-3"
+                className="card !p-4 space-y-3"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
@@ -164,7 +175,7 @@ export function ClaimsSummaryReport({
                 </div>
                 <div className="grid grid-cols-3 gap-2 pt-2 border-t border-gray-100 dark:border-slate-800 text-xs">
                   <div>
-                    <span className="text-gray-400 dark:text-slate-500 block">{t('enums.requestStatus.approved')}</span>
+                    <span className="text-gray-500 dark:text-slate-400 block">{t('enums.requestStatus.approved')}</span>
                     <span className="font-semibold text-emerald-600 dark:text-emerald-400 tabular-nums">
                       {formatNumber(r.approved_count)}
                     </span>
@@ -175,7 +186,7 @@ export function ClaimsSummaryReport({
                     )}
                   </div>
                   <div>
-                    <span className="text-gray-400 dark:text-slate-500 block">{t('enums.requestStatus.pending')}</span>
+                    <span className="text-gray-500 dark:text-slate-400 block">{t('enums.requestStatus.pending')}</span>
                     <span className="font-semibold text-amber-600 dark:text-amber-400 tabular-nums">
                       {formatNumber(r.pending_count)}
                     </span>
@@ -186,7 +197,7 @@ export function ClaimsSummaryReport({
                     )}
                   </div>
                   <div>
-                    <span className="text-gray-400 dark:text-slate-500 block">{t('enums.requestStatus.rejected')}</span>
+                    <span className="text-gray-500 dark:text-slate-400 block">{t('enums.requestStatus.rejected')}</span>
                     <span className={`font-semibold tabular-nums ${r.rejected_count > 0 ? 'text-red-600 dark:text-red-400' : 'text-gray-500 dark:text-slate-400'}`}>
                       {formatNumber(r.rejected_count)}
                     </span>
@@ -196,7 +207,7 @@ export function ClaimsSummaryReport({
             ))}
           </div>
 
-          <div className="hidden md:block bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 overflow-x-auto">
+          <div className="hidden md:block card !p-0 overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-gray-50 dark:bg-slate-950/70 text-gray-500 dark:text-slate-400 text-xs uppercase tracking-wide">

@@ -5,7 +5,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::core::client_ip::client_ip;
+use crate::core::client_ip::client_ip_with_header;
 
 #[derive(Debug, Clone, Default)]
 pub struct AuditRequestMeta {
@@ -28,12 +28,23 @@ impl AuditRequestMeta {
         peer: Option<IpAddr>,
         trust_proxy_headers: bool,
     ) -> Self {
+        Self::from_request_with_header(headers, peer, trust_proxy_headers, None)
+    }
+
+    pub fn from_request_with_header(
+        headers: &HeaderMap,
+        peer: Option<IpAddr>,
+        trust_proxy_headers: bool,
+        preferred_header: Option<&str>,
+    ) -> Self {
         // Truncated to the column width (audit_logs.ip_address is
         // varchar(45)) exactly as user_agent is below: an over-long value
         // would fail the INSERT — fatal wherever an audit row shares a
         // transaction with the change it describes. An `IpAddr` never exceeds
         // 45 characters, but the user agent is arbitrary client text.
-        let ip_address = client_ip(headers, peer, trust_proxy_headers).map(|ip| ip.to_string());
+        let ip_address =
+            client_ip_with_header(headers, peer, trust_proxy_headers, preferred_header)
+                .map(|ip| ip.to_string());
 
         let user_agent = headers
             .get(header::USER_AGENT)

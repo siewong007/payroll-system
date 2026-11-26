@@ -61,29 +61,35 @@ impl JobProgress {
     }
 
     /// Declare the denominator — or extend it, for multi-phase jobs like the
-    /// import (insert phase, then provisioning phase).
+    /// import (insert phase, then provisioning phase). Uses `try_acquire` so a
+    /// saturated pool never stalls an open write transaction waiting on progress.
     pub async fn set_total(&self, total: i32) {
         self.total.store(total, Ordering::Relaxed);
         self.step.store((total / 20).max(1), Ordering::Relaxed);
-        let _ = background_jobs::set_progress(
-            &self.pool,
-            self.job_id,
-            self.last_written.load(Ordering::Relaxed),
-            total,
-        )
-        .await;
+        if let Some(mut conn) = self.pool.try_acquire() {
+            let _ = background_jobs::set_progress(
+                &mut *conn,
+                self.job_id,
+                self.last_written.load(Ordering::Relaxed),
+                total,
+            )
+            .await;
+        }
     }
 
     /// Record `done` units. Writes at most once per `step` (and always at the
     /// total), so progress costs ~20 UPDATEs over a whole job, not one per
-    /// unit of work.
+    /// unit of work. Uses `try_acquire` so best-effort progress never stalls a
+    /// write transaction behind pool saturation.
     pub async fn tick(&self, done: i32) {
         let total = self.total.load(Ordering::Relaxed);
         let step = self.step.load(Ordering::Relaxed).max(1);
         let prev = self.last_written.load(Ordering::Relaxed);
         if done >= total || done - prev >= step {
             self.last_written.store(done, Ordering::Relaxed);
-            let _ = background_jobs::set_progress(&self.pool, self.job_id, done, total).await;
+            if let Some(mut conn) = self.pool.try_acquire() {
+                let _ = background_jobs::set_progress(&mut *conn, self.job_id, done, total).await;
+            }
         }
     }
 }

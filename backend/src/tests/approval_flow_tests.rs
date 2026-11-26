@@ -35,6 +35,7 @@ fn test_config() -> AppConfig {
         smtp_from_email: None,
         smtp_from_name: None,
         trust_proxy_headers: false,
+        client_ip_header: None,
         turnstile_secret_key: None,
         turnstile_verify_url: "https://challenges.cloudflare.com/turnstile/v0/siteverify".into(),
         vapid_public_key: None,

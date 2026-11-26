@@ -21,7 +21,7 @@ pub async fn payroll_summary(
     let rows = sqlx::query_as!(
         PayrollSummaryRow,
         r#"SELECT
-            TO_CHAR(MIN(period_start), 'YYYY-MM') AS "period!",
+            period_year::text || '-' || LPAD(period_month::text, 2, '0') AS "period!",
             COALESCE(SUM(employee_count), 0)::int AS "employee_count!",
             COALESCE(SUM(total_gross), 0)::bigint AS "total_gross!",
             COALESCE(SUM(total_net), 0)::bigint AS "total_net!",
@@ -36,7 +36,7 @@ pub async fn payroll_summary(
             COALESCE(SUM(total_employer_cost), 0)::bigint AS "total_employer_cost!"
         FROM payroll_runs
         WHERE company_id = $1 AND period_year = $2
-          AND status::text IN ('approved', 'paid')
+          AND status IN ('approved', 'paid')
         GROUP BY period_year, period_month
         ORDER BY period_month ASC"#,
         company_id,
@@ -66,7 +66,7 @@ pub async fn payroll_by_department(
         JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
         JOIN employees e ON pi.employee_id = e.id
         WHERE pr.company_id = $1 AND pr.period_year = $2 AND pr.period_month = $3
-        AND pr.status::text IN ('approved', 'paid')
+        AND pr.status IN ('approved', 'paid')
         GROUP BY e.department
         ORDER BY COALESCE(SUM(pi.gross_salary), 0) DESC"#,
         company_id,
@@ -101,7 +101,8 @@ pub async fn leave_report(
         FROM leave_balances lb
         JOIN employees e ON lb.employee_id = e.id
         JOIN leave_types lt ON lb.leave_type_id = lt.id
-        WHERE e.company_id = $1 AND lb.year = $2 AND e.is_active = TRUE
+        WHERE e.company_id = $1 AND lb.year = $2
+          AND e.is_active = TRUE AND e.deleted_at IS NULL AND lt.is_active = TRUE
         ORDER BY e.full_name, lt.name"#,
         company_id,
         year,
@@ -171,7 +172,7 @@ pub async fn statutory_report(
         JOIN payroll_runs pr ON pi.payroll_run_id = pr.id
         JOIN employees e ON pi.employee_id = e.id
         WHERE pr.company_id = $1 AND pr.period_year = $2 AND pr.period_month = $3
-        AND pr.status::text IN ('approved', 'paid')
+        AND pr.status IN ('approved', 'paid')
         ORDER BY e.employee_number"#,
         company_id,
         year,
@@ -192,7 +193,7 @@ pub async fn distinct_payroll_periods(
         r#"SELECT DISTINCT period_year, period_month
         FROM payroll_runs
         WHERE company_id = $1
-        AND status::text IN ('approved', 'paid')
+        AND status IN ('approved', 'paid')
         ORDER BY period_year ASC, period_month ASC"#,
         company_id,
     )

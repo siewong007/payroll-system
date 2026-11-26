@@ -23,7 +23,33 @@
 
 use std::net::IpAddr;
 
-use axum::http::HeaderMap;
+use axum::http::{HeaderMap, HeaderName};
+
+/// Right-most entry of `preferred_header` when configured (for example,
+/// `cf-connecting-ip`), or otherwise `X-Forwarded-For` / `X-Real-IP`.
+///
+/// Only meaningful when a trusted proxy is the sole path to the API; callers
+/// gate this on `trust_forwarded`. When `preferred_header` is set and valid,
+/// ONLY that header is consulted so client-supplied `X-Forwarded-For` cannot
+/// shadow the edge-verified header.
+pub fn forwarded_ip_with_header(
+    headers: &HeaderMap,
+    preferred_header: Option<&str>,
+) -> Option<IpAddr> {
+    if let Some(raw_name) = preferred_header.map(str::trim).filter(|h| !h.is_empty()) {
+        let Ok(name) = HeaderName::from_bytes(raw_name.as_bytes()) else {
+            return None;
+        };
+        return headers
+            .get_all(&name)
+            .iter()
+            .rev()
+            .filter_map(|v| v.to_str().ok())
+            .flat_map(|val| val.split(',').rev())
+            .find_map(|part| part.trim().parse::<IpAddr>().ok());
+    }
+    forwarded_ip(headers)
+}
 
 /// Right-most entry of `X-Forwarded-For`, i.e. the address appended by the
 /// closest (trusted) proxy. Taking the left-most instead would read whatever
@@ -60,7 +86,16 @@ pub fn client_ip(
     peer: Option<IpAddr>,
     trust_forwarded: bool,
 ) -> Option<IpAddr> {
-    if trust_forwarded && let Some(ip) = forwarded_ip(headers) {
+    client_ip_with_header(headers, peer, trust_forwarded, None)
+}
+
+pub fn client_ip_with_header(
+    headers: &HeaderMap,
+    peer: Option<IpAddr>,
+    trust_forwarded: bool,
+    preferred_header: Option<&str>,
+) -> Option<IpAddr> {
+    if trust_forwarded && let Some(ip) = forwarded_ip_with_header(headers, preferred_header) {
         return Some(ip);
     }
     peer

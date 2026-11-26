@@ -1,12 +1,14 @@
 import { useEffect, useId, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
+  CalendarDays,
   ChevronLeft,
   ChevronRight,
   Download,
   Link as LinkIcon,
+  Loader2,
   Plus,
   Upload,
 } from 'lucide-react';
@@ -25,6 +27,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { FormField } from '@/components/ui/FormField';
 import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { useConfirm } from '@/lib/confirm';
 import { usePermissions } from '@/lib/usePermissions';
 import { useToast } from '@/lib/toast';
@@ -77,7 +80,9 @@ export function CalendarPage() {
   const [showHolidayModal, setShowHolidayModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [editingHoliday, setEditingHoliday] = useState<Holiday | null>(null);
+  const [deletingHolidayId, setDeletingHolidayId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'calendar' | 'holidays' | 'working-days'>('calendar');
+  const isCurrentMonth = selectedYear === now.getFullYear() && selectedMonth === now.getMonth() + 1;
   const queryClient = useQueryClient();
 
   const {
@@ -105,12 +110,14 @@ export function CalendarPage() {
   const {
     data: monthCal,
     isLoading: loadingMonthCal,
+    isFetching: fetchingMonthCal,
     isError: monthCalError,
     error: monthCalErrorObj,
     refetch: refetchMonthCal,
   } = useQuery({
     queryKey: ['month-calendar', selectedYear, selectedMonth],
     queryFn: () => getMonthCalendar(selectedYear, selectedMonth),
+    placeholderData: keepPreviousData,
   });
 
   const createMutation = useMutation({
@@ -148,6 +155,7 @@ export function CalendarPage() {
       toast.success(t('calendar.holidayDeleted'));
     },
     onError: (err) => toast.error(getErrorMessage(err, t('calendar.holidayDeleteFailed'))),
+    onSettled: () => setDeletingHolidayId(null),
   });
 
   const workingDaysMutation = useMutation({
@@ -219,6 +227,13 @@ export function CalendarPage() {
     }
   };
 
+  const handleGoToday = () => {
+    const today = new Date();
+    setSelectedYear(today.getFullYear());
+    setSelectedMonth(today.getMonth() + 1);
+    setSelectedDay(today.getDate());
+  };
+
   // Calendar grid
   const renderCalendarGrid = () => {
     const firstDay = new Date(selectedYear, selectedMonth - 1, 1);
@@ -231,7 +246,7 @@ export function CalendarPage() {
       cells.push(
         <div
           key={`empty-${i}`}
-          className="min-h-12 sm:h-24 bg-gray-50 dark:bg-slate-800/40 border border-gray-100 dark:border-slate-800"
+          className="min-h-12 lg:h-24 bg-gray-50 dark:bg-slate-800/40 border border-gray-100 dark:border-slate-800"
         />,
       );
     }
@@ -252,30 +267,40 @@ export function CalendarPage() {
           onClick={() => setSelectedDay(day)}
           aria-pressed={isSelected}
           aria-label={formatDateLong(new Date(selectedYear, selectedMonth - 1, day))}
-          className={`min-h-12 sm:h-24 text-left align-top border border-gray-100 dark:border-slate-800 p-1 sm:p-1.5 overflow-hidden flex flex-col justify-between sm:justify-start transition-colors ${
-            isOff ? 'bg-gray-50 dark:bg-slate-800/50' : 'bg-white dark:bg-slate-900'
-          } ${isSelected ? 'ring-2 ring-[var(--accent-1)] ring-inset bg-indigo-50/40 dark:bg-indigo-500/10' : ''} ${
-            isToday && !isSelected ? 'ring-2 ring-black dark:ring-slate-300 ring-inset' : ''
+          className={`min-h-12 lg:h-24 text-left align-top border border-gray-100 dark:border-slate-800 p-1 lg:p-1.5 overflow-hidden flex flex-col justify-between lg:justify-start transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-inset ${
+            isSelected
+              ? 'bg-indigo-50/70 dark:bg-indigo-500/15 ring-2 ring-[var(--accent-1)] ring-inset'
+              : isOff
+                ? 'bg-gray-50 dark:bg-slate-800/50'
+                : 'bg-white dark:bg-slate-900 hover:bg-gray-50/60 dark:hover:bg-slate-800/40'
           }`}
         >
-          <div className={`text-xs font-medium leading-none ${isOff ? 'text-gray-400 dark:text-slate-500' : 'text-gray-700 dark:text-slate-200'} ${isToday ? 'font-bold text-black dark:text-white' : ''}`}>
+          <div
+            className={`text-xs font-medium leading-none tabular-nums ${
+              isToday
+                ? 'inline-flex h-6 w-6 items-center justify-center rounded-full bg-gray-900 text-white dark:bg-slate-100 dark:text-slate-900 font-bold'
+                : isOff
+                  ? 'text-gray-500 dark:text-slate-400'
+                  : 'text-gray-700 dark:text-slate-200'
+            }`}
+          >
             {day}
           </div>
 
-          {/* Mobile dot indicators */}
+          {/* Mobile & portrait-tablet dot indicators */}
           {dayHolidays.length > 0 && (
-            <div className="flex sm:hidden flex-wrap items-center gap-0.5 mt-1">
+            <div className="flex lg:hidden flex-wrap items-center gap-0.5 mt-1" aria-hidden="true">
               {dayHolidays.slice(0, 3).map((h) => (
                 <span key={h.id} className={`w-1.5 h-1.5 rounded-full ${holidayDotClass(h.holiday_type)}`} />
               ))}
               {dayHolidays.length > 3 && (
-                <span className="text-[9px] text-gray-500 dark:text-slate-400 leading-none">+{dayHolidays.length - 3}</span>
+                <span className="text-[9px] text-gray-500 dark:text-slate-400 leading-none tabular-nums">+{dayHolidays.length - 3}</span>
               )}
             </div>
           )}
 
           {/* Desktop holiday chips */}
-          <div className="hidden sm:block mt-1 space-y-0.5 w-full overflow-hidden">
+          <div className="hidden lg:block mt-1 space-y-0.5 w-full overflow-hidden">
             {dayHolidays.slice(0, 2).map((h) => (
               <div
                 key={h.id}
@@ -286,7 +311,7 @@ export function CalendarPage() {
               </div>
             ))}
             {dayHolidays.length > 2 && (
-              <div className="text-[10px] text-gray-500 dark:text-slate-400 px-1 truncate">
+              <div className="text-[10px] text-gray-500 dark:text-slate-400 px-1 truncate tabular-nums">
                 {t('calendar.moreCount', { count: dayHolidays.length - 2 })}
               </div>
             )}
@@ -295,12 +320,22 @@ export function CalendarPage() {
       );
     }
 
+    const totalSlots = Math.ceil((startDow + daysInMonth) / 7) * 7;
+    for (let i = startDow + daysInMonth; i < totalSlots; i++) {
+      cells.push(
+        <div
+          key={`trailing-${i}`}
+          className="min-h-12 lg:h-24 bg-gray-50 dark:bg-slate-800/40 border border-gray-100 dark:border-slate-800"
+        />,
+      );
+    }
+
     return (
       <div className="grid grid-cols-7 gap-0 rounded-xl overflow-hidden border border-gray-200 dark:border-slate-800">
         {DAY_INDICES.map((dow) => (
           <div key={dow} className="text-center text-xs font-medium text-gray-500 dark:text-slate-400 py-2 bg-gray-50 dark:bg-slate-800/80 border-b border-gray-200 dark:border-slate-800 truncate px-0.5">
-            <span className="sm:hidden">{weekdayName(dow, 'narrow')}</span>
-            <span className="hidden sm:inline">{weekdayName(dow)}</span>
+            <span className="lg:hidden">{weekdayName(dow, 'narrow')}</span>
+            <span className="hidden lg:inline">{weekdayName(dow)}</span>
           </div>
         ))}
         {cells}
@@ -343,14 +378,19 @@ export function CalendarPage() {
       />
 
       {/* Tabs */}
-      <div className="flex gap-1 bg-gray-100 dark:bg-slate-800/70 p-1 rounded-xl w-fit max-w-full overflow-x-auto">
+      <div
+        role="tablist"
+        aria-label={t('calendar.title')}
+        className="flex gap-1 bg-gray-100 dark:bg-slate-800/70 p-1 rounded-xl w-fit max-w-full overflow-x-auto scrollbar-thin"
+      >
         {(['calendar', 'holidays', 'working-days'] as const).map((tab) => (
           <button
             type="button"
+            role="tab"
             key={tab}
-            aria-pressed={activeTab === tab}
+            aria-selected={activeTab === tab}
             onClick={() => setActiveTab(tab)}
-            className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap shrink-0 transition-all ${
+            className={`min-h-11 sm:min-h-9 px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap shrink-0 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] ${
               activeTab === tab
                 ? 'bg-white dark:bg-slate-900 text-gray-900 dark:text-slate-100 shadow-sm'
                 : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-200'
@@ -362,10 +402,19 @@ export function CalendarPage() {
       </div>
 
       {activeTab === 'calendar' && (
-        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-800 p-4 sm:p-6">
-          {loadingMonthCal ? (
-            <div className="flex items-center justify-center py-12">
-              <div className="spinner" />
+        <div className="card p-3 sm:p-6">
+          {loadingMonthCal && !monthCal ? (
+            <div role="status" aria-label={t('common.loading')} className="space-y-4">
+              <div className="flex items-center justify-between gap-2">
+                <Skeleton className="h-9 w-9 rounded-lg" />
+                <Skeleton className="h-6 w-40" />
+                <Skeleton className="h-9 w-9 rounded-lg" />
+              </div>
+              <div className="grid grid-cols-7 gap-2">
+                {Array.from({ length: 35 }).map((_, idx) => (
+                  <Skeleton key={idx} className="h-12 lg:h-24 w-full rounded-lg" />
+                ))}
+              </div>
             </div>
           ) : monthCalError ? (
             <EmptyState
@@ -387,16 +436,27 @@ export function CalendarPage() {
                   onClick={handlePrevMonth}
                   aria-label={t('calendar.previousMonth')}
                   title={t('calendar.previousMonth')}
-                  className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 flex items-center justify-center rounded-lg border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors"
+                  className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 flex items-center justify-center rounded-lg border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] shrink-0"
                 >
-                  <ChevronLeft className="w-4 h-4" />
+                  <ChevronLeft className="w-4 h-4" aria-hidden="true" />
                 </button>
-                <div className="text-center min-w-0">
-                  <h2 className="text-lg font-semibold text-gray-900 dark:text-slate-100">
-                    {monthName(selectedMonth)} {selectedYear}
-                  </h2>
+                <div className="text-center min-w-0 flex-1">
+                  <div className="flex items-center justify-center gap-2 flex-wrap">
+                    <h2 className="text-lg font-semibold text-gray-900 dark:text-slate-100 tabular-nums">
+                      {monthName(selectedMonth)} {selectedYear}
+                    </h2>
+                    {!isCurrentMonth && (
+                      <button
+                        type="button"
+                        onClick={handleGoToday}
+                        className="min-h-11 sm:min-h-7 px-2.5 py-1 text-xs font-medium rounded-lg border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+                      >
+                        {t('common.today')}
+                      </button>
+                    )}
+                  </div>
                   {monthCal && (
-                    <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-400">
+                    <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-400 tabular-nums">
                       {t('calendar.workingDaysCount', { count: monthCal.working_days })} &middot; {t('calendar.holidaysCount', { count: monthCal.holidays.length })}
                     </p>
                   )}
@@ -406,20 +466,22 @@ export function CalendarPage() {
                   onClick={handleNextMonth}
                   aria-label={t('calendar.nextMonth')}
                   title={t('calendar.nextMonth')}
-                  className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 flex items-center justify-center rounded-lg border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors"
+                  className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 flex items-center justify-center rounded-lg border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-200 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] shrink-0"
                 >
-                  <ChevronRight className="w-4 h-4" />
+                  <ChevronRight className="w-4 h-4" aria-hidden="true" />
                 </button>
               </div>
 
-              {renderCalendarGrid()}
+              <div className={fetchingMonthCal ? 'opacity-70 transition-opacity' : undefined}>
+                {renderCalendarGrid()}
+              </div>
 
               {/* Selected day agenda */}
               {selectedDay !== null && (
                 <div className="mt-4 rounded-xl border border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/50 p-4">
                   <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-                    <h3 className="text-sm font-semibold text-gray-900 dark:text-slate-100">
-                      {selectedDay} {monthName(selectedMonth)} {selectedYear}
+                    <h3 className="text-sm font-semibold text-gray-900 dark:text-slate-100 tabular-nums">
+                      {formatDateLong(new Date(selectedYear, selectedMonth - 1, selectedDay))}
                     </h3>
                     {(() => {
                       const dow = new Date(selectedYear, selectedMonth - 1, selectedDay).getDay();
@@ -461,7 +523,7 @@ export function CalendarPage() {
                                 updateMutation.reset();
                                 setShowHolidayModal(true);
                               }}
-                              className="text-xs font-medium text-gray-600 dark:text-slate-300 hover:text-black dark:hover:text-white px-2 py-1 shrink-0"
+                              className="min-h-11 sm:min-h-8 text-xs font-medium text-gray-600 dark:text-slate-300 hover:text-black dark:hover:text-white px-3 py-1 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                             >
                               {t('common.edit')}
                             </button>
@@ -476,19 +538,19 @@ export function CalendarPage() {
               {/* Legend */}
               <div className="flex flex-wrap gap-3 sm:gap-4 mt-4 text-xs text-gray-500 dark:text-slate-400">
                 <span className="flex items-center gap-1.5">
-                  <span className="w-3 h-3 rounded bg-red-100 dark:bg-red-500/30 border border-red-200 dark:border-red-500/40" /> {t('enums.holidayType.public_holiday')}
+                  <span className="w-3 h-3 rounded bg-red-100 dark:bg-red-500/30 border border-red-200 dark:border-red-500/40" aria-hidden="true" /> {t('enums.holidayType.public_holiday')}
                 </span>
                 <span className="flex items-center gap-1.5">
-                  <span className="w-3 h-3 rounded bg-blue-100 dark:bg-blue-500/30 border border-blue-200 dark:border-blue-500/40" /> {t('enums.holidayType.company_holiday')}
+                  <span className="w-3 h-3 rounded bg-blue-100 dark:bg-blue-500/30 border border-blue-200 dark:border-blue-500/40" aria-hidden="true" /> {t('enums.holidayType.company_holiday')}
                 </span>
                 <span className="flex items-center gap-1.5">
-                  <span className="w-3 h-3 rounded bg-green-100 dark:bg-emerald-500/30 border border-green-200 dark:border-emerald-500/40" /> {t('enums.holidayType.replacement_leave')}
+                  <span className="w-3 h-3 rounded bg-green-100 dark:bg-emerald-500/30 border border-green-200 dark:border-emerald-500/40" aria-hidden="true" /> {t('enums.holidayType.replacement_leave')}
                 </span>
                 <span className="flex items-center gap-1.5">
-                  <span className="w-3 h-3 rounded bg-yellow-100 dark:bg-amber-500/30 border border-yellow-200 dark:border-amber-500/40" /> {t('enums.holidayType.state_holiday')}
+                  <span className="w-3 h-3 rounded bg-yellow-100 dark:bg-amber-500/30 border border-amber-300 dark:border-amber-500/40" aria-hidden="true" /> {t('enums.holidayType.state_holiday')}
                 </span>
                 <span className="flex items-center gap-1.5">
-                  <span className="w-3 h-3 rounded bg-gray-100 dark:bg-slate-800 border border-gray-200 dark:border-slate-700" /> {t('calendar.nonWorkingDay')}
+                  <span className="w-3 h-3 rounded bg-gray-100 dark:bg-slate-800 border border-gray-200 dark:border-slate-700" aria-hidden="true" /> {t('calendar.nonWorkingDay')}
                 </span>
               </div>
             </>
@@ -497,7 +559,7 @@ export function CalendarPage() {
       )}
 
       {activeTab === 'holidays' && (
-        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-800 overflow-hidden">
+        <div className="card !p-0 overflow-hidden">
           <div className="p-4 border-b border-gray-100 dark:border-slate-800 flex items-center gap-3">
             <label htmlFor="calendar-holiday-year" className="text-sm font-medium text-gray-700 dark:text-slate-300">
               {t('common.year')}:
@@ -513,7 +575,7 @@ export function CalendarPage() {
                   prev !== null ? Math.min(prev, new Date(nextYear, selectedMonth, 0).getDate()) : null,
                 );
               }}
-              className="form-input !w-auto !py-1.5"
+              className="form-input !w-auto min-h-11 sm:min-h-9 py-1.5 tabular-nums"
             >
               {yearOptions.map((y) => (
                 <option key={y} value={y}>{y}</option>
@@ -521,8 +583,10 @@ export function CalendarPage() {
             </select>
           </div>
           {loadingHolidays ? (
-            <div className="flex items-center justify-center py-12">
-              <div className="spinner" />
+            <div role="status" aria-label={t('common.loading')} className="p-4 sm:p-6 space-y-3">
+              {[0, 1, 2, 3].map((idx) => (
+                <Skeleton key={idx} className="h-14 w-full rounded-xl" />
+              ))}
             </div>
           ) : holidaysError ? (
             <div className="p-6">
@@ -538,19 +602,40 @@ export function CalendarPage() {
               />
             </div>
           ) : holidays.length === 0 ? (
-            <div className="p-8 text-center text-sm text-gray-400 dark:text-slate-500">
-              {t('calendar.noHolidays', { year: selectedYear })}
+            <div className="p-6">
+              <EmptyState
+                icon={CalendarDays}
+                title={t('calendar.noHolidays', { year: selectedYear })}
+                action={
+                  canManageCalendar ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingHoliday(null);
+                        createMutation.reset();
+                        updateMutation.reset();
+                        setShowHolidayModal(true);
+                      }}
+                      className="btn-primary"
+                    >
+                      <Plus className="w-4 h-4" aria-hidden="true" />
+                      {t('calendar.addHoliday')}
+                    </button>
+                  ) : undefined
+                }
+              />
             </div>
           ) : (
             <div className="divide-y divide-gray-100 dark:divide-slate-800">
               {holidays.map((h) => {
                 const parsed = parseYmd(h.date);
+                const isDeletingRow = deletingHolidayId === h.id && deleteMutation.isPending;
                 return (
                   <div key={h.id} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-4 sm:px-6 py-4">
                     <div className="flex items-center gap-4 min-w-0">
                       <div className="text-center min-w-[50px] shrink-0">
                         <div className="text-xs text-gray-500 dark:text-slate-400 uppercase">
-                          {parsed ? monthName(parsed.month).slice(0, 3) : '\u2014'}
+                          {parsed ? monthName(parsed.month, 'short') : '\u2014'}
                         </div>
                         <div className="text-xl font-bold text-gray-900 dark:text-slate-100 tabular-nums">
                           {parsed ? parsed.day : '\u2014'}
@@ -581,25 +666,27 @@ export function CalendarPage() {
                             updateMutation.reset();
                             setShowHolidayModal(true);
                           }}
-                          className="min-h-10 sm:min-h-8 px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors"
+                          className="min-h-11 sm:min-h-8 px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                         >
                           {t('common.edit')}
                         </button>
                         <button
                           type="button"
-                          disabled={deleteMutation.isPending}
+                          disabled={isDeletingRow}
                           onClick={async () => {
                             const ok = await confirmDialog({
                               description: t('calendar.deleteConfirm', { name: h.name }),
                               variant: 'danger',
                             });
                             if (ok) {
+                              setDeletingHolidayId(h.id);
                               deleteMutation.mutate(h.id);
                             }
                           }}
-                          className="min-h-10 sm:min-h-8 px-3 py-1.5 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/15 rounded-lg disabled:opacity-50 transition-colors"
+                          className="min-h-11 sm:min-h-8 px-3 py-1.5 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/15 rounded-lg disabled:opacity-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] inline-flex items-center gap-1.5"
                         >
-                          {t('common.delete')}
+                          {isDeletingRow && <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" />}
+                          {isDeletingRow ? t('common.deleting') : t('common.delete')}
                         </button>
                       </div>
                     )}
@@ -612,16 +699,18 @@ export function CalendarPage() {
       )}
 
       {activeTab === 'working-days' && (
-        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-800 p-5 sm:p-6">
-          <h3 className="text-sm font-semibold text-gray-900 dark:text-slate-100 mb-2">
+        <div className="card p-5 sm:p-6">
+          <h2 className="text-sm font-semibold text-gray-900 dark:text-slate-100 mb-2">
             {t('calendar.workingDaysTitle')}
-          </h3>
+          </h2>
           <p className="text-xs text-gray-500 dark:text-slate-400 mb-6">
             {t('calendar.workingDaysDescription')}
           </p>
           {loadingWorkingDays ? (
-            <div className="flex items-center justify-center py-8">
-              <div className="spinner" />
+            <div role="status" aria-label={t('common.loading')} className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-7 gap-3">
+              {DAY_INDICES.map((i) => (
+                <Skeleton key={i} className="h-20 w-full rounded-xl" />
+              ))}
             </div>
           ) : workingDaysError ? (
             <EmptyState
@@ -635,7 +724,7 @@ export function CalendarPage() {
               }
             />
           ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-7 gap-3">
               {DAY_INDICES.map((i) => {
                 const config = workingDays.find((d) => d.day_of_week === i);
                 const isWorking = config ? config.is_working_day : i >= 1 && i <= 5;
@@ -659,7 +748,7 @@ export function CalendarPage() {
                     aria-pressed={isWorking}
                     disabled={workingDaysMutation.isPending}
                     onClick={() => toggleWorkingDay(i)}
-                    className={`p-4 rounded-xl border-2 text-center transition-all disabled:opacity-60 ${cardStyle} ${
+                    className={`min-h-11 p-4 rounded-xl border-2 text-center transition-all disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-1 ${cardStyle} ${
                       !isWorking ? 'hover:border-gray-300 dark:hover:border-slate-600' : ''
                     }`}
                   >
@@ -885,12 +974,12 @@ function HolidayModal({
             />
           )}
         </FormField>
-        <label className="flex items-center gap-2 cursor-pointer">
+        <label className="flex items-center gap-2 min-h-11 sm:min-h-0 cursor-pointer">
           <input
             type="checkbox"
             checked={Boolean(form.is_recurring)}
             onChange={(e) => setForm((prev) => ({ ...prev, is_recurring: e.target.checked }))}
-            className="rounded border-gray-300 dark:border-slate-700"
+            className="h-4 w-4 rounded border-gray-300 dark:border-slate-700 accent-[var(--accent-1)]"
           />
           <span className="text-sm text-gray-700 dark:text-slate-200">
             {t('calendar.recurringLabel')}
@@ -1025,33 +1114,35 @@ function ImportIcsModal({
         <div className="flex gap-1 bg-gray-100 dark:bg-slate-800/70 p-1 rounded-xl">
           <button
             type="button"
+            aria-pressed={importMode === 'file'}
             onClick={() => { setImportMode('file'); setError(''); }}
-            className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+            className={`min-h-11 sm:min-h-9 flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] ${
               importMode === 'file'
                 ? 'bg-white dark:bg-slate-900 text-gray-900 dark:text-slate-100 shadow-sm'
                 : 'text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200'
             }`}
           >
-            <Upload className="w-4 h-4" />
+            <Upload className="w-4 h-4" aria-hidden="true" />
             {t('calendar.uploadFile')}
           </button>
           <button
             type="button"
+            aria-pressed={importMode === 'url'}
             onClick={() => { setImportMode('url'); setError(''); }}
-            className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+            className={`min-h-11 sm:min-h-9 flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] ${
               importMode === 'url'
                 ? 'bg-white dark:bg-slate-900 text-gray-900 dark:text-slate-100 shadow-sm'
                 : 'text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200'
             }`}
           >
-            <LinkIcon className="w-4 h-4" />
+            <LinkIcon className="w-4 h-4" aria-hidden="true" />
             {t('calendar.pasteUrl')}
           </button>
         </div>
 
         {importMode === 'file' ? (
           <div>
-            <label className="form-label">{t('calendar.icsFile')}</label>
+            <span className="form-label">{t('calendar.icsFile')}</span>
             <label
               onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
               onDragLeave={() => setDragOver(false)}
@@ -1061,24 +1152,24 @@ function ImportIcsModal({
                 const dropped = e.dataTransfer.files?.[0];
                 if (dropped) acceptIcsFile(dropped);
               }}
-              className={`flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-xl cursor-pointer transition-all focus-within:ring-2 focus-within:ring-black dark:focus-within:ring-slate-400 ${
+              className={`flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-xl cursor-pointer transition-all focus-within:ring-2 focus-within:ring-[var(--ring)] ${
                 dragOver || file
-                  ? 'border-black dark:border-slate-300 bg-gray-50 dark:bg-slate-800/70'
+                  ? 'border-[var(--accent-1)] bg-gray-50 dark:bg-slate-800/70'
                   : 'border-gray-300 dark:border-slate-700 hover:border-gray-400 dark:hover:border-slate-600 hover:bg-gray-50 dark:hover:bg-slate-800/40'
               }`}
             >
               <div className="flex flex-col items-center justify-center pt-5 pb-6 px-4 text-center">
-                <Upload className={`w-8 h-8 mb-2 ${file ? 'text-black dark:text-slate-100' : 'text-gray-400 dark:text-slate-500'}`} />
+                <Upload className={`w-8 h-8 mb-2 ${file ? 'text-black dark:text-slate-100' : 'text-gray-400 dark:text-slate-500'}`} aria-hidden="true" />
                 {file ? (
                   <>
                     <p className="text-sm font-medium text-gray-900 dark:text-slate-100 break-all">{file.name}</p>
-                    <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">{(file.size / 1024).toFixed(1)} KB</p>
+                    <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5 tabular-nums">{(file.size / 1024).toFixed(1)} KB</p>
                   </>
                 ) : (
                   <>
                     {/* i18n-ok: `.ics` is a file extension, not copy */}
                     <p className="text-sm text-gray-600 dark:text-slate-300">{t('calendar.clickToSelect')} <span className="font-medium">.ics</span></p>
-                    <p className="text-xs text-gray-400 dark:text-slate-500 mt-0.5">{t('calendar.orDragDrop')}</p>
+                    <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">{t('calendar.orDragDrop')}</p>
                   </>
                 )}
               </div>
@@ -1129,7 +1220,7 @@ function ImportIcsModal({
         )}
 
         {result && (
-          <div className="p-3 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 text-sm rounded-lg border border-emerald-100 dark:border-emerald-500/30">
+          <div role="status" className="p-3 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 text-sm rounded-lg border border-emerald-100 dark:border-emerald-500/30">
             {t('calendar.importSuccess', { count: result.count })}
           </div>
         )}

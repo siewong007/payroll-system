@@ -229,13 +229,39 @@ pub async fn list_for_run(
     executor: impl Executor<'_, Database = Postgres>,
     company_id: Uuid,
     run_id: Uuid,
+    hide_privileged: bool,
 ) -> AppResult<Vec<AuditLogWithUser>> {
     let logs = sqlx::query_as!(
         AuditLogWithUser,
-        r#"SELECT al.id, al.user_id, al.action, al.entity_type, al.entity_id,
-            al.old_values, al.new_values, al.ip_address, al.user_agent,
+        r#"SELECT al.id,
+            CASE
+                WHEN $3::bool AND u.id IS NOT NULL AND u.roles && ARRAY['admin', 'super_admin']::varchar[]
+                THEN NULL::uuid
+                ELSE al.user_id
+            END AS "user_id?",
+            al.action, al.entity_type, al.entity_id,
+            al.old_values, al.new_values,
+            CASE
+                WHEN $3::bool AND u.id IS NOT NULL AND u.roles && ARRAY['admin', 'super_admin']::varchar[]
+                THEN NULL::text
+                ELSE al.ip_address
+            END AS "ip_address?",
+            CASE
+                WHEN $3::bool AND u.id IS NOT NULL AND u.roles && ARRAY['admin', 'super_admin']::varchar[]
+                THEN NULL::text
+                ELSE al.user_agent
+            END AS "user_agent?",
             al.description, al.created_at,
-            u.email AS "user_email?", u.full_name AS "user_full_name?"
+            CASE
+                WHEN $3::bool AND u.id IS NOT NULL AND u.roles && ARRAY['admin', 'super_admin']::varchar[]
+                THEN NULL::text
+                ELSE u.email
+            END AS "user_email?",
+            CASE
+                WHEN $3::bool AND u.id IS NOT NULL AND u.roles && ARRAY['admin', 'super_admin']::varchar[]
+                THEN NULL::text
+                ELSE u.full_name
+            END AS "user_full_name?"
         FROM audit_logs al
         LEFT JOIN users u ON al.user_id = u.id
         WHERE al.company_id = $1
@@ -253,6 +279,7 @@ pub async fn list_for_run(
         LIMIT 100"#,
         company_id,
         run_id,
+        hide_privileged,
     )
     .fetch_all(executor)
     .await?;

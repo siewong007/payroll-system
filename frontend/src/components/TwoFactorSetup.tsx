@@ -41,12 +41,13 @@ export function TwoFactorSetup() {
   });
 
   const confirmMutation = useMutation({
-    mutationFn: (code: string) => totpSetupConfirm(code),
+    mutationFn: ({ code, pw }: { code: string; pw: string }) => totpSetupConfirm(code, pw),
     onSuccess: (data) => {
       setError('');
       setBackupCodes(data.backup_codes);
       setView('backup_codes');
       setConfirmCode('');
+      setPassword('');
       queryClient.invalidateQueries({ queryKey: ['totp-status'] });
       queryClient.invalidateQueries({ queryKey: ['sessions'] });
     },
@@ -199,11 +200,24 @@ export function TwoFactorSetup() {
               />
             )}
           </FormField>
+          <FormField label={t('auth.twoFactor.confirmPasswordPrompt')}>
+            {(aria) => (
+              <input
+                {...aria}
+                type="password"
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="form-input !p-2.5"
+                placeholder={t('auth.twoFactor.currentPasswordPlaceholder')}
+              />
+            )}
+          </FormField>
           <div className="flex gap-2">
             <button
               type="button"
-              onClick={() => confirmMutation.mutate(confirmCode.trim())}
-              disabled={!confirmCode.trim() || confirmMutation.isPending}
+              onClick={() => confirmMutation.mutate({ code: confirmCode.trim(), pw: password })}
+              disabled={!confirmCode.trim() || !password || confirmMutation.isPending}
               className="btn-primary flex-1"
             >
               {confirmMutation.isPending ? t('auth.twoFactor.verifying') : t('auth.twoFactor.confirmEnable')}
@@ -213,6 +227,7 @@ export function TwoFactorSetup() {
               onClick={() => {
                 setView('idle');
                 setConfirmCode('');
+                setPassword('');
                 setError('');
               }}
               className="btn-secondary"

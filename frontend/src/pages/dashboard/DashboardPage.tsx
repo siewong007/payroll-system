@@ -53,7 +53,7 @@ export function DashboardPage() {
   const unassignedSuperAdmin = Boolean(user) && hasAnyRole(user, SUPER_ADMIN_ROLES) && !user?.company_id;
   const subtitle = canViewPayroll ? t('ux.dashboard.subtitle') : t('ux.dashboard.subtitleNoPayroll');
 
-  const { data, isLoading, error, refetch } = useQuery({
+  const { data, isLoading, isPlaceholderData, error, refetch } = useQuery({
     queryKey: ['dashboard-summary', windowDays],
     queryFn: () => getDashboardSummary(windowDays),
     enabled: !unassignedSuperAdmin,
@@ -81,7 +81,7 @@ export function DashboardPage() {
         <KpiSkeletonGrid count={canViewPayroll ? 4 : 2} />
         <div className="card space-y-4">
           <Skeleton className="h-5 w-44" />
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <Skeleton className="h-16 w-full" />
             <Skeleton className="h-16 w-full" />
             <Skeleton className="h-16 w-full" />
@@ -232,16 +232,21 @@ export function DashboardPage() {
       />
 
       {/* KPI Strip */}
-      <div className={`grid grid-cols-1 gap-4 sm:grid-cols-2 ${canViewPayroll ? 'lg:grid-cols-4' : 'lg:grid-cols-2'}`}>
+      <div
+        aria-busy={isPlaceholderData}
+        className={`grid grid-cols-1 gap-4 sm:grid-cols-2 ${canViewPayroll ? 'xl:grid-cols-4' : 'lg:grid-cols-2'} ${
+          isPlaceholderData ? 'opacity-75 transition-opacity' : ''
+        }`}
+      >
         <div className="card hover-lift flex items-start justify-between gap-3">
-          <div>
+          <div className="min-w-0">
             <p className="text-xs font-medium text-gray-500 dark:text-slate-400">
               {t('ux.dashboard.activeHeadcount')}
             </p>
             <p className="mt-1.5 text-2xl font-bold tabular-nums text-gray-900 dark:text-slate-100">
               {formatNumber(data.active_employees)}
             </p>
-            <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">
+            <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">
               {t('ux.dashboard.ofTotalHeadcount', { total: formatNumber(data.total_employees) })}
             </p>
           </div>
@@ -257,10 +262,17 @@ export function DashboardPage() {
                 <p className="text-xs font-medium text-gray-500 dark:text-slate-400">
                   {t('ux.dashboard.latestPayroll')}
                 </p>
-                <p className="mt-1.5 truncate text-2xl font-bold tabular-nums text-gray-900 dark:text-slate-100">
+                <p
+                  title={
+                    data.last_payroll_total_net !== null
+                      ? formatMYR(data.last_payroll_total_net)
+                      : undefined
+                  }
+                  className="mt-1.5 truncate text-2xl font-bold tabular-nums text-gray-900 dark:text-slate-100"
+                >
                   {data.last_payroll_total_net !== null ? formatMYR(data.last_payroll_total_net) : '—'}
                 </p>
-                <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">
+                <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">
                   {data.last_payroll_period
                     ? t('ux.dashboard.latestPayrollSub', {
                         period: formatDashboardPeriod(data.last_payroll_period),
@@ -279,10 +291,13 @@ export function DashboardPage() {
                 <p className="text-xs font-medium text-gray-500 dark:text-slate-400">
                   {t('ux.dashboard.ytdGross')}
                 </p>
-                <p className="mt-1.5 truncate text-2xl font-bold tabular-nums text-gray-900 dark:text-slate-100">
+                <p
+                  title={formatMYR(data.ytd_total_gross)}
+                  className="mt-1.5 truncate text-2xl font-bold tabular-nums text-gray-900 dark:text-slate-100"
+                >
                   {formatMYR(data.ytd_total_gross)}
                 </p>
-                <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">
+                <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">
                   {t('ux.dashboard.ytdGrossSub')}
                 </p>
               </div>
@@ -296,10 +311,13 @@ export function DashboardPage() {
                 <p className="text-xs font-medium text-gray-500 dark:text-slate-400">
                   {t('ux.dashboard.ytdStatutory')}
                 </p>
-                <p className="mt-1.5 truncate text-2xl font-bold tabular-nums text-gray-900 dark:text-slate-100">
+                <p
+                  title={formatMYR(ytdEmployerStatutory)}
+                  className="mt-1.5 truncate text-2xl font-bold tabular-nums text-gray-900 dark:text-slate-100"
+                >
                   {formatMYR(ytdEmployerStatutory)}
                 </p>
-                <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">
+                <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">
                   {t('ux.dashboard.ytdStatutorySub')}
                 </p>
               </div>
@@ -310,14 +328,14 @@ export function DashboardPage() {
           </>
         ) : (
           <div className="card hover-lift flex items-start justify-between gap-3">
-            <div>
+            <div className="min-w-0">
               <p className="text-xs font-medium text-gray-500 dark:text-slate-400">
                 {t('ux.dashboard.departmentsTitle')}
               </p>
               <p className="mt-1.5 text-2xl font-bold tabular-nums text-gray-900 dark:text-slate-100">
                 {formatNumber(data.departments.length)}
               </p>
-              <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">
+              <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">
                 {t('ux.dashboard.departmentsSub')}
               </p>
             </div>
@@ -329,7 +347,10 @@ export function DashboardPage() {
       </div>
 
       {/* Needs Attention Action Queue */}
-      <section className="card" aria-labelledby="needs-attention-heading">
+      <section
+        className={`card ${isPlaceholderData ? 'opacity-75 transition-opacity' : ''}`}
+        aria-labelledby="needs-attention-heading"
+      >
         <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h2 id="needs-attention-heading" className="section-title">
@@ -354,7 +375,7 @@ export function DashboardPage() {
             </div>
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
             {attentionItems.map((item) => {
               const Icon = item.icon;
               const toneClass =
@@ -396,8 +417,8 @@ export function DashboardPage() {
       </section>
 
       {/* Department Headcount + Statutory Breakdown / Quick Shortcuts */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        <section className="card lg:col-span-2" aria-labelledby="dept-heading">
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
+        <section className="card xl:col-span-2" aria-labelledby="dept-heading">
           <h2 id="dept-heading" className="section-title mb-4">
             {t('ux.dashboard.departmentsTitle')}
           </h2>
@@ -470,13 +491,13 @@ export function DashboardPage() {
                 <Link
                   key={item.href}
                   to={item.href}
-                  className="flex items-center justify-between rounded-xl border border-gray-100 dark:border-slate-800 bg-white/60 dark:bg-slate-900/50 px-3.5 py-2.5 text-sm font-medium text-gray-700 dark:text-slate-200 transition-all hover:border-[var(--accent-1)]/40 hover:bg-[var(--accent-soft)]"
+                  className="flex min-h-11 sm:min-h-0 items-center justify-between rounded-xl border border-gray-100 dark:border-slate-800 bg-white/60 dark:bg-slate-900/50 px-3.5 py-2.5 text-sm font-medium text-gray-700 dark:text-slate-200 transition-all hover:border-[var(--accent-1)]/40 hover:bg-[var(--accent-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                 >
                   <span className="inline-flex items-center gap-2.5">
                     <item.icon className="h-4 w-4 text-[var(--accent-1)]" aria-hidden="true" />
                     {item.label}
                   </span>
-                  <ArrowRight className="h-4 w-4 text-gray-400" aria-hidden="true" />
+                  <ArrowRight className="h-4 w-4 text-gray-500 dark:text-slate-400" aria-hidden="true" />
                 </Link>
               ))}
             </div>

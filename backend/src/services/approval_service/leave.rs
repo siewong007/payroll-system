@@ -8,12 +8,12 @@ use uuid::Uuid;
 use crate::core::config::AppConfig;
 use crate::core::error::{AppError, AppResult};
 use crate::core::upload_path::validate_optional_file_url;
-use crate::models::payroll::round_sen;
+use crate::models::payroll::checked_round_sen;
 use crate::models::portal::{CreateLeaveRequest, LeaveRequest, UpdateLeaveRequest};
 use crate::repositories::reads::approvals as approval_reads;
 use crate::repositories::{
     companies, employees as employee_repo, leave_balances, leave_requests, leave_types,
-    payroll_entries, users as user_repo,
+    payroll_entries, payroll_runs, users as user_repo,
 };
 use crate::services::audit_service::AuditRequestMeta;
 use crate::services::calendar_service;
@@ -22,7 +22,8 @@ use crate::services::notification_service;
 
 use super::common::{
     Reviewer, audit_self_approval_override, ensure_employee_in_company,
-    ensure_leave_type_in_company, ensure_not_self_approval, reviewer_employee_id,
+    ensure_leave_type_in_company, ensure_not_creator_or_editor, ensure_not_self_approval,
+    reviewer_employee_id,
 };
 use crate::models::upload::UploadAccess;
 use crate::services::upload_service;
@@ -90,6 +91,7 @@ pub async fn create_leave_request_admin(
         req.reason,
         req.attachment_url,
         req.attachment_name,
+        Some(actor_id),
     )
     .await?;
 
@@ -162,14 +164,15 @@ pub async fn update_leave_request_admin(
 
     let mut tx = pool.begin().await?;
 
-    let current = leave_requests::get_pending_with_type(&mut *tx, request_id, company_id)
-        .await?
-        .ok_or_else(|| {
-            AppError::Conflict(
+    let current =
+        leave_requests::get_pending_with_type_for_update(&mut *tx, request_id, company_id)
+            .await?
+            .ok_or_else(|| {
+                AppError::Conflict(
                 "This leave request changed state while it was being updated. Reload and try again."
                     .into(),
             )
-        })?;
+            })?;
 
     if (
         current.employee_id,
@@ -189,7 +192,15 @@ pub async fn update_leave_request_admin(
         ));
     }
 
-    employee_repo::lock_for_update(&mut *tx, employee_id, company_id).await?;
+    let (first_emp, second_emp) = if current.employee_id <= employee_id {
+        (current.employee_id, employee_id)
+    } else {
+        (employee_id, current.employee_id)
+    };
+    employee_repo::lock_for_update(&mut *tx, first_emp, company_id).await?;
+    if second_emp != first_emp {
+        employee_repo::lock_for_update(&mut *tx, second_emp, company_id).await?;
+    }
 
     if leave_requests::overlaps_existing(
         &mut *tx,
@@ -207,6 +218,17 @@ pub async fn update_leave_request_admin(
 
     let old_year = current.start_date.year();
     let new_year = start_date.year();
+    let old_key = (current.employee_id, current.leave_type_id, old_year);
+    let new_key = (employee_id, leave_type_id, new_year);
+    let (lock_a, lock_b) = if old_key <= new_key {
+        (old_key, new_key)
+    } else {
+        (new_key, old_key)
+    };
+    let _ = leave_balances::lock_for_update(&mut *tx, lock_a.0, lock_a.1, lock_a.2).await?;
+    if lock_b != lock_a {
+        let _ = leave_balances::lock_for_update(&mut *tx, lock_b.0, lock_b.1, lock_b.2).await?;
+    }
 
     leave_balances::subtract_pending(
         &mut *tx,
@@ -238,6 +260,7 @@ pub async fn update_leave_request_admin(
         req.reason,
         req.attachment_url,
         req.attachment_name,
+        Some(actor_id),
     )
     .await?
     .ok_or_else(|| {
@@ -326,6 +349,19 @@ pub async fn cancel_leave_request_admin(
         })?;
 
     if current.status == "approved" {
+        if payroll_runs::has_paid_covering_dates(
+            &mut *tx,
+            company_id,
+            current.start_date,
+            current.end_date,
+        )
+        .await?
+        {
+            return Err(AppError::BadRequest(
+                "Approved leave covered by a paid payroll run cannot be cancelled".into(),
+            ));
+        }
+
         let is_paid = leave_types::get_is_paid(&mut *tx, current.leave_type_id).await?;
 
         if is_paid == Some(false) {
@@ -487,15 +523,7 @@ async fn compute_unpaid_leave_deduction(
         lr.start_date,
         lr.end_date,
     )
-    .await
-    .unwrap_or_else(|_| {
-        // Fallback when the calendar lookup fails. Rounding the Decimal
-        // directly matters: formatting it and calling parse::<i32>() fails
-        // for any fractional value like "1.5", yielding 0 working days and
-        // silently staging no deduction at all.
-        use rust_decimal::prelude::ToPrimitive;
-        lr.days.round().to_i32().unwrap_or(0)
-    });
+    .await?;
 
     if unpaid_working_days <= 0 {
         return Ok(None);
@@ -530,7 +558,8 @@ async fn compute_unpaid_leave_deduction(
         return Ok(None);
     }
 
-    let amount = round_sen(Decimal::from(basic_salary) * effective_days / Decimal::from(divisor));
+    let amount =
+        checked_round_sen(Decimal::from(basic_salary) * effective_days / Decimal::from(divisor))?;
     if amount <= 0 {
         return Ok(None);
     }
@@ -602,6 +631,7 @@ pub async fn approve_leave(
     // does not cover `employee_id`, so comparing the earlier read would leave the
     // guard raceable.
     ensure_not_self_approval(reviewer_employee, lr.employee_id, "leave request")?;
+    ensure_not_creator_or_editor(&reviewer, lr.created_by, lr.updated_by, "leave request")?;
 
     // The request could have been edited between the read above and the CAS —
     // the CAS only guarantees it was still *pending*, not unchanged. Anything

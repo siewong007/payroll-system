@@ -1,0 +1,67 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH base AS (\n            SELECT id, employee_number, full_name, is_active, payroll_group_id,\n                   date_of_birth, date_resigned, bank_account_number,\n                   epf_number, tax_identification_number\n            FROM employees\n            WHERE company_id = $1 AND deleted_at IS NULL\n        ),\n        flagged AS (\n            SELECT v.flag_key, b.id, b.employee_number, b.full_name\n            FROM base b\n            CROSS JOIN LATERAL (VALUES\n                (\n                    'missing_date_of_birth',\n                    b.is_active IS TRUE AND b.payroll_group_id IS NOT NULL AND b.date_of_birth IS NULL\n                ),\n                (\n                    'inactive_without_resignation_date',\n                    b.is_active IS NOT TRUE AND b.date_resigned IS NULL AND b.payroll_group_id IS NOT NULL\n                ),\n                (\n                    'missing_payroll_group',\n                    b.is_active IS TRUE AND b.payroll_group_id IS NULL\n                ),\n                (\n                    'missing_bank_account',\n                    b.is_active IS TRUE AND b.payroll_group_id IS NOT NULL\n                        AND (b.bank_account_number IS NULL OR btrim(b.bank_account_number) = '')\n                ),\n                (\n                    'missing_statutory_ids',\n                    b.is_active IS TRUE AND b.payroll_group_id IS NOT NULL AND (\n                        ((b.date_of_birth IS NULL OR age(CURRENT_DATE, b.date_of_birth) < INTERVAL '75 years')\n                         AND (b.epf_number IS NULL OR btrim(b.epf_number) = ''))\n                        OR (b.tax_identification_number IS NULL OR btrim(b.tax_identification_number) = '')\n                    )\n                )\n            ) AS v(flag_key, matches)\n            WHERE v.matches\n        ),\n        numbered AS (\n            SELECT flag_key, id, employee_number, full_name,\n                   ROW_NUMBER() OVER (PARTITION BY flag_key ORDER BY full_name, id) AS rn,\n                   COUNT(*) OVER (PARTITION BY flag_key) AS total\n            FROM flagged\n        )\n        SELECT flag_key AS \"flag_key!\",\n               total AS \"total!\",\n               id AS \"employee_id!\",\n               employee_number AS \"employee_number!\",\n               full_name AS \"employee_name!\"\n        FROM numbered\n        WHERE rn <= $2\n        ORDER BY flag_key, rn",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "flag_key!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "total!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "employee_id!",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "employee_number!",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "employee_number"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "employee_name!",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "employees",
+            "name": "full_name"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "a41178711b1ad938a9af71a024e75a6b3b404979275764632adae575710d2774"
+}

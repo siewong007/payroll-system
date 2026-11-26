@@ -332,6 +332,20 @@ pub(crate) async fn confirm_import_inner(
     let mut portal_accounts_created = 0usize;
     let mut leave_balances_created = 0usize;
     let mut provisioning_warnings = Vec::new();
+    let active_leave_types = if to_provision.is_empty() {
+        Vec::new()
+    } else {
+        match crate::repositories::leave_types::list_active(pool, company_id).await {
+            Ok(types) => types,
+            Err(e) => {
+                provisioning_warnings.push(format!(
+                    "Leave types could not be loaded for leave provisioning: {}",
+                    e.client_response().1
+                ));
+                Vec::new()
+            }
+        }
+    };
     for ProvisionRow {
         row_number,
         employee_id: id,
@@ -386,20 +400,22 @@ pub(crate) async fn confirm_import_inner(
             }
         }
 
-        match portal_service::initialize_leave_balances(
-            pool,
-            *id,
-            company_id,
-            *date_joined,
-            current_year,
-        )
-        .await
-        {
-            Ok(balances) => leave_balances_created += balances.len(),
-            Err(e) => provisioning_warnings.push(format!(
-                "Row {row_number}: leave balances not initialised: {}",
-                e.client_response().1
-            )),
+        if !active_leave_types.is_empty() {
+            match portal_service::initialize_leave_balances_with_types(
+                pool,
+                *id,
+                *date_joined,
+                current_year,
+                &active_leave_types,
+            )
+            .await
+            {
+                Ok(balances) => leave_balances_created += balances.len(),
+                Err(e) => provisioning_warnings.push(format!(
+                    "Row {row_number}: leave balances not initialised: {}",
+                    e.client_response().1
+                )),
+            }
         }
 
         processed_count += 1;

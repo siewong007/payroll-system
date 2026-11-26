@@ -6,7 +6,7 @@ use axum::{
 };
 
 use crate::core::app_state::AppState;
-use crate::core::auth::{AuthUser, create_token, verify_token};
+use crate::core::auth::{AuthUser, create_token_with_exp, verify_token};
 use crate::core::cookie;
 use crate::core::error::{AppError, AppResult};
 use crate::core::extract::ValidatedJson;
@@ -142,11 +142,13 @@ pub async fn switch_company(
     )
     .await;
 
-    // Fetch updated user
+    // Fetch updated user and re-check 2FA enforcement in case company group
+    // permissions elevated the user into a 2FA-required tier (M5), while
+    // preserving the original token expiration (H1).
     let user = auth_service::get_user_by_id(&state.pool, auth.0.sub).await?;
+    auth_service::enforce_two_factor_policy(&state.pool, &user).await?;
 
-    // Issue new token with updated company_id
-    let token = create_token(
+    let token = create_token_with_exp(
         user.id,
         &user.email,
         &user.roles,
@@ -154,7 +156,7 @@ pub async fn switch_company(
         user.employee_id,
         auth.0.sid,
         &state.config.jwt_secret,
-        state.config.jwt_expiry_hours,
+        auth.0.exp,
     )?;
 
     Ok(Json(LoginResponse {
@@ -324,7 +326,7 @@ pub async fn forgot_password(
     // response on SMTP or expose account existence through response timing.
     if let Some((user_email, user_name, raw_token)) = result {
         let reset_url = format!(
-            "{}/reset-password?token={}",
+            "{}/reset-password#token={}",
             state.config.frontend_url, raw_token
         );
         let body_html = email_service::password_reset_html(&user_name, &reset_url);

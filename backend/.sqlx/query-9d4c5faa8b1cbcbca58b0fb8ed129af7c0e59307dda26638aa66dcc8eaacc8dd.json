@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS(\n            SELECT 1 FROM payroll_runs\n            WHERE company_id = $1\n              AND status = 'paid'\n              AND period_start <= $3\n              AND period_end >= $2\n        ) AS \"exists!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "exists!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Date",
+        "Date"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "9d4c5faa8b1cbcbca58b0fb8ed129af7c0e59307dda26638aa66dcc8eaacc8dd"
+}

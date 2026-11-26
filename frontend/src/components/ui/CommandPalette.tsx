@@ -226,7 +226,12 @@ export function CommandPalette() {
       addRoute('portal-team-calendar', t('nav.portal.teamCalendar'), '/portal/team-calendar', Users);
     }
     if (user.company_id) {
-      addRoute('portal-notifications', t('nav.portal.notifications'), '/portal/notifications', Bell);
+      addRoute(
+        'portal-notifications',
+        t('nav.portal.notifications'),
+        hasAdminConsole ? '/notifications' : '/portal/notifications',
+        Bell,
+      );
     }
 
     if (user.employee_id || !hasAdminConsole) {

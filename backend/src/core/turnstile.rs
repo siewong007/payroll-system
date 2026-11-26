@@ -111,6 +111,7 @@ mod tests {
             smtp_from_email: None,
             smtp_from_name: None,
             trust_proxy_headers: false,
+            client_ip_header: None,
             turnstile_secret_key: secret.map(str::to_string),
             turnstile_verify_url: url.to_string(),
             vapid_public_key: None,

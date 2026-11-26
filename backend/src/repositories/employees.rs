@@ -222,6 +222,24 @@ pub async fn lock_for_update(
     Ok(())
 }
 
+/// Count of active, non-deleted employees and distinct non-null departments in one scan.
+pub async fn count_active_and_departments(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+) -> AppResult<(i64, i64)> {
+    let row = sqlx::query!(
+        r#"SELECT
+               COUNT(*) AS "total_employees!",
+               COUNT(DISTINCT department) AS "total_departments!"
+           FROM employees
+           WHERE company_id = $1 AND is_active = TRUE AND deleted_at IS NULL"#,
+        company_id,
+    )
+    .fetch_one(executor)
+    .await?;
+    Ok((row.total_employees, row.total_departments))
+}
+
 /// Count of active, non-deleted employees for a company.
 pub async fn count_active(
     executor: impl Executor<'_, Database = Postgres>,
@@ -765,7 +783,7 @@ pub async fn soft_delete(
     company_id: Uuid,
 ) -> AppResult<u64> {
     let rows = sqlx::query!(
-        "UPDATE employees SET deleted_at = NOW(), is_active = FALSE WHERE id = $1 AND company_id = $2",
+        "UPDATE employees SET deleted_at = NOW(), is_active = FALSE, updated_at = NOW() WHERE id = $1 AND company_id = $2 AND deleted_at IS NULL",
         id,
         company_id,
     )

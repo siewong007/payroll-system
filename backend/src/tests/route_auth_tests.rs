@@ -45,6 +45,7 @@ fn test_config(database_url: String) -> AppConfig {
         // ConnectInfo; trusting the forwarded header the helper already sets
         // keeps the rate limiters able to extract a key.
         trust_proxy_headers: true,
+        client_ip_header: None,
         turnstile_secret_key: None,
         turnstile_verify_url: "https://challenges.cloudflare.com/turnstile/v0/siteverify".into(),
         vapid_public_key: None,

@@ -30,6 +30,7 @@ pub async fn list_candidates(
                   SUM(o.observation_count)::bigint                                    AS "observation_count!",
                   SUM(o.anchored_count)::bigint                                       AS "anchored_count!",
                   SUM(o.denied_count)::bigint                                         AS "denied_count!",
+                  COUNT(DISTINCT o.employee_id) FILTER (WHERE o.denied_count > 0)     AS "distinct_denied_employees!",
                   MIN(o.first_seen_at)                                                AS "first_seen_at!",
                   MAX(o.last_seen_at)                                                 AS "last_seen_at!"
            FROM attendance_network_observations o
@@ -46,12 +47,11 @@ pub async fn list_candidates(
                    AND d.expires_at > NOW()
              )
            GROUP BY o.network, o.prefix_len
-           -- Denials first: a block turning people away is the one an
-           -- administrator needs to see today, ahead of any slow-burn
-           -- corroborated candidate.
-           ORDER BY SUM(o.denied_count) DESC,
-                    SUM(o.anchored_count) DESC,
-                    COUNT(DISTINCT o.employee_id) DESC,
+           -- Order by distinct employees affected (not raw request volume) so one
+           -- employee spamming check-in retries cannot hijack candidate ranking.
+           ORDER BY COUNT(DISTINCT o.employee_id) FILTER (WHERE o.denied_count > 0) DESC,
+                    COUNT(DISTINCT o.employee_id) FILTER (WHERE o.anchored_count > 0) DESC,
+                    COUNT(DISTINCT o.employee_id) FILTER (WHERE o.observation_count > 0) DESC,
                     MAX(o.last_seen_at) DESC
            LIMIT 50"#,
         company_id
@@ -78,6 +78,7 @@ pub async fn get_candidate(
                   SUM(o.observation_count)::bigint                                    AS "observation_count!",
                   SUM(o.anchored_count)::bigint      AS "anchored_count!",
                   SUM(o.denied_count)::bigint        AS "denied_count!",
+                  COUNT(DISTINCT o.employee_id) FILTER (WHERE o.denied_count > 0)     AS "distinct_denied_employees!",
                   MIN(o.first_seen_at)               AS "first_seen_at!",
                   MAX(o.last_seen_at)                AS "last_seen_at!"
            FROM attendance_network_observations o

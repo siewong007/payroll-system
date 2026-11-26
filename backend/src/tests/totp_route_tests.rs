@@ -20,9 +20,10 @@ use crate::services::{session_service, totp_service};
 use crate::tests::route_auth_tests::{JWT_SECRET, TOTP_ENCRYPTION_KEY, app_for};
 use crate::tests::support::{seed_company, seed_user, skip_if_no_db};
 
-async fn seed_user_with_password(
+async fn seed_user_with_role_and_password(
     pool: &sqlx::PgPool,
     company_id: Uuid,
+    role: &str,
     email: &str,
     password: &str,
 ) -> Uuid {
@@ -32,16 +33,34 @@ async fn seed_user_with_password(
     let hash = bcrypt::hash(password, 4).expect("hash test password");
     sqlx::query(
         r#"INSERT INTO users (id, email, password_hash, full_name, roles, company_id)
-           VALUES ($1, $2, $3, 'Totp Test User', ARRAY['admin']::VARCHAR(50)[], $4)"#,
+           VALUES ($1, $2, $3, 'Totp Test User', ARRAY[$4]::VARCHAR(50)[], $5)"#,
     )
     .bind(user_id)
     .bind(email)
     .bind(&hash)
+    .bind(role)
     .bind(company_id)
     .execute(pool)
     .await
     .expect("insert user");
+    sqlx::query(
+        "INSERT INTO user_companies (user_id, company_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+    )
+    .bind(user_id)
+    .bind(company_id)
+    .execute(pool)
+    .await
+    .expect("insert user company");
     user_id
+}
+
+async fn seed_user_with_password(
+    pool: &sqlx::PgPool,
+    company_id: Uuid,
+    email: &str,
+    password: &str,
+) -> Uuid {
+    seed_user_with_role_and_password(pool, company_id, "admin", email, password).await
 }
 
 fn json_request(method: &str, uri: &str, token: Option<&str>, body: &str) -> Request<Body> {
@@ -150,15 +169,18 @@ async fn totp_setup_gates_login_until_code_is_verified() {
             .starts_with("otpauth://")
     );
 
-    // Confirm with the previous-step code — enables 2FA and returns backup codes,
-    // leaving the current step unused for the immediate login below.
+    // Confirm with the previous-step code + step-up password — enables 2FA and returns
+    // backup codes, leaving the current step unused for the immediate login below.
     let resp = app
         .clone()
         .oneshot(json_request(
             "POST",
             "/api/auth/2fa/setup/confirm",
             Some(&auth_token),
-            &format!(r#"{{"code":"{}"}}"#, code_for_secret_offset(&secret, -30)),
+            &format!(
+                r#"{{"code":"{}","password":"{password}"}}"#,
+                code_for_secret_offset(&secret, -30)
+            ),
         ))
         .await
         .expect("setup/confirm response");
@@ -229,14 +251,15 @@ async fn totp_setup_gates_login_until_code_is_verified() {
 // encrypted their secret under a since-rotated JWT secret) and only a
 // super_admin can restore access — without direct database access.
 
-/// Enrolls a fresh `admin` user in 2FA through the real service functions.
-async fn enroll_target(
+/// Enrolls a fresh user with `role` in 2FA through the real service functions.
+async fn enroll_target_with_role(
     pool: &sqlx::PgPool,
     company_id: Uuid,
+    role: &str,
 ) -> (Uuid, String, String, Vec<String>) {
     let email = format!("totp-reset-{}@example.invalid", Uuid::new_v4());
     let password = "Sup3rSecretPassw0rd";
-    let user_id = seed_user_with_password(pool, company_id, &email, password).await;
+    let user_id = seed_user_with_role_and_password(pool, company_id, role, &email, password).await;
     let user = crate::services::auth_service::get_user_by_id(pool, user_id)
         .await
         .expect("load target user");
@@ -253,6 +276,13 @@ async fn enroll_target(
     .await
     .expect("confirm 2FA setup");
     (user_id, email, password.to_string(), codes)
+}
+
+async fn enroll_target(
+    pool: &sqlx::PgPool,
+    company_id: Uuid,
+) -> (Uuid, String, String, Vec<String>) {
+    enroll_target_with_role(pool, company_id, "admin").await
 }
 
 /// A super_admin whose stored hash is a real bcrypt hash of `password`, so the
@@ -488,15 +518,23 @@ async fn login_falls_back_to_backup_codes_when_the_totp_secret_is_unreadable() {
 // `complete_login` would hand back a pending-MFA marker and a backup code
 // already consumed by the first check would fail the second.
 
-/// Enrolls like `enroll_target` but also returns the raw TOTP secret, so a
-/// test can mint a *current* code to sign in with.
+/// Enrolls an unprivileged employee user and also returns the raw TOTP secret,
+/// so a test can mint a *current* code to sign in with via `/auth/login/code`.
 async fn enroll_and_get_secret(
     pool: &sqlx::PgPool,
     company_id: Uuid,
 ) -> (Uuid, String, String, Vec<String>) {
+    enroll_and_get_secret_for_role(pool, company_id, "employee").await
+}
+
+async fn enroll_and_get_secret_for_role(
+    pool: &sqlx::PgPool,
+    company_id: Uuid,
+    role: &str,
+) -> (Uuid, String, String, Vec<String>) {
     let email = format!("totp-code-login-{}@example.invalid", Uuid::new_v4());
     let password = "Sup3rSecretPassw0rd";
-    let user_id = seed_user_with_password(pool, company_id, &email, password).await;
+    let user_id = seed_user_with_role_and_password(pool, company_id, role, &email, password).await;
     let user = crate::services::auth_service::get_user_by_id(pool, user_id)
         .await
         .expect("load target user");
@@ -554,7 +592,8 @@ async fn code_login_with_a_backup_code_issues_a_session_and_consumes_the_code() 
     };
     let _policy_guard = POLICY_SENSITIVE_LOGINS.lock().await;
     let company_id = seed_company(&pool).await;
-    let (_user_id, email, _secret, backup_codes) = enroll_target(&pool, company_id).await;
+    let (_user_id, email, _secret, backup_codes) =
+        enroll_target_with_role(&pool, company_id, "employee").await;
     let app = app_for(pool).await;
 
     let resp = app
@@ -589,9 +628,17 @@ async fn code_login_rejects_bad_code_unknown_email_and_no_2fa_identically() {
         return;
     };
     let company_id = seed_company(&pool).await;
-    let (_id, email, _secret, _codes) = enroll_target(&pool, company_id).await;
+    let (_id, email, _secret, _codes) =
+        enroll_target_with_role(&pool, company_id, "employee").await;
     let no_2fa_email = format!("totp-none-{}@example.invalid", Uuid::new_v4());
-    seed_user_with_password(&pool, company_id, &no_2fa_email, "Sup3rSecretPassw0rd").await;
+    seed_user_with_role_and_password(
+        &pool,
+        company_id,
+        "employee",
+        &no_2fa_email,
+        "Sup3rSecretPassw0rd",
+    )
+    .await;
     let app = app_for(pool).await;
 
     let mut bodies = Vec::new();
@@ -622,6 +669,69 @@ async fn code_login_rejects_bad_code_unknown_email_and_no_2fa_identically() {
         bodies[0]["error"],
         serde_json::json!("Invalid email or code")
     );
+}
+
+#[tokio::test]
+async fn code_login_rejects_privileged_roles_and_isolates_lockout_counters() {
+    let Some(pool) = skip_if_no_db().await else {
+        return;
+    };
+    let company_id = seed_company(&pool).await;
+    let app = app_for(pool.clone()).await;
+
+    for role in [
+        "admin",
+        "payroll_admin",
+        "hr_manager",
+        "finance",
+        "super_admin",
+    ] {
+        let (_id, email, secret, _codes) =
+            enroll_and_get_secret_for_role(&pool, company_id, role).await;
+        let resp = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/auth/login/code",
+                None,
+                &format!(
+                    r#"{{"email":"{email}","code":"{}"}}"#,
+                    code_for_secret(&secret)
+                ),
+            ))
+            .await
+            .expect("privileged code login attempt");
+        assert_eq!(
+            resp.status(),
+            StatusCode::UNAUTHORIZED,
+            "privileged role {role} must never bypass password via /auth/login/code"
+        );
+    }
+
+    // Repeated wrong attempts on /auth/login/code increment only code_login_failed_attempts,
+    // leaving password+2FA failed_attempts untouched. Use a fresh router instance so the
+    // IP rate-limiter burst (5/IP) from the privileged-role loop above doesn't return 429.
+    let app = app_for(pool.clone()).await;
+    let (emp_id, emp_email, _emp_secret, _codes) = enroll_and_get_secret(&pool, company_id).await;
+    for _ in 0..5 {
+        let resp = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/auth/login/code",
+                None,
+                &format!(r#"{{"email":"{emp_email}","code":"000000"}}"#),
+            ))
+            .await
+            .expect("bad code login");
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+    let row = user_totp::find_by_user(&pool, emp_id)
+        .await
+        .expect("load user_totp")
+        .expect("totp row");
+    assert_eq!(row.failed_attempts, 0);
+    assert_eq!(row.code_login_failed_attempts, 5);
 }
 
 /// The startup migration: a row encrypted under the old JWT-derived key is
@@ -818,6 +928,14 @@ async fn enforcement_refuses_hard_cut_and_gates_only_privileged_logins() {
         .execute(&pool)
         .await
         .expect("insert staff user");
+        sqlx::query(
+            "INSERT INTO user_companies (user_id, company_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        )
+        .bind(id)
+        .bind(company_id)
+        .execute(&pool)
+        .await
+        .expect("insert staff user company");
         id
     };
 

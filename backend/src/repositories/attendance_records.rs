@@ -122,7 +122,9 @@ pub async fn check_out(
                -- says, and blunting it would hide the anomaly from the
                -- attendance summary too.
                overtime_hours = CASE
-                   WHEN src.overtime_hours > $7 THEN NULL
+                   WHEN (COALESCE(ar.is_outside_geofence, FALSE) OR $5)
+                     OR (COALESCE(ar.is_offsite_network, FALSE) OR $6)
+                     OR src.overtime_hours > $7 THEN NULL
                    ELSE src.overtime_hours
                END,
                updated_at = NOW()
@@ -235,7 +237,8 @@ pub async fn exists_active_checkin_today(
         r#"SELECT EXISTS(
             SELECT 1 FROM attendance_records
             WHERE employee_id = $1
-              AND DATE(check_in_at AT TIME ZONE $2) = DATE(NOW() AT TIME ZONE $2)
+              AND check_in_at >= date_trunc('day', NOW() AT TIME ZONE $2) AT TIME ZONE $2
+              AND check_in_at < (date_trunc('day', NOW() AT TIME ZONE $2) + INTERVAL '1 day') AT TIME ZONE $2
               AND check_out_at IS NULL
         ) AS "exists!""#,
         employee_id,
@@ -259,7 +262,8 @@ pub async fn get_today(
                 created_at, updated_at
          FROM attendance_records
          WHERE employee_id = $1
-           AND DATE(check_in_at AT TIME ZONE $2) = DATE(NOW() AT TIME ZONE $2)
+           AND check_in_at >= date_trunc('day', NOW() AT TIME ZONE $2) AT TIME ZONE $2
+           AND check_in_at < (date_trunc('day', NOW() AT TIME ZONE $2) + INTERVAL '1 day') AT TIME ZONE $2
          ORDER BY check_in_at DESC
          LIMIT 1",
         employee_id,
@@ -282,6 +286,27 @@ pub async fn get_by_id(
                 created_by, hours_worked, overtime_hours, is_outside_geofence, is_offsite_network,
                 created_at, updated_at
          FROM attendance_records WHERE id = $1 AND company_id = $2",
+        record_id,
+        company_id,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(record)
+}
+
+pub async fn get_by_id_locked(
+    executor: impl Executor<'_, Database = Postgres>,
+    record_id: Uuid,
+    company_id: Uuid,
+) -> AppResult<Option<AttendanceRecord>> {
+    let record = sqlx::query_as!(
+        AttendanceRecord,
+        "SELECT id, company_id, employee_id, check_in_at, check_out_at, method, status,
+                latitude, longitude, checkout_latitude, checkout_longitude, notes, qr_token_id,
+                created_by, hours_worked, overtime_hours, is_outside_geofence, is_offsite_network,
+                created_at, updated_at
+         FROM attendance_records WHERE id = $1 AND company_id = $2
+         FOR UPDATE",
         record_id,
         company_id,
     )
@@ -318,14 +343,17 @@ pub async fn insert_manual(
                    ELSE GREATEST(0,
                        GREATEST(0,
                            ROUND(EXTRACT(EPOCH FROM ($4::timestamptz - $3::timestamptz)) / 3600.0, 2)
-                           - COALESCE((SELECT ws.unpaid_break_minutes FROM company_work_schedules ws WHERE ws.company_id = $1 AND ws.is_default = TRUE), 0) / 60.0
+                           - COALESCE(ws.unpaid_break_minutes, 0) / 60.0
                        )
                        - GREATEST(0,
-                           COALESCE((SELECT MOD(EXTRACT(EPOCH FROM (ws.end_time - ws.start_time))::numeric + 86400, 86400) / 3600.0 FROM company_work_schedules ws WHERE ws.company_id = $1 AND ws.is_default = TRUE), 9)
-                           - COALESCE((SELECT ws.unpaid_break_minutes FROM company_work_schedules ws WHERE ws.company_id = $1 AND ws.is_default = TRUE), 0) / 60.0
+                           COALESCE(MOD(EXTRACT(EPOCH FROM (ws.end_time - ws.start_time))::numeric + 86400, 86400) / 3600.0, 9)
+                           - COALESCE(ws.unpaid_break_minutes, 0) / 60.0
                        )
                    )
                END
+           FROM (VALUES (1)) AS _single(k)
+           LEFT JOIN company_work_schedules ws
+             ON ws.company_id = $1 AND ws.is_default = TRUE
            RETURNING id, company_id, employee_id, check_in_at, check_out_at, method, status,
                      latitude, longitude, checkout_latitude, checkout_longitude, notes, qr_token_id,
                      created_by, hours_worked, overtime_hours, is_outside_geofence, is_offsite_network,
@@ -371,20 +399,23 @@ pub async fn update(
                    ELSE GREATEST(0,
                        GREATEST(0,
                            ROUND(EXTRACT(EPOCH FROM ($4::timestamptz - $3::timestamptz)) / 3600.0, 2)
-                           - COALESCE((SELECT ws.unpaid_break_minutes FROM company_work_schedules ws WHERE ws.company_id = ar.company_id AND ws.is_default = TRUE), 0) / 60.0
+                           - COALESCE(ws.unpaid_break_minutes, 0) / 60.0
                        )
                        - GREATEST(0,
-                           COALESCE((SELECT MOD(EXTRACT(EPOCH FROM (ws.end_time - ws.start_time))::numeric + 86400, 86400) / 3600.0 FROM company_work_schedules ws WHERE ws.company_id = ar.company_id AND ws.is_default = TRUE), 9)
-                           - COALESCE((SELECT ws.unpaid_break_minutes FROM company_work_schedules ws WHERE ws.company_id = ar.company_id AND ws.is_default = TRUE), 0) / 60.0
+                           COALESCE(MOD(EXTRACT(EPOCH FROM (ws.end_time - ws.start_time))::numeric + 86400, 86400) / 3600.0, 9)
+                           - COALESCE(ws.unpaid_break_minutes, 0) / 60.0
                        )
                    )
                END,
                updated_at = NOW()
+           FROM (SELECT $2::uuid AS cid) AS _scope
+           LEFT JOIN company_work_schedules ws
+             ON ws.company_id = _scope.cid AND ws.is_default = TRUE
            WHERE ar.id = $1 AND ar.company_id = $2
-           RETURNING id, company_id, employee_id, check_in_at, check_out_at, method, status,
-                     latitude, longitude, checkout_latitude, checkout_longitude, notes, qr_token_id,
-                     created_by, hours_worked, overtime_hours, is_outside_geofence, is_offsite_network,
-                created_at, updated_at"#,
+           RETURNING ar.id, ar.company_id, ar.employee_id, ar.check_in_at, ar.check_out_at, ar.method, ar.status,
+                     ar.latitude, ar.longitude, ar.checkout_latitude, ar.checkout_longitude, ar.notes, ar.qr_token_id,
+                     ar.created_by, ar.hours_worked, ar.overtime_hours, ar.is_outside_geofence, ar.is_offsite_network,
+                     ar.created_at, ar.updated_at"#,
         record_id,
         company_id,
         check_in_at,
@@ -424,7 +455,8 @@ pub async fn delete_auto_absent_today(
              AND method = 'manual'
              AND created_by IS NULL
              AND notes = $3
-             AND DATE(check_in_at AT TIME ZONE $2) = DATE(NOW() AT TIME ZONE $2)"#,
+             AND check_in_at >= date_trunc('day', NOW() AT TIME ZONE $2) AT TIME ZONE $2
+             AND check_in_at < (date_trunc('day', NOW() AT TIME ZONE $2) + INTERVAL '1 day') AT TIME ZONE $2"#,
         employee_id,
         tz,
         AUTO_ABSENT_NOTE,
@@ -460,104 +492,164 @@ pub async fn mark_absent_returning(
     target_date: chrono::NaiveDate,
     company_id: Option<Uuid>,
 ) -> AppResult<Vec<(Uuid, Uuid)>> {
-    let rows = sqlx::query!(
-        r#"INSERT INTO attendance_records
-           (company_id, employee_id, check_in_at, check_out_at, method, status, notes)
-           SELECT
-               e.company_id,
-               e.id,
-               ($2::date)::timestamp AT TIME ZONE $1,
-               ($2::date)::timestamp AT TIME ZONE $1,
-               'manual',
-               'absent',
-               $4::text
-           FROM employees e
-           -- Only working days. LEFT JOIN, not JOIN: a company that never saved
-           -- working_day_config would otherwise be skipped entirely and never get
-           -- absent marking. Falls back to Mon-Fri, matching calendar_service.
-           LEFT JOIN working_day_config wdc
-               ON wdc.company_id = e.company_id
-               AND wdc.day_of_week = EXTRACT(DOW FROM $2::date)::int
-           WHERE e.is_active = TRUE
-             AND e.deleted_at IS NULL
-             AND ($3::uuid IS NULL OR e.company_id = $3)
-             -- Only within the employment window. When this query was pinned to
-             -- NOW() an active employee had necessarily already joined, so the
-             -- guard was unreachable; now that the date is a parameter (catch-up
-             -- and admin backfill both target past dates) its absence would
-             -- invent absences from before a hire or after a resignation.
-             -- Mirrors the payroll eligibility filter in employees.rs.
-             AND e.date_joined <= $2::date
-             AND (e.date_resigned IS NULL OR e.date_resigned >= $2::date)
-             AND CASE
-                   WHEN EXISTS (
-                       SELECT 1 FROM working_day_config w
-                       WHERE w.company_id = e.company_id
-                   ) THEN COALESCE(wdc.is_working_day, FALSE)
-                   ELSE EXTRACT(DOW FROM $2::date)::int BETWEEN 1 AND 5
-                 END
-             -- No holiday that day. A recurring holiday is stored once, on the year
-             -- it was created, so matching only the exact date auto-marked everyone
-             -- absent on every later occurrence.
-             AND NOT EXISTS (
-                 SELECT 1 FROM holidays h
-                 WHERE h.company_id = e.company_id
-                   AND (
-                       h.date = $2::date
-                       OR (
-                           h.is_recurring
-                           AND h.date <= $2::date
-                           AND EXTRACT(MONTH FROM h.date) = EXTRACT(MONTH FROM $2::date)
-                           AND EXTRACT(DAY FROM h.date) = EXTRACT(DAY FROM $2::date)
-                       )
-                   )
-             )
-             -- Not on approved leave that day
-             AND NOT EXISTS (
-                 SELECT 1 FROM leave_requests lr
-                 WHERE lr.employee_id = e.id
-                   AND lr.status = 'approved'
-                   AND $2::date BETWEEN lr.start_date AND lr.end_date
-             )
-             -- No open overnight session overlapping the target local date within 24h
-             AND NOT EXISTS (
-                 SELECT 1 FROM attendance_records open_ar
-                 WHERE open_ar.employee_id = e.id
-                   AND open_ar.check_out_at IS NULL
-                   AND open_ar.check_in_at > (($2::date)::timestamp AT TIME ZONE $1) - INTERVAL '24 hours'
-                   AND open_ar.check_in_at < ($2::date + 1)::timestamp AT TIME ZONE $1
-             )
-             -- No attendance record on that local date. Sargable range on the raw
-             -- timestamptz so the (employee_id, check_in_at) index serves it.
-             AND NOT EXISTS (
-                 SELECT 1 FROM attendance_records ar
-                 WHERE ar.employee_id = e.id
-                   AND ar.check_in_at >= ($2::date)::timestamp AT TIME ZONE $1
-                   AND ar.check_in_at < ($2::date + 1)::timestamp AT TIME ZONE $1
-             )
-           -- Restating 1019's index predicate verbatim (literals, not $4 — the
-           -- planner infers the arbiter by proving the index predicate from
-           -- this clause, and cannot do that through a bind parameter). NOT a
-           -- bare `ON CONFLICT DO NOTHING`: that would also swallow a violation
-           -- of attendance_one_open_per_employee, turning a real bug into a
-           -- silent no-op.
-           ON CONFLICT (employee_id, check_in_at)
-               WHERE created_by IS NULL
-                 AND status = 'absent'
-                 AND method = 'manual'
-                 AND notes = 'Auto-marked absent (no check-in recorded)'
-           DO NOTHING
-           RETURNING company_id, employee_id"#,
-        tz,
-        target_date,
-        company_id,
-        AUTO_ABSENT_NOTE,
-    )
-    .fetch_all(executor)
-    .await?;
+    match company_id {
+        Some(cid) => {
+            let rows = sqlx::query!(
+                r#"INSERT INTO attendance_records
+                   (company_id, employee_id, check_in_at, check_out_at, method, status, notes)
+                   SELECT
+                       e.company_id,
+                       e.id,
+                       ($2::date)::timestamp AT TIME ZONE $1,
+                       ($2::date)::timestamp AT TIME ZONE $1,
+                       'manual',
+                       'absent',
+                       $4::text
+                   FROM employees e
+                   LEFT JOIN working_day_config wdc
+                       ON wdc.company_id = e.company_id
+                       AND wdc.day_of_week = EXTRACT(DOW FROM $2::date)::int
+                   WHERE e.company_id = $3
+                     AND e.is_active = TRUE
+                     AND e.deleted_at IS NULL
+                     AND e.date_joined <= $2::date
+                     AND (e.date_resigned IS NULL OR e.date_resigned >= $2::date)
+                     AND CASE
+                           WHEN EXISTS (
+                               SELECT 1 FROM working_day_config w
+                               WHERE w.company_id = e.company_id
+                           ) THEN COALESCE(wdc.is_working_day, FALSE)
+                           ELSE EXTRACT(DOW FROM $2::date)::int BETWEEN 1 AND 5
+                         END
+                     AND NOT EXISTS (
+                         SELECT 1 FROM holidays h
+                         WHERE h.company_id = e.company_id
+                           AND (
+                               h.date = $2::date
+                               OR (
+                                   h.is_recurring
+                                   AND h.date <= $2::date
+                                   AND EXTRACT(MONTH FROM h.date)::int = EXTRACT(MONTH FROM $2::date)::int
+                                   AND EXTRACT(DAY FROM h.date)::int = EXTRACT(DAY FROM $2::date)::int
+                               )
+                           )
+                     )
+                     AND NOT EXISTS (
+                         SELECT 1 FROM leave_requests lr
+                         WHERE lr.employee_id = e.id
+                           AND lr.status = 'approved'
+                           AND $2::date BETWEEN lr.start_date AND lr.end_date
+                     )
+                     AND NOT EXISTS (
+                         SELECT 1 FROM attendance_records open_ar
+                         WHERE open_ar.employee_id = e.id
+                           AND open_ar.check_out_at IS NULL
+                           AND open_ar.check_in_at > (($2::date)::timestamp AT TIME ZONE $1) - INTERVAL '24 hours'
+                           AND open_ar.check_in_at < ($2::date + 1)::timestamp AT TIME ZONE $1
+                     )
+                     AND NOT EXISTS (
+                         SELECT 1 FROM attendance_records ar
+                         WHERE ar.employee_id = e.id
+                           AND ar.check_in_at >= ($2::date)::timestamp AT TIME ZONE $1
+                           AND ar.check_in_at < ($2::date + 1)::timestamp AT TIME ZONE $1
+                     )
+                   ON CONFLICT (employee_id, check_in_at)
+                       WHERE created_by IS NULL
+                         AND status = 'absent'
+                         AND method = 'manual'
+                         AND notes = 'Auto-marked absent (no check-in recorded)'
+                   DO NOTHING
+                   RETURNING company_id, employee_id"#,
+                tz,
+                target_date,
+                cid,
+                AUTO_ABSENT_NOTE,
+            )
+            .fetch_all(executor)
+            .await?;
 
-    Ok(rows
-        .into_iter()
-        .map(|row| (row.company_id, row.employee_id))
-        .collect())
+            Ok(rows
+                .into_iter()
+                .map(|row| (row.company_id, row.employee_id))
+                .collect())
+        }
+        None => {
+            let rows = sqlx::query!(
+                r#"INSERT INTO attendance_records
+                   (company_id, employee_id, check_in_at, check_out_at, method, status, notes)
+                   SELECT
+                       e.company_id,
+                       e.id,
+                       ($2::date)::timestamp AT TIME ZONE $1,
+                       ($2::date)::timestamp AT TIME ZONE $1,
+                       'manual',
+                       'absent',
+                       $3::text
+                   FROM employees e
+                   LEFT JOIN working_day_config wdc
+                       ON wdc.company_id = e.company_id
+                       AND wdc.day_of_week = EXTRACT(DOW FROM $2::date)::int
+                   WHERE e.is_active = TRUE
+                     AND e.deleted_at IS NULL
+                     AND e.date_joined <= $2::date
+                     AND (e.date_resigned IS NULL OR e.date_resigned >= $2::date)
+                     AND CASE
+                           WHEN EXISTS (
+                               SELECT 1 FROM working_day_config w
+                               WHERE w.company_id = e.company_id
+                           ) THEN COALESCE(wdc.is_working_day, FALSE)
+                           ELSE EXTRACT(DOW FROM $2::date)::int BETWEEN 1 AND 5
+                         END
+                     AND NOT EXISTS (
+                         SELECT 1 FROM holidays h
+                         WHERE h.company_id = e.company_id
+                           AND (
+                               h.date = $2::date
+                               OR (
+                                   h.is_recurring
+                                   AND h.date <= $2::date
+                                   AND EXTRACT(MONTH FROM h.date)::int = EXTRACT(MONTH FROM $2::date)::int
+                                   AND EXTRACT(DAY FROM h.date)::int = EXTRACT(DAY FROM $2::date)::int
+                               )
+                           )
+                     )
+                     AND NOT EXISTS (
+                         SELECT 1 FROM leave_requests lr
+                         WHERE lr.employee_id = e.id
+                           AND lr.status = 'approved'
+                           AND $2::date BETWEEN lr.start_date AND lr.end_date
+                     )
+                     AND NOT EXISTS (
+                         SELECT 1 FROM attendance_records open_ar
+                         WHERE open_ar.employee_id = e.id
+                           AND open_ar.check_out_at IS NULL
+                           AND open_ar.check_in_at > (($2::date)::timestamp AT TIME ZONE $1) - INTERVAL '24 hours'
+                           AND open_ar.check_in_at < ($2::date + 1)::timestamp AT TIME ZONE $1
+                     )
+                     AND NOT EXISTS (
+                         SELECT 1 FROM attendance_records ar
+                         WHERE ar.employee_id = e.id
+                           AND ar.check_in_at >= ($2::date)::timestamp AT TIME ZONE $1
+                           AND ar.check_in_at < ($2::date + 1)::timestamp AT TIME ZONE $1
+                     )
+                   ON CONFLICT (employee_id, check_in_at)
+                       WHERE created_by IS NULL
+                         AND status = 'absent'
+                         AND method = 'manual'
+                         AND notes = 'Auto-marked absent (no check-in recorded)'
+                   DO NOTHING
+                   RETURNING company_id, employee_id"#,
+                tz,
+                target_date,
+                AUTO_ABSENT_NOTE,
+            )
+            .fetch_all(executor)
+            .await?;
+
+            Ok(rows
+                .into_iter()
+                .map(|row| (row.company_id, row.employee_id))
+                .collect())
+        }
+    }
 }

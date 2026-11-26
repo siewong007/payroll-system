@@ -40,6 +40,14 @@ async fn seed_login_user(pool: &sqlx::PgPool, company_id: Uuid) -> (Uuid, String
     .execute(pool)
     .await
     .expect("insert user");
+    sqlx::query(
+        "INSERT INTO user_companies (user_id, company_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+    )
+    .bind(user_id)
+    .bind(company_id)
+    .execute(pool)
+    .await
+    .expect("insert user company");
     (user_id, email, password.to_string())
 }
 

@@ -132,6 +132,36 @@ pub async fn move_pending_to_taken(
 }
 
 /// Undo one day of "Replacement Leave" entitlement for an employee/year (used
+/// when cancelling an approved public-holiday OT), refusing if that day has
+/// already been consumed or reserved by a leave request.
+pub async fn try_subtract_entitled_replacement(
+    executor: impl Executor<'_, Database = Postgres>,
+    employee_id: Uuid,
+    year: i32,
+    company_id: Uuid,
+) -> AppResult<bool> {
+    let rows = sqlx::query!(
+        r#"UPDATE leave_balances lb
+           SET entitled_days = lb.entitled_days - 1, updated_at = NOW()
+           FROM leave_types lt
+           WHERE lb.leave_type_id = lt.id
+             AND lb.employee_id = $1
+             AND lb.year = $2
+             AND lt.company_id = $3
+             AND lt.name = 'Replacement Leave'
+             AND lb.entitled_days >= 1
+             AND (lb.entitled_days - 1 + lb.carried_forward) >= (lb.taken_days + lb.pending_days)"#,
+        employee_id,
+        year,
+        company_id,
+    )
+    .execute(executor)
+    .await?
+    .rows_affected();
+    Ok(rows == 1)
+}
+
+/// Undo one day of "Replacement Leave" entitlement for an employee/year (used
 /// when cancelling an approved public-holiday OT).
 //
 // NOTE: indentation matches the byte-exact SQL in the offline `.sqlx` cache
@@ -207,6 +237,33 @@ pub async fn upsert_entitled(
     Ok(balance)
 }
 
+pub async fn lock_for_update(
+    executor: impl Executor<'_, Database = Postgres>,
+    employee_id: Uuid,
+    leave_type_id: Uuid,
+    year: i32,
+) -> AppResult<Option<(Decimal, Decimal, Decimal, Decimal)>> {
+    let balance = sqlx::query!(
+        r#"SELECT entitled_days, taken_days, pending_days, carried_forward
+                    FROM leave_balances
+                    WHERE employee_id = $1 AND leave_type_id = $2 AND year = $3
+                    FOR UPDATE"#,
+        employee_id,
+        leave_type_id,
+        year,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(balance.map(|b| {
+        (
+            b.entitled_days,
+            b.taken_days,
+            b.pending_days,
+            b.carried_forward,
+        )
+    }))
+}
+
 pub async fn get_balance_for_year(
     executor: impl Executor<'_, Database = Postgres>,
     employee_id: Uuid,
@@ -231,6 +288,97 @@ pub async fn get_balance_for_year(
             b.carried_forward,
         )
     }))
+}
+
+pub async fn upsert_entitled_batch(
+    executor: impl Executor<'_, Database = Postgres>,
+    employee_ids: &[Uuid],
+    leave_type_ids: &[Uuid],
+    years: &[i32],
+    entitled_days: &[Decimal],
+) -> AppResult<Vec<crate::models::portal::LeaveBalance>> {
+    if employee_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let balances = sqlx::query_as!(
+        crate::models::portal::LeaveBalance,
+        r#"INSERT INTO leave_balances (employee_id, leave_type_id, year, entitled_days)
+            SELECT employee_id, leave_type_id, year, entitled_days
+            FROM UNNEST($1::uuid[], $2::uuid[], $3::int4[], $4::numeric[])
+                AS t(employee_id, leave_type_id, year, entitled_days)
+            ON CONFLICT (employee_id, leave_type_id, year) DO NOTHING
+            RETURNING *"#,
+        employee_ids,
+        leave_type_ids,
+        years,
+        entitled_days,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(balances)
+}
+
+pub async fn list_for_company_year(
+    executor: impl Executor<'_, Database = Postgres>,
+    company_id: Uuid,
+    year: i32,
+) -> AppResult<Vec<(Uuid, Uuid, Decimal, Decimal, Decimal, Decimal)>> {
+    let rows = sqlx::query!(
+        r#"SELECT lb.employee_id, lb.leave_type_id,
+                  lb.entitled_days, lb.taken_days, lb.pending_days, lb.carried_forward
+           FROM leave_balances lb
+           JOIN employees e ON e.id = lb.employee_id
+           WHERE e.company_id = $1
+             AND e.is_active = TRUE
+             AND e.deleted_at IS NULL
+             AND lb.year = $2"#,
+        company_id,
+        year,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| {
+            (
+                r.employee_id,
+                r.leave_type_id,
+                r.entitled_days,
+                r.taken_days,
+                r.pending_days,
+                r.carried_forward,
+            )
+        })
+        .collect())
+}
+
+pub async fn upsert_carried_forward_batch(
+    executor: impl Executor<'_, Database = Postgres>,
+    employee_ids: &[Uuid],
+    leave_type_ids: &[Uuid],
+    years: &[i32],
+    entitled_days: &[Decimal],
+    carried_forward: &[Decimal],
+) -> AppResult<u64> {
+    if employee_ids.is_empty() {
+        return Ok(0);
+    }
+    let res = sqlx::query!(
+        r#"INSERT INTO leave_balances (employee_id, leave_type_id, year, entitled_days, carried_forward)
+            SELECT employee_id, leave_type_id, year, entitled_days, carried_forward
+            FROM UNNEST($1::uuid[], $2::uuid[], $3::int4[], $4::numeric[], $5::numeric[])
+                AS t(employee_id, leave_type_id, year, entitled_days, carried_forward)
+            ON CONFLICT (employee_id, leave_type_id, year)
+            DO UPDATE SET carried_forward = EXCLUDED.carried_forward, updated_at = NOW()"#,
+        employee_ids,
+        leave_type_ids,
+        years,
+        entitled_days,
+        carried_forward,
+    )
+    .execute(executor)
+    .await?;
+    Ok(res.rows_affected())
 }
 
 pub async fn upsert_carried_forward(

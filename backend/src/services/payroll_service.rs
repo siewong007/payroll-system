@@ -94,11 +94,12 @@ pub async fn list_run_audit_logs(
     pool: &PgPool,
     company_id: Uuid,
     run_id: Uuid,
+    hide_privileged: bool,
 ) -> AppResult<Vec<AuditLogWithUser>> {
     if !payroll_runs::exists(pool, run_id, company_id).await? {
         return Err(AppError::NotFound("Payroll run not found".into()));
     }
-    audit_reads::list_for_run(pool, company_id, run_id).await
+    audit_reads::list_for_run(pool, company_id, run_id, hide_privileged).await
 }
 
 /// Hard-delete a non-locked run and revert its staged entries/claims, in one transaction.
@@ -109,7 +110,11 @@ pub async fn delete_run(
     actor_id: Uuid,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<()> {
+    let existing = payroll_runs::get_for_company(pool, id, company_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Payroll run not found".into()))?;
     let mut tx = pool.begin().await?;
+    payroll_runs::acquire_tax_year_lock(&mut *tx, company_id, existing.period_year).await?;
     let run = payroll_runs::get_for_company_locked(&mut *tx, id, company_id)
         .await?
         .ok_or_else(|| AppError::NotFound("Payroll run not found".into()))?;
@@ -185,7 +190,11 @@ pub async fn update_item_pcb(
         return Err(AppError::BadRequest("PCB amount cannot be negative".into()));
     }
 
+    let existing = payroll_runs::get_for_company(pool, run_id, company_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Payroll run not found".into()))?;
     let mut tx = pool.begin().await?;
+    payroll_runs::acquire_tax_year_lock(&mut *tx, company_id, existing.period_year).await?;
 
     let run_row = payroll_runs::get_status_locked(&mut *tx, run_id, company_id)
         .await?
@@ -253,17 +262,15 @@ pub async fn update_item_pcb(
 
     payroll_runs::bump_pcb_totals(&mut *tx, run_id, company_id, delta, actor_id).await?;
 
-    tx.commit().await?;
-
-    let summary = get_summary(pool, company_id, run_id).await?;
-
+    // Write the item-edit audit trail inside the same transaction so maker-checker
+    // enforcement in `approve` cannot miss a PCB edit via post-commit lag or failure.
     let _ = audit_service::log_action_with_metadata(
-        pool,
+        &mut *tx,
         Some(company_id),
         Some(actor_id),
         "update",
         "payroll_item",
-        None,
+        Some(run_id),
         Some(serde_json::json!({
             "payroll_run_id": run_id,
             "employee_id": employee_id,
@@ -279,7 +286,9 @@ pub async fn update_item_pcb(
     )
     .await;
 
-    Ok(summary)
+    tx.commit().await?;
+
+    get_summary(pool, company_id, run_id).await
 }
 
 // ─── Payroll overview (operational dashboard) ───
@@ -342,6 +351,7 @@ async fn build_action_queue(pool: &PgPool, company_id: Uuid) -> AppResult<Vec<Pa
     // Data-quality flags: (read fn, diagnostic code, severity, message).
     // Codes match `PayrollDiagnostic.code` in payroll_engine where the same
     // condition exists there, so the UI can cross-link without prose matching.
+    let flag_map = overview_reads::action_queue_employee_flags(pool, company_id, SAMPLE).await?;
     let checks: [(&str, &str, &str, &str); 5] = [
         (
             "missing_date_of_birth",
@@ -375,21 +385,11 @@ async fn build_action_queue(pool: &PgPool, company_id: Uuid) -> AppResult<Vec<Pa
         ),
     ];
     for (key, code, severity, message) in checks {
-        let (count, employees) = match key {
-            "missing_date_of_birth" => {
-                overview_reads::missing_date_of_birth(pool, company_id, SAMPLE).await?
-            }
-            "inactive_without_resignation_date" => {
-                overview_reads::inactive_without_resignation(pool, company_id, SAMPLE).await?
-            }
-            "missing_payroll_group" => {
-                overview_reads::missing_payroll_group(pool, company_id, SAMPLE).await?
-            }
-            "missing_bank_account" => {
-                overview_reads::missing_bank_account(pool, company_id, SAMPLE).await?
-            }
-            _ => overview_reads::missing_statutory_ids(pool, company_id, SAMPLE).await?,
+        let Some((count, employees)) = flag_map.get(key) else {
+            continue;
         };
+        let count = *count;
+        let employees = employees.clone();
         if count == 0 {
             continue;
         }
@@ -454,8 +454,7 @@ pub async fn overview(pool: &PgPool, company_id: Uuid) -> AppResult<PayrollOverv
         }
         None => Vec::new(),
     };
-    let mut recent_runs = payroll_runs::list_for_company(pool, company_id).await?;
-    recent_runs.truncate(5);
+    let recent_runs = payroll_runs::list_recent_for_company(pool, company_id, 5).await?;
     let action_queue = build_action_queue(pool, company_id).await?;
 
     Ok(PayrollOverview {
@@ -571,15 +570,13 @@ pub async fn journal_preview(
     }
 
     let departments = payroll_reads::run_department_totals(pool, run_id).await?;
-    let items = payroll_items::list_for_run(pool, run_id).await?;
-    let total_claims: i64 = items.iter().map(|i| i.total_claims).sum();
-    let total_ptptn: i64 = items.iter().map(|i| i.ptptn_amount).sum();
-    let total_tabung_haji: i64 = items.iter().map(|i| i.tabung_haji_amount).sum();
-    let total_other_deductions: i64 = items
-        .iter()
-        .map(|i| i.total_loan_deductions + i.total_other_deductions)
-        .sum();
-    let total_unpaid_leave: i64 = items.iter().map(|i| i.unpaid_leave_deduction).sum();
+    let crate::models::payroll::RunJournalItemTotals {
+        total_claims,
+        total_ptptn,
+        total_tabung_haji,
+        total_other_deductions,
+        total_unpaid_leave,
+    } = payroll_reads::run_journal_item_totals(pool, run_id).await?;
 
     let mut lines: Vec<JournalLine> = Vec::new();
     let mut push = |side: &str,

@@ -146,7 +146,12 @@ fn is_payroll_audit_key(key: &str, entity_type: &str) -> bool {
         entity_type,
         "payroll_entry" | "payroll_run" | "payroll_item" | "salary_history"
     );
-    if is_payroll_entity && matches!(k.as_str(), "amount" | "rate" | "quantity") {
+    if is_payroll_entity
+        && matches!(
+            k.as_str(),
+            "amount" | "rate" | "quantity" | "description" | "notes" | "reason" | "cancel_reason"
+        )
+    {
         return true;
     }
     if entity_type == "tp3_record"
@@ -189,6 +194,8 @@ fn is_payroll_audit_key(key: &str, entity_type: &str) -> bool {
             | "salary_group"
             | "payroll_group_id"
             | "unpaid_leave_divisor"
+            | "working_spouse"
+            | "is_muslim"
     ) || k.starts_with("bank_")
         || k.starts_with("epf_")
         || k.starts_with("socso_")
@@ -215,10 +222,14 @@ fn is_personal_audit_key(key: &str) -> bool {
             | "address"
             | "address_line1"
             | "address_line2"
+            | "city"
+            | "state"
             | "postcode"
             | "bank_name"
             | "bank_account_number"
             | "bank_account_type"
+            | "working_spouse"
+            | "is_muslim"
     )
 }
 

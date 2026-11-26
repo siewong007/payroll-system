@@ -112,17 +112,39 @@ self.addEventListener('fetch', (event) => {
   );
 });
 
+function hasControlOrBackslash(value) {
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code <= 0x1f || code === 0x7f || code === 0x5c) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isSafeRelativeAssetPath(value) {
+  return (
+    typeof value === 'string' &&
+    value.startsWith('/') &&
+    !value.startsWith('//') &&
+    !hasControlOrBackslash(value)
+  );
+}
+
 function sanitizeNotificationUrl(rawUrl) {
   if (typeof rawUrl !== 'string' || !rawUrl) {
     return DEFAULT_NOTIFICATION_URL;
   }
   const trimmed = rawUrl.trim();
+  if (hasControlOrBackslash(trimmed)) {
+    return DEFAULT_NOTIFICATION_URL;
+  }
   if (trimmed.startsWith('/') && !trimmed.startsWith('//')) {
     return trimmed;
   }
   try {
     const parsed = new URL(trimmed, self.location.origin);
-    if (parsed.origin === self.location.origin) {
+    if (parsed.origin === self.location.origin && !hasControlOrBackslash(parsed.pathname)) {
       return `${parsed.pathname}${parsed.search}${parsed.hash}`;
     }
   } catch {
@@ -146,16 +168,8 @@ self.addEventListener('push', (event) => {
       ? payload.title.trim()
       : 'PayrollMY';
   const body = typeof payload.body === 'string' ? payload.body : '';
-  const icon =
-    typeof payload.icon === 'string' && payload.icon.startsWith('/') && !payload.icon.startsWith('//')
-      ? payload.icon
-      : '/icons/icon-192.png';
-  const badge =
-    typeof payload.badge === 'string' &&
-    payload.badge.startsWith('/') &&
-    !payload.badge.startsWith('//')
-      ? payload.badge
-      : '/icons/badge-72.png';
+  const icon = isSafeRelativeAssetPath(payload.icon) ? payload.icon : '/icons/icon-192.png';
+  const badge = isSafeRelativeAssetPath(payload.badge) ? payload.badge : '/icons/badge-72.png';
   const tag = typeof payload.tag === 'string' && payload.tag ? payload.tag : undefined;
   const targetUrl = sanitizeNotificationUrl(payload.url);
 

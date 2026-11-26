@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -9,6 +9,7 @@ import {
   Clock,
   Download,
   FileText,
+  Loader2,
   Lock,
   Pencil,
   RotateCcw,
@@ -41,6 +42,7 @@ import { usePermissions } from '@/lib/usePermissions';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { useConfirm } from '@/lib/confirm';
 import { usePrompt } from '@/lib/prompt';
 import { useToast } from '@/lib/toast';
@@ -78,6 +80,13 @@ export function PayrollDetail() {
   const [journal, setJournal] = useState<JournalPreview | null>(null);
   const [downloadingPayslips, setDownloadingPayslips] = useState(false);
   const [downloadingPayment, setDownloadingPayment] = useState(false);
+  const pcbInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (editingPcbEmployeeId) {
+      pcbInputRef.current?.focus();
+    }
+  }, [editingPcbEmployeeId]);
 
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['payrollRun', id],
@@ -85,7 +94,13 @@ export function PayrollDetail() {
     enabled: !!id,
   });
 
-  const { data: auditLogs = [] } = useQuery({
+  const {
+    data: auditLogs = [],
+    isLoading: loadingAuditLogs,
+    isError: auditLogsError,
+    error: auditLogsErrorObj,
+    refetch: refetchAuditLogs,
+  } = useQuery({
     queryKey: ['payrollRunAuditLogs', id],
     queryFn: () => getPayrollRunAuditLogs(id!),
     enabled: !!id,
@@ -216,34 +231,69 @@ export function PayrollDetail() {
     },
   });
 
+  const baseBreadcrumbs = [
+    { label: t('nav.payroll'), href: '/payroll' },
+    { label: t('payroll.listTitle'), href: '/payroll/runs' },
+  ];
+
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-64" role="status">
-        <span className="sr-only">{t('common.loading')}</span>
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[var(--accent-1)]" />
+      <div className="space-y-6">
+        <PageHeader
+          className="mb-0"
+          title={t('payroll.listTitle')}
+          breadcrumbs={baseBreadcrumbs}
+        />
+        <div role="status" aria-busy="true" aria-label={t('common.loading')} className="space-y-6">
+          <Skeleton className="h-16 w-full rounded-2xl" />
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {[0, 1, 2, 3].map((i) => (
+              <Skeleton key={i} className="h-20 w-full rounded-2xl" />
+            ))}
+          </div>
+          <Skeleton className="h-72 w-full rounded-2xl" />
+        </div>
       </div>
     );
   }
 
   if (isError) {
     return (
-      <div className="card">
-        <EmptyState
-          icon={AlertTriangle}
-          title={t('payroll.detail.loadFailed')}
-          description={getErrorMessage(error, t('payroll.detail.loadFailed'))}
-          action={
-            <button type="button" onClick={() => void refetch()} className="btn-primary">
-              {t('common.retry')}
-            </button>
-          }
+      <div className="space-y-6">
+        <PageHeader
+          className="mb-0"
+          title={t('payroll.listTitle')}
+          breadcrumbs={baseBreadcrumbs}
         />
+        <div className="card">
+          <EmptyState
+            icon={AlertTriangle}
+            title={t('payroll.detail.loadFailed')}
+            description={getErrorMessage(error, t('payroll.detail.loadFailed'))}
+            action={
+              <button type="button" onClick={() => void refetch()} className="btn-primary">
+                {t('common.retry')}
+              </button>
+            }
+          />
+        </div>
       </div>
     );
   }
 
   if (!data) {
-    return <div className="text-center text-gray-500 dark:text-slate-400 py-12">{t('payroll.detail.notFound')}</div>;
+    return (
+      <div className="space-y-6">
+        <PageHeader
+          className="mb-0"
+          title={t('payroll.listTitle')}
+          breadcrumbs={baseBreadcrumbs}
+        />
+        <div className="card">
+          <EmptyState compact icon={FileText} title={t('payroll.detail.notFound')} />
+        </div>
+      </div>
+    );
   }
 
   const { payroll_run: run, items } = data;
@@ -329,7 +379,11 @@ export function PayrollDetail() {
                 disabled={downloadingPayslips}
                 className="no-print btn-secondary min-h-11 disabled:opacity-50"
               >
-                <Download className="w-4 h-4" aria-hidden="true" />
+                {downloadingPayslips ? (
+                  <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                ) : (
+                  <Download className="w-4 h-4" aria-hidden="true" />
+                )}
                 {downloadingPayslips ? t('common.downloading') : t('payroll.detail.downloadPayslips')}
               </button>
             )}
@@ -346,9 +400,13 @@ export function PayrollDetail() {
                   }
                 }}
                 disabled={deleteMutation.isPending}
-                className="no-print flex items-center gap-2 bg-white dark:bg-slate-900 border border-red-200 dark:border-red-500/30 text-red-600 dark:text-red-400 px-4 py-2 min-h-[44px] rounded-xl hover:bg-red-50 dark:hover:bg-red-500/10 disabled:opacity-50 text-sm font-medium transition-colors"
+                className="no-print flex items-center gap-2 bg-white dark:bg-slate-900 border border-red-200 dark:border-red-500/30 text-red-600 dark:text-red-400 px-4 py-2 min-h-[44px] rounded-xl hover:bg-red-50 dark:hover:bg-red-500/10 disabled:opacity-50 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
               >
-                <Trash2 className="w-4 h-4" aria-hidden="true" />
+                {deleteMutation.isPending ? (
+                  <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                ) : (
+                  <Trash2 className="w-4 h-4" aria-hidden="true" />
+                )}
                 {deleteMutation.isPending ? t('common.deleting') : t('common.delete')}
               </button>
             )}
@@ -367,7 +425,11 @@ export function PayrollDetail() {
                 disabled={submitMutation.isPending}
                 className="no-print btn-primary min-h-11"
               >
-                <Send className="w-4 h-4" aria-hidden="true" />
+                {submitMutation.isPending ? (
+                  <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                ) : (
+                  <Send className="w-4 h-4" aria-hidden="true" />
+                )}
                 {submitMutation.isPending ? t('payroll.detail.submitting') : t('payroll.detail.submitForApproval')}
               </button>
             )}
@@ -387,7 +449,11 @@ export function PayrollDetail() {
                   disabled={returnMutation.isPending}
                   className="no-print btn-secondary min-h-11"
                 >
-                  <RotateCcw className="w-4 h-4" aria-hidden="true" />
+                  {returnMutation.isPending ? (
+                    <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <RotateCcw className="w-4 h-4" aria-hidden="true" />
+                  )}
                   {returnMutation.isPending ? t('payroll.detail.returning') : t('payroll.detail.return')}
                 </button>
                 <button
@@ -406,9 +472,13 @@ export function PayrollDetail() {
                   }}
                   disabled={approveMutation.isPending || selfApprovalBlocked}
                   title={selfApprovalBlocked ? t('payroll.detail.selfApprovalBlocked') : undefined}
-                  className="no-print flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 min-h-[44px] rounded-xl hover:bg-emerald-700 disabled:opacity-50 text-sm font-semibold transition-colors"
+                  className="no-print flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 min-h-[44px] rounded-xl hover:bg-emerald-700 disabled:opacity-50 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                 >
-                  <CheckCircle className="w-4 h-4" aria-hidden="true" />
+                  {approveMutation.isPending ? (
+                    <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <CheckCircle className="w-4 h-4" aria-hidden="true" />
+                  )}
                   {approveMutation.isPending ? t('payroll.detail.approving') : t('payroll.detail.approve')}
                 </button>
               </>
@@ -428,7 +498,11 @@ export function PayrollDetail() {
                 disabled={lockMutation.isPending}
                 className="no-print btn-primary min-h-11"
               >
-                <Lock className="w-4 h-4" aria-hidden="true" />
+                {lockMutation.isPending ? (
+                  <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                ) : (
+                  <Lock className="w-4 h-4" aria-hidden="true" />
+                )}
                 {lockMutation.isPending ? t('payroll.detail.locking') : t('payroll.detail.lockMarkPaid')}
               </button>
             )}
@@ -440,7 +514,11 @@ export function PayrollDetail() {
                   disabled={downloadingPayment}
                   className="no-print btn-secondary min-h-11 disabled:opacity-50"
                 >
-                  <Download className="w-4 h-4" aria-hidden="true" />
+                  {downloadingPayment ? (
+                    <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <Download className="w-4 h-4" aria-hidden="true" />
+                  )}
                   {downloadingPayment ? t('common.downloading') : t('payroll.detail.paymentFile')}
                 </button>
                 <button
@@ -449,7 +527,11 @@ export function PayrollDetail() {
                   disabled={journalMutation.isPending}
                   className="no-print btn-secondary min-h-11"
                 >
-                  <FileText className="w-4 h-4" aria-hidden="true" />
+                  {journalMutation.isPending ? (
+                    <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <FileText className="w-4 h-4" aria-hidden="true" />
+                  )}
                   {journalMutation.isPending ? t('common.loading') : t('payroll.detail.journalPreview')}
                 </button>
               </>
@@ -468,9 +550,13 @@ export function PayrollDetail() {
                   if (reason) cancelMutation.mutate(reason);
                 }}
                 disabled={cancelMutation.isPending}
-                className="no-print flex items-center gap-2 bg-white dark:bg-slate-900 border border-red-200 dark:border-red-500/30 text-red-600 dark:text-red-400 px-4 py-2 min-h-[44px] rounded-xl hover:bg-red-50 dark:hover:bg-red-500/10 disabled:opacity-50 text-sm font-medium transition-colors"
+                className="no-print flex items-center gap-2 bg-white dark:bg-slate-900 border border-red-200 dark:border-red-500/30 text-red-600 dark:text-red-400 px-4 py-2 min-h-[44px] rounded-xl hover:bg-red-50 dark:hover:bg-red-500/10 disabled:opacity-50 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
               >
-                <Ban className="w-4 h-4" aria-hidden="true" />
+                {cancelMutation.isPending ? (
+                  <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                ) : (
+                  <Ban className="w-4 h-4" aria-hidden="true" />
+                )}
                 {cancelMutation.isPending ? t('payroll.detail.cancelling') : t('payroll.detail.cancelRun')}
               </button>
             )}
@@ -488,9 +574,13 @@ export function PayrollDetail() {
                   if (reason) reverseMutation.mutate(reason);
                 }}
                 disabled={reverseMutation.isPending}
-                className="no-print flex items-center gap-2 bg-white dark:bg-slate-900 border border-red-200 dark:border-red-500/30 text-red-600 dark:text-red-400 px-4 py-2 min-h-[44px] rounded-xl hover:bg-red-50 dark:hover:bg-red-500/10 disabled:opacity-50 text-sm font-medium transition-colors"
+                className="no-print flex items-center gap-2 bg-white dark:bg-slate-900 border border-red-200 dark:border-red-500/30 text-red-600 dark:text-red-400 px-4 py-2 min-h-[44px] rounded-xl hover:bg-red-50 dark:hover:bg-red-500/10 disabled:opacity-50 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
               >
-                <RotateCcw className="w-4 h-4" aria-hidden="true" />
+                {reverseMutation.isPending ? (
+                  <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                ) : (
+                  <RotateCcw className="w-4 h-4" aria-hidden="true" />
+                )}
                 {reverseMutation.isPending ? t('payroll.detail.reversing') : t('payroll.detail.reverseRun')}
               </button>
             )}
@@ -545,7 +635,13 @@ export function PayrollDetail() {
         </div>
       )}
 
-      <PayrollAuditTimeline logs={auditLogs} />
+      <PayrollAuditTimeline
+        logs={auditLogs}
+        isLoading={loadingAuditLogs}
+        isError={auditLogsError}
+        error={auditLogsErrorObj}
+        onRetry={() => void refetchAuditLogs()}
+      />
 
       {/* Summary Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
@@ -610,7 +706,7 @@ export function PayrollDetail() {
           <table className="w-full">
             <thead className="bg-gray-50 dark:bg-slate-950/70 border-b border-gray-200 dark:border-slate-800">
               <tr>
-                <th className="sticky left-0 z-10 bg-gray-50 dark:bg-slate-950 text-left px-4 py-3 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase whitespace-nowrap">
+                <th className="sticky left-0 z-10 bg-gray-50 dark:bg-slate-950 text-left px-4 py-3 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase whitespace-nowrap max-w-[160px] sm:max-w-xs">
                   {t('employees.columns.employee')}
                 </th>
                 <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase whitespace-nowrap">{t('payroll.cols.basic')}</th>
@@ -628,22 +724,22 @@ export function PayrollDetail() {
             </thead>
             <tbody className="divide-y divide-gray-100 dark:divide-slate-800">
               {items.map((item) => (
-                <tr key={item.employee_id} className="hover:bg-gray-50 dark:hover:bg-slate-800/50">
-                  <td className="sticky left-0 z-10 bg-white dark:bg-slate-900 px-4 py-3 whitespace-nowrap">
+                <tr key={item.employee_id} className="group hover:bg-gray-50 dark:hover:bg-slate-800/50">
+                  <td className="sticky left-0 z-10 bg-white dark:bg-slate-900 group-hover:bg-gray-50 dark:group-hover:bg-slate-800 px-4 py-3 max-w-[160px] sm:max-w-xs whitespace-nowrap transition-colors">
                     <button
                       type="button"
                       onClick={() => setBreakdownEmployeeId(item.employee_id)}
-                      className="text-left min-h-11 py-1 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-1)]"
+                      className="text-left min-h-11 max-w-full py-1 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-1)]"
                     >
-                      <div className="text-sm font-medium text-gray-900 dark:text-slate-100 underline decoration-gray-300 dark:decoration-slate-600 underline-offset-2 hover:decoration-gray-900 dark:hover:decoration-slate-200">
+                      <div className="text-sm font-medium text-gray-900 dark:text-slate-100 truncate underline decoration-gray-300 dark:decoration-slate-600 underline-offset-2 hover:decoration-gray-900 dark:hover:decoration-slate-200">
                         {item.employee_name}
                       </div>
-                      <div className="text-xs text-gray-500 dark:text-slate-400">{item.employee_number}</div>
+                      <div className="text-xs text-gray-500 dark:text-slate-400 truncate">{item.employee_number}</div>
                     </button>
                   </td>
                   <td className="px-4 py-3 text-sm text-right tabular-nums whitespace-nowrap text-gray-900 dark:text-slate-100">{formatMYR(item.basic_salary)}</td>
-                  <td className="px-4 py-3 text-sm text-right tabular-nums whitespace-nowrap text-gray-900 dark:text-slate-100">{item.total_allowances > 0 ? formatMYR(item.total_allowances) : '-'}</td>
-                  <td className="px-4 py-3 text-sm text-right tabular-nums whitespace-nowrap text-gray-900 dark:text-slate-100">{item.total_overtime > 0 ? formatMYR(item.total_overtime) : '-'}</td>
+                  <td className="px-4 py-3 text-sm text-right tabular-nums whitespace-nowrap text-gray-900 dark:text-slate-100">{item.total_allowances > 0 ? formatMYR(item.total_allowances) : '\u2014'}</td>
+                  <td className="px-4 py-3 text-sm text-right tabular-nums whitespace-nowrap text-gray-900 dark:text-slate-100">{item.total_overtime > 0 ? formatMYR(item.total_overtime) : '\u2014'}</td>
                   <td className="px-4 py-3 text-sm text-right tabular-nums whitespace-nowrap text-gray-900 dark:text-slate-100">{formatMYR(item.gross_salary)}</td>
                   <td className="px-4 py-3 text-sm text-right tabular-nums whitespace-nowrap text-gray-900 dark:text-slate-100">{formatMYR(item.epf_employee)}</td>
                   <td className="px-4 py-3 text-sm text-right tabular-nums whitespace-nowrap text-gray-900 dark:text-slate-100">{formatMYR(item.socso_employee)}</td>
@@ -652,7 +748,9 @@ export function PayrollDetail() {
                     {editingPcbEmployeeId === item.employee_id ? (
                       <div className="no-print flex min-w-44 items-center justify-end gap-1.5">
                         <input
+                          ref={pcbInputRef}
                           type="number"
+                          inputMode="decimal"
                           min="0"
                           step="0.01"
                           value={pcbInput}
@@ -667,22 +765,26 @@ export function PayrollDetail() {
                             }
                           }}
                           aria-label={t('payroll.detail.pcbInputLabel', { name: item.employee_name })}
-                          className="w-24 rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-gray-900 dark:text-slate-100 px-2 py-1.5 min-h-11 sm:min-h-9 text-right text-sm outline-none focus:border-[var(--accent-1)] focus:ring-1 focus:ring-[var(--accent-1)]"
+                          className="w-24 rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-gray-900 dark:text-slate-100 px-2 py-1.5 min-h-11 sm:min-h-9 text-right sm:text-sm tabular-nums outline-none focus:border-[var(--accent-1)] focus:ring-1 focus:ring-[var(--accent-1)]"
                         />
                         <button
                           type="button"
                           onClick={() => savePcb(item.employee_id)}
                           disabled={updatePcbMutation.isPending}
-                          className="inline-flex min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 items-center justify-center rounded-lg text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 disabled:opacity-50"
+                          className="inline-flex min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 items-center justify-center rounded-lg text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                           aria-label={t('payroll.detail.savePcb')}
                           title={t('payroll.detail.savePcb')}
                         >
-                          <Save className="w-4 h-4" aria-hidden="true" />
+                          {updatePcbMutation.isPending ? (
+                            <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                          ) : (
+                            <Save className="w-4 h-4" aria-hidden="true" />
+                          )}
                         </button>
                         <button
                           type="button"
                           onClick={cancelEditPcb}
-                          className="inline-flex min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 items-center justify-center rounded-lg text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800"
+                          className="inline-flex min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 items-center justify-center rounded-lg text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                           aria-label={t('payroll.detail.cancelPcbEdit')}
                           title={t('payroll.detail.cancelPcbEdit')}
                         >
@@ -696,7 +798,7 @@ export function PayrollDetail() {
                           <button
                             type="button"
                             onClick={() => startEditPcb(item.employee_id, item.pcb_amount)}
-                            className="no-print inline-flex min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 items-center justify-center rounded-lg text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 hover:text-gray-900 dark:hover:text-slate-100"
+                            className="no-print inline-flex min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 items-center justify-center rounded-lg text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 hover:text-gray-900 dark:hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                             aria-label={t('payroll.detail.editPcb')}
                             title={t('payroll.detail.editPcb')}
                           >
@@ -708,7 +810,7 @@ export function PayrollDetail() {
                   </td>
                   <td className="px-4 py-3 text-sm text-right tabular-nums whitespace-nowrap text-red-600 dark:text-red-400">{formatMYR(item.total_deductions)}</td>
                   <td className="px-4 py-3 text-sm text-right tabular-nums whitespace-nowrap">
-                    {item.total_claims > 0 ? <span className="text-blue-600 dark:text-blue-400">{formatMYR(item.total_claims)}</span> : '-'}
+                    {item.total_claims > 0 ? <span className="text-blue-600 dark:text-blue-400">{formatMYR(item.total_claims)}</span> : '\u2014'}
                   </td>
                   <td className="px-4 py-3 text-sm text-right font-bold tabular-nums whitespace-nowrap text-emerald-700 dark:text-emerald-400">{formatMYR(item.net_salary)}</td>
                 </tr>
@@ -850,7 +952,19 @@ function CalculationProvenance({ snapshot }: { snapshot: PayrollSummary['calcula
   );
 }
 
-function PayrollAuditTimeline({ logs }: { logs: Awaited<ReturnType<typeof getPayrollRunAuditLogs>> }) {
+function PayrollAuditTimeline({
+  logs,
+  isLoading,
+  isError,
+  error,
+  onRetry,
+}: {
+  logs: Awaited<ReturnType<typeof getPayrollRunAuditLogs>>;
+  isLoading: boolean;
+  isError: boolean;
+  error: unknown;
+  onRetry: () => void;
+}) {
   const { t } = useTranslation();
   const [showAllLogs, setShowAllLogs] = useState(false);
   const visibleLogs = showAllLogs ? logs : logs.slice(0, 6);
@@ -860,19 +974,43 @@ function PayrollAuditTimeline({ logs }: { logs: Awaited<ReturnType<typeof getPay
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-sm font-semibold text-gray-900 dark:text-slate-100">{t('payroll.detail.auditTitle')}</h2>
         <div className="flex items-center gap-3">
-          <span className="text-xs text-gray-500 dark:text-slate-400">{t('payroll.detail.auditRecords', { count: logs.length })}</span>
-          {logs.length > 6 && (
+          {!isLoading && !isError && (
+            <span className="text-xs text-gray-500 dark:text-slate-400 tabular-nums">
+              {t('payroll.detail.auditRecords', { count: logs.length })}
+            </span>
+          )}
+          {!isLoading && !isError && logs.length > 6 && (
             <button
               type="button"
               onClick={() => setShowAllLogs((prev) => !prev)}
-              className="no-print text-xs font-medium text-[var(--accent-1)] hover:underline min-h-9 px-1"
+              className="no-print text-xs font-medium text-[var(--accent-1)] hover:underline min-h-11 sm:min-h-9 px-1 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
             >
               {showAllLogs ? t('payroll.detail.showFewerLogs') : t('payroll.detail.showAllLogs', { count: formatNumber(logs.length) })}
             </button>
           )}
         </div>
       </div>
-      {visibleLogs.length === 0 ? (
+      {isLoading ? (
+        <div role="status" aria-busy="true" aria-label={t('common.loading')} className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {[0, 1, 2].map((i) => (
+            <Skeleton key={i} className="h-20 w-full rounded-xl" />
+          ))}
+        </div>
+      ) : isError ? (
+        <div
+          role="alert"
+          className="rounded-xl border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-950/30 px-4 py-3 text-sm text-amber-800 dark:text-amber-200 flex flex-wrap items-center justify-between gap-2"
+        >
+          <span>{getErrorMessage(error, t('payroll.detail.loadFailed'))}</span>
+          <button
+            type="button"
+            onClick={onRetry}
+            className="btn-secondary min-h-11 sm:min-h-9 !py-1.5 !px-3 text-xs shrink-0"
+          >
+            {t('common.retry')}
+          </button>
+        </div>
+      ) : visibleLogs.length === 0 ? (
         <p className="text-sm text-gray-500 dark:text-slate-400">{t('payroll.detail.auditEmpty')}</p>
       ) : (
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">

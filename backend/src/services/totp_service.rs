@@ -8,7 +8,9 @@ use crate::core::crypto;
 use crate::core::error::{AppError, AppResult};
 use crate::models::totp::TotpSetupResponse;
 use crate::models::user::User;
-use crate::repositories::{refresh_tokens, user_sessions, user_totp, user_totp_backup_codes};
+use crate::repositories::{
+    mfa_challenges, refresh_tokens, user_sessions, user_totp, user_totp_backup_codes,
+};
 use crate::services::audit_service::{self, AuditRequestMeta};
 use crate::services::auth_service;
 
@@ -92,16 +94,7 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 /// Verifies the current password and returns the user row, so callers that
 /// need the account's company scope for auditing do not have to re-fetch it.
 async fn verify_password(pool: &PgPool, user_id: Uuid, password: &str) -> AppResult<User> {
-    let user = auth_service::get_user_by_id(pool, user_id).await?;
-    // A malformed stored hash is an authentication failure, not a server
-    // fault — reporting it as one would turn a data problem into a 500.
-    let valid = auth_service::verify_password(password, &user.password_hash)
-        .await
-        .map_err(|_| AppError::BadRequest("Current password is incorrect".into()))?;
-    if !valid {
-        return Err(AppError::BadRequest("Current password is incorrect".into()));
-    }
-    Ok(user)
+    auth_service::verify_user_password(pool, user_id, password).await
 }
 
 /// Starts (or restarts) enrollment: generates a fresh secret, stores it
@@ -159,19 +152,24 @@ pub async fn confirm_setup(
     encryption_key: &str,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<Vec<String>> {
-    confirm_setup_with_session(pool, user_id, None, code, encryption_key, audit_meta).await
+    confirm_setup_with_session(pool, user_id, None, None, code, encryption_key, audit_meta).await
 }
 
-/// Session-aware variant used by HTTP setup confirmation so other active
-/// sessions are revoked upon 2FA enrollment without dropping the caller's own.
+/// Session-aware variant used by HTTP setup confirmation so current password is
+/// re-verified and other active sessions are revoked upon 2FA enrollment.
 pub async fn confirm_setup_with_session(
     pool: &PgPool,
     user_id: Uuid,
     current_session_id: Option<Uuid>,
+    password: Option<&str>,
     code: &str,
     encryption_key: &str,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<Vec<String>> {
+    if let Some(pw) = password {
+        verify_password(pool, user_id, pw).await?;
+    }
+
     let row = user_totp::find_by_user(pool, user_id)
         .await?
         .ok_or_else(|| AppError::BadRequest("No 2FA setup in progress".into()))?;
@@ -205,9 +203,12 @@ pub async fn confirm_setup_with_session(
     let hashes = hash_backup_codes(backup_codes.clone()).await?;
 
     let mut tx = pool.begin().await?;
-    user_totp::confirm(&mut *tx, user_id, matched_step).await?;
+    if !user_totp::confirm(&mut *tx, user_id, matched_step).await? {
+        return Err(AppError::Conflict("2FA is already enabled".into()));
+    }
     user_totp_backup_codes::delete_for_user(&mut *tx, user_id).await?;
     user_totp_backup_codes::insert_many(&mut *tx, user_id, &hashes, &lookup_hashes).await?;
+    mfa_challenges::revoke_for_user(&mut *tx, user_id).await?;
     if let Some(sid) = current_session_id {
         user_sessions::revoke_others(&mut *tx, user_id, sid).await?;
         refresh_tokens::revoke_other_sessions(&mut *tx, user_id, sid).await?;
@@ -249,6 +250,157 @@ pub async fn is_enabled<'e>(
 const MAX_2FA_ATTEMPTS: i32 = 5;
 const LOCK_2FA_MINUTES: i64 = 15;
 
+/// Verifies a login-time code against a server-tracked single-use MFA challenge
+/// (`jti`), locking both `mfa_challenges` and `user_totp` rows so concurrent
+/// brute-force attempts or token replays serialize cleanly.
+pub async fn verify_login_code_for_challenge(
+    pool: &PgPool,
+    user_id: Uuid,
+    jti: Uuid,
+    code: &str,
+    encryption_key: &str,
+) -> AppResult<()> {
+    let mut tx = pool.begin().await?;
+
+    let Some(challenge) = mfa_challenges::find_for_update(&mut *tx, jti, user_id).await? else {
+        return Err(AppError::Unauthorized(
+            "Invalid or expired MFA session".into(),
+        ));
+    };
+    if challenge.consumed_at.is_some()
+        || challenge.expires_at <= chrono::Utc::now()
+        || challenge.attempts >= MAX_2FA_ATTEMPTS
+    {
+        return Err(AppError::Unauthorized(
+            "Invalid or expired MFA session".into(),
+        ));
+    }
+
+    let row = user_totp::find_by_user_for_update(&mut *tx, user_id)
+        .await?
+        .filter(|r| r.enabled)
+        .ok_or_else(|| AppError::Unauthorized("2FA is not enabled".into()))?;
+
+    if row
+        .locked_until
+        .is_some_and(|until| until > chrono::Utc::now())
+    {
+        return Err(AppError::TooManyRequests(
+            "Too many failed 2FA attempts. Please try again later.".into(),
+        ));
+    }
+
+    let trimmed = code.trim();
+
+    if let Ok(totp) = crypto::decrypt_secret(&row.secret_encrypted, encryption_key)
+        .and_then(|secret_b32| build_totp(parse_secret(&secret_b32)?, ""))
+    {
+        let now_step = chrono::Utc::now().timestamp() / 30;
+        let mut matched_step: Option<i64> = None;
+        for offset in [-1i64, 0, 1] {
+            let step = now_step + offset;
+            if step >= 0 {
+                let expected = totp.generate((step as u64) * 30).to_string();
+                if constant_time_eq(trimmed.as_bytes(), expected.as_bytes()) {
+                    matched_step = Some(step);
+                }
+            }
+        }
+        if let Some(step) = matched_step {
+            if user_totp::claim_totp_step(&mut *tx, user_id, step).await?
+                && mfa_challenges::consume(&mut *tx, jti, user_id, MAX_2FA_ATTEMPTS).await?
+            {
+                tx.commit().await?;
+                return Ok(());
+            }
+            mfa_challenges::record_failed_attempt(&mut *tx, jti, user_id).await?;
+            user_totp::record_failure(&mut *tx, user_id, MAX_2FA_ATTEMPTS, LOCK_2FA_MINUTES)
+                .await?;
+            tx.commit().await?;
+            return Err(AppError::Unauthorized("Invalid authentication code".into()));
+        }
+    }
+
+    let normalized = trimmed.to_ascii_uppercase();
+    let lookup_hash = backup_code_lookup_hash(encryption_key, user_id, &normalized);
+
+    let lookup_candidate =
+        user_totp_backup_codes::find_unused_by_lookup(&mut *tx, user_id, &lookup_hash).await?;
+    let candidates: Vec<(Uuid, String)> = if let Some(candidate) = lookup_candidate {
+        vec![(candidate.id, candidate.code_hash)]
+    } else {
+        user_totp_backup_codes::find_unused_legacy(&mut *tx, user_id)
+            .await?
+            .into_iter()
+            .map(|c| (c.id, c.code_hash))
+            .collect()
+    };
+
+    if candidates.is_empty() {
+        mfa_challenges::record_failed_attempt(&mut *tx, jti, user_id).await?;
+        user_totp::record_failure(&mut *tx, user_id, MAX_2FA_ATTEMPTS, LOCK_2FA_MINUTES).await?;
+        tx.commit().await?;
+        return Err(AppError::Unauthorized("Invalid authentication code".into()));
+    }
+
+    // Release row locks and the DB connection before CPU-intensive bcrypt verification
+    // so concurrent login/2FA traffic does not hold DB connections across bcrypt waits.
+    tx.rollback().await?;
+
+    let matched_id = tokio::task::spawn_blocking(move || {
+        candidates.into_iter().find_map(|(id, hash)| {
+            if bcrypt::verify(&normalized, &hash).unwrap_or(false) {
+                Some(id)
+            } else {
+                None
+            }
+        })
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("Backup code verification task failed: {e}")))?;
+
+    let mut tx = pool.begin().await?;
+    let Some(challenge) = mfa_challenges::find_for_update(&mut *tx, jti, user_id).await? else {
+        return Err(AppError::Unauthorized(
+            "Invalid or expired MFA session".into(),
+        ));
+    };
+    if challenge.consumed_at.is_some()
+        || challenge.expires_at <= chrono::Utc::now()
+        || challenge.attempts >= MAX_2FA_ATTEMPTS
+    {
+        return Err(AppError::Unauthorized(
+            "Invalid or expired MFA session".into(),
+        ));
+    }
+    let row = user_totp::find_by_user_for_update(&mut *tx, user_id)
+        .await?
+        .filter(|r| r.enabled)
+        .ok_or_else(|| AppError::Unauthorized("2FA is not enabled".into()))?;
+    if row
+        .locked_until
+        .is_some_and(|until| until > chrono::Utc::now())
+    {
+        return Err(AppError::TooManyRequests(
+            "Too many failed 2FA attempts. Please try again later.".into(),
+        ));
+    }
+
+    if let Some(id) = matched_id
+        && user_totp_backup_codes::mark_used(&mut *tx, id).await?
+        && mfa_challenges::consume(&mut *tx, jti, user_id, MAX_2FA_ATTEMPTS).await?
+    {
+        user_totp::reset_failures(&mut *tx, user_id).await?;
+        tx.commit().await?;
+        return Ok(());
+    }
+
+    mfa_challenges::record_failed_attempt(&mut *tx, jti, user_id).await?;
+    user_totp::record_failure(&mut *tx, user_id, MAX_2FA_ATTEMPTS, LOCK_2FA_MINUTES).await?;
+    tx.commit().await?;
+    Err(AppError::Unauthorized("Invalid authentication code".into()))
+}
+
 /// Verifies a login-time code: a current TOTP code, or (as a fallback) an
 /// unused backup code, which is consumed on success. Used only at the
 /// post-primary-auth MFA gate.
@@ -258,19 +410,130 @@ pub async fn verify_login_code(
     code: &str,
     encryption_key: &str,
 ) -> AppResult<()> {
-    verify_code_inner(pool, user_id, code, encryption_key, true).await
+    verify_code_inner(pool, user_id, code, encryption_key).await
 }
 
-/// Passwordless `/auth/login/code` variant: verifies the code without mutating
-/// `user_totp.failed_attempts` / `locked_until` so unauthenticated callers
-/// cannot DoS-lock a victim's normal password + 2FA login flow.
+/// Passwordless `/auth/login/code` variant: verifies the code against its own
+/// isolated lockout bucket (`code_login_failed_attempts` /
+/// `code_login_locked_until`) so unauthenticated attackers are rate-limited
+/// without locking out the user's password + 2FA login flow.
 pub async fn verify_code_login(
     pool: &PgPool,
     user_id: Uuid,
     code: &str,
     encryption_key: &str,
 ) -> AppResult<()> {
-    verify_code_inner(pool, user_id, code, encryption_key, false).await
+    let mut tx = pool.begin().await?;
+    let row = user_totp::find_by_user_for_update(&mut *tx, user_id)
+        .await?
+        .filter(|r| r.enabled)
+        .ok_or_else(|| AppError::Unauthorized("2FA is not enabled".into()))?;
+
+    if row
+        .code_login_locked_until
+        .is_some_and(|until| until > chrono::Utc::now())
+    {
+        return Err(AppError::TooManyRequests(
+            "Too many failed 2FA attempts. Please try again later.".into(),
+        ));
+    }
+
+    let trimmed = code.trim();
+
+    if let Ok(totp) = crypto::decrypt_secret(&row.secret_encrypted, encryption_key)
+        .and_then(|secret_b32| build_totp(parse_secret(&secret_b32)?, ""))
+    {
+        let now_step = chrono::Utc::now().timestamp() / 30;
+        let mut matched_step: Option<i64> = None;
+        for offset in [-1i64, 0, 1] {
+            let step = now_step + offset;
+            if step >= 0 {
+                let expected = totp.generate((step as u64) * 30).to_string();
+                if constant_time_eq(trimmed.as_bytes(), expected.as_bytes()) {
+                    matched_step = Some(step);
+                }
+            }
+        }
+        if let Some(step) = matched_step {
+            if user_totp::claim_code_login_step(&mut *tx, user_id, step).await? {
+                tx.commit().await?;
+                return Ok(());
+            }
+            user_totp::record_code_login_failure(
+                &mut *tx,
+                user_id,
+                MAX_2FA_ATTEMPTS,
+                LOCK_2FA_MINUTES,
+            )
+            .await?;
+            tx.commit().await?;
+            return Err(AppError::Unauthorized("Invalid authentication code".into()));
+        }
+    }
+
+    let normalized = trimmed.to_ascii_uppercase();
+    let lookup_hash = backup_code_lookup_hash(encryption_key, user_id, &normalized);
+
+    let lookup_candidate =
+        user_totp_backup_codes::find_unused_by_lookup(&mut *tx, user_id, &lookup_hash).await?;
+    let candidates: Vec<(Uuid, String)> = if let Some(candidate) = lookup_candidate {
+        vec![(candidate.id, candidate.code_hash)]
+    } else {
+        user_totp_backup_codes::find_unused_legacy(&mut *tx, user_id)
+            .await?
+            .into_iter()
+            .map(|c| (c.id, c.code_hash))
+            .collect()
+    };
+
+    if candidates.is_empty() {
+        user_totp::record_code_login_failure(&mut *tx, user_id, MAX_2FA_ATTEMPTS, LOCK_2FA_MINUTES)
+            .await?;
+        tx.commit().await?;
+        return Err(AppError::Unauthorized("Invalid authentication code".into()));
+    }
+
+    // Release row lock and DB connection before bcrypt verification.
+    tx.rollback().await?;
+
+    let matched_id = tokio::task::spawn_blocking(move || {
+        candidates.into_iter().find_map(|(id, hash)| {
+            if bcrypt::verify(&normalized, &hash).unwrap_or(false) {
+                Some(id)
+            } else {
+                None
+            }
+        })
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("Backup code verification task failed: {e}")))?;
+
+    let mut tx = pool.begin().await?;
+    let row = user_totp::find_by_user_for_update(&mut *tx, user_id)
+        .await?
+        .filter(|r| r.enabled)
+        .ok_or_else(|| AppError::Unauthorized("2FA is not enabled".into()))?;
+    if row
+        .code_login_locked_until
+        .is_some_and(|until| until > chrono::Utc::now())
+    {
+        return Err(AppError::TooManyRequests(
+            "Too many failed 2FA attempts. Please try again later.".into(),
+        ));
+    }
+
+    if let Some(id) = matched_id
+        && user_totp_backup_codes::mark_used(&mut *tx, id).await?
+    {
+        user_totp::reset_code_login_failures(&mut *tx, user_id).await?;
+        tx.commit().await?;
+        return Ok(());
+    }
+
+    user_totp::record_code_login_failure(&mut *tx, user_id, MAX_2FA_ATTEMPTS, LOCK_2FA_MINUTES)
+        .await?;
+    tx.commit().await?;
+    Err(AppError::Unauthorized("Invalid authentication code".into()))
 }
 
 async fn verify_code_inner(
@@ -278,7 +541,6 @@ async fn verify_code_inner(
     user_id: Uuid,
     code: &str,
     encryption_key: &str,
-    record_lockout: bool,
 ) -> AppResult<()> {
     let row = user_totp::find_by_user(pool, user_id)
         .await?
@@ -315,10 +577,8 @@ async fn verify_code_inner(
                 if user_totp::claim_totp_step(pool, user_id, step).await? {
                     return Ok(());
                 }
-                if record_lockout {
-                    user_totp::record_failure(pool, user_id, MAX_2FA_ATTEMPTS, LOCK_2FA_MINUTES)
-                        .await?;
-                }
+                user_totp::record_failure(pool, user_id, MAX_2FA_ATTEMPTS, LOCK_2FA_MINUTES)
+                    .await?;
                 return Err(AppError::Unauthorized("Invalid authentication code".into()));
             }
         }
@@ -374,9 +634,7 @@ async fn verify_code_inner(
         return Ok(());
     }
 
-    if record_lockout {
-        user_totp::record_failure(pool, user_id, MAX_2FA_ATTEMPTS, LOCK_2FA_MINUTES).await?;
-    }
+    user_totp::record_failure(pool, user_id, MAX_2FA_ATTEMPTS, LOCK_2FA_MINUTES).await?;
     Err(AppError::Unauthorized("Invalid authentication code".into()))
 }
 
@@ -384,6 +642,18 @@ async fn verify_code_inner(
 pub async fn disable(
     pool: &PgPool,
     user_id: Uuid,
+    password: &str,
+    audit_meta: Option<&AuditRequestMeta>,
+) -> AppResult<()> {
+    disable_with_session(pool, user_id, None, password, audit_meta).await
+}
+
+/// Session-aware variant used by HTTP 2FA removal so any other sessions and
+/// pending MFA challenges are revoked without dropping the caller's session.
+pub async fn disable_with_session(
+    pool: &PgPool,
+    user_id: Uuid,
+    current_session_id: Option<Uuid>,
     password: &str,
     audit_meta: Option<&AuditRequestMeta>,
 ) -> AppResult<()> {
@@ -395,6 +665,11 @@ pub async fn disable(
     let rows = user_totp::delete_for_user(&mut *tx, user_id).await?;
     if rows == 0 {
         return Err(AppError::NotFound("2FA is not enabled".into()));
+    }
+    mfa_challenges::revoke_for_user(&mut *tx, user_id).await?;
+    if let Some(sid) = current_session_id {
+        user_sessions::revoke_others(&mut *tx, user_id, sid).await?;
+        refresh_tokens::revoke_other_sessions(&mut *tx, user_id, sid).await?;
     }
     tx.commit().await?;
 
@@ -550,6 +825,7 @@ pub async fn admin_reset(
     user_totp::delete_for_user(&mut *tx, target_user_id).await?;
     user_sessions::revoke_all_for_user(&mut *tx, target_user_id).await?;
     refresh_tokens::revoke_all_for_user(&mut *tx, target_user_id).await?;
+    mfa_challenges::revoke_for_user(&mut *tx, target_user_id).await?;
 
     // Scoped to the target's company so the reset shows up in that tenant's
     // own audit view, not just in a platform-wide query.

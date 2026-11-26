@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n               COUNT(*) AS \"total_employees!\",\n               COUNT(DISTINCT department) AS \"total_departments!\"\n           FROM employees\n           WHERE company_id = $1 AND is_active = TRUE AND deleted_at IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "total_employees!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "total_departments!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "a22601c58c55c79c170bd114a48e10c1413214bb9818d19f8270528a0748514b"
+}

@@ -202,6 +202,7 @@ const ms: Messages = {
     adminBadge: 'Pentadbir',
     adminConsoleBadge: 'Konsol Pentadbir',
     accountSecurity: 'Akaun & Keselamatan',
+    preferences: 'Keutamaan',
     signOut: 'Log Keluar',
     portal: {
       profile: 'Profil Saya',
@@ -386,6 +387,9 @@ const ms: Messages = {
       sessionLost: 'Sesi anda tidak dapat dipulihkan. Sila log masuk dan cuba memaut semula.',
       missingData: 'Pemautan akaun Google gagal. Data pengesahan tiada.',
       linkFailed: 'Tidak dapat memautkan akaun Google.',
+      confirmTitle: 'Sahkan pautan akaun Google',
+      confirmPrompt: 'Masukkan kata laluan semasa anda untuk melengkapkan pemautan akaun Google anda.',
+      confirmAction: 'Pautkan akaun Google',
     },
     twoFactor: {
       title: 'Pengesahan dua faktor',
@@ -832,7 +836,7 @@ const ms: Messages = {
       steps: {
         1: '1. Buka PayrollMY pada telefon anda',
         2: '2. Ketik "Kehadiran" dalam portal',
-        3: '3. Imbas kod QR di atas',
+        3: '3. Imbas kod QR pada skrin',
         4: '4. Sahkan lokasi anda',
       },
       autoRegen: 'Kod QR dijana semula secara automatik',

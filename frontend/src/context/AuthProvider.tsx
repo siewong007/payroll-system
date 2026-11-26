@@ -84,8 +84,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const completeTwoFactorLogin = useCallback(
-    async (mfaToken: string, code: string): Promise<User> => {
-      const data = await verifyTwoFactorLogin(mfaToken, code);
+    async (mfaToken: string, code: string, turnstileToken?: string): Promise<User> => {
+      const data = await verifyTwoFactorLogin(mfaToken, code, turnstileToken);
       // Refresh token is set as httpOnly cookie by the server
       setSession(data.token, data.user);
       return data.user;

@@ -2,7 +2,7 @@ import { useEffect, useId, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Calculator, Lock, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-react';
+import { Calculator, Loader2, Lock, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-react';
 import {
   createPayrollEntry,
   deletePayrollEntry,
@@ -62,6 +62,7 @@ export function PayrollProcess() {
   const [notes, setNotes] = useState('');
   const [processError, setProcessError] = useState('');
   const [editingEntry, setEditingEntry] = useState<PayrollEntryWithEmployee | null>(null);
+  const [deletingEntryId, setDeletingEntryId] = useState<string | null>(null);
   const [entryError, setEntryError] = useState('');
   const [entryForm, setEntryForm] = useState({
     employee_id: '',
@@ -209,6 +210,7 @@ export function PayrollProcess() {
 
   const deleteEntryMutation = useMutation({
     mutationFn: deletePayrollEntry,
+    onMutate: (entryId) => setDeletingEntryId(entryId),
     onSuccess: (_data, deletedId) => {
       queryClient.invalidateQueries({ queryKey: ['payrollEntries'] });
       invalidatePreview();
@@ -219,6 +221,7 @@ export function PayrollProcess() {
     onError: (err: unknown) => {
       toast.error(getErrorMessage(err, t('payroll.process.deleteEntryFailed')));
     },
+    onSettled: () => setDeletingEntryId(null),
   });
 
   const runRequest = () => ({
@@ -403,7 +406,7 @@ export function PayrollProcess() {
             className="rounded-xl border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-950/30 px-4 py-3 text-sm text-red-700 dark:text-red-300 flex items-center justify-between gap-2"
           >
             <span>{getErrorMessage(groupsErrorObj, t('common.error'))}</span>
-            <button type="button" onClick={() => void refetchGroups()} className="underline font-medium shrink-0">
+            <button type="button" onClick={() => void refetchGroups()} className="btn-secondary min-h-11 sm:min-h-9 !py-1.5 !px-3 text-xs shrink-0">
               {t('common.retry')}
             </button>
           </div>
@@ -471,7 +474,11 @@ export function PayrollProcess() {
           disabled={!groupId || previewMutation.isPending}
           className="btn-primary min-h-11 w-full sm:w-auto justify-center px-6"
         >
-          <Calculator className="w-4 h-4" aria-hidden="true" />
+          {previewMutation.isPending ? (
+            <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+          ) : (
+            <Calculator className="w-4 h-4" aria-hidden="true" />
+          )}
           {previewMutation.isPending ? t('payroll.process.calculating') : t('payroll.process.reviewButton')}
         </button>
       </div>
@@ -509,18 +516,23 @@ export function PayrollProcess() {
 
         <fieldset
           disabled={adjustmentsLocked}
-          className="grid grid-cols-1 gap-4 border-b border-gray-100 dark:border-slate-800 p-6 lg:grid-cols-6 disabled:opacity-60"
+          className="grid grid-cols-1 gap-4 border-b border-gray-100 dark:border-slate-800 p-6 md:grid-cols-2 xl:grid-cols-6 disabled:opacity-60"
         >
-          <div className="lg:col-span-2">
-            <span className="form-label">{t('employees.columns.employee')} *</span>
-            {/* Keyed on the entry so switching between two edits cannot leave the
-                previous employee's name in the box. */}
-            <EmployeePicker
-              key={editingEntry?.id ?? 'new'}
-              value={entryForm.employee_id}
-              onChange={(id, label) => setEntryForm((prev) => ({ ...prev, employee_id: id, employee_label: label }))}
-              initialLabel={entryForm.employee_label || undefined}
-            />
+          <div className="md:col-span-2 xl:col-span-2">
+            <FormField label={t('employees.columns.employee')} required>
+              {(aria) => (
+                /* Keyed on the entry so switching between two edits cannot leave the
+                   previous employee's name in the box. */
+                <EmployeePicker
+                  key={editingEntry?.id ?? 'new'}
+                  id={aria.id}
+                  aria-describedby={aria['aria-describedby']}
+                  value={entryForm.employee_id}
+                  onChange={(id, label) => setEntryForm((prev) => ({ ...prev, employee_id: id, employee_label: label }))}
+                  initialLabel={entryForm.employee_label || undefined}
+                />
+              )}
+            </FormField>
           </div>
           <div>
             <FormField label={t('payroll.process.entryKind')} required>
@@ -572,11 +584,12 @@ export function PayrollProcess() {
                 <input
                   {...aria}
                   type="number"
+                  inputMode="decimal"
                   min="0"
                   step="0.01"
                   value={entryForm.amount}
                   onChange={(e) => setEntryForm((prev) => ({ ...prev, amount: e.target.value }))}
-                  className="form-input"
+                  className="form-input tabular-nums"
                   placeholder="0.00"
                 />
               )}
@@ -589,11 +602,15 @@ export function PayrollProcess() {
               disabled={adjustmentsLocked || saveEntryMutation.isPending}
               className="btn-primary min-h-11 w-full justify-center"
             >
-              <Plus className="w-4 h-4" aria-hidden="true" />
+              {saveEntryMutation.isPending ? (
+                <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <Plus className="w-4 h-4" aria-hidden="true" />
+              )}
               {saveEntryMutation.isPending ? t('common.saving') : editingEntry ? t('common.update') : t('common.add')}
             </button>
           </div>
-          <div className="lg:col-span-3">
+          <div className="md:col-span-2 xl:col-span-3">
             <FormField label={t('payroll.process.description')} required>
               {(aria) => (
                 <input
@@ -612,11 +629,12 @@ export function PayrollProcess() {
                 <input
                   {...aria}
                   type="number"
+                  inputMode="decimal"
                   min="0"
                   step="0.01"
                   value={entryForm.quantity}
                   onChange={(e) => setEntryForm((prev) => ({ ...prev, quantity: e.target.value }))}
-                  className="form-input"
+                  className="form-input tabular-nums"
                 />
               )}
             </FormField>
@@ -627,31 +645,32 @@ export function PayrollProcess() {
                 <input
                   {...aria}
                   type="number"
+                  inputMode="decimal"
                   min="0"
                   step="0.01"
                   value={entryForm.rate}
                   onChange={(e) => setEntryForm((prev) => ({ ...prev, rate: e.target.value }))}
-                  className="form-input"
+                  className="form-input tabular-nums"
                 />
               )}
             </FormField>
           </div>
           <label
             htmlFor={taxableCheckboxId}
-            className="flex items-center gap-2 pt-1 lg:pt-7 text-sm font-medium text-gray-700 dark:text-slate-300"
+            className="min-h-11 sm:min-h-9 flex items-center gap-2.5 pt-1 xl:pt-7 text-sm font-medium text-gray-700 dark:text-slate-300 cursor-pointer"
           >
             <input
               id={taxableCheckboxId}
               type="checkbox"
               checked={entryForm.is_taxable}
               onChange={(e) => setEntryForm((prev) => ({ ...prev, is_taxable: e.target.checked }))}
-              className="h-4 w-4 rounded border-gray-300 dark:border-slate-600 text-[var(--accent-1)] focus:ring-[var(--accent-1)]"
+              className="h-4 w-4 rounded border-gray-300 dark:border-slate-600 accent-[var(--accent-1)] focus:ring-[var(--ring)]"
             />
             {t('payroll.process.taxable')}
           </label>
           {entryError && (
             <div
-              className="lg:col-span-6 rounded-xl border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-950/30 px-4 py-3 text-sm text-red-700 dark:text-red-300"
+              className="md:col-span-2 xl:col-span-6 rounded-xl border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-950/30 px-4 py-3 text-sm text-red-700 dark:text-red-300"
               role="alert"
             >
               {entryError}
@@ -665,102 +684,185 @@ export function PayrollProcess() {
             className="mx-6 mb-4 rounded-xl border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-950/30 px-4 py-3 text-sm text-red-700 dark:text-red-300 flex items-center justify-between gap-2"
           >
             <span>{getErrorMessage(entriesErrorObj, t('common.error'))}</span>
-            <button type="button" onClick={() => void refetchEntries()} className="underline font-medium shrink-0">
+            <button type="button" onClick={() => void refetchEntries()} className="btn-secondary min-h-11 sm:min-h-9 !py-1.5 !px-3 text-xs shrink-0">
               {t('common.retry')}
             </button>
           </div>
         )}
 
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-gray-50 dark:bg-slate-950/70 text-left">
-              <tr>
-                <th className="px-6 py-3 text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-slate-400">{t('employees.columns.employee')}</th>
-                <th className="px-6 py-3 text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-slate-400">{t('payroll.process.colType')}</th>
-                <th className="px-6 py-3 text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-slate-400">{t('payroll.process.description')}</th>
-                <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-slate-400">{t('common.amount')}</th>
-                <th className="px-6 py-3 text-center text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-slate-400">{t('payroll.process.taxable')}</th>
-                <th className="px-6 py-3 text-center text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-slate-400">{t('common.actions')}</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100 dark:divide-slate-800">
-              {entries.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="px-6 py-10 text-center text-sm text-gray-500 dark:text-slate-400">
-                    {t('payroll.process.noAdjustments', { period: formatPeriod(year, month) })}
-                  </td>
-                </tr>
-              ) : entries.map((entry) => {
+        {entries.length === 0 ? (
+          <div className="px-6 py-10 text-center text-sm text-gray-500 dark:text-slate-400">
+            {t('payroll.process.noAdjustments', { period: formatPeriod(year, month) })}
+          </div>
+        ) : (
+          <>
+            <div className="md:hidden divide-y divide-gray-100 dark:divide-slate-800">
+              {entries.map((entry) => {
                 const isAutoManaged = Boolean(
                   entry.overtime_application_id ||
                     entry.leave_request_id ||
                     entry.item_type === 'overtime' ||
                     entry.item_type === 'claim_reimbursement',
                 );
+                const isDeletingThis = deletingEntryId === entry.id && deleteEntryMutation.isPending;
                 return (
-                <tr key={entry.id} className="hover:bg-gray-50 dark:hover:bg-slate-800/50">
-                  <td className="px-6 py-4 text-sm">
-                    <div className="font-medium text-gray-900 dark:text-slate-100">{entry.employee_name}</div>
-                    <div className="text-xs text-gray-500 dark:text-slate-400">{entry.employee_number}</div>
-                  </td>
-                  <td className="px-6 py-4 text-sm">
-                    <span className={`badge ${entry.category === 'earning' ? 'badge-approved' : 'badge-rejected'}`}>
-                      {getEntryKindLabel(entry, t)}
-                    </span>
-                    <div className="mt-1 text-xs text-gray-500 dark:text-slate-400">
-                      {formatEntryItemType(entry.item_type, t)}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 text-sm text-gray-700 dark:text-slate-300">{entry.description}</td>
-                  <td className="px-6 py-4 text-right text-sm font-semibold tabular-nums whitespace-nowrap text-gray-900 dark:text-slate-100">
-                    {formatMYR(entry.amount)}
-                  </td>
-                  <td className="px-6 py-4 text-center text-sm text-gray-600 dark:text-slate-300">
-                    {entry.is_taxable ? t('common.yes') : t('common.no')}
-                  </td>
-                  <td className="px-6 py-4 text-center">
-                    {isAutoManaged ? (
-                      <span className="text-xs text-gray-400 dark:text-slate-500">
-                        {t('payroll.process.approvalManaged')}
-                      </span>
-                    ) : (
-                      <div className="flex items-center justify-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() => startEditEntry(entry)}
-                          disabled={adjustmentsLocked}
-                          className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-40 transition-colors"
-                          aria-label={t('common.edit')}
-                          title={t('common.edit')}
-                        >
-                          <Pencil className="w-4 h-4" aria-hidden="true" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            if (adjustmentsLocked) return;
-                            const ok = await confirmDialog({
-                              description: t('payroll.process.deleteEntryConfirm'),
-                              variant: 'danger',
-                            });
-                            if (ok) deleteEntryMutation.mutate(entry.id);
-                          }}
-                          disabled={adjustmentsLocked || deleteEntryMutation.isPending}
-                          className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 disabled:opacity-40 transition-colors"
-                          aria-label={t('common.delete')}
-                          title={t('common.delete')}
-                        >
-                          <Trash2 className="w-4 h-4" aria-hidden="true" />
-                        </button>
+                  <div key={entry.id} className="p-4 space-y-2.5">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="font-medium text-sm text-gray-900 dark:text-slate-100 truncate">
+                          {entry.employee_name}
+                        </div>
+                        <div className="text-xs text-gray-500 dark:text-slate-400">{entry.employee_number}</div>
                       </div>
-                    )}
-                  </td>
-                </tr>
+                      <span className="text-sm font-semibold tabular-nums whitespace-nowrap text-gray-900 dark:text-slate-100 shrink-0">
+                        {formatMYR(entry.amount)}
+                      </span>
+                    </div>
+                    <p className="text-sm text-gray-700 dark:text-slate-300 break-words">{entry.description}</p>
+                    <div className="flex items-center justify-between gap-2 pt-1">
+                      <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-slate-400">
+                        <span className={`badge ${entry.category === 'earning' ? 'badge-approved' : 'badge-rejected'}`}>
+                          {getEntryKindLabel(entry, t)}
+                        </span>
+                        <span>{formatEntryItemType(entry.item_type, t)}</span>
+                        <span>· {t('payroll.process.taxable')}: {entry.is_taxable ? t('common.yes') : t('common.no')}</span>
+                      </div>
+                      {isAutoManaged ? (
+                        <span className="text-xs text-gray-500 dark:text-slate-400 shrink-0">
+                          {t('payroll.process.approvalManaged')}
+                        </span>
+                      ) : (
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => startEditEntry(entry)}
+                            disabled={adjustmentsLocked}
+                            className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-40 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+                            aria-label={`${t('common.edit')} \u2014 ${entry.employee_name}`}
+                            title={t('common.edit')}
+                          >
+                            <Pencil className="w-4 h-4" aria-hidden="true" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              if (adjustmentsLocked) return;
+                              const ok = await confirmDialog({
+                                description: t('payroll.process.deleteEntryConfirm'),
+                                variant: 'danger',
+                              });
+                              if (ok) deleteEntryMutation.mutate(entry.id);
+                            }}
+                            disabled={adjustmentsLocked || isDeletingThis}
+                            className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 disabled:opacity-40 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+                            aria-label={t('common.deleteName', { name: entry.description })}
+                            title={t('common.delete')}
+                          >
+                            {isDeletingThis ? (
+                              <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                            ) : (
+                              <Trash2 className="w-4 h-4" aria-hidden="true" />
+                            )}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 );
               })}
-            </tbody>
-          </table>
-        </div>
+            </div>
+
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-gray-50 dark:bg-slate-950/70 text-left">
+                  <tr>
+                    <th className="px-6 py-3 text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-slate-400">{t('employees.columns.employee')}</th>
+                    <th className="px-6 py-3 text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-slate-400">{t('payroll.process.colType')}</th>
+                    <th className="px-6 py-3 text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-slate-400">{t('payroll.process.description')}</th>
+                    <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-slate-400">{t('common.amount')}</th>
+                    <th className="px-6 py-3 text-center text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-slate-400">{t('payroll.process.taxable')}</th>
+                    <th className="px-6 py-3 text-center text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-slate-400">{t('common.actions')}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 dark:divide-slate-800">
+                  {entries.map((entry) => {
+                    const isAutoManaged = Boolean(
+                      entry.overtime_application_id ||
+                        entry.leave_request_id ||
+                        entry.item_type === 'overtime' ||
+                        entry.item_type === 'claim_reimbursement',
+                    );
+                    const isDeletingThis = deletingEntryId === entry.id && deleteEntryMutation.isPending;
+                    return (
+                      <tr key={entry.id} className="hover:bg-gray-50 dark:hover:bg-slate-800/50">
+                        <td className="px-6 py-4 text-sm">
+                          <div className="font-medium text-gray-900 dark:text-slate-100">{entry.employee_name}</div>
+                          <div className="text-xs text-gray-500 dark:text-slate-400">{entry.employee_number}</div>
+                        </td>
+                        <td className="px-6 py-4 text-sm">
+                          <span className={`badge ${entry.category === 'earning' ? 'badge-approved' : 'badge-rejected'}`}>
+                            {getEntryKindLabel(entry, t)}
+                          </span>
+                          <div className="mt-1 text-xs text-gray-500 dark:text-slate-400">
+                            {formatEntryItemType(entry.item_type, t)}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-sm text-gray-700 dark:text-slate-300">{entry.description}</td>
+                        <td className="px-6 py-4 text-right text-sm font-semibold tabular-nums whitespace-nowrap text-gray-900 dark:text-slate-100">
+                          {formatMYR(entry.amount)}
+                        </td>
+                        <td className="px-6 py-4 text-center text-sm text-gray-600 dark:text-slate-300">
+                          {entry.is_taxable ? t('common.yes') : t('common.no')}
+                        </td>
+                        <td className="px-6 py-4 text-center">
+                          {isAutoManaged ? (
+                            <span className="text-xs text-gray-500 dark:text-slate-400">
+                              {t('payroll.process.approvalManaged')}
+                            </span>
+                          ) : (
+                            <div className="flex items-center justify-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => startEditEntry(entry)}
+                                disabled={adjustmentsLocked}
+                                className="inline-flex min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 items-center justify-center rounded-lg text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-40 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+                                aria-label={`${t('common.edit')} \u2014 ${entry.employee_name}`}
+                                title={t('common.edit')}
+                              >
+                                <Pencil className="w-4 h-4" aria-hidden="true" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  if (adjustmentsLocked) return;
+                                  const ok = await confirmDialog({
+                                    description: t('payroll.process.deleteEntryConfirm'),
+                                    variant: 'danger',
+                                  });
+                                  if (ok) deleteEntryMutation.mutate(entry.id);
+                                }}
+                                disabled={adjustmentsLocked || isDeletingThis}
+                                className="inline-flex min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 items-center justify-center rounded-lg text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 disabled:opacity-40 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+                                aria-label={t('common.deleteName', { name: entry.description })}
+                                title={t('common.delete')}
+                              >
+                                {isDeletingThis ? (
+                                  <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                                ) : (
+                                  <Trash2 className="w-4 h-4" aria-hidden="true" />
+                                )}
+                              </button>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

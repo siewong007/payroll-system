@@ -46,6 +46,54 @@ pub async fn insert_lines(
     Ok(())
 }
 
+/// Insert breakdown lines across all payslips in a run in chunked batch UNNEST statements.
+pub async fn insert_lines_batch(
+    executor: &mut sqlx::PgConnection,
+    rows: &[(Uuid, &PayslipLine)],
+) -> AppResult<()> {
+    if rows.is_empty() {
+        return Ok(());
+    }
+
+    for chunk in rows.chunks(2_000) {
+        let mut item_ids = Vec::with_capacity(chunk.len());
+        let mut categories = Vec::with_capacity(chunk.len());
+        let mut item_types = Vec::with_capacity(chunk.len());
+        let mut descriptions = Vec::with_capacity(chunk.len());
+        let mut amounts = Vec::with_capacity(chunk.len());
+        let mut taxable = Vec::with_capacity(chunk.len());
+        let mut statutory = Vec::with_capacity(chunk.len());
+
+        for (item_id, line) in chunk {
+            item_ids.push(*item_id);
+            categories.push(line.category.clone());
+            item_types.push(line.item_type.clone());
+            descriptions.push(line.description.clone());
+            amounts.push(line.amount);
+            taxable.push(line.is_taxable);
+            statutory.push(line.is_statutory);
+        }
+
+        sqlx::query!(
+            r#"INSERT INTO payroll_item_details
+                (payroll_item_id, category, item_type, description, amount, is_taxable, is_statutory)
+            SELECT item_id, category, item_type, description, amount, is_taxable, is_statutory
+            FROM UNNEST($1::uuid[], $2::varchar[], $3::varchar[], $4::varchar[], $5::bigint[], $6::bool[], $7::bool[])
+                AS t(item_id, category, item_type, description, amount, is_taxable, is_statutory)"#,
+            &item_ids,
+            &categories,
+            &item_types,
+            &descriptions,
+            &amounts,
+            &taxable,
+            &statutory,
+        )
+        .execute(&mut *executor)
+        .await?;
+    }
+    Ok(())
+}
+
 /// Breakdown lines for one payslip, earnings before deductions.
 pub async fn list_for_item(
     executor: impl Executor<'_, Database = Postgres>,

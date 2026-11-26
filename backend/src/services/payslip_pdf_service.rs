@@ -14,11 +14,11 @@ pub async fn generate_payslip_pdf(
     payslip_id: Uuid,
     employee_id: Uuid,
 ) -> AppResult<Vec<u8>> {
-    let data = payslip_reads::payslip_for_employee(pool, payslip_id, employee_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound("Payslip not found".into()))?;
+    let (data, company) =
+        payslip_reads::payslip_and_company_for_employee(pool, payslip_id, employee_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("Payslip not found".into()))?;
 
-    let company = payslip_reads::company_for_employee(pool, employee_id).await?;
     let lines = payroll_item_details::list_for_item(pool, payslip_id).await?;
 
     render_payslip_page(&data, &company, &lines)

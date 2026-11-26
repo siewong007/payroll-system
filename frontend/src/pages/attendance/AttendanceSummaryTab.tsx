@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   Clock,
   Download,
+  Loader2,
   LogOut,
   Timer,
 } from 'lucide-react';
@@ -16,6 +17,8 @@ import {
   getAttendanceSummary,
   type AttendanceSummaryItem,
 } from '@/api/attendance';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { getErrorMessage } from '@/lib/utils';
 import { attStatusLabel, firstOfMonth } from './attendanceHelpers';
 
@@ -27,7 +30,7 @@ export function StatsBar({ today, onShowOpen }: { today: string; onShowOpen: () 
   // collapse to zero while still being labelled "today".
   // Key is prefixed with 'attendance-records' so the existing invalidation after
   // a manual entry or edit refreshes these tiles too.
-  const { data, isError } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ['attendance-records', 'today-stats', today],
     queryFn: () => getAttendanceSummary({ date_from: today, date_to: today }),
   });
@@ -36,10 +39,25 @@ export function StatsBar({ today, onShowOpen }: { today: string; onShowOpen: () 
   const late = items.reduce((sum, i) => sum + i.late_days, 0);
   const stillIn = items.reduce((sum, i) => sum + i.unchecked_out_days, 0);
 
+  if (isLoading) {
+    return (
+      <div
+        role="status"
+        aria-busy="true"
+        aria-label={t('common.loading')}
+        className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mb-6"
+      >
+        {[0, 1, 2].map((i) => (
+          <Skeleton key={i} className="h-20 w-full rounded-2xl" />
+        ))}
+      </div>
+    );
+  }
+
   if (isError) {
     return (
-      <div className="bg-white dark:bg-slate-900 border border-gray-200/80 dark:border-slate-800 rounded-2xl shadow-sm p-5 mb-6 flex items-center gap-3 text-sm text-gray-600 dark:text-slate-300">
-        <AlertCircle className="w-5 h-5 text-red-500 shrink-0" />
+      <div className="card !p-5 mb-6 flex items-center gap-3 text-sm text-gray-600 dark:text-slate-300">
+        <AlertCircle className="w-5 h-5 text-red-500 shrink-0" aria-hidden="true" />
         {t('attendance.stats.loadFailed')}
       </div>
     );
@@ -77,16 +95,16 @@ export function StatsBar({ today, onShowOpen }: { today: string; onShowOpen: () 
   ];
 
   return (
-    <div className="grid grid-cols-3 gap-2.5 sm:gap-4 mb-6">
+    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mb-6">
       {tiles.map((s) => {
         const body = (
           <>
-            <div className={`${s.bg} ${s.color} p-2 sm:p-3 rounded-xl shrink-0 w-fit`}>
-              <s.icon className="w-4 h-4 sm:w-5 sm:h-5" />
+            <div className={`${s.bg} ${s.color} p-2.5 sm:p-3 rounded-xl shrink-0 w-fit`}>
+              <s.icon className="w-4 h-4 sm:w-5 sm:h-5" aria-hidden="true" />
             </div>
             <div className="min-w-0">
-              <p className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-slate-100 leading-tight">{s.value}</p>
-              <p className="text-[11px] sm:text-xs text-gray-500 dark:text-slate-400 leading-tight">
+              <p className="text-xl sm:text-2xl font-bold tabular-nums text-gray-900 dark:text-slate-100 leading-tight">{s.value}</p>
+              <p className="text-xs text-gray-500 dark:text-slate-400 leading-tight">
                 <span className="sm:hidden">{s.short}</span>
                 <span className="hidden sm:inline">{s.label}</span>
                 {s.action && s.value > 0 && (
@@ -99,14 +117,14 @@ export function StatsBar({ today, onShowOpen }: { today: string; onShowOpen: () 
           </>
         );
         const shell =
-          'bg-white dark:bg-slate-900 border border-gray-200/80 dark:border-slate-800 rounded-2xl shadow-sm p-3 sm:p-5 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 min-w-0';
+          'card !p-4 sm:!p-5 flex items-center gap-3 sm:gap-4 min-w-0';
 
         return s.action ? (
           <button
             key={s.label}
             type="button"
             onClick={s.action}
-            className={`${shell} text-left cursor-pointer hover:shadow-md transition-shadow`}
+            className={`${shell} min-h-11 text-left cursor-pointer hover:shadow-md transition-shadow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]`}
           >
             {body}
           </button>
@@ -138,7 +156,7 @@ function SummaryCard({ item: i }: { item: AttendanceSummaryItem }) {
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="font-medium text-gray-900 dark:text-slate-100 line-clamp-2">{i.full_name}</p>
-          <p className="text-xs text-gray-400 dark:text-slate-500 truncate">
+          <p className="text-xs text-gray-500 dark:text-slate-400 truncate">
             {i.employee_number}
             {i.department ? ` · ${i.department}` : ''}
           </p>
@@ -146,9 +164,9 @@ function SummaryCard({ item: i }: { item: AttendanceSummaryItem }) {
         {i.unchecked_out_days > 0 && (
           <span
             title={t('attendance.summary.noCheckout')}
-            className="shrink-0 inline-flex items-center gap-1 rounded-full bg-amber-50 dark:bg-amber-500/15 px-2.5 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300"
+            className="shrink-0 inline-flex items-center gap-1 rounded-full bg-amber-50 dark:bg-amber-500/15 px-2.5 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300 tabular-nums"
           >
-            <AlertTriangle className="w-3.5 h-3.5" />
+            <AlertTriangle className="w-3.5 h-3.5" aria-hidden="true" />
             {t('attendance.summary.openDays', { count: i.unchecked_out_days })}
           </span>
         )}
@@ -190,7 +208,7 @@ export function SummaryTab({
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState('');
 
-  const { data, isLoading, isError, refetch } = useQuery({
+  const { data, isLoading, isFetching, isError, refetch } = useQuery({
     queryKey: ['attendance-summary', range],
     queryFn: () => getAttendanceSummary(range),
     enabled: canView,
@@ -199,25 +217,33 @@ export function SummaryTab({
   const items = data ?? [];
 
   return (
-    <div className="bg-white dark:bg-slate-900 border border-gray-200/80 dark:border-slate-800 rounded-2xl shadow-sm overflow-hidden">
-      <div className="flex flex-wrap items-center gap-2.5 sm:gap-3 p-4 sm:p-5 border-b border-gray-100 dark:border-slate-800">
-        <div className="flex w-full sm:w-auto items-center gap-2 text-sm text-gray-600 dark:text-slate-300">
-          <Calendar className="w-4 h-4" /> {t('attendance.summary.period')}
+    <div className="card !p-0 overflow-hidden">
+      <div className="flex flex-wrap items-end gap-2.5 sm:gap-3 p-4 sm:p-5 border-b border-gray-100 dark:border-slate-800">
+        <div className="flex w-full sm:w-auto items-center gap-2 self-center text-sm text-gray-600 dark:text-slate-300">
+          <Calendar className="w-4 h-4" aria-hidden="true" /> {t('attendance.summary.period')}
         </div>
-        <input
-          type="date"
-          value={range.date_from}
-          onChange={(e) => setRange((p) => ({ ...p, date_from: e.target.value }))}
-          aria-label={t('attendance.page.from')}
-          className="form-input !w-auto min-w-[8.5rem] flex-1 sm:flex-none !py-1.5"
-        />
-        <input
-          type="date"
-          value={range.date_to}
-          onChange={(e) => setRange((p) => ({ ...p, date_to: e.target.value }))}
-          aria-label={t('attendance.page.to')}
-          className="form-input !w-auto min-w-[8.5rem] flex-1 sm:flex-none !py-1.5"
-        />
+        <label className="flex flex-col gap-1 min-w-[8.5rem] flex-1 sm:flex-none">
+          <span className="text-xs font-medium text-gray-500 dark:text-slate-400">{t('attendance.page.from')}</span>
+          <input
+            type="date"
+            value={range.date_from}
+            max={range.date_to || undefined}
+            onChange={(e) => setRange((p) => ({ ...p, date_from: e.target.value }))}
+            aria-label={t('attendance.page.from')}
+            className="form-input !w-full min-h-11 sm:min-h-9 !py-1.5 sm:text-xs"
+          />
+        </label>
+        <label className="flex flex-col gap-1 min-w-[8.5rem] flex-1 sm:flex-none">
+          <span className="text-xs font-medium text-gray-500 dark:text-slate-400">{t('attendance.page.to')}</span>
+          <input
+            type="date"
+            value={range.date_to}
+            min={range.date_from || undefined}
+            onChange={(e) => setRange((p) => ({ ...p, date_to: e.target.value }))}
+            aria-label={t('attendance.page.to')}
+            className="form-input !w-full min-h-11 sm:min-h-9 !py-1.5 sm:text-xs"
+          />
+        </label>
         {canExport && (
           <button
             type="button"
@@ -236,9 +262,13 @@ export function SummaryTab({
               }
             }}
             disabled={exporting}
-            className="btn-secondary w-full sm:w-auto sm:ml-auto !py-2 sm:!py-1.5 !min-h-9"
+            className="btn-secondary w-full sm:w-auto sm:ml-auto !py-2 sm:!py-1.5 min-h-11 sm:!min-h-9"
           >
-            <Download className="w-4 h-4 shrink-0" />
+            {exporting ? (
+              <Loader2 className="w-4 h-4 shrink-0 animate-spin" aria-hidden="true" />
+            ) : (
+              <Download className="w-4 h-4 shrink-0" aria-hidden="true" />
+            )}
             {exporting ? t('common.exporting') : t('attendance.summary.exportPeriod')}
           </button>
         )}
@@ -246,28 +276,30 @@ export function SummaryTab({
 
       {exportError && (
         <p role="alert" className="px-5 py-2 text-sm text-red-600 dark:text-red-400 flex items-center gap-1.5">
-          <AlertCircle className="w-3.5 h-3.5 shrink-0" /> {exportError}
+          <AlertCircle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" /> {exportError}
         </p>
       )}
 
       {isLoading ? (
-        <div className="flex items-center justify-center h-48">
-          <div className="spinner" />
+        <div role="status" aria-busy="true" aria-label={t('common.loading')} className="p-4 sm:p-5 space-y-3">
+          {[0, 1, 2, 3].map((i) => (
+            <Skeleton key={i} className="h-14 w-full rounded-xl" />
+          ))}
         </div>
       ) : isError ? (
-        <div className="flex flex-col items-center justify-center h-48 gap-2 text-gray-600 dark:text-slate-300 px-6 text-center">
-          <AlertCircle className="w-8 h-8 text-red-500" />
-          <p className="text-sm">{t('attendance.summary.loadFailed')}</p>
-          <button
-            type="button"
-            onClick={() => refetch()}
-            className="text-sm font-medium text-gray-900 dark:text-slate-100 hover:underline"
-          >
-            {t('common.retry')}
-          </button>
-        </div>
+        <EmptyState
+          icon={AlertCircle}
+          title={t('attendance.summary.loadFailed')}
+          action={
+            <button type="button" onClick={() => refetch()} className="btn-primary">
+              {t('common.retry')}
+            </button>
+          }
+        />
+      ) : items.length === 0 ? (
+        <EmptyState icon={Calendar} title={t('attendance.summary.empty')} />
       ) : (
-        <>
+        <div className={isFetching && !isLoading ? 'opacity-75 transition-opacity' : undefined}>
           {/* Cards below lg, table above — see SummaryCard. */}
           <div className="divide-y divide-gray-100 dark:divide-slate-800 lg:hidden">
             {items.map((i) => (
@@ -304,7 +336,7 @@ export function SummaryTab({
                   <tr key={i.employee_id} className="hover:bg-gray-50/70 dark:hover:bg-slate-800/40 transition-colors">
                     <td className="px-5 py-3">
                       <div className="font-medium text-gray-900 dark:text-slate-100">{i.full_name}</div>
-                      <div className="text-xs text-gray-400 dark:text-slate-500">{i.employee_number}</div>
+                      <div className="text-xs text-gray-500 dark:text-slate-400">{i.employee_number}</div>
                     </td>
                     <td className="px-5 py-3 text-gray-600 dark:text-slate-300">
                       {i.department || t('common.unassigned')}
@@ -322,11 +354,11 @@ export function SummaryTab({
                     <td className="px-5 py-3 tabular-nums">
                       {i.unchecked_out_days > 0 ? (
                         <span className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400 font-medium">
-                          <AlertTriangle className="w-3.5 h-3.5" />
+                          <AlertTriangle className="w-3.5 h-3.5" aria-hidden="true" />
                           {i.unchecked_out_days}
                         </span>
                       ) : (
-                        <span className="text-gray-300 dark:text-slate-600">—</span>
+                        <span className="text-gray-400 dark:text-slate-500">—</span>
                       )}
                     </td>
                   </tr>
@@ -334,14 +366,7 @@ export function SummaryTab({
               </tbody>
             </table>
           </div>
-
-          {items.length === 0 && (
-            <div className="flex flex-col items-center justify-center h-40 text-gray-400 dark:text-slate-500">
-              <Calendar className="w-10 h-10 mb-2 opacity-40" />
-              <p className="text-sm">{t('attendance.summary.empty')}</p>
-            </div>
-          )}
-        </>
+        </div>
       )}
     </div>
   );

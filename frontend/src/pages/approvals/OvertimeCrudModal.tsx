@@ -1,13 +1,14 @@
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { Loader2 } from 'lucide-react';
 import {
   createOvertimeRequest,
   updateOvertimeRequest,
   type OvertimeWithEmployee,
 } from '@/api/approvals';
 import { EmployeePicker } from '@/components/employees/EmployeePicker';
-import { FormField } from '@/components/ui/FormField';
+import { FieldGroup, FormField } from '@/components/ui/FormField';
 import { Modal } from '@/components/ui/Modal';
 import { TimeSelector } from '@/components/ui/TimeSelector';
 import { formatEmployeeLabel } from '@/lib/employeeFields';
@@ -38,6 +39,7 @@ export function OvertimeCrudModal({
 }) {
   const { t } = useTranslation();
   const formId = useId();
+  const errorRef = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
   const [form, setForm] = useState<AdminCreateOvertimeRequest>({
     employee_id: '',
@@ -163,27 +165,49 @@ export function OvertimeCrudModal({
     });
   };
 
+  const isSubmitting = createMutation.isPending || updateMutation.isPending;
+
+  useEffect(() => {
+    if (error) {
+      errorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }, [error]);
+
   return (
     <Modal
       open={open}
-      onClose={onClose}
+      onClose={() => {
+        if (!isSubmitting) {
+          onClose();
+        }
+      }}
       title={modalTitle}
       footer={
         <div className="flex flex-col-reverse sm:flex-row justify-end gap-3">
-          <button type="button" onClick={onClose} className="btn-secondary">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={isSubmitting}
+            className="btn-secondary"
+          >
             {t('common.cancel')}
           </button>
           <button
             type="submit"
             form={formId}
-            disabled={createMutation.isPending || updateMutation.isPending}
+            disabled={isSubmitting}
             className="btn-primary"
           >
-            {createMutation.isPending || updateMutation.isPending
-              ? t('common.saving')
-              : item
-                ? t('common.saveChanges')
-                : t('approvals.createOvertime')}
+            {isSubmitting ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                {t('common.saving')}
+              </>
+            ) : item ? (
+              t('common.saveChanges')
+            ) : (
+              t('approvals.createOvertime')
+            )}
           </button>
         </div>
       }
@@ -197,7 +221,11 @@ export function OvertimeCrudModal({
         className="space-y-4"
       >
         {error && (
-          <div role="alert" className="rounded-lg border border-red-200 dark:border-red-500/30 bg-red-50 dark:bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-300">
+          <div
+            ref={errorRef}
+            role="alert"
+            className="rounded-lg border border-red-200 dark:border-red-500/30 bg-red-50 dark:bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-300"
+          >
             {error}
           </div>
         )}
@@ -230,13 +258,12 @@ export function OvertimeCrudModal({
           )}
         </FormField>
 
-        <div>
-          <label className="form-label">{t('approvals.otType')} *</label>
+        <FieldGroup legend={t('approvals.otType')} required>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
             {(['normal', 'rest_day', 'public_holiday'] as const).map((type) => (
               <label
                 key={type}
-                className={`flex flex-col items-center gap-1 px-3 py-3 rounded-lg border-2 cursor-pointer transition-all text-center focus-within:ring-2 focus-within:ring-black dark:focus-within:ring-slate-400 ${
+                className={`flex min-h-11 flex-col items-center justify-center gap-1 px-3 py-3 rounded-lg border-2 cursor-pointer transition-all text-center focus-within:ring-2 focus-within:ring-[var(--ring)] ${
                   form.ot_type === type
                     ? type === 'public_holiday'
                       ? 'border-red-400 bg-red-50 dark:bg-red-500/15 dark:border-red-400 text-red-900 dark:text-red-200'
@@ -254,33 +281,47 @@ export function OvertimeCrudModal({
                   className="sr-only"
                 />
                 <span className="text-xs font-medium">{t(`enums.otType.${type}`)}</span>
-                <span className="text-[10px] text-gray-500 dark:text-slate-400">
+                <span className="text-xs tabular-nums text-gray-500 dark:text-slate-400">
                   {type === 'normal' ? '1.5x' : type === 'rest_day' ? '2.0x' : '3.0x'}
                 </span>
               </label>
             ))}
           </div>
-        </div>
+        </FieldGroup>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <TimeSelector
-            label={`${t('common.startTime')} *`}
+            label={t('common.startTime')}
+            required
             value={form.start_time}
             onChange={(value) => updateTime('start_time', value)}
           />
           <TimeSelector
-            label={`${t('common.endTime')} *`}
+            label={t('common.endTime')}
+            required
             value={form.end_time}
             onChange={(value) => updateTime('end_time', value)}
           />
         </div>
 
-        {form.hours > 0 && (
-          <div className="bg-gray-50 dark:bg-slate-800/70 rounded-lg p-3 text-center">
-            <span className="text-2xl font-bold text-gray-900 dark:text-slate-100 tabular-nums">{form.hours}</span>
-            <span className="text-sm text-gray-500 dark:text-slate-400 ml-1">{t('common.hours')}</span>
-          </div>
-        )}
+        <div
+          className={`rounded-lg p-3 text-center ${
+            form.hours > 0
+              ? 'bg-gray-50 dark:bg-slate-800/70'
+              : 'border border-amber-200 dark:border-amber-500/30 bg-amber-50/70 dark:bg-amber-500/10'
+          }`}
+        >
+          {form.hours > 0 ? (
+            <>
+              <span className="text-2xl font-bold text-gray-900 dark:text-slate-100 tabular-nums">{form.hours}</span>
+              <span className="text-sm text-gray-500 dark:text-slate-400 ml-1">{t('common.hours')}</span>
+            </>
+          ) : (
+            <p className="text-xs font-medium text-amber-800 dark:text-amber-300">
+              {t('approvals.timesMustDiffer')}
+            </p>
+          )}
+        </div>
 
         <FormField label={t('common.reason')}>
           {(aria) => (

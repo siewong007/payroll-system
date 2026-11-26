@@ -37,6 +37,14 @@ async fn seed_portal_user(pool: &PgPool, company_id: Uuid, employee_id: Uuid) ->
     .execute(pool)
     .await
     .expect("insert portal user");
+    sqlx::query(
+        "INSERT INTO user_companies (user_id, company_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+    )
+    .bind(user_id)
+    .bind(company_id)
+    .execute(pool)
+    .await
+    .expect("insert portal user company");
     user_id
 }
 

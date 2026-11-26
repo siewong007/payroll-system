@@ -1,9 +1,9 @@
-import { useEffect, useId, useMemo, useState } from 'react';
+import { type KeyboardEvent, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, Download, FileText } from 'lucide-react';
+import { AlertTriangle, Download, FileText, Loader2 } from 'lucide-react';
 import { usePermissions } from '@/lib/usePermissions';
 import {
   getReportPeriods,
@@ -246,6 +246,7 @@ export function Reports() {
   const { t } = useTranslation();
   const toast = useToast();
   const tabsIdPrefix = useId();
+  const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const { can } = usePermissions();
   const canViewPayroll = can('view_payroll');
   const canViewStatutory = can('view_statutory_exports');
@@ -294,6 +295,25 @@ export function Reports() {
 
   const handleTabChange = (nextTab: ReportTab) => {
     updateParams({ tab: nextTab });
+  };
+
+  const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, currentIndex: number) => {
+    let targetIndex: number | null = null;
+    if (event.key === 'ArrowRight') {
+      targetIndex = (currentIndex + 1) % tabs.length;
+    } else if (event.key === 'ArrowLeft') {
+      targetIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+    } else if (event.key === 'Home') {
+      targetIndex = 0;
+    } else if (event.key === 'End') {
+      targetIndex = tabs.length - 1;
+    }
+    if (targetIndex === null) return;
+    event.preventDefault();
+    const targetTab = tabs[targetIndex];
+    if (!targetTab) return;
+    handleTabChange(targetTab.key);
+    tabRefs.current[targetIndex]?.focus();
   };
 
   const handleYearChange = (nextYear: number) => {
@@ -489,7 +509,7 @@ export function Reports() {
           role="alert"
         >
           <span>{getErrorMessage(periodsQuery.error, t('reports.periodsLoadFailed'))}</span>
-          <button type="button" onClick={() => void periodsQuery.refetch()} className="btn-secondary min-h-9 !py-1 !px-3 text-xs">
+          <button type="button" onClick={() => void periodsQuery.refetch()} className="btn-secondary min-h-11 sm:min-h-9 !py-1.5 !px-3 text-xs">
             {t('common.retry')}
           </button>
         </div>
@@ -501,18 +521,23 @@ export function Reports() {
         aria-label={t('reports.tabsLabel')}
         className="no-print flex gap-1 border-b border-gray-200 dark:border-slate-800 overflow-x-auto"
       >
-        {tabs.map((tabDef) => {
+        {tabs.map((tabDef, idx) => {
           const isSelected = tab === tabDef.key;
           return (
             <button
               key={tabDef.key}
+              ref={(el) => {
+                tabRefs.current[idx] = el;
+              }}
               id={`${tabsIdPrefix}-tab-${tabDef.key}`}
               type="button"
               role="tab"
               aria-selected={isSelected}
-              aria-controls={`${tabsIdPrefix}-panel-${tabDef.key}`}
+              tabIndex={isSelected ? 0 : -1}
+              aria-controls={isSelected ? activePanelId : undefined}
               onClick={() => handleTabChange(tabDef.key)}
-              className={`min-h-11 px-4 py-2.5 text-sm font-medium border-b-2 whitespace-nowrap shrink-0 transition-all-fast ${
+              onKeyDown={(e) => handleTabKeyDown(e, idx)}
+              className={`min-h-11 px-4 py-2.5 text-sm font-medium border-b-2 whitespace-nowrap shrink-0 transition-all-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] ${
                 isSelected
                   ? 'border-[var(--accent-1)] text-gray-900 dark:text-slate-100'
                   : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200'
@@ -689,7 +714,11 @@ export function Reports() {
                     disabled={downloadingExport !== null}
                     className="btn-secondary min-h-11 sm:min-h-9 !py-1.5 !px-3 !text-xs disabled:opacity-50"
                   >
-                    <Download className="w-3.5 h-3.5" aria-hidden="true" />
+                    {downloadingExport === exportType ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" />
+                    ) : (
+                      <Download className="w-3.5 h-3.5" aria-hidden="true" />
+                    )}
                     {downloadingExport === exportType
                       ? t('common.downloading')
                       : t(`reports.statutoryFiles.${exportType}`)}

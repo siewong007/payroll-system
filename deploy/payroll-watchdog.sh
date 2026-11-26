@@ -36,13 +36,31 @@ log_msg() {
   logger -t payroll-watchdog "[$level] $*" || true
 }
 
+json_escape_string() {
+  local s=$1
+  s=${s//\\/\\\\}
+  s=${s//\"/\\\"}
+  s=${s//$'\n'/\\n}
+  s=${s//$'\r'/\\r}
+  s=${s//$'\t'/\\t}
+  printf '%s' "$s"
+}
+
 notify_webhook() {
   local message=$1
   [[ -n "${ALERT_WEBHOOK_URL:-}" ]] || return 0
+  local payload
+  if command -v jq >/dev/null 2>&1; then
+    payload=$(jq -nc --arg text "$message" '{service: "payroll-backend", text: $text}')
+  else
+    local escaped
+    escaped=$(json_escape_string "$message")
+    payload="{\"service\":\"payroll-backend\",\"text\":\"${escaped}\"}"
+  fi
   curl --silent --show-error --max-time 10 \
     -X POST \
     -H 'content-type: application/json' \
-    -d "{\"service\":\"payroll-backend\",\"text\":\"${message//\"/\\\"}\"}" \
+    -d "$payload" \
     "$ALERT_WEBHOOK_URL" >/dev/null 2>&1 || true
 }
 

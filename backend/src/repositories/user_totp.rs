@@ -25,6 +25,8 @@ pub async fn upsert_pending(
             last_used_step = NULL,
             failed_attempts = 0,
             locked_until = NULL,
+            code_login_failed_attempts = 0,
+            code_login_locked_until = NULL,
             updated_at = NOW()
         WHERE user_totp.enabled = FALSE
         RETURNING *"#,
@@ -40,15 +42,16 @@ pub async fn confirm(
     executor: impl Executor<'_, Database = Postgres>,
     user_id: Uuid,
     last_used_step: i64,
-) -> AppResult<()> {
-    sqlx::query!(
-        "UPDATE user_totp SET enabled = true, confirmed_at = NOW(), last_used_step = $2, updated_at = NOW() WHERE user_id = $1",
+) -> AppResult<bool> {
+    let rows = sqlx::query!(
+        "UPDATE user_totp SET enabled = true, confirmed_at = NOW(), last_used_step = $2, updated_at = NOW() WHERE user_id = $1 AND enabled = FALSE",
         user_id,
         last_used_step,
     )
     .execute(executor)
-    .await?;
-    Ok(())
+    .await?
+    .rows_affected();
+    Ok(rows == 1)
 }
 
 pub async fn find_by_user(
@@ -58,6 +61,20 @@ pub async fn find_by_user(
     let row = sqlx::query_as!(
         UserTotp,
         "SELECT * FROM user_totp WHERE user_id = $1",
+        user_id,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(row)
+}
+
+pub async fn find_by_user_for_update(
+    executor: impl Executor<'_, Database = Postgres>,
+    user_id: Uuid,
+) -> AppResult<Option<UserTotp>> {
+    let row = sqlx::query_as!(
+        UserTotp,
+        "SELECT * FROM user_totp WHERE user_id = $1 FOR UPDATE",
         user_id,
     )
     .fetch_optional(executor)
@@ -117,6 +134,7 @@ pub async fn claim_totp_step(
                updated_at = NOW()
            WHERE user_id = $1
              AND enabled = TRUE
+             AND (locked_until IS NULL OR locked_until <= NOW())
              AND (last_used_step IS NULL OR last_used_step < $2)"#,
         user_id,
         step,
@@ -125,6 +143,76 @@ pub async fn claim_totp_step(
     .await?
     .rows_affected();
     Ok(rows == 1)
+}
+
+pub async fn claim_code_login_step(
+    executor: impl Executor<'_, Database = Postgres>,
+    user_id: Uuid,
+    step: i64,
+) -> AppResult<bool> {
+    let rows = sqlx::query!(
+        r#"UPDATE user_totp
+           SET last_used_step = $2,
+               code_login_failed_attempts = 0,
+               code_login_locked_until = NULL,
+               updated_at = NOW()
+           WHERE user_id = $1
+             AND enabled = TRUE
+             AND (code_login_locked_until IS NULL OR code_login_locked_until <= NOW())
+             AND (last_used_step IS NULL OR last_used_step < $2)"#,
+        user_id,
+        step,
+    )
+    .execute(executor)
+    .await?
+    .rows_affected();
+    Ok(rows == 1)
+}
+
+pub async fn record_code_login_failure(
+    executor: impl Executor<'_, Database = Postgres>,
+    user_id: Uuid,
+    max_attempts: i32,
+    lock_minutes: i64,
+) -> AppResult<()> {
+    sqlx::query!(
+        r#"UPDATE user_totp
+           SET code_login_failed_attempts = CASE
+                   WHEN code_login_locked_until IS NOT NULL AND code_login_locked_until <= NOW() THEN 1
+                   ELSE code_login_failed_attempts + 1
+               END,
+               code_login_locked_until = CASE
+                   WHEN code_login_locked_until IS NOT NULL AND code_login_locked_until <= NOW() THEN
+                       CASE WHEN 1 >= $2 THEN NOW() + ($3 * INTERVAL '1 minute') ELSE NULL END
+                   WHEN code_login_failed_attempts + 1 >= $2 THEN NOW() + ($3 * INTERVAL '1 minute')
+                   ELSE code_login_locked_until
+               END,
+               updated_at = NOW()
+           WHERE user_id = $1"#,
+        user_id,
+        max_attempts,
+        lock_minutes as f64,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
+pub async fn reset_code_login_failures(
+    executor: impl Executor<'_, Database = Postgres>,
+    user_id: Uuid,
+) -> AppResult<()> {
+    sqlx::query!(
+        r#"UPDATE user_totp
+           SET code_login_failed_attempts = 0,
+               code_login_locked_until = NULL,
+               updated_at = NOW()
+           WHERE user_id = $1"#,
+        user_id,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
 }
 
 pub async fn record_failure(

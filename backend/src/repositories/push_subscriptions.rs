@@ -132,6 +132,22 @@ pub async fn revoke_all_for_user(
     Ok(res.rows_affected())
 }
 
+pub async fn revoke_all_for_employee(
+    executor: impl Executor<'_, Database = Postgres>,
+    employee_id: Uuid,
+) -> AppResult<u64> {
+    let res = sqlx::query!(
+        "UPDATE push_subscriptions
+         SET revoked_at = NOW(), updated_at = NOW()
+         WHERE revoked_at IS NULL
+           AND user_id IN (SELECT id FROM users WHERE employee_id = $1)",
+        employee_id,
+    )
+    .execute(executor)
+    .await?;
+    Ok(res.rows_affected())
+}
+
 pub async fn update_company_for_session(
     executor: impl Executor<'_, Database = Postgres>,
     user_id: Uuid,
@@ -192,6 +208,29 @@ pub async fn count_active_for_user(
     .fetch_one(executor)
     .await?;
     Ok(count)
+}
+
+pub async fn exists_active_for_user_endpoint(
+    executor: impl Executor<'_, Database = Postgres>,
+    user_id: Uuid,
+    endpoint: &str,
+) -> AppResult<bool> {
+    let exists = sqlx::query_scalar!(
+        r#"SELECT EXISTS(
+               SELECT 1
+               FROM push_subscriptions ps
+               LEFT JOIN user_sessions us ON us.id = ps.session_id
+               WHERE ps.user_id = $1
+                 AND ps.endpoint = $2
+                 AND ps.revoked_at IS NULL
+                 AND (ps.session_id IS NULL OR (us.revoked_at IS NULL AND us.expires_at > NOW()))
+           ) AS "exists!""#,
+        user_id,
+        endpoint,
+    )
+    .fetch_one(executor)
+    .await?;
+    Ok(exists)
 }
 
 pub async fn record_delivery_success(

@@ -25,22 +25,13 @@ import {
   Sparkles,
   PanelLeftClose,
   PanelLeftOpen,
-  Search,
-  Bell,
-  Download,
-  Smartphone,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
-import { usePwa } from '@/context/PwaContext';
 import { useTranslation } from 'react-i18next';
 import { CompanySwitcher } from './CompanySwitcher';
-import { LanguageSwitcher } from '@/components/ui/LanguageSwitcher';
-import { AppearanceSwitcher } from '@/components/ui/AppearanceSwitcher';
-import { openCommandPalette } from '@/lib/commandPalette';
 import { BrandLogo } from '@/components/ui/BrandLogo';
 import { getAccessToken } from '@/api/client';
 import { getPendingApprovalCounts } from '@/api/approvals';
-import { getNotificationCount } from '@/api/notifications';
 import { hasAnyRole, roleList, type AppRole } from '@/lib/roles';
 import { userCan, userCanAny } from '@/lib/usePermissions';
 import { useMediaQuery } from '@/lib/useMediaQuery';
@@ -115,22 +106,7 @@ function SidebarContent({
 }) {
   const location = useLocation();
   const { user, logout } = useAuth();
-  const {
-    canPromptInstall,
-    canShowInstallGuide,
-    notificationStatus,
-    notificationBusy,
-    triggerInstall,
-    enableNotifications,
-  } = usePwa();
   const { t } = useTranslation();
-  const { data: notifCount } = useQuery({
-    queryKey: ['notification-count'],
-    queryFn: getNotificationCount,
-    refetchInterval: 30_000,
-    enabled: Boolean(user?.company_id) && !user?.must_change_password,
-  });
-  const unreadNotifications = notifCount?.unread ?? 0;
 
   const visibleNav = navigation.filter((item) => {
     if (item.hideFor && hasAnyRole(user, item.hideFor)) return false;
@@ -150,34 +126,16 @@ function SidebarContent({
       {/* Aurora glow inside the rail */}
       <div aria-hidden className="aurora-rail pointer-events-none absolute inset-0" />
 
-      {/* Logo + collapse / close */}
-      <div className={`relative border-b border-white/10 flex items-center justify-between ${collapsed ? 'p-3.5 justify-center' : 'p-5'}`}>
+      {/* Logo + collapse / close aligned with top header height */}
+      <div
+        className={`relative h-14 border-b border-white/10 flex items-center shrink-0 ${
+          collapsed ? 'px-3 justify-center' : 'px-4 justify-between'
+        }`}
+      >
         {!collapsed && (
-          <div className="min-w-0">
-            <BrandLogo variant="lockup-dark" priority className="h-8 w-auto rounded-lg drop-shadow-md" />
-            <span className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-indigo-200">
-              <span className="glow-dot" />
-              {t('nav.adminConsoleBadge')}
-            </span>
-          </div>
+          <BrandLogo variant="lockup-dark" priority className="h-7 w-auto rounded-lg drop-shadow-md" />
         )}
         <div className="flex items-center gap-1 shrink-0">
-          {!collapsed && user?.company_id && (
-            <Link
-              to="/portal/notifications"
-              onClick={onClose}
-              title={t('nav.portal.notifications')}
-              aria-label={t('nav.portal.notifications')}
-              className="relative hidden md:inline-flex p-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-all-fast"
-            >
-              <Bell className="w-4 h-4" />
-              {unreadNotifications > 0 && (
-                <span className="absolute top-1 right-1 min-w-[15px] h-[15px] px-0.5 text-[9px] font-bold bg-red-500 text-white rounded-full flex items-center justify-center leading-none">
-                  {unreadNotifications > 99 ? '99+' : unreadNotifications}
-                </span>
-              )}
-            </Link>
-          )}
           {onToggleCollapse && !onClose && (
             <button
               type="button"
@@ -202,37 +160,10 @@ function SidebarContent({
         </div>
       </div>
 
-      {/* Company Switcher + Quick Search */}
-      {collapsed ? (
-        <div className="px-2.5 pt-2">
-          <button
-            type="button"
-            onClick={openCommandPalette}
-            title={`${t('nav.quickSearch')} (⌘K)`}
-            aria-label={t('nav.quickSearch')}
-            className="flex w-full min-h-10 items-center justify-center rounded-xl border border-white/10 bg-white/[0.04] p-2 text-slate-400 transition-all hover:border-indigo-400/30 hover:bg-white/[0.08] hover:text-slate-200"
-          >
-            <Search className="h-4 w-4 shrink-0 text-indigo-300" aria-hidden="true" />
-          </button>
-        </div>
-      ) : (
+      {/* Company Switcher */}
+      {!collapsed && (
         <div className="relative">
           <CompanySwitcher />
-          <div className="px-3 pt-2">
-            <button
-              type="button"
-              onClick={openCommandPalette}
-              className="flex w-full items-center justify-between rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-slate-400 transition-all hover:border-indigo-400/30 hover:bg-white/[0.08] hover:text-slate-200"
-            >
-              <span className="inline-flex items-center gap-2 truncate">
-                <Search className="h-3.5 w-3.5 shrink-0 text-indigo-300" aria-hidden="true" />
-                <span className="truncate">{t('nav.quickSearch')}</span>
-              </span>
-              <kbd className="rounded border border-white/10 bg-white/5 px-1.5 py-0.5 text-[10px] font-semibold text-slate-400">
-                ⌘K
-              </kbd>
-            </button>
-          </div>
         </div>
       )}
 
@@ -302,80 +233,23 @@ function SidebarContent({
         })}
       </nav>
 
-      {/* User & Preferences */}
+      {/* Compact User Footer */}
       <div
-        className="relative p-4 border-t border-white/10 bg-white/[0.03] shrink-0"
-        style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}
+        className="relative p-3.5 border-t border-white/10 bg-white/[0.03] shrink-0"
+        style={{ paddingBottom: 'max(0.875rem, env(safe-area-inset-bottom))' }}
       >
-        {!collapsed && (
-          <div className="mb-3 space-y-2">
-            {(canShowInstallGuide ||
-              notificationStatus === 'default' ||
-              notificationStatus === 'ios-install-required') && (
-              <div className="space-y-1.5">
-                {canShowInstallGuide && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onClose?.();
-                      void triggerInstall();
-                    }}
-                    className="flex w-full items-center gap-2 rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5 text-xs font-medium text-slate-200 hover:bg-white/10 transition-colors"
-                  >
-                    {canPromptInstall ? (
-                      <Download className="w-3.5 h-3.5 shrink-0 text-indigo-300" aria-hidden="true" />
-                    ) : (
-                      <Smartphone className="w-3.5 h-3.5 shrink-0 text-indigo-300" aria-hidden="true" />
-                    )}
-                    <span className="truncate">
-                      {canPromptInstall
-                        ? t('pwa.actions.installApp')
-                        : t('pwa.actions.addToHomeScreen')}
-                    </span>
-                  </button>
-                )}
-                {(notificationStatus === 'default' ||
-                  notificationStatus === 'ios-install-required') && (
-                  <button
-                    type="button"
-                    disabled={notificationBusy}
-                    onClick={() => {
-                      onClose?.();
-                      void enableNotifications();
-                    }}
-                    className="flex w-full items-center gap-2 rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5 text-xs font-medium text-slate-200 hover:bg-white/10 transition-colors disabled:opacity-50"
-                  >
-                    <Bell className="w-3.5 h-3.5 shrink-0 text-indigo-300" aria-hidden="true" />
-                    <span className="truncate">{t('pwa.actions.allowNotifications')}</span>
-                  </button>
-                )}
-              </div>
-            )}
-            <AppearanceSwitcher darkRail />
-            <LanguageSwitcher dark />
-            <div className="flex flex-wrap items-center justify-center gap-2 pt-1 text-[11px] text-slate-400">
-              <Link to="/terms" onClick={onClose} className="hover:text-slate-200 transition-colors">
-                {t('legal.links.terms')}
-              </Link>
-              <span className="text-slate-600">·</span>
-              <Link to="/privacy" onClick={onClose} className="hover:text-slate-200 transition-colors">
-                {t('legal.links.privacy')}
-              </Link>
-              <span className="text-slate-600">·</span>
-              <Link to="/compliance" onClick={onClose} className="hover:text-slate-200 transition-colors">
-                {t('legal.links.compliance')}
-              </Link>
-            </div>
-          </div>
-        )}
         <div className={`flex items-center ${collapsed ? 'flex-col gap-2' : 'gap-2'}`}>
           <Link
             to="/account"
             onClick={onClose}
             title={t('nav.accountSecurity')}
             aria-label={collapsed ? t('nav.accountSecurity') : undefined}
-            className={`group flex items-center min-w-0 rounded-xl transition-colors hover:bg-white/10 ${
-              collapsed ? 'p-1.5 justify-center' : 'flex-1 gap-3 p-1.5 -m-1.5'
+            className={`group flex items-center min-w-0 rounded-xl transition-colors ${
+              collapsed ? 'p-1.5 justify-center' : 'flex-1 gap-3 p-1.5 -m-1'
+            } ${
+              location.pathname === '/account'
+                ? 'bg-white/10 ring-1 ring-white/15'
+                : 'hover:bg-white/10'
             }`}
           >
             <div className="w-9 h-9 rounded-full bg-gradient-to-br from-indigo-500 to-violet-500 ring-2 ring-white/15 shadow-[0_0_16px_-4px_var(--glow)] flex items-center justify-center text-sm font-semibold text-white shrink-0">
@@ -390,21 +264,6 @@ function SidebarContent({
               </p>
             </div>
           </Link>
-          {!collapsed && (
-            <Link
-              to="/account"
-              onClick={onClose}
-              title={t('nav.accountSecurity')}
-              aria-label={t('nav.accountSecurity')}
-              className={`p-2 rounded-lg transition-all-fast shrink-0 ${
-                location.pathname === '/account'
-                  ? 'text-indigo-300 bg-white/10'
-                  : 'text-slate-400 hover:text-white hover:bg-white/10'
-              }`}
-            >
-              <Shield className="w-4 h-4" />
-            </Link>
-          )}
           <button
             type="button"
             onClick={() => void logout()}

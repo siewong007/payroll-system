@@ -135,7 +135,7 @@ export function EmployeeList() {
     [canViewPayroll, t],
   );
 
-  const { data, isLoading, isError, error, refetch } = useQuery({
+  const { data, isLoading, isFetching, isError, error, refetch } = useQuery({
     queryKey: ['employees', { search, page, perPage }],
     queryFn: () => getEmployees({ search: search || undefined, page, per_page: perPage }),
     placeholderData: keepPreviousData,
@@ -167,7 +167,7 @@ export function EmployeeList() {
                   onClick={() => navigate('/employees/import')}
                   className="btn-secondary w-full sm:w-auto"
                 >
-                  <Upload className="w-4 h-4" />
+                  <Upload className="w-4 h-4" aria-hidden="true" />
                   {t('common.import')}
                 </button>
               )}
@@ -177,7 +177,7 @@ export function EmployeeList() {
                   onClick={() => setShowCreate(true)}
                   className="btn-primary w-full sm:w-auto"
                 >
-                  <Plus className="w-4 h-4" />
+                  <Plus className="w-4 h-4" aria-hidden="true" />
                   {t('employees.add')}
                 </button>
               )}
@@ -188,14 +188,14 @@ export function EmployeeList() {
 
       {/* Search */}
       <div className="relative mb-6">
-        <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 dark:text-slate-500 pointer-events-none" />
+        <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 dark:text-slate-500 pointer-events-none" aria-hidden="true" />
         <input
           type="text"
           placeholder={t('employees.pickerPlaceholder')}
           aria-label={t('employees.pickerPlaceholder')}
           value={searchInput}
           onChange={(e) => setSearch(e.target.value)}
-          className="form-input !pl-10 !pr-11 !py-2.5"
+          className="form-input pl-10 pr-11 py-2.5"
         />
         {searchInput && (
           <button
@@ -203,80 +203,84 @@ export function EmployeeList() {
             onClick={() => setSearch('')}
             aria-label={t('common.clear')}
             title={t('common.clear')}
-            className="absolute right-1.5 top-1/2 -translate-y-1/2 min-h-10 min-w-10 flex items-center justify-center rounded-md text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-200 transition-colors"
+            className="absolute right-1.5 top-1/2 -translate-y-1/2 min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 flex items-center justify-center rounded-md text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 transition-colors"
           >
-            <X className="w-4 h-4" />
+            <X className="w-4 h-4" aria-hidden="true" />
           </button>
         )}
       </div>
 
       {isError ? (
-        <EmptyState
-          icon={AlertTriangle}
-          title={t('employees.loadFailed')}
-          description={getErrorMessage(error, t('employees.loadFailed'))}
-          action={
-            <button type="button" onClick={() => refetch()} className="btn-primary">
-              {t('common.retry')}
-            </button>
-          }
-        />
+        <div className="card">
+          <EmptyState
+            icon={AlertTriangle}
+            title={t('employees.loadFailed')}
+            description={getErrorMessage(error, t('employees.loadFailed'))}
+            action={
+              <button type="button" onClick={() => refetch()} className="btn-primary">
+                {t('common.retry')}
+              </button>
+            }
+          />
+        </div>
       ) : (
-        <DataTable
-          columns={filteredColumns}
-          data={data?.data ?? []}
-          total={data?.total}
-          page={page}
-          onPageChange={setPage}
-          perPage={perPage}
-          isLoading={isLoading}
-          emptyIcon={<Users className="w-8 h-8 text-gray-300 dark:text-slate-600" />}
-          emptyMessage={search ? t('employees.noMatch') : t('employees.empty')}
-          emptyAction={
-            search ? (
-              <button type="button" onClick={() => setSearch('')} className="btn-secondary">
-                {t('reports.clearSearch')}
-              </button>
-            ) : canManageEmployees ? (
-              <button type="button" onClick={() => setShowCreate(true)} className="btn-primary">
-                <Plus className="w-4 h-4" />
-                {t('employees.add')}
-              </button>
-            ) : undefined
-          }
-          summaryTitle={(emp) => emp.full_name}
-          renderSummary={(emp) => <EmployeeProfile employeeId={emp.id} />}
-          renderSummaryFooter={
-            canManageEmployees
-              ? (emp, close) => (
-                  <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-between gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        close();
-                        setDeletingEmployee(emp);
-                      }}
-                      className="btn-secondary text-red-600 dark:text-red-400 border-red-200 dark:border-red-500/30 hover:bg-red-50 dark:hover:bg-red-500/15"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                      {t('common.delete')}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        close();
-                        setEditingEmployee(emp);
-                      }}
-                      className="btn-primary"
-                    >
-                      <Pencil className="w-4 h-4" />
-                      {t('employees.editEmployee')}
-                    </button>
-                  </div>
-                )
-              : undefined
-          }
-        />
+        <div className={isFetching && !isLoading ? 'opacity-65 transition-opacity' : ''}>
+          <DataTable
+            columns={filteredColumns}
+            data={data?.data ?? []}
+            total={data?.total}
+            page={page}
+            onPageChange={setPage}
+            perPage={perPage}
+            isLoading={isLoading}
+            emptyIcon={<Users className="w-8 h-8 text-gray-300 dark:text-slate-600" aria-hidden="true" />}
+            emptyMessage={search ? t('employees.noMatch') : t('employees.empty')}
+            emptyAction={
+              search ? (
+                <button type="button" onClick={() => setSearch('')} className="btn-secondary">
+                  {t('reports.clearSearch')}
+                </button>
+              ) : canManageEmployees ? (
+                <button type="button" onClick={() => setShowCreate(true)} className="btn-primary">
+                  <Plus className="w-4 h-4" aria-hidden="true" />
+                  {t('employees.add')}
+                </button>
+              ) : undefined
+            }
+            summaryTitle={(emp) => emp.full_name}
+            renderSummary={(emp) => <EmployeeProfile employeeId={emp.id} />}
+            renderSummaryFooter={
+              canManageEmployees
+                ? (emp, close) => (
+                    <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          close();
+                          setDeletingEmployee(emp);
+                        }}
+                        className="btn-secondary text-red-600 dark:text-red-400 border-red-200 dark:border-red-500/30 hover:bg-red-50 dark:hover:bg-red-500/15"
+                      >
+                        <Trash2 className="w-4 h-4" aria-hidden="true" />
+                        {t('common.delete')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          close();
+                          setEditingEmployee(emp);
+                        }}
+                        className="btn-primary"
+                      >
+                        <Pencil className="w-4 h-4" aria-hidden="true" />
+                        {t('employees.editEmployee')}
+                      </button>
+                    </div>
+                  )
+                : undefined
+            }
+          />
+        </div>
       )}
 
       {showCreate && (
@@ -301,7 +305,7 @@ export function EmployeeList() {
         title={t('employees.deleteTitle')}
         footer={
           deletingEmployee ? (
-            <div className="flex justify-end gap-3">
+            <div className="flex flex-col-reverse sm:flex-row justify-end gap-3">
               <button
                 type="button"
                 onClick={() => setDeletingEmployee(null)}
@@ -325,7 +329,7 @@ export function EmployeeList() {
         {deletingEmployee && (
           <div className="flex items-start gap-4 p-5 bg-red-50 dark:bg-red-500/10 rounded-xl border border-red-100 dark:border-red-500/30">
             <div className="w-10 h-10 rounded-full bg-red-100 dark:bg-red-500/20 flex items-center justify-center shrink-0">
-              <AlertTriangle className="w-5 h-5 text-red-600 dark:text-red-400" />
+              <AlertTriangle className="w-5 h-5 text-red-600 dark:text-red-400" aria-hidden="true" />
             </div>
             <div className="min-w-0">
               <p className="text-sm font-semibold text-red-800 dark:text-red-300">{t('employees.deleteWarning')}</p>
