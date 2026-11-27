@@ -1426,10 +1426,13 @@ async fn audit_and_trigram_indexes_are_planner_usable() {
         "expected idx_audit_logs_payroll_item_run_old, got {old_idxs:?} in {plan_old}"
     );
 
+    // Seed 5,000 rows so the GIN trigram bitmap scan (~56-60 cost) beats
+    // `idx_documents_company` (~260 cost) even under PostgreSQL's default
+    // `random_page_cost = 4.0` used in CI (with 1,000 rows, B-tree ~52.65 wins).
     sqlx::query(
         r#"INSERT INTO documents (company_id, title, file_name, file_url, status)
            SELECT $1, 'Doc ' || g, 'file_' || g || '.pdf', '/api/uploads/doc-' || g || '.pdf', 'active'
-           FROM generate_series(1, 1000) g"#,
+           FROM generate_series(1, 5000) g"#,
     )
     .bind(company_id)
     .execute(&mut *tx)

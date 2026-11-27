@@ -162,6 +162,7 @@ async fn seed_all_working_days(pool: &sqlx::PgPool, company_id: uuid::Uuid) {
 
 #[tokio::test]
 async fn mark_absent_skips_leave_existing_records_and_is_idempotent() {
+    let _absent_guard = GLOBAL_ABSENT_TEST_LOCK.lock().await;
     let Some(pool) = skip_if_no_db().await else {
         return;
     };
@@ -218,9 +219,11 @@ async fn mark_absent_skips_leave_existing_records_and_is_idempotent() {
 
     let absent_employee: Option<uuid::Uuid> = sqlx::query_scalar(
         "SELECT employee_id FROM attendance_records
-         WHERE company_id = $1 AND status = 'absent' AND created_by IS NULL",
+         WHERE company_id = $1 AND status = 'absent' AND created_by IS NULL
+           AND (check_in_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date = $2",
     )
     .bind(company_id)
+    .bind(target)
     .fetch_optional(&pool)
     .await
     .expect("query absent rows");
@@ -235,6 +238,7 @@ async fn mark_absent_skips_leave_existing_records_and_is_idempotent() {
 
 #[tokio::test]
 async fn mark_absent_respects_the_employment_window() {
+    let _absent_guard = GLOBAL_ABSENT_TEST_LOCK.lock().await;
     let Some(pool) = skip_if_no_db().await else {
         return;
     };
@@ -268,9 +272,12 @@ async fn mark_absent_respects_the_employment_window() {
         .expect("mark_absent should succeed");
 
     let leaver_rows: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM attendance_records WHERE employee_id = $1 AND status = 'absent'",
+        "SELECT COUNT(*) FROM attendance_records
+         WHERE employee_id = $1 AND status = 'absent'
+           AND (check_in_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date = $2",
     )
     .bind(resigned)
+    .bind(after_leaving)
     .fetch_one(&pool)
     .await
     .expect("count leaver rows");
@@ -310,6 +317,7 @@ async fn mark_absent_skips_recurring_holidays_from_prior_years() {
 
 #[tokio::test]
 async fn checkin_supersedes_todays_auto_absent_row() {
+    let _absent_guard = GLOBAL_ABSENT_TEST_LOCK.lock().await;
     let Some(pool) = skip_if_no_db().await else {
         return;
     };
@@ -351,9 +359,11 @@ async fn checkin_supersedes_todays_auto_absent_row() {
 
     let absent_left: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM attendance_records
-         WHERE employee_id = $1 AND status = 'absent' AND created_by IS NULL",
+         WHERE employee_id = $1 AND status = 'absent' AND created_by IS NULL
+           AND (check_in_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date = $2",
     )
     .bind(employee_id)
+    .bind(today)
     .fetch_one(&pool)
     .await
     .expect("count absent rows");

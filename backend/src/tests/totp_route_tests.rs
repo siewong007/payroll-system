@@ -74,9 +74,12 @@ fn json_request_from_ip(
         .method(method)
         .uri(uri)
         .header(header::CONTENT_TYPE, "application/json")
+        // Left entry is what the caller claimed, right entry is what the proxy
+        // appended. `app_for` runs with `trust_proxy_headers: true`, so
+        // `core::client_ip` keys rate limiting and audit IP on the right-most entry.
         .header(
             "x-forwarded-for",
-            format!("203.0.113.{last_octet}, 10.0.0.1"),
+            format!("198.51.100.99, 203.0.113.{last_octet}"),
         )
         .header(header::USER_AGENT, "PayrollTotpTest/1.0");
     if let Some(token) = token {
